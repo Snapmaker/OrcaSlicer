@@ -1676,7 +1676,7 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
 Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
 {
     const boost::filesystem::path data_dir_path = Slic3r::data_dir_path();
-    boost::filesystem::path resc_dir_path(resources_dir());
+    const boost::filesystem::path resc_dir_path = Slic3r::resources_dir_path();
     auto                    config_folder = data_dir_path / "printers";
     auto                    resc_folder   = (update ? cache_path : resc_dir_path) / "printers";
     std::string             curr_version;

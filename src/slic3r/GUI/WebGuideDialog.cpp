@@ -217,18 +217,34 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
     m_page = startpage;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(" enter, load=%1%, start_page=%2%")%load%int(startpage);
     //wxLogMessage("GUIDE: webpage_1  %s", (Slic3r::resources_dir_path() / "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-    wxString TargetUrl = from_u8( (Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().string() );
+#ifdef WIN32
+    wxString TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().wstring()));
+#else
+    wxString TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().string());
+#endif
     //wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 
     if (startpage == BBL_WELCOME){
         SetTitle(_L("Setup Wizard"));
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=1").make_preferred().string());
+#endif
     } else if (startpage == BBL_REGION) {
         SetTitle(_L("Setup Wizard"));
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=11").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=11").make_preferred().string());
+#endif
     } else if (startpage == BBL_MODELS) {
         SetTitle(_L("Setup Wizard"));
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
+#endif
     } else if (startpage == BBL_FILAMENTS) {
         SetTitle(_L("Setup Wizard"));
 
@@ -239,19 +255,39 @@ wxString GuideFrame::SetStartPage(GuidePage startpage, bool load)
         }
 
         if (nSize>0)
+#ifdef WIN32
+            TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=22").make_preferred().wstring()));
+#else
             TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=22").make_preferred().string());
+#endif
         else
+#ifdef WIN32
+            TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().wstring()));
+#else
             TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
+#endif
     } else if (startpage == BBL_FILAMENT_ONLY) {
         SetTitle("");
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=23").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=23").make_preferred().string());
+#endif
     } else if (startpage == BBL_MODELS_ONLY) {
         SetTitle("");
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=24").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=24").make_preferred().string());
+#endif
     }
     else {
         SetTitle(_L("Setup Wizard"));
+#ifdef WIN32
+        TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().wstring()));
+#else
         TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/0/index.html?target=21").make_preferred().string());
+#endif
     }
 
     wxString strlang = wxGetApp().current_language_code_safe();

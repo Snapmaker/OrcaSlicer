@@ -1785,6 +1785,7 @@ static std::string resolve_windows_json_payload(std::string raw)
         return as_gbk;
     if (slic3r_buffer_is_strict_utf8(as_acp.data(), as_acp.size()))
         return as_acp;
+    BOOST_LOG_TRIVIAL(warning) << "resolve_windows_json_payload: could not decode file as UTF-8, GBK, or ACP; passing raw bytes to json::parse";
     return raw;
 }
 } // namespace

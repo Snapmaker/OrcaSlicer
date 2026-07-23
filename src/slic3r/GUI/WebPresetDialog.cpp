@@ -276,10 +276,18 @@ wxString WebPresetDialog::SetStartPage(GuidePage startpage, bool load)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" enter, load=%1%, start_page=%2%") % load % int(startpage);
     // wxLogMessage("GUIDE: webpage_1  %s", (Slic3r::resources_dir_path() /
     // "web\\guide\\1\\index.html").make_preferred().string().c_str() );
+#ifdef WIN32
+    wxString TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/guide/1/index.html").make_preferred().wstring()));
+#else
     wxString TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/1/index.html").make_preferred().string());
+#endif
     // wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
 
+#ifdef WIN32
+    TargetUrl = from_u8(boost::nowide::narrow((Slic3r::resources_dir_path() / "web/preset_bind/24/index.html").make_preferred().wstring()));
+#else
     TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/preset_bind/24/index.html").make_preferred().string());
+#endif
     // TargetUrl = from_u8((Slic3r::resources_dir_path() / "web/guide/24/index.html").make_preferred().string());
 
     wxString strlang = wxGetApp().current_language_code_safe();

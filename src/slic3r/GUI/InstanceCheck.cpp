@@ -348,7 +348,7 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 	if (! cla.should_send.has_value())
 		cla.should_send = app_config_single_instance;
 #ifdef _WIN32
-	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", (Slic3r::data_dir_path() / "cache").string() + "\\");
+	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", boost::nowide::narrow((Slic3r::data_dir_path() / "cache").make_preferred().wstring()) + "\\");
 	if (cla.should_send.value() && GUI::wxGetApp().single_instance_checker()->IsAnotherRunning()) {
 #else // mac & linx
 	// get_lock() creates the lockfile therefore *cla.should_send is checked after

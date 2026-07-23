@@ -3327,7 +3327,11 @@ __retry:
 
         //BBS set cert dir
         if (m_agent)
-            m_agent->set_cert_file((Slic3r::resources_dir_path() / "cert").string(), "slicer_base64.cer");
+#ifdef WIN32
+            m_agent->set_cert_file(boost::nowide::narrow((Slic3r::resources_dir_path() / "cert").make_preferred().wstring()), "slicer_base64.cer");
+#else
+            m_agent->set_cert_file((Slic3r::resources_dir_path() / "cert").make_preferred().string(), "slicer_base64.cer");
+#endif
 
         init_http_extra_header();
 
@@ -4580,7 +4584,11 @@ std::string GUI_App::handle_web_request(std::string cmd)
                     pt::ptree                    data_node = root.get_child("data");
                     boost::optional<std::string> path      = data_node.get_optional<std::string>("file");
                     if (path.has_value()) {
-                        std::string Fullpath = (Slic3r::resources_dir_path() / "web" / "homepage" / "model" / path.value()).string();
+#ifdef WIN32
+                        std::string Fullpath = boost::nowide::narrow((Slic3r::resources_dir_path() / "web" / "homepage" / "model" / path.value()).make_preferred().wstring());
+#else
+                        std::string Fullpath = (Slic3r::resources_dir_path() / "web" / "homepage" / "model" / path.value()).make_preferred().string();
+#endif
 
                         this->request_open_project(Fullpath);
                     }

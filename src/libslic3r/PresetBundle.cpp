@@ -1417,7 +1417,11 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
         if (!boost::iequals(dir_entry.path().extension().string(), ".json"))
             continue;
 
+#ifdef WIN32
+        std::string vendor_name = boost::nowide::narrow(dir_entry.path().stem().wstring());
+#else
         std::string vendor_name = dir_entry.path().stem().string();
+#endif
         vendor_names.push_back(vendor_name);
     }
     // Move ORCA_FILAMENT_LIBRARY to the beginning of the list
@@ -1504,11 +1508,10 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_mod
     PresetsConfigSubstitutions substitutions;
     std::string                errors_cummulative;
     for (auto &dir_entry : boost::filesystem::directory_iterator(dir)) {
-        std::string vendor_file = dir_entry.path().string();
-        if (Slic3r::is_json_file(vendor_file)) {
-            std::string vendor_name = dir_entry.path().filename().string();
-            // Remove the .json suffix.
-            vendor_name.erase(vendor_name.size() - 5);
+        if (!boost::iequals(dir_entry.path().extension().string(), ".json"))
+            continue;
+
+        std::string vendor_name = dir_entry.path().stem().string();
             try {
                 // Load the config bundle, flatten it.
                 append(substitutions, load_vendor_configs_from_json(dir, vendor_name, PresetBundle::LoadVendorOnly, compatibility_rule).first);
@@ -1539,11 +1542,10 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_fil
     std::string                errors_cummulative;
     bool                       first = true;
     for (auto &dir_entry : boost::filesystem::directory_iterator(dir)) {
-        std::string vendor_file = dir_entry.path().string();
-        if (Slic3r::is_json_file(vendor_file)) {
-            std::string vendor_name = dir_entry.path().filename().string();
-            // Remove the .json suffix.
-            vendor_name.erase(vendor_name.size() - 5);
+        if (!boost::iequals(dir_entry.path().extension().string(), ".json"))
+            continue;
+
+        std::string vendor_name = dir_entry.path().stem().string();
             try {
                 if (first) {
                     // Reset this PresetBundle and load the first vendor config.

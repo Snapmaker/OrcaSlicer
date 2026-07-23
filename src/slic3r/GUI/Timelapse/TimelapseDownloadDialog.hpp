@@ -19,7 +19,6 @@ class TimelapseDownloadDialog : public DPIDialog
 public:
     TimelapseDownloadDialog(const std::string& file_url,
                             const std::string& file_name,
-                            int encrypt_type,
                             const std::string& sn,
                             int file_count,
                             wxWindow* parent = nullptr);
@@ -38,7 +37,6 @@ private:
 
     std::string m_file_url;
     std::string m_file_name;
-    int m_encrypt_type;
     std::string m_sn;
     std::string m_download_path;
     int m_file_count{1};

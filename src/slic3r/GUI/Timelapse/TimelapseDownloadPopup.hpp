@@ -11,12 +11,16 @@
 #include <wx/dialog.h>
 #include <wx/timer.h>
 #include <wx/scrolwin.h>
+#include <wx/panel.h>
+#include <wx/statbmp.h>
 
 namespace Slic3r {
 
 class BBLStatusBarSend;
 
 namespace GUI {
+
+class TimelapseTaskRow;
 
 class TimelapseDownloadPopup : public DPIDialog
 {
@@ -25,9 +29,7 @@ public:
     {
         std::string file_name;
         std::string file_url;
-        int         encrypt_type;
         std::string sn;
-        size_t      file_size;
         std::string date_index;
     };
 
@@ -60,21 +62,25 @@ private:
     void on_timer(wxTimerEvent&);
     void toggle_collapse();
     void update_layout_size();
+    void reorder_rows();
+    void destroy_dividers();
+    void set_row_state(int index, int state);
+    void dismiss_row(int index);
 
-    struct TaskRow
+    struct TaskRowInfo
     {
-        std::shared_ptr<BBLStatusBarSend> status_bar;
-        std::string file_name;
-        int        state; // 0=pending, 1=downloading, 2=complete, 3=error, 4=cancelled
+        TimelapseTaskRow* row;
+        int               state; // 0=pending, 1=downloading, 2=complete, 3=error, 4=cancelled
+        bool              visible;
     };
 
     wxPanel*           m_title_bar;
     Label*             m_title_label;
-    Button*            m_collapse_btn;
+    wxStaticBitmap*    m_collapse_btn;
     wxScrolledWindow*  m_task_panel;
     wxBoxSizer*        m_task_sizer;
 
-    std::vector<TaskRow> m_rows;
+    std::vector<TaskRowInfo> m_rows;
     bool m_collapsed;
     bool m_all_complete;
     int  m_task_count;
@@ -85,12 +91,68 @@ private:
 
     wxTimer* m_position_timer;
 
-    static constexpr int TITLE_BAR_HEIGHT   = 36;
-    static constexpr int TASK_ROW_HEIGHT    = 55;
-    static constexpr int DIALOG_WIDTH       = 456;
-    static constexpr int MAX_VISIBLE_ROWS   = 5;
-    static constexpr int DEFAULT_VISIBLE    = 2;
+    // Design constants (match Figma spec, in raw px — converted via FromDIP)
+    static constexpr int TITLE_BAR_HEIGHT   = 40;
+    static constexpr int TASK_ROW_HEIGHT    = 58;
+    static constexpr int DIALOG_WIDTH       = 375;
+    static constexpr int DIALOG_HEIGHT      = 195;
+    static constexpr int CONTENT_HEIGHT     = 155;
+    static constexpr int MAX_VISIBLE_ROWS   = 3;
+    static constexpr int DEFAULT_VISIBLE    = 3;
     static constexpr int SCROLL_RATE        = 10;
+    static constexpr int BOTTOM_MARGIN      = 20;
+};
+
+// Custom task row matching the Figma design.
+// State machine: Pending → Downloading → (Completed | Failed | Cancelled)
+class TimelapseTaskRow : public wxPanel
+{
+public:
+    enum class State
+    {
+        Pending,
+        Downloading,
+        Completed,
+        Failed,
+        Cancelled
+    };
+
+    TimelapseTaskRow(wxWindow* parent, const wxString& file_name);
+    ~TimelapseTaskRow();
+
+    void set_state(State s);
+    void set_progress(int percent);
+    void set_status_text(const wxString& text);
+    void set_cancel_callback(std::function<void()> cb);
+    void set_dismiss_callback(std::function<void()> cb);
+    void disable_cancel(); // visual gray-out + switch click behavior to dismiss
+
+    // Figma design sizes (raw px — converted via FromDIP at use sites)
+    static constexpr int ROW_WIDTH        = 375;
+    static constexpr int ROW_HEIGHT       = 58;
+    static constexpr int PROGRESS_WIDTH   = 299;
+    static constexpr int PROGRESS_HEIGHT  = 4;
+    static constexpr int CANCEL_SIZE      = 19;
+    static constexpr int STATUS_ICON_SIZE = 16;
+
+private:
+    void on_cancel_down(wxMouseEvent&);
+
+    Label*           m_name_label;
+    wxPanel*         m_progress_track;
+    wxStaticBitmap*  m_status_icon;
+    Label*           m_status_label;
+    wxStaticBitmap*  m_cancel_btn;
+    wxSizer*         m_status_sizer;
+
+    State     m_state;
+    int       m_percent;
+    bool      m_cancel_enabled;
+    wxString  m_status_text;
+
+    std::function<void()> m_cancel_cb;
+    std::function<void()> m_dismiss_cb;
 };
 
 }} // namespace Slic3r::GUI
+

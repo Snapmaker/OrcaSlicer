@@ -28,6 +28,7 @@ using tcp = asio::ip::tcp;
 #define UPDATE_PRIVACY_STATUS "sw_SubUserUpdatePrivacy"
 #define GET_PRIVACY_STATUS "sw_GetUserUpdatePrivacy"
 #define UPLOAD_CAMERA_TIMELAPSE "sw_UploadCameraTimelapse"
+#define UPLOAD_ASYNC_TIMELAPSE_INSTANCE "sw_UploadAsyncTimelapseInstance"
 #define DELETE_CAMERA_TIMELAPSE "sw_DeleteCameraTimelapse"
 #define GET_DEVICEDATA_STORAGESPACE "sw_GetDeviceDataStorageSpace"
 #define DOWNLOAD_FILE_AND_OPEN "sw_DownLoadFileAndOpen"
@@ -429,6 +430,7 @@ private:
     void sw_exception_query();
     void sw_GetFileListPage();
     void sw_UploadCameraTimelapse();
+    void sw_UploadAsyncTimelapseInstance();
     void sw_DeleteCameraTimelapse();
     void sw_GetCameraTimelapseInstance();
 
@@ -565,9 +567,22 @@ private:
     void sw_GetFilesFromDir();
 
 public:
-    struct SubscribeDownloadContext;
-    std::shared_ptr<SubscribeDownloadContext> m_subscribe_dl_ctx;
-    static std::unordered_map<std::string, std::weak_ptr<SubscribeDownloadContext>> m_subscribe_dl_map;
+    // Passive subscription entry — sw_SubscribeDownloadState only registers,
+    // downloads are triggered by sw_DownLoadFile which pushes "download_complete"
+    // to matching subscribers on completion.
+    struct SubscribeInfo {
+        std::string event_id;
+        std::string sn;
+        std::string type;     // "timelapse"
+        wxWebView*  webview;  // not owned — captured so we can push events after the caller instance is gone
+    };
+    static std::unordered_map<std::string, std::shared_ptr<SubscribeInfo>> m_subscribe_map;  // event_id -> info
+
+    // Push a "download_complete" event to every subscriber whose sn matches.
+    // One-shot: matched entries are removed from the map.
+    static void notify_subscribers(const std::string& sn,
+                                   const std::vector<json>& files,
+                                   bool cancelled);
 };
 
 // Instance class for homepage business

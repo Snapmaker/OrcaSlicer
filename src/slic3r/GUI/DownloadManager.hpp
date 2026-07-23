@@ -59,7 +59,7 @@ struct DownloadTask {
     int percent;
     std::string error_message;
 
-    int encrypt_type;
+    bool need_decrypt;
     std::string sn;
     std::string decrypt_path;
 
@@ -69,11 +69,11 @@ struct DownloadTask {
     // Constructor for WCP downloads
     DownloadTask(size_t id, const std::string& url, const std::string& name,
                  const std::string& path, std::shared_ptr<SSWCP_Instance> instance,
-                 bool use_original_event = false, int enc_type = 1,
+                 bool use_original_event = false, bool decrypt = true,
                  const std::string& sn_param = "")
         : task_id(id), file_url(url), file_name(name), dest_path(path)
         , wcp_instance(instance), state(DownloadTaskState::Pending), percent(0)
-        , encrypt_type(enc_type), sn(sn_param)
+        , need_decrypt(decrypt), sn(sn_param)
         , auto_finish_job(false), use_original_event_id(use_original_event)
     {}
     
@@ -82,16 +82,16 @@ struct DownloadTask {
                  const std::string& path, DownloadCallbacks cb)
         : task_id(id), file_url(url), file_name(name), dest_path(path)
         , callbacks(std::move(cb)), state(DownloadTaskState::Pending), percent(0)
-        , encrypt_type(0), auto_finish_job(false), use_original_event_id(false)
+        , need_decrypt(false), auto_finish_job(false), use_original_event_id(false)
     {}
 
     // Constructor for internal downloads with encryption support
     DownloadTask(size_t id, const std::string& url, const std::string& name,
                  const std::string& path, DownloadCallbacks cb,
-                 int enc_type, const std::string& sn_param)
+                 bool decrypt, const std::string& sn_param)
         : task_id(id), file_url(url), file_name(name), dest_path(path)
         , callbacks(std::move(cb)), state(DownloadTaskState::Pending), percent(0)
-        , encrypt_type(enc_type), sn(sn_param)
+        , need_decrypt(decrypt), sn(sn_param)
         , auto_finish_job(false), use_original_event_id(false)
     {}
     
@@ -121,7 +121,7 @@ public:
                               const std::string& file_name,
                               std::shared_ptr<SSWCP_Instance> wcp_instance,
                               bool use_original_event_id,
-                              int encrypt_type,
+                              bool need_decrypt,
                               const std::string& sn);
     
     // ============================================================================
@@ -140,7 +140,7 @@ public:
                                     const std::string& file_name,
                                     const std::string& dest_path,
                                     DownloadCallbacks callbacks,
-                                    int encrypt_type,
+                                    bool need_decrypt,
                                     const std::string& sn);
 
     // ============================================================================

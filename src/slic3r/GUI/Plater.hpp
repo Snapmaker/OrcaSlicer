@@ -255,6 +255,12 @@ public:
         FilamentTempMixingDetail detail;
     };
 
+    // Per-plate breakdown of filaments whose flow ratio is 0 and would produce
+    // zero extrusion. Slot numbers are 1-based to match the UI display.
+    struct FlowRatioZeroDetail {
+        std::vector<int> offender_slots_1based;
+    };
+
     Plater(wxWindow *parent, MainFrame *main_frame);
     Plater(Plater &&) = delete;
     Plater(const Plater &) = delete;
@@ -562,6 +568,20 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// @brief Check whether any used filament on a specific plate has flow ratio == 0.
+    /// @param plate_index Plate index to check.
+    /// @return True if all used filaments have positive flow ratio (or plate is invalid/empty); false otherwise.
+    bool check_flow_ratio_zero(int plate_index);
+    /// @brief Same as above, plus fills `detail` with the 1-based slots of offending filaments.
+    ///        `detail` is only meaningful when this overload returns false. On valid plates, `detail` is cleared.
+    bool check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail);
+    /// @brief Check whether a specific plate is blocked because one of its used filaments has flow ratio == 0.
+    /// @param plate_index Plate index to check.
+    /// @return True if slicing this plate is blocked; otherwise false.
+    bool is_plate_blocked_by_flow_ratio_zero(int plate_index);
+    /// Sync notification state with current flow-ratio-zero status.
+    /// Returns true if slicing is allowed, false if any used filament has flow ratio == 0.
+    bool sync_flow_ratio_zero_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Check and guard filament temp mixing before slicing all plates.

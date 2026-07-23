@@ -3808,3 +3808,121 @@ TEST_CASE("add_batch rejects entries whose gradient/pattern reference a filament
     auto red = compute_redundant_filaments(4, {1, 2, 3, 4}, {5}, mgr.mixed_filaments());
     CHECK(red.redundant_mixed.empty());
 }
+
+// --------------------------------------------------------------------------
+// [shrink] — set_num_filaments tail-truncation path
+//
+// These tests pin the remap behaviour when the physical filament count is
+// REDUCED via set_num_filaments(N) with N < current. This is the "compact"
+// path the batch-match confirm flow uses (mirroring recommended mode's
+// set_num_filaments call): it truncates the tail rather than deleting an
+// arbitrary middle slot, so surviving physical ids keep their identity and
+// the truncated tail maps to 0 (NONE). auto_generate is disabled via
+// MixedAutoGenerateGuard to isolate the pure remap-table behaviour from any
+// mixed-list rebuild side effects.
+// --------------------------------------------------------------------------
+
+TEST_CASE("shrink: set_num_filaments remap physical tail to 0", "[MixedFilament][shrink]")
+{
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets = {"Default Filament", "Default Filament", "Default Filament",
+                               "Default Filament", "Default Filament", "Default Filament"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF"};
+    bundle.update_multi_material_filament_presets();
+
+    // Shrink 6 -> 2 (tail truncation, same call shape as recommended mode).
+    bundle.set_num_filaments(2, std::vector<std::string>{});
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+    // Remap covers old_total + 1 (6 physical + 0 mixed + 1). Index 0 is the
+    // NONE sink and is always present.
+    REQUIRE(remap.size() == 7);
+
+    // Surviving head keeps identity.
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    // Truncated tail maps to 0 (NONE) — NOT identity. This is what makes
+    // tail-truncation safe for the compact flow: painting referencing a
+    // deleted physical is cleanly redirected to NONE.
+    CHECK(remap[3] == 0);
+    CHECK(remap[4] == 0);
+    CHECK(remap[5] == 0);
+    CHECK(remap[6] == 0);
+}
+
+TEST_CASE("shrink: tail-truncate keeps surviving ids identity, mid-delete shifts", "[MixedFilament][shrink]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    // --- Scenario A: tail-truncate 6 -> 4 --------------------------------
+    {
+        PresetBundle bundle;
+        bundle.filament_presets = {"Default Filament", "Default Filament", "Default Filament",
+                                   "Default Filament", "Default Filament", "Default Filament"};
+        bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+            {"#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF"};
+        bundle.update_multi_material_filament_presets();
+
+        bundle.set_num_filaments(4, std::vector<std::string>{});
+        const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+        REQUIRE(remap.size() >= 5);
+        // All survivors keep identity — no shifting because nothing was
+        // removed from the middle.
+        CHECK(remap[1] == 1);
+        CHECK(remap[2] == 2);
+        CHECK(remap[3] == 3);
+        CHECK(remap[4] == 4);
+    }
+
+    // --- Scenario B: mid-delete via update_num_filaments(index 2) --------
+    // Deleting the 3rd physical (0-based index 2) shifts every higher id
+    // down by one — the opposite of tail-truncation.
+    {
+        PresetBundle bundle;
+        bundle.filament_presets = {"Default Filament", "Default Filament", "Default Filament",
+                                   "Default Filament", "Default Filament", "Default Filament"};
+        bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+            {"#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF"};
+        bundle.update_multi_material_filament_presets();
+
+        bundle.update_num_filaments(2); // remove 0-based index 2 → 1-based id 3
+        const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+        REQUIRE(remap.size() >= 6);
+        // Deleted slot maps to 0.
+        CHECK(remap[3] == 0);
+        // Every id above the deleted slot shifts down by one.
+        CHECK(remap[4] == 3);
+        CHECK(remap[5] == 4);
+        CHECK(remap[6] == 5);
+        // Ids below the deleted slot are unaffected.
+        CHECK(remap[1] == 1);
+        CHECK(remap[2] == 2);
+    }
+}
+
+TEST_CASE("shrink: redundant_physical empty after tail-truncate to kept count", "[MixedFilament][shrink]")
+{
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets = {"Default Filament", "Default Filament", "Default Filament", "Default Filament"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    bundle.update_multi_material_filament_presets();
+
+    // Compact: keep only the first 2 physicals.
+    bundle.set_num_filaments(2, std::vector<std::string>{});
+    bundle.consume_last_filament_id_remap(); // drain, not needed here
+
+    // After compaction the physical count is already the kept count, so
+    // compute_redundant_filaments must report NO redundant physicals.
+    // This is the precondition for the cleanup loop being a no-op in the
+    // compact flow — if this fails, the deletion loop would still run and
+    // the optimisation would not hold.
+    auto red = compute_redundant_filaments(2, {1, 2}, {}, bundle.mixed_filaments.mixed_filaments());
+    CHECK(red.redundant_physical.empty());
+    CHECK(red.new_num_physical == 2);
+}

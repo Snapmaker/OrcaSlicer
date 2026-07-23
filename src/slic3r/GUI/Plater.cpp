@@ -2339,6 +2339,21 @@ Sidebar::Sidebar(Plater *parent)
         const BatchMatchResult& result = dlg.GetResult();
         if (!result.success) return;
 
+        // Applying batch-match results involves palette rewrite, mixed-filament
+        // creation, painting remap and cleanup — all synchronous on the main
+        // thread.  Show a progress dialog so the user sees "processing" instead
+        // of "not responding".
+        // wxWidgets pitfall (§70): Update() pumps the event loop and its return
+        // value reflects skip/close state — check it. wxPD_AUTO_HIDE only fires
+        // at 100%, so the final step must reach 100 or the bar visibly aborts.
+        ProgressDialog progress(_L("Applying color match"), _L("Preparing palette..."), 100,
+                                find_toplevel_parent(this), wxPD_APP_MODAL | wxPD_AUTO_HIDE);
+        auto update_progress = [&](int value, const wxString& msg) {
+            // Return value intentionally not acted on (no wxPD_CAN_ABORT button),
+            // but consumed to satisfy §70 ("check the return value of Update()").
+            (void) progress.Update(value, msg);
+        };
+
         auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
 
         // Snapshot the dialog-time virtual-id -> stable_id mapping BEFORE any
@@ -2527,6 +2542,7 @@ Sidebar::Sidebar(Plater *parent)
             batch_entries.push_back(std::move(entry));
         }
         std::vector<unsigned int> assigned_ids;
+        update_progress(20, _L("Creating mixed filaments..."));
         mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids);
 
         // Replace dialog-computed target ids with the actual virtual ids assigned by
@@ -2558,12 +2574,15 @@ Sidebar::Sidebar(Plater *parent)
                     << "or invalid components); regions left on original filament.";
         }
         // Apply matched recipes to model painting data
+        update_progress(40, _L("Mapping model colors..."));
         apply_batch_match_to_model(model_result, wxGetApp().plater()->fff_print());
 
         // Remove physical/mixed filaments left unreferenced by the match.
+        update_progress(60, _L("Cleaning up unused filaments..."));
         cleanup_unused_filaments_after_batch_match(model_result);
 
         // cleanup already serializes; only panel refresh needed.
+        update_progress(80, _L("Updating UI..."));
         update_mixed_filament_panel(false);
         update_ui_from_settings();
         update_dynamic_filament_list();
@@ -2573,6 +2592,9 @@ Sidebar::Sidebar(Plater *parent)
         for (size_t i = 0; i < fcombos.size(); ++i) {
             if (fcombos[i]) fcombos[i]->update();
         }
+        // §70: reach 100% so wxPD_AUTO_HIDE dismisses cleanly (the dialog would
+        // otherwise disappear mid-fill at 80% when it goes out of scope).
+        update_progress(100, _L("Done"));
     });
     bSizer39->Add(p->m_btn_batch_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
 
@@ -7792,8 +7814,13 @@ void Sidebar::on_filaments_delete(size_t filament_id)
     p->m_panel_filament_title->Refresh();
     update_ui_from_settings();
     update_dynamic_filament_list();
-    update_mixed_filament_panel();
-    update_color_mix_panel();
+    // During batch physical deletion, skip the expensive panel rebuilds —
+    // they run once after the loop finishes (in cleanup_unused_filaments_after_batch_match).
+    // Query the single Plater-owned flag (no Sidebar-side duplicate).
+    if (wxGetApp().plater()->batch_physical_deletion() == 0) {
+        update_mixed_filament_panel();
+        update_color_mix_panel();
+    }
 
     if (PresetBundle *pb = wxGetApp().preset_bundle) {
         const bool can_add = pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
@@ -8271,10 +8298,63 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // model triangles away from the correct ids already set by apply.
     // Cascade rows (components reference a deleted physical) are erased here
     // by remove_physical_filament, so they need no explicit marking below.
-    for (unsigned int redundant_id : red.redundant_physical)
-        delete_filament(redundant_id - 1, -1,
-                        /*skip_dependency_check=*/true,
-                        /*skip_update=*/true);
+    //
+    // Batch optimization: skip per-deletion painting remap + panel rebuild +
+    // GL render during the loop, then apply ONE composite painting remap and
+    // ONE panel rebuild at the end.  This replaces K × TriangleSelector
+    // reconstruction + K × panel rebuild + K × render with 1 of each.
+    if (!red.redundant_physical.empty()) {
+        // Snapshot pre-deletion mixed state for the composite remap.
+        const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filaments();
+        const size_t old_num_physical = num_physical;
+        const size_t new_num_physical = red.new_num_physical;
+
+        // INVARIANT: red.redundant_physical must be strictly DESCENDING.
+        // delete_filament does middle-deletion repacking, so only descending
+        // order guarantees the kept head ids (1..new_num_physical) keep their
+        // identity — the precondition build_filament_id_remap(..., deleting_
+        // filament=false) bakes into the composite remap (tail-truncation).
+        // If this ever flips to ascending, painting is silently remapped to
+        // wrong colours. Source: compute_redundant_filaments @ MixedFilament.cpp.
+        for (size_t i = 1; i < red.redundant_physical.size(); ++i)
+            assert(red.redundant_physical[i] < red.redundant_physical[i - 1]);
+
+        // RAII: bump the single batch-deletion flag for the duration of the
+        // loop so on_filaments_delete (Sidebar + Plater) skip per-deletion panel
+        // rebuild and painting remap. Exception- and reentrancy-safe.
+        Plater *plater = wxGetApp().plater();
+        Plater::BatchPhysicalDeletionGuard guard(*plater);
+        for (unsigned int redundant_id : red.redundant_physical)
+            delete_filament(redundant_id - 1, -1,
+                            /*skip_dependency_check=*/true,
+                            /*skip_update=*/true);
+
+        // ONE composite painting remap: build old→new from the snapshot, apply
+        // to every volume.  Equivalent to K sequential single-deletion remaps
+        // (remap is a pure pointwise state_map lookup, composable).
+        pb->update_mixed_filament_id_remap(old_mixed_snapshot, old_num_physical, new_num_physical);
+        const std::vector<unsigned int> composite_remap = pb->consume_last_filament_id_remap();
+        if (!composite_remap.empty()) {
+            EnforcerBlockerStateMap state_map;
+            for (size_t i = 0; i < state_map.size(); ++i)
+                state_map[i] = EnforcerBlockerType(i);
+            const size_t total_filaments = new_num_physical + pb->mixed_filaments.enabled_count();
+            for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
+                const unsigned int mapped = composite_remap[i];
+                if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
+                    state_map[i] = EnforcerBlockerType::NONE;
+                else
+                    state_map[i] = EnforcerBlockerType(mapped);
+            }
+            for (ModelObject* mo : wxGetApp().model().objects)
+                for (ModelVolume* mv : mo->volumes)
+                    if (mv->type() == ModelVolumeType::MODEL_PART)
+                        // Pass total_filaments (physical + mixed), NOT new_num_physical —
+                        // remap_enforcer_block_types clips any state > max_type to NONE,
+                        // and remapped mixed virtual ids (N+1..total) must survive.
+                        mv->remap_extruder_ids(total_filaments, state_map);
+        }
+    }
 
     // Mark the redundant mixed rows that survived the physical deletions
     // (the non-cascade ones).  Match by stable_id against the CURRENT m_mixed
@@ -8313,6 +8393,8 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // and is NOT skippable.
     if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
         opt->value = pb->mixed_filaments.serialize_custom_entries();
+    // Rebuild panels once (skipped per-deletion in the loop above).
+    update_mixed_filament_panel();
     update_color_mix_panel();
     wxGetApp().plater()->update();
 }
@@ -9310,6 +9392,7 @@ struct Plater::priv
     bool m_slice_all_only_has_gcode{ false };
 
     bool m_need_update{false};
+    int  m_batch_physical_deletion{0}; // >0: skip per-deletion painting remap in on_filaments_delete
     //BBS: add popup object table logic
     //ObjectTableDialog* m_popup_table{ nullptr };
 
@@ -20944,13 +21027,18 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     }
 
     // update mmu paint data
-    for (ModelObject* mo : wxGetApp().model().objects) {
-        for (ModelVolume* mv : mo->volumes) {
-            if (should_remap_states) {
-                mv->remap_extruder_ids(num_filaments, state_map);
-            } else {
-                mv->update_extruder_count_when_delete_filament(num_filaments, filament_id + 1,
-                                                               replace_filament_id + 1); // this function is 1 base
+    // During batch physical deletion, skip per-deletion painting remap —
+    // cleanup applies ONE composite remap after the loop covering all K
+    // deletions.  Applying both would double-remap.
+    if (p->m_batch_physical_deletion == 0) {
+        for (ModelObject* mo : wxGetApp().model().objects) {
+            for (ModelVolume* mv : mo->volumes) {
+                if (should_remap_states) {
+                    mv->remap_extruder_ids(num_filaments, state_map);
+                } else {
+                    mv->update_extruder_count_when_delete_filament(num_filaments, filament_id + 1,
+                                                                   replace_filament_id + 1); // this function is 1 base
+                }
             }
         }
     }
@@ -23142,6 +23230,14 @@ void Plater::set_need_update(bool need_update)
 {
     p->set_need_update(need_update);
 }
+
+int Plater::batch_physical_deletion() const
+{
+    return p->m_batch_physical_deletion;
+}
+
+void Plater::inc_batch_physical_deletion() { ++p->m_batch_physical_deletion; }
+void Plater::dec_batch_physical_deletion() { --p->m_batch_physical_deletion; }
 
 // BBS
 //BBS: add popup logic for table object

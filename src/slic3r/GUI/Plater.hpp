@@ -752,7 +752,27 @@ public:
 
     bool need_update() const;
     void set_need_update(bool need_update);
+    // >0 while cleanup_unused_filaments_after_batch_match is looping physical
+    // deletions: suppresses per-deletion panel rebuild + painting remap (both
+    // run once after the loop). Single source of truth — Sidebar queries this
+    // instead of keeping its own flag.
+    int  batch_physical_deletion() const;
+    void inc_batch_physical_deletion();
+    void dec_batch_physical_deletion();
     void update_title_dirty_status();
+
+    // RAII guard for batch physical deletion: bumps batch_physical_deletion()
+    // on construction, decrements on destruction. Used by the batch-match
+    // cleanup loop to skip per-deletion rebuilds/remaps; exception-safe.
+    class BatchPhysicalDeletionGuard
+    {
+        Plater &m_plater;
+    public:
+        explicit BatchPhysicalDeletionGuard(Plater &p) : m_plater(p) { m_plater.inc_batch_physical_deletion(); }
+        ~BatchPhysicalDeletionGuard() { m_plater.dec_batch_physical_deletion(); }
+        BatchPhysicalDeletionGuard(const BatchPhysicalDeletionGuard &) = delete;
+        BatchPhysicalDeletionGuard &operator=(const BatchPhysicalDeletionGuard &) = delete;
+    };
 
     // ROII wrapper for suppressing the Undo / Redo snapshot to be taken.
 	class SuppressSnapshots

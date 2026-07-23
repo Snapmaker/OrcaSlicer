@@ -49,8 +49,12 @@ private:
     void on_method_changed(wxCommandEvent&);
     void update_method_combo_tooltip(); // refresh combo tooltip to describe the active mode
     void on_manual_selection_changed();
-    void update_manual_swatch(int row); // refresh the numbered swatch color to match the combo selection
     void update_add_remove_buttons(); // mirrors MixedFilamentDialog: hide add at max, remove at min
+    // Compose drop_down arrow + numbered color badge into one transparent icon and set it as
+    // the combo's left icon. Mirrors MixedFilamentDialog::set_combo_combined_icon: ComboBox
+    // shows only the selected item's image when present (no native arrow), so we bake both
+    // the arrow and the badge into a single SetIcon() image to keep the arrow visible.
+    void set_manual_combo_icon(int row, int filament_idx);
 
     // Preview lifecycle
     void build_preview_panels();           // create wxStaticBitmaps once + render initial thumbnails
@@ -191,7 +195,6 @@ private:
     wxStaticBitmap* m_recommended_swatches[4] = {nullptr};
     wxStaticText*   m_recommended_labels[4]   = {nullptr};
     ComboBox*       m_filament_combo[4]       = {nullptr};
-    wxStaticBitmap* m_filament_swatch[4]      = {nullptr}; // numbered color swatch, left of combo
     wxWindow*       m_manual_row_panels[4]    = {nullptr};
     int             m_manual_filament_count   = 0; // computed in ctor based on physical filaments
     // Add/remove buttons (mirrors MixedFilamentDialog: hidden at min/max count)

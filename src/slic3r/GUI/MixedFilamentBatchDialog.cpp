@@ -882,8 +882,9 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         auto* title_row = new wxBoxSizer(wxHORIZONTAL);
         auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup"));
         lbl->SetFont(Label::Body_14);
+        // §17/§81: wxStaticText does not inherit the card's bg on wxMSW and may be
+        // overridden by the GTK theme — set fg+bg explicitly via darkModeColorFor.
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
-        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         title_row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
         title_row->AddStretchSpacer();
@@ -924,9 +925,8 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     // see §137 of the wxWidgets pitfalls checklist.)
     s->AddSpacer(FromDIP(10)); // title-to-grid gap per Figma spec
 
-    // 2-column grid of filament selectors — mirrors Plater's physical-filament rows:
-    // a 20x20 numbered color swatch (Figma node 27614:63036) + a preset-name combo. The
-    // swatch number is fixed (row index 1..4); its color follows the combo selection.
+    // 2-column grid of filament rows — a single preset-name combo per row whose dropdown
+    // items carry a numbered color icon (the filament number lives in that icon, not a label).
     PresetBundle* pb = wxGetApp().preset_bundle;
     const std::vector<std::string>& fps = pb ? pb->filament_presets : std::vector<std::string>();
     auto* grid = new wxFlexGridSizer(2, FromDIP(12), FromDIP(12));
@@ -939,20 +939,12 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
 
-        // Numbered color swatch (20x20) — get_extruder_color_icon renders the color fill
-        // with the white centered number, same API Plater uses for clr_picker.
-        const int sel0 = (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
-                             ? m_filament_selections[i]
-                             : 0;
-        const std::string& swatch_color = !m_physical_colors.empty() ? m_physical_colors[sel0] : std::string("#808080");
-        wxBitmap* icon = get_extruder_color_icon(swatch_color, std::to_string(i + 1), FromDIP(20), FromDIP(20));
-        auto* swatch = new wxStaticBitmap(panel, wxID_ANY, icon ? *icon : wxNullBitmap);
-        swatch->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        m_filament_swatch[i] = swatch;
-        r->Add(swatch, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-
+        // §68: read-only selection would normally call for wxChoice, but this
+        // custom ComboBox carries a numbered color icon (SetIcon in
+        // set_manual_combo_icon) that wxChoice cannot render, so ComboBox is
+        // intentional here — do not "fix" to wxChoice.
         auto* cb = new ComboBox(panel, wxID_ANY, wxEmptyString,
-                                 wxDefaultPosition, wxSize(-1, FromDIP(24)),
+                                 wxDefaultPosition, wxSize(-1, FromDIP(30)),
                                  0, nullptr, wxCB_READONLY);
         for (size_t j = 0; j < m_physical_colors.size(); ++j) {
             wxString name;
@@ -961,11 +953,19 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
                 if (preset) name = from_u8(preset->label(false));
             }
             if (name.empty()) name = wxString::Format("F%zu", j + 1);
-            cb->Append(name);
+            wxBitmap* icon = get_extruder_color_icon(m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
+            cb->Append(name, icon ? icon->ConvertToImage() : wxNullImage);
         }
-        cb->SetSelection(sel0);
+        if (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
+            cb->SetSelection(m_filament_selections[i]);
+        else if (!m_physical_colors.empty())
+            cb->SetSelection(0);
+        // Combined arrow+badge icon so the combo keeps its drop-down arrow alongside the
+        // numbered color swatch (ComboBox hides the arrow when an item image is set).
+        set_manual_combo_icon(i, cb->GetSelection());
         cb->Bind(wxEVT_COMBOBOX, [this, i](wxCommandEvent&) {
-            update_manual_swatch(i);
+            if (m_filament_combo[i])
+                set_manual_combo_icon(i, m_filament_combo[i]->GetSelection());
             on_manual_selection_changed();
         });
         r->Add(cb, 1, wxALIGN_CENTER_VERTICAL);
@@ -999,8 +999,9 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     {
         auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup (CMYW)"));
         lbl->SetFont(Label::Body_14);
+        // §17/§81: explicit fg+bg so the label matches the card on wxMSW and
+        // resists GTK theme override.
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
-        lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         s->Add(lbl, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
@@ -1030,6 +1031,11 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         wxBitmap* icon = get_extruder_color_icon(CMYW_ENTRIES[i].first, std::to_string(i + 1), FromDIP(20), FromDIP(20));
         if (icon) {
             auto* sw = new wxStaticBitmap(panel, wxID_ANY, *icon);
+            // §17: wxStaticBitmap does not inherit the panel bg. The icon is
+            // opaque so it covers the control, but set the bg explicitly to
+            // match the card and resist GTK theme override (consistency with
+            // the removed manual-card swatch, which set it too).
+            sw->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             m_recommended_swatches[i] = sw;
             r->Add(sw, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
         }
@@ -1087,7 +1093,15 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         s->Add(prow, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
 
-    // Divider between previews and controls
+    // Divider between previews and controls.
+    // NOTE: build_manual_card / build_recommended_card dropped their 1px wxPanel
+    // dividers because a 1px wxPanel rendered as a stray dark line on wxMSW
+    // (§17: a wxPanel does not reliably honour SetBackgroundColour inside a
+    // coloured container). This one is KEPT because it separates two visually
+    // distinct sections (previews vs. controls) and its #F3F4F6 fill is wrapped
+    // in darkModeColorFor. If it ever renders incorrectly on Windows, remove it
+    // and rely on the spacing already in the sizer (AddSpacer pattern), as the
+    // other two cards do.
     {
         auto* divider = new wxPanel(m_preview_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
         divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
@@ -1378,6 +1392,11 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
     if (m_matching_method == MANUAL && m_manual_card) {
         m_manual_card->Layout();
         m_manual_card->GetParent()->Layout();
+        // Re-apply combo icons: set_manual_combo_icon was called during build
+        // while the card was hidden (SetIcon may not render on a hidden window).
+        for (int i = 0; i < 4; ++i)
+            if (m_filament_combo[i])
+                set_manual_combo_icon(i, m_filament_combo[i]->GetSelection());
     }
     if (m_matching_method == RECOMMENDED && m_recommended_card) {
         m_recommended_card->Layout();
@@ -1449,18 +1468,65 @@ void MixedFilamentBatchDialog::check_manual_filament_ratio()
     display_warning(wxString::Format(_L("Filament %d ratio is too high. Mix may be affected."), max_sel + 1));
 }
 
-void MixedFilamentBatchDialog::update_manual_swatch(int row)
+void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
 {
-    // Refresh the numbered swatch's color to match the combo's current selection. The
-    // number stays fixed (row index 1..4); only the fill color tracks the picked physical
-    // filament — mirrors Plater's clr_picker, which keeps its extruder index as the label.
+    // Compose a single transparent icon holding [drop_down arrow] + [numbered color badge]
+    // and set it as the combo's left icon via SetIcon(). This mirrors
+    // MixedFilamentDialog::set_combo_combined_icon: ComboBox only renders ONE icon on its
+    // left — when the selected dropdown item carries an image (our numbered color swatch),
+    // the native drop-down arrow is suppressed, so we bake both into one image.
     if (row < 0 || row >= 4) return;
-    if (!m_filament_swatch[row] || !m_filament_combo[row]) return;
-    const int sel = m_filament_combo[row]->GetSelection();
-    if (sel < 0 || sel >= static_cast<int>(m_physical_colors.size())) return;
-    wxBitmap* icon = get_extruder_color_icon(m_physical_colors[sel], std::to_string(row + 1),
-                                              FromDIP(20), FromDIP(20));
-    if (icon) m_filament_swatch[row]->SetBitmap(*icon);
+    ComboBox* cb = m_filament_combo[row];
+    if (!cb) return;
+    if (filament_idx < 0 || filament_idx >= (int) m_physical_colors.size()) return;
+
+    const int pad = FromDIP(8), arr_w = FromDIP(8), badge_w = FromDIP(20), h = FromDIP(20), gap = FromDIP(8), text_gap = FromDIP(8);
+    const int total_w = pad + arr_w + gap + badge_w + text_gap;
+    wxImage  img(total_w, h, true);
+    img.InitAlpha();
+    memset(img.GetAlpha(), 0, total_w * h);
+
+    auto set_rgba = [&](int x, int y, unsigned char r, unsigned char g, unsigned char b, unsigned char a) {
+        if (x < 0 || x >= total_w || y < 0 || y >= h) return;
+        int pos = y * total_w + x;
+        img.GetData()[pos * 3]     = r;
+        img.GetData()[pos * 3 + 1] = g;
+        img.GetData()[pos * 3 + 2] = b;
+        img.GetAlpha()[pos]        = a;
+    };
+
+    // Arrow: paste SVG (transparent background, only arrow pixels opaque)
+    ScalableBitmap ab(cb, "drop_down", arr_w);
+    if (ab.bmp().IsOk()) {
+        wxImage aimg = ab.bmp().ConvertToImage();
+        if (!aimg.HasAlpha()) aimg.InitAlpha();
+        int ax = pad, ay = (h - aimg.GetHeight()) / 2;
+        for (int y = 0; y < aimg.GetHeight() && ay + y < h; ++y)
+            for (int x = 0; x < aimg.GetWidth() && ax + x < total_w; ++x) {
+                unsigned char* s = aimg.GetData() + (y * aimg.GetWidth() + x) * 3;
+                unsigned char a = aimg.HasAlpha() ? *(aimg.GetAlpha() + y * aimg.GetWidth() + x) : 255;
+                if (a > 0) set_rgba(ax + x, ay + y, s[0], s[1], s[2], a);
+            }
+    }
+
+    // Badge: use get_extruder_color_icon (numbered color swatch, opaque)
+    const int bx = pad + arr_w + gap;
+    wxBitmap* badge_bmp = get_extruder_color_icon(m_physical_colors[filament_idx],
+        std::to_string(filament_idx + 1), FromDIP(20), FromDIP(20));
+    if (badge_bmp) {
+        wxImage bimg = badge_bmp->ConvertToImage();
+        int by = (h - bimg.GetHeight()) / 2;
+        for (int y = 0; y < bimg.GetHeight() && by + y < h; ++y)
+            for (int x = 0; x < bimg.GetWidth() && bx + x < total_w; ++x) {
+                unsigned char* s = bimg.GetData() + (y * bimg.GetWidth() + x) * 3;
+                set_rgba(bx + x, by + y, s[0], s[1], s[2], 255);
+            }
+    }
+
+    cb->SetIcon(wxBitmap(img));
+    // SetIcon triggers Rescale→messureSize which recalculates height; re-lock to 30
+    cb->SetMinSize(wxSize(-1, FromDIP(30)));
+    cb->SetMaxSize(wxSize(-1, FromDIP(30)));
 }
 
 void MixedFilamentBatchDialog::update_add_remove_buttons()

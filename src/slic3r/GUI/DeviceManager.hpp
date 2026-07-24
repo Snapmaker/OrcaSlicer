@@ -9,7 +9,6 @@
 #include <chrono>
 #include <boost/thread.hpp>
 #include <boost/nowide/fstream.hpp>
-#include <boost/filesystem/fstream.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/ProjectTask.hpp"
 #include "slic3r/Utils/json_diff.hpp"
@@ -1174,7 +1173,7 @@ public:
     template<typename T>
     static T get_value_from_config(std::string type_str, std::string item){
         auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
-        boost::filesystem::ifstream json_file(config_path);
+        boost::nowide::ifstream json_file(config_path);
         try {
             json jj;
             if (json_file.is_open()) {

@@ -89,11 +89,11 @@ std::mutex g_mutex;
 
 struct form_file
 {
-    fs::ifstream                          ifs;
-    boost::filesystem::ifstream::off_type init_offset;
+    boost::nowide::ifstream               ifs;
+    boost::nowide::ifstream::off_type     init_offset;
     size_t                                content_length;
 
-    form_file(fs::path const& p, const boost::filesystem::ifstream::off_type offset, const size_t content_length)
+    form_file(fs::path const& p, const boost::nowide::ifstream::off_type offset, const size_t content_length)
         : ifs(p, std::ios::in | std::ios::binary), init_offset(offset), content_length(content_length)
     {}
 };
@@ -142,7 +142,7 @@ struct Http::priv
 
 	void set_timeout_connect(long timeout);
     void set_timeout_max(long timeout);
-	void form_add_file(const char *name, const fs::path &path, const char* filename, boost::filesystem::ifstream::off_type offset, size_t length);
+	void form_add_file(const char *name, const fs::path &path, const char* filename, boost::nowide::ifstream::off_type offset, size_t length);
 	/* mime */
 	void mime_form_add_text(const char* name, const char* value);
 	void mime_form_add_file(const char* name, const char* path);
@@ -331,7 +331,7 @@ void Http::priv::set_timeout_max(long timeout)
     ::curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
 }
 
-void Http::priv::form_add_file(const char *name, const fs::path &path, const char* filename, boost::filesystem::ifstream::off_type offset, size_t length)
+void Http::priv::form_add_file(const char *name, const fs::path &path, const char* filename, boost::nowide::ifstream::off_type offset, size_t length)
 {
 	// We can't use CURLFORM_FILECONTENT, because curl doesn't support Unicode filenames on Windows
 	// and so we use CURLFORM_STREAM with boost ifstream to read the file.
@@ -650,7 +650,7 @@ Http& Http::form_add(const std::string &name, const std::string &contents)
 	return *this;
 }
 
-Http& Http::form_add_file(const std::string &name, const fs::path &path, boost::filesystem::ifstream::off_type offset, size_t length)
+Http& Http::form_add_file(const std::string &name, const fs::path &path, boost::nowide::ifstream::off_type offset, size_t length)
 {
 	if (p) { p->form_add_file(name.c_str(), path.c_str(), nullptr, offset, length); }
 	return *this;
@@ -670,13 +670,13 @@ Http& Http::mime_form_add_file(std::string &name, const char* path)
 }
 
 
-Http& Http::form_add_file(const std::wstring& name, const fs::path& path, boost::filesystem::ifstream::off_type offset, size_t length)
+Http& Http::form_add_file(const std::wstring& name, const fs::path& path, boost::nowide::ifstream::off_type offset, size_t length)
 {
 	if (p) { p->form_add_file((char*)name.c_str(), path.c_str(), nullptr, offset, length); }
 	return *this;
 }
 
-Http& Http::form_add_file(const std::string &name, const fs::path &path, const std::string &filename, boost::filesystem::ifstream::off_type offset, size_t length)
+Http& Http::form_add_file(const std::string &name, const fs::path &path, const std::string &filename, boost::nowide::ifstream::off_type offset, size_t length)
 {
 	if (p) { p->form_add_file(name.c_str(), path.c_str(), filename.c_str(), offset, length); }
 	return *this;

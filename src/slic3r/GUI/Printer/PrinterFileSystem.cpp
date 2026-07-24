@@ -244,7 +244,7 @@ struct PrinterFileSystem::Download : Progress
     std::string                 path;
     std::string                 local_path;
     std::string                 error;
-    boost::filesystem::ofstream ofs;
+    boost::nowide::ofstream ofs;
     boost::uuids::detail::md5   boost_md5;
 };
 

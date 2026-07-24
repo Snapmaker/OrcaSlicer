@@ -108,7 +108,7 @@ std::optional<std::string> read_storage_file()
     if (path.empty() || !boost::filesystem::exists(path))
         return std::nullopt;
 
-    boost::filesystem::ifstream file(path);
+    boost::nowide::ifstream file(path);
     if (!file)
         return std::nullopt;
 
@@ -136,7 +136,7 @@ bool write_storage_file(const std::string& value)
     if (ec)
         return false;
 
-    boost::filesystem::ofstream file(path, std::ios::trunc);
+    boost::nowide::ofstream file(path, std::ios::trunc);
     if (!file)
         return false;
 

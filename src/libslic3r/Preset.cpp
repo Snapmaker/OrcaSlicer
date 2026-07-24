@@ -177,7 +177,7 @@ ConfigFileType guess_config_file_type(const ptree &tree)
 VendorProfile VendorProfile::from_ini(const boost::filesystem::path &path, bool load_all)
 {
     ptree tree;
-    boost::filesystem::ifstream ifs(path);
+    boost::nowide::ifstream ifs(path);
     boost::property_tree::read_ini(ifs, tree);
     return VendorProfile::from_ini(tree, path, load_all);
 }

@@ -409,7 +409,7 @@ bool SimplyPrint::do_chunk_upload(const boost::filesystem::path& file_path, cons
         }
 
         // Calculate the offset and length of current chunk
-        const boost::filesystem::ifstream::off_type offset = i * buffer_size;
+        const boost::nowide::ifstream::off_type offset = i * buffer_size;
         const size_t length = i == (chunk_amount - 1) ? file_size - offset : buffer_size;
 
         const bool succ = do_api_call(

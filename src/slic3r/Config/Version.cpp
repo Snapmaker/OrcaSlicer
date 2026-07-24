@@ -3,7 +3,6 @@
 #include <cctype>
 
 #include <boost/filesystem/operations.hpp>
-#include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include "libslic3r/libslic3r.h"
@@ -197,7 +196,7 @@ size_t Index::load(const boost::filesystem::path &path)
 	m_vendor = path.stem().string();
 	m_path = path;
 
-    boost::filesystem::ifstream ifs(path);
+    boost::nowide::ifstream ifs(path);
     std::string line;
     size_t idx_line = 0;
     Version ver;

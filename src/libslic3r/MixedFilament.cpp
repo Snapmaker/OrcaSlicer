@@ -1957,8 +1957,8 @@ void MixedFilamentManager::add_batch_custom_filaments(
             continue;
         }
 
-        unsigned int a = std::max<unsigned int>(1, std::min<unsigned int>(e.component_a, (unsigned int)n));
-        unsigned int b = std::max<unsigned int>(1, std::min<unsigned int>(e.component_b, (unsigned int)n));
+        unsigned int a = std::max<unsigned int>(1, std::min<unsigned int>(e.component_a, static_cast<unsigned int>(n)));
+        unsigned int b = std::max<unsigned int>(1, std::min<unsigned int>(e.component_b, static_cast<unsigned int>(n)));
         if (a == b) {
             b = (a == 1) ? 2u : 1u;
             if (a == b) {
@@ -1971,7 +1971,7 @@ void MixedFilamentManager::add_batch_custom_filaments(
         mf.component_a     = a;
         mf.component_b     = b;
         mf.stable_id       = allocate_stable_id();
-        mf.mix_b_percent   = e.mix_b_percent;
+        mf.mix_b_percent   = std::clamp(e.mix_b_percent, 0, 100);
         mf.ratio_a         = 1;
         mf.ratio_b         = 1;
         mf.manual_pattern  = e.manual_pattern;

@@ -20,6 +20,14 @@ namespace Slic3r { class Print; }
 
 namespace Slic3r { namespace GUI {
 
+// ---- Shared constants ----
+
+// Canonical preset name for the Full Spectrum (formerly "CMYW") recommended-mode
+// palette. Single source of truth shared by MixedFilamentBatchDialog (palette load +
+// swatch label) and Plater (auto-assign slots after batch match). Inline so multiple
+// translation units can include this header without ODR violations.
+inline const std::string kFullSpectrumPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
+
 // ---- CIELAB color space types ----
 
 struct CIELab {
@@ -95,7 +103,8 @@ CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
 MixedColorMatchRecipeResult build_best_color_match_recipe(
     const std::vector<std::string> &physical_colors,
     const wxColour                 &target_color,
-    int                             min_component_percent = 0);
+    int                             min_component_percent = 0,
+    int                             max_component_percent = 100);
 
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
@@ -198,6 +207,7 @@ BatchMatchResult batch_match_model_colors(
     const std::vector<ModelColorEntry>&          model_colors,
     const std::vector<std::string>&             physical_colors,
     int                                          min_component_percent,
+    int                                          max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
     std::function<void(int,int)>                 progress_callback = nullptr);
 
@@ -234,6 +244,7 @@ std::vector<std::string> recommend_best_filament_combo(
     const std::vector<ModelColorEntry>&  model_colors,
     const std::vector<std::string>&      all_preset_colors,
     int                                  min_component_percent = 15,
+    int                                  max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>   cancel_token = nullptr);
 
 }} // namespace Slic3r::GUI

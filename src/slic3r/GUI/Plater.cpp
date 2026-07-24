@@ -1921,28 +1921,20 @@ Sidebar::Sidebar(Plater *parent)
                 return;        
             }
 
-            std::string                machine_type = "";
-            std::vector<std::string>   nozzle_diameters;
-            std::string                device_name = "";
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
-            const bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
+            MachineInfo&              machine_info      = resolve_result.info;
+            std::vector<std::string>  nozzle_diameters  = machine_info.nozzle_diameters;
 
             const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
             if (!sync_nozzle_slots.empty()) {
-                nozzle_diameters.clear();
-                for (const auto& slot : sync_nozzle_slots) {
-                    std::string nd = slot.nozzle_info;
-                    boost::algorithm::trim(nd);
-                    if (nd.size() > 2 && boost::iends_with(nd, "mm")) {
-                        nd.resize(nd.size() - 2);
-                        boost::algorithm::trim(nd);
-                    }
-                    if (!nd.empty())
-                        nozzle_diameters.push_back(nd);
-                }
+                std::vector<std::pair<std::string, std::string>> cached_slots;
+                for (const auto& slot : sync_nozzle_slots)
+                    cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
+                SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
             }
-            if (got_machine_info && machine_type == "Snapmaker U1")
+            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse && machine_info.model == "Snapmaker U1")
             {
                 if (nozzle_diameters.size() <= 0)
                 {
@@ -2013,7 +2005,7 @@ Sidebar::Sidebar(Plater *parent)
                         diameter.resize(diameter.size() - 2);
                         boost::algorithm::trim(diameter);
                     }
-                    wxTheApp->CallAfter([this, diameter]() {
+                    wxTheApp->CallAfter([this, diameter, nozzle_volume_types = machine_info.nozzle_volume_types]() {
                         auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
                         if (preset == nullptr) {
                             BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
@@ -2027,6 +2019,10 @@ Sidebar::Sidebar(Plater *parent)
                         wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
                         wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
                         wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+
+                        // Apply synchronized nozzle flow types in one batch
+                        if (!nozzle_volume_types.empty())
+                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
 
                         wxTheApp->CallAfter([this]() {
                             MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
@@ -8136,25 +8132,27 @@ void Sidebar::show_sync_filament_dialog()
         static const std::set<std::string> white_list_machine_types = {
             "Snapmaker U1"
         };
-        std::string machine_type;
-        std::string device_name;
-        std::vector<std::string> nozzle_diameters;
+        MachineInfo machine_info;
         bool got_machine_info = false;
 
         if (host) {
-            got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
-        }
-
-        if (!got_machine_info || machine_type.empty()) {
-            if (device_machine) {
-                machine_type = device_machine->printer_type;
-                got_machine_info = !machine_type.empty();
+            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
+            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse) {
+                machine_info     = resolve_result.info;
+                got_machine_info = true;
             }
         }
 
-        bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
+        if (!got_machine_info || machine_info.model.empty()) {
+            if (device_machine) {
+                machine_info.model = SSWCPProtocol::normalize_machine_model(device_machine->printer_type);
+                got_machine_info = !machine_info.model.empty();
+            }
+        }
 
-        if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
+        bool is_white_listed_type = white_list_machine_types.find(machine_info.model) != white_list_machine_types.end();
+
+        if (got_machine_info && !machine_info.model.empty() && !is_white_listed_type) {
             SyncRichConfirmDialog dlg(this,
                 _L("The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."),
                 wxYES_NO);

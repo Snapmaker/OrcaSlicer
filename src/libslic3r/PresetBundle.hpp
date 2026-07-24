@@ -35,6 +35,7 @@ struct ConnectMachineInfo
     std::string filament_info {""};
     std::string filament_type {""};
     std::string nozzle_info {""};
+    std::string nozzle_volume_type {""};
     std::string color_info{""};
     std::vector<std::string> multiColors;
     Slic3r::FilamentColorMode colorMode { Slic3r::FilamentColorMode::Segment };

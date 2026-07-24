@@ -17,6 +17,7 @@
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 #include "slic3r/Utils/MQTT.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 
 
 using namespace nlohmann;
@@ -412,6 +413,9 @@ private:
     void sw_GetFileFilamentMapping();
     void sw_SetFilamentMappingComplete();
     void sw_FinishFilamentMapping();
+    // sw_FinishFilamentMapping post-close handlers, one per FinishFilamentMappingEvent.
+    // Add a new handler here when a new event value is introduced.
+    void on_finish_filament_mapping_custom_flow_regroup();
 
     // new
     void sw_SetDeviceName();
@@ -616,7 +620,15 @@ public:
     static void on_webview_delete(wxWebView* webview);
 
     // query the info of the machine
-    static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second = 5);
+    static bool query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second = 5);
+
+    // Resolve machine info via parallel system_info + objects.query, then merge by field priority.
+    // model/device_name from system_info (real-time, authoritative), normalized.
+    // nozzle from objects.query (real-time, preferred) or system_info fallback.
+    // Status: NoResponse / GotIdentity / Complete.
+    // Must be called from a thread that is NOT the UI thread if timeout_second is large,
+    // or from UI thread if cache hit is expected to short-circuit quickly.
+    static SSWCPProtocol::ResolveResult resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second = 8);
 
     // update the active file name
     static void update_active_filename(const std::string& filename);
@@ -659,22 +671,17 @@ public:
 
     void add_instance(const std::string& ip, const std::string& machine_type)
     {
-        m_map_mtx.lock();
+        std::lock_guard<std::mutex> lock(m_map_mtx);
         m_ip_type_map[ip] = machine_type;
-        m_map_mtx.unlock();
     }
 
     bool get_machine_type(const std::string& ip, std::string& output)
     {
-        bool res = true;
-        m_map_mtx.lock();
-        if (m_ip_type_map.count(ip)) {
-            output = m_ip_type_map[ip];
-        } else {
-            res = false;
-        }
-        m_map_mtx.unlock();
-        return res;
+        std::lock_guard<std::mutex> lock(m_map_mtx);
+        auto it = m_ip_type_map.find(ip);
+        if (it == m_ip_type_map.end()) return false;
+        output = it->second;
+        return true;
     }
 
 private:

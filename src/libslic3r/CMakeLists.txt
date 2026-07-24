@@ -433,6 +433,8 @@ set(lisbslic3r_sources
     Surface.hpp
     SurfaceMesh.hpp
     SVG.cpp
+    SSWCPProtocol.cpp
+    SSWCPProtocol.hpp
     SVG.hpp
     Technologies.hpp
     Tesselate.cpp
@@ -527,6 +529,7 @@ target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
 find_package(OpenCASCADE REQUIRED)
 target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
+target_link_libraries(libslic3r PUBLIC nlohmann_json)
 
 find_package(JPEG REQUIRED)
 

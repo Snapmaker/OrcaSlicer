@@ -61,6 +61,20 @@ void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type)
     notify_plater();
 }
 
+void set_nozzle_volume_types(const std::vector<std::string> &volume_types)
+{
+    const size_t count = nozzle_count();
+    if (volume_types.size() != count)
+        return;
+
+    auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+    opt->values.clear();
+    opt->values.reserve(volume_types.size());
+    for (const std::string &type : volume_types)
+        opt->values.push_back(type == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard);
+    notify_plater();
+}
+
 std::string grouping_mode()
 {
     const auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("filament_grouping_mode");

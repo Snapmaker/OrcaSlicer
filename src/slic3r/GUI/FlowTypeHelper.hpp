@@ -28,6 +28,10 @@ std::vector<std::string> nozzle_volume_types();
 // Writes one nozzle's flow type and marks the project dirty.
 void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type);
 
+// Batch-writes all nozzle flow types from connected machine data.
+// Silently ignores mismatches between the vector size and the nozzle count.
+void set_nozzle_volume_types(const std::vector<std::string> &volume_types);
+
 // Grouping mode (FILAMENT_GROUPING_STANDARD / FILAMENT_GROUPING_CUSTOM).
 std::string grouping_mode();
 

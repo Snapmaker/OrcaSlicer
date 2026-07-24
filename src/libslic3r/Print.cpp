@@ -15,6 +15,7 @@
 #include "GCode.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/WipeTower2.hpp"
+#include "GCode/WipeTowerHelper.hpp"
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
 #include "FilamentHotBedNozzleRules.hpp"
@@ -3433,6 +3434,9 @@ void Print::_make_wipe_tower()
 
         m_wipe_tower_data.used_filament         = wipe_tower.get_used_filament();
         m_wipe_tower_data.number_of_toolchanges = wipe_tower.get_number_of_toolchanges();
+        m_wipe_tower_data.construct_mesh(wipe_tower.width(), wipe_tower.get_depth(), wipe_tower.get_wipe_tower_height(), 
+            wipe_tower.get_brim_width(), wipe_tower.get_is_rib_wall(),
+            wipe_tower.get_rib_width(), wipe_tower.get_rib_length(), config().wipe_tower_fillet_wall.value);
         const Vec3d origin                      = Vec3d::Zero();
         m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position(), wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
                                                   config().initial_layer_print_height, m_wipe_tower_data.depth,
@@ -5016,6 +5020,33 @@ ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const
         wtels.push_back(el);
     }
     return wtels;
+}
+
+void WipeTowerData::construct_mesh(float width, float depth, float height, 
+    float brim_width, bool is_rib_wipe_tower, float rib_width, float rib_length, bool fillet_wall)
+{
+    wipe_tower_mesh_data = WipeTowerMeshData{};
+    float first_layer_height = 0.08; //brim height
+    if (width < EPSILON || depth < EPSILON || height < EPSILON) 
+        return;
+    if (!is_rib_wipe_tower || rib_length < EPSILON) {
+        wipe_tower_mesh_data->real_wipe_tower_mesh = make_cube(width, depth, height);
+        wipe_tower_mesh_data->real_brim_mesh = make_cube(width + 2 * brim_width, depth + 2 * brim_width, first_layer_height);
+        wipe_tower_mesh_data->real_brim_mesh.translate({ -brim_width, -brim_width, 0 });
+        wipe_tower_mesh_data->bottom = { scaled(Vec2f{-brim_width, -brim_width}), scaled(Vec2f{width + brim_width, 0}), 
+            scaled(Vec2f{width + brim_width, depth + brim_width}), scaled(Vec2f{0, depth}) };
+    }
+    else {
+        wipe_tower_mesh_data->real_wipe_tower_mesh = WipeTowerHelper::its_make_rib_tower(width, depth, height, rib_length, rib_width, fillet_wall);
+        wipe_tower_mesh_data->bottom = WipeTowerHelper::rib_section(width, depth, rib_length, rib_width, fillet_wall);
+        auto brim_bottom = offset(wipe_tower_mesh_data->bottom, scaled(brim_width));
+        if (!brim_bottom.empty())
+            wipe_tower_mesh_data->bottom = brim_bottom.front();
+        wipe_tower_mesh_data->real_brim_mesh = WipeTowerHelper::its_make_rib_brim(wipe_tower_mesh_data->bottom, first_layer_height);
+        wipe_tower_mesh_data->real_wipe_tower_mesh.translate(Vec3f(rib_offset[0], rib_offset[1], 0));
+        wipe_tower_mesh_data->real_brim_mesh.translate(Vec3f(rib_offset[0], rib_offset[1], 0));
+        wipe_tower_mesh_data->bottom.translate(scaled(Vec2f(rib_offset[0], rib_offset[1])));
+    }
 }
 
 } // namespace Slic3r

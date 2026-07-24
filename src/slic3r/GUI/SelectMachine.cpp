@@ -22,6 +22,7 @@
 #include <wx/dcgraph.h>
 #include <wx/mstream.h>
 #include <miniz.h>
+#include <boost/nowide/fstream.hpp>
 #include <algorithm>
 #include "Plater.hpp"
 #include "Notebook.hpp"
@@ -2948,7 +2949,7 @@ bool SelectMachineDialog::is_show_timelapse()
     fs::path   gcode_path = plate->get_tmp_gcode_path();
 
     std::string              line;
-    boost::filesystem::ifstream gcode_file(gcode_path);
+    boost::nowide::ifstream gcode_file(gcode_path);
     if (gcode_file.fail()) {
     } else {
         bool is_version = false;

@@ -3,6 +3,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/filesystem/fstream.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <future>
 #include <fstream>
 

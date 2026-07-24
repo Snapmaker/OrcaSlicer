@@ -7,6 +7,7 @@
 #include <sstream>
 #include <exception>
 #include <boost/filesystem/fstream.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/format.hpp>

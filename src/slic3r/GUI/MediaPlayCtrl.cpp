@@ -12,6 +12,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/utf8_codecvt.hpp>
+#include <boost/nowide/fstream.hpp>
 #undef pid_t
 #include <boost/process.hpp>
 #ifdef __WIN32__
@@ -463,12 +464,12 @@ void MediaPlayCtrl::ToggleStream()
 {
     auto file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
     if (m_streaming) {
-        boost::filesystem::ofstream file(file_url);
+        boost::nowide::ofstream file(file_url);
         file.close();
         m_streaming = false;
         return;
     } else if (!boost::filesystem::exists(file_url)) {
-        boost::filesystem::ofstream file(file_url);
+        boost::nowide::ofstream file(file_url);
         file.close();
     }
     std::string url;
@@ -527,7 +528,7 @@ void MediaPlayCtrl::ToggleStream()
         url += "&dev_ver=" + m_dev_ver;
         BOOST_LOG_TRIVIAL(info) << "MediaPlayCtrl::ToggleStream: " << hide_passwd(hide_id_middle_string(url, url.find(m_lan_ip), m_lan_ip.length()), {m_lan_passwd});
         auto                    file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
-        boost::filesystem::ofstream file(file_url);
+        boost::nowide::ofstream file(file_url);
         auto                    url2 = encode_path(url.c_str());
         file.write(url2.c_str(), url2.size());
         file.close();
@@ -556,7 +557,7 @@ void MediaPlayCtrl::ToggleStream()
                 return;
             }
             auto                    file_url = Slic3r::data_dir_path() / "cameratools" / "url.txt";
-            boost::filesystem::ofstream file(file_url);
+            boost::nowide::ofstream file(file_url);
             auto                    url2 = encode_path(url.c_str());
             file.write(url2.c_str(), url2.size());
             file.close();
@@ -742,7 +743,7 @@ bool MediaPlayCtrl::start_stream_service(bool *need_install)
     }
     auto file_url  = Slic3r::data_dir_path() / "cameratools" / "url.txt";
     if (!boost::filesystem::exists(file_url)) {
-        boost::filesystem::ofstream file(file_url);
+        boost::nowide::ofstream file(file_url);
         file.close();
     }
 #ifdef WIN32

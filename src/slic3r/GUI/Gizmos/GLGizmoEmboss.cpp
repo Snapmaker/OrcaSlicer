@@ -3355,7 +3355,7 @@ boost::filesystem::path get_fontlist_cache_path(){
 }
 
 bool store(const Facenames &facenames) {
-    boost::filesystem::ofstream file(get_fontlist_cache_path(), std::ios::binary);
+    boost::nowide::ofstream file(get_fontlist_cache_path(), std::ios::binary);
     ::cereal::BinaryOutputArchive archive(file);
     std::vector<wxString> good;
     good.reserve(facenames.faces.size());
@@ -3381,7 +3381,7 @@ bool load(Facenames &facenames) {
         BOOST_LOG_TRIVIAL(warning) << "Fontlist cache - '" << path_str << "' does not exists.";
         return false;
     }
-    boost::filesystem::ifstream file(path, std::ios::binary);
+    boost::nowide::ifstream file(path, std::ios::binary);
     cereal::BinaryInputArchive archive(file);
     
     FacenamesSerializer data;

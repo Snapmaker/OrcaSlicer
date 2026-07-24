@@ -2286,8 +2286,8 @@ void GUI_App::copy_web_resources() {
         try {
             boost::property_tree::ptree source_config, target_config;
             // Use path-aware stream open on Windows to avoid ANSI codepage path corruption.
-            boost::filesystem::ifstream source_ifs(source_version_file);
-            boost::filesystem::ifstream target_ifs(target_version_file);
+            boost::nowide::ifstream source_ifs(source_version_file);
+            boost::nowide::ifstream target_ifs(target_version_file);
             boost::property_tree::read_json(source_ifs, source_config);
             boost::property_tree::read_json(target_ifs, target_config);
             const std::string source_version_str = source_config.get<std::string>("version", "0");

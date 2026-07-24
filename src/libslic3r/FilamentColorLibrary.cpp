@@ -163,7 +163,7 @@ std::string NormalizeJsonColor(const std::string& color, bool& hasInvalidColor)
 
 bool LoadJsonFile(const boost::filesystem::path& path, nlohmann::json& out)
 {
-    boost::filesystem::ifstream ifs(path);
+    boost::nowide::ifstream ifs(path);
     if (!ifs.is_open())
     {
         BOOST_LOG_TRIVIAL(warning) << "Failed to open official filament color file: " << path.string();

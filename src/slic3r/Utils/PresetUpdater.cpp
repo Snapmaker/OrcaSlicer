@@ -2233,7 +2233,7 @@ void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serv
 
         auto                        ori_version_file = Slic3r::data_dir_path() / "web" / "flutter_web" / "version.json";
         boost::property_tree::ptree ori_config;
-        boost::filesystem::ifstream ifs_ori(ori_version_file);
+        boost::nowide::ifstream ifs_ori(ori_version_file);
         boost::property_tree::read_json(ifs_ori, ori_config);
         ori_version_str      = ori_config.get<std::string>("version", "0");
         ori_build_number_str = ori_config.get<std::string>("build_number", "0");
@@ -2241,7 +2241,7 @@ void PresetUpdater::load_flutter_web(const std::string& resource_path, bool serv
         {
             const fs::path version_path = flutter_root / "version.json";
             boost::property_tree::ptree config;
-            boost::filesystem::ifstream ifs_ver(version_path);
+            boost::nowide::ifstream ifs_ver(version_path);
             boost::property_tree::read_json(ifs_ver, config);
             std::string version_str      = config.get<std::string>("version", "0");
             std::string build_number_str = config.get<std::string>("build_number", "0");
@@ -2415,7 +2415,7 @@ void PresetUpdater::import_system_profile()
             if (dir_entry.path().extension() == ".json") {
                 {                  
                     boost::property_tree::ptree config;
-                    boost::filesystem::ifstream ifs(dir_entry.path());
+                    boost::nowide::ifstream ifs(dir_entry.path());
                     boost::property_tree::read_json(ifs, config);
                     std::string version_str = config.get<std::string>("version", "0");
                     std::string vendor      = dir_entry.path().stem().string();

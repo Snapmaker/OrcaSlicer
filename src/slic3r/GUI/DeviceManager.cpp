@@ -17,6 +17,7 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
+#include <boost/nowide/fstream.hpp>
 #include "fast_float/fast_float.h"
 #include <wx/dir.h>
 
@@ -6821,7 +6822,7 @@ std::vector<std::string> DeviceManager::get_resolution_supported(std::string typ
     std::vector<std::string> resolution_supported;
 
     auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
-    boost::filesystem::ifstream json_file(config_path);
+    boost::nowide::ifstream json_file(config_path);
     try {
         json jj;
         if (json_file.is_open()) {
@@ -6843,7 +6844,7 @@ std::vector<std::string> DeviceManager::get_compatible_machine(std::string type_
 {
     std::vector<std::string> compatible_machine;
     auto config_path = Slic3r::resources_dir_path() / "printers" / (type_str + ".json");
-    boost::filesystem::ifstream json_file(config_path);
+    boost::nowide::ifstream json_file(config_path);
     try {
         json jj;
         if (json_file.is_open()) {
@@ -6883,7 +6884,7 @@ boost::bimaps::bimap<std::string, std::string> DeviceManager::get_all_model_id_w
         if (!file.Lower().ends_with(".json")) continue;
 
         auto config_path = Slic3r::resources_dir_path() / "printers" / file.ToStdString();
-        boost::filesystem::ifstream json_file(config_path);
+        boost::nowide::ifstream json_file(config_path);
 
         try {
             json jj;
@@ -6913,7 +6914,7 @@ bool DeviceManager::load_filaments_blacklist_config()
     filaments_blacklist = json::object();
 
     auto config_path = Slic3r::resources_dir_path() / "printers" / "filaments_blacklist.json";
-    boost::filesystem::ifstream json_file(config_path);
+    boost::nowide::ifstream json_file(config_path);
 
     try {
         if (json_file.is_open()) {
@@ -7000,7 +7001,7 @@ void DeviceManager::check_filaments_in_blacklist(std::string tag_vendor, std::st
 std::string DeviceManager::load_gcode(std::string type_str, std::string gcode_file)
 {
     auto gcode_path = Slic3r::resources_dir_path() / "printers" / gcode_file;
-    boost::filesystem::ifstream gcode(gcode_path);
+    boost::nowide::ifstream gcode(gcode_path);
     try {
         std::stringstream gcode_str;
         if (gcode.is_open()) {

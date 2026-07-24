@@ -7,6 +7,7 @@
 #include <functional>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/fstream.hpp>
+#include <boost/nowide/fstream.hpp>
 
 #include "libslic3r/Exception.hpp"
 #include "common_func/common_func.hpp"

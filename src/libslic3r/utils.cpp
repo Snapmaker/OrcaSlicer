@@ -1708,7 +1708,7 @@ bool atomic_replace_directory(
 
 void save_string_file(const boost::filesystem::path& p, const std::string& str)
 {
-    boost::filesystem::ofstream file;
+    boost::nowide::ofstream file;
     file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
     file.open(p, std::ios_base::binary);
     file.write(str.c_str(), str.size());
@@ -1716,7 +1716,7 @@ void save_string_file(const boost::filesystem::path& p, const std::string& str)
 
 void load_string_file(const boost::filesystem::path& p, std::string& str)
 {
-    boost::filesystem::ifstream file;
+    boost::nowide::ifstream file;
     file.exceptions(std::ios_base::failbit | std::ios_base::badbit);
     file.open(p, std::ios_base::binary);
     // Size from the opened stream (matches handle; avoids a separate file_size vs. open race).

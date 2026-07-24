@@ -460,7 +460,7 @@ static int decode_png_to_thumbnail(std::string png_file, ThumbnailData& thumbnai
     std::string png_buffer(size, '\0');
     png_buffer.reserve(size);
 
-    boost::filesystem::ifstream ifs(png_file, std::ios::binary);
+    boost::nowide::ifstream ifs(png_file, std::ios::binary);
     ifs.read(png_buffer.data(), png_buffer.size());
     ifs.close();
 

@@ -12,6 +12,7 @@
 #include <boost/log/trivial.hpp>
 #include <boost/uuid/detail/md5.hpp>
 #include <boost/regex.hpp>
+#include <boost/nowide/fstream.hpp>
 
 #include <wx/mstream.h>
 

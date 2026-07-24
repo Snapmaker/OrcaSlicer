@@ -3010,7 +3010,7 @@ FilamentTempType Print::get_filament_temp_type(const std::string& filament_type)
 
     if (filament_temp_type_map.empty()) {
         fs::path file_path = Slic3r::resources_dir_path() / "info" / "filament_info.json";
-        boost::filesystem::ifstream in(file_path);
+        boost::nowide::ifstream in(file_path);
         json j;
         try{
             j = json::parse(in);
@@ -3045,7 +3045,7 @@ int Print::get_hrc_by_nozzle_type(const NozzleType&type)
     static std::map<std::string, int>nozzle_type_to_hrc;
     if (nozzle_type_to_hrc.empty()) {
         fs::path file_path = Slic3r::resources_dir_path() / "info" / "nozzle_info.json";
-        boost::filesystem::ifstream in(file_path);
+        boost::nowide::ifstream in(file_path);
         //std::ifstream in(file_path.string());
         json j;
         try {

@@ -67,7 +67,7 @@ namespace {
 
 	void write_used_binary(const std::vector<std::string>& ids)
 	{
-		boost::filesystem::ofstream file(Slic3r::data_dir_path() / "user" / "hints.cereal", std::ios::binary);
+		boost::nowide::ofstream file(Slic3r::data_dir_path() / "user" / "hints.cereal", std::ios::binary);
 		cereal::BinaryOutputArchive archive(file);
 		HintsCerealData cd{ ids };
 		try
@@ -86,7 +86,7 @@ namespace {
 			BOOST_LOG_TRIVIAL(warning) << "Failed to load to hints.cereal. File does not exists. " << path.string();
 			return;
 		}
-		boost::filesystem::ifstream file(path);
+		boost::nowide::ifstream file(path);
 		cereal::BinaryInputArchive archive(file);
 		HintsCerealData cd;
 		try
@@ -324,7 +324,7 @@ void HintDatabase::load_hints_from_file(const boost::filesystem::path& path)
 {
 	namespace pt = boost::property_tree;
 	pt::ptree tree;
-	boost::filesystem::ifstream ifs(path);
+	boost::nowide::ifstream ifs(path);
 	try {
 		pt::read_ini(ifs, tree);
 	}

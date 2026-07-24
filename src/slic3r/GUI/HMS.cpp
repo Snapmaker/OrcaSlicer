@@ -1,6 +1,7 @@
 #include "HMS.hpp"
 
 #include <boost/filesystem/fstream.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/log/trivial.hpp>
 
 
@@ -113,7 +114,7 @@ int HMSQuery::load_from_local(std::string& version_info, std::string hms_type, j
         fs::create_directory(hms_folder);
 
     auto hms_file = hms_folder / filename;
-    boost::filesystem::ifstream json_file(hms_file);
+    boost::nowide::ifstream json_file(hms_file);
     try {
         if (json_file.is_open()) {
             json_file >> (*load_json);
@@ -145,7 +146,7 @@ int HMSQuery::save_to_local(std::string lang, std::string hms_type, json save_js
     if (!fs::exists(hms_folder))
         fs::create_directory(hms_folder);
     auto hms_file = hms_folder / filename;
-    boost::filesystem::ofstream json_file(hms_file);
+    boost::nowide::ofstream json_file(hms_file);
     if (json_file.is_open()) {
         json_file << std::setw(4) << save_json << std::endl;
         json_file.close();

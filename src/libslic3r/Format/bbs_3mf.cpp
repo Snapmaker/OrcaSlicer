@@ -6152,7 +6152,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     MD5_CTX       ctx;
                     MD5_Init(&ctx);
                     auto                        src_gcode_file = plate_data->gcode_file;
-                    boost::filesystem::ifstream ifs(src_gcode_file, std::ios::binary);
+                    boost::nowide::ifstream ifs(src_gcode_file, std::ios::binary);
                     std::string                 buf(64 * 1024, 0);
                     const std::size_t &         size      = boost::filesystem::file_size(src_gcode_file);
                     std::size_t                 left_size = size;
@@ -7996,7 +7996,7 @@ bool _BBS_3MF_Exporter::_add_gcode_file_to_archive(mz_zip_archive& archive, cons
                     BOOST_LOG_TRIVIAL(error) << "Gcode is missing, filename = " << src_gcode_file;
                     result = false;
                 }
-                boost::filesystem::ifstream ifs(src_gcode_file, std::ios::binary);
+                boost::nowide::ifstream ifs(src_gcode_file, std::ios::binary);
                 std::string buf(64 * 1024, 0);
                 while (ifs) {
                     ifs.read(buf.data(), buf.size());

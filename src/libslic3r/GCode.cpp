@@ -801,7 +801,12 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcode += gcodegen.travel_to(
                 wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d),
                 erMixed, "Travel from ramming to wipe area");
-            if (!will_detour)
+            // Always unlift the spiral hop, else the wipe lands at printZ+z_hop and
+            // the preview splits it into a spurious layer. Skip only the E deretract
+            // when detouring (set_extruder's toolchange retract handles E).
+            if (will_detour)
+                gcode += gcodegen.writer().unlift();
+            else
                 gcode += gcodegen.unretract();
         }
     }

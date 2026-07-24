@@ -210,6 +210,15 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
+static bool is_filament_extruder_map_version(const ConfigSubstitutionContext& config_substitutions,
+                                             const Semver& file_version,
+                                             const Semver& app_version)
+{
+    return file_version.valid() && file_version > app_version &&
+           std::find(config_substitutions.unrecogized_keys.begin(), config_substitutions.unrecogized_keys.end(),
+                     "filament_extruder_map") != config_substitutions.unrecogized_keys.end();
+}
+
 static std::string filament_temp_mixing_warning_text()
 {
     return _u8L("Detected both high and low temperature materials. "
@@ -10592,6 +10601,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
                     // BBS: version check
                     Semver app_version = *(Semver::parse(Snapmaker_VERSION));
+                    if (is_filament_extruder_map_version(config_substitutions, file_version, app_version)) {
+                        show_info(q,
+                                  _L("Since the current version of SnapmakerOrca is relatively low, this 3mf file cannot be fully loaded, and the nozzle flow rate type may not match the file."),
+                                  _L("Newer 3mf version"));
+                    }
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;

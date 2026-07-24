@@ -3749,8 +3749,8 @@ void TabFilament::build()
         optgroup->append_line(line);
 
         optgroup = page->new_optgroup(L("Bed temperature"), L"param_bed_temp");
-        line = { L("Cool Plate (SuperTack)"),
-                 L("Bed temperature when the Cool Plate SuperTack is installed. A value of 0 means the filament does not support printing on the Cool Plate SuperTack.") };
+        line = { L("Cool Steel Plate"),
+                 L("Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate.") };
         line.append_option(optgroup->get_option("supertack_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("supertack_plate_temp"));
         optgroup->append_line(line);
@@ -4056,9 +4056,9 @@ void TabFilament::toggle_options()
                 : _L("Smooth PEI Plate / High Temp Plate");
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
-            // U1 default show 3 plates
-            toggle_line("supertack_plate_temp_initial_layer", false);
-            toggle_line("supertack_plate_temp", false);
+            // U1 default show 4 plates
+            toggle_line("supertack_plate_temp_initial_layer", true);
+            toggle_line("supertack_plate_temp", true);
             toggle_line("cool_plate_temp_initial_layer", false);
             toggle_line("cool_plate_temp", false);
             toggle_line("textured_cool_plate_temp_initial_layer", false);

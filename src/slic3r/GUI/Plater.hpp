@@ -253,13 +253,15 @@ public:
     };
 
     /// \brief Aggregate per-plate cold-plate compatibility result, computed in one pass.
-    /// \details Combines state with the data that produced it (unsupported filament list,
-    ///          TPU flag) so callers can render notifications without re-querying.
+    /// \details Combines state with the data that produced it (unsupported filament slots,
+    ///          TPU slots) so callers can render notifications without re-querying.
+    ///          Slot lists are 1-based to match filament_display_label / FlowRatioZeroDetail.
     struct ColdPlateCompatResult
     {
-        ColdPlateCompatState                      state = ColdPlateCompatState::Compatible;
-        std::vector<std::pair<int, std::string>> unsupported;  // (slot_0_based, filament_type)
-        bool                                      uses_tpu = false;
+        ColdPlateCompatState   state = ColdPlateCompatState::Compatible;
+        std::vector<int>       unsupported_slots_1based;
+        std::vector<int>       tpu_slots_1based;
+        bool                   uses_tpu = false;
     };
 
     Plater(wxWindow *parent, MainFrame *main_frame);

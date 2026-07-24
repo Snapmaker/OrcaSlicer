@@ -7808,12 +7808,12 @@ msgstr "噴嘴"
 msgid "Nozzle temperature when printing"
 msgstr "列印時的噴嘴溫度"
 
-msgid "Cool Plate (SuperTack)"
+msgid "Cool Steel Plate"
 msgstr "低溫增穩列印板"
 
 msgid ""
-"Bed temperature when the Cool Plate SuperTack is installed. A value of 0 "
-"means the filament does not support printing on the Cool Plate SuperTack."
+"Bed temperature when the Cool Steel Plate is installed. A value of 0 "
+"means the filament does not support printing on the Cool Steel Plate."
 msgstr ""
 
 msgid "Cool Plate"
@@ -9622,7 +9622,7 @@ msgstr "其它層"
 
 msgid ""
 "Bed temperature for layers except the initial one. A value of 0 means the "
-"filament does not support printing on the Cool Plate SuperTack."
+"filament does not support printing on the Cool Steel Plate."
 msgstr ""
 
 msgid ""
@@ -9658,7 +9658,7 @@ msgstr "首層床溫"
 
 msgid ""
 "Bed temperature of the initial layer. A value of 0 means the filament does "
-"not support printing on the Cool Plate SuperTack."
+"not support printing on the Cool Steel Plate."
 msgstr "首層的列印床溫度。值為 0 表示該線材不適用於低溫增穩列印板"
 
 msgid ""
@@ -17743,7 +17743,7 @@ msgstr ""
 
 #~ msgid ""
 #~ "Bed temperature when the Cool Plate Supertack is installed. A value of 0 "
-#~ "means the filament does not support printing on the Cool Plate SuperTack."
+#~ "means the filament does not support printing on the Cool Steel Plate."
 #~ msgstr ""
 #~ "使用低溫增穩列印板時，熱床設定溫度其值為 0 ，表示該線材不適用於低溫增穩列"
 #~ "印板"

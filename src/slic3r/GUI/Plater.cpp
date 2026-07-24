@@ -224,41 +224,80 @@ static std::string filament_temp_mixing_error_text()
                 "of high and low temperature materials\" in Preferences.");
 }
 
-// CSP bed-type key as stored in the PrintConfig enum map.
-static const char* const s_cold_plate_bed_type_key = "Cool Steel Plate";
-
-/// \brief Compose merged error text for unsupported filaments on the Cool Steel Plate.
-/// \param[in] bed_index_1_based CSP's 1-based position in the current bed-type combobox.
-/// \param[in] unsupported       Vector of (slot_0_based, filament_type) pairs.
-/// \return Multi-line string; each unsupported filament occupies one line.
-static std::string cold_plate_error_text(
-    int bed_index_1_based,
-    const std::vector<std::pair<int, std::string>>& unsupported)
+// Translate a source string to a UTF-8 std::string (immediate lookup).
+static std::string tr_u8(const char* s)
 {
-    std::string result;
-    for (size_t i = 0; i < unsupported.size(); ++i) {
-        const int         slot_1_based = unsupported[i].first + 1;
-        const std::string type         = unsupported[i].second;
-        // Source string is English; _u8L performs immediate translation lookup.
-        const std::string line = Slic3r::GUI::format(
-            _u8L("Heatbed %1%: The Cool Steel Plate is not recommended for printing with %2% (%3%) filament. "
-                 "If you still want to print, please set the corresponding bed temperature of the filament to a non-zero value."),
-            bed_index_1_based, slot_1_based, type);
-        if (i > 0)
-            result += "\n";
-        result += line;
+    const wxString ws = _L(s);
+    const wxScopedCharBuffer buf = ws.utf8_str();
+    return std::string(buf.data(), buf.length());
+}
+
+// Build a user-facing label for a single filament slot, in the form
+// "[n] PresetName". Falls back to "[n] (unknown)" if the preset can't be
+// resolved. Shared across cold-plate / flow-ratio / temp-mixing notifications
+// so all three features present filaments in the same shape.
+static std::string filament_display_label(int slot_1based)
+{
+    const int slot_0_based = slot_1based - 1;
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    std::string name = tr_u8("unknown");
+    if (bundle != nullptr
+        && slot_0_based >= 0
+        && slot_0_based < static_cast<int>(bundle->filament_presets.size())) {
+        const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot_0_based], true);
+        if (preset != nullptr)
+            name = preset->name;
     }
-    return result;
+    return std::string("[") + std::to_string(slot_1based) + "] " + name;
+}
+
+// Comma-separated list of "[n] PresetName" labels from 1-based slot numbers.
+static std::string format_filament_slot_list(const std::vector<int>& slots_1based)
+{
+    std::string out;
+    for (size_t i = 0; i < slots_1based.size(); ++i) {
+        if (i != 0)
+            out += ", ";
+        out += filament_display_label(slots_1based[i]);
+    }
+    return out;
+}
+
+// Cool Steel Plate shares the Supertack bed-type enumerator (enum key string
+// "Supertack Plate"), so we reuse that key for combobox lookups.
+static const char* const s_cold_plate_bed_type_key = "Supertack Plate";
+
+/// \brief Compose error text for unsupported filaments on the Cool Steel Plate.
+/// \param[in] bed_index_1_based     CSP's 1-based position in the current bed-type combobox.
+/// \param[in] unsupported_slots_1based  Offending filament slots (1-based).
+/// \return Single-line string listing all offenders via filament_display_label.
+static std::string cold_plate_error_text(
+    int                      bed_index_1_based,
+    const std::vector<int>&  unsupported_slots_1based)
+{
+    std::string out = Slic3r::GUI::format(
+        _u8L("Heatbed %1%: The following filaments are not compatible with the Cool Steel Plate: "),
+        bed_index_1_based);
+    out += format_filament_slot_list(unsupported_slots_1based);
+    out += ". ";
+    out += _u8L("Set the corresponding bed temperature to a non-zero value to enable printing.");
+    return out;
 }
 
 /// \brief Compose TPU serious-warning text for the Cool Steel Plate.
-/// \param[in] bed_index_1_based CSP's 1-based position in the current bed-type combobox.
-static std::string cold_plate_serious_warning_text(int bed_index_1_based)
+/// \param[in] bed_index_1_based  CSP's 1-based position in the current bed-type combobox.
+/// \param[in] tpu_slots_1based   TPU filament slots (1-based).
+static std::string cold_plate_serious_warning_text(
+    int                      bed_index_1_based,
+    const std::vector<int>&  tpu_slots_1based)
 {
-    return Slic3r::GUI::format(
-        _u8L("Heatbed %1%: TPU printing on a cool steel plate can be hard to remove. "
-             "Use a textured PEI plate or heat the bed."),
+    std::string out = Slic3r::GUI::format(
+        _u8L("Heatbed %1%: The following filaments may be hard to remove from the Cool Steel Plate: "),
         bed_index_1_based);
+    out += format_filament_slot_list(tpu_slots_1based);
+    out += ". ";
+    out += _u8L("Use a textured PEI plate or heat the bed.");
+    return out;
 }
 
 /// \brief Compute CSP's 1-based position in the current bed-type combobox.
@@ -3155,7 +3194,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             
             // Orca: Update proj_config directly to avoid callback context issues
             if (is_snapmaker_u1 && !support_multi_bed_types) {
-                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP && bed_type_to_use != btSuperTack) {
                     bed_type_to_use = btPTE;
                     wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
                     wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
@@ -3168,7 +3207,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         } else {
             if (is_snapmaker_u1 && !support_multi_bed_types) {
                 BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-                if (curr != btPTE && curr != btPEI && curr != btGESP) {
+                if (curr != btPTE && curr != btPEI && curr != btGESP && curr != btSuperTack) {
                     wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
                     m_bed_type_list->SetSelection(0);
                 } else
@@ -21061,9 +21100,11 @@ Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_inde
         return result;
     }
 
-    // Early exit: only relevant under CSP bed type
-    BedType curr_bed = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-    if (curr_bed != btCSP)
+    // Early exit: only relevant under the Cool Steel Plate bed type.
+    // Cool Steel Plate reuses the Supertack bed-type enumerator (its config key
+    // is "Supertack Plate" in s_keys_map_BedType), so compare against btSuperTack directly.
+    const BedType curr_bed = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
+    if (curr_bed != btSuperTack)
         return result;
 
     // Need a non-null plate and at least one object on it
@@ -21108,16 +21149,18 @@ Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_inde
         const std::string type_str = (ftype != nullptr && !ftype->values.empty())
             ? ftype->values[0]
             : std::string("?");
-        if (type_str == "TPU")
+        if (type_str == "TPU") {
             result.uses_tpu = true;
+            result.tpu_slots_1based.push_back(slot + 1);
+        }
 
-        const int t_other = preset->config.opt_int("cool_steel_plate_temp", 0);
-        const int t_first = preset->config.opt_int("cool_steel_plate_temp_initial_layer", 0);
+        const int t_other = preset->config.opt_int("supertack_plate_temp", 0);
+        const int t_first = preset->config.opt_int("supertack_plate_temp_initial_layer", 0);
         if (t_first <= 0 || t_other <= 0)
-            result.unsupported.emplace_back(slot, type_str);
+            result.unsupported_slots_1based.push_back(slot + 1);
     }
 
-    if (!result.unsupported.empty())
+    if (!result.unsupported_slots_1based.empty())
         result.state = ColdPlateCompatState::BlockedError;
     else if (result.uses_tpu)
         result.state = ColdPlateCompatState::SeriousWarning;
@@ -21165,7 +21208,7 @@ bool Plater::sync_cold_plate_notification()
     case ColdPlateCompatState::SeriousWarning: {
         // TPU is compatible but warrants a non-blocking serious warning.
         const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
-        const std::string text    = cold_plate_serious_warning_text(bed_idx);
+        const std::string text    = cold_plate_serious_warning_text(bed_idx, compat.tpu_slots_1based);
         get_notification_manager()->push_slicing_serious_warning_notification(text, std::vector<ModelObject const*>());
         p->cold_plate_last_serious_warning_text = text;
         slicing_allowed = true;
@@ -21176,7 +21219,7 @@ bool Plater::sync_cold_plate_notification()
         const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
         StringObjectException err;
         err.type   = STRING_EXCEPT_COLD_PLATE_INCOMPATIBLE;
-        err.string = cold_plate_error_text(bed_idx, compat.unsupported);
+        err.string = cold_plate_error_text(bed_idx, compat.unsupported_slots_1based);
         get_notification_manager()->push_validate_error_notification(err);
         p->cold_plate_last_error_text = err.string;
         slicing_allowed = false;

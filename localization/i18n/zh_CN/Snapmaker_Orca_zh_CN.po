@@ -7445,11 +7445,11 @@ msgstr "喷嘴"
 msgid "Nozzle temperature when printing"
 msgstr "打印时的喷嘴温度"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "低温打印板（超强粘附）"
+msgid "Cool Steel Plate"
+msgstr "低温冷打钢板"
 
-msgid "Bed temperature when the Cool Plate SuperTack is installed. A value of 0 means the filament does not support printing on the Cool Plate SuperTack."
-msgstr "安装低温打印板（超强粘附）时的热床温度。0值表示该材料不支持在低温打印板（超强粘附）上打印。"
+msgid "Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate."
+msgstr "安装低温冷打钢板时的热床温度。0值表示该材料不支持在低温冷打钢板上打印。"
 
 msgid "Cool Plate"
 msgstr "低温打印热床"
@@ -9013,8 +9013,8 @@ msgstr "mm 或 %"
 msgid "Other layers"
 msgstr "其它层"
 
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate SuperTack."
-msgstr "除首层外的其他层的热床温度。0值表示该耗材丝不支持在Cool Plate SuperTack上打印。"
+msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Steel Plate."
+msgstr "除首层外的其他层的热床温度。0值表示该耗材丝不支持在Cool Steel Plate上打印。"
 
 msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate."
 msgstr "非首层热床温度。0值表示这个耗材丝不支持低温打印热床"
@@ -9037,7 +9037,7 @@ msgstr "首层"
 msgid "Initial layer bed temperature"
 msgstr "首层床温"
 
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Plate SuperTack."
+msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Steel Plate."
 msgstr ""
 
 msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Plate."
@@ -15332,11 +15332,17 @@ msgstr "检测到高温材料与低温材料同时使用。混合打印可能导
 msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
 msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
 
-msgid "Heatbed %1%: The Cool Steel Plate is not recommended for printing with %2% (%3%) filament. If you still want to print, please set the corresponding bed temperature of the filament to a non-zero value."
-msgstr "热床%1%：低温冷打钢板不建议被用于打印%2%(%3%)材料。如果您依然想打印，请设置耗材对应的热床温度为非零值。"
+msgid "Heatbed %1%: The following filaments are not compatible with the Cool Steel Plate: "
+msgstr "热床%1%：以下耗材不兼容低温冷打钢板："
 
-msgid "Heatbed %1%: TPU printing on a cool steel plate can be hard to remove. Use a textured PEI plate or heat the bed."
-msgstr "热床%1%：低温冷打钢板打印TPU易脱模困难，请使用纹理PEI热床或开启热床。"
+msgid "Set the corresponding bed temperature to a non-zero value to enable printing."
+msgstr "请将对应耗材的热床温度设置为非零值后再打印。"
+
+msgid "Heatbed %1%: The following filaments may be hard to remove from the Cool Steel Plate: "
+msgstr "热床%1%：以下耗材在低温冷打钢板上可能脱模困难："
+
+msgid "Use a textured PEI plate or heat the bed."
+msgstr "请使用纹理PEI热床或开启热床。"
 
 msgid "This material combination may cause risks. Do you want to continue?"
 msgstr "此材料组合可能存在风险，是否继续？"

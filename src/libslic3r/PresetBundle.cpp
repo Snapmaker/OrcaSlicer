@@ -1561,7 +1561,6 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_mod
                 errors_cummulative += "\n";
             }
         }
-    }
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" finished, errors_cummulative %1%") % errors_cummulative;
     return std::make_pair(std::move(substitutions), errors_cummulative);
@@ -1611,7 +1610,6 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_fil
                 errors_cummulative += "\n";
             }
         }
-    }
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(" finished, errors_cummulative %1%") % errors_cummulative;
     return std::make_pair(std::move(substitutions), errors_cummulative);

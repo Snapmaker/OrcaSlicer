@@ -2161,6 +2161,28 @@ void TreeSupport::draw_circles()
                         floor_areas = std::move(diff_ex(floor_areas, bottom_gap_area));
                     }
                 }
+                // Safety trim: remove base_areas within the XY gap ring around the actual
+                // object lslices. The collision model uses simplified outlines
+                // (m_layer_outlines) that can under-represent concave features by up to
+                // g_config_tree_support_collision_resolution (0.2mm). Combined with zero
+                // collision offset for sharp_tail contacts when top_z_distance=0, this
+                // allows the support polygon to intrude into the object body. This trim
+                // uses the actual (non-simplified) lslices to enforce a material-safe gap.
+                // Only the RING (between lslices and lslices+offset) is subtracted, so
+                // support under overhangs (inside lslices) is preserved.
+                if (obj_layer_nr < m_object->layer_count()) {
+                    const Layer *trim_obj_layer = m_object->get_layer(obj_layer_nr);
+                    if (trim_obj_layer && !trim_obj_layer->lslices.empty() && !base_areas.empty()) {
+                        coordf_t trim_gap = (obj_layer_nr == 0)
+                            ? config.support_object_first_layer_gap
+                            : m_ts_data->m_xy_distance;
+                        ExPolygons offset_lslices = offset_ex(trim_obj_layer->lslices, scale_(trim_gap));
+                        ExPolygons trim_ring     = diff_ex(offset_lslices, trim_obj_layer->lslices);
+                        base_areas = diff_ex(base_areas,
+                            ClipperUtils::clip_clipper_polygons_with_subject_bbox(
+                                trim_ring, get_extents(base_areas)));
+                    }
+                }
                 auto &area_groups = ts_layer->area_groups;
                 for (auto& expoly : ts_layer->base_areas) {
                     //if (area(expoly) < SQ(scale_(1))) continue;

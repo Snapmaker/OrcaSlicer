@@ -1187,8 +1187,8 @@ void PresetBundle::update_user_presets_directory(const std::string preset_folder
 
 void PresetBundle::remove_user_presets_directory(const std::string preset_folder)
 {
-    const boost::filesystem::path folder = Slic3r::data_dir_path() / PRESET_USER_DIR / preset_folder;
-    const std::string dir_user_presets = folder.make_preferred().string();
+    const boost::filesystem::path folder = (Slic3r::data_dir_path() / PRESET_USER_DIR / preset_folder).make_preferred();
+    const std::string dir_user_presets = folder.string();
 
     if (preset_folder.empty()) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": preset_folder is empty, no need to remove directory : %1%") % dir_user_presets;

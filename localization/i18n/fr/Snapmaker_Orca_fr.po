@@ -15110,6 +15110,12 @@ msgstr ""
 "Espacement des lignes d'interface inférieures. Zéro signifie une interface "
 "solide"
 
+msgid "Minimum Support Contact Area"
+msgstr "Surface de contact minimale du support"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Des valeurs plus basses génèrent davantage de surfaces de contact du support."
+
 msgid "Speed of support interface."
 msgstr "Vitesse pour l'interface des supports"
 

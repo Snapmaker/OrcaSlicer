@@ -13642,6 +13642,12 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Az érintkező réteg vonalai közötti távolság. A nulla szilárd kitöltést jelent"
 
+msgid "Minimum Support Contact Area"
+msgstr "Támasz minimális érintkezési felülete"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Az alacsonyabb értékek több érintkezési felületet hoznak létre."
+
 msgid "Speed of support interface."
 msgstr "Támasz érintkező felületek sebessége"
 

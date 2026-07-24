@@ -13908,6 +13908,12 @@ msgstr "Spodní rozestup"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "Rozestup linek spodního. Nula znamená plné rozhraní"
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimální kontaktní plocha podpěr"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Nižší hodnoty generují více kontaktních ploch podpěr."
+
 msgid "Speed of support interface."
 msgstr "Rychlost pro kontaktní vrstvy podpěr"
 

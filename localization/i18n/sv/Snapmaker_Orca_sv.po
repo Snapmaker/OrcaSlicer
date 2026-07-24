@@ -13538,6 +13538,12 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Mellanrummet på botten gränssnittets linjer. 0 betyder solid gränssnitt"
 
+msgid "Minimum Support Contact Area"
+msgstr "Supportens minsta kontaktyta"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Lägre värden genererar fler kontaktytor för supporten."
+
 msgid "Speed of support interface."
 msgstr "Support gränssnittets hastighet"
 

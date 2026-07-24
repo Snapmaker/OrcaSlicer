@@ -15136,6 +15136,12 @@ msgstr ""
 "Расстояние между линиями связующего слоя снизу. Установите 0, чтобы получить "
 "сплошной слой."
 
+msgid "Minimum Support Contact Area"
+msgstr "Минимальная площадь контакта поддержки"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Меньшие значения создают больше площадей контакта поддержки."
+
 msgid "Speed of support interface."
 msgstr "Скорость печати связующего слоя поддержки."
 

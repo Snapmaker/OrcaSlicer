@@ -14838,6 +14838,12 @@ msgstr ""
 "Odstęp między liniami dolnej powierzchni warstwy łączącej. Wartość zero "
 "oznacza, że warstwa łącząca jest jednolita i bez przerw"
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimalna powierzchnia kontaktu podpory"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Niższe wartości generują więcej powierzchni kontaktowych podpory."
+
 msgid "Speed of support interface."
 msgstr "Prędkość dla warstw łączących"
 

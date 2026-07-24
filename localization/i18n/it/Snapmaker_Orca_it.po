@@ -15027,6 +15027,12 @@ msgstr ""
 "Spaziatura delle linee dell'interfaccia inferiore. 0 equivale ad "
 "un'interfaccia solida."
 
+msgid "Minimum Support Contact Area"
+msgstr "Area minima di contatto del supporto"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Valori più bassi generano più superfici di contatto del supporto."
+
 msgid "Speed of support interface."
 msgstr "Velocità per le interfacce di supporto."
 

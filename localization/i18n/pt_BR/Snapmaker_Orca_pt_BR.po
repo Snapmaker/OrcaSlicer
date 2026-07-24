@@ -15015,6 +15015,12 @@ msgstr ""
 "Espaçamento das linhas de interface inferior. Zero significa interface "
 "sólida."
 
+msgid "Minimum Support Contact Area"
+msgstr "Área mínima de contato do suporte"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Valores menores geram mais superfícies de contato do suporte."
+
 msgid "Speed of support interface."
 msgstr "Velocidade da interface de suporte."
 

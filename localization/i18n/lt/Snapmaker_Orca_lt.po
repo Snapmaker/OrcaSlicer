@@ -14728,6 +14728,12 @@ msgstr "Apatinės sąsajos tarpas"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "Atstumas tarp apatinių sąsajos linijų. 0 reiškia vientisą sąsają"
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimalus atramos kontaktinis plotas"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Mažesnės reikšmės sukuria daugiau atramos kontaktinių paviršių."
+
 msgid "Speed of support interface."
 msgstr "Atramų sąsajų greitis"
 

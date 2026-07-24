@@ -13315,6 +13315,12 @@ msgstr "底部接触面間隔"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "底部接触面を造形時に線の距離です。0はソリッド接触面です。"
 
+msgid "Minimum Support Contact Area"
+msgstr "サポート接触面積の最小値"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "値を小さくすると、より多くのサポート接触面が生成されます。"
+
 msgid "Speed of support interface."
 msgstr "サポート接触面の造形速度です。"
 

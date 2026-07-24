@@ -14786,6 +14786,12 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Espaciado de las líneas de interfaz. Cero significa que la interfaz es sólida"
 
+msgid "Minimum Support Contact Area"
+msgstr "Área mínima de contacto del soporte"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Los valores más bajos generan más superficies de contacto del soporte."
+
 msgid "Speed of support interface."
 msgstr "Velocidad de la interfaz de soporte"
 

@@ -3,6 +3,7 @@
 #include <cctype>
 
 #include <boost/filesystem/operations.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include "libslic3r/libslic3r.h"

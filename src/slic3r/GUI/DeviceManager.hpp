@@ -9,6 +9,7 @@
 #include <chrono>
 #include <boost/thread.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <boost/filesystem/fstream.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/ProjectTask.hpp"
 #include "slic3r/Utils/json_diff.hpp"

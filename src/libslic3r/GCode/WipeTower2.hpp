@@ -192,6 +192,10 @@ public:
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
+    float get_layer_height() const { return m_layer_height; }
+    float get_rib_length() const { return m_rib_length; }
+    float get_rib_width() const { return m_rib_width; }
+    bool get_is_rib_wall() const{ return m_use_rib_wall; }
 
     enum class WipeTowerLayerType : unsigned char
     {
@@ -453,10 +457,7 @@ private:
 		const WipeTower::box_coordinates  &cleaning_box,
 		float wipe_volume);
 
-    void toolchange_wipe_new(WipeTowerWriter2& writer, 
-        const WipeTower::box_coordinates& cleaning_box, float wipe_volume);
-
-    void toolchange_wipe_new_test(WipeTowerWriter2& writer,
+    void toolchange_wipe_new(WipeTowerWriter2& writer,
         const WipeTower::box_coordinates& cleaning_box, float wipe_length, bool solid_toolchange = false);
     
     Polygon generate_support_rib_wall(WipeTowerWriter2&                 writer,

@@ -23,6 +23,7 @@
 #include "libslic3r/Tesselate.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/GCode/WipeTowerHelper.hpp"
 
 #include "I18N.hpp"
 #include "GUI_App.hpp"
@@ -1684,78 +1685,85 @@ std::vector<int> PartPlate::get_used_extruders()
 	return std::vector(used_extruders_set.begin(), used_extruders_set.end());
 }
 
-Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double w, const double d, int plate_extruder_size, bool use_global_objects) const
+Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double wipe_volume, 
+    const double d, int plate_extruder_size, bool use_global_objects) const
 {
-	Vec3d wipe_tower_size;
+    Vec3d wipe_tower_size;
 
-	double layer_height = 0.08f; // hard code layer height
-	double max_height = 0.f;
-	wipe_tower_size.setZero();
-	wipe_tower_size(0) = w;
+    double layer_height = 0.08f; // hard code layer height
+    double max_height = 0.f;
+    wipe_tower_size.setZero();
+    wipe_tower_size(0) = wipe_volume;
 
-	const ConfigOption* layer_height_opt = config.option("layer_height");
-	if (layer_height_opt)
-		layer_height = layer_height_opt->getFloat();
+    const ConfigOption* layer_height_opt = config.option("layer_height");
+    if (layer_height_opt)
+        layer_height = layer_height_opt->getFloat();
 
-	// empty plate
-	if (plate_extruder_size == 0)
+    // empty plate
+    if (plate_extruder_size == 0)
     {
         std::vector<int> plate_extruders = get_extruders(true);
         plate_extruder_size = plate_extruders.size();
     }
-	if (plate_extruder_size == 0)
-		return wipe_tower_size;
+    if (plate_extruder_size == 0)
+        return wipe_tower_size;
 
-	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
-		if (!use_global_objects && !contain_instance_totally(obj_idx, 0))
-			continue;
+    for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
+        if (!use_global_objects && !contain_instance_totally(obj_idx, 0))
+            continue;
 
-		BoundingBoxf3 bbox = m_model->objects[obj_idx]->bounding_box_exact();
-		max_height = std::max(bbox.size().z(), max_height);
-	}
-	wipe_tower_size(2) = max_height;
+        BoundingBoxf3 bbox = m_model->objects[obj_idx]->bounding_box_exact();
+        max_height = std::max(bbox.size().z(), max_height);
+    }
+    wipe_tower_size(2) = max_height;
 
-	//const DynamicPrintConfig &dconfig = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    //const DynamicPrintConfig &dconfig = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto timelapse_type    = config.option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
-    bool timelapse_enabled = timelapse_type ? (timelapse_type->value == TimelapseType::tlSmooth) : false;
+    bool need_wipe_tower = timelapse_type ? (timelapse_type->value == TimelapseType::tlSmooth) : false;
 
-    double depth = plate_extruder_size == 1 ? 0 : d;
-    if (timelapse_enabled || depth > EPSILON) {
-		float min_wipe_tower_depth = 0.f;
-		auto iter = WipeTower::min_depth_per_height.begin();
-		while (iter != WipeTower::min_depth_per_height.end()) {
-			auto curr_height_to_depth = *iter;
+    double extra_spacing = 1.0;
+    if (config.option("wipe_tower_extra_spacing") != nullptr) {
+        extra_spacing = config.option("wipe_tower_extra_spacing")->getFloat() / 100.;
+    }
+    const ConfigOptionEnum<WipeTowerWallType>* use_rib_wall_opt = config.option<ConfigOptionEnum<WipeTowerWallType>>("wipe_tower_wall_type");
+    bool use_rib_wall = use_rib_wall_opt ? use_rib_wall_opt->value == WipeTowerWallType::wtwRib : false;
+    double rib_width = config.option("wipe_tower_rib_width")->getFloat();
 
-			// This is the case that wipe tower height is lower than the first min_depth_to_height member.
-			if (curr_height_to_depth.first >= max_height) {
-				min_wipe_tower_depth = curr_height_to_depth.second;
-				break;
-			}
-
-			iter++;
-
-			// If curr_height_to_depth is the last member, use its min_depth.
-			if (iter == WipeTower::min_depth_per_height.end()) {
-				min_wipe_tower_depth = curr_height_to_depth.second;
-				break;
-			}
-
-			// If wipe tower height is between the current and next member, set the min_depth as linear interpolation between them
-			auto next_height_to_depth = *iter;
-			if (next_height_to_depth.first > max_height) {
-				float height_base = curr_height_to_depth.first;
-				float height_diff = next_height_to_depth.first - curr_height_to_depth.first;
-				float min_depth_base = curr_height_to_depth.second;
-				float depth_diff = next_height_to_depth.second - curr_height_to_depth.second;
-
-				min_wipe_tower_depth = min_depth_base + (max_height - curr_height_to_depth.first) / height_diff * depth_diff;
-				break;
-			}
-		}
-		depth = std::max((double)min_wipe_tower_depth, depth);
-	}
-	wipe_tower_size(1) = depth;
-	return wipe_tower_size;
+    double depth = 0.;
+    double filament_change_volume = 0.5;
+    {
+        std::vector<double> filament_change_volumes;
+        auto filament_change_opt = m_print->config().option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+        if (filament_change_opt) {
+            filament_change_volumes = filament_change_opt->values;
+        }
+        if (!filament_change_volumes.empty()) {
+            filament_change_volume = *std::max_element(filament_change_volumes.begin(), filament_change_volumes.end());
+        }
+    }
+    double volume = wipe_volume * plate_extruder_size + filament_change_volume * (plate_extruder_size - 1);
+    
+    if (use_rib_wall) {
+        depth = std::sqrt(volume / layer_height * extra_spacing);
+        if (need_wipe_tower || plate_extruder_size > 1) {
+            float min_wipe_tower_depth = WipeTowerHelper::get_limit_depth_by_height(max_height);
+            double volume_depth = depth;
+            depth = std::max((double)min_wipe_tower_depth, depth);
+            rib_width = std::min(rib_width, depth / 2);
+            depth = rib_width + std::max(depth + m_print->config().wipe_tower_extra_rib_length.value, volume_depth);
+            wipe_tower_size(0) = wipe_tower_size(1) = depth;
+        }
+    }
+    else {
+        depth = volume / (layer_height * wipe_volume) * extra_spacing;
+        if (need_wipe_tower || depth > EPSILON) {
+            float min_wipe_tower_depth = WipeTowerHelper::get_limit_depth_by_height(max_height);
+            depth = std::max((double)min_wipe_tower_depth, depth);
+        }
+        wipe_tower_size(0) = wipe_volume;
+        wipe_tower_size(1) = depth;
+    }
+    return wipe_tower_size;
 }
 
 arrangement::ArrangePolygon PartPlate::estimate_wipe_tower_polygon(const DynamicPrintConfig& config, int plate_index, int plate_extruder_size, bool use_global_objects) const

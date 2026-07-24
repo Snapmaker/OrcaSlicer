@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Snapmaker_Orca is an open-source 3D slicer application forked from Bambu Studio, built using C++ with wxWidgets for the GUI and CMake as the build system. The project uses a modular architecture with separate libraries for core slicing functionality, GUI components, and platform-specific code.
+Snapmaker Orca is an open-source FDM 3D slicer forked from OrcaSlicer (which forked from Bambu Studio → PrusaSlicer → Slic3r). Built in C++17 with wxWidgets for the GUI and CMake as the build system. The codebase is 500k+ lines — use search tools extensively rather than browsing.
+
+See also: `AGENTS.md` (repo guidelines), `doc/developer-reference/` (slicing hierarchy, build details, setting docs), `README.md` (end-user build/install), `SECURITY.md` (vulnerability reporting).
 
 ## Build Commands
 
@@ -72,13 +74,19 @@ build_release_vs2022.bat slicer
 ```
 
 ### Build System
-- Uses CMake with minimum version 3.13 (maximum 3.31.x on Windows)
+- Uses CMake. **Windows requires CMake 3.31.x exactly** (mandatory); macOS/Linux minimum 3.13.
 - Primary build directory: `build/`
-- Dependencies are built in `deps/build/`
-- The build process is split into dependency building and main application building
-- Windows builds use Visual Studio generators
-- macOS builds use Xcode by default, Ninja with -x flag
-- Linux builds use Ninja generator
+- Dependencies are built in `deps/build/` (vendored snapshots in `deps/`, `deps_src/` — do not modify without recording upstream tag in the PR).
+- The build process is split into dependency building and main application building.
+- Windows builds use Visual Studio generators; macOS uses Xcode by default (Ninja with -x); Linux uses Ninja.
+
+### Direct CMake (alternative to platform scripts)
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target Snapmaker_Orca --config Release --parallel
+cmake --build build --target tests
+ctest --test-dir build --output-on-failure
+```
 
 ### Testing
 Tests are located in the `tests/` directory and use the Catch2 testing framework. Test structure:
@@ -112,7 +120,21 @@ Run individual test suites:
 ./tests/sla_print/sla_print_tests
 ```
 
+Run a single test case (Catch2 syntax):
+```bash
+./tests/libslic3r/libslic3r_tests "TestName"           # by name
+./tests/libslic3r/libslic3r_tests -L fast              # only fast-tagged specs
+```
+Tag long-running cases so `ctest -L fast` stays useful. Test fixtures and sample G-code live in `tests/data/`.
+
 ## Architecture
+
+### Slicing pipeline (start here for navigation)
+Slicing logic is hard to locate by browsing. The full call flow from UI click to algorithm is diagrammed in `doc/developer-reference/slicing-hierarchy.md`. The spine is:
+
+`Plater::priv::on_action_slice_plate` → `Plater::reslice` → `BackgroundSlicingProcess::thread_proc` → `Print::process` → `PrintObject::slice` / `PrintObject::make_perimeters`
+
+Most slicing runs on background threads — start from `BackgroundSlicingProcess::start()` when tracing. `libslic3r/Print.cpp` orchestrates the FFF pipeline; `PrintConfig.cpp` defines every print/printer/material setting (the source of truth for option names, defaults, bounds).
 
 ### Core Libraries
 - **libslic3r/**: Core slicing engine and algorithms (platform-independent)
@@ -188,19 +210,20 @@ Run individual test suites:
 
 ### Code Style and Standards
 - **C++17 standard** with selective C++20 features
-- **Naming conventions**: PascalCase for classes, snake_case for functions/variables
-- **Header guards**: Use `#pragma once` 
-- **Memory management**: Prefer smart pointers, RAII patterns
-- **Thread safety**: Use TBB for parallelization, be mindful of shared state
+- **`.clang-format` is enforced**: 4-space indent, 140-column limit, aligned initializers, brace wrapping. Run `clang-format -i <file>` before committing (CMake `clang-format` target available when LLVM is on PATH).
+- **Naming**: `CamelCase` classes, `snake_case` functions/locals, `SCREAMING_CASE` constants (matches AGENTS.md; note existing code mixes this with PascalCase classes — follow nearby code).
+- **Header guards**: `#pragma once`
+- **Memory**: smart pointers, RAII
+- **Threading**: TBB for parallelization; be mindful of shared state across background slicing threads.
 
 ### Common Development Tasks
 
 #### Adding New Print Settings
-1. Define setting in `PrintConfig.cpp` with proper bounds and defaults
-2. Add UI controls in appropriate GUI components  
-3. Update serialization in config save/load
-4. Add tooltips and help text for user guidance
-5. Test with different printer profiles
+1. Define setting in `src/libslic3r/PrintConfig.cpp` (the source of truth — option name, type, default, bounds, tooltip key).
+2. Add UI controls in the appropriate `src/slic3r/GUI/` component (typically an OG_Settings or Tab subclass).
+3. Serialization in config save/load is driven by the PrintConfig definition — rarely needs manual work.
+4. Document the setting under `doc/print_settings/` (organized by category: quality, strength, speed, support, multimaterial, others).
+5. Test with different printer profiles.
 
 #### Modifying Slicing Algorithms  
 1. Core algorithms live in `libslic3r/` subdirectories
@@ -255,3 +278,9 @@ Run individual test suites:
 - **Performance benchmarks** help catch performance regressions
 - **Memory leak** detection important for long-running GUI application
 - **Cross-platform** testing required before releases
+
+### Commit & PR Conventions
+- Sentence-style subject lines with optional issue ref, e.g. `Fix grid lines origin for multiple plates (#10724)`. Squash fixups locally before opening a PR.
+- Complete `.github/pull_request_template.md`. Include reproduction steps or screenshots for UI changes; mention impacted presets or translations.
+- Link issues via `Closes #NNNN`. Call out dependency bumps or profile migrations explicitly for maintainer review.
+- Do not commit API tokens or printer credentials; use `sandboxes/` for experimental settings.

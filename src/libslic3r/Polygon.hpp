@@ -99,6 +99,8 @@ public:
 inline bool operator==(const Polygon &lhs, const Polygon &rhs) { return lhs.points == rhs.points; }
 inline bool operator!=(const Polygon &lhs, const Polygon &rhs) { return lhs.points != rhs.points; }
 
+Polygon rounding_polygon(Polygon& polygon, double rounding = 2., double angle_tol = 30. / 180. * PI);
+
 BoundingBox get_extents(const Polygon &poly);
 BoundingBox get_extents(const Polygons &polygons);
 BoundingBox get_extents_rotated(const Polygon &poly, double angle);

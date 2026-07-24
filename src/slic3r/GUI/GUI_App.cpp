@@ -2286,10 +2286,13 @@ void GUI_App::copy_web_resources() {
             boost::property_tree::ptree source_config, target_config;
             boost::property_tree::read_json(source_version_file.string(), source_config);
             boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+            std::string source_version_str = source_config.get<std::string>("version", "0");
+            std::string target_version_str = target_config.get<std::string>("version", "0");
 
-            if (source_build_number_str > target_build_number_str) {
+            Semver source_version(source_version_str);
+            Semver target_version(target_version_str);
+
+            if (target_version < source_version) {
                 copy_bundled_flutter_web(true);
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {

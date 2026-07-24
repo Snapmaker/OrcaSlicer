@@ -354,11 +354,25 @@ double color_delta_e00(const wxColour& lhs, const wxColour& rhs)
 
 MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string>& physical_colors,
                                                           const wxColour&                 target_color,
-                                                          int                             min_component_percent)
+                                                          int                             min_component_percent,
+                                                          int                             max_component_percent)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
         return best;
+
+    // Validate max_component_percent symmetrically with batch_match_model_colors's
+    // min check. Range [50, 100]: the floor matches loop_min_weight's clamp ceiling
+    // (a max < the effective min makes the search window empty and silently yields no
+    // recipe); 100 is the physical cap. Out-of-range input returns an invalid result
+    // rather than letting the search loops run with nonsensical bounds (e.g. a value
+    // >100 would widen the upper bound past 100% and silently bypass the cap).
+    if (max_component_percent < 50 || max_component_percent > 100) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "build_best_color_match_recipe: max_component_percent=" << max_component_percent
+            << " out of [50, 100]; returning invalid recipe";
+        return best;
+    }
 
     // ---- Step 1: build palette & pre-convert to Lab ----
     const size_t n = physical_colors.size();
@@ -424,7 +438,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     for (size_t a = 0; a < n; ++a) {
         for (size_t b = a + 1; b < n; ++b) {
             if (!compat[a][b]) continue;
-            for (int pct = loop_min_weight; pct <= 100 - loop_min_weight; pct += k_coarse_step) {
+            for (int pct = std::max(loop_min_weight, 100 - max_component_percent); pct <= std::min(100 - loop_min_weight, max_component_percent); pct += k_coarse_step) {
                 const CIELab& blended_lab = lut.get(a, b, pct);
                 double de = delta_e_lab(target_lab, blended_lab);
                 update_best_pair(unsigned(a + 1), unsigned(b + 1), pct, de);
@@ -442,8 +456,8 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     while (!heap.empty()) {
         auto [de, a, b, coarse_pct] = heap.top();
         heap.pop();
-        int fine_min = std::max(loop_min_weight, coarse_pct - k_coarse_step + 1);
-        int fine_max = std::min(100 - loop_min_weight, coarse_pct + k_coarse_step - 1);
+        int fine_min = std::max(std::max(loop_min_weight, 100 - max_component_percent), coarse_pct - k_coarse_step + 1);
+        int fine_max = std::min(std::min(100 - loop_min_weight, max_component_percent), coarse_pct + k_coarse_step - 1);
         for (int pct = fine_min; pct <= fine_max; ++pct) {
             if ((pct - loop_min_weight) % k_coarse_step == 0) continue; // already evaluated in coarse
             const CIELab& blended_lab = lut.get(a - 1, b - 1, pct);
@@ -498,10 +512,10 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 unsigned int a = candidate_pool[fi], b = candidate_pool[fj], c = candidate_pool[fk];
                 if (!compat[a - 1][b - 1] || !compat[b - 1][c - 1] || !compat[a - 1][c - 1]) continue;
 
-                for (int wa = loop_min_weight; wa <= 100 - 2 * loop_min_weight; wa += k_triple_coarse_step) {
+                for (int wa = loop_min_weight; wa <= std::min(100 - 2 * loop_min_weight, max_component_percent); wa += k_triple_coarse_step) {
                     for (int wb = loop_min_weight; wa + wb <= 100 - loop_min_weight; wb += k_triple_coarse_step) {
                         int wc = 100 - wa - wb;
-                        if (wc < loop_min_weight) continue;
+                        if (wc < loop_min_weight || wc > max_component_percent) continue;
                         CIELab blended = blend_weighted_lab_accurate(palette, {a, b, c}, {wa, wb, wc});
                         double  de      = delta_e_lab(target_lab, blended);
                         // Update best triple
@@ -535,15 +549,15 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
         TripleEntry te = triple_heap.top();
         triple_heap.pop();
         int wa_min = std::max(loop_min_weight, te.wa - k_triple_coarse_step + 1);
-        int wa_max = std::min(100 - 2 * loop_min_weight, te.wa + k_triple_coarse_step - 1);
+        int wa_max = std::min(std::min(100 - 2 * loop_min_weight, max_component_percent), te.wa + k_triple_coarse_step - 1);
         for (int wa = wa_min; wa <= wa_max; ++wa) {
             if ((wa - loop_min_weight) % k_triple_coarse_step == 0) continue;
             int wb_min = std::max(loop_min_weight, te.wb - k_triple_coarse_step + 1);
-            int wb_max = std::min(100 - wa - loop_min_weight, te.wb + k_triple_coarse_step - 1);
+            int wb_max = std::min(std::min(100 - wa - loop_min_weight, max_component_percent), te.wb + k_triple_coarse_step - 1);
             for (int wb = wb_min; wb <= wb_max; ++wb) {
                 if ((wb - loop_min_weight) % k_triple_coarse_step == 0) continue;
                 int wc = 100 - wa - wb;
-                if (wc < loop_min_weight) continue;
+                if (wc < loop_min_weight || wc > max_component_percent) continue;
                 CIELab blended = blend_weighted_lab_accurate(palette, {te.a, te.b, te.c}, {wa, wb, wc});
                 double  de2    = delta_e_lab(target_lab, blended);
                 if (!best.valid || de2 + 1e-6 < best.delta_e) {
@@ -1292,9 +1306,13 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 
     auto& filament_colours = print.config().filament_colour.values;
 
-    // Also read mixed-filament display colors for virtual ID lookup
+    // Also read mixed-filament display colors for virtual ID lookup.
+    // NOTE: Do NOT bind a reference via a ternary with a temporary on one branch —
+    // the temporary would be destroyed at the end of the full expression, leaving
+    // a dangling reference (use-after-scope UB). Use the raw pointer and null-check
+    // it only at the virtual-lookup call site; the physical-colour path does not
+    // depend on preset_bundle at all.
     auto* pb = wxGetApp().preset_bundle;
-    auto& mgr = pb ? pb->mixed_filaments : (MixedFilamentManager&)MixedFilamentManager();
 
     for (const PrintObject* obj : print.objects()) {
         if (!obj) continue;
@@ -1313,8 +1331,15 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
                     // Physical filament color
                     color_hex = filament_colours[idx];
                 } else {
-                    // Virtual mixed filament — look up its display_color
-                    const MixedFilament* mf = mgr.mixed_filament_from_id(
+                    // Virtual mixed filament — look up its display_color.
+                    // Early startup or rare call paths may have no preset_bundle;
+                    // skip virtual-colour resolution then rather than dereference null.
+                    if (pb == nullptr) {
+                        BOOST_LOG_TRIVIAL(warning)
+                            << "extract_model_colors: preset_bundle null, skipping virtual filament " << eid;
+                        continue;
+                    }
+                    const MixedFilament* mf = pb->mixed_filaments.mixed_filament_from_id(
                         static_cast<unsigned int>(eid), filament_colours.size());
                     if (mf && !mf->display_color.empty())
                         color_hex = mf->display_color;
@@ -1407,7 +1432,7 @@ void assign_batch_virtual_filament_ids(
             << "assign_batch_virtual_filament_ids: invalid num_physical=" << num_physical;
         return;
     }
-    unsigned int next_virtual_id = unsigned(num_physical + existing_mixed_count + 1);
+    unsigned int next_virtual_id = static_cast<unsigned int>(num_physical + existing_mixed_count + 1);
 
     for (auto& mapping : result.mappings) {
         if (mapping.is_pure_recipe) {
@@ -1430,6 +1455,7 @@ BatchMatchResult batch_match_model_colors(
     const std::vector<ModelColorEntry>&          model_colors,
     const std::vector<std::string>&             physical_colors,
     int                                          min_component_percent,
+    int                                          max_component_percent,
     std::shared_ptr<std::atomic<bool>>           cancel_token,
     std::function<void(int,int)>                 progress_callback)
 {
@@ -1452,8 +1478,8 @@ BatchMatchResult batch_match_model_colors(
         return result;
     }
 
-    const int total = int(model_colors.size());
-    for (int i = 0; i < total; ++i) {
+    const int total_count = static_cast<int>(model_colors.size());
+    for (size_t i = 0; i < model_colors.size(); ++i) {
         if (cancel_token && cancel_token->load()) {
             result.success = false;
             result.error_message = "Cancelled by user";
@@ -1463,7 +1489,7 @@ BatchMatchResult batch_match_model_colors(
 
         const auto& entry = model_colors[i];
         MixedColorMatchRecipeResult recipe =
-            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent);
+            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent, max_component_percent);
 
         if (!recipe.valid) {
             BOOST_LOG_TRIVIAL(warning)
@@ -1485,7 +1511,7 @@ BatchMatchResult batch_match_model_colors(
         result.mappings.push_back(mapping);
 
         if (progress_callback)
-            progress_callback(i + 1, total);
+            progress_callback(static_cast<int>(i) + 1, total_count);
     }
 
     if (result.mappings.empty()) {
@@ -1509,7 +1535,7 @@ BatchMatchResult batch_match_model_colors(
         result.selected_physical_ids.push_back(static_cast<unsigned int>(i));
 
     BOOST_LOG_TRIVIAL(info)
-        << "batch_match: " << total << " model colors -> "
+        << "batch_match: " << total_count << " model colors -> "
         << result.mappings.size() << " unique recipes, avg DeltaE=" << result.avg_delta_e;
     return result;
 }
@@ -1550,6 +1576,7 @@ std::vector<std::string> recommend_best_filament_combo(
     const std::vector<ModelColorEntry>&  model_colors,
     const std::vector<std::string>&      all_preset_colors,
     int                                  min_component_percent,
+    int                                  max_component_percent,
     std::shared_ptr<std::atomic<bool>>   cancel_token)
 {
     if (model_colors.empty() || all_preset_colors.size() < 4)
@@ -1595,7 +1622,7 @@ std::vector<std::string> recommend_best_filament_combo(
                     double sum_de = 0.0;
                     int matched = 0;
                     for (const auto& mc : model_colors) {
-                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent);
+                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent, max_component_percent);
                         if (recipe.valid) {
                             sum_de += recipe.delta_e;
                             ++matched;
@@ -1699,3 +1726,4 @@ void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
 }
 
 }} // namespace Slic3r::GUI
+

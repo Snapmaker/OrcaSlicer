@@ -2367,7 +2367,7 @@ Sidebar::Sidebar(Plater *parent)
         std::unordered_map<unsigned int, uint64_t> dialog_vid_to_sid;
         const size_t dialog_num_physical = wxGetApp().preset_bundle->filament_presets.size();
         {
-            unsigned int vid = (unsigned int)dialog_num_physical + 1;
+            unsigned int vid = static_cast<unsigned int>(dialog_num_physical) + 1;
             for (const MixedFilament& mf : mgr.mixed_filaments()) {
                 if (!mf.enabled || mf.deleted) continue;
                 dialog_vid_to_sid[vid++] = mf.stable_id;
@@ -2404,8 +2404,13 @@ Sidebar::Sidebar(Plater *parent)
             // Write before set_num_filaments so auto_generate sees CMYG palette.
             if (fc) fc->values = colors_vec;
 
-            pb->set_num_filaments((unsigned int)target_count, std::vector<std::string>{});
-            wxGetApp().plater()->on_filaments_change((int)target_count);
+            pb->set_num_filaments(static_cast<unsigned int>(target_count), std::vector<std::string>{});
+            // Assign the Full Spectrum filament preset to slots 1-4 so the
+            // combobox displays the preset name instead of F1-F4 fallback.
+            for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
+                pb->set_filament_preset(i, kFullSpectrumPresetName);
+
+            wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
         } else {
             ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
             colors_vec = co ? co->values : std::vector<std::string>{};
@@ -2450,7 +2455,7 @@ Sidebar::Sidebar(Plater *parent)
                 // Locate that row in the CURRENT mixed list; record its vid.
                 MixedFilament* target     = nullptr;
                 unsigned int   target_vid = 0;
-                unsigned int   vid        = (unsigned int)cur_num_physical + 1;
+                unsigned int   vid        = static_cast<unsigned int>(cur_num_physical) + 1;
                 for (MixedFilament& mf : mgr.mixed_filaments()) {
                     if (!mf.enabled || mf.deleted) continue;
                     if (mf.stable_id == sid) { target = &mf; target_vid = vid; break; }
@@ -2499,12 +2504,12 @@ Sidebar::Sidebar(Plater *parent)
         // Physical-slot ids are identity in this flow (nothing is deleted
         // before apply); ids whose row no longer exists are dropped.
         {
-            const unsigned int cur_num_physical = (unsigned int)colors_vec.size();
+            const unsigned int cur_num_physical = static_cast<unsigned int>(colors_vec.size());
             for (auto& mapping : model_result.mappings) {
                 std::vector<unsigned int> translated;
                 translated.reserve(mapping.source_extruder_ids.size());
                 for (unsigned int src : mapping.source_extruder_ids) {
-                    if (src <= (unsigned int)dialog_num_physical) {
+                    if (src <= static_cast<unsigned int>(dialog_num_physical)) {
                         translated.push_back(src); // physical slot: identity
                         continue;
                     }
@@ -8316,43 +8321,67 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
         // filament=false) bakes into the composite remap (tail-truncation).
         // If this ever flips to ascending, painting is silently remapped to
         // wrong colours. Source: compute_redundant_filaments @ MixedFilament.cpp.
-        for (size_t i = 1; i < red.redundant_physical.size(); ++i)
-            assert(red.redundant_physical[i] < red.redundant_physical[i - 1]);
-
-        // RAII: bump the single batch-deletion flag for the duration of the
-        // loop so on_filaments_delete (Sidebar + Plater) skip per-deletion panel
-        // rebuild and painting remap. Exception- and reentrancy-safe.
-        Plater *plater = wxGetApp().plater();
-        Plater::BatchPhysicalDeletionGuard guard(*plater);
-        for (unsigned int redundant_id : red.redundant_physical)
-            delete_filament(redundant_id - 1, -1,
-                            /*skip_dependency_check=*/true,
-                            /*skip_update=*/true);
-
-        // ONE composite painting remap: build old→new from the snapshot, apply
-        // to every volume.  Equivalent to K sequential single-deletion remaps
-        // (remap is a pure pointwise state_map lookup, composable).
-        pb->update_mixed_filament_id_remap(old_mixed_snapshot, old_num_physical, new_num_physical);
-        const std::vector<unsigned int> composite_remap = pb->consume_last_filament_id_remap();
-        if (!composite_remap.empty()) {
-            EnforcerBlockerStateMap state_map;
-            for (size_t i = 0; i < state_map.size(); ++i)
-                state_map[i] = EnforcerBlockerType(i);
-            const size_t total_filaments = new_num_physical + pb->mixed_filaments.enabled_count();
-            for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
-                const unsigned int mapped = composite_remap[i];
-                if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
-                    state_map[i] = EnforcerBlockerType::NONE;
-                else
-                    state_map[i] = EnforcerBlockerType(mapped);
+        // The check is enforced at RUNTIME (not just assert) because the failure
+        // mode is silent wrong-colour mapping and assert() is compiled out under
+        // NDEBUG (Release builds). On violation we fall back to per-deletion
+        // updates (skip_update=false) so each deletion's own remap keeps colours
+        // correct, instead of the batched composite path that depends on the order.
+        bool descending_ok = true;
+        for (size_t i = 1; i < red.redundant_physical.size(); ++i) {
+            if (red.redundant_physical[i] >= red.redundant_physical[i - 1]) {
+                BOOST_LOG_TRIVIAL(error)
+                    << "redundant_physical descending invariant violated at index " << i
+                    << " (" << red.redundant_physical[i] << " >= " << red.redundant_physical[i - 1]
+                    << "); falling back to per-deletion update to avoid silent wrong-colour mapping";
+                descending_ok = false;
+                break;
             }
-            for (ModelObject* mo : wxGetApp().model().objects)
-                for (ModelVolume* mv : mo->volumes)
-                    if (mv->type() == ModelVolumeType::MODEL_PART)
-                        // Pass total_filaments (physical + mixed), NOT new_num_physical —
-                        // remap_enforcer_block_types clips any state > max_type to NONE,
-                        // and remapped mixed virtual ids (N+1..total) must survive.
-                        mv->remap_extruder_ids(total_filaments, state_map);
+        }
+        assert(descending_ok);
+
+        if (descending_ok) {
+            // RAII: bump the single batch-deletion flag for the duration of the
+            // loop so on_filaments_delete (Sidebar + Plater) skip per-deletion panel
+            // rebuild and painting remap. Exception- and reentrancy-safe.
+            Plater *plater = wxGetApp().plater();
+            Plater::BatchPhysicalDeletionGuard guard(*plater);
+            for (unsigned int redundant_id : red.redundant_physical)
+                delete_filament(redundant_id - 1, -1,
+                                /*skip_dependency_check=*/true,
+                                /*skip_update=*/true);
+
+            // ONE composite painting remap: build old→new from the snapshot, apply
+            // to every volume.  Equivalent to K sequential single-deletion remaps
+            // (remap is a pure pointwise state_map lookup, composable).
+            pb->update_mixed_filament_id_remap(old_mixed_snapshot, old_num_physical, new_num_physical);
+            const std::vector<unsigned int> composite_remap = pb->consume_last_filament_id_remap();
+            if (!composite_remap.empty()) {
+                EnforcerBlockerStateMap state_map;
+                for (size_t i = 0; i < state_map.size(); ++i)
+                    state_map[i] = EnforcerBlockerType(i);
+                const size_t total_filaments = new_num_physical + pb->mixed_filaments.enabled_count();
+                for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
+                    const unsigned int mapped = composite_remap[i];
+                    if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
+                        state_map[i] = EnforcerBlockerType::NONE;
+                    else
+                        state_map[i] = EnforcerBlockerType(mapped);
+                }
+                for (ModelObject* mo : wxGetApp().model().objects)
+                    for (ModelVolume* mv : mo->volumes)
+                        if (mv->type() == ModelVolumeType::MODEL_PART)
+                            // Pass total_filaments (physical + mixed), NOT new_num_physical —
+                            // remap_enforcer_block_types clips any state > max_type to NONE,
+                            // and remapped mixed virtual ids (N+1..total) must survive.
+                            mv->remap_extruder_ids(total_filaments, state_map);
+            }
+        } else {
+            // Safe fallback: delete one by one with full per-deletion update so each
+            // deletion's own painting remap runs. Slower but colour-correct.
+            for (unsigned int redundant_id : red.redundant_physical)
+                delete_filament(redundant_id - 1, -1,
+                                /*skip_dependency_check=*/true,
+                                /*skip_update=*/false);
         }
     }
 

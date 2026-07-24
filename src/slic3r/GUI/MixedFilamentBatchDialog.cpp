@@ -5,6 +5,7 @@
 #include "I18N.hpp"
 #include "PresetBundle.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "Widgets/StaticBox.hpp"
 #include "Widgets/Button.hpp"
@@ -15,6 +16,7 @@
 #include "BitmapCache.hpp"
 
 #include <unordered_map>
+#include <set>
 #include <algorithm>
 
 #include <wx/scrolwin.h>
@@ -23,10 +25,40 @@
 
 namespace Slic3r { namespace GUI {
 
+// Canonical Full Spectrum palette used as a fallback when load_full_spectrum_colors() fails
+// to read the live preset (library not loaded, preset missing, or <4 validated colors).
+// Mirrors filaments_colours.json's "Snapmaker PLA Full Spectrum @U1" single-color SKUs.
+// Single source of truth for the fallback path in both build_recommended_card and
+// launch_background_match — avoids the old duplicate CMYW_ENTRIES / CMYW_COLORS constants.
+static const std::vector<std::string> FULL_SPECTRUM_FALLBACK_COLORS = {
+    "#08ABFB", // semi-translucent cyan
+    "#D93B90", // semi-translucent magenta
+    "#F9ED3D", // semi-translucent yellow
+    "#9199A4", // semi-translucent gray
+};
+
 // Columns for the Color Mapping legend grid. Fixed (not growable) so each mapping
 // item keeps its natural width and the card height is computed correctly on macOS
 // (same rationale as MixedFilamentDialog's fixed-col swatch grid).
 static constexpr int LEGEND_GRID_COLS = 4;
+
+// Component-weight bounds for recipe generation (see launch_background_match).
+// Recommended mode caps a single component at 70% (product spec); manual mode is
+// unrestricted — an over-70% recipe surfaces as an advisory via check_manual_recipe_ratio
+// instead of being hard-rejected at match time.
+static constexpr int kMinComponentPercent = 0;   // recommended mode floor (near-pure allowed)
+static constexpr int kMaxComponentPercent = 70;  // recommended mode cap; also the advisory threshold
+
+// Product spec: a model is capped at 64 distinct filament colors. Colors past the cap are
+// dropped (see load_model_colors) and a deferred warning is shown once build_ui is up.
+static constexpr size_t kMaxColors = 64;
+
+// Card geometry (DIP). CARD_WIDTH_DIP leaves room for a vertical scrollbar inside the
+// 500-wide dialog: 500 − 2×12(margin) − 17(scrollbar) = 459. FILAMENT_COL_WIDTH_DIP pins
+// each 2×2 grid cell so slots 1/2 and 3/4 stay equal regardless of filament-name length
+// (wxFlexGridSizer otherwise sizes columns by content, so uneven names shift the columns).
+static constexpr int CARD_WIDTH_DIP        = 459;  // 500 − 2×12 − 17
+static constexpr int FILAMENT_COL_WIDTH_DIP = 207; // (459 − 2×16(padding) − 12(gap)) / 2 = 207.5 → floor
 
 // Preview panel design sizes (DIP), kept in sync with the RoundedPreviewPanel ctor args
 // in build_preview_card. Used as the std::max floor when reading GetClientSize() so an
@@ -258,6 +290,12 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         else
             m_tray_index = 1;
     }
+    // Pre-warm FilamentColorLibrary on the main thread. EnsureLoaded() is NOT thread-safe
+    // (_loaded is an unlocked bool, and it performs file I/O + JSON parse), so it MUST run
+    // before the worker thread in launch_background_match() starts. After warm-up, the
+    // worker's only call into the library is the read-only FindFilamentByName (a map lookup),
+    // which is safe to run concurrently with the main thread. See load_full_spectrum_colors().
+    FilamentColorLibrary::Instance().EnsureLoaded();
     load_model_colors();
     build_ui();
     set_match_buttons_state(false);
@@ -646,6 +684,77 @@ void MixedFilamentBatchDialog::load_model_colors()
             std::vector<unsigned int>{static_cast<unsigned int>(i + 1)}
         });
     }
+
+    // Product spec: cap at 64 distinct colors. This loop is the dedup source (each push is
+    // a unique validated color), so the cap applies to unique colors. Drop the tail beyond
+    // kMaxColors. The warning is deferred to build_ui because m_warning_panel is still null
+    // here — the ctor runs load_model_colors before build_banners/build_ui, so calling
+    // display_warning now would hit the early `if (!m_warning_panel) return` and be lost.
+    while (m_model_colors.size() > kMaxColors) {
+        m_model_colors.pop_back();
+        m_pending_64_color_warning = true;
+    }
+}
+
+// The Full Spectrum preset name shown in the name column of every recommended-card row.
+// Per product spec the name stays the preset label across all four slots; only the swatch
+// color varies. Falls back to the raw name when the preset bundle is unavailable.
+static wxString get_full_spectrum_preset_label()
+{
+    static const std::string kPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
+    if (auto* pb = wxGetApp().preset_bundle) {
+        if (auto* p = pb->filaments.find_preset(kPresetName))
+            return wxString::FromUTF8(p->label(false));
+    }
+    return wxString::FromUTF8(kPresetName);
+}
+
+// Load the real recommended-mode palette colors from the Full Spectrum filament preset
+// (filaments_colours.json via FilamentColorLibrary). Returns the list of validated hex colors
+// (one per single-color SKU); empty on any failure so the caller falls back to the canonical
+// CMYW palette. NOTE: only the swatch COLORS come from here — the name column is the preset
+// label (see get_full_spectrum_preset_label), NOT the per-color name.
+//
+// Safety review closure (harness: input-validation, thread-safety):
+//   - (N) hex validation: every hex is re-checked via try_parse_color_match_hex; invalid
+//     values are skipped with a warning (defense-in-depth on top of FilamentColorLibrary's
+//     own NormalizeFilamentHexColor).
+//   - Thread safety: FilamentColorLibrary::EnsureLoaded() is NOT thread-safe (_loaded is an
+//     unlocked bool). The dialog ctor pre-warms it on the main thread; this function only
+//     does a read-only FindFilamentByName afterwards, so it is safe to call from the worker
+//     thread in launch_background_match. EnsureLoaded() here is a cheap no-op after warm-up.
+//   - (HIGH) distinct logging: each failure path emits its own BOOST_LOG_TRIVIAL(warning).
+static std::vector<std::string> load_full_spectrum_colors()
+{
+    const std::string kPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
+    if (!FilamentColorLibrary::Instance().EnsureLoaded()) {
+        BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: FilamentColorLibrary not loaded, fallback to canonical palette";
+        return {};
+    }
+    FilamentColorInfo info;
+    if (!FilamentColorLibrary::Instance().FindFilamentByName(kPresetName, info)) {
+        BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: Full Spectrum preset not found in color library, fallback";
+        return {};
+    }
+
+    std::vector<std::string> result;
+    for (const FilamentColorItem& item : info.colors) {
+        // Only single-color SKUs qualify as palette candidates; skip dual-color / gradient
+        // entries (e.g. PLA Silk's Sunset Ember) so they don't pollute the palette.
+        if (item.colorData.colors.size() != 1)
+            continue;
+        const std::string& hex = item.colorData.colors[0];
+        // (N) Re-validate hex: FilamentColorLibrary normalises format, but double-check the
+        // color is wxColour-constructible before it flows into get_extruder_color_icon /
+        // recommend_best_filament_combo.
+        wxColour parsed;
+        if (!try_parse_color_match_hex(wxString::FromUTF8(hex.c_str()), parsed)) {
+            BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: invalid hex '" << hex << "' in Full Spectrum, skipped";
+            continue;
+        }
+        result.push_back(hex);
+    }
+    return result;
 }
 
 void MixedFilamentBatchDialog::update_recommended_card()
@@ -654,14 +763,9 @@ void MixedFilamentBatchDialog::update_recommended_card()
     const auto& colors = m_result.recommended_physical_colors;
     if (colors.size() < 4) return;
 
-    // Color name lookup — maps from hex in CMYW palette back to a
-    // human-readable label.  Covers the 4 canonical colors.
-    static const std::unordered_map<std::string, wxString> kColorName = {
-        {"#08ABFB", _L("Blue")},
-        {"#D93B90", _L("Magenta")},
-        {"#F9ED3D", _L("Yellow")},
-        {"#9199A4", _L("Gray")},
-    };
+    // NOTE: the name column shows the preset label (Snapmaker PLA Full Spectrum …) on every
+    // row, NOT the per-color name — per product spec only the swatch color varies per row.
+    // So no hex→name lookup is needed here; just the constant preset label.
 
     for (int i = 0; i < 4; ++i) {
         // Update swatch bitmap
@@ -673,13 +777,9 @@ void MixedFilamentBatchDialog::update_recommended_card()
                 m_recommended_swatches[i]->SetBitmap(*icon);
         }
 
-        // Update label text
+        // Update label text — the preset name (same on all four rows).
         if (m_recommended_labels[i]) {
-            auto it = kColorName.find(colors[i]);
-            m_recommended_labels[i]->SetLabel(
-                it != kColorName.end()
-                    ? it->second
-                    : wxString::Format("F%d", int(i + 1)));
+            m_recommended_labels[i]->SetLabel(get_full_spectrum_preset_label());
         }
     }
 
@@ -745,6 +845,12 @@ void MixedFilamentBatchDialog::build_ui()
     // update_nav_arrow_state is otherwise only called from combo/nav callbacks, so the
     // initial state was never set.
     update_nav_arrow_state();
+
+    // Deferred from load_model_colors: if the model had >64 distinct colors, the extras were
+    // dropped there. m_warning_panel is now created (build_banners ran before build_ui), so
+    // the advisory can finally be shown.
+    if (m_pending_64_color_warning)
+        display_warning(_L("Filament color limit reached (64 colors). Colors over the limit have been removed."));
 }
 
 void MixedFilamentBatchDialog::build_banners()
@@ -871,8 +977,8 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // All four cards share the same fixed width + centered alignment so their edges line up
     // with consistent margins — mirrors MixedFilamentDialog's fixed-width (325) cards.
-    card->SetMinSize(wxSize(FromDIP(460), -1));
-    card->SetMaxSize(wxSize(FromDIP(460), -1));
+    card->SetMinSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
+    card->SetMaxSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
     card->Hide();
     m_manual_card = card;
     auto* s = new wxBoxSizer(wxVERTICAL);
@@ -937,6 +1043,12 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         // wxPanel/StaticText don't inherit the card's bg — set white explicitly so the
         // row doesn't show the dialog's #F8F7F7 through (same as MixedFilamentDialog rows).
         panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Pin a fixed column width so the 2×2 slots stay equal regardless of how long the
+        // selected filament's name is. wxFlexGridSizer sizes columns by content (best size)
+        // first, then distributes leftover via AddGrowableCol(0/1, 1) — without a pinned
+        // base width, slots 1/2 and 3/4 drift apart when names differ in length.
+        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
+        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
 
         // §68: read-only selection would normally call for wxChoice, but this
@@ -978,7 +1090,8 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
     s->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     card->SetSizer(s);
     // Horizontal margin only; the card-to-card vertical gap is added at the build_ui call site.
-    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
+    // 12px pairs with CARD_WIDTH_DIP (459 = 500 − 2×12 − 17 scrollbar) so cards stay centered.
+    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
@@ -989,15 +1102,16 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the manual card (see build_manual_card).
-    card->SetMinSize(wxSize(FromDIP(460), -1));
-    card->SetMaxSize(wxSize(FromDIP(460), -1));
+    card->SetMinSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
+    card->SetMaxSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
     card->Hide();
     m_recommended_card = card;
     auto* s = new wxBoxSizer(wxVERTICAL);
 
-    // Title
+    // Title — generic "Filament Setup" (no longer "(CMYW)"); colors are now driven by the
+    // Full Spectrum preset, so the title doesn't hardcode a color model.
     {
-        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup (CMYW)"));
+        auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup"));
         lbl->SetFont(Label::Body_14);
         // §17/§81: explicit fg+bg so the label matches the card on wxMSW and
         // resists GTK theme override.
@@ -1010,15 +1124,22 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     // see §137).
     s->AddSpacer(FromDIP(10)); // title-to-grid gap per Figma spec
 
-    // 2x2 grid: numbered CMYW swatch (20x20) + bordered name field. Initially populated
-    // with the canonical CMYW order; update_recommended_card() refreshes swatches/names
-    // after a match reflects the palette order chosen by recommend_best_filament_combo.
-    static const std::vector<std::pair<std::string, wxString>> CMYW_ENTRIES = {
-        {"#08ABFB", _L("Blue")},
-        {"#D93B90", _L("Magenta")},
-        {"#F9ED3D", _L("Yellow")},
-        {"#9199A4", _L("Gray")},
-    };
+    // Load the real palette colors from the Full Spectrum preset (filaments_colours.json).
+    // Falls back to the canonical palette when the preset is missing or yields <4 validated
+    // single-color SKUs. Only the swatch COLORS come from here; the name column is the preset
+    // label (see get_full_spectrum_preset_label). See load_full_spectrum_colors() for the
+    // safety review (hex validation, thread safety, distinct logging).
+    std::vector<std::string> palette = load_full_spectrum_colors();
+    if (palette.size() < 4) {
+        palette.clear();
+        for (const std::string& c : FULL_SPECTRUM_FALLBACK_COLORS)
+            palette.push_back(c);
+    }
+    const int fill_count = std::min<int>(4, static_cast<int>(palette.size()));
+
+    // 2x2 grid: numbered swatch (20x20) + bordered name field. update_recommended_card()
+    // refreshes swatches after a match reflects the palette order chosen by
+    // recommend_best_filament_combo.
     auto* grid = new wxFlexGridSizer(2, FromDIP(12), FromDIP(12));
     grid->AddGrowableCol(0, 1);
     grid->AddGrowableCol(1, 1);
@@ -1026,21 +1147,29 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         auto* panel = new wxPanel(card, wxID_ANY);
         // wxPanel doesn't inherit the card's bg — set white explicitly (see build_manual_card).
         panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Pin a fixed column width so the 2×2 slots stay equal — see build_manual_card for
+        // the wxFlexGridSizer rationale (keeps recommended + manual rows aligned on switch).
+        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
+        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
-        // Numbered color swatch (stored for later update)
-        wxBitmap* icon = get_extruder_color_icon(CMYW_ENTRIES[i].first, std::to_string(i + 1), FromDIP(20), FromDIP(20));
-        if (icon) {
-            auto* sw = new wxStaticBitmap(panel, wxID_ANY, *icon);
-            // §17: wxStaticBitmap does not inherit the panel bg. The icon is
-            // opaque so it covers the control, but set the bg explicitly to
-            // match the card and resist GTK theme override (consistency with
-            // the removed manual-card swatch, which set it too).
-            sw->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-            m_recommended_swatches[i] = sw;
-            r->Add(sw, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        // Numbered color swatch (stored for later update). Guard with fill_count so a short
+        // palette can never read out of bounds (the fallback above always yields 4).
+        if (i < fill_count) {
+            wxBitmap* icon = get_extruder_color_icon(palette[i], std::to_string(i + 1), FromDIP(20), FromDIP(20));
+            if (icon) {
+                auto* sw = new wxStaticBitmap(panel, wxID_ANY, *icon);
+                // §17: wxStaticBitmap does not inherit the panel bg. The icon is
+                // opaque so it covers the control, but set the bg explicitly to
+                // match the card and resist GTK theme override (consistency with
+                // the removed manual-card swatch, which set it too).
+                sw->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+                m_recommended_swatches[i] = sw;
+                r->Add(sw, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+            }
         }
         // Bordered name field (StaticBox wrapper, border #dbdbdb — same technique as
-        // MixedFilamentDialog's pattern-input wrapper)
+        // MixedFilamentDialog's pattern-input wrapper). Name is the preset label (same on
+        // every row), NOT the per-color name — per product spec only the swatch varies.
         auto* field = new StaticBox(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         field->SetCornerRadius(FromDIP(4));
         field->SetBorderWidth(FromDIP(1));
@@ -1048,7 +1177,7 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         field->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
         field->SetMinSize(wxSize(-1, FromDIP(24)));
         auto* fs = new wxBoxSizer(wxHORIZONTAL);
-        auto* name = new wxStaticText(field, wxID_ANY, CMYW_ENTRIES[i].second);
+        auto* name = new wxStaticText(field, wxID_ANY, get_full_spectrum_preset_label());
         name->SetFont(Label::Body_13);
         name->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         name->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
@@ -1062,7 +1191,8 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     s->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     card->SetSizer(s);
     // Horizontal margin only; the card-to-card vertical gap is added at the build_ui call site.
-    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
+    // 12px pairs with CARD_WIDTH_DIP (459 = 500 − 2×12 − 17 scrollbar) so cards stay centered.
+    parent.Add(card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
@@ -1073,8 +1203,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     m_preview_card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     m_preview_card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the filament-config cards.
-    m_preview_card->SetMinSize(wxSize(FromDIP(460), -1));
-    m_preview_card->SetMaxSize(wxSize(FromDIP(460), -1));
+    m_preview_card->SetMinSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
+    m_preview_card->SetMaxSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
     auto* s = new wxBoxSizer(wxVERTICAL);
 
     // Dual previews: Original (fixed 180x180) + After Match (fixed 227x227), both rounded.
@@ -1171,7 +1301,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     }
 
     m_preview_card->SetSizer(s);
-    parent.Add(m_preview_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(20));
+    // 12px margin pairs with CARD_WIDTH_DIP (see build_manual_card).
+    parent.Add(m_preview_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
@@ -1182,8 +1313,8 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
     m_mapping_card->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     m_mapping_card->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
     // Same fixed width + centering as the filament-config cards.
-    m_mapping_card->SetMinSize(wxSize(FromDIP(460), -1));
-    m_mapping_card->SetMaxSize(wxSize(FromDIP(460), -1));
+    m_mapping_card->SetMinSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
+    m_mapping_card->SetMaxSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
     auto* cs = new wxBoxSizer(wxVERTICAL);
 
     // Title row: label + info icon
@@ -1209,7 +1340,11 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
     m_legend_panel->SetSizer(m_legend_sizer);
     cs->Add(m_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     m_mapping_card->SetSizer(cs);
-    parent.Add(m_mapping_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(20));
+    // Horizontal margin 12 (pairs with CARD_WIDTH_DIP); bottom 20 stays as breathing room
+    // above the footer (kept distinct from the L/R margin so the card-to-footer gap is
+    // preserved when the L/R margin narrowed from 20→12).
+    parent.Add(m_mapping_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(12));
+    parent.AddSpacer(FromDIP(20));
 }
 
 void MixedFilamentBatchDialog::build_footer()
@@ -1417,8 +1552,8 @@ void MixedFilamentBatchDialog::update_method_combo_tooltip()
     // adding a permanent subtitle row to the UI.
     m_method_combo->SetToolTip(m_matching_method == MANUAL
         ? _L("Manually select filaments from the current list for color mixing.")
-        : _L("Automatically uses official CMYW filaments for color mixing. "
-             "The mix ratio for each color is limited to X%\u2013Y%."));
+        : _L("Automatically uses official Full Spectrum filaments for color mixing. "
+             "The mix ratio for each color is limited to 0%\u201370%."));
 }
 
 void MixedFilamentBatchDialog::on_manual_selection_changed()
@@ -1468,6 +1603,53 @@ void MixedFilamentBatchDialog::check_manual_filament_ratio()
     display_warning(wxString::Format(_L("Filament %d ratio is too high. Mix may be affected."), max_sel + 1));
 }
 
+void MixedFilamentBatchDialog::check_manual_recipe_ratio()
+{
+    // Post-match complement to check_manual_filament_ratio: that one warns BEFORE a match
+    // (based on how many rows picked the same physical slot). This one warns AFTER a match,
+    // scanning every non-pure recipe for any single component above kMaxComponentPercent and
+    // listing ALL offending filament IDs in one banner (gap doc case 13).
+    if (m_warning_panel) m_warning_panel->Hide();
+    if (m_matching_method != MANUAL) return;
+    if (!m_match_completed || m_result.mappings.empty()) return;
+
+    // NOTE: size by m_physical_colors.size(). In manual mode, launch_background_match's
+    // manual-remap branch rewrites recipe component ids to project-wide 1-based indices, so
+    // expand_color_match_recipe_weights must be sized against the FULL physical palette.
+    // A too-small count reads out-of-range indices as 0 weight and silently misses the
+    // over-threshold component.
+    const size_t num_physical = m_physical_colors.size();
+    if (num_physical == 0) return;
+
+    // Collect offending filament ids (1-based) in a set for de-dup + ascending order.
+    std::set<unsigned int> over_ids;
+    for (const ColorMappingEntry& e : m_result.mappings) {
+        if (e.is_pure_recipe) continue;        // pure = single component, ratio n/a
+        if (!e.recipe.valid) continue;         // nothing to check
+        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
+        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
+            if (weights[i] > kMaxComponentPercent)
+                over_ids.insert(static_cast<unsigned int>(i + 1));
+        }
+    }
+    if (over_ids.empty()) return;
+
+    // Build "{x, y, z}" for the %s placeholder.
+    wxString id_list = "{";
+    bool first = true;
+    for (unsigned int id : over_ids) {
+        if (!first) id_list += ", ";
+        id_list << id;
+        first = false;
+    }
+    id_list << "}";
+
+    display_warning(wxString::Format(
+        _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"
+           "%%\u2013%d%% range. Adjust the mix ratios manually for better results."),
+        id_list, kMinComponentPercent, kMaxComponentPercent));
+}
+
 void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
 {
     // Compose a single transparent icon holding [drop_down arrow] + [numbered color badge]
@@ -1478,7 +1660,7 @@ void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
     if (row < 0 || row >= 4) return;
     ComboBox* cb = m_filament_combo[row];
     if (!cb) return;
-    if (filament_idx < 0 || filament_idx >= (int) m_physical_colors.size()) return;
+    if (filament_idx < 0 || filament_idx >= static_cast<int>(m_physical_colors.size())) return;
 
     const int pad = FromDIP(8), arr_w = FromDIP(8), badge_w = FromDIP(20), h = FromDIP(20), gap = FromDIP(8), text_gap = FromDIP(8);
     const int total_w = pad + arr_w + gap + badge_w + text_gap;
@@ -1594,14 +1776,21 @@ void MixedFilamentBatchDialog::launch_background_match()
     const auto all_physical      = m_physical_colors;
 
     const auto matching_method = m_matching_method;
-    // Fixed CMYW palette for recommended mode.
-    static const std::vector<std::string> CMYW_COLORS = {
-        "#08ABFB",  // blue
-        "#D93B90",  // magenta
-        "#F9ED3D",  // yellow
-        "#9199A4",  // gray
-    };
-    const std::vector<std::string> preset_colors = CMYW_COLORS;
+    // Physical palette for recommended mode. Loaded from the real Full Spectrum preset
+    // (filaments_colours.json) on the main thread here, then captured by value into the
+    // worker lambda below — so the worker never touches FilamentColorLibrary. Falls back to
+    // FULL_SPECTRUM_FALLBACK_COLORS when the preset is missing or yields <4 validated colors.
+    // See load_full_spectrum_colors() for hex validation + distinct logging.
+    std::vector<std::string> preset_colors;
+    {
+        std::vector<std::string> palette = load_full_spectrum_colors();
+        if (palette.size() >= 4) {
+            preset_colors = std::move(palette);
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "launch_background_match: preset colors <4, fallback to canonical palette";
+            preset_colors = FULL_SPECTRUM_FALLBACK_COLORS;
+        }
+    }
     // Use enabled_count() (skips deleted/disabled) to match the virtual ID
     // numbering scheme used by mixed_index_from_filament_id() and
     // add_batch_custom_filaments(), both of which count only enabled entries.
@@ -1623,7 +1812,10 @@ void MixedFilamentBatchDialog::launch_background_match()
             physical_colors = manual_colors;
         } else {
             if (preset_colors.size() >= 4) {
-                auto best = recommend_best_filament_combo(model_colors, preset_colors, 15, cancel_token);
+                // Combo search passes max=100 here: this stage only picks WHICH 4 preset
+                // colors form the palette; the per-component 70% cap is enforced later in
+                // the Pass-2 batch_match_model_colors call (match_max=kMaxComponentPercent).
+                auto best = recommend_best_filament_combo(model_colors, preset_colors, 15, 100, cancel_token);
                 if (best.empty()) {
                     physical_colors.assign(preset_colors.begin(), preset_colors.begin() + std::min<size_t>(4, preset_colors.size()));
                 } else {
@@ -1662,7 +1854,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                 existing_ids.push_back(static_cast<unsigned int>(i + 1));
             }
         }
-        // Recommended mode: only use the recommended CMYW physical colors as the
+        // Recommended mode: only use the recommended Full Spectrum physical colors as the
         // Pass-1 reuse palette. Existing mixed filaments are NOT included because
         // (a) their display_colors reference the old physical palette that is about
         // to be replaced, and (b) a passthrough recipe targeting a virtual filament
@@ -1703,8 +1895,17 @@ void MixedFilamentBatchDialog::launch_background_match()
         // Pass 2: batch-match remaining colors.  batch_match_model_colors uses a
         // return-code model (result.success / error_code) and its whole call chain
         // has no throw sites, so no exception handling is needed here.
+        //
+        // Per-component weight bounds are mode-dependent:
+        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)] — product
+        //     spec forces no single component above 70%.
+        //   - MANUAL: [15, 100] — keep the 15% floor so a mix always has minimum
+        //     participation, but allow >70%; over-70% is surfaced as an advisory by
+        //     check_manual_recipe_ratio after the match, not hard-rejected here.
+        const int match_min = (matching_method == MANUAL) ? 15 : kMinComponentPercent;
+        const int match_max = (matching_method == MANUAL) ? 100 : kMaxComponentPercent;
         if (!unmatched_colors.empty()) {
-            auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, 15, cancel_token,
+            auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, match_min, match_max, cancel_token,
                 [progress_bar, destroyed](int done, int total) {
                     if (progress_bar && !destroyed->load()) {
                         wxGetApp().CallAfter([progress_bar, done, total, destroyed]() {
@@ -1836,6 +2037,10 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     if (result.is_recommended_mode)
         update_recommended_card();
     refresh_previews();
+    // Post-match advisory: scan manual-mode recipes for any single component > 70%. Must run
+    // after refresh_previews (m_match_completed is already true here) and before the button
+    // state flip so the warning banner is in place when Confirm lights up.
+    check_manual_recipe_ratio();
     // Defer the button-state flip until AFTER refresh_previews() has rendered and
     // pushed the After-Match bitmap, so Confirm/Re-match light up in lockstep with
     // the preview — not a frame earlier. m_match_completed stays true throughout so

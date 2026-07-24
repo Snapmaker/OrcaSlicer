@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 // Lightweight header declaring the named-thumbnail-viewpoint enum.
 // Kept separate from GLCanvas3D.hpp so lightweight consumers (e.g.

@@ -5,6 +5,8 @@
 #include "I18N.hpp"
 #include "PresetBundle.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/libslic3r.h"
 #include "Widgets/ComboBox.hpp"
 #include "Widgets/StaticBox.hpp"
 #include "Widgets/Button.hpp"
@@ -625,25 +627,93 @@ void MixedFilamentBatchDialog::load_model_colors()
     auto* plater = wxGetApp().plater();
     if (!plater) return;
 
-    const auto all_colors = plater->get_extruder_colors_from_plater_config(nullptr, true);
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    if (!pb) return;
 
-    for (size_t i = 0; i < all_colors.size(); ++i) {
-        const std::string& hex = all_colors[i];
-        if (hex.empty()) continue;
+    const size_t num_physical = pb->filament_presets.size();
+    ConfigOptionStrings* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
+    if (!co || co->values.empty()) return;
+
+    // Collect all extruder IDs actually painted on the model's volumes,
+    // NOT the palette index.  load_model_colors used to enumerate the
+    // get_extruder_colors_from_plater_config() palette and use its array
+    // index as the extruder_id, which misses (a) config-level extruder
+    // assignments on volumes with no MMU paint, and (b) old mixed-filament
+    // virtual IDs that are still painted on triangles but whose display
+    // color may have been deduplicated against the physical palette.
+    //
+    // We now walk every MODEL_PART volume's get_extruders() (MMU paint
+    // chunked facet data + config extruder_id), look up each extruder's
+    // hex colour from the physical palette or the mixed-filament
+    // display_color table, deduplicate by hex, and ACCUMULATE extruder
+    // IDs per colour so every extruder that a given colour is painted with
+    // lands in source_extruder_ids.  This guarantees that
+    // apply_batch_match_to_model can remap every painted extruder,
+    // including virtual mixed IDs from a prior batch match.
+
+    // Map hex → accumulated extruder_ids (unordered, insert-order for log stability)
+    std::vector<std::pair<std::string, std::vector<unsigned int>>> hex_to_eids;
+
+    for (const ModelObject* mo : wxGetApp().model().objects) {
+        for (const ModelVolume* mv : mo->volumes) {
+            if (!mv || mv->type() != ModelVolumeType::MODEL_PART) continue;
+
+            for (int eid : mv->get_extruders()) {
+                if (eid < 1 || eid > int(MAXIMUM_EXTRUDER_NUMBER)) continue;
+
+                std::string color_hex;
+                if (size_t(eid - 1) < co->values.size()) {
+                    // Physical filament colour
+                    color_hex = co->values[size_t(eid - 1)];
+                } else {
+                    // Virtual mixed filament — look up its display_color
+                    const MixedFilament* mf = pb->mixed_filaments.mixed_filament_from_id(
+                        static_cast<unsigned int>(eid), num_physical);
+                    if (mf && !mf->display_color.empty())
+                        color_hex = mf->display_color;
+                }
+                if (color_hex.empty()) continue;
+
+                // Normalize hex for dedup
+                wxColour c;
+                if (!try_parse_color_match_hex(color_hex, c)) continue;
+                const wxString hex_norm = normalize_color_match_hex(color_hex);
+
+                // Accumulate extruder IDs per (normalized) hex value
+                auto it = std::find_if(hex_to_eids.begin(), hex_to_eids.end(),
+                    [&](const auto& p) { return p.first == hex_norm; });
+                if (it != hex_to_eids.end()) {
+                    it->second.push_back(static_cast<unsigned int>(eid));
+                } else {
+                    hex_to_eids.push_back({hex_norm.ToStdString(), {static_cast<unsigned int>(eid)}});
+                }
+            }
+        }
+    }
+
+    // If no model volumes provided extruders, fall back to the palette-index
+    // enumeration so the dialog still opens with a useful colour list.
+    if (hex_to_eids.empty()) {
+        const auto all_colors = plater->get_extruder_colors_from_plater_config(nullptr, true);
+        for (size_t i = 0; i < all_colors.size(); ++i) {
+            const std::string& hex = all_colors[i];
+            if (hex.empty()) continue;
+            wxColour c;
+            if (!try_parse_color_match_hex(hex, c)) continue;
+            hex_to_eids.push_back({normalize_color_match_hex(hex).ToStdString(), {static_cast<unsigned int>(i + 1)}});
+        }
+    }
+
+    for (size_t idx = 0; idx < hex_to_eids.size(); ++idx) {
+        const std::string& hex = hex_to_eids[idx].first;
+        const auto& eids      = hex_to_eids[idx].second;
         wxColour c;
-        if (!try_parse_color_match_hex(hex, c)) continue;
+        try_parse_color_match_hex(hex, c); // already validated above
 
-        // all_colors is indexed by filament_id-1: [physical colors..., then mixed
-        // display colors]. filament_id = i+1 for every slot — physical OR mixed.
-        // For a mixed slot, i+1 is the virtual id its regions are painted with, so
-        // binding it here lets apply_batch_match_to_model re-match and re-map
-        // existing mixed-painted regions to the new target. Leaving it empty (the
-        // old behavior) stranded those regions: never re-matched, then erased by
-        // cleanup when a component physical was dropped.
         m_model_colors.push_back({
             static_cast<unsigned int>(m_model_colors.size() + 1),
             c, hex,
-            std::vector<unsigned int>{static_cast<unsigned int>(i + 1)}
+            eids
         });
     }
 }

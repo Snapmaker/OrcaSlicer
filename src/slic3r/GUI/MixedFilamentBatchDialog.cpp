@@ -13,6 +13,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/Label.hpp"
 #include "wxExtensions.hpp"
+#include "MsgDialog.hpp"
 #include "Plater.hpp"
 #include "PartPlate.hpp"
 #include "BitmapCache.hpp"
@@ -20,6 +21,8 @@
 #include <unordered_map>
 #include <set>
 #include <algorithm>
+#include <cctype>
+#include <thread>
 
 #include <wx/scrolwin.h>
 #include <wx/dcbuffer.h>
@@ -54,6 +57,32 @@ static constexpr int kMaxComponentPercent = 70;  // recommended mode cap; also t
 // Product spec: a model is capped at 64 distinct filament colors. Colors past the cap are
 // dropped (see load_model_colors) and a deferred warning is shown once build_ui is up.
 static constexpr size_t kMaxColors = 64;
+
+// Recommended-mode (Full Spectrum) per-color transmittance-density (TD) values. These are NOT
+// in the filament data model (filaments_colours.json carries no TD field), so they are pinned
+// here as product constants — provided by product spec (snapshot in code per request).
+//
+// KEYED BY COLOR FAMILY (canonical color name), NOT by palette position. The recommended card's
+// swatch order is normally preset-order (C/M/Y/G), but a match's ΔE fallback path
+// (launch_background_match) can reorder the palette, so positional indexing would bind the
+// wrong TD to a color after reorder. Looking up by the color's identity avoids that.
+//
+// Each entry: {substring-to-match-against-English-name, TD-label, TD-value}. The match is
+// case-insensitive substring on the EN color name (which is always present in FilamentColorItem
+// .colorNames regardless of UI locale — it's the SKU's canonical name in filaments_colours.json).
+// White (W:8.8) is included per spec; Full Spectrum has no White SKU today, so it only surfaces
+// if a White-named color is ever added to the preset.
+// Each entry: {substring-to-match, TD-value}. The substring IS the family display name —
+// tooltip shows it verbatim (e.g. "cyan 5.5"), no separate label/abbreviation needed.
+struct TdEntry { const char* family; double value; };
+static const std::vector<TdEntry> FULL_SPECTRUM_TD = {
+    {"cyan",    5.5},
+    {"magenta", 5.5},
+    {"yellow",  9.5},
+    {"white",   8.8},
+    {"gray",    6.5},
+    {"grey",    6.5}, // spelling variant, defensive
+};
 
 // Card geometry (DIP). CARD_WIDTH_DIP leaves room for a vertical scrollbar inside the
 // 500-wide dialog: 500 − 2×12(margin) − 17(scrollbar) = 459. FILAMENT_COL_WIDTH_DIP pins
@@ -771,12 +800,11 @@ void MixedFilamentBatchDialog::load_model_colors()
 // color varies. Falls back to the raw name when the preset bundle is unavailable.
 static wxString get_full_spectrum_preset_label()
 {
-    static const std::string kPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
     if (auto* pb = wxGetApp().preset_bundle) {
-        if (auto* p = pb->filaments.find_preset(kPresetName))
+        if (auto* p = pb->filaments.find_preset(kFullSpectrumPresetName))
             return wxString::FromUTF8(p->label(false));
     }
-    return wxString::FromUTF8(kPresetName);
+    return wxString::FromUTF8(kFullSpectrumPresetName);
 }
 
 // Load the real recommended-mode palette colors from the Full Spectrum filament preset
@@ -796,13 +824,12 @@ static wxString get_full_spectrum_preset_label()
 //   - (HIGH) distinct logging: each failure path emits its own BOOST_LOG_TRIVIAL(warning).
 static std::vector<std::string> load_full_spectrum_colors()
 {
-    const std::string kPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
     if (!FilamentColorLibrary::Instance().EnsureLoaded()) {
         BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: FilamentColorLibrary not loaded, fallback to canonical palette";
         return {};
     }
     FilamentColorInfo info;
-    if (!FilamentColorLibrary::Instance().FindFilamentByName(kPresetName, info)) {
+    if (!FilamentColorLibrary::Instance().FindFilamentByName(kFullSpectrumPresetName, info)) {
         BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: Full Spectrum preset not found in color library, fallback";
         return {};
     }
@@ -827,6 +854,105 @@ static std::vector<std::string> load_full_spectrum_colors()
     return result;
 }
 
+// Full Spectrum palette as raw FilamentColorItems — same single-color-SKU filter and hex
+// re-validation as load_full_spectrum_colors(), but keeps each item's colorNames map so the
+// caller (build_recommended_card's tooltip) can show the localized per-color name. Returns
+// empty on any failure; callers fall back to positional defaults. NOT thread-safe beyond the
+// EnsureLoaded warm-up done in the ctor (see load_full_spectrum_colors's safety note).
+static std::vector<FilamentColorItem> load_full_spectrum_items()
+{
+    if (!FilamentColorLibrary::Instance().EnsureLoaded()) return {};
+    FilamentColorInfo info;
+    if (!FilamentColorLibrary::Instance().FindFilamentByName(kFullSpectrumPresetName, info)) return {};
+
+    std::vector<FilamentColorItem> result;
+    for (const FilamentColorItem& item : info.colors) {
+        if (item.colorData.colors.size() != 1) continue;
+        wxColour parsed;
+        if (!try_parse_color_match_hex(wxString::FromUTF8(item.colorData.colors[0].c_str()), parsed))
+            continue;
+        result.push_back(item);
+    }
+    return result;
+}
+
+// Look up a name from a FilamentColorItem's colorNames map for a specific language key.
+// On hit, writes the decoded name into `out` and returns true; on miss, returns false and
+// leaves `out` untouched. The JSON keys are short codes ("zh_CN","en"); callers try the full
+// locale, then the base language, then a fallback.
+//
+// NOTE: must NOT return `&wxString::FromUTF8(...)` — that yields a pointer to a temporary
+// wxString, which is destroyed at the semicolon, leaving a dangling pointer (UB / crash on
+// deref). The bool+out-param form keeps ownership with the caller.
+static bool color_name_for_lang(const FilamentColorItem& item, const wxString& key, wxString& out)
+{
+    auto it = item.colorNames.find(into_u8(key));
+    if (it == item.colorNames.end()) return false;
+    out = wxString::FromUTF8(it->second.c_str());
+    return true;
+}
+
+// The ENGLISH color name — always present in colorNames (it's the SKU's canonical name in
+// filaments_colours.json) regardless of UI locale. Used as a STABLE identity for TD family
+// matching (FULL_SPECTRUM_TD is keyed by EN substrings: cyan/magenta/yellow/...). Falls back
+// to whatever name is present, then to a positional "F<n>" label.
+static wxString english_color_name(const FilamentColorItem& item, int position)
+{
+    wxString s;
+    if (color_name_for_lang(item, "en", s)) return s;
+    if (!item.colorNames.empty())
+        return wxString::FromUTF8(item.colorNames.begin()->second.c_str());
+    return wxString::Format("F%d", position + 1);
+}
+
+// Pick a localized color name from a FilamentColorItem's colorNames map, honouring the app's
+// current language. Falls back to English, then to the SKU, then to the positional label.
+static wxString localized_color_name(const FilamentColorItem& item, int position)
+{
+    // current_language_code() returns e.g. "zh_CN" / "en" / "en_US". Try the exact code first,
+    // then the base language (strip region suffix), then English.
+    const wxString lang = wxGetApp().current_language_code();
+    wxString s;
+    if (color_name_for_lang(item, lang, s)) return s;
+    const wxString base = lang.BeforeFirst('_');
+    if (color_name_for_lang(item, base, s)) return s;
+    if (color_name_for_lang(item, wxString("en"), s)) return s;
+    return english_color_name(item, position);
+}
+
+// Resolve the TD family for a filament color by matching the ENGLISH color name against the
+// canonical-family substrings in FULL_SPECTRUM_TD (e.g. "Semi-Translucent Cyan" → family "C").
+// Returns nullptr if no family matches. Case-insensitive substring match on the EN name so it
+// tolerates adjectives ("Semi-Translucent") and prefix/suffix variation.
+//
+// Why English: the EN name is the SKU's canonical identity in filaments_colours.json and is
+// always present regardless of UI locale, so family detection is locale-independent and stable.
+static const TdEntry* resolve_td_family(const wxString& english_name)
+{
+    wxString lower = english_name.Lower();
+    for (const TdEntry& e : FULL_SPECTRUM_TD)
+        if (lower.find(e.family) != wxString::npos) return &e;
+    return nullptr;
+}
+
+// Build the hover tooltip string for one recommended-mode row. Two lines:
+//   <preset label>          e.g. "Snapmaker PLA Full Spectrum"
+//   <color name> TD : <val> e.g. "Translucent Cyan TD : 5.5"
+// The color name is localized; TD is resolved by the color's family via its English name
+// (see resolve_td_family), NOT by palette position — so the TD stays bound to the right color
+// even when the match reorders the palette. When TD is unknown (color family not in
+// FULL_SPECTRUM_TD) the value shows "-".
+static wxString make_recommended_tooltip(const wxString& localized_name, const wxString& english_name)
+{
+    const TdEntry* td = resolve_td_family(english_name);
+    const wxString td_disp = td ? wxString::Format("%.1f", td->value) : wxString("-");
+    return wxString::Format("%s\n%s %s : %s",
+        get_full_spectrum_preset_label(),
+        localized_name,
+        _L("TD"),
+        td_disp);
+}
+
 void MixedFilamentBatchDialog::update_recommended_card()
 {
     if (!m_recommended_card) return;
@@ -835,7 +961,33 @@ void MixedFilamentBatchDialog::update_recommended_card()
 
     // NOTE: the name column shows the preset label (Snapmaker PLA Full Spectrum …) on every
     // row, NOT the per-color name — per product spec only the swatch color varies per row.
-    // So no hex→name lookup is needed here; just the constant preset label.
+    // So no hex→name lookup is needed for the LABEL; the tooltip, however, shows the per-color
+    // name and DOES need to resolve colors[i] → the right FilamentColorItem.
+
+    // Re-load items and index them by HEX so each row resolves the correct color identity.
+    // This is essential after a match: launch_background_match's ΔE fallback can REORDER the
+    // palette, so colors[i] may not sit at position i in the preset's natural order. Looking
+    // up by hex (rather than positional items[i]) binds the tooltip's name + TD to the actual
+    // color on the swatch, not its grid slot. Hex comparison is case-insensitive to tolerate
+    // "#08abfb" vs "#08ABFB" between config and library.
+    const std::vector<FilamentColorItem> items = load_full_spectrum_items();
+    std::unordered_map<std::string, const FilamentColorItem*> by_hex;
+    by_hex.reserve(items.size());
+    for (const FilamentColorItem& item : items) {
+        if (item.colorData.colors.size() == 1) {
+            std::string h = item.colorData.colors[0];
+            std::transform(h.begin(), h.end(), h.begin(),
+                           [](unsigned char ch) { return std::tolower(ch); });
+            by_hex.emplace(std::move(h), &item);
+        }
+    }
+    auto find_item = [&](const std::string& hex) -> const FilamentColorItem* {
+        std::string h = hex;
+        std::transform(h.begin(), h.end(), h.begin(),
+                       [](unsigned char ch) { return std::tolower(ch); });
+        auto it = by_hex.find(h);
+        return it != by_hex.end() ? it->second : nullptr;
+    };
 
     for (int i = 0; i < 4; ++i) {
         // Update swatch bitmap
@@ -850,6 +1002,22 @@ void MixedFilamentBatchDialog::update_recommended_card()
         // Update label text — the preset name (same on all four rows).
         if (m_recommended_labels[i]) {
             m_recommended_labels[i]->SetLabel(get_full_spectrum_preset_label());
+        }
+
+        // Refresh the row tooltip to reflect the now-rendered swatch color. Resolve the color
+        // identity by HEX (colors[i]) so the name + TD match the actual swatch even if the
+        // palette was reordered by the match. Falls back to a positional label if the hex is
+        // unknown (e.g. library reload failed / a color outside the Full Spectrum preset).
+        if (i < static_cast<int>(colors.size())) {
+            const FilamentColorItem* item = find_item(colors[i]);
+            const wxString ename = item ? english_color_name(*item, i)
+                                        : wxString::Format("F%d", i + 1);
+            const wxString cname = item ? localized_color_name(*item, i) : ename;
+            const wxString tip = make_recommended_tooltip(cname, ename);
+            if (m_recommended_swatches[i]) m_recommended_swatches[i]->SetToolTip(tip);
+            if (m_recommended_labels[i])   m_recommended_labels[i]->SetToolTip(tip);
+            wxWindow* row = m_recommended_swatches[i] ? m_recommended_swatches[i]->GetParent() : nullptr;
+            if (row) row->SetToolTip(tip);
         }
     }
 
@@ -1207,6 +1375,13 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     }
     const int fill_count = std::min<int>(4, static_cast<int>(palette.size()));
 
+    // Also load the raw FilamentColorItems (same filter/validation) so the per-row hover
+    // tooltip can show the localized color NAME. Loaded in lock-step with `palette` (same
+    // preset, same single-color-SKU filter, same order) so palette[i] ↔ items[i]. If the
+    // loader fails (library not loaded / preset missing) items is empty and the tooltip
+    // builder falls back to the positional label "F<i+1>".
+    const std::vector<FilamentColorItem> items = load_full_spectrum_items();
+
     // 2x2 grid: numbered swatch (20x20) + bordered name field. update_recommended_card()
     // refreshes swatches after a match reflects the palette order chosen by
     // recommend_best_filament_combo.
@@ -1214,48 +1389,71 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     grid->AddGrowableCol(0, 1);
     grid->AddGrowableCol(1, 1);
     for (int i = 0; i < 4; ++i) {
-        auto* panel = new wxPanel(card, wxID_ANY);
-        // wxPanel doesn't inherit the card's bg — set white explicitly (see build_manual_card).
-        panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Per Figma (node 28325:94417 "Container"): the WHOLE row is a bordered container
+        // (1px #dbdbdb, sharp corners — no rounded-* class, height 30, horizontal padding 9px)
+        // holding swatch + name together. The previous implementation bordered only the name
+        // `field`, leaving the numbered swatch sitting outside the border — the most visible
+        // mismatch with Figma. Sharp corners: the spec shows a plain `border border-[#dbdbdb]`
+        // with no `rounded-*` utility, so SetCornerRadius is 0 (StaticBox's default is 0, but
+        // we set it explicitly for clarity against future edits).
+        auto* panel = new StaticBox(card, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        panel->SetCornerRadius(FromDIP(0));
+        panel->SetBorderWidth(FromDIP(1));
+        panel->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
+        panel->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
         // Pin a fixed column width so the 2×2 slots stay equal — see build_manual_card for
         // the wxFlexGridSizer rationale (keeps recommended + manual rows aligned on switch).
-        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
-        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
+        // Height 30 matches Figma; pinning min+max keeps the four rows visually uniform.
+        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), FromDIP(30)));
+        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), FromDIP(30)));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
-        // Numbered color swatch (stored for later update). Guard with fill_count so a short
-        // palette can never read out of bounds (the fallback above always yields 4).
+        // Numbered color swatch (20×20, stored for later update). Guard with fill_count so a
+        // short palette can never read out of bounds (the fallback above always yields 4).
+        // wxLEFT=9 is the bordered container's left inset (Figma: px=9).
         if (i < fill_count) {
             wxBitmap* icon = get_extruder_color_icon(palette[i], std::to_string(i + 1), FromDIP(20), FromDIP(20));
             if (icon) {
                 auto* sw = new wxStaticBitmap(panel, wxID_ANY, *icon);
-                // §17: wxStaticBitmap does not inherit the panel bg. The icon is
-                // opaque so it covers the control, but set the bg explicitly to
-                // match the card and resist GTK theme override (consistency with
-                // the removed manual-card swatch, which set it too).
+                // §17: wxStaticBitmap does not inherit the panel bg. The icon is opaque so it
+                // covers the control, but set the bg explicitly to match the card and resist
+                // GTK theme override.
                 sw->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
                 m_recommended_swatches[i] = sw;
-                r->Add(sw, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+                r->Add(sw, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(9));
             }
         }
-        // Bordered name field (StaticBox wrapper, border #dbdbdb — same technique as
-        // MixedFilamentDialog's pattern-input wrapper). Name is the preset label (same on
-        // every row), NOT the per-color name — per product spec only the swatch varies.
-        auto* field = new StaticBox(panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        field->SetCornerRadius(FromDIP(4));
-        field->SetBorderWidth(FromDIP(1));
-        field->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
-        field->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
-        field->SetMinSize(wxSize(-1, FromDIP(24)));
-        auto* fs = new wxBoxSizer(wxHORIZONTAL);
-        auto* name = new wxStaticText(field, wxID_ANY, get_full_spectrum_preset_label());
-        name->SetFont(Label::Body_13);
+        // Name — the preset label (same on every row; only the swatch color varies, per product
+        // spec). 14px per Figma, with wxST_ELLIPSIZE_END so a long preset name ("Snapmaker PLA
+        // Full Spectrum @U1 0.4 nozzle") truncates instead of wrapping and breaking the row.
+        // The name sits directly in the bordered row (no separate bordered `field`); wxLEFT=8
+        // is the swatch→name gap (Figma: gap 8), wxRIGHT=8 the trailing inset (Figma 9 − 1px).
+        auto* name = new wxStaticText(panel, wxID_ANY, get_full_spectrum_preset_label(),
+                                       wxDefaultPosition, wxDefaultSize, wxST_ELLIPSIZE_END);
+        name->SetFont(Label::Body_14);
         name->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         name->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-        fs->Add(name, 1, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, FromDIP(9));
-        field->SetSizer(fs);
         m_recommended_labels[i] = name;
-        r->Add(field, 1, wxALIGN_CENTER_VERTICAL | wxEXPAND);
+        r->Add(name, 1, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, FromDIP(8));
         panel->SetSizer(r);
+        // Per-row hover tooltip: per-color NAME (localized) + COLOR hex + TD value (product spec).
+        // TD is resolved by the color's ENGLISH family name (cyan→C, magenta→M, ...), NOT by
+        // palette position — so it stays bound to the right color even when a match reorders the
+        // palette. The tooltip is set on the row panel AND its children (swatch, name): wx child
+        // windows do NOT inherit the parent tooltip, so without setting it on each child, hovering
+        // directly over the swatch/name shows nothing. update_recommended_card re-applies it after
+        // a match.
+        if (i < fill_count) {
+            const wxString ename = (i < static_cast<int>(items.size()))
+                ? english_color_name(items[i], i)
+                : wxString::Format("F%d", i + 1);
+            const wxString cname = (i < static_cast<int>(items.size()))
+                ? localized_color_name(items[i], i)
+                : ename;
+            const wxString tip = make_recommended_tooltip(cname, ename);
+            panel->SetToolTip(tip);
+            if (m_recommended_swatches[i]) m_recommended_swatches[i]->SetToolTip(tip);
+            name->SetToolTip(tip);
+        }
         grid->Add(panel, 0, wxEXPAND);
     }
     s->Add(grid, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
@@ -1486,7 +1684,26 @@ void MixedFilamentBatchDialog::build_footer()
     panel_sizer->Add(btn_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
     panel_sizer->AddSpacer(FromDIP(12));
 
-    m_btn_cancel_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    // Cancel shows a "Discard Match" confirmation before closing — but only when there's an
+    // actual match result to lose. The PRD (6.6) secondary check exists so the user doesn't
+    // discard a completed match by accident; "No" returns to the dialog with the current
+    // state (results, preview, legend) intact. When there's no result yet (idle / matching /
+    // failed), closing is lossless, so we skip the prompt and close directly. The gate mirrors
+    // the Confirm-button enable condition (set_match_buttons_state): a discardable result
+    // exists iff m_match_completed && m_result.success.
+    m_btn_cancel_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!m_match_completed || !m_result.success) {
+            EndModal(wxID_CANCEL);
+            return;
+        }
+        RichMessageDialog confirm(this,
+            _L("Are you sure you want to discard this match? The current configuration will not be saved."),
+            _L("Discard Match"),
+            wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
+        confirm.SetYesNoLabels(_L("Discard"), _L("Cancel"));
+        if (confirm.ShowModal() == wxID_YES)
+            EndModal(wxID_CANCEL);
+    });
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
 
     btn_panel->SetSizer(panel_sizer);
@@ -1585,7 +1802,15 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
 void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
 {
     int sel = m_method_combo->GetSelection();
-    m_matching_method = (sel == 1) ? MANUAL : RECOMMENDED;
+    MatchingMethod new_method = (sel == 1) ? MANUAL : RECOMMENDED;
+    // No-op if the user re-selected the already-active mode: wxComboBox fires COMBOBOX
+    // even for a re-pick of the current item (notably on wxMSW, clicking the open list's
+    // selected row). Re-running the refresh pipeline here would force needless card
+    // Show/Layout/tooltip updates and briefly hide the error/warning banners even though
+    // nothing actually changed.
+    if (new_method == m_matching_method)
+        return;
+    m_matching_method = new_method;
     // Preserve the previous match result; only Start/Re-match clears it.
     m_error_panel->Hide();
     m_warning_panel->Hide();

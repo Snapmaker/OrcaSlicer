@@ -14826,6 +14826,12 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Відстань між нижніми інтерфейсними лініями. Нуль означає суцільнийінтерфейс"
 
+msgid "Minimum Support Contact Area"
+msgstr "Мінімальна площа контакту підтримки"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Нижчі значення створюють більше контактних поверхонь підтримки."
+
 msgid "Speed of support interface."
 msgstr "Швидкість друку підтримки"
 

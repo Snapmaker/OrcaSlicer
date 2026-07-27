@@ -14263,6 +14263,12 @@ msgstr "하단 접점 선 간격"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "하단 접점 선의 간격. 0은 꽉찬 접점을 의미합니다"
 
+msgid "Minimum Support Contact Area"
+msgstr "서포트 최소 접촉 면적"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "값이 작을수록 더 많은 서포트 접촉면이 생성됩니다."
+
 msgid "Speed of support interface."
 msgstr "서포트 접점 속도"
 

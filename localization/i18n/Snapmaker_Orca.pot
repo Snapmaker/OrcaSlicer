@@ -12931,6 +12931,12 @@ msgstr ""
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 
+msgid "Minimum Support Contact Area"
+msgstr ""
+
+msgid "Lower values generate more support contact surfaces."
+msgstr ""
+
 msgid "Speed of support interface."
 msgstr ""
 

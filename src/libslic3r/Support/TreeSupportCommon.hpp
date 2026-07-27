@@ -89,6 +89,7 @@ struct TreeSupportMeshGroupSettings {
         this->support_tree_branch_diameter = scaled<coord_t>(config.tree_support_branch_diameter_organic.value);
         this->support_tree_branch_diameter_angle  = std::clamp<double>(config.tree_support_branch_diameter_angle * M_PI / 180., 0., 0.5 * M_PI - EPSILON);
         this->support_tree_top_rate       = config.tree_support_top_rate.value; // percent
+        this->minimum_roof_area           = scaled<double>(scaled<double>(config.support_interface_min_area.value));
     //    this->support_tree_tip_diameter = this->support_line_width;
         this->support_tree_tip_diameter = std::clamp(scaled<coord_t>(config.tree_support_tip_diameter.value), (coord_t)0, this->support_tree_branch_diameter);
     }
@@ -160,7 +161,7 @@ struct TreeSupportMeshGroupSettings {
     coord_t                         support_floor_layers                    { 2 };
     // Minimum Support Roof Area
     // Minimum area size for the roofs of the support. Polygons which have an area smaller than this value will be printed as normal support.
-    double                          minimum_roof_area                       { scaled<double>(scaled<double>(1.)) };
+    double                          minimum_roof_area                       { scaled<double>(scaled<double>(0.25)) };
     // A list of integer line directions to use. Elements from the list are used sequentially as the layers progress 
     // and when the end of the list is reached, it starts at the beginning again. The list items are separated
     // by commas and the whole list is contained in square brackets. Default is an empty list which means

@@ -13753,6 +13753,12 @@ msgstr "底部接觸面間距"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "底部接觸面走線的線距。0 表示實心接觸面"
 
+msgid "Minimum Support Contact Area"
+msgstr "最小支撐接觸面積"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "數值越小，生成的支撐接觸面越多。"
+
 msgid "Speed of support interface."
 msgstr "支撐面速度"
 

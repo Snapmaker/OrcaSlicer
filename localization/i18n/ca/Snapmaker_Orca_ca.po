@@ -14917,6 +14917,12 @@ msgstr ""
 "Espaiat de les línies inferiors de la interfície. Zero significa interfície "
 "sòlida"
 
+msgid "Minimum Support Contact Area"
+msgstr "Àrea mínima de contacte del suport"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Els valors més baixos generen més superfícies de contacte del suport."
+
 msgid "Speed of support interface."
 msgstr "Velocitat de la interfície de suport"
 

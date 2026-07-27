@@ -438,8 +438,8 @@ private:
     const coordf_t MAX_BRANCH_RADIUS_FIRST_LAYER = 12.0;
     const coordf_t MIN_BRANCH_RADIUS_FIRST_LAYER = 2.0;
     double diameter_angle_scale_factor = tan(5.0*M_PI/180.0);
-    // minimum roof area (1 mm^2), area smaller than this value will not have interface
-    const double minimum_roof_area{SQ(scaled<double>(1.))};
+    // minimum roof area (default 0.25 mm^2), area smaller than this value will not have interface.
+    double minimum_roof_area = scaled<double>(scaled<double>(0.25));
     float        top_z_distance = 0.0;
 
     bool  is_strong = false;

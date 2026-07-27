@@ -14819,6 +14819,12 @@ msgstr "Alt arayüz aralığı"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "Alt arayüz çizgilerinin aralığı. Sıfır, sağlam arayüz anlamına gelir."
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimum destek temas alanı"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Daha düşük değerler daha fazla destek temas yüzeyi oluşturur."
+
 msgid "Speed of support interface."
 msgstr "Destek arayüzünün hızı."
 

@@ -13839,6 +13839,12 @@ msgstr ""
 "Dit is de afstand tussen de onderste interfacelijnen. 0 betekent solide "
 "interface."
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimale contactoppervlak van support"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Lagere waarden genereren meer contactoppervlakken van de support."
+
 msgid "Speed of support interface."
 msgstr "Dit is de snelheid voor het printen van de support interfaces."
 

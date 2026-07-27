@@ -15197,6 +15197,12 @@ msgstr ""
 "Abstand der unteren Trennschichtlinien der Stützstrukturen. Null bedeutet "
 "eine solide Schnittstelle."
 
+msgid "Minimum Support Contact Area"
+msgstr "Minimale Kontaktfläche der Stützstruktur"
+
+msgid "Lower values generate more support contact surfaces."
+msgstr "Niedrigere Werte erzeugen mehr Kontaktflächen der Stützstruktur."
+
 msgid "Speed of support interface."
 msgstr "Geschwindigkeit der Stützstruktur-Schnittstellen."
 

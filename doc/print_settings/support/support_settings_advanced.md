@@ -8,6 +8,7 @@
 - [Interface layers](#interface-layers)
 - [Interface pattern](#interface-pattern)
 - [Interface spacing](#interface-spacing)
+- [Interface min area](#interface-min-area)
 - [Normal support expansion](#normal-support-expansion)
 - [Support/object XY distance](#supportobject-xy-distance)
 - [Support/object first layer gap](#supportobject-first-layer-gap)
@@ -45,6 +46,10 @@ The pattern used for the support interface.
 ## Interface spacing
 
 Spacing of interface lines. Zero means solid interface.
+
+## Interface min area
+
+Minimum area for support contact surfaces, in square millimeters. Roof polygons smaller than this value fall back to normal support instead of being generated as interface. Lower values generate more contact surfaces; higher values consolidate them. Set to 0 to disable filtering.
 
 ## Normal support expansion
 

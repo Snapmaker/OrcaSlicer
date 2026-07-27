@@ -439,9 +439,6 @@ private:
 		const int 				old_temperature,
 		const int 				new_temperature);
 
-    void toolchange_unload_new(WipeTowerWriter2& writer, size_t old_filament_id, size_t new_filament_id,
-        int old_temperature, int new_temperature);
-
     WipeTower::NozzleChangeResult ramming(const WipeTowerInfo::ToolChange& tool_change,
         bool solid_infill = false, bool extruder_change = true);
 

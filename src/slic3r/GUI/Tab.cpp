@@ -893,13 +893,13 @@ void Tab::decorate()
 }
 
 void Tab::register_flow_variant_view(ConfigFlowDomain domain,
-                                     const PageShp& page,
+                                     const std::vector<PageShp>& pages,
                                      std::function<const std::vector<std::string>&()> options,
                                      std::function<bool(const std::string&)> is_option)
 {
     m_flow_variant_view = std::make_unique<FlowVariantView>();
     m_flow_variant_view->domain = domain;
-    m_flow_variant_view->page = page;
+    m_flow_variant_view->pages = pages;
     m_flow_variant_view->options = std::move(options);
     m_flow_variant_view->is_option = std::move(is_option);
 
@@ -991,22 +991,27 @@ void Tab::refresh_flow_variant_view()
     update_flow_variant_view_visibility();
 
     const int flow_index = int(flow_variant_view_index());
-    for (const ConfigOptionsGroupShp& group : m_flow_variant_view->page->m_optgroups)
+    for (const PageShp& page : m_flow_variant_view->pages)
     {
-        for (const auto& option : group->opt_map())
+        for (const ConfigOptionsGroupShp& group : page->m_optgroups)
         {
-            const std::string& key = option.second.first;
-            if (m_flow_variant_view->is_option(key))
-                group->set_option_index(key, flow_index);
+            for (const auto& option : group->opt_map())
+            {
+                const std::string& key = option.second.first;
+                if (m_flow_variant_view->is_option(key))
+                    group->set_option_index(key, flow_index);
+            }
         }
     }
 }
 
 void Tab::update_flow_variant_view_visibility()
 {
-    const bool show = m_flow_variant_view &&
+    const bool active_page_supports_flow_variants = m_flow_variant_view &&
+        std::any_of(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(),
+                    [this](const PageShp& page) { return m_active_page == page.get(); });
+    const bool show = active_page_supports_flow_variants &&
                       m_flow_variant_view->selector &&
-                      m_active_page == m_flow_variant_view->page.get() &&
                       m_parent->get_current_tab() == this;
 
     if (m_flow_variant_view && m_flow_variant_view->selector)
@@ -1230,18 +1235,26 @@ void Tab::update_changed_tree_ui()
                 }
             }
 
-            if (m_flow_variant_view && page == m_flow_variant_view->page)
+            if (m_flow_variant_view &&
+                std::find(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(), page) != m_flow_variant_view->pages.end())
             {
-                for (const std::string& key : m_flow_variant_view->options())
+                for (const ConfigOptionsGroupShp& group : page->m_optgroups)
                 {
-                    const std::string prefix = key + "#";
-                    for (const auto& option : m_options_list)
+                    for (const auto& option_in_group : group->opt_map())
                     {
-                        if (option.first.compare(0, prefix.size(), prefix) != 0)
+                        const std::string& key = option_in_group.second.first;
+                        if (!m_flow_variant_view->is_option(key))
                             continue;
 
-                        sys_page &= (option.second & osSystemValue) != 0;
-                        modified_page |= (option.second & osInitValue) == 0;
+                        const std::string prefix = key + "#";
+                        for (const auto& option : m_options_list)
+                        {
+                            if (option.first.compare(0, prefix.size(), prefix) != 0)
+                                continue;
+
+                            sys_page &= (option.second & osSystemValue) != 0;
+                            modified_page |= (option.second & osInitValue) == 0;
+                        }
                     }
                 }
             }
@@ -3698,7 +3711,7 @@ void TabFilament::set_custom_gcode(const t_config_option_key& opt_key, const std
     load_config(new_conf);
 }
 
-void TabFilament::add_filament_overrides_page()
+PageShp TabFilament::add_filament_overrides_page()
 {
     //BBS
     PageShp page = add_options_page(L("Setting Overrides"), "custom-gcode_setting_override"); // ORCA: icon only visible on placeholders
@@ -3765,6 +3778,8 @@ void TabFilament::add_filament_overrides_page()
                                         // "filament_seam_gap"
                                      })
         append_single_option_line(opt_key, extruder_idx);
+
+    return page;
 }
 
 void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* printers_config)
@@ -3854,6 +3869,7 @@ void TabFilament::build()
     load_initial_data();
 
     auto page = add_options_page(L("Filament"), "custom-gcode_filament"); // ORCA: icon only visible on placeholders
+    const PageShp filament_page = page;
         //BBS
         auto optgroup = page->new_optgroup(L("Basic information"), L"param_information");
         optgroup->append_single_option_line("filament_type"); // ORCA use same width with other elements
@@ -4008,6 +4024,7 @@ void TabFilament::build()
         //optgroup->append_line(line);
 
     page = add_options_page(L("Cooling"), "custom-gcode_cooling_fan"); // ORCA: icon only visible on placeholders
+    const PageShp cooling_page = page;
 
         //line = { "", "" };
         //line.full_width = 1;
@@ -4058,7 +4075,7 @@ void TabFilament::build()
         line.append_option(optgroup->get_option("complete_print_exhaust_fan_speed"));
         optgroup->append_line(line);
         //BBS
-        add_filament_overrides_page();
+        const PageShp overrides_page = add_filament_overrides_page();
         const int gcode_field_height = 15; // 150
         const int notes_field_height = 25; // 250
 
@@ -4088,6 +4105,7 @@ void TabFilament::build()
         optgroup->append_single_option_line(option);
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
+    const PageShp multimaterial_page = page;
         optgroup = page->new_optgroup(L("Wipe tower parameters"), "param_tower");
         optgroup->append_single_option_line("filament_minimal_purge_on_wipe_tower");
 
@@ -4126,6 +4144,12 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_multitool_ramming_volume");
         optgroup->append_single_option_line("filament_multitool_ramming_flow");
 
+    register_flow_variant_view(
+        ConfigFlowDomain::Filament,
+        {filament_page, cooling_page, overrides_page, multimaterial_page},
+        []() -> const std::vector<std::string>& { return filament_flow_variant_options(); },
+        [](const std::string& key) { return is_filament_flow_variant_option(key); });
+
     page = add_options_page(L("Dependencies"), "advanced");
         optgroup = page->new_optgroup(L("Compatible printers"), "param_dependencies_printers");
         create_line_with_widget(optgroup.get(), "compatible_printers", "", [this](wxWindow* parent) {
@@ -4159,6 +4183,7 @@ void TabFilament::build()
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
 void TabFilament::reload_config()
 {
+    refresh_flow_variant_view();
     this->compatible_widget_reload(m_compatible_printers);
     this->compatible_widget_reload(m_compatible_prints);
     Tab::reload_config();

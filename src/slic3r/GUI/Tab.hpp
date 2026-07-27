@@ -280,7 +280,7 @@ protected:
     struct FlowVariantView
     {
         ConfigFlowDomain domain { ConfigFlowDomain::Process };
-        PageShp page;
+        std::vector<PageShp> pages;
         SegmentedToggle* selector { nullptr };
         std::vector<std::string> modes;
         std::string selected_mode;
@@ -435,9 +435,16 @@ public:
 
 protected:
     void register_flow_variant_view(ConfigFlowDomain domain,
-                                    const PageShp& page,
+                                    const std::vector<PageShp>& pages,
                                     std::function<const std::vector<std::string>&()> options,
                                     std::function<bool(const std::string&)> is_option);
+    void register_flow_variant_view(ConfigFlowDomain domain,
+                                    const PageShp& page,
+                                    std::function<const std::vector<std::string>&()> options,
+                                    std::function<bool(const std::string&)> is_option)
+    {
+        register_flow_variant_view(domain, std::vector<PageShp> {page}, std::move(options), std::move(is_option));
+    }
     void refresh_flow_variant_view();
     void update_flow_variant_view_visibility();
     size_t flow_variant_view_index() const;
@@ -576,7 +583,7 @@ private:
 	ogStaticText*	m_volumetric_speed_description_line {nullptr};
 	ogStaticText*	m_cooling_description_line {nullptr};
 
-    void            add_filament_overrides_page();
+    PageShp         add_filament_overrides_page();
     void            update_filament_overrides_page(const DynamicPrintConfig* printers_config);
 	void 			update_volumetric_flow_preset_hints();
 

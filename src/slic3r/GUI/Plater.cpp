@@ -2404,7 +2404,33 @@ Sidebar::Sidebar(Plater *parent)
             // Write before set_num_filaments so auto_generate sees CMYG palette.
             if (fc) fc->values = colors_vec;
 
+            // Snapshot the old mixed list BEFORE set_num_filaments clears
+            // custom entries, so we can build a proper old→new remap that
+            // covers the existing painted virtual IDs (review item R3).
+            const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filaments();
+
             pb->set_num_filaments((unsigned int)target_count, std::vector<std::string>{});
+
+            // Restore custom entries that were wiped by clear_custom_entries
+            // in update_multi_material_filament_presets.  add_batch_custom_
+            // filaments below will manage the batch-matched rows; we just
+            // need to keep the pre-existing custom rows alive so their
+            // stable_ids survive into the in-place edit block above and the
+            // translation step below.
+            {
+                const std::string saved = pb->project_config.opt_string("mixed_filament_definitions");
+                if (!saved.empty())
+                    pb->mixed_filaments.load_custom_entries(saved, colors_vec);
+            }
+
+            // Build a remap from old→new virtual IDs so on_filaments_change
+            // correctly remaps existing painted mixed-IDs before
+            // apply_batch_match_to_model runs.
+            if (old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
+                pb->update_mixed_filament_id_remap(
+                    old_mixed_snapshot, current_count, target_count);
+            }
+
             wxGetApp().plater()->on_filaments_change((int)target_count);
         } else {
             ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
@@ -2490,14 +2516,7 @@ Sidebar::Sidebar(Plater *parent)
         }
 
         // Translate mixed-slot source ids from the dialog epoch to the CURRENT
-        // epoch.  Growing the physical count (recommended mode, < 4 filaments)
-        // shifts every mixed virtual id, and on_filaments_change has already
-        // applied that shift to the painted facets (it consumes the remap built
-        // by set_num_filaments).  apply_batch_match_to_model keys its facet
-        // remap on source_extruder_ids, so a stale dialog-time mixed id would
-        // miss the moved facets and strand the painting on the old recipe row.
-        // Physical-slot ids are identity in this flow (nothing is deleted
-        // before apply); ids whose row no longer exists are dropped.
+        // epoch.
         {
             const unsigned int cur_num_physical = (unsigned int)colors_vec.size();
             for (auto& mapping : model_result.mappings) {
@@ -2546,9 +2565,7 @@ Sidebar::Sidebar(Plater *parent)
         mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids);
 
         // Replace dialog-computed target ids with the actual virtual ids assigned by
-        // add_batch_custom_filaments.  The dialog's estimate is stale by confirm time:
-        // recommended mode can grow num_physical (shifting every mixed virtual id), and
-        // the in-place block above reuses existing rows instead of allocating new ones.
+        // add_batch_custom_filaments.
         {
             size_t k = 0;
             size_t dropped = 0;
@@ -2560,9 +2577,6 @@ Sidebar::Sidebar(Plater *parent)
                 if (vid != 0u) {
                     mapping.target_filament_id = vid;
                 } else {
-                    // Dropped recipe (cap reached or invalid components): exclude it
-                    // from cleanup (target 0 is filtered out by extract_batch_kept_sets)
-                    // and leave its painted regions on their original filament.
                     mapping.target_filament_id = 0;
                     mapping.source_extruder_ids.clear();
                     ++dropped;
@@ -2586,6 +2600,11 @@ Sidebar::Sidebar(Plater *parent)
         update_mixed_filament_panel(false);
         update_ui_from_settings();
         update_dynamic_filament_list();
+        // Refresh the object list filament column so every row shows the
+        // post-remap extruder ID.  Without this the list still displays the
+        // old physical-slot IDs because the earlier on_filaments_change
+        // refresh ran BEFORE apply_batch_match_to_model.
+        obj_list()->update_objects_list_filament_column(colors_vec.size());
         // Force-refresh combo swatches in case filament count stayed the same
         // (Sidebar::on_filaments_change early-returns in that case).
         std::vector<PlaterPresetComboBox*>& fcombos = combos_filament();

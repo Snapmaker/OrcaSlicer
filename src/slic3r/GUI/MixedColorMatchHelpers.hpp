@@ -104,7 +104,8 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(
     const std::vector<std::string> &physical_colors,
     const wxColour                 &target_color,
     int                             min_component_percent = 0,
-    int                             max_component_percent = 100);
+    int                             max_component_percent = 100,
+    bool                            check_compatible = true);
 
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
@@ -209,7 +210,8 @@ BatchMatchResult batch_match_model_colors(
     int                                          min_component_percent,
     int                                          max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
-    std::function<void(int,int)>                 progress_callback = nullptr);
+    std::function<void(int,int)>                 progress_callback = nullptr,
+    bool                                         check_compatible = true);
 
 #if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 /// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).

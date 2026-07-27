@@ -2321,17 +2321,28 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
-        // No loaded model → batch match has nothing to map. Surface as an info dialog
-        // (not an error — these are "please do X first" hints, not failures) BEFORE
-        // opening the dialog.
+        // No loaded model → batch match has nothing to map. Surface as a confirmation
+        // dialog (not an error — these are "please do X first" hints, not failures)
+        // BEFORE opening the dialog, using the same RichMessageDialog style as the
+        // filament-sync prompts (caption "Batch Match", "Got it" button, screen-centred).
         if (p->plater->model().objects.empty()) {
-            show_info(this, _L("No model detected. Import a multi-color model to continue."));
+            RichMessageDialog dlg(this,
+                _L("No model detected. Import a multi-color model to continue."),
+                _L("Batch Match"), wxOK);
+            dlg.SetOKLabel(_L("Got it"));
+            dlg.CentreOnScreen();
+            dlg.ShowModal();
             return;
         }
         ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
         if (colors.size() < 2) {
-            show_info(this, _L("Please add at least 2 filaments to use batch color matching."));
+            RichMessageDialog dlg(this,
+                _L("Please add at least 2 filaments to use batch color matching."),
+                _L("Batch Match"), wxOK);
+            dlg.SetOKLabel(_L("Got it"));
+            dlg.CentreOnScreen();
+            dlg.ShowModal();
             return;
         }
         MixedFilamentBatchDialog dlg(this);

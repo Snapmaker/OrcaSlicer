@@ -1107,7 +1107,7 @@ void MixedFilamentBatchDialog::build_banners()
     m_error_text->SetMaxSize(wxSize(FromDIP(480), -1));
     es->Add(m_error_text, 1, wxALL, FromDIP(8));
     m_error_panel->SetSizer(es);
-    m_root->Add(m_error_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
+    m_root->Add(m_error_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
 
     // Warning banner — mirrors MixedFilamentDialog's banner 1:1 (same bg, icon, margins,
     // tab-traversal flag) so the two dialogs read as the same family.
@@ -1127,7 +1127,7 @@ void MixedFilamentBatchDialog::build_banners()
     // wxBOTTOM on each banner so a visible banner gets a gap to the scrolled content below.
     // wxBoxSizer collapses both the window and its border when the window is hidden, so
     // idle state (both banners hidden) adds no whitespace.
-    m_root->Add(m_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
+    m_root->Add(m_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_mode_row()
@@ -1207,9 +1207,11 @@ void MixedFilamentBatchDialog::build_mode_row()
     outer->AddSpacer(FromDIP(10));
     m_mode_row_panel->SetSizer(outer);
     // Full-width like the footer panel (no left/right margin) so the white strip spans the
-    // dialog content area edge-to-edge. No top/bottom margin — strip sits flush under the
-    // title bar and directly above the error/warning banners (build_banners runs next).
-    m_root->Add(m_mode_row_panel, 0, wxEXPAND);
+    // dialog content area edge-to-edge. No top margin — strip sits flush under the title bar.
+    // 12px bottom gap to the content below: with banners hidden (the common case) this is the
+    // mode-row → scrolled-content gap; with a banner visible it stacks as mode_row(12) → banner(8)
+    // → scrolled, keeping the mode selector visually separated from whatever appears under it.
+    m_root->Add(m_mode_row_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
@@ -1614,11 +1616,10 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
     m_legend_panel->SetSizer(m_legend_sizer);
     cs->Add(m_legend_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     m_mapping_card->SetSizer(cs);
-    // Horizontal margin 12 (pairs with CARD_WIDTH_DIP); bottom 20 stays as breathing room
-    // above the footer (kept distinct from the L/R margin so the card-to-footer gap is
-    // preserved when the L/R margin narrowed from 20→12).
+    // Horizontal margin 12 (pairs with CARD_WIDTH_DIP); bottom 12 — same gap as between cards
+    // above, so the last card sits at a uniform distance from the footer.
     parent.Add(m_mapping_card, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT, FromDIP(12));
-    parent.AddSpacer(FromDIP(20));
+    parent.AddSpacer(FromDIP(12));
 }
 
 void MixedFilamentBatchDialog::build_footer()
@@ -1707,8 +1708,18 @@ void MixedFilamentBatchDialog::build_footer()
             _L("Discard Match"),
             wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
         confirm.SetYesNoLabels(_L("Discard"), _L("Cancel"));
-        if (confirm.ShowModal() == wxID_YES)
+        auto result = confirm.ShowModal();
+        if (result == wxID_YES) {
             EndModal(wxID_CANCEL);
+        } else {
+            // The confirm dialog is a modal child: while it ran, Cancel never lost
+            // keyboard focus (mouseDown did SetFocus on click). After dismissal the
+            // focus stays on Cancel, which on Windows renders as a focus indicator
+            // that looks like a stuck "pressed" state. Hand focus to Confirm — it is
+            // enabled in this branch (m_match_completed && m_result.success) — so the
+            // dialog returns to a clean visual.
+            if (m_btn_confirm && m_btn_confirm->IsEnabled()) m_btn_confirm->SetFocus();
+        }
     });
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
 
@@ -2123,10 +2134,12 @@ void MixedFilamentBatchDialog::launch_background_match()
                 // error banner and restores the prior result. Mirrors the cancel handling
                 // in batch_match_model_colors (error_code = 2).
                 if (cancel_token->load()) {
+                    // User cancellation (Stop Matching) — not an error. error_message is
+                    // intentionally empty: handle_batch_match_result treats error_code==2 as a
+                    // silent rollback and never displays it.
                     BatchMatchResult cancelled;
-                    cancelled.success       = false;
-                    cancelled.error_code    = 2;
-                    cancelled.error_message = "Cancelled by user";
+                    cancelled.success    = false;
+                    cancelled.error_code = 2;
                     wxGetApp().CallAfter([this, destroyed, result = std::move(cancelled)]() mutable {
                         if (destroyed->load()) return;
                         handle_batch_match_result(result);
@@ -2213,12 +2226,15 @@ void MixedFilamentBatchDialog::launch_background_match()
         // return-code model (result.success / error_code) and its whole call chain
         // has no throw sites, so no exception handling is needed here.
         //
-        // Per-component weight bounds are mode-dependent:
-        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)] — product
-        //     spec forces no single component above 70%.
-        //   - MANUAL: [15, 100] — keep the 15% floor so a mix always has minimum
-        //     participation, but allow >70%; over-70% is surfaced as an advisory by
-        //     check_manual_recipe_ratio after the match, not hard-rejected here.
+        // Per-component weight bounds AND the compatibility filter are mode-dependent:
+        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)] +
+        //     check_compatible=true (product spec: same-type only).
+        //   - MANUAL: [15, 100] + check_compatible=false — keep the 15% floor so a mix
+        //     always has minimum participation, allow >70% (surfaces as advisory via
+        //     check_manual_recipe_ratio after the match), AND allow cross-type recipes
+        //     (PLA+PETG etc.). The slice gate (Plater::has_incompatible_mixed_filament_in_use)
+        //     still blocks incompatible mixes at slice time — this only lets them be
+        //     created and stored.
         const int match_min = (matching_method == MANUAL) ? 15 : kMinComponentPercent;
         const int match_max = (matching_method == MANUAL) ? 100 : kMaxComponentPercent;
         if (!unmatched_colors.empty()) {
@@ -2230,7 +2246,8 @@ void MixedFilamentBatchDialog::launch_background_match()
                             if (total > 0) progress_bar->SetValue(done * 100 / total);
                         });
                     }
-                });
+                },
+                /*check_compatible=*/ matching_method != MANUAL);
             if (sub_result.success) {
                 // Offset virtual IDs: start after all existing filaments
                 assign_batch_virtual_filament_ids(sub_result, physical_colors.size(), existing_mixed_count);

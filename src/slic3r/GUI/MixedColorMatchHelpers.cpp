@@ -356,7 +356,8 @@ double color_delta_e00(const wxColour& lhs, const wxColour& rhs)
 MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string>& physical_colors,
                                                           const wxColour&                 target_color,
                                                           int                             min_component_percent,
-                                                          int                             max_component_percent)
+                                                          int                             max_component_percent,
+                                                          bool                            check_compatible)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
@@ -389,7 +390,19 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     const CIELab target_lab = sRGB_to_CIELab(target_color);
 
     const int  loop_min_weight      = std::max(1, std::clamp(min_component_percent, 0, 50));
-    const auto compat                = build_compatibility_matrix(n);
+
+    // check_compatible=false (manual batch mode) bypasses the category filter so
+    // cross-type mixes (e.g. PLA+PETG) can be computed and stored. The downstream
+    // slice gate (Plater::has_incompatible_mixed_filament_in_use) still blocks
+    // incompatible mixes at slice time — this only widens the candidate pool during
+    // recipe search. All `if (!compat[i][j]) continue;` sites below stay unchanged;
+    // an all-true matrix makes them no-ops.
+    std::vector<std::vector<bool>> compat;
+    if (check_compatible) {
+        compat = build_compatibility_matrix(n);
+    } else {
+        compat.assign(n, std::vector<bool>(n, true));
+    }
 
     // Helper: encode filament IDs as gradient_component_ids string.
     // Legacy format (all IDs ≤ 9): concatenated single chars, e.g. "123".
@@ -1544,7 +1557,8 @@ BatchMatchResult batch_match_model_colors(
     int                                          min_component_percent,
     int                                          max_component_percent,
     std::shared_ptr<std::atomic<bool>>           cancel_token,
-    std::function<void(int,int)>                 progress_callback)
+    std::function<void(int,int)>                 progress_callback,
+    bool                                         check_compatible)
 {
     BatchMatchResult result;
     result.success = true;
@@ -1568,15 +1582,18 @@ BatchMatchResult batch_match_model_colors(
     const int total_count = static_cast<int>(model_colors.size());
     for (size_t i = 0; i < model_colors.size(); ++i) {
         if (cancel_token && cancel_token->load()) {
-            result.success = false;
-            result.error_message = "Cancelled by user";
+            // User cancellation (Stop Matching) — not an error. error_message is intentionally
+            // empty: handle_batch_match_result treats error_code==2 as a silent rollback and
+            // never displays it. See BatchMatchResult.error_code docs.
+            result.success    = false;
             result.error_code = 2;
             return result;
         }
 
         const auto& entry = model_colors[i];
         MixedColorMatchRecipeResult recipe =
-            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent, max_component_percent);
+            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent, max_component_percent,
+                                          check_compatible);
 
         if (!recipe.valid) {
             BOOST_LOG_TRIVIAL(warning)

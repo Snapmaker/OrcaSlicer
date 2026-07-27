@@ -678,13 +678,19 @@ void PrintObject::generate_support_material()
 void PrintObject::estimate_curled_extrusions()
 {
     if (this->set_started(posEstimateCurledExtrusions)) {
-        if ( std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
-                        [](const PrintRegion *region) { return region->config().enable_overhang_speed.getBool(); })) {
+        const DynamicPrintConfig &full_config = this->print()->full_print_config();
+        if (std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
+                        [&full_config](const PrintRegion *region) {
+                            return get_value_at(full_config, region->config().enable_overhang_speed,
+                                                ConfigFlowDomain::Process, 0);
+                        })) {
+            const double inner_wall_acceleration = get_value_at(
+                full_config, this->print()->default_object_config().inner_wall_acceleration,
+                ConfigFlowDomain::Process, 0);
 
             // Estimate curling of support material and add it to the malformaition lines of each layer
-            float support_flow_width = support_material_flow(this, this->config().layer_height).width();
             SupportSpotsGenerator::Params params{this->print()->m_config.filament_type.values,
-                                                 float(this->print()->default_object_config().inner_wall_acceleration.values.front()),
+                                                 float(inner_wall_acceleration),
                                                  this->config().raft_layers.getInt(), this->config().brim_type.value,
                                                  float(this->config().brim_width.getFloat())};
             SupportSpotsGenerator::estimate_malformations(this->layers(), params);

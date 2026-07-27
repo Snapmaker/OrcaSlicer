@@ -1242,14 +1242,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatOrPercent(50, true));
 
-    def = this->add("enable_overhang_speed", coBool);
+    def = this->add("enable_overhang_speed", coBools);
     def->label = L("Slow down for overhang");
     def->category = L("Speed");
     def->tooltip = L("Enable this option to slow printing down for different overhang degree.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool{ true });
+    def->set_default_value(new ConfigOptionBools{ true });
     
-    def = this->add("slowdown_for_curled_perimeters", coBool);
+    def = this->add("slowdown_for_curled_perimeters", coBools);
     def->label = L("Slow down for curled perimeters");
     def->category = L("Speed");
     // xgettext:no-c-format, no-boost-format
@@ -1264,7 +1264,7 @@ void PrintConfigDef::init_fff_params()
                      "applied even if the overhanging perimeter is part of a bridge. For example, when the perimeters are 100% overhanging"
                      ", with no wall supporting them from underneath, the 100% overhang speed will be applied.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool{ true });
+    def->set_default_value(new ConfigOptionBools{ true });
 
     def = this->add("overhang_1_4_speed", coFloatsOrPercents);
     def->label = "(10%, 25%)";
@@ -1314,7 +1314,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{0., false} });
 
-    def = this->add("bridge_speed", coFloat);
+    def = this->add("bridge_speed", coFloats);
     def->label = L("External");
     def->category = L("Speed");
     def->tooltip = L("Speed of the externally visible bridge extrusions.\n\n"
@@ -1324,9 +1324,9 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(25));
+    def->set_default_value(new ConfigOptionFloats { 25. });
 
-    def = this->add("internal_bridge_speed", coFloatOrPercent);
+    def = this->add("internal_bridge_speed", coFloatsOrPercents);
     def->label = L("Internal");
     def->category = L("Speed");
     def->tooltip = L("Speed of internal bridges. If the value is expressed as a percentage, it will be calculated based on the bridge_speed. Default value is 150%.");
@@ -1334,7 +1334,7 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "bridge_speed";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(150, true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{150., true} });
 
     def = this->add("brim_width", coFloat);
     def->label = L("Brim width");
@@ -1749,7 +1749,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 60. });
 
-    def = this->add("small_perimeter_speed", coFloatOrPercent);
+    def = this->add("small_perimeter_speed", coFloatsOrPercents);
     def->label = L("Small perimeters");
     def->category = L("Speed");
     def->tooltip = L("This separate setting will affect the speed of perimeters having radius <= small_perimeter_threshold "
@@ -1759,16 +1759,16 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "outer_wall_speed";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(50, true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{50., true} });
 
-    def = this->add("small_perimeter_threshold", coFloat);
+    def = this->add("small_perimeter_threshold", coFloats);
     def->label = L("Small perimeters threshold");
     def->category = L("Speed");
     def->tooltip = L("This sets the threshold for small perimeter length. Default threshold is 0mm.");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0));
+    def->set_default_value(new ConfigOptionFloats { 0. });
 
     def = this->add("wall_sequence", coEnum);
     def->label = L("Walls printing order");
@@ -2662,21 +2662,21 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 10000. });
 
-    def = this->add("travel_acceleration", coFloat);
+    def = this->add("travel_acceleration", coFloats);
     def->label = L("Travel");
     def->tooltip = L("Acceleration of travel moves.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(10000));
+    def->set_default_value(new ConfigOptionFloats { 10000. });
 
-    def = this->add("top_surface_acceleration", coFloat);
+    def = this->add("top_surface_acceleration", coFloats);
     def->label = L("Top surface");
     def->tooltip = L("Acceleration of top surface infill. Using a lower value may improve top surface quality.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(500));
+    def->set_default_value(new ConfigOptionFloats { 500. });
 
     def = this->add("outer_wall_acceleration", coFloats);
     def->label = L("Outer wall");
@@ -2686,119 +2686,119 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 500. });
 
-    def = this->add("bridge_acceleration", coFloatOrPercent);
+    def = this->add("bridge_acceleration", coFloatsOrPercents);
     def->label = L("Bridge");
     def->tooltip = L("Acceleration of bridges. If the value is expressed as a percentage (e.g. 50%), it will be calculated based on the outer wall acceleration.");
     def->sidetext = L("mm/s² or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->ratio_over = "outer_wall_acceleration";
-    def->set_default_value(new ConfigOptionFloatOrPercent(50,true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{50., true} });
 
-    def = this->add("sparse_infill_acceleration", coFloatOrPercent);
+    def = this->add("sparse_infill_acceleration", coFloatsOrPercents);
     def->label = L("Sparse infill");
     def->tooltip = L("Acceleration of sparse infill. If the value is expressed as a percentage (e.g. 100%), it will be calculated based on the default acceleration.");
     def->sidetext = L("mm/s² or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->ratio_over = "default_acceleration";
-    def->set_default_value(new ConfigOptionFloatOrPercent(100, true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{100., true} });
 
-    def = this->add("internal_solid_infill_acceleration", coFloatOrPercent);
+    def = this->add("internal_solid_infill_acceleration", coFloatsOrPercents);
     def->label = L("Internal solid infill");
     def->tooltip = L("Acceleration of internal solid infill. If the value is expressed as a percentage (e.g. 100%), it will be calculated based on the default acceleration.");
     def->sidetext = L("mm/s² or %");
     def->min = 0;
     def->mode = comAdvanced;
     def->ratio_over = "default_acceleration";
-    def->set_default_value(new ConfigOptionFloatOrPercent(100, true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{100., true} });
 
-    def = this->add("initial_layer_acceleration", coFloat);
+    def = this->add("initial_layer_acceleration", coFloats);
     def->label = L("Initial layer");
     def->tooltip = L("Acceleration of initial layer. Using a lower value can improve build plate adhesion.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(300));
+    def->set_default_value(new ConfigOptionFloats { 300. });
 
-    def = this->add("accel_to_decel_enable", coBool);
+    def = this->add("accel_to_decel_enable", coBools);
     def->label = L("Enable accel_to_decel");
     def->tooltip = L("Klipper's max_accel_to_decel will be adjusted automatically.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
-    
-    def = this->add("accel_to_decel_factor", coPercent);
+    def->set_default_value(new ConfigOptionBools{ true });
+
+    def = this->add("accel_to_decel_factor", coPercents);
     def->label = L("accel_to_decel");
     def->tooltip = L("Klipper's max_accel_to_decel will be adjusted to this %% of acceleration.");
     def->sidetext = "%";
     def->min = 1;
     def->max = 100;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionPercent(50));
+    def->set_default_value(new ConfigOptionPercents { 50. });
     
-    def = this->add("default_jerk", coFloat);
+    def = this->add("default_jerk", coFloats);
     def->label = L("Default");
     def->tooltip = L("Default jerk.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0));
+    def->set_default_value(new ConfigOptionFloats { 0. });
 
-    def = this->add("default_junction_deviation", coFloat);
+    def = this->add("default_junction_deviation", coFloats);
     def->label = L("Junction Deviation");
     def->tooltip = L("Marlin Firmware Junction Deviation (replaces the traditional XY Jerk setting).");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0));
+    def->set_default_value(new ConfigOptionFloats { 0. });
 
-    def = this->add("outer_wall_jerk", coFloat);
+    def = this->add("outer_wall_jerk", coFloats);
     def->label = L("Outer wall");
     def->tooltip = L("Jerk of outer walls.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(9));
+    def->set_default_value(new ConfigOptionFloats { 9. });
 
-    def = this->add("inner_wall_jerk", coFloat);
+    def = this->add("inner_wall_jerk", coFloats);
     def->label = L("Inner wall");
     def->tooltip = L("Jerk of inner walls.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(9));
+    def->set_default_value(new ConfigOptionFloats { 9. });
 
-    def = this->add("top_surface_jerk", coFloat);
+    def = this->add("top_surface_jerk", coFloats);
     def->label = L("Top surface");
     def->tooltip = L("Jerk for top surface.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(9));
+    def->set_default_value(new ConfigOptionFloats { 9. });
 
-    def = this->add("infill_jerk", coFloat);
+    def = this->add("infill_jerk", coFloats);
     def->label = L("Infill");
     def->tooltip = L("Jerk for infill.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(9));
+    def->set_default_value(new ConfigOptionFloats { 9. });
 
-    def = this->add("initial_layer_jerk", coFloat);
+    def = this->add("initial_layer_jerk", coFloats);
     def->label = L("Initial layer");
     def->tooltip = L("Jerk for initial layer.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(9));
+    def->set_default_value(new ConfigOptionFloats { 9. });
 
-    def = this->add("travel_jerk", coFloat);
+    def = this->add("travel_jerk", coFloats);
     def->label = L("Travel");
     def->tooltip = L("Jerk for travel.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(12));
+    def->set_default_value(new ConfigOptionFloats { 12. });
 
     def = this->add("initial_layer_line_width", coFloatOrPercent);
     def->label = L("Initial layer");
@@ -2829,23 +2829,23 @@ void PrintConfigDef::init_fff_params()
     //    "Note that this option only takes effect if no prime tower is generated in current plate.");
     //def->set_default_value(new ConfigOptionBool(0));
 
-    def = this->add("initial_layer_speed", coFloat);
+    def = this->add("initial_layer_speed", coFloats);
     def->label = L("Initial layer");
     def->tooltip = L("Speed of initial layer except the solid infill part.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(30));
+    def->set_default_value(new ConfigOptionFloats { 30. });
 
-    def = this->add("initial_layer_infill_speed", coFloat);
+    def = this->add("initial_layer_infill_speed", coFloats);
     def->label = L("Initial layer infill");
     def->tooltip = L("Speed of solid infill part of initial layer.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(60.0));
+    def->set_default_value(new ConfigOptionFloats { 60. });
 
-    def = this->add("initial_layer_travel_speed", coFloatOrPercent);
+    def = this->add("initial_layer_travel_speed", coFloatsOrPercents);
     def->label = L("Initial layer travel speed");
     def->tooltip = L("Travel speed of initial layer.");
     def->category = L("Speed");
@@ -2853,9 +2853,9 @@ void PrintConfigDef::init_fff_params()
     def->ratio_over = "travel_speed";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(100, true));
+    def->set_default_value(new ConfigOptionFloatsOrPercents { FloatOrPercent{100., true} });
 
-    def = this->add("slow_down_layers", coInt);
+    def = this->add("slow_down_layers", coInts);
     def->label = L("Number of slow layers");
     def->tooltip = L("The first few layers are printed slower than normal. "
                      "The speed is gradually increased in a linear fashion over the specified number of layers.");
@@ -2863,7 +2863,7 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = L("layers"); // ORCA add side text
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(0));
+    def->set_default_value(new ConfigOptionInts { 0 });
 
     def = this->add("nozzle_temperature_initial_layer", coInts);
     def->label = L("Initial layer");
@@ -3622,14 +3622,14 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
-    def = this->add("ironing_speed", coFloat);
+    def = this->add("ironing_speed", coFloats);
     def->label = L("Ironing speed");
     def->category = L("Quality");
     def->tooltip = L("Print speed of ironing lines.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(20));
+    def->set_default_value(new ConfigOptionFloats { 20. });
 
     def           = this->add("ironing_angle", coFloat);
     def->label    = L("Ironing angle");
@@ -3896,13 +3896,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
 
-    def = this->add("max_volumetric_extrusion_rate_slope", coFloat);
+    def = this->add("max_volumetric_extrusion_rate_slope", coFloats);
     def->label = L("Extrusion rate smoothing");
-    def->tooltip = L("This parameter smooths out sudden extrusion rate changes that happen when " 
+    def->tooltip = L("This parameter smooths out sudden extrusion rate changes that happen when "
                      "the printer transitions from printing a high flow (high speed/larger width) "
                      "extrusion to a lower flow (lower speed/smaller width) extrusion and vice versa.\n\n"
                      "It defines the maximum rate by which the extruded volumetric flow in mm³/s can change over time. "
-                     "Higher values mean higher extrusion rate changes are allowed, resulting in faster speed transitions.\n\n" 
+                     "Higher values mean higher extrusion rate changes are allowed, resulting in faster speed transitions.\n\n"
                      "A value of 0 disables the feature.\n\n"
                      "For a high speed, high flow direct drive printer (like the Bambu lab or Voron) this value is usually not needed. "
                      "However it can provide some marginal benefit in certain cases where feature speeds vary greatly. For example, "
@@ -3915,9 +3915,9 @@ void PrintConfigDef::init_fff_params()
     def->sidetext = u8"mm³/s²";	// cubic milimeters per second per second, don't need translation
     def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0));
+    def->set_default_value(new ConfigOptionFloats { 0. });
 
-    def = this->add("max_volumetric_extrusion_rate_slope_segment_length", coFloat);
+    def = this->add("max_volumetric_extrusion_rate_slope_segment_length", coFloats);
     def->label = L("Smoothing segment length");
     def->tooltip = L("A lower value results in smoother extrusion rate transitions. "
                      "However, this results in a significantly larger G-code file and more instructions for the printer to process.\n\n"
@@ -3927,14 +3927,14 @@ void PrintConfigDef::init_fff_params()
     def->max = 5;
     def->sidetext = "mm";	// milimeters, don't need translation
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(3.0));
-    
-    def = this->add("extrusion_rate_smoothing_external_perimeter_only", coBool);
+    def->set_default_value(new ConfigOptionFloats { 3. });
+
+    def = this->add("extrusion_rate_smoothing_external_perimeter_only", coBools);
     def->label = L("Apply only on external features");
     def->tooltip = L("Applies extrusion rate smoothing only on external perimeters and overhangs. This can help reduce artefacts due to sharp speed transitions on externally visible "
                      "overhangs without impacting the print speed of features that will not be visible to the user.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBools{ false });
 
 
     def = this->add("fan_min_speed", coFloats);
@@ -5491,14 +5491,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.5));
 
-    def = this->add("support_interface_speed", coFloat);
+    def = this->add("support_interface_speed", coFloats);
     def->label = L("Support interface");
     def->category = L("Speed");
     def->tooltip = L("Speed of support interface.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(80));
+    def->set_default_value(new ConfigOptionFloats { 80. });
 
     def = this->add("support_base_pattern", coEnum);
     def->label = L("Base pattern");
@@ -5557,14 +5557,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
-    def = this->add("support_speed", coFloat);
+    def = this->add("support_speed", coFloats);
     def->label = L("Support");
     def->category = L("Speed");
     def->tooltip = L("Speed of support.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(80));
+    def->set_default_value(new ConfigOptionFloats { 80. });
 
     def = this->add("support_style", coEnum);
     def->label = L("Style");
@@ -7310,6 +7310,75 @@ const std::vector<std::string>& filament_flow_variant_options()
 bool is_filament_flow_variant_option(const std::string &key)
 {
     const auto &options = filament_flow_variant_options();
+    return std::find(options.begin(), options.end(), key) != options.end();
+}
+
+const std::vector<std::string>& process_flow_variant_options()
+{
+    // Keys whose values are arrayed per declared flow variant (standard / high_flow / ...).
+    // Effective value is resolved at read time via ConfigFlowDomain::Process.
+    // Ordered by logical group: speed, acceleration, jerk, volumetric-flow shaping.
+    // NOTE: keep in sync with the vector-typed defs in this file (coFloats / coFloatsOrPercents /
+    // coBools / coPercents / coInts). Once a key's reads/writes are migrated to
+    // get_value_at / process_flow_value, list it here.
+    static const std::vector<std::string> options {
+        // ---- speed (region / object / gcode / print) ----
+        "outer_wall_speed",
+        "inner_wall_speed",
+        "sparse_infill_speed",
+        "internal_solid_infill_speed",
+        "top_surface_speed",
+        "gap_infill_speed",
+        "bridge_speed",
+        "internal_bridge_speed",
+        "ironing_speed",
+        "small_perimeter_speed",
+        "small_perimeter_threshold",
+        "support_speed",
+        "support_interface_speed",
+        "initial_layer_speed",
+        "initial_layer_infill_speed",
+        "initial_layer_travel_speed",
+        "travel_speed",
+        "slow_down_layers",
+        "overhang_1_4_speed",
+        "overhang_2_4_speed",
+        "overhang_3_4_speed",
+        "overhang_4_4_speed",
+        "enable_overhang_speed",
+        "slowdown_for_curled_perimeters",
+        // ---- acceleration ----
+        "default_acceleration",
+        "outer_wall_acceleration",
+        "inner_wall_acceleration",
+        "top_surface_acceleration",
+        "initial_layer_acceleration",
+        "bridge_acceleration",
+        "travel_acceleration",
+        "sparse_infill_acceleration",
+        "internal_solid_infill_acceleration",
+        "accel_to_decel_enable",
+        "accel_to_decel_factor",
+        // ---- jerk / junction deviation ----
+        "default_jerk",
+        "outer_wall_jerk",
+        "inner_wall_jerk",
+        "infill_jerk",
+        "top_surface_jerk",
+        "initial_layer_jerk",
+        "travel_jerk",
+        "default_junction_deviation",
+        // ---- volumetric flow shaping (pressure equalizer) ----
+        "max_volumetric_extrusion_rate_slope",
+        "max_volumetric_extrusion_rate_slope_segment_length",
+        "extrusion_rate_smoothing_external_perimeter_only",
+    };
+    return options;
+}
+
+bool is_process_flow_variant_option(const std::string &key)
+{
+    const auto &options = process_flow_variant_options();
     return std::find(options.begin(), options.end(), key) != options.end();
 }
 

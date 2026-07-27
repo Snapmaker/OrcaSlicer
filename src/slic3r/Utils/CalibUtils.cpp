@@ -805,7 +805,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     filament_config.set_key_value("slow_down_layer_time", new ConfigOptionInts{0});
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
-    print_config.set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
+    print_config.set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
     print_config.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config.set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config.set_key_value("alternate_extra_wall", new ConfigOptionBool(false));
@@ -869,7 +869,7 @@ void CalibUtils::calib_VFA(const CalibInfo &calib_info, wxString &error_message)
     filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
-    print_config.set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
+    print_config.set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
     print_config.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config.set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config.set_key_value("detect_thin_wall", new ConfigOptionBool(false));

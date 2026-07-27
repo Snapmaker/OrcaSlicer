@@ -1983,12 +1983,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             std::string warning_key;
 
             // check jerk
-            if (m_default_object_config.default_jerk == 1 || m_default_object_config.outer_wall_jerk == 1 ||
-                m_default_object_config.inner_wall_jerk == 1) {
+            if (m_default_object_config.default_jerk.values.front() == 1 || m_default_object_config.outer_wall_jerk.values.front() == 1 ||
+                m_default_object_config.inner_wall_jerk.values.front() == 1) {
                warning->string = L("Setting the jerk speed too low could lead to artifacts on curved surfaces");
-               if (m_default_object_config.outer_wall_jerk == 1)
+               if (m_default_object_config.outer_wall_jerk.values.front() == 1)
                     warning_key = "outer_wall_jerk";
-               else if (m_default_object_config.inner_wall_jerk == 1)
+               else if (m_default_object_config.inner_wall_jerk.values.front() == 1)
                     warning_key = "inner_wall_jerk";
                else
                     warning_key = "default_jerk";
@@ -1996,12 +1996,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                warning->opt_key = warning_key;
             }
 
-            if (warning_key.empty() && m_default_object_config.default_jerk > 0) {
+            if (warning_key.empty() && m_default_object_config.default_jerk.values.front() > 0) {
                std::vector<std::string> jerk_to_check = {"default_jerk",     "outer_wall_jerk",    "inner_wall_jerk", "infill_jerk",
                                                          "top_surface_jerk", "initial_layer_jerk", "travel_jerk"};
                const auto               max_jerk = std::min(m_config.machine_max_jerk_x.values[0], m_config.machine_max_jerk_y.values[0]);
                warning_key.clear();
-               if (m_default_object_config.default_jerk > 0)
+               if (m_default_object_config.default_jerk.values.front() > 0)
                     warning_key = check_motion_ability_object_setting(jerk_to_check, max_jerk);
                if (!warning_key.empty()) {
                     warning->string = L(
@@ -2014,7 +2014,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 
             // check  junction deviation
             const auto max_junction_deviation = m_config.machine_max_junction_deviation.values[0];
-            if (warning_key.empty() && m_default_object_config.default_junction_deviation.value > max_junction_deviation) {
+            if (warning_key.empty() && m_default_object_config.default_junction_deviation.values.front() > max_junction_deviation) {
                 warning->string  = L( "Junction deviation setting exceeds the printer's maximum value "
                                       "(machine_max_junction_deviation).\nOrca will "
                                       "automatically cap the junction deviation to ensure it doesn't surpass the printer's "

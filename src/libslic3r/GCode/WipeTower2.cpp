@@ -1338,7 +1338,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     // it is taken over following default. Speeds from config are not
     // easily accessible here.
     const float default_speed = 60.f;
-    m_first_layer_speed       = config.initial_layer_speed;
+    m_first_layer_speed       = config.initial_layer_speed.values.front();
     if (m_first_layer_speed == 0.f) // just to make sure autospeed doesn't break it.
         m_first_layer_speed = default_speed / 2.f;
 

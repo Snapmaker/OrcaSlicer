@@ -377,6 +377,13 @@ private:
     //BBS
     void check_placeholder_parser_failed();
 
+    /*
+     * Build scalar process options for custom G-code evaluation.
+     * Flow-variant vectors are resolved for current_extruder_id, and explicit overrides take precedence.
+    */
+    DynamicConfig build_placeholder_process_config(unsigned int current_extruder_id,
+                                                   const DynamicConfig *config_override) const;
+
     void            set_last_pos(const Point &pos) { m_last_pos = pos; m_last_pos_defined = true; }
     bool            last_pos_defined() const { return m_last_pos_defined; }
     void            set_extruders(const std::vector<unsigned int> &extruder_ids);

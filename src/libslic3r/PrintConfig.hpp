@@ -390,6 +390,10 @@ const char* flow_support_key(ConfigFlowDomain domain);
 const std::vector<std::string>& filament_flow_variant_options();
 bool is_filament_flow_variant_option(const std::string &key);
 
+// Process / printer options whose vector values are stored per declared flow variant.
+const std::vector<std::string>& process_flow_variant_options();
+bool is_process_flow_variant_option(const std::string &key);
+
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id = 0);
 
 template<typename VectorOption>
@@ -913,13 +917,13 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_interface_bottom_layers))
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
-    ((ConfigOptionFloat,               support_interface_speed))
+    ((ConfigOptionFloats,              support_interface_speed))
     ((ConfigOptionEnum<SupportMaterialPattern>, support_base_pattern))
     ((ConfigOptionEnum<SupportMaterialInterfacePattern>, support_interface_pattern))
     // Spacing between support material lines (the hatching distance).
     ((ConfigOptionFloat,               support_base_pattern_spacing))
     ((ConfigOptionFloat,               support_expansion))
-    ((ConfigOptionFloat,               support_speed))
+    ((ConfigOptionFloats,              support_speed))
     ((ConfigOptionEnum<SupportMaterialStyle>, support_style))
     // BBS
     //((ConfigOptionBool,                independent_support_layer_height))
@@ -982,22 +986,22 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,             default_acceleration))
     ((ConfigOptionFloats,             outer_wall_acceleration))
     ((ConfigOptionFloats,             inner_wall_acceleration))
-    ((ConfigOptionFloat,              top_surface_acceleration))
-    ((ConfigOptionFloat,              initial_layer_acceleration))
-    ((ConfigOptionFloatOrPercent,     bridge_acceleration))
-    ((ConfigOptionFloat,              travel_acceleration))
-    ((ConfigOptionFloatOrPercent,     sparse_infill_acceleration))
-    ((ConfigOptionFloatOrPercent,     internal_solid_infill_acceleration))
+    ((ConfigOptionFloats,             top_surface_acceleration))
+    ((ConfigOptionFloats,             initial_layer_acceleration))
+    ((ConfigOptionFloatsOrPercents,   bridge_acceleration))
+    ((ConfigOptionFloats,             travel_acceleration))
+    ((ConfigOptionFloatsOrPercents,   sparse_infill_acceleration))
+    ((ConfigOptionFloatsOrPercents,   internal_solid_infill_acceleration))
 
-    ((ConfigOptionFloat,              default_jerk))
-    ((ConfigOptionFloat,              outer_wall_jerk))
-    ((ConfigOptionFloat,              inner_wall_jerk))
-    ((ConfigOptionFloat,              infill_jerk))
-    ((ConfigOptionFloat,              top_surface_jerk))
-    ((ConfigOptionFloat,              initial_layer_jerk))
-    ((ConfigOptionFloat,              travel_jerk))
+    ((ConfigOptionFloats,             default_jerk))
+    ((ConfigOptionFloats,             outer_wall_jerk))
+    ((ConfigOptionFloats,             inner_wall_jerk))
+    ((ConfigOptionFloats,             infill_jerk))
+    ((ConfigOptionFloats,             top_surface_jerk))
+    ((ConfigOptionFloats,             initial_layer_jerk))
+    ((ConfigOptionFloats,             travel_jerk))
     ((ConfigOptionBool,               precise_z_height))
-    ((ConfigOptionFloat,              default_junction_deviation))
+    ((ConfigOptionFloats,             default_junction_deviation))
         
     ((ConfigOptionBool, interlocking_beam))
     ((ConfigOptionFloat,interlocking_beam_width))
@@ -1022,8 +1026,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                internal_bridge_angle)) // ORCA: Internal bridge angle override
     ((ConfigOptionFloat,                bridge_flow))
     ((ConfigOptionFloat,                internal_bridge_flow))
-    ((ConfigOptionFloat,                bridge_speed))
-    ((ConfigOptionFloatOrPercent,       internal_bridge_speed))
+    ((ConfigOptionFloats,               bridge_speed))
+    ((ConfigOptionFloatsOrPercents,     internal_bridge_speed))
     ((ConfigOptionEnum<EnsureVerticalShellThickness>,   ensure_vertical_shell_thickness))
     ((ConfigOptionPercent,              top_surface_density))
     ((ConfigOptionPercent,               bottom_surface_density))
@@ -1077,7 +1081,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, ironing_spacing))
     ((ConfigOptionFloat, ironing_inset))
     ((ConfigOptionFloat, ironing_direction))
-    ((ConfigOptionFloat, ironing_speed))
+    ((ConfigOptionFloats, ironing_speed))
     ((ConfigOptionFloat, ironing_angle))
     // Detect bridging perimeters
     ((ConfigOptionBool, detect_overhang_wall))
@@ -1098,7 +1102,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, top_shell_thickness))
     ((ConfigOptionFloats, top_surface_speed))
     //BBS
-    ((ConfigOptionBool,                 enable_overhang_speed))
+    ((ConfigOptionBools,                enable_overhang_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_1_4_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_2_4_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_3_4_speed))
@@ -1118,8 +1122,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                 precise_outer_wall))
     ((ConfigOptionPercent,              bridge_density))
     ((ConfigOptionFloat,                 filter_out_gap_fill))
-    ((ConfigOptionFloatOrPercent,       small_perimeter_speed))
-    ((ConfigOptionFloat,                small_perimeter_threshold))
+    ((ConfigOptionFloatsOrPercents,     small_perimeter_speed))
+    ((ConfigOptionFloats,               small_perimeter_threshold))
     ((ConfigOptionFloat,                top_solid_infill_flow_ratio))
     ((ConfigOptionFloat,                bottom_solid_infill_flow_ratio))
     ((ConfigOptionFloatOrPercent,       infill_anchor))
@@ -1128,7 +1132,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Orca
     ((ConfigOptionBool,                 make_overhang_printable))
     ((ConfigOptionBool,                 extra_perimeters_on_overhangs))
-    ((ConfigOptionBool,                 slowdown_for_curled_perimeters))
+    ((ConfigOptionBools,                slowdown_for_curled_perimeters))
     ((ConfigOptionBool,                 hole_to_polyhole))
     ((ConfigOptionFloatOrPercent,       hole_to_polyhole_threshold))
     ((ConfigOptionBool,                 hole_to_polyhole_twisted))
@@ -1240,9 +1244,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionString,              layer_change_gcode))
     ((ConfigOptionString,              time_lapse_gcode))
 
-    ((ConfigOptionFloat,               max_volumetric_extrusion_rate_slope))
-    ((ConfigOptionFloat,               max_volumetric_extrusion_rate_slope_segment_length))
-    ((ConfigOptionBool,               extrusion_rate_smoothing_external_perimeter_only))
+    ((ConfigOptionFloats,              max_volumetric_extrusion_rate_slope))
+    ((ConfigOptionFloats,              max_volumetric_extrusion_rate_slope_segment_length))
+    ((ConfigOptionBools,               extrusion_rate_smoothing_external_perimeter_only))
 
     
     ((ConfigOptionPercents,            retract_before_wipe))
@@ -1287,9 +1291,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     // SoftFever
     ((ConfigOptionBool,                use_firmware_retraction))
     ((ConfigOptionBool,                use_relative_e_distances))
-    ((ConfigOptionBool,                accel_to_decel_enable))
-    ((ConfigOptionPercent,             accel_to_decel_factor))
-    ((ConfigOptionFloatOrPercent,      initial_layer_travel_speed))
+    ((ConfigOptionBools,               accel_to_decel_enable))
+    ((ConfigOptionPercents,            accel_to_decel_factor))
+    ((ConfigOptionFloatsOrPercents,    initial_layer_travel_speed))
     ((ConfigOptionBool,                bbl_calib_mark_logo))
     ((ConfigOptionBool,                disable_m73))
 
@@ -1399,10 +1403,10 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               complete_print_exhaust_fan_speed))
     ((ConfigOptionFloatOrPercent,     initial_layer_line_width))
     ((ConfigOptionFloat,              initial_layer_print_height))
-    ((ConfigOptionFloat,              initial_layer_speed))
+    ((ConfigOptionFloats,             initial_layer_speed))
 
     //BBS
-    ((ConfigOptionFloat,              initial_layer_infill_speed))
+    ((ConfigOptionFloats,             initial_layer_infill_speed))
     ((ConfigOptionInts,               nozzle_temperature_initial_layer))
     ((ConfigOptionInts,               full_fan_speed_layer))
     ((ConfigOptionFloats,               fan_max_speed))
@@ -1511,7 +1515,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,                gcode_label_objects))
     ((ConfigOptionBool,                exclude_object))
     ((ConfigOptionBool,                gcode_comments))
-    ((ConfigOptionInt,                 slow_down_layers))
+    ((ConfigOptionInts,                slow_down_layers))
     ((ConfigOptionInts,                support_material_interface_fan_speed))
     ((ConfigOptionInts,                internal_bridge_fan_speed)) // ORCA: Add support for separate internal bridge fan speed control
     ((ConfigOptionInts,                ironing_fan_speed))

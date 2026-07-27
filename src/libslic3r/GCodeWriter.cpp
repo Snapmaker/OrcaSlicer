@@ -217,8 +217,9 @@ std::string GCodeWriter::set_acceleration_internal(Acceleration type, unsigned i
         gcode << (separate_travel ? "M204 T" : "M204 P") << acceleration;
     else if (FLAVOR_IS(gcfKlipper)) {
         gcode << "SET_VELOCITY_LIMIT ACCEL=" << acceleration;
-        if (this->config.accel_to_decel_enable) {
-            gcode << " ACCEL_TO_DECEL=" << acceleration * this->config.accel_to_decel_factor / 100;
+        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
+        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
+            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
             if (GCodeWriter::full_gcode_comment)
                 gcode << " ; adjust ACCEL_TO_DECEL";
         }
@@ -285,8 +286,9 @@ std::string GCodeWriter::set_accel_and_jerk(unsigned int acceleration, double je
     gcode << "SET_VELOCITY_LIMIT";
     if (acceleration != 0 && acceleration != m_last_acceleration) {
         gcode << " ACCEL=" << acceleration;
-        if (this->config.accel_to_decel_enable) {
-            gcode << " ACCEL_TO_DECEL=" << acceleration * this->config.accel_to_decel_factor / 100;
+        unsigned int filament_id = m_extruder != nullptr ? m_extruder->id() : 0;
+        if (get_value_at(this->config, this->config.accel_to_decel_enable, ConfigFlowDomain::Process, filament_id)) {
+            gcode << " ACCEL_TO_DECEL=" << acceleration * get_value_at(this->config, this->config.accel_to_decel_factor, ConfigFlowDomain::Process, filament_id) / 100;
         }
         m_last_acceleration = acceleration;
         is_empty = false;
@@ -492,8 +494,10 @@ double GCodeWriter::active_travel_speed(bool first_layer_aware) const
     unsigned int extruder_id = m_extruder != nullptr ? m_extruder->id() : 0;
     double speed = get_value_at(this->config, this->config.travel_speed, ConfigFlowDomain::Process, extruder_id);
 
-    if (first_layer_aware && m_is_first_layer)
-        speed = this->config.initial_layer_travel_speed.get_abs_value(speed);
+    if (first_layer_aware && m_is_first_layer) {
+        const auto ilt_fop = get_value_at(this->config, this->config.initial_layer_travel_speed, ConfigFlowDomain::Process, extruder_id);
+        speed              = ilt_fop.percent ? (ilt_fop.value * 0.01 * speed) : ilt_fop.value;
+    }
 
     return speed;
 }

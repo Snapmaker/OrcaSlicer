@@ -2931,7 +2931,7 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
             printSpeedMap.maxSpeed = printSpeedMap.topSolidInfillSpeed;
     }
     if (config.has("support_speed")) {
-        printSpeedMap.supportSpeed = config.opt_float("support_speed");
+        printSpeedMap.supportSpeed = config.opt_float("support_speed", 0);
 
         if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;

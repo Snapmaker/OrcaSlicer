@@ -711,7 +711,9 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
     Vec2f start_pos = tcr.start_pos;
     Vec2f end_pos   = tcr.end_pos;
-    Vec2f tool_change_start_pos = tcr.is_tool_change ? tcr.tool_change_start_pos : start_pos;
+    Vec2f tool_change_start_pos = start_pos;
+    if (tcr.is_tool_change)
+        tool_change_start_pos = tcr.tool_change_start_pos;
     if (!tcr.priming) {
         start_pos             = transform_wt_pt(start_pos);
         end_pos               = transform_wt_pt(end_pos);

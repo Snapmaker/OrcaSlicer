@@ -8,6 +8,7 @@
 #include "PresetBundle.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <queue>
@@ -922,14 +923,18 @@ static FilamentCategory filament_category_from_name(const std::string& name)
 // 2D compatibility matrix. Dimension is tied to the enum so adding a category
 // to FilamentCategory automatically grows the table.
 static std::vector<std::vector<bool>> s_compat;
-static bool                           s_compat_loaded = false;
+// atomic, not plain bool: the unlocked first read below and the locked write in
+// load_filament_compatibility() would otherwise be a data race (classic non-atomic
+// double-checked locking). acquire/release is sufficient — the mutex inside provides
+// the heavy lifting; this flag only needs to publish "already loaded" without a race.
+static std::atomic<bool>              s_compat_loaded{false};
 static std::mutex                     s_compat_mutex;
 
 static void load_filament_compatibility()
 {
-    if (s_compat_loaded) return;
+    if (s_compat_loaded.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lock(s_compat_mutex);
-    if (s_compat_loaded) return;
+    if (s_compat_loaded.load(std::memory_order_acquire)) return;
 
     // Default: each category compatible only with itself
     s_compat.assign(k_compat_dim, std::vector<bool>(k_compat_dim, false));
@@ -982,7 +987,7 @@ static void load_filament_compatibility()
                 s_compat[(size_t)cat_b][(size_t)cat_a] = true;
             }
         }
-        s_compat_loaded = true;
+        s_compat_loaded.store(true, std::memory_order_release);
         BOOST_LOG_TRIVIAL(info) << "Loaded filament compatibility matrix from " << path;
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to parse filament compatibility config: " << e.what();
@@ -1060,7 +1065,11 @@ static std::string normalize_filament_type(const std::string& type)
     size_t end   = normalized.find_last_not_of(" \t\r\n");
     if (start != std::string::npos && end != std::string::npos)
         normalized = normalized.substr(start, end - start + 1);
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+    // toupper from <cctype> requires an argument in [0, UCHAR_MAX] or EOF; passing a
+    // negative char (signed byte >= 0x80, e.g. a non-ASCII filament_type) is UB. The lambda
+    // forces the unsigned char conversion the C API expects.
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
     return normalized;
 }
 
@@ -1566,6 +1575,15 @@ BatchMatchResult batch_match_model_colors(
     if (min_component_percent < 0 || min_component_percent > 50) {
         result.success = false;
         result.error_message = "min_component_percent must be in [0, 50]";
+        return result;
+    }
+    // Symmetric with build_best_color_match_recipe's max check (see line ~375). Without this,
+    // an out-of-range max would be forwarded per-recipe and silently rejected by the inner
+    // function, surfacing to the user as the misleading "No valid recipes found" instead of
+    // a parameter error.
+    if (max_component_percent < 50 || max_component_percent > 100) {
+        result.success = false;
+        result.error_message = "max_component_percent must be in [50, 100]";
         return result;
     }
     if (model_colors.empty()) {

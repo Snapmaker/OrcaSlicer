@@ -88,7 +88,16 @@ private:
 
     void set_match_buttons_state(bool matching);
     void update_recommended_card();
+    // Enumerate target colors from the model's painted volumes (legacy path; currently NOT
+    // called by the ctor — kept for reference / future use). See load_palette_colors.
     void load_model_colors();
+    // Enumerate target colors from the project's FULL palette: physical filament_colour
+    // values + enabled mixed-filament display_colors (mirrors the enumeration done by
+    // Plater::get_extruder_colors_from_plater_config(nullptr, /*include_mixed=*/true)).
+    // Called by the ctor so every palette color appears in the match legend, even when the
+    // model never uses it (apply stays a no-op for those — source_extruder_ids has no
+    // corresponding model volume to remap).
+    void load_palette_colors();
     void reset_match_preview();
 
     enum MatchingMethod { RECOMMENDED = 0, MANUAL = 1 };

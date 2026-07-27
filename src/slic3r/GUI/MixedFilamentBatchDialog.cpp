@@ -296,8 +296,16 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
     CentreOnScreen();
 
     if (wxGetApp().preset_bundle) {
-        ConfigOptionStrings* co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-        if (co) m_physical_colors = co->values;
+        // Physical filament colors for the Manual-mode combo list. Go through
+        // get_extruder_colors_from_plater_config (include_mixed=false) rather than reading
+        // filament_colour.values directly: that function resizes the vector to filaments_cnt()
+        // (preset_bundle->filament_presets.size()), padding with "#26A69A" when the raw config
+        // array is shorter than the real extruder count. This keeps m_physical_colors.size()
+        // in lock-step with the physical extruder count — load_palette_colors uses the same
+        // source (include_mixed=true), so Manual combo items and target rows never drift apart
+        // when filament_colour has fallen out of sync with filament_presets.
+        if (auto* plater = wxGetApp().plater())
+            m_physical_colors = plater->get_extruder_colors_from_plater_config(nullptr, false);
     }
     // Default the manual-mode filament count to the number of physical filaments,
     // capped at 4 (the max supported slots) and floored at 2 (the min).
@@ -327,7 +335,9 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
     // worker's only call into the library is the read-only FindFilamentByName (a map lookup),
     // which is safe to run concurrently with the main thread. See load_full_spectrum_colors().
     FilamentColorLibrary::Instance().EnsureLoaded();
-    load_model_colors();
+    // Match targets = the project's FULL palette (physical filament_colour + enabled mixed
+    // display_colors), NOT just the model's painted volumes. See load_palette_colors.
+    load_palette_colors();
     build_ui();
     set_match_buttons_state(false);
     m_btn_start_match->Enable(!m_model_colors.empty() && m_physical_colors.size() >= 2);
@@ -689,6 +699,10 @@ void MixedFilamentBatchDialog::render_original_thumb_for_plate(int plate_idx)
 
 void MixedFilamentBatchDialog::load_model_colors()
 {
+    // NOTE: legacy path — enumerates target colors from the model's painted MODEL_PART volumes.
+    // The ctor now calls load_palette_colors() instead (full project palette: physical
+    // filament_colour + enabled mixed display_colors). This function is kept for reference /
+    // future use; no current caller. Do not delete without confirming nothing else depends on it.
     m_model_colors.clear();
 
     auto* plater = wxGetApp().plater();
@@ -789,6 +803,69 @@ void MixedFilamentBatchDialog::load_model_colors()
     // kMaxColors. The warning is deferred to build_ui because m_warning_panel is still null
     // here — the ctor runs load_model_colors before build_banners/build_ui, so calling
     // display_warning now would hit the early `if (!m_warning_panel) return` and be lost.
+    while (m_model_colors.size() > kMaxColors) {
+        m_model_colors.pop_back();
+        m_pending_64_color_warning = true;
+    }
+}
+
+// Enumerate the match target set from the project's FULL palette instead of from the model's
+// painted volumes (the legacy load_model_colors path above, which is no longer called by the
+// ctor — kept here for reference / future use).
+//
+// Source: Plater::get_extruder_colors_from_plater_config(nullptr, /*include_mixed=*/true),
+// which returns [physical filament_colour hexes...][enabled mixed-filament display_colors...].
+// The 1-based extruder id is the palette index + 1, matching mixed_filament_from_id's
+// "physical+1 onwards is virtual" convention, so apply_batch_match_to_model's source_extruder_ids
+// line up with the real (physical|virtual) extruder space.
+//
+// Palette colors the model never uses still produce a legend row, but apply stays a no-op for
+// them: apply_batch_match_to_model walks model volumes' extruders and only remaps ids that
+// actually appear, so an unused palette id never triggers a virtual-filament allocation.
+//
+// Dedup / validation / 64-color cap mirror load_model_colors exactly (same helpers, same
+// m_pending_64_color_warning deferred-display contract — m_warning_panel is null here).
+void MixedFilamentBatchDialog::load_palette_colors()
+{
+    m_model_colors.clear();
+
+    auto* plater = wxGetApp().plater();
+    if (!plater) return;
+
+    // Map hex → accumulated extruder_ids (insert-order for stable legend ordering)
+    std::vector<std::pair<std::string, std::vector<unsigned int>>> hex_to_eids;
+
+    const auto all_colors = plater->get_extruder_colors_from_plater_config(nullptr, true);
+    for (size_t i = 0; i < all_colors.size(); ++i) {
+        const std::string& hex = all_colors[i];
+        if (hex.empty()) continue;
+        wxColour c;
+        if (!try_parse_color_match_hex(hex, c)) continue;
+        const wxString hex_norm = normalize_color_match_hex(hex);
+
+        auto it = std::find_if(hex_to_eids.begin(), hex_to_eids.end(),
+            [&](const auto& p) { return p.first == hex_norm; });
+        if (it != hex_to_eids.end()) {
+            it->second.push_back(static_cast<unsigned int>(i + 1));
+        } else {
+            hex_to_eids.push_back({hex_norm.ToStdString(), {static_cast<unsigned int>(i + 1)}});
+        }
+    }
+
+    for (size_t idx = 0; idx < hex_to_eids.size(); ++idx) {
+        const std::string& hex = hex_to_eids[idx].first;
+        const auto&        eids = hex_to_eids[idx].second;
+        wxColour c;
+        try_parse_color_match_hex(hex, c); // already validated above
+
+        m_model_colors.push_back({
+            static_cast<unsigned int>(m_model_colors.size() + 1),
+            c, hex,
+            eids
+        });
+    }
+
+    // Same 64-color cap + deferred-warning contract as load_model_colors (see comment there).
     while (m_model_colors.size() > kMaxColors) {
         m_model_colors.pop_back();
         m_pending_64_color_warning = true;
@@ -1057,7 +1134,10 @@ void MixedFilamentBatchDialog::build_ui()
     m_scrolled_content->SetSizer(scroll_sizer);
     // Width floor must match the dialog width or cards overflow horizontally (MultiMachineManagerPage).
     m_scrolled_content->SetMinSize(wxSize(FromDIP(500), FromDIP(80)));
-    m_root->Add(m_scrolled_content, 1, wxEXPAND);
+    // 12px top gap separates the scrolled content from whatever sits above (mode row, or the
+    // last visible banner). Applied here rather than as wxBOTTOM on the banners/mode row so a
+    // banner sits flush against the mode row when shown.
+    m_root->Add(m_scrolled_content, 1, wxEXPAND | wxTOP, FromDIP(12));
 
     // Footer (Cancel/Confirm) above progress: Figma spec has the match-progress bar pinned
     // to the dialog's bottom edge, with the action buttons sitting just above it. Order
@@ -1101,13 +1181,17 @@ void MixedFilamentBatchDialog::build_banners()
     m_error_panel->Hide();
     auto* es = new wxBoxSizer(wxHORIZONTAL);
     ScalableBitmap ebmp(m_error_panel, "error_icon_red_exclamation", 14);
-    es->Add(new wxStaticBitmap(m_error_panel, wxID_ANY, ebmp.bmp()), 0, wxALL, FromDIP(8));
+    auto* e_icon = new wxStaticBitmap(m_error_panel, wxID_ANY, ebmp.bmp());
+    // §17: wxStaticBitmap does not inherit the panel bg on wxMSW — the icon SVG has
+    // transparent pixels that would show the system color instead of #FDE8E8.
+    e_icon->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FDE8E8")));
+    es->Add(e_icon, 0, wxALL, FromDIP(8));
     m_error_text = new Label(m_error_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
     m_error_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#D32F2F")));
     m_error_text->SetMaxSize(wxSize(FromDIP(480), -1));
     es->Add(m_error_text, 1, wxALL, FromDIP(8));
     m_error_panel->SetSizer(es);
-    m_root->Add(m_error_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+    m_root->Add(m_error_panel, 0, wxEXPAND);
 
     // Warning banner — mirrors MixedFilamentDialog's banner 1:1 (same bg, icon, margins,
     // tab-traversal flag) so the two dialogs read as the same family.
@@ -1117,17 +1201,21 @@ void MixedFilamentBatchDialog::build_banners()
     m_warning_panel->Hide();
     auto* ws = new wxBoxSizer(wxHORIZONTAL);
     ScalableBitmap wbmp(m_warning_panel, "icon_warning_triangle", 14);
-    ws->Add(new wxStaticBitmap(m_warning_panel, wxID_ANY, wbmp.bmp()), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
+    auto* w_icon = new wxStaticBitmap(m_warning_panel, wxID_ANY, wbmp.bmp());
+    // §17: see e_icon above — transparent SVG pixels need the panel bg to render correctly on wxMSW.
+    w_icon->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFF3EB")));
+    ws->Add(w_icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
     ws->AddSpacer(FromDIP(4));
     m_warning_text = new Label(m_warning_panel, Label::Body_12, wxEmptyString, LB_AUTO_WRAP);
     m_warning_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF842D")));
     m_warning_text->SetMaxSize(wxSize(FromDIP(480), -1));
     ws->Add(m_warning_text, 1, wxALL, FromDIP(8));
     m_warning_panel->SetSizer(ws);
-    // wxBOTTOM on each banner so a visible banner gets a gap to the scrolled content below.
-    // wxBoxSizer collapses both the window and its border when the window is hidden, so
-    // idle state (both banners hidden) adds no whitespace.
-    m_root->Add(m_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+    // No bottom margin on the banners: the gap to the scrolled content below is applied as wxTOP
+    // on m_scrolled_content, so the banner sits flush against the mode row above it. wxBoxSizer
+    // collapses both the window and its border when the window is hidden, so idle state (both
+    // banners hidden) adds no whitespace.
+    m_root->Add(m_warning_panel, 0, wxEXPAND);
 }
 
 void MixedFilamentBatchDialog::build_mode_row()
@@ -1207,11 +1295,11 @@ void MixedFilamentBatchDialog::build_mode_row()
     outer->AddSpacer(FromDIP(10));
     m_mode_row_panel->SetSizer(outer);
     // Full-width like the footer panel (no left/right margin) so the white strip spans the
-    // dialog content area edge-to-edge. No top margin — strip sits flush under the title bar.
-    // 12px bottom gap to the content below: with banners hidden (the common case) this is the
-    // mode-row → scrolled-content gap; with a banner visible it stacks as mode_row(12) → banner(8)
-    // → scrolled, keeping the mode selector visually separated from whatever appears under it.
-    m_root->Add(m_mode_row_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+    // dialog content area edge-to-edge. No top/bottom margin — strip sits flush under the title
+    // bar and directly above the error/warning banners (build_banners runs next). The 12px gap
+    // to whatever appears below (banner, or scrolled content when banners are hidden) is applied
+    // as wxTOP on m_scrolled_content so the banner sits flush against the mode row when shown.
+    m_root->Add(m_mode_row_panel, 0, wxEXPAND);
 }
 
 void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
@@ -2476,6 +2564,9 @@ void MixedFilamentBatchDialog::update_mapping_legend()
                 : "mixed_filament_mapping_right_arrow";
             ScalableBitmap arrow_bmp(item, arrow_name, 16);
             auto* arrow = new wxStaticBitmap(item, wxID_ANY, arrow_bmp.bmp());
+            // §17: stroke-only arrow SVG has transparent pixels; without matching the item's
+            // white bg they would render with the system color on wxMSW.
+            arrow->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
             s->Add(arrow, 0, wxALIGN_CENTER_VERTICAL);
 
             s->AddStretchSpacer(1);
@@ -2499,8 +2590,8 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             // parent), and the swatches/arrow are independent child windows — so we must set
             // the same tip on every child too, otherwise hovering a swatch shows nothing and
             // only the gaps between children trigger the row's tip.
-            const wxString grade = (mapping.delta_e <= 1.0) ? _L("Good")
-                                  : (mapping.delta_e <= 3.0) ? _L("Fair")
+            const wxString grade = (mapping.delta_e <= 3.0) ? _L("Good")
+                                  : (mapping.delta_e <= 5.0) ? _L("Fair")
                                   : _L("Poor");
             // Per copy spec: "色差：{等级}（ΔE={X}）" / "Color Difference: {Level} (ΔE={X})".
             // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all

@@ -6672,6 +6672,20 @@ void GCode::apply_print_config(const PrintConfig& print_config)
 
 static std::string serialize_gcode_config_option(const DynamicPrintConfig &config, const std::string &key)
 {
+    if (key == "filament_flow_support" || key == "process_flow_support" || key == "printer_flow_support") {
+        const auto *support = config.option<ConfigOptionStrings>(key);
+        if (support == nullptr)
+            return config.opt_serialize(key);
+
+        std::ostringstream serialized;
+        for (size_t i = 0; i < support->values.size(); ++i) {
+            if (i > 0)
+                serialized << ',';
+            serialized << support->values[i];
+        }
+        return serialized.str();
+    }
+
     const ConfigOption *source = config.option(key);
     if (source == nullptr || source->is_scalar() || !is_filament_flow_variant_option(key))
         return config.opt_serialize(key);

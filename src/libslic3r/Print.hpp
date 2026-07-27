@@ -700,6 +700,12 @@ struct FakeWipeTower
 
 struct WipeTowerData
 {
+    struct WipeTowerMeshData
+    {
+        Polygon bottom;
+        TriangleMesh real_wipe_tower_mesh;
+        TriangleMesh real_brim_mesh;
+    };
     // Following section will be consumed by the GCodeGenerator.
     // Tool ordering of a non-sequential print has to be known to calculate the wipe tower.
     // Cache it here, so it does not need to be recalculated during the G-code generation.
@@ -719,6 +725,8 @@ struct WipeTowerData
     float                                                 brim_width;
     float                                                 height;
     BoundingBoxf                                           bbx;
+    Vec2f rib_offset;
+    std::optional<WipeTowerMeshData> wipe_tower_mesh_data;
 
     void clear() {
         priming.reset(nullptr);
@@ -730,7 +738,11 @@ struct WipeTowerData
         depth = 0.f;
         local_z_reserve_boxes.clear();
         brim_width = 0.f;
+        wipe_tower_mesh_data = std::nullopt;
     }
+
+    void construct_mesh(float width, float depth, float height, 
+        float brim_width, bool is_rib_wipe_tower, float rib_width, float rib_length, bool fillet_wall);
 
 private:
 	// Only allow the WipeTowerData to be instantiated internally by Print, 

@@ -623,6 +623,21 @@ Option ConfigOptionsGroup::get_option(const std::string& opt_key, int opt_index 
 	return Option(*m_config->def()->get(opt_key), opt_id);
 }
 
+bool ConfigOptionsGroup::set_option_index(const std::string& opt_key, int opt_index)
+{
+    bool updated = false;
+    for (auto& option : m_opt_map)
+    {
+        if (option.second.first != opt_key)
+            continue;
+
+        option.second.second = opt_index;
+        updated = true;
+    }
+
+    return updated;
+}
+
 void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const boost::any& value)
 {
 	if (!m_opt_map.empty())

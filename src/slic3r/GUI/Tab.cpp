@@ -12,6 +12,7 @@
 
 #include "Search.hpp"
 #include "OG_CustomCtrl.hpp"
+#include "Widgets/SegmentedToggle.hpp"
 
 #include <wx/app.h>
 #include <wx/button.h>
@@ -891,13 +892,137 @@ void Tab::decorate()
         m_active_page->refresh();
 }
 
+void Tab::register_flow_variant_view(ConfigFlowDomain domain,
+                                     const PageShp& page,
+                                     std::function<const std::vector<std::string>&()> options,
+                                     std::function<bool(const std::string&)> is_option)
+{
+    m_flow_variant_view = std::make_unique<FlowVariantView>();
+    m_flow_variant_view->domain = domain;
+    m_flow_variant_view->page = page;
+    m_flow_variant_view->options = std::move(options);
+    m_flow_variant_view->is_option = std::move(is_option);
+
+    refresh_flow_variant_view();
+}
+
+size_t Tab::flow_variant_view_index() const
+{
+    if (!m_flow_variant_view || m_flow_variant_view->modes.empty())
+        return 0;
+
+    const auto mode = std::find(m_flow_variant_view->modes.begin(),
+                                m_flow_variant_view->modes.end(),
+                                m_flow_variant_view->selected_mode);
+    return mode == m_flow_variant_view->modes.end()
+        ? 0
+        : size_t(std::distance(m_flow_variant_view->modes.begin(), mode));
+}
+
+void Tab::refresh_flow_variant_view()
+{
+    if (!m_flow_variant_view || !m_config)
+        return;
+
+    std::vector<std::string> modes;
+    const auto* support = m_config->option<ConfigOptionStrings>(flow_support_key(m_flow_variant_view->domain));
+    if (support != nullptr)
+        modes = support->values;
+    if (modes.empty())
+        modes.emplace_back(FLOW_MODE_STANDARD);
+
+    if (std::find(modes.begin(), modes.end(), m_flow_variant_view->selected_mode) == modes.end())
+    {
+        const auto standard = std::find(modes.begin(), modes.end(), FLOW_MODE_STANDARD);
+        m_flow_variant_view->selected_mode = (standard == modes.end()) ? modes.front() : *standard;
+    }
+
+    if (m_flow_variant_view->selector == nullptr || modes != m_flow_variant_view->modes)
+    {
+        if (m_flow_variant_view->selector != nullptr)
+        {
+            m_parent->get_page_header_sizer()->Detach(m_flow_variant_view->selector);
+            m_flow_variant_view->selector->Destroy();
+        }
+
+        m_flow_variant_view->modes = modes;
+        std::vector<wxString> labels;
+        labels.reserve(modes.size());
+        for (const std::string& mode : modes)
+        {
+            if (mode == FLOW_MODE_STANDARD)
+                labels.emplace_back(_L("Standard"));
+            else if (mode == FLOW_MODE_HIGH_FLOW)
+                labels.emplace_back(_L("High flow"));
+            else
+            {
+                std::string label = mode;
+                std::replace(label.begin(), label.end(), '_', ' ');
+                labels.emplace_back(from_u8(label));
+            }
+        }
+
+        m_flow_variant_view->selector = new SegmentedToggle(m_parent->get_page_header(),
+                                                            labels,
+                                                            int(flow_variant_view_index()));
+        m_parent->get_page_header_sizer()->Add(m_flow_variant_view->selector,
+                                               0,
+                                               wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM,
+                                               FromDIP(10));
+        m_flow_variant_view->selector->bindSelectionCallback([this](int index) {
+            if (!m_flow_variant_view || index < 0 || size_t(index) >= m_flow_variant_view->modes.size())
+                return;
+
+            m_flow_variant_view->selected_mode = m_flow_variant_view->modes[size_t(index)];
+            refresh_flow_variant_view();
+            Tab::reload_config();
+            update_changed_ui();
+            toggle_options();
+            update_visibility();
+            m_parent->Layout();
+        });
+        m_parent->get_page_header()->Layout();
+    }
+    else
+    {
+        m_flow_variant_view->selector->setSelected(int(flow_variant_view_index()));
+    }
+
+    update_flow_variant_view_visibility();
+
+    const int flow_index = int(flow_variant_view_index());
+    for (const ConfigOptionsGroupShp& group : m_flow_variant_view->page->m_optgroups)
+    {
+        for (const auto& option : group->opt_map())
+        {
+            const std::string& key = option.second.first;
+            if (m_flow_variant_view->is_option(key))
+                group->set_option_index(key, flow_index);
+        }
+    }
+}
+
+void Tab::update_flow_variant_view_visibility()
+{
+    const bool show = m_flow_variant_view &&
+                      m_flow_variant_view->selector &&
+                      m_active_page == m_flow_variant_view->page.get() &&
+                      m_parent->get_current_tab() == this;
+
+    if (m_flow_variant_view && m_flow_variant_view->selector)
+        m_flow_variant_view->selector->Show(show);
+    m_parent->show_page_header(show);
+}
+
 // Update UI according to changes
 void Tab::update_changed_ui()
 {
     if (m_postpone_update_ui)
         return;
 
-    const bool deep_compare = (m_type == Slic3r::Preset::TYPE_PRINTER || m_type == Slic3r::Preset::TYPE_SLA_MATERIAL);
+    const bool deep_compare = (m_flow_variant_view != nullptr ||
+                               m_type == Slic3r::Preset::TYPE_PRINTER ||
+                               m_type == Slic3r::Preset::TYPE_SLA_MATERIAL);
     auto dirty_options = m_presets->current_dirty_options(deep_compare);
     auto nonsys_options = m_presets->current_different_from_parent_options(deep_compare);
     if (m_type == Preset::TYPE_PRINTER && static_cast<TabPrinter*>(this)->m_printer_technology == ptFFF) {
@@ -911,8 +1036,19 @@ void Tab::update_changed_ui()
     for (auto& it : m_options_list)
         it.second = m_opt_status_value;
 
-    for (auto opt_key : dirty_options)	m_options_list[opt_key] &= ~osInitValue;
-    for (auto opt_key : nonsys_options)	m_options_list[opt_key] &= ~osSystemValue;
+    for (auto opt_key : dirty_options) m_options_list[opt_key] &= ~osInitValue;
+    for (auto opt_key : nonsys_options) m_options_list[opt_key] &= ~osSystemValue;
+
+    if (m_flow_variant_view)
+    {
+        const size_t current_index = flow_variant_view_index();
+        for (const std::string& key : m_flow_variant_view->options())
+        {
+            const auto current = m_options_list.find(key + "#" + std::to_string(current_index));
+            if (current != m_options_list.end())
+                m_options_list[key] = current->second;
+        }
+    }
 
     update_custom_dirty();
 
@@ -933,6 +1069,19 @@ void Tab::init_options_list()
 
     for (const std::string& opt_key : m_config->keys())
         m_options_list.emplace(opt_key, m_opt_status_value);
+
+    if (!m_flow_variant_view)
+        return;
+
+    const size_t flow_count = m_flow_variant_view->modes.empty() ? 1 : m_flow_variant_view->modes.size();
+    for (const std::string& key : m_flow_variant_view->options())
+    {
+        if (!m_config->has(key))
+            continue;
+
+        for (size_t index = 0; index < flow_count; ++index)
+            m_options_list.emplace(key + "#" + std::to_string(index), m_opt_status_value);
+    }
 }
 
 template<class T>
@@ -1078,6 +1227,22 @@ void Tab::update_changed_tree_ui()
                 for (const auto &kvp : group->opt_map()) {
                     const std::string& opt_key = kvp.first;
                     get_sys_and_mod_flags(opt_key, sys_page, modified_page);
+                }
+            }
+
+            if (m_flow_variant_view && page == m_flow_variant_view->page)
+            {
+                for (const std::string& key : m_flow_variant_view->options())
+                {
+                    const std::string prefix = key + "#";
+                    for (const auto& option : m_options_list)
+                    {
+                        if (option.first.compare(0, prefix.size(), prefix) != 0)
+                            continue;
+
+                        sys_page &= (option.second & osSystemValue) != 0;
+                        modified_page |= (option.second & osInitValue) == 0;
+                    }
                 }
             }
 
@@ -2417,6 +2582,14 @@ void TabPrint::build()
         optgroup->append_single_option_line("ensure_vertical_shell_thickness", "strength_settings_advanced#ensure-vertical-shell-thickness");
 
     page = add_options_page(L("Speed"), "custom-gcode_speed"); // ORCA: icon only visible on placeholders
+        if (m_type == Preset::TYPE_PRINT)
+        {
+            register_flow_variant_view(
+                ConfigFlowDomain::Process,
+                page,
+                []() -> const std::vector<std::string>& { return process_flow_variant_options(); },
+                [](const std::string& key) { return is_process_flow_variant_option(key); });
+        }
         optgroup = page->new_optgroup(L("Initial layer speed"), L"param_speed_first", 15);
     optgroup->append_single_option_line("initial_layer_speed", "speed_settings_initial_layer_speed#initial-layer");
         optgroup->append_single_option_line("initial_layer_infill_speed", "speed_settings_initial_layer_speed#initial-layer-infill");
@@ -2690,6 +2863,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
 void TabPrint::reload_config()
 {
+    refresh_flow_variant_view();
     this->compatible_widget_reload(m_compatible_printers);
     Tab::reload_config();
 }
@@ -5826,6 +6000,7 @@ void Tab::clear_pages()
 {
     // invalidated highlighter, if any exists
     m_highlighter.invalidate();
+    m_parent->show_page_header(false);
     // clear pages from the controlls
     for (auto p : m_pages)
         p->clear();
@@ -5897,6 +6072,7 @@ void Tab::activate_selected_page(std::function<void()> throw_if_canceled)
     if (m_active_page && !(m_active_page->title() == "Dependencies"))
         toggle_options();
     m_active_page->update_visibility(m_mode, true); // for taggle line
+    update_flow_variant_view_visibility();
 }
 
 //BBS: GUI refactor
@@ -6013,8 +6189,8 @@ bool Tab::tree_sel_change_delayed(wxCommandEvent& event)
         m_active_page = page;
         // BBS: not changed
         // update_undo_buttons();
-        this->OnActivate();
         m_parent->set_active_tab(this);
+        this->OnActivate();
 
         m_page_view->Thaw();
         return false;

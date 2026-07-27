@@ -265,6 +265,7 @@ public:
     void        set_config(DynamicPrintConfig* config) { 
 		m_config = config; m_modelconfig = nullptr; }
 	Option		get_option(const std::string& opt_key, int opt_index = -1);
+	bool        set_option_index(const std::string& opt_key, int opt_index);
 	Line		create_single_option_line(const std::string& title, const std::string& path = std::string(), int idx = -1) /*const*/{
 		Option option = get_option(title, idx);
 		return OptionsGroup::create_single_option_line(option, path);

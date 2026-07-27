@@ -53,6 +53,7 @@ namespace GUI {
 
 class TabPresetComboBox;
 class OG_CustomCtrl;
+class SegmentedToggle;
 
 // Single Tab page containing a{ vsizer } of{ optgroups }
 // package Slic3r::GUI::Tab::Page;
@@ -276,6 +277,18 @@ protected:
 
 	DynamicPrintConfig 	m_cache_config;
 
+    struct FlowVariantView
+    {
+        ConfigFlowDomain domain { ConfigFlowDomain::Process };
+        PageShp page;
+        SegmentedToggle* selector { nullptr };
+        std::vector<std::string> modes;
+        std::string selected_mode;
+        std::function<const std::vector<std::string>&()> options;
+        std::function<bool(const std::string&)> is_option;
+    };
+    std::unique_ptr<FlowVariantView> m_flow_variant_view;
+
 
 	bool				m_page_switch_running = false;
 	bool				m_page_switch_planned = false;
@@ -421,6 +434,14 @@ public:
     virtual void				set_custom_gcode(const t_config_option_key& opt_key, const std::string& value);
 
 protected:
+    void register_flow_variant_view(ConfigFlowDomain domain,
+                                    const PageShp& page,
+                                    std::function<const std::vector<std::string>&()> options,
+                                    std::function<bool(const std::string&)> is_option);
+    void refresh_flow_variant_view();
+    void update_flow_variant_view_visibility();
+    size_t flow_variant_view_index() const;
+
 	void			create_line_with_widget(ConfigOptionsGroup* optgroup, const std::string& opt_key, const std::string& path, widget_t widget);
 	wxSizer*		compatible_widget_create(wxWindow* parent, PresetDependencies &deps);
 	void 			compatible_widget_reload(PresetDependencies &deps);

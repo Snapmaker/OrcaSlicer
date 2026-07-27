@@ -226,6 +226,20 @@ void assign_batch_virtual_filament_ids(
     size_t             num_physical,
     size_t             existing_mixed_count = 0);
 
+/// Merge mappings whose NON-PURE recipes are byte-identical (same components + ratio +
+/// gradient) into a single entry, so identical recipes share one virtual slot instead of
+/// each creating a duplicate mixed-filament row. Pure-recipe mappings (is_pure_recipe)
+/// are passed through untouched — they target existing physical IDs and never allocate a
+/// new slot. The surviving mapping keeps the FIRST occurrence's target_filament_id and
+/// accumulates the union of source_extruder_ids (so apply_batch_match_to_model still
+/// remaps every source extruder) plus merged_model_indices. Order is preserved.
+///
+/// Identity fingerprint: {component_a, component_b, mix_b_percent, gradient_component_ids,
+/// gradient_component_weights, manual_pattern}. Derived fields (preview_color, delta_e,
+/// display_color) are excluded — identical recipes produce identical blends by construction.
+std::vector<ColorMappingEntry> merge_duplicate_recipe_mappings(
+    const std::vector<ColorMappingEntry>& mappings);
+
 /// Populate result.mixed_filaments from result.mappings.
 void populate_mixed_filaments_from_mappings(
     BatchMatchResult&                           result,

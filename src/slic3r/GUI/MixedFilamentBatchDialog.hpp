@@ -95,6 +95,15 @@ private:
 
     MatchingMethod                     m_matching_method = RECOMMENDED;
     BatchMatchResult                   m_result;
+    // Snapshot of the user-facing input that produced m_result. On a failed/cancelled
+    // re-match we restore the prior preview ONLY when this still matches the current
+    // input — otherwise we'd show a preview built for a different mode or filament
+    // selection (e.g. after toggling Recommended↔Manual, or changing a combo selection).
+    // m_model_colors and m_physical_colors are immutable for the dialog's lifetime
+    // (set in the ctor), so they are NOT part of the snapshot.
+    MatchingMethod m_last_result_method      = RECOMMENDED;
+    int            m_last_result_selections[4] = {0, 1, 2, 3};
+    int            m_last_result_manual_count  = 0;
     bool                               m_match_completed = false;
     bool                               m_match_running   = false; // UI-thread-only; do not access from worker
     std::shared_ptr<std::atomic<bool>> m_destroyed{std::make_shared<std::atomic<bool>>(false)};

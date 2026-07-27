@@ -2317,18 +2317,22 @@ Sidebar::Sidebar(Plater *parent)
     bSizer39->Hide(p->m_flushing_volume_btn);
 
     // Batch color-match mapping button
-    p->m_btn_batch_match = new Button(p->m_panel_filament_title, _L("Batch Match"));
+    p->m_btn_batch_match = new Button(p->m_panel_filament_title, _L("Color Mixing Match"));
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
+    p->m_btn_batch_match->SetToolTip(_L("Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\n"
+                                        "Note:\n"
+                                        "1.Color mixing match is based on the official recommended CMYW filaments. The matched colors may differ from the original model.\n"
+                                        "2.The order of the Color Mapping list may differ from that of the Color Mixing list."));
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
         // No loaded model → batch match has nothing to map. Surface as a confirmation
         // dialog (not an error — these are "please do X first" hints, not failures)
         // BEFORE opening the dialog, using the same RichMessageDialog style as the
-        // filament-sync prompts (caption "Batch Match", "Got it" button, screen-centred).
+        // filament-sync prompts (caption "Color Mixing Match", "Got it" button, screen-centred).
         if (p->plater->model().objects.empty()) {
             RichMessageDialog dlg(this,
                 _L("No model detected. Import a multi-color model to continue."),
-                _L("Batch Match"), wxOK);
+                _L("Color Mixing Match"), wxOK);
             dlg.SetOKLabel(_L("Got it"));
             dlg.CentreOnScreen();
             dlg.ShowModal();
@@ -2339,7 +2343,7 @@ Sidebar::Sidebar(Plater *parent)
         if (colors.size() < 2) {
             RichMessageDialog dlg(this,
                 _L("Please add at least 2 filaments to use batch color matching."),
-                _L("Batch Match"), wxOK);
+                _L("Color Mixing Match"), wxOK);
             dlg.SetOKLabel(_L("Got it"));
             dlg.CentreOnScreen();
             dlg.ShowModal();
@@ -2444,8 +2448,9 @@ Sidebar::Sidebar(Plater *parent)
 
             // Assign the Full Spectrum filament preset to slots 1-4 so the
             // combobox displays the preset name instead of F1-F4 fallback.
+            const std::string full_spectrum_preset = full_spectrum_preset_name();
             for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
-                pb->set_filament_preset(i, kFullSpectrumPresetName);
+                pb->set_filament_preset(i, full_spectrum_preset);
 
             wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
         } else {

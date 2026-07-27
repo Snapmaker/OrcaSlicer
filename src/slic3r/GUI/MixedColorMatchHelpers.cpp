@@ -8,6 +8,7 @@
 #include "PresetBundle.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <fstream>
 #include <set>
 #include <queue>
@@ -16,6 +17,7 @@
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 
@@ -611,6 +613,50 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     return best;
 }
 
+// Full Spectrum preset name, with nozzle diameter resolved from the current
+// printer's nozzle_diameter (mirrors PresetComboBoxes.cpp's @U1 <nozzle> nozzle
+// convention). Falls back to the canonical 0.4 SKU when no matching preset
+// exists for the current nozzle. Follows the same preset_bundle-access pattern
+// as build_mixed_filament_display_context below (null-check + warning log +
+// std::max clamp) -- see the header doc for the UI-thread convention.
+std::string full_spectrum_preset_name()
+{
+    static const std::string kBase           = "Snapmaker PLA Full Spectrum @U1 ";
+    static constexpr double  kFallbackNozzle = 0.4;
+    static constexpr double  kMinNozzle      = 0.05; // matches build_mixed_filament_display_context
+
+    auto format_nozzle = [](double mm) -> std::string {
+        std::string s = float_to_string_decimal_point(mm, 2);
+        while (!s.empty() && s.back() == '0') s.pop_back();
+        if (!s.empty() && s.back() == '.') s.pop_back();
+        return s;
+    };
+
+    double nozzle = kFallbackNozzle;
+    auto* pb = wxGetApp().preset_bundle;
+    if (pb != nullptr) {
+        if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+            opt != nullptr && !opt->values.empty()) {
+            // (C) clamp to sane physical range -- matches build_mixed_filament_display_context
+            nozzle = std::max(kMinNozzle, opt->values.front());
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning)
+            << "full_spectrum_preset_name: preset_bundle null; falling back to "
+            << kBase << format_nozzle(kFallbackNozzle) << " nozzle";
+    }
+
+    // Candidate for the current nozzle; verify the preset actually exists.
+    const std::string candidate = kBase + format_nozzle(nozzle) + " nozzle";
+    if (pb != nullptr && pb->filaments.find_preset(candidate) != nullptr)
+        return candidate;
+
+    // Fallback: the canonical 0.4 SKU (shipped today). If even that is missing
+    // (profile not loaded), return the literal name so upstream fallback chains
+    // (load_full_spectrum_colors -> canonical CMYW palette) take over.
+    return kBase + format_nozzle(kFallbackNozzle) + " nozzle";
+}
+
 MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string>& physical_colors)
 {
     MixedFilamentDisplayContext context;
@@ -922,14 +968,18 @@ static FilamentCategory filament_category_from_name(const std::string& name)
 // 2D compatibility matrix. Dimension is tied to the enum so adding a category
 // to FilamentCategory automatically grows the table.
 static std::vector<std::vector<bool>> s_compat;
-static bool                           s_compat_loaded = false;
+// atomic, not plain bool: the unlocked first read below and the locked write in
+// load_filament_compatibility() would otherwise be a data race (classic non-atomic
+// double-checked locking). acquire/release is sufficient — the mutex inside provides
+// the heavy lifting; this flag only needs to publish "already loaded" without a race.
+static std::atomic<bool>              s_compat_loaded{false};
 static std::mutex                     s_compat_mutex;
 
 static void load_filament_compatibility()
 {
-    if (s_compat_loaded) return;
+    if (s_compat_loaded.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lock(s_compat_mutex);
-    if (s_compat_loaded) return;
+    if (s_compat_loaded.load(std::memory_order_acquire)) return;
 
     // Default: each category compatible only with itself
     s_compat.assign(k_compat_dim, std::vector<bool>(k_compat_dim, false));
@@ -982,7 +1032,7 @@ static void load_filament_compatibility()
                 s_compat[(size_t)cat_b][(size_t)cat_a] = true;
             }
         }
-        s_compat_loaded = true;
+        s_compat_loaded.store(true, std::memory_order_release);
         BOOST_LOG_TRIVIAL(info) << "Loaded filament compatibility matrix from " << path;
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to parse filament compatibility config: " << e.what();
@@ -1060,7 +1110,11 @@ static std::string normalize_filament_type(const std::string& type)
     size_t end   = normalized.find_last_not_of(" \t\r\n");
     if (start != std::string::npos && end != std::string::npos)
         normalized = normalized.substr(start, end - start + 1);
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+    // toupper from <cctype> requires an argument in [0, UCHAR_MAX] or EOF; passing a
+    // negative char (signed byte >= 0x80, e.g. a non-ASCII filament_type) is UB. The lambda
+    // forces the unsigned char conversion the C API expects.
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
     return normalized;
 }
 
@@ -1566,6 +1620,15 @@ BatchMatchResult batch_match_model_colors(
     if (min_component_percent < 0 || min_component_percent > 50) {
         result.success = false;
         result.error_message = "min_component_percent must be in [0, 50]";
+        return result;
+    }
+    // Symmetric with build_best_color_match_recipe's max check (see line ~375). Without this,
+    // an out-of-range max would be forwarded per-recipe and silently rejected by the inner
+    // function, surfacing to the user as the misleading "No valid recipes found" instead of
+    // a parameter error.
+    if (max_component_percent < 50 || max_component_percent > 100) {
+        result.success = false;
+        result.error_message = "max_component_percent must be in [50, 100]";
         return result;
     }
     if (model_colors.empty()) {

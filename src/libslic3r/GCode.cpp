@@ -358,8 +358,10 @@ float get_wipe_avoid_pos_x(const Vec2f& wt_min, const Vec2f& wt_max, float offse
     float a = 0.f, b = 0.f;
     a = wt_max.x() + offset;
     b = wt_min.x() - offset;
-    if (a > left && a < right) return a;
-    if (b > left && b < right) return b;
+    if (a > left && a < right) 
+        return a;
+    if (b > left && b < right) 
+        return b;
     return default_value;
 }
 
@@ -1190,9 +1192,9 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                     gcode_out += oss.str();
                 }
             }
-            old_pos = Vec2f{ -1000.1f, -1000.1f };
+            /*old_pos = Vec2f{ -1000.1f, -1000.1f };
             pos = tcr.tool_change_start_pos;
-            transformed_pos = pos;
+            transformed_pos = pos;*/
         }
     }
     return gcode_out;

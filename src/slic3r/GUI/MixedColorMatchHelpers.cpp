@@ -1314,6 +1314,14 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
     // it only at the virtual-lookup call site; the physical-colour path does not
     // depend on preset_bundle at all.
     auto* pb = wxGetApp().preset_bundle;
+    // Log the null-preset_bundle condition ONCE here (not per virtual-ID iteration
+    // inside the loop below) — otherwise a model with N virtual-painted faces would
+    // emit N identical warnings. pb is loop-invariant, so the inner check can stay
+    // a silent `continue`.
+    if (pb == nullptr) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "extract_model_colors: preset_bundle null; virtual filament colors will be skipped";
+    }
 
     for (const PrintObject* obj : print.objects()) {
         if (!obj) continue;
@@ -1333,11 +1341,8 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
                     color_hex = filament_colours[idx];
                 } else {
                     // Virtual mixed filament — look up its display_color.
-                    // Early startup or rare call paths may have no preset_bundle;
-                    // skip virtual-colour resolution then rather than dereference null.
+                    // pb null is already logged once above the loop; skip silently here.
                     if (pb == nullptr) {
-                        BOOST_LOG_TRIVIAL(warning)
-                            << "extract_model_colors: preset_bundle null, skipping virtual filament " << eid;
                         continue;
                     }
                     const MixedFilament* mf = pb->mixed_filaments.mixed_filament_from_id(

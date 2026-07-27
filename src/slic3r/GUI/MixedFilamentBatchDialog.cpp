@@ -193,7 +193,7 @@ private:
         const wxSize sz = GetClientSize();
         if (sz.x <= 0 || sz.y <= 0) return;
         const int radius = FromDIP(m_radius_dip);
-        const wxColour bg = StateColor::darkModeColorFor(wxColour(245, 245, 245));
+        const wxColour bg = StateColor::darkModeColorFor(wxColour(231, 231, 231));
         const wxColour key(255, 0, 255); // mask key — transparent where it appears
 
         wxImage img(sz);
@@ -221,9 +221,9 @@ private:
         const wxSize sz = GetClientSize();
         const int radius = FromDIP(m_radius_dip);
 
-        // 1) Rounded background (#F5F5F5, theme-aware). Shows through the corner mask's
+        // 1) Rounded background (#E7E7E7, theme-aware). Shows through the corner mask's
         //    transparent center and any letterbox bars around the centered thumbnail.
-        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(245, 245, 245))));
+        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(231, 231, 231))));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRoundedRectangle(wxRect(sz), radius);
 
@@ -263,15 +263,16 @@ private:
         // 4) Badge: square-cornered label, top-left, with white text. Drawn here (not a
         // child window) so StaticBox-style compositing can't erase it.
         // Style: bg (147,147,147) — the opaque equivalent of rgba(0,0,0,0.40) over the
-        // #F5F5F5 panel bg (no alpha blending needed; a plain wxDC DrawRectangle handles
-        // it). Square corners (no border-radius); the preview image keeps radius 8.
+        // #E7E7E7 panel bg (no alpha blending needed; a plain wxDC DrawRectangle handles
+        // it). Dark mode maps #939393 → #000000 (pure black for max contrast). Square
+        // corners (no border-radius); the preview image keeps radius 8.
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);
         const int pad_y = FromDIP(4);
         const int inset = FromDIP(8);
         wxRect badge(inset, inset, text_sz.x + pad_x * 2, text_sz.y + pad_y * 2);
-        dc.SetBrush(wxBrush(wxColour(147, 147, 147)));
+        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(147, 147, 147))));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(badge);
         dc.SetTextForeground(*wxWHITE);
@@ -376,11 +377,21 @@ void MixedFilamentBatchDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
 }
 
 // Convert ThumbnailData (RGBA pixels, OpenGL FBO = bottom-up) to wxBitmap (top-down)
-// Blends alpha against the panel background (#F5F5F5)
+// Blends alpha against the panel background (#E7E7E7)
 static wxBitmap thumbnail_to_bitmap(const ThumbnailData& data, int max_w, int max_h)
 {
     if (!data.is_valid() || data.width == 0 || data.height == 0)
         return wxNullBitmap;
+
+    // Panel background the thumbnail will sit on. Resolved once via
+    // darkModeColorFor so the blended bg follows the active theme — the bitmap
+    // must not bake in a hardcoded light bg, otherwise in dark mode the cached
+    // thumbnail renders as a light-gray patch on the (now dark) panel. The
+    // hex #E7E7E7 maps to #54545B in dark mode (see StateColor gDarkColors).
+    const wxColour bg_color = StateColor::darkModeColorFor(wxColour(231, 231, 231));
+    const float    bg_r     = bg_color.Red();
+    const float    bg_g     = bg_color.Green();
+    const float    bg_b     = bg_color.Blue();
 
     wxImage img(data.width, data.height, false);
     img.InitAlpha();
@@ -398,12 +409,13 @@ static wxBitmap thumbnail_to_bitmap(const ThumbnailData& data, int max_w, int ma
             unsigned char g   = data.pixels[si + 1];
             unsigned char b   = data.pixels[si + 2];
             unsigned char alpha = data.pixels[si + 3];
-            // Blend with panel background (#F5F5F5) for low-alpha pixels
+            // Blend with panel background (theme-aware #E7E7E7 / dark #54545B)
+            // for low-alpha pixels
             if (alpha < 255) {
                 float t = alpha / 255.0f;
-                r = static_cast<unsigned char>(r * t + 245 * (1.0f - t));
-                g = static_cast<unsigned char>(g * t + 245 * (1.0f - t));
-                b = static_cast<unsigned char>(b * t + 245 * (1.0f - t));
+                r = static_cast<unsigned char>(r * t + bg_r * (1.0f - t));
+                g = static_cast<unsigned char>(g * t + bg_g * (1.0f - t));
+                b = static_cast<unsigned char>(b * t + bg_b * (1.0f - t));
             }
             d[di + 0] = r;
             d[di + 1] = g;
@@ -877,11 +889,12 @@ void MixedFilamentBatchDialog::load_palette_colors()
 // color varies. Falls back to the raw name when the preset bundle is unavailable.
 static wxString get_full_spectrum_preset_label()
 {
+    const std::string preset_name = full_spectrum_preset_name();
     if (auto* pb = wxGetApp().preset_bundle) {
-        if (auto* p = pb->filaments.find_preset(kFullSpectrumPresetName))
+        if (auto* p = pb->filaments.find_preset(preset_name))
             return wxString::FromUTF8(p->label(false));
     }
-    return wxString::FromUTF8(kFullSpectrumPresetName);
+    return wxString::FromUTF8(preset_name);
 }
 
 // Load the real recommended-mode palette colors from the Full Spectrum filament preset
@@ -906,7 +919,7 @@ static std::vector<std::string> load_full_spectrum_colors()
         return {};
     }
     FilamentColorInfo info;
-    if (!FilamentColorLibrary::Instance().FindFilamentByName(kFullSpectrumPresetName, info)) {
+    if (!FilamentColorLibrary::Instance().FindFilamentByName(full_spectrum_preset_name(), info)) {
         BOOST_LOG_TRIVIAL(warning) << "MixedFilamentBatchDialog: Full Spectrum preset not found in color library, fallback";
         return {};
     }
@@ -940,7 +953,7 @@ static std::vector<FilamentColorItem> load_full_spectrum_items()
 {
     if (!FilamentColorLibrary::Instance().EnsureLoaded()) return {};
     FilamentColorInfo info;
-    if (!FilamentColorLibrary::Instance().FindFilamentByName(kFullSpectrumPresetName, info)) return {};
+    if (!FilamentColorLibrary::Instance().FindFilamentByName(full_spectrum_preset_name(), info)) return {};
 
     std::vector<FilamentColorItem> result;
     for (const FilamentColorItem& item : info.colors) {
@@ -1793,7 +1806,7 @@ void MixedFilamentBatchDialog::build_footer()
         }
         RichMessageDialog confirm(this,
             _L("Are you sure you want to discard this match? The current configuration will not be saved."),
-            _L("Discard Match"),
+            _L("Discard Matching"),
             wxYES_NO | wxNO_DEFAULT | wxICON_QUESTION);
         confirm.SetYesNoLabels(_L("Discard"), _L("Cancel"));
         auto result = confirm.ShowModal();
@@ -1952,8 +1965,8 @@ void MixedFilamentBatchDialog::update_method_combo_tooltip()
     // adding a permanent subtitle row to the UI.
     m_method_combo->SetToolTip(m_matching_method == MANUAL
         ? _L("Manually select filaments from the current list for color mixing.")
-        : _L("Automatically uses official Full Spectrum filaments for color mixing. "
-             "The mix ratio for each color is limited to 0%\u201370%."));
+        : wxString::Format(_L("Automatically uses official Full Spectrum filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."),
+             kMinComponentPercent, kMaxComponentPercent));
 }
 
 void MixedFilamentBatchDialog::on_manual_selection_changed()
@@ -2046,7 +2059,7 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
 
     display_warning(wxString::Format(
         _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"
-           "%%\u2013%d%% range. Adjust the mix ratios manually for better results."),
+           "%%–%d%% range. Adjust the mix ratios manually for better results."),
         id_list, kMinComponentPercent, kMaxComponentPercent));
 }
 

@@ -23,10 +23,18 @@ namespace Slic3r { namespace GUI {
 // ---- Shared constants ----
 
 // Canonical preset name for the Full Spectrum (formerly "CMYW") recommended-mode
-// palette. Single source of truth shared by MixedFilamentBatchDialog (palette load +
-// swatch label) and Plater (auto-assign slots after batch match). Inline so multiple
-// translation units can include this header without ODR violations.
-inline const std::string kFullSpectrumPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
+// palette. Resolved at call time against the current printer's nozzle_diameter:
+// if a matching Full Spectrum preset exists for that nozzle, it is returned;
+// otherwise falls back to the canonical 0.4 variant (the only SKU shipped today).
+// Future-proof: shipping a new nozzle variant (e.g. 0.6/0.8) just requires adding
+// its preset JSON under resources/profiles/Snapmaker/filament/ -- no code change.
+//
+// Thread-safety convention: same as the other preset_bundle readers in this file
+// (build_mixed_filament_display_context, extract_model_colors, etc.) -- caller
+// MUST be on the UI thread. No worker-thread call site exists today; the worker
+// lambda in launch_background_match captures values by copy precisely to keep
+// off preset_bundle (see load_full_spectrum_colors's safety note).
+std::string full_spectrum_preset_name();
 
 // ---- CIELAB color space types ----
 

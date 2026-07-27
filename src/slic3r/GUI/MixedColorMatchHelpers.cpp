@@ -17,6 +17,7 @@
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 
@@ -610,6 +611,50 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     }
 
     return best;
+}
+
+// Full Spectrum preset name, with nozzle diameter resolved from the current
+// printer's nozzle_diameter (mirrors PresetComboBoxes.cpp's @U1 <nozzle> nozzle
+// convention). Falls back to the canonical 0.4 SKU when no matching preset
+// exists for the current nozzle. Follows the same preset_bundle-access pattern
+// as build_mixed_filament_display_context below (null-check + warning log +
+// std::max clamp) -- see the header doc for the UI-thread convention.
+std::string full_spectrum_preset_name()
+{
+    static const std::string kBase           = "Snapmaker PLA Full Spectrum @U1 ";
+    static constexpr double  kFallbackNozzle = 0.4;
+    static constexpr double  kMinNozzle      = 0.05; // matches build_mixed_filament_display_context
+
+    auto format_nozzle = [](double mm) -> std::string {
+        std::string s = float_to_string_decimal_point(mm, 2);
+        while (!s.empty() && s.back() == '0') s.pop_back();
+        if (!s.empty() && s.back() == '.') s.pop_back();
+        return s;
+    };
+
+    double nozzle = kFallbackNozzle;
+    auto* pb = wxGetApp().preset_bundle;
+    if (pb != nullptr) {
+        if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+            opt != nullptr && !opt->values.empty()) {
+            // (C) clamp to sane physical range -- matches build_mixed_filament_display_context
+            nozzle = std::max(kMinNozzle, opt->values.front());
+        }
+    } else {
+        BOOST_LOG_TRIVIAL(warning)
+            << "full_spectrum_preset_name: preset_bundle null; falling back to "
+            << kBase << format_nozzle(kFallbackNozzle) << " nozzle";
+    }
+
+    // Candidate for the current nozzle; verify the preset actually exists.
+    const std::string candidate = kBase + format_nozzle(nozzle) + " nozzle";
+    if (pb != nullptr && pb->filaments.find_preset(candidate) != nullptr)
+        return candidate;
+
+    // Fallback: the canonical 0.4 SKU (shipped today). If even that is missing
+    // (profile not loaded), return the literal name so upstream fallback chains
+    // (load_full_spectrum_colors -> canonical CMYW palette) take over.
+    return kBase + format_nozzle(kFallbackNozzle) + " nozzle";
 }
 
 MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string>& physical_colors)

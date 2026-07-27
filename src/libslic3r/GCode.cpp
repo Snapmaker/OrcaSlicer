@@ -711,9 +711,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
     Vec2f start_pos = tcr.start_pos;
     Vec2f end_pos   = tcr.end_pos;
+    Vec2f tool_change_start_pos = tcr.is_tool_change ? tcr.tool_change_start_pos : start_pos;
     if (!tcr.priming) {
-        start_pos = transform_wt_pt(start_pos);
-        end_pos   = transform_wt_pt(end_pos);
+        start_pos             = transform_wt_pt(start_pos);
+        end_pos               = transform_wt_pt(end_pos);
+        tool_change_start_pos = transform_wt_pt(tool_change_start_pos);
     }
 
     Vec2f wipe_tower_offset   = tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos;
@@ -847,7 +849,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         Point tower_obj = wipe_tower_point_to_object_point(
             gcodegen, start_pos + plate_origin_2d);
         Point safe_obj = wipe_tower_point_to_object_point(
-            gcodegen, Vec2f(safe_x, start_pos.y()) + plate_origin_2d);
+            gcodegen, Vec2f(safe_x, tool_change_start_pos.y()) + plate_origin_2d);
 
         Polyline dep_detour = detour_around_wipe_tower(
             tower_obj, safe_obj, tower_bbx);
@@ -880,7 +882,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     if (has_detour_bbox) {
         Point start_obj  = gcodegen.last_pos();
         Point target_obj = wipe_tower_point_to_object_point(
-            gcodegen, start_pos + plate_origin_2d);
+            gcodegen, tool_change_start_pos + plate_origin_2d);
 
         Polyline detour = detour_around_wipe_tower(start_obj, target_obj, tower_bbx);
         for (size_t i = 0; i < detour.points.size(); ++i) {

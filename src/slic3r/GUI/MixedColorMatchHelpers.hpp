@@ -20,6 +20,14 @@ namespace Slic3r { class Print; }
 
 namespace Slic3r { namespace GUI {
 
+// ---- Shared constants ----
+
+// Canonical preset name for the Full Spectrum (formerly "CMYW") recommended-mode
+// palette. Single source of truth shared by MixedFilamentBatchDialog (palette load +
+// swatch label) and Plater (auto-assign slots after batch match). Inline so multiple
+// translation units can include this header without ODR violations.
+inline const std::string kFullSpectrumPresetName = "Snapmaker PLA Full Spectrum @U1 0.4 nozzle";
+
 // ---- CIELAB color space types ----
 
 struct CIELab {
@@ -95,7 +103,9 @@ CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
 MixedColorMatchRecipeResult build_best_color_match_recipe(
     const std::vector<std::string> &physical_colors,
     const wxColour                 &target_color,
-    int                             min_component_percent = 0);
+    int                             min_component_percent = 0,
+    int                             max_component_percent = 100,
+    bool                            check_compatible = true);
 
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
@@ -198,8 +208,10 @@ BatchMatchResult batch_match_model_colors(
     const std::vector<ModelColorEntry>&          model_colors,
     const std::vector<std::string>&             physical_colors,
     int                                          min_component_percent,
+    int                                          max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
-    std::function<void(int,int)>                 progress_callback = nullptr);
+    std::function<void(int,int)>                 progress_callback = nullptr,
+    bool                                         check_compatible = true);
 
 #if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 /// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).
@@ -215,6 +227,20 @@ void assign_batch_virtual_filament_ids(
     BatchMatchResult& result,
     size_t             num_physical,
     size_t             existing_mixed_count = 0);
+
+/// Merge mappings whose NON-PURE recipes are byte-identical (same components + ratio +
+/// gradient) into a single entry, so identical recipes share one virtual slot instead of
+/// each creating a duplicate mixed-filament row. Pure-recipe mappings (is_pure_recipe)
+/// are passed through untouched — they target existing physical IDs and never allocate a
+/// new slot. The surviving mapping keeps the FIRST occurrence's target_filament_id and
+/// accumulates the union of source_extruder_ids (so apply_batch_match_to_model still
+/// remaps every source extruder) plus merged_model_indices. Order is preserved.
+///
+/// Identity fingerprint: {component_a, component_b, mix_b_percent, gradient_component_ids,
+/// gradient_component_weights, manual_pattern}. Derived fields (preview_color, delta_e,
+/// display_color) are excluded — identical recipes produce identical blends by construction.
+std::vector<ColorMappingEntry> merge_duplicate_recipe_mappings(
+    const std::vector<ColorMappingEntry>& mappings);
 
 /// Populate result.mixed_filaments from result.mappings.
 void populate_mixed_filaments_from_mappings(
@@ -234,6 +260,7 @@ std::vector<std::string> recommend_best_filament_combo(
     const std::vector<ModelColorEntry>&  model_colors,
     const std::vector<std::string>&      all_preset_colors,
     int                                  min_component_percent = 15,
+    int                                  max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>   cancel_token = nullptr);
 
 }} // namespace Slic3r::GUI

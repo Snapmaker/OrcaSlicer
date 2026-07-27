@@ -15302,6 +15302,12 @@ msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续�
 msgid "Filament %d ratio is too high. Mix may be affected."
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
 
+msgid ""
+"The mix ratios for %s in the Color Mapping list are outside the recommended %d"
+"%%–%d%% range. Adjust the mix ratios manually for better results."
+msgstr ""
+"Color Mapping 列表中 {%s} 的混色比例超出推荐范围 %d%%–%d%%。请手动调整混色比例以获得更好效果。"
+
 msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
 msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
 
@@ -15365,9 +15371,6 @@ msgstr "未检测到模型，请先导入多色模型。"
 msgid "Filament Setup"
 msgstr "耗材配置"
 
-msgid "Filament Setup (CMYW)"
-msgstr "耗材配置（CMYW）"
-
 msgid "Original"
 msgstr "原模型"
 
@@ -15398,8 +15401,8 @@ msgstr "开始匹配"
 msgid "Rematch"
 msgstr "重新匹配"
 
-msgid "Automatically uses official CMYW filaments for color mixing. The mix ratio for each color is limited to X%–Y%."
-msgstr "自动选择官方 CMYW 耗材进行混色匹配。单色混色比例范围：X%–Y%。"
+msgid "Automatically uses official Full Spectrum filaments for color mixing. The mix ratio for each color is limited to X%–Y%."
+msgstr "自动选择官方全光谱耗材进行混色匹配。单色混色比例范围：X%–Y%。"
 
 msgid "Manually select filaments from the current list for color mixing."
 msgstr "手动选择当前列表中的耗材进行混色匹配。"

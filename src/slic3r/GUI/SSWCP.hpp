@@ -37,6 +37,7 @@ using tcp = asio::ip::tcp;
 #define DOWN_LOAD_FILE "sw_DownLoadFile"
 #define FILE_VIEW "sw_FileView"
 #define GET_FILES_FROM_DIR "sw_GetFilesFromDir"
+#define NOTIFY_UPLOAD_TIMELASPE "sw_NotifyUploadTimelaspe"
 
 namespace Slic3r { namespace GUI {
 
@@ -565,6 +566,7 @@ private:
     void sw_FileView();
     void sw_SubscribeDownloadState();
     void sw_GetFilesFromDir();
+    void sw_NotifyUploadTimelaspe();
 
 public:
     // Passive subscription entry — sw_SubscribeDownloadState only registers,

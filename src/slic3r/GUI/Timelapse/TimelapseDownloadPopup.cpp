@@ -538,6 +538,8 @@ void TimelapseDownloadPopup::dismiss_row(int index)
             ++visible_count;
         }
     }
+    m_title_label->SetLabel(
+        wxString::Format(_L("Download List (%d)"), visible_count));
     if (visible_count == 0) {
         wxGetApp().CallAfter([this]() {
             if (!IsBeingDeleted()) {

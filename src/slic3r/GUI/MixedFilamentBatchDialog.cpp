@@ -591,7 +591,7 @@ void MixedFilamentBatchDialog::render_match_thumb_for_plate(int plate_idx)
 
     auto* plater = wxGetApp().plater();
     if (!plater) return;
-    auto* canvas = plater->canvas3D();
+    auto* canvas = plater->get_view3D_canvas3D();
     if (!canvas) return;
 
     const int match_w = std::max(FromDIP(MATCH_PREVIEW_DIP), m_preview_match_panel->GetClientSize().GetWidth());
@@ -641,7 +641,7 @@ void MixedFilamentBatchDialog::render_original_thumb_for_plate(int plate_idx)
 
     auto* plater = wxGetApp().plater();
     if (!plater) return;
-    auto* canvas = plater->canvas3D();
+    auto* canvas = plater->get_view3D_canvas3D();
     if (!canvas) return;
 
     const int orig_w = std::max(FromDIP(ORIG_PREVIEW_DIP), m_preview_orig_panel->GetClientSize().GetWidth());
@@ -965,8 +965,10 @@ void MixedFilamentBatchDialog::build_ui()
 
     // No in-content title strip: the native OS title bar (set in the ctor via wxCAPTION)
     // already shows "Mixed Color Match". Adding a second header here would duplicate it.
-    build_banners();
     build_mode_row();
+    // Error/warning banners sit BELOW the mode row (between mode row and scrolled content)
+    // so toggling them doesn't shift the mode selector the user just interacted with.
+    build_banners();
 
     // Page-level scroller (mirrors MixedFilamentDialog): spans full dialog width so the
     // scrollbar sits at the right edge; mode row / progress / footer stay fixed.
@@ -1015,8 +1017,8 @@ void MixedFilamentBatchDialog::build_ui()
     update_nav_arrow_state();
 
     // Deferred from load_model_colors: if the model had >64 distinct colors, the extras were
-    // dropped there. m_warning_panel is now created (build_banners ran before build_ui), so
-    // the advisory can finally be shown.
+    // dropped there. m_warning_panel is now created (build_banners ran above in build_ui),
+    // so the advisory can finally be shown.
     if (m_pending_64_color_warning)
         display_warning(_L("Filament color limit reached (64 colors). Colors over the limit have been removed."));
 }
@@ -1035,7 +1037,7 @@ void MixedFilamentBatchDialog::build_banners()
     m_error_text->SetMaxSize(wxSize(FromDIP(480), -1));
     es->Add(m_error_text, 1, wxALL, FromDIP(8));
     m_error_panel->SetSizer(es);
-    m_root->Add(m_error_panel, 0, wxEXPAND);
+    m_root->Add(m_error_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
 
     // Warning banner — mirrors MixedFilamentDialog's banner 1:1 (same bg, icon, margins,
     // tab-traversal flag) so the two dialogs read as the same family.
@@ -1052,7 +1054,10 @@ void MixedFilamentBatchDialog::build_banners()
     m_warning_text->SetMaxSize(wxSize(FromDIP(480), -1));
     ws->Add(m_warning_text, 1, wxALL, FromDIP(8));
     m_warning_panel->SetSizer(ws);
-    m_root->Add(m_warning_panel, 0, wxEXPAND);
+    // wxBOTTOM on each banner so a visible banner gets a gap to the scrolled content below.
+    // wxBoxSizer collapses both the window and its border when the window is hidden, so
+    // idle state (both banners hidden) adds no whitespace.
+    m_root->Add(m_warning_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
 }
 
 void MixedFilamentBatchDialog::build_mode_row()
@@ -1132,8 +1137,9 @@ void MixedFilamentBatchDialog::build_mode_row()
     outer->AddSpacer(FromDIP(10));
     m_mode_row_panel->SetSizer(outer);
     // Full-width like the footer panel (no left/right margin) so the white strip spans the
-    // dialog content area edge-to-edge. No top margin — strip sits flush under the title bar.
-    m_root->Add(m_mode_row_panel, 0, wxEXPAND | wxBOTTOM, FromDIP(10));
+    // dialog content area edge-to-edge. No top/bottom margin — strip sits flush under the
+    // title bar and directly above the error/warning banners (build_banners runs next).
+    m_root->Add(m_mode_row_panel, 0, wxEXPAND);
 }
 
 void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
@@ -1958,11 +1964,10 @@ void MixedFilamentBatchDialog::start_batch_match()
     m_match_running = true;
     m_error_panel->Hide();
     m_warning_panel->Hide();
-    // Clear stale legend from previous match before starting new one
-    m_result = BatchMatchResult{};
+    // Don't clear m_result — preserve it across failed/cancelled matches so the user can
+    // retry without losing context. Only the success branch in handle_batch_match_result
+    // overwrites m_result.
     m_match_completed = false;
-    update_mapping_legend();
-    m_legend_panel->Layout();
     reset_match_preview();
     set_match_buttons_state(true);
     launch_background_match();
@@ -2041,6 +2046,23 @@ void MixedFilamentBatchDialog::launch_background_match()
                 // colors form the palette; the per-component 70% cap is enforced later in
                 // the Pass-2 batch_match_model_colors call (match_max=kMaxComponentPercent).
                 auto best = recommend_best_filament_combo(model_colors, preset_colors, 15, 100, cancel_token);
+                // recommend_best_filament_combo returns {} for BOTH "no valid combo" and
+                // "cancelled" — distinguish here by re-checking the token. On cancel, skip
+                // the fallback palette + Pass-2 match (hundreds of ms of wasted work) and
+                // deliver a cancelled result directly so handle_batch_match_result shows no
+                // error banner and restores the prior result. Mirrors the cancel handling
+                // in batch_match_model_colors (error_code = 2).
+                if (cancel_token->load()) {
+                    BatchMatchResult cancelled;
+                    cancelled.success       = false;
+                    cancelled.error_code    = 2;
+                    cancelled.error_message = "Cancelled by user";
+                    wxGetApp().CallAfter([this, destroyed, result = std::move(cancelled)]() mutable {
+                        if (destroyed->load()) return;
+                        handle_batch_match_result(result);
+                    });
+                    return;  // exit worker lambda — skip Pass-2 match + merge
+                }
                 if (best.empty()) {
                     physical_colors.assign(preset_colors.begin(), preset_colors.begin() + std::min<size_t>(4, preset_colors.size()));
                 } else {
@@ -2205,15 +2227,27 @@ void MixedFilamentBatchDialog::launch_background_match()
             }
         }
 
+        // Merge mappings whose mixed-filament recipes are byte-identical so they share one
+        // virtual slot instead of each creating a duplicate row (e.g. two identical model
+        // colors, or two distinct colors whose recipes happen to match). MUST run after both
+        // ID-assignment phases (assign_batch_virtual_filament_ids + optional manual remap)
+        // so the survivor keeps the final target_filament_id; the manual-remap reassign loop
+        // above unconditionally rewrites target ids, so any earlier merge would be clobbered.
+        // Pure-recipe mappings are skipped by the merge (they target existing physicals and
+        // never allocate a new slot). source_extruder_ids are unioned so apply still covers
+        // every source extruder.
+        result.mappings = merge_duplicate_recipe_mappings(result.mappings);
+
         if (result.success && result.mappings.empty()) {
             result.success = false;
             result.error_message = "No valid recipes found for any model color";
             result.error_code = 1;
         }
         if (result.success) {
-            // Each model color always gets its own mapping entry — no deduplication.
-            // Merging by matched_color would lose distinct model-source colors whose
-            // recipes happen to produce similar output shades.
+            // avg ΔE over the (post-merge) mapping set. We do NOT merge by matched_color
+            // (that would collapse distinct source colors whose recipes produce similar
+            // output shades, losing per-source traceability); merge_duplicate_recipe_mappings
+            // above only collapses byte-identical recipes, which is lossless for ΔE.
             double sum_de = 0.0;
             for (const auto& m : result.mappings) sum_de += m.delta_e;
             result.avg_delta_e = sum_de / double(result.mappings.size());
@@ -2245,10 +2279,30 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     m_progress_bar->Hide();
 
     if (!result.success) {
-        set_error(wxString::FromUTF8(result.error_message));
-        // Route through set_match_buttons_state so the Start vs Re-match enable mask
-        // follows m_match_completed (false here — Start is enabled, Re-match is not).
-        // Hard-coding both Enable(true) left Re-match clickable with no result to re-match.
+        // User cancellation is not an error — don't show the error banner.
+        const bool cancelled = (result.error_code == 2);
+        if (!cancelled) {
+            set_error(wxString::FromUTF8(result.error_message));
+        }
+        // Restore the prior result ONLY when the user-facing input is unchanged since
+        // that result was produced (same mode + same manual filament selections).
+        // Otherwise we'd surface a preview built for a different input — e.g. after
+        // toggling Recommended↔Manual or changing a combo selection. m_result itself
+        // is preserved across failed matches (start_batch_match no longer clears it),
+        // so this gate is what prevents a stale result from being shown.
+        const bool input_intact = (m_matching_method == m_last_result_method
+            && (m_matching_method != MANUAL
+                || (m_manual_filament_count == m_last_result_manual_count
+                    && std::equal(m_filament_selections,
+                                  m_filament_selections + m_manual_filament_count,
+                                  m_last_result_selections))));
+        if (m_result.success && input_intact) {
+            // rebuild_match_thumb_cache is needed because reset_match_preview already
+            // cleared the thumb buckets at the start of this match attempt.
+            m_match_completed = true;
+            rebuild_match_thumb_cache();
+            refresh_previews();
+        }
         set_match_buttons_state(false);
         Layout();
         return;
@@ -2256,6 +2310,12 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
 
     m_match_completed = false;
     m_result = result;
+    // Record the user-facing input that produced this result, so a later failed/cancelled
+    // re-match can tell whether the prior preview is still valid to restore.
+    m_last_result_method = m_matching_method;
+    m_last_result_manual_count = m_manual_filament_count;
+    for (int i = 0; i < m_manual_filament_count; ++i)
+        m_last_result_selections[i] = m_filament_selections[i];
     m_match_completed = true;
     update_mapping_legend();
     rebuild_match_thumb_cache();

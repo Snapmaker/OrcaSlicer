@@ -1,5 +1,6 @@
 #include "MixedColorMatchHelpers.hpp"
 #include "MixedGradientSelector.hpp"
+#include <unordered_map>
 #include <unordered_set>
 #include <ColorSpaceConvert.hpp>
 #include "MixedFilamentColorMapPanel.hpp"
@@ -513,7 +514,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 if (!compat[a - 1][b - 1] || !compat[b - 1][c - 1] || !compat[a - 1][c - 1]) continue;
 
                 for (int wa = loop_min_weight; wa <= std::min(100 - 2 * loop_min_weight, max_component_percent); wa += k_triple_coarse_step) {
-                    for (int wb = loop_min_weight; wa + wb <= 100 - loop_min_weight; wb += k_triple_coarse_step) {
+                    for (int wb = loop_min_weight; wb <= std::min(100 - wa - loop_min_weight, max_component_percent); wb += k_triple_coarse_step) {
                         int wc = 100 - wa - wb;
                         if (wc < loop_min_weight || wc > max_component_percent) continue;
                         CIELab blended = blend_weighted_lab_accurate(palette, {a, b, c}, {wa, wb, wc});
@@ -1449,6 +1450,87 @@ void assign_batch_virtual_filament_ids(
             mapping.target_filament_id = next_virtual_id++;
         }
     }
+}
+
+std::vector<ColorMappingEntry> merge_duplicate_recipe_mappings(
+    const std::vector<ColorMappingEntry>& mappings)
+{
+    if (mappings.size() < 2) return mappings;
+
+    // Fingerprint: the recipe fields that define which physical filaments are mixed and in
+    // what ratio. Two recipes with the same fingerprint produce the same blend, so they must
+    // share one virtual slot. Derived fields (preview_color, delta_e, display_color) are
+    // excluded — they are deterministic functions of the identity fields.
+    auto fingerprint = [](const MixedColorMatchRecipeResult& r) {
+        std::ostringstream oss;
+        // Use '|' as a field separator so (a=1,b=12) != (a=11,b=2); the ints alone would
+        // collide if concatenated without a delimiter.
+        oss << r.component_a << '|' << r.component_b << '|' << r.mix_b_percent << '|'
+            << r.manual_pattern << '|' << r.gradient_component_ids << '|'
+            << r.gradient_component_weights;
+        return oss.str();
+    };
+
+    std::vector<ColorMappingEntry> result;
+    result.reserve(mappings.size());
+    // recipe fingerprint → index into result. Only non-pure mappings are tracked: pure
+    // recipes target existing physical IDs and never allocate a new slot, so deduping them
+    // is both unnecessary and semantically wrong (two pure recipes hitting the same physical
+    // is the normal, expected case — they share the ID already).
+    std::unordered_map<std::string, size_t> seen;
+
+    for (const ColorMappingEntry& m : mappings) {
+        if (m.is_pure_recipe) {
+            result.push_back(m);
+            continue;
+        }
+        const std::string key = fingerprint(m.recipe);
+        auto it = seen.find(key);
+        if (it != seen.end()) {
+            // Merge into the first occurrence: union source_extruder_ids (so apply still
+            // remaps every source extruder to this target) and accumulate merged_model_indices
+            // for traceability. The survivor keeps its own target_filament_id — the merged-in
+            // mapping's target is discarded (it was a duplicate slot allocation).
+            ColorMappingEntry& survivor = result[it->second];
+            survivor.source_extruder_ids.insert(survivor.source_extruder_ids.end(),
+                                                m.source_extruder_ids.begin(),
+                                                m.source_extruder_ids.end());
+            survivor.merged_model_indices.insert(survivor.merged_model_indices.end(),
+                                                 m.merged_model_indices.begin(),
+                                                 m.merged_model_indices.end());
+        } else {
+            seen.emplace(key, result.size());
+            result.push_back(m);
+        }
+    }
+
+    // The merge above unions source_extruder_ids / merged_model_indices by appending.
+    // The two are normally disjoint across merged mappings (extract_model_colors
+    // aggregates extruders by unique color), but sort+unique defensively so
+    // survivor.source_extruder_ids stays idempotent for apply_batch_match_to_model
+    // (unordered_map) and merged_model_indices doesn't double-count in traceability.
+    // Only runs when a merge actually happened; the common no-merge path is untouched.
+    if (result.size() != mappings.size()) {
+        for (ColorMappingEntry& e : result) {
+            if (e.is_pure_recipe) continue;
+            std::sort(e.source_extruder_ids.begin(), e.source_extruder_ids.end());
+            e.source_extruder_ids.erase(
+                std::unique(e.source_extruder_ids.begin(), e.source_extruder_ids.end()),
+                e.source_extruder_ids.end());
+            std::sort(e.merged_model_indices.begin(), e.merged_model_indices.end());
+            e.merged_model_indices.erase(
+                std::unique(e.merged_model_indices.begin(), e.merged_model_indices.end()),
+                e.merged_model_indices.end());
+        }
+    }
+
+    if (result.size() != mappings.size()) {
+        BOOST_LOG_TRIVIAL(info)
+            << "merge_duplicate_recipe_mappings: " << mappings.size()
+            << " -> " << result.size() << " (merged " << (mappings.size() - result.size())
+            << " duplicate recipe mappings)";
+    }
+    return result;
 }
 
 BatchMatchResult batch_match_model_colors(

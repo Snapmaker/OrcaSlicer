@@ -4780,6 +4780,7 @@ struct TimelapseFileEntry {
     std::string sn;
     std::string date_index;
     std::string url;        // lan: required from caller; wan: filled after upload callback
+    size_t      file_size = 0;
 };
 
 struct TimelapseQueueContext {
@@ -5104,6 +5105,12 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         entry.sn           = item.value("sn", "");
         entry.date_index   = item.value("date_index", "");
         entry.url          = item.value("url", "");
+        entry.file_size    = item.value("file_size", size_t(0));
+
+        BOOST_LOG_TRIVIAL(warning) << "DownloadFile: mode=" << entry.mode
+            << " sn=" << entry.sn << " file_name=" << entry.file_name
+            << " date_index=" << entry.date_index << " url=" << entry.url
+            << " file_size=" << entry.file_size;
 
         if (entry.file_name.empty()) {
             handle_general_fail(-1, "Each timelapse entry must have file_name");
@@ -5126,6 +5133,39 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         files.push_back(std::move(entry));
     }
 
+    // Compute save_path and check disk space BEFORE responding to flutter.
+    const std::string& sn = files[0].sn;
+    boost::filesystem::path save_path_fs =
+        boost::filesystem::path(wxGetApp().app_config->get("download_path")) / sn;
+    boost::system::error_code mk_ec;
+    boost::filesystem::create_directories(save_path_fs, mk_ec);
+    std::string save_path = save_path_fs.string();
+
+    {
+        size_t total_file_size = 0;
+        for (const auto& f : files) {
+            total_file_size += f.file_size;
+        }
+        size_t required = static_cast<size_t>(total_file_size * 1.2);
+        if (required < 100ULL * 1024 * 1024) {
+            required = 100ULL * 1024 * 1024;
+        }
+        boost::system::error_code space_ec;
+        boost::filesystem::space_info si = boost::filesystem::space(save_path, space_ec);
+        if (!space_ec && si.available < required) {
+            json result;
+            result["error"]      = "insufficient_disk_space";
+            result["required"]   = required;
+            result["available"]  = si.available;
+            m_res_data = result;
+            m_status   = -1;
+            m_msg      = "Insufficient disk space";
+            send_to_js();
+            finish_job();
+            return;
+        }
+    }
+
     // Phase B: Respond immediately, defer finish_job until downloads complete
     m_res_data = json::object();
     m_status = 200;
@@ -5136,28 +5176,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this()));
 
     // Phase C: Defer UI and download orchestration to main thread
-    wxGetApp().CallAfter([files = std::move(files), wcp_self]() {
+    wxGetApp().CallAfter([files = std::move(files), save_path, wcp_self]() {
         int total_count = static_cast<int>(files.size());
-
-        // Default download dir: <User Downloads>/<sn>. Create the sn folder on
-        // first download — no path picker dialog, flutter UI drives selection.
-        const std::string& sn = files[0].sn;
-        boost::filesystem::path save_path_fs =
-            boost::filesystem::path(wxGetApp().app_config->get("download_path")) / sn;
-        boost::system::error_code mk_ec;
-        boost::filesystem::create_directories(save_path_fs, mk_ec);
-        std::string save_path = save_path_fs.string();
-
-        // Disk space check: fixed 100MB minimum
-        const size_t required = 100ULL * 1024 * 1024;
-        boost::system::error_code ec;
-        boost::filesystem::space_info si = boost::filesystem::space(save_path, ec);
-        if (!ec && si.available < required) {
-            wxString msg = _L("Insufficient disk space. At least 100MB of free space is required.");
-            wxMessageDialog dlg(nullptr, msg, _L("Disk Space Warning"), wxOK | wxICON_WARNING);
-            dlg.ShowModal();
-            return;
-        }
 
         // Create multi-task download popup
         auto* popup = new TimelapseDownloadPopup(wxGetApp().mainframe);
@@ -5718,17 +5738,21 @@ void SSWCP_UserLogin_Instance::sw_GetFilesFromDir()
     json files_arr = json::array();
 
     boost::filesystem::directory_iterator end_iter;
-    for (boost::filesystem::directory_iterator it(dir_path, ec); it != end_iter; ++it) {
-        if (ec) { ec.clear(); continue; }
-        if (!boost::filesystem::is_regular_file(it->status())) { continue; }
-
-        const std::string file_name = it->path().filename().string();
-        json file_info;
-        file_info["file_name"] = file_name;
-        file_info["file_path"] = it->path().string();
-        file_info["file_size"] = boost::filesystem::file_size(it->path(), ec);
-        if (ec) { file_info["file_size"] = 0; ec.clear(); }
-        files_arr.push_back(file_info);
+    boost::filesystem::directory_iterator it(dir_path, ec);
+    while (it != end_iter) {
+        if (ec) { ec.clear(); }
+        boost::system::error_code file_ec;
+        if (boost::filesystem::is_regular_file(it->path(), file_ec) && !file_ec) {
+            const std::string file_name = it->path().filename().string();
+            json file_info;
+            file_info["file_name"] = file_name;
+            file_info["file_path"] = it->path().string();
+            boost::system::error_code sz_ec;
+            file_info["file_size"] = boost::filesystem::file_size(it->path(), sz_ec);
+            if (sz_ec) { file_info["file_size"] = 0; }
+            files_arr.push_back(file_info);
+        }
+        it.increment(ec);
     }
 
     result["files"] = files_arr;

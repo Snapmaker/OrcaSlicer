@@ -46,3 +46,5 @@ tools/cli_test_tool/tool.log
 tools/cli_test_tool/__pycache__/
 tools/cli_test_tool/_fix*.py
 tools/cli_test_tool/_verify*.py
+
+.planning/

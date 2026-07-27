@@ -822,6 +822,7 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
             ${CMAKE_PREFIX_PATH}/bin/occt/TKXDESTEP.dll
             ${CMAKE_PREFIX_PATH}/bin/occt/TKXSBase.dll
             ${CMAKE_PREFIX_PATH}/bin/freetype.dll
+            ${CMAKE_PREFIX_PATH}/bin/ffmpeg/zlib1.dll
          DESTINATION ${_out_dir})
 
     # Build the DLL list in a local variable first
@@ -858,6 +859,7 @@ function(Snapmaker_Orca_copy_dlls target config postfix output_dlls)
         ${_out_dir}/TKXSBase.dll
 
         ${_out_dir}/freetype.dll
+        ${_out_dir}/zlib1.dll
     )
 
     # Add Sentry DLLs to the list if Sentry is enabled

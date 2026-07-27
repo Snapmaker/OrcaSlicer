@@ -7728,6 +7728,12 @@ msgstr "ノズル"
 msgid "Nozzle temperature when printing"
 msgstr "ノズル温度"
 
+msgid "Cool Plate (SuperTack)"
+msgstr ""
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+
 msgid "Cool Steel Plate"
 msgstr ""
 

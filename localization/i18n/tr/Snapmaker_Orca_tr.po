@@ -8161,6 +8161,14 @@ msgstr "Nozul"
 msgid "Nozzle temperature when printing"
 msgstr "Yazdırma sırasında nozul sıcaklığı"
 
+msgid "Cool Plate (SuperTack)"
+msgstr ""
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+"Cool Plate takıldığında yatak sıcaklığı. 0 değeri, filamentin Cool Plate "
+"SuperTack üzerine yazdırmayı desteklemediği anlamına gelir"
+
 msgid "Cool Steel Plate"
 msgstr "Cool Steel Plate"
 

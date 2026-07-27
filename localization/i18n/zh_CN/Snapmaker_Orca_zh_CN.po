@@ -7445,6 +7445,12 @@ msgstr "喷嘴"
 msgid "Nozzle temperature when printing"
 msgstr "打印时的喷嘴温度"
 
+msgid "Cool Plate (SuperTack)"
+msgstr "低温打印板（超强粘附）"
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr "安装低温打印板（超强粘附）时的热床温度。0值表示该耗材丝不支持在低温打印板（超强粘附）上打印。"
+
 msgid "Cool Steel Plate"
 msgstr "低温冷打钢板"
 

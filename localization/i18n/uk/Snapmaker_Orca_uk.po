@@ -8213,8 +8213,16 @@ msgstr "Сопло"
 msgid "Nozzle temperature when printing"
 msgstr "Температура сопла під час друку"
 
-msgid "Cool Steel Plate"
+msgid "Cool Plate (SuperTack)"
 msgstr "Холодна пластина (SuperTack)"
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+"Температура столу при встановленій холодній пластині. Значення 0 означає "
+"що філамент не підтримує друк на Холодній Пластині SuperTack"
+
+msgid "Cool Steel Plate"
+msgstr "Холодна сталева пластина"
 
 msgid ""
 "Bed temperature when the Cool Steel Plate is installed. A value of 0 "

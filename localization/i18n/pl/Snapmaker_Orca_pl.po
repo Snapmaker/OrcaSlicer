@@ -8188,6 +8188,14 @@ msgstr "Dysza"
 msgid "Nozzle temperature when printing"
 msgstr "Temperatura dyszy podczas druku"
 
+msgid "Cool Plate (SuperTack)"
+msgstr ""
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+"Temperatura stołu, gdy zainstalowana jest cool plate. Wartość 0 oznacza, "
+"że filament nie jest przystosowany do druku na Cool Steel Plate"
+
 msgid "Cool Steel Plate"
 msgstr "Cool Steel Plate"
 

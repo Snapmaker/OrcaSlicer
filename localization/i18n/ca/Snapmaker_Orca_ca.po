@@ -8233,6 +8233,14 @@ msgstr "Broquet( nozzle )"
 msgid "Nozzle temperature when printing"
 msgstr "Temperatura del broquet en imprimir"
 
+msgid "Cool Plate (SuperTack)"
+msgstr ""
+
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+"Temperatura del llit quan s'instal·la la placa freda. El valor 0 "
+"significa que el filament no admet la impressió al Cool Steel Plate"
+
 msgid "Cool Steel Plate"
 msgstr "Cool Steel Plate"
 

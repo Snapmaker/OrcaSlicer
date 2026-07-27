@@ -3749,8 +3749,20 @@ void TabFilament::build()
         optgroup->append_line(line);
 
         optgroup = page->new_optgroup(L("Bed temperature"), L"param_bed_temp");
-        line = { L("Cool Steel Plate"),
-                 L("Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate.") };
+        // Initial label/tooltip are picked based on the printer selected at build time;
+        // toggle_options() re-applies them whenever the user switches printers, so the
+        // row stays in sync with the bed-type combobox (U1 = Cool Steel Plate, others =
+        // Cool Plate (SuperTack)). Both names map to the same btSuperTack enumerator.
+        bool        is_u1_at_build = false;
+        const auto *printer_model_opt_build = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model");
+        if (printer_model_opt_build) {
+            const std::string &pm = printer_model_opt_build->value;
+            is_u1_at_build = boost::icontains(pm, "Snapmaker") && boost::icontains(pm, "U1");
+        }
+        line = { is_u1_at_build ? L("Cool Steel Plate") : L("Cool Plate (SuperTack)"),
+                 is_u1_at_build
+                     ? L("Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate.")
+                     : L("Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack).") };
         line.append_option(optgroup->get_option("supertack_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("supertack_plate_temp"));
         optgroup->append_line(line);
@@ -4054,6 +4066,16 @@ void TabFilament::toggle_options()
             hot_plate_line->label = is_snapmaker_u1
                 ? _L("Smooth PEI Plate")
                 : _L("Smooth PEI Plate / High Temp Plate");
+        }
+        // Supertack slot: U1 renames btSuperTack to "Cool Steel Plate"; keep the filament
+        // temperature row in sync with the bed-type combobox so the names match.
+        if (Line* supertack_line = get_line("supertack_plate_temp_initial_layer")) {
+            supertack_line->label = is_snapmaker_u1
+                ? _L("Cool Steel Plate")
+                : _L("Cool Plate (SuperTack)");
+            supertack_line->label_tooltip = is_snapmaker_u1
+                ? _L("Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate.")
+                : _L("Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack).");
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
             // U1 default show 4 plates

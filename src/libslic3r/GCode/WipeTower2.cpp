@@ -1542,6 +1542,9 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     }
 
     m_bed_bottom_left = m_bed_shape == RectangularBed ? Vec2f(bed_points.front().x(), bed_points.front().y()) : Vec2f::Zero();
+
+    m_shared_print_bed.clear();
+    m_shared_print_bed.emplace_back(Polygon::new_scale(bed_points));
 }
 
 void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
@@ -2722,6 +2725,10 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
 
     bool should_flat_ironging = true;
     bool should_line_ironing = true;
+    if (solid_toolchange) {
+        should_flat_ironging = false;
+        should_line_ironing = false;
+    }
 
     float x_to_wipe = wipe_length;
     float dy = (is_first_layer() ? m_extra_flow : m_extra_spacing_wipe) * m_perimeter_width;
@@ -3915,7 +3922,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                 finish_layer_tcr = finish_layer_new(true, layer.extruder_fill);
                 std::for_each(m_wipe_tower_blocks.begin(), m_wipe_tower_blocks.end(), [this](WipeTowerBlock& block) {
                     block.finish_depth[this->m_cur_layer_id] = block.start_depth;
-                    });
+                });
             }
         }
 
@@ -4935,8 +4942,10 @@ WipeTower::ToolChangeResult WipeTower2::finish_block_solid(const WipeTowerBlock&
                 stop_pos = Vec2f(stop_pos.x() - filament_tower_interface_pre_extrusion_dist, stop_pos.y());
             else
                 stop_pos = Vec2f(stop_pos.x() + filament_tower_interface_pre_extrusion_dist, stop_pos.y());
-            if (stop_pos.x() < printer_bbx.min[0]) stop_pos.x() = printer_bbx.min[0];
-            if (stop_pos.x() > printer_bbx.max[0]) stop_pos.x() = printer_bbx.max[0];
+            if (stop_pos.x() < printer_bbx.min[0]) 
+                stop_pos.x() = printer_bbx.min[0];
+            if (stop_pos.x() > printer_bbx.max[0]) 
+                stop_pos.x() = printer_bbx.max[0];
             initial_pos = stop_pos;
             if (m_filpar[m_current_tool].filament_tower_interface_print_temp != m_filpar[m_current_tool].temperature)
                 writer.format_line_M109(m_filpar[m_current_tool].filament_tower_interface_print_temp, m_current_tool);

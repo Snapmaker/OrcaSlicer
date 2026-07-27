@@ -334,16 +334,7 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                             const std::string enc_path = task->dest_path;
                             const std::string tmp_path = enc_path + ".tmp";
 
-                            const DecryptKeyIV dkiv = derive_key_iv(task->sn, 983);
-                            if (dkiv.key.empty() || dkiv.iv.empty()) {
-                                send_error_update(task, "Key derivation failed");
-                                cleanup_task(task->task_id);
-                                m_active_downloads--;
-                                process_queue();
-                                return;
-                            }
-
-                            if (!decrypt_file_aes_cbc(enc_path, dkiv.key, dkiv.iv, tmp_path)) {
+                            if (!decrypt_file_aes_cbc(enc_path, task->sn, Slic3r::PBKDF2_ITERATIONS, tmp_path)) {
                                 send_error_update(task, "File decryption failed");
                                 cleanup_task(task->task_id);
                                 m_active_downloads--;

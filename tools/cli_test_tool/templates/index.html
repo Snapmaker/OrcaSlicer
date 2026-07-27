@@ -1,0 +1,523 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snapmaker CLI Slicing Test Tool</title>
+<style>
+:root{
+  --bg:#f0f0f3; --surface:#ffffff; --border:#d1d1d6; --border-focus:#0071e3;
+  --text:#1d1d1f; --text-secondary:#86868b; --primary:#0071e3; --primary-hover:#0058b0;
+  --success:#34c759; --failed:#ff3b30; --timeout:#ff9500; --crashed:#af52de;
+  --skipped:#8e8e93; --running:#0071e3; --pending:#8e8e93;
+  --log-bg:#1e1e2e; --log-text:#cdd6f4; --radius:8px; --shadow:0 1px 3px rgba(0,0,0,0.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);
+  line-height:1.5;font-size:14px;min-height:100vh}
+.container{max-width:1200px;margin:0 auto;padding:20px}
+h1{font-size:22px;font-weight:700;margin-bottom:2px}
+.subtitle{color:var(--text-secondary);font-size:13px;margin-bottom:20px}
+.panel{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+  margin-bottom:16px;overflow:hidden}
+.panel-header{padding:12px 16px;font-weight:600;font-size:15px;cursor:pointer;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border);user-select:none}
+.panel-header:hover{background:#f5f5f7}
+.panel-body{padding:16px}
+.panel-body.collapsed{display:none}
+.field-row{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.field-row label{width:120px;font-size:13px;color:var(--text-secondary);flex-shrink:0;
+  text-align:right}
+.field-row input[type="text"],.field-row input[type="number"],.field-row select{
+  flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;
+  font-family:inherit;background:var(--surface)}
+.field-row input:focus,.field-row select:focus{outline:none;border-color:var(--border-focus)}
+.btn{padding:7px 14px;border:none;border-radius:6px;font-size:13px;font-weight:500;
+  cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:6px;
+  transition:background 0.15s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:disabled{background:#b0b0b5;cursor:not-allowed}
+.btn-secondary{background:#e8e8ed;color:var(--text)}
+.btn-secondary:hover{background:#d8d8de}
+.btn-danger{background:var(--failed);color:#fff}
+.btn-danger:hover{background:#cc3329}
+.btn-sm{padding:5px 10px;font-size:12px}
+.btn-browse{background:#f0f0f3;border:1px solid var(--border);color:var(--text);
+  padding:5px 10px;font-size:12px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.btn-browse:hover{background:#e0e0e5}
+.advanced-toggle{color:var(--primary);font-size:13px;cursor:pointer;margin-top:8px;
+  display:inline-block}
+.advanced-section{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);
+  display:none}
+.advanced-section.show{display:block}
+.action-bar{display:flex;gap:10px;margin-bottom:16px;align-items:center}
+.scan-info{color:var(--text-secondary);font-size:13px}
+.file-list{max-height:200px;overflow-y:auto;border:1px solid var(--border);
+  border-radius:6px;margin-top:8px}
+.file-item{padding:6px 12px;font-size:13px;display:flex;align-items:center;gap:8px;
+  border-bottom:1px solid #f0f0f3}
+.file-item:last-child{border-bottom:none}
+.file-item input[type="checkbox"]{margin:0}
+.file-item .fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-item .fsize{color:var(--text-secondary);font-size:12px}
+.progress-section{margin-bottom:16px}
+.progress-bar{width:100%;height:24px;background:#e8e8ed;border-radius:6px;
+  overflow:hidden;margin-bottom:8px}
+.progress-fill{height:100%;background:var(--primary);transition:width 0.3s;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;
+  font-weight:600;min-width:40px}
+.current-task{font-size:13px;color:var(--text-secondary);margin-bottom:8px}
+.log-stream{background:var(--log-bg);color:var(--log-text);border-radius:6px;
+  padding:12px;font-family:'Cascadia Code','Consolas',monospace;font-size:12px;
+  line-height:1.6;max-height:250px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));
+  gap:12px;margin-bottom:16px}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:14px;
+  text-align:center;box-shadow:var(--shadow)}
+.stat-num{font-size:26px;font-weight:700;line-height:1.2}
+.stat-lbl{font-size:11px;color:var(--text-secondary);text-transform:uppercase;
+  letter-spacing:0.5px;margin-top:2px}
+.filter-bar{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.filter-btn{padding:4px 12px;border-radius:12px;font-size:12px;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface);font-family:inherit}
+.filter-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.result-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);
+  margin-bottom:10px;overflow:hidden;border-left:4px solid var(--border)}
+.result-card.success{border-left-color:var(--success)}
+.result-card.failed{border-left-color:var(--failed)}
+.result-card.timeout{border-left-color:var(--timeout)}
+.result-card.crashed{border-left-color:var(--crashed)}
+.result-card.skipped{border-left-color:var(--skipped)}
+.result-header{padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.result-header .fname{font-weight:600;flex:1;min-width:150px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.5px;color:#fff}
+.badge.success{background:var(--success)}
+.badge.failed{background:var(--failed)}
+.badge.timeout{background:var(--timeout)}
+.badge.crashed{background:var(--crashed)}
+.badge.skipped{background:var(--skipped)}
+.badge.pending{background:var(--pending)}
+.badge.running{background:var(--running)}
+.duration-tag{color:var(--text-secondary);font-size:12px;font-family:monospace}
+.exit-tag{color:var(--text-secondary);font-size:12px;font-family:monospace}
+.result-meta{padding:0 16px 8px;display:flex;gap:16px;flex-wrap:wrap;
+  font-size:12px;color:#555}
+.suggestion-box{background:#fff9e6;border:1px solid #ffe082;border-radius:6px;
+  padding:8px 12px;margin:0 16px 8px;font-size:12px;color:#7a5c00}
+.keyword-box{padding:0 16px 8px;font-size:12px;color:#555}
+.keyword-box .kw-item{margin:2px 0}
+.keyword-box .kw-item strong{color:var(--failed)}
+.result-details{border-top:1px solid var(--border)}
+.result-details summary{padding:8px 16px;cursor:pointer;color:var(--primary);
+  font-size:12px;user-select:none}
+.result-details summary:hover{background:#f5f5f7}
+.result-log{background:var(--log-bg);color:var(--log-text);padding:12px 16px;
+  font-family:'Cascadia Code','Consolas',monospace;font-size:11px;line-height:1.5;
+  max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.empty-state{text-align:center;padding:40px 20px;color:var(--text-secondary)}
+.error-banner{background:#fee;border:1px solid var(--failed);color:var(--failed);
+  padding:8px 16px;border-radius:6px;margin-bottom:12px;font-size:13px}
+.section-title{font-size:16px;font-weight:600;margin-bottom:12px;display:flex;
+  align-items:center;gap:8px}
+.spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--primary);
+  border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.hidden{display:none!important}
+.checkbox-row{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px}
+.checkbox-row label{color:var(--text-secondary)}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Snapmaker CLI Slicing Test Tool</h1>
+  <div class="subtitle">Batch-test 3MF files with the Snapmaker CLI. Real-time progress, detailed logs, failure analysis.</div>
+
+  <div id="errorBanner" class="error-banner hidden"></div>
+
+  <!-- Config Panel -->
+  <div class="panel">
+    <div class="panel-header" onclick="togglePanel('configPanel')">
+      <span>Settings</span>
+      <span style="font-size:12px;color:var(--text-secondary)">click to collapse</span>
+    </div>
+    <div id="configPanel" class="panel-body">
+      <div class="field-row">
+        <label>CLI Path</label>
+        <input type="text" id="cliPath" placeholder="snapmaker-orca.exe path">
+        <button class="btn-browse" onclick="browse('file','cliPath','exe')">Browse</button>
+      </div>
+      <div class="field-row">
+        <label>Data Directory</label>
+        <input type="text" id="datadir" placeholder="resources directory">
+        <button class="btn-browse" onclick="browse('dir','datadir')">Browse</button>
+      </div>
+      <div class="field-row">
+        <label>Output Directory</label>
+        <input type="text" id="outputDir" placeholder="where to put G-code output">
+        <button class="btn-browse" onclick="browse('dir','outputDir')">Browse</button>
+      </div>
+      <div class="advanced-toggle" onclick="toggleAdvanced()">Advanced options</div>
+      <div id="advancedSection" class="advanced-section">
+        <div class="field-row">
+          <label>Slice Mode</label>
+          <select id="sliceMode">
+            <option value="0">All plates (0)</option>
+            <option value="1">Plate 1</option>
+            <option value="2">Plate 2</option>
+            <option value="3">Plate 3</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>Max Time/Plate (s)</label>
+          <input type="number" id="mstpp" value="0" min="0" placeholder="0 = no limit">
+        </div>
+        <div class="field-row">
+          <label>Max Triangles</label>
+          <input type="number" id="mtcpp" value="0" min="0" placeholder="0 = no limit">
+        </div>
+        <div class="field-row">
+          <label>Debug Level</label>
+          <select id="debugLevel">
+            <option value="0">0 (errors)</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3 (default)</option>
+            <option value="4">4</option>
+            <option value="5">5 (trace)</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label>Timeout (s)</label>
+          <input type="number" id="timeout" value="600" min="30">
+        </div>
+        <div class="field-row">
+          <label>Extra Args</label>
+          <input type="text" id="extraArgs" placeholder="--no-check --orient 1">
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="allowNewer" checked>
+          <label for="allowNewer">--allow-newer-file (skip version check)</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="noRelativeE" checked>
+          <label for="noRelativeE">--use-relative-e-distances=0 (fix -51 errors)</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input Panel -->
+  <div class="panel">
+    <div class="panel-header" onclick="togglePanel('inputPanel')">
+      <span>Input Files</span>
+      <span style="font-size:12px;color:var(--text-secondary)">select a 3MF file or directory</span>
+    </div>
+    <div id="inputPanel" class="panel-body">
+      <div class="field-row">
+        <label>File / Directory</label>
+        <input type="text" id="inputPath" placeholder="path to a .3mf file or a directory containing .3mf files">
+        <button class="btn-browse" onclick="browse('file','inputPath','3mf')">File</button>
+        <button class="btn-browse" onclick="browse('dir','inputPath')">Dir</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-secondary" onclick="scanFiles()">Scan for 3MF files</button>
+        <span id="scanInfo" class="scan-info"></span>
+      </div>
+      <div id="fileListContainer" class="hidden">
+        <div class="file-list" id="fileList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Bar -->
+  <div class="action-bar">
+    <button class="btn btn-primary" id="startBtn" onclick="startSlicing()">Start Slicing</button>
+    <button class="btn btn-danger hidden" id="stopBtn" onclick="stopSlicing()">Stop</button>
+    <button class="btn btn-secondary hidden" id="exportBtn" onclick="exportReport()">Export Report</button>
+    <span id="sessionState" class="scan-info"></span>
+  </div>
+
+  <!-- Progress Section -->
+  <div id="progressSection" class="progress-section hidden">
+    <div class="section-title"><span class="spinner"></span> Slicing in progress</div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width:0%">0%</div>
+    </div>
+    <div class="current-task" id="currentTask"></div>
+    <div class="log-stream" id="liveLog">Waiting for output...</div>
+  </div>
+
+  <!-- Results Section -->
+  <div id="resultsSection" class="hidden">
+    <div class="section-title">Results</div>
+    <div class="stats-grid" id="statsGrid"></div>
+    <div class="filter-bar" id="filterBar"></div>
+    <div id="resultsList"></div>
+  </div>
+
+  <div id="emptyState" class="empty-state">
+    Select a 3MF file or directory, then click Start Slicing.
+  </div>
+</div>
+
+<script>
+let selectedFiles = [];
+let allResults = [];
+let currentFilter = 'all';
+let eventSource = null;
+let liveLogLines = [];
+
+function togglePanel(id) {
+  const body = document.getElementById(id);
+  body.classList.toggle('collapsed');
+}
+function toggleAdvanced() {
+  document.getElementById('advancedSection').classList.toggle('show');
+}
+function showError(msg) {
+  const el = document.getElementById('errorBanner');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  setTimeout(() => el.classList.add('hidden'), 5000);
+}
+function fmtSize(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+  return (n/1048576).toFixed(2) + ' MB';
+}
+async function api(path, method='GET', body=null) {
+  const opts = {method, headers: {'Content-Type': 'application/json'}};
+  if (body) opts.body = JSON.stringify(body);
+  const resp = await fetch(path, opts);
+  return resp.json();
+}
+async function browse(type, inputId, filetype) {
+  const data = await api('/api/browse', 'POST', {type, filetype});
+  if (data.error) { showError(data.error); return; }
+  if (data.path) document.getElementById(inputId).value = data.path;
+}
+async function scanFiles() {
+  const path = document.getElementById('inputPath').value.trim();
+  if (!path) { showError('Please enter a file or directory path.'); return; }
+  const data = await api('/api/scan', 'POST', {path});
+  selectedFiles = data.files || [];
+  document.getElementById('scanInfo').textContent = data.count + ' file(s) found';
+  renderFileList();
+}
+function renderFileList() {
+  const container = document.getElementById('fileListContainer');
+  const list = document.getElementById('fileList');
+  if (selectedFiles.length === 0) { container.classList.add('hidden'); return; }
+  container.classList.remove('hidden');
+  list.innerHTML = selectedFiles.map((f, i) => {
+    const name = f.split(/[\\/]/).pop();
+    return '<div class="file-item">' +
+      '<input type="checkbox" checked data-idx="' + i + '">' +
+      '<span class="fname" title="' + f + '">' + name + '</span>' +
+      '</div>';
+  }).join('');
+}
+function getSelectedFiles() {
+  const checkboxes = document.querySelectorAll('#fileList input[type=checkbox]');
+  const files = [];
+  checkboxes.forEach(cb => { if (cb.checked) files.push(selectedFiles[cb.dataset.idx]); });
+  return files.length > 0 ? files : selectedFiles;
+}
+function getConfig() {
+  return {
+    cli_path: document.getElementById('cliPath').value.trim(),
+    datadir: document.getElementById('datadir').value.trim(),
+    output_dir: document.getElementById('outputDir').value.trim(),
+    slice_mode: parseInt(document.getElementById('sliceMode').value),
+    mstpp: parseInt(document.getElementById('mstpp').value),
+    mtcpp: parseInt(document.getElementById('mtcpp').value),
+    debug: parseInt(document.getElementById('debugLevel').value),
+    timeout: parseInt(document.getElementById('timeout').value),
+    extra_args: document.getElementById('extraArgs').value.trim(),
+    allow_newer_file: document.getElementById('allowNewer').checked,
+    no_relative_e: document.getElementById('noRelativeE').checked,
+  };
+}
+async function startSlicing() {
+  const files = getSelectedFiles();
+  if (files.length === 0) { showError('No files selected. Scan a path first.'); return; }
+  const config = getConfig();
+  if (!config.cli_path) { showError('CLI path is required.'); return; }
+  if (!config.output_dir) { showError('Output directory is required.'); return; }
+  const data = await api('/api/start', 'POST', {files, config});
+  if (!data.ok) { showError(data.message || 'Failed to start.'); return; }
+  document.getElementById('startBtn').classList.add('hidden');
+  document.getElementById('stopBtn').classList.remove('hidden');
+  document.getElementById('progressSection').classList.remove('hidden');
+  document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('exportBtn').classList.add('hidden');
+  liveLogLines = [];
+  document.getElementById('liveLog').textContent = 'Waiting for output...';
+  connectSSE();
+}
+function stopSlicing() { api('/api/stop', 'POST'); }
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/stream');
+  eventSource.onmessage = function(e) {
+    const event = JSON.parse(e.data);
+    handleEvent(event);
+  };
+  eventSource.onerror = function() {
+    setTimeout(() => { if (document.getElementById('stopBtn').offsetParent !== null) connectSSE(); }, 2000);
+  };
+}
+function handleEvent(event) {
+  switch(event.type) {
+    case 'init':
+      if (event.session && event.session.results && event.session.results.length > 0) {
+        allResults = event.session.results;
+        renderResults();
+      }
+      break;
+    case 'session_started':
+      document.getElementById('currentTask').textContent = 'Starting session with ' + event.total + ' files...';
+      break;
+    case 'progress':
+      const pct = Math.round((event.current / event.total) * 100);
+      document.getElementById('progressFill').style.width = pct + '%';
+      document.getElementById('progressFill').textContent = event.current + ' / ' + event.total + ' (' + pct + '%)';
+      document.getElementById('currentTask').textContent = 'Slicing: ' + event.file;
+      break;
+    case 'slice_started':
+      liveLogLines.push('=== ' + event.file + ' ===');
+      updateLiveLog();
+      break;
+    case 'slice_done':
+      const log = event.result.log || '';
+      const lines = log.split('\n');
+      liveLogLines = liveLogLines.slice(0, -1);
+      liveLogLines.push('=== ' + event.file + ' ===');
+      lines.forEach(l => liveLogLines.push(l));
+      liveLogLines.push('');
+      updateLiveLog();
+      const idx = allResults.findIndex(r => r.file_name === event.result.file_name);
+      if (idx >= 0) allResults[idx] = event.result;
+      else allResults.push(event.result);
+      break;
+    case 'session_done':
+      document.getElementById('startBtn').classList.remove('hidden');
+      document.getElementById('startBtn').textContent = 'Start New Session';
+      document.getElementById('stopBtn').classList.add('hidden');
+      document.getElementById('exportBtn').classList.remove('hidden');
+      document.getElementById('sessionState').textContent =
+        'Done: ' + event.summary.success + '/' + event.summary.total + ' success (' + event.summary.success_rate + '%)';
+      renderResults();
+      break;
+  }
+}
+function updateLiveLog() {
+  const el = document.getElementById('liveLog');
+  const lines = liveLogLines.slice(-200);
+  el.textContent = lines.join('\n');
+  el.scrollTop = el.scrollHeight;
+}
+function renderResults() {
+  document.getElementById('progressSection').classList.add('hidden');
+  document.getElementById('resultsSection').classList.remove('hidden');
+  document.getElementById('emptyState').classList.add('hidden');
+  renderStats();
+  renderFilters();
+  renderResultCards();
+}
+function renderStats() {
+  const counts = {success:0, failed:0, timeout:0, crashed:0, skipped:0, pending:0, running:0};
+  let totalDuration = 0;
+  allResults.forEach(r => {
+    counts[r.status] = (counts[r.status] || 0) + 1;
+    totalDuration += r.duration || 0;
+  });
+  const total = allResults.length;
+  const successRate = total > 0 ? Math.round(counts.success / total * 100 * 10) / 10 : 0;
+  const stats = [
+    {num: total, lbl: 'Total', color: ''},
+    {num: counts.success, lbl: 'Success', color: 'var(--success)'},
+    {num: counts.failed, lbl: 'Failed', color: 'var(--failed)'},
+    {num: counts.timeout, lbl: 'Timeout', color: 'var(--timeout)'},
+    {num: counts.crashed, lbl: 'Crashed', color: 'var(--crashed)'},
+    {num: successRate + '%', lbl: 'Success Rate', color: ''},
+    {num: totalDuration.toFixed(0) + 's', lbl: 'Total Time', color: ''},
+  ];
+  document.getElementById('statsGrid').innerHTML = stats.map(s =>
+    '<div class="stat-card"><div class="stat-num" style="color:' + (s.color||'') + '">' + s.num + '</div><div class="stat-lbl">' + s.lbl + '</div></div>'
+  ).join('');
+}
+function renderFilters() {
+  const filters = ['all', 'success', 'failed', 'timeout', 'crashed', 'skipped'];
+  const counts = {};
+  allResults.forEach(r => counts[r.status] = (counts[r.status]||0)+1);
+  document.getElementById('filterBar').innerHTML = filters.map(f => {
+    const count = f === 'all' ? allResults.length : (counts[f]||0);
+    const active = currentFilter === f ? 'active' : '';
+    return '<button class="filter-btn ' + active + '" onclick="setFilter(\'' + f + '\')">' + f + ' (' + count + ')</button>';
+  }).join('');
+}
+function setFilter(f) { currentFilter = f; renderFilters(); renderResultCards(); }
+function renderResultCards() {
+  const filtered = currentFilter === 'all' ? allResults : allResults.filter(r => r.status === currentFilter);
+  if (filtered.length === 0) {
+    document.getElementById('resultsList').innerHTML = '<div class="empty-state">No results for this filter.</div>';
+    return;
+  }
+  document.getElementById('resultsList').innerHTML = filtered.map(r => {
+    const gcodeStr = (r.gcode_files && r.gcode_files.length) ? r.gcode_files.join(', ') : 'N/A';
+    let suggestionHtml = r.suggestion ? '<div class="suggestion-box">' + r.suggestion + '</div>' : '';
+    let keywordHtml = '';
+    if (r.error_keywords && r.error_keywords.length) {
+      keywordHtml = '<div class="keyword-box">';
+      r.error_keywords.forEach(kw => {
+        keywordHtml += '<div class="kw-item"><strong>' + kw.keyword + '</strong> &mdash; ' + kw.suggestion + '</div>';
+      });
+      keywordHtml += '</div>';
+    }
+    const logLines = (r.log||'').split('\n').length;
+    return '<div class="result-card ' + r.status + '">' +
+      '<div class="result-header">' +
+        '<span class="fname" title="' + r.file_path + '">' + r.file_name + '</span>' +
+        '<span class="badge ' + r.status + '">' + r.status + '</span>' +
+        '<span class="duration-tag">' + (r.duration||0).toFixed(1) + 's</span>' +
+        '<span class="exit-tag">exit ' + (r.exit_code !== null ? r.exit_code : 'N/A') + '</span>' +
+      '</div>' +
+      '<div class="result-meta">' +
+        '<span>' + fmtSize(r.file_size) + '</span>' +
+        '<span>G-code: ' + gcodeStr + ' (' + fmtSize(r.gcode_total_size) + ')</span>' +
+        (r.label ? '<span>' + r.label + '</span>' : '') +
+      '</div>' +
+      suggestionHtml + keywordHtml +
+      '<details class="result-details"><summary>Full log (' + logLines + ' lines)</summary>' +
+        '<div class="result-log">' + (r.log||'(empty)').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
+      '</details>' +
+    '</div>';
+  }).join('');
+}
+function exportReport() { window.open('/api/report/export', '_blank'); }
+// Init: load defaults
+(async function() {
+  const data = await api('/api/defaults');
+  if (data.cli_path) document.getElementById('cliPath').value = data.cli_path;
+  if (data.datadir) document.getElementById('datadir').value = data.datadir;
+  document.getElementById('outputDir').value = '';
+  // Check CLI binary freshness
+  const diag = await api('/api/diag');
+  if (!diag.ok) {
+    const banner = document.getElementById('errorBanner');
+    banner.innerHTML = '<b>CLI Binary Issue:</b> ' + diag.message;
+    banner.classList.remove('hidden');
+    banner.style.background = '#ff9500';
+  }
+  connectSSE();
+})();
+</script>
+</body>
+</html>

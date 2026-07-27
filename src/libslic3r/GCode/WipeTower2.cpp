@@ -2526,22 +2526,22 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     // This is where we want to place the custom gcodes. We will use placeholders for this.
     // These will be substituted by the actual gcodes when the gcode is generated.
     // writer.append("[end_filament_gcode]\n");
-    writer.append("[filament_end_gcode]\n");
+    //writer.append("[filament_end_gcode]\n");
     writer.append("[change_filament_gcode]\n");
 
     //if (m_is_mk4mmu3)
     //    writer.switch_filament_monitoring(true);
 
-    //Vec2f current_pos = writer.pos_rotated();
-    //writer
-    //    .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
-    //    .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
-    //        Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
+    Vec2f current_pos = writer.pos_rotated();
+    writer
+        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+        .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
+            Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 
-    //writer.append("[deretraction_from_wipe_tower_generator]");
+    writer.append("[deretraction_from_wipe_tower_generator]");
 
     writer.set_tool(new_tool); // This outputs nothing, the writer just needs to know the tool has changed.
-    writer.append("[filament_start_gcode]\n");
+    //writer.append("[filament_start_gcode]\n");
 
     writer.flush_planner_queue();
     m_current_tool = new_tool;

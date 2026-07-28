@@ -1005,12 +1005,13 @@ void SSWCP_Instance::send_to_js()
         WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        wxGetApp().CallAfter([weak_self, str_res]() {
+        wxGetApp().CallAfter([weak_self, str_res, json_str]() {
             try {
                 auto self = weak_self.lock();
                 if (self && self->m_webview && self->m_webview->GetRefData()) {
                     WebView::RunScript(self->m_webview, str_res);
                 }
+                SSWCP::send_message_to_flutter(json_str);
             } catch (std::exception& e) {
                 WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
             }
@@ -7175,6 +7176,10 @@ std::unordered_map<std::string, std::shared_ptr<SSWCP_UserLogin_Instance::Subscr
     SSWCP_UserLogin_Instance::m_subscribe_map;
 std::mutex  SSWCP::m_file_size_mutex;
 
+std::unique_ptr<WebSocketDebugServer> SSWCP::m_debug_server = nullptr;
+std::mutex SSWCP::m_debug_server_mutex;
+bool SSWCP::m_debug_mode_enabled = false;
+
 std::unordered_map<std::string, int> SSWCP::m_tab_map = {
     {"Home", MainFrame::TabPosition::tpHome},
     {"3DEditor", MainFrame::TabPosition::tp3DEditor},
@@ -7358,6 +7363,46 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
 
     }
     catch (std::exception& e) {
+    }
+}
+
+// Handle incoming web messages for Flutter debug (no webview required)
+void SSWCP::handle_webmsg_for_debug(std::string message) {
+    {
+        WCP_Logger::getInstance().add_log(message, false, "", "WCP", "info");
+
+        json j_message = json::parse(message);
+
+        if (j_message.empty() || !j_message.count("header") || !j_message.count("payload") || !j_message["payload"].count("cmd")) {
+            return;
+        }
+
+        json header = j_message["header"];
+        json payload = j_message["payload"];
+
+        std::string cmd = "";
+        std::string event_id = "";
+        json params;
+
+        if (payload.count("cmd")) {
+            cmd = payload["cmd"].get<std::string>();
+        }
+        if (payload.count("params")) {
+            params = payload["params"];
+        }
+
+        if (payload.count("event_id") && !payload["event_id"].is_null()) {
+            event_id = payload["event_id"].get<std::string>();
+        }
+        std::shared_ptr<SSWCP_Instance> instance = create_sswcp_instance(cmd, header, params, event_id, nullptr);
+        if (instance) {
+            if (event_id != "") {
+                m_instance_list.add_infinite(instance.get(), instance);
+            } else {
+                m_instance_list.add(instance.get(), instance, DEFAULT_INSTANCE_TIMEOUT);
+            }
+            instance->process();
+        }
     }
 }
 
@@ -7637,6 +7682,84 @@ MachineIPType* MachineIPType::getInstance()
 {
     static MachineIPType mipt_instance;
     return &mipt_instance;
+}
+
+
+// WebSocket Debug Server implementation
+void SSWCP::enable_debug_mode(bool enable, unsigned short port)
+{
+    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
+
+    if (enable && !m_debug_server) {
+        BOOST_LOG_TRIVIAL(info) << "Enabling WebSocket debug mode on port " << port;
+
+        m_debug_server = std::make_unique<WebSocketDebugServer>(port);
+
+        m_debug_server->set_message_callback([](const std::string& message) {
+            BOOST_LOG_TRIVIAL(debug) << "Received message from Flutter Web via WebSocket";
+
+            wxGetApp().CallAfter([message]() {
+                SSWCP::handle_webmsg_for_debug(message);
+            });
+        });
+
+        if (m_debug_server->start()) {
+            m_debug_mode_enabled = true;
+            BOOST_LOG_TRIVIAL(info) << " WebSocket debug mode enabled successfully";
+            BOOST_LOG_TRIVIAL(info) << " Flutter Web can connect to: ws://localhost:" << port;
+        } else {
+            BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
+            m_debug_server.reset();
+            m_debug_mode_enabled = false;
+        }
+    } else if (!enable && m_debug_server) {
+        BOOST_LOG_TRIVIAL(info) << "Disabling WebSocket debug mode";
+        m_debug_server->stop();
+        m_debug_server.reset();
+        m_debug_mode_enabled = false;
+    }
+}
+
+void SSWCP::disable_debug_mode()
+{
+    enable_debug_mode(false);
+}
+
+bool SSWCP::is_debug_mode_enabled()
+{
+    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
+    return m_debug_mode_enabled;
+}
+
+void SSWCP::send_message_to_flutter(const std::string& message)
+{
+    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
+
+    if (m_debug_server && m_debug_mode_enabled) {
+        m_debug_server->send_message(message);
+    }
+}
+
+void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
+{
+    if (webview && webview->GetRefData()) {
+        BOOST_LOG_TRIVIAL(debug) << "Sending message to Flutter via WebView postMessage";
+        std::string js_code = "window.postMessage(JSON.stringify(" + message + "), '*');";
+        WebView::RunScript(webview, js_code);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_debug_server_mutex);
+        if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
+            BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Sending message to Flutter via WebSocket";
+            m_debug_server->send_message(message);
+        }
+    }
+
+    if ((!webview || !webview->GetRefData()) &&
+        (!m_debug_mode_enabled || !m_debug_server || !m_debug_server->has_client())) {
+        BOOST_LOG_TRIVIAL(warning) << "Cannot send message: no WebSocket client and no WebView available";
+    }
 }
 
 

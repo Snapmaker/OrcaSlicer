@@ -3350,6 +3350,9 @@ msgstr "热床调平"
 msgid "Timelapse"
 msgstr "延时摄影"
 
+msgid "Download Failed"
+msgstr "下载失败"
+
 msgid "Flow Dynamic Calibration"
 msgstr "动态流量校准"
 

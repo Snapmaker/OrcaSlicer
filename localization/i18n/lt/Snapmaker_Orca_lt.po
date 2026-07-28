@@ -8192,16 +8192,8 @@ msgstr "Purkštukas"
 msgid "Nozzle temperature when printing"
 msgstr "Purkštuko temperatūra spausdinant"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "Šalta plokštė (SuperTack)"
-
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr ""
-"Pagrindo temperatūra, kai sumontuota šalta plokštė. Reikšmė 0 reiškia, "
-"kad gija nepalaiko spausdinimo ant šaltos plokštės"
-
 msgid "Cool Steel Plate"
-msgstr "Šaltas plieninis lakštas"
+msgstr "Šalta plokštė (SuperTack)"
 
 msgid ""
 "Bed temperature when the Cool Steel Plate is installed. A value of 0 "

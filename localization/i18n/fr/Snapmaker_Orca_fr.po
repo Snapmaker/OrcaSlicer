@@ -8324,15 +8324,6 @@ msgstr "Buse"
 msgid "Nozzle temperature when printing"
 msgstr "Température de la buse lors de l'impression"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "Cool Plate SuperTack"
-
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr ""
-"Température du plateau lorsque la Cool Plate est installée. La valeur 0 "
-"signifie que le filament ne peut pas être imprimé sur la plaque Cool "
-"Plate SuperTack"
-
 msgid "Cool Steel Plate"
 msgstr "Cool Steel Plate"
 

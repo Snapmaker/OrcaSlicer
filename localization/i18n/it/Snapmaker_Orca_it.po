@@ -8256,17 +8256,8 @@ msgstr "Ugello"
 msgid "Nozzle temperature when printing"
 msgstr "Temperatura dell'ugello durante la stampa"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "Piatto SuperTack a bassa temperatura"
-
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr ""
-"Indica la temperatura del piano di stampa quando è installato il Piatto "
-"SuperTack a bassa temperatura. Un valore pari a 0 indica che il filamento "
-"non è compatibile con la stampa sul Piatto SuperTack a bassa temperatura."
-
 msgid "Cool Steel Plate"
-msgstr "Piatto in acciaio a freddo"
+msgstr "Piatto SuperTack a bassa temperatura"
 
 msgid ""
 "Bed temperature when the Cool Steel Plate is installed. A value of 0 "

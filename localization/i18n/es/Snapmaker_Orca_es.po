@@ -8251,17 +8251,8 @@ msgstr "Boquilla"
 msgid "Nozzle temperature when printing"
 msgstr "Temperatura de la boquilla al imprimir"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "Bandeja Fría (SuperTack)"
-
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr ""
-"Temperatura de cama cuando la bandeja fría está instalada. Valor 0 "
-"significa que el filamento no es compatible para imprimir en la bandeja "
-"fría SuperTack"
-
 msgid "Cool Steel Plate"
-msgstr "Bandeja de Acero Frío"
+msgstr "Bandeja Fría (SuperTack)"
 
 msgid ""
 "Bed temperature when the Cool Steel Plate is installed. A value of 0 "

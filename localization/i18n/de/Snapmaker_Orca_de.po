@@ -8344,17 +8344,8 @@ msgstr "Düse"
 msgid "Nozzle temperature when printing"
 msgstr "Düsentemperatur beim Drucken"
 
-msgid "Cool Plate (SuperTack)"
-msgstr "Kalte Druckplatte (SuperTack)"
-
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr ""
-"Dies ist die Betttemperatur, wenn die kalte Druckplatte installiert ist. "
-"Ein Wert von 0 bedeutet, dass das Filament auf der kalten Druckplatte "
-"SuperTack "
-
 msgid "Cool Steel Plate"
-msgstr "Kalte Stahlplatte"
+msgstr "Kalte Druckplatte (SuperTack)"
 
 msgid ""
 "Bed temperature when the Cool Steel Plate is installed. A value of 0 "

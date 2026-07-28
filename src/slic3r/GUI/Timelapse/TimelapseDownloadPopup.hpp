@@ -126,6 +126,7 @@ public:
     void set_cancel_callback(std::function<void()> cb);
     void set_dismiss_callback(std::function<void()> cb);
     void disable_cancel(); // visual gray-out + switch click behavior to dismiss
+    void set_queue_position(int pos) { m_queue_position = pos; }
 
     // Figma design sizes (raw px — converted via FromDIP at use sites)
     static constexpr int ROW_WIDTH        = 375;
@@ -147,6 +148,7 @@ private:
 
     State     m_state;
     int       m_percent;
+    int       m_queue_position = 1;
     bool      m_cancel_enabled;
     wxString  m_status_text;
 

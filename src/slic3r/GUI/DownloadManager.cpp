@@ -110,14 +110,7 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
 
     m_tasks[task_id] = task;
 
-    if (m_active_downloads >= m_max_concurrent_downloads) {
-        task->state = DownloadTaskState::Pending;
-        m_pending_queue.push_back(task_id);
-        return task_id;
-    }
-
     task->state = DownloadTaskState::Downloading;
-    m_active_downloads++;
     start_download_impl(task);
     return task_id;
 }
@@ -154,14 +147,7 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
 
     m_tasks[task_id] = task;
 
-    if (m_active_downloads >= m_max_concurrent_downloads) {
-        task->state = DownloadTaskState::Pending;
-        m_pending_queue.push_back(task_id);
-        return task_id;
-    }
-
     task->state = DownloadTaskState::Downloading;
-    m_active_downloads++;
     start_download_impl(task);
 
     return task_id;
@@ -207,31 +193,10 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
 
     m_tasks[task_id] = task;
 
-    if (m_active_downloads >= m_max_concurrent_downloads) {
-        task->state = DownloadTaskState::Pending;
-        m_pending_queue.push_back(task_id);
-        return task_id;
-    }
-
     task->state = DownloadTaskState::Downloading;
-    m_active_downloads++;
     start_download_impl(task);
 
     return task_id;
-}
-
-void DownloadManager::process_queue() {
-    std::lock_guard<std::mutex> lock(m_tasks_mutex);
-    while (!m_pending_queue.empty() && m_active_downloads < m_max_concurrent_downloads) {
-        size_t task_id = m_pending_queue.front();
-        m_pending_queue.pop_front();
-        auto it = m_tasks.find(task_id);
-        if (it != m_tasks.end() && it->second->state == DownloadTaskState::Pending) {
-            it->second->state = DownloadTaskState::Downloading;
-            m_active_downloads++;
-            start_download_impl(it->second);
-        }
-    }
 }
 
 void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
@@ -309,8 +274,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                             Slic3r::flush_logs();
                             send_error_update(task, error_msg);
                             cleanup_task(task->task_id);
-                            m_active_downloads--;
-                            process_queue();
                             return;
                         }
 
@@ -322,8 +285,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                             file.close();
                             send_error_update(task, error_msg);
                             cleanup_task(task->task_id);
-                            m_active_downloads--;
-                            process_queue();
                             return;
                         }
                         file.close();
@@ -337,8 +298,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                             if (!decrypt_file_aes_cbc(enc_path, task->sn, Slic3r::PBKDF2_ITERATIONS, tmp_path)) {
                                 send_error_update(task, "File decryption failed");
                                 cleanup_task(task->task_id);
-                                m_active_downloads--;
-                                process_queue();
                                 return;
                             }
 
@@ -352,16 +311,12 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         task->percent = 100;
                         send_complete_update(task, final_path);
                         cleanup_task(task->task_id);
-                        m_active_downloads--;
-                        process_queue();
                     } catch (std::exception& e) {
                         std::string error_msg = std::string("File write exception: ") + e.what();
                         BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg;
                         Slic3r::flush_logs();
                         send_error_update(task, error_msg);
                         cleanup_task(task->task_id);
-                        m_active_downloads--;
-                        process_queue();
                     }
                 });
             });
@@ -379,8 +334,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                     task->error_message = error;
                     send_error_update(task, error);
                     cleanup_task(task->task_id);
-                    m_active_downloads--;
-                    process_queue();
                 });
             });
 
@@ -393,8 +346,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
             task->error_message = e.what();
             send_error_update(task, e.what());
             cleanup_task(task->task_id);
-            m_active_downloads--;
-            process_queue();
         }
     });
 }
@@ -407,12 +358,6 @@ bool DownloadManager::cancel_download(size_t task_id) {
 
         auto it = m_tasks.find(task_id);
         if (it == m_tasks.end()) {
-            for (auto qit = m_pending_queue.begin(); qit != m_pending_queue.end(); ++qit) {
-                if (*qit == task_id) {
-                    m_pending_queue.erase(qit);
-                    return true;
-                }
-            }
             return false;
         }
 
@@ -426,20 +371,10 @@ bool DownloadManager::cancel_download(size_t task_id) {
             m_tasks.erase(task_id);
             m_last_percent.erase(task_id);
             m_last_update.erase(task_id);
-            m_active_downloads--;
             if (!partial_path.empty()) {
                 boost::system::error_code ec;
                 boost::filesystem::remove(partial_path, ec);
             }
-        } else if (task->state == DownloadTaskState::Pending) {
-            for (auto qit = m_pending_queue.begin(); qit != m_pending_queue.end(); ++qit) {
-                if (*qit == task_id) {
-                    m_pending_queue.erase(qit);
-                    break;
-                }
-            }
-            m_tasks.erase(task_id);
-            return true;
         } else {
             return false;
         }
@@ -448,8 +383,6 @@ bool DownloadManager::cancel_download(size_t task_id) {
     if (wcp_to_destroy) {
         wcp_to_destroy->finish_job();
     }
-
-    process_queue();
 
     return true;
 }

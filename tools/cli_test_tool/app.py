@@ -422,7 +422,9 @@ def _run_gcode_score(gcode_path, out_dir):
     return None
 
 def _generate_quality_html(data, gcode_name):
-    """Build a standalone HTML quality report from gcode-diff score JSON."""
+    """Build a standalone HTML quality report from gcode-diff score JSON.
+    Embeds both CN and EN text with a client-side language toggle (defaults to CN).
+    """
     score = data.get("overall_score") or data.get("score", 0)
     summary = data.get("summary", "")
     has_critical = data.get("has_critical", False)
@@ -431,67 +433,155 @@ def _generate_quality_html(data, gcode_name):
     printer = data.get("printer_model", "")
     physics_trust = data.get("physics_trust", "")
     dimensions = data.get("dimensions", [])
+    aniso = data.get("material_anisotropy", "")
+
+    # --- Translation dictionaries (finite deterministic output from gcode-diff) ---
+    _DIM_CN = {
+        "Cooling": "\u51b7\u5374", "Retraction": "\u56de\u62bd", "Travel Efficiency": "\u7a7a\u9a76\u6548\u7387",
+        "Temperature": "\u6e29\u5ea6", "Extrusion Uniformity": "\u6324\u51fa\u5747\u5300\u6027",
+        "Wall & Shell": "\u5899\u58c1\u4e0e\u5916\u58f3", "Print Volume Fit": "\u6253\u5370\u4f53\u79ef\u9002\u914d",
+        "Layer Height": "\u5c42\u9ad8", "Volumetric Flow": "\u4f53\u79ef\u6d41\u91cf",
+        "Speed Consistency": "\u901f\u5ea6\u4e00\u81f4\u6027", "First Layer": "\u9996\u5c42",
+        "Temp Stability": "\u6e29\u5ea6\u7a33\u5b9a\u6027", "Support Ratio": "\u652f\u6491\u6bd4\u4f8b",
+        "Corner Speed": "\u62d0\u89d2\u901f\u5ea6", "Min Layer Time": "\u6700\u5c0f\u5c42\u65f6\u95f4",
+        "Overhang": "\u60ac\u5782", "Layer Consistency": "\u5c42\u4e00\u81f4\u6027",
+        "Multi-Extruder": "\u591a\u6324\u51fa\u5934", "Bridge": "\u6865\u63a5",
+        "Bed Adhesion": "\u70ed\u5e8a\u9644\u7740", "Stringing": "\u62c9\u4e1d",
+    }
+    _SEV_CN = {
+        "CRITICAL": "\u4e25\u91cd", "WARNING_MAJOR": "\u8b66\u544a", "WARNING_MINOR": "\u6ce8\u610f",
+        "BENIGN": "\u6b63\u5e38", "UNKNOWN": "\u672a\u77e5",
+    }
+    _SUMMARY_CN = {
+        "Excellent": "\u4f18\u79c0", "Good": "\u826f\u597d", "Fair": "\u4e00\u822c",
+        "Poor": "\u8f83\u5dee", "Critical": "\u4e25\u91cd\u95ee\u9898", "Perfect": "\u5b8c\u7f8e",
+    }
+    _META_CN = {
+        "Verified": "\u5df2\u9a8c\u8bc1", "Unverified": "\u672a\u9a8c\u8bc1",
+        "Partially verified": "\u90e8\u5206\u9a8c\u8bc1",
+    }
+    _PHRASES_CN = {
+        "Fan PWM low for PLA": "PLA \u98ce\u6247 PWM \u504f\u4f4e",
+        "Increase part cooling fan speed": "\u63d0\u9ad8\u90e8\u4ef6\u51b7\u5374\u98ce\u6247\u8f6c\u901f",
+        "Extremely high retraction density": "\u56de\u62bd\u5bc6\u5ea6\u6781\u9ad8",
+        "Slicer profile has incorrect retraction settings": "\u5207\u7247\u914d\u7f6e\u6587\u4ef6\u7684\u56de\u62bd\u8bbe\u7f6e\u6709\u8bef",
+        "Extruder temperature within recommended range": "\u6324\u51fa\u5934\u6e29\u5ea6\u5728\u63a8\u8350\u8303\u56f4\u5185",
+        "Outer wall extrusion consistent": "\u5916\u5899\u6324\u51fa\u4e00\u81f4",
+        "Wall loops and shell layers adequate": "\u5899\u58c1\u5708\u6570\u548c\u5916\u58f3\u5c42\u6570\u5145\u8db3",
+        "Model fits within configured bed": "\u6a21\u578b\u9002\u914d\u914d\u7f6e\u7684\u6253\u5370\u5e8a",
+        "Speed consistent across layers": "\u5404\u5c42\u901f\u5ea6\u4e00\u81f4",
+        "cannot verify from motion data": "\u65e0\u6cd5\u4ece\u8fd0\u52a8\u6570\u636e\u9a8c\u8bc1",
+        "Temperature stable across print": "\u6253\u5370\u8fc7\u7a0b\u4e2d\u6e29\u5ea6\u7a33\u5b9a",
+        "Flow exceeds hotend capacity": "\u6d41\u91cf\u8d85\u51fa\u70ed\u7aef\u80fd\u529b",
+        "reduce speed or increase temperature": "\u964d\u4f4e\u901f\u5ea6\u6216\u63d0\u9ad8\u6e29\u5ea6",
+        "Increase minimum layer time or reduce speed": "\u589e\u52a0\u6700\u5c0f\u5c42\u65f6\u95f4\u6216\u964d\u4f4e\u901f\u5ea6",
+        "Reduce overhang angle, add support, or increase cooling": "\u51cf\u5c0f\u60ac\u5782\u89d2\u5ea6\u3001\u6dfb\u52a0\u652f\u6491\u6216\u589e\u5f3a\u51b7\u5374",
+        "overhangs above this should have support": "\u8d85\u8fc7\u6b64\u89d2\u5ea6\u7684\u60ac\u5782\u5e94\u6dfb\u52a0\u652f\u6491",
+        "Smooth speed profile - low ringing risk": "\u901f\u5ea6\u66f2\u7ebf\u5e73\u6ed1 - \u632f\u7eb9\u98ce\u9669\u4f4e",
+        "Layer count matches declared": "\u5c42\u6570\u4e0e\u58f0\u660e\u4e00\u81f4",
+    }
+
+    def _cn(text):
+        if not text:
+            return text
+        result = text
+        for en in sorted(_PHRASES_CN.keys(), key=lambda x: -len(x)):
+            result = result.replace(en, _PHRASES_CN[en])
+        return result
+
     if score >= 80:
         sc = "#34c759"
     elif score >= 60:
         sc = "#ff9500"
     else:
         sc = "#ff3b30"
+
     rows = ""
     for d in dimensions:
         ds = d.get("score", 0)
         if isinstance(ds, (int, float)):
-            if ds >= 80:
-                dc = "#34c759"
-            elif ds >= 60:
-                dc = "#ff9500"
-            else:
-                dc = "#ff3b30"
+            dc = "#34c759" if ds >= 80 else "#ff9500" if ds >= 60 else "#ff3b30"
             ds_str = "{:.1f}".format(ds)
         else:
             dc = "#86868b"
             ds_str = str(ds)
-        sev = d.get("severity", "")
-        rows += "<tr><td>" + str(d.get("name", "")) + "</td>"
+        en_name = str(d.get("name", ""))
+        cn_name = _DIM_CN.get(en_name, en_name)
+        en_sev = d.get("severity", "")
+        cn_sev = _SEV_CN.get(en_sev, en_sev)
+        en_verdict = str(d.get("verdict", ""))
+        cn_verdict = _cn(en_verdict)
+        en_rec = str(d.get("recommendation", ""))
+        cn_rec = _cn(en_rec)
+        rows += "<tr><td><span class='cn'>" + cn_name + "</span><span class='en hidden'>" + en_name + "</span></td>"
         rows += "<td style='text-align:center;font-weight:700;color:" + dc + "'>" + ds_str + "</td>"
-        rows += "<td>" + sev + "</td>"
-        rows += "<td>" + str(d.get("verdict", "")) + "</td>"
-        rows += "<td>" + str(d.get("recommendation", "")) + "</td></tr>"
-    crit = '<span class="crit">CRITICAL</span>' if has_critical else ""
-    parts = []
-    parts.append("<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>")
-    parts.append("<title>Quality Report - " + gcode_name + "</title>")
-    parts.append("<style>")
-    parts.append("body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:#f0f0f3;color:#1d1d1f;margin:0;padding:24px}")
-    parts.append("h1{font-size:20px;margin-bottom:4px}")
-    parts.append(".meta{color:#86868b;font-size:13px;margin-bottom:20px;line-height:1.6}")
-    parts.append(".score-card{background:#fff;border-radius:8px;padding:24px;text-align:center;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
-    parts.append(".score-num{font-size:48px;font-weight:800;color:" + sc + "}")
-    parts.append(".score-lbl{font-size:18px;font-weight:600;margin-top:4px}")
-    parts.append("table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
-    parts.append("th{padding:10px 14px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#86868b;border-bottom:2px solid #e0e0e5}")
-    parts.append("td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f0f0f3;vertical-align:top}")
-    parts.append("tr:last-child td{border-bottom:none}")
-    parts.append(".crit{display:inline-block;padding:2px 10px;border-radius:4px;font-size:11px;font-weight:700;color:#fff;background:#ff3b30;margin-left:8px}")
-    parts.append("</style></head><body>")
-    parts.append("<h1>G-code Quality Report</h1>")
-    parts.append("<div class='meta'>")
-    parts.append(gcode_name + "<br>")
+        rows += "<td><span class='cn'>" + cn_sev + "</span><span class='en hidden'>" + en_sev + "</span></td>"
+        rows += "<td><span class='cn'>" + cn_verdict + "</span><span class='en hidden'>" + en_verdict + "</span></td>"
+        rows += "<td><span class='cn'>" + cn_rec + "</span><span class='en hidden'>" + en_rec + "</span></td></tr>"
+
+    cn_summary = _SUMMARY_CN.get(summary, summary)
+    cn_physics = _META_CN.get(physics_trust, physics_trust)
+    cn_crit = "\u4e25\u91cd\u95ee\u9898" if has_critical else ""
+    en_crit = "CRITICAL" if has_critical else ""
+
+    p = []
+    p.append("<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>")
+    p.append("<title>\u8d28\u91cf\u62a5\u544a - " + gcode_name + "</title>")
+    p.append("<style>")
+    p.append("body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:#f0f0f3;color:#1d1d1f;margin:0;padding:24px}")
+    p.append(".hidden{display:none!important}")
+    p.append(".lang-toggle{position:fixed;top:16px;right:16px;background:#fff;border:1px solid #d1d1d6;border-radius:6px;padding:6px 14px;font-size:13px;cursor:pointer;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:100}")
+    p.append(".lang-toggle:hover{background:#f5f5f7}")
+    p.append("h1{font-size:20px;margin-bottom:4px}")
+    p.append(".meta{color:#86868b;font-size:13px;margin-bottom:20px;line-height:1.6}")
+    p.append(".score-card{background:#fff;border-radius:8px;padding:24px;text-align:center;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
+    p.append(".score-num{font-size:48px;font-weight:800;color:" + sc + "}")
+    p.append(".score-lbl{font-size:18px;font-weight:600;margin-top:4px}")
+    p.append("table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
+    p.append("th{padding:10px 14px;text-align:left;font-size:12px;letter-spacing:.5px;color:#86868b;border-bottom:2px solid #e0e0e5}")
+    p.append("td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f0f0f3;vertical-align:top}")
+    p.append("tr:last-child td{border-bottom:none}")
+    p.append(".crit{display:inline-block;padding:2px 10px;border-radius:4px;font-size:11px;font-weight:700;color:#fff;background:#ff3b30;margin-left:8px}")
+    p.append("</style>")
+    p.append("<script>var lang='cn';function toggleLang(){")
+    p.append("lang=lang==='cn'?'en':'cn';")
+    p.append("document.querySelectorAll('.cn').forEach(function(e){e.classList.toggle('hidden',lang!=='cn')});")
+    p.append("document.querySelectorAll('.en').forEach(function(e){e.classList.toggle('hidden',lang!=='en')});")
+    p.append("var b=document.getElementById('langBtn');if(b){b.textContent=lang==='cn'?'EN':'\u4e2d\u6587';}")
+    p.append("}</script>")
+    p.append("</head><body>")
+    p.append("<button class='lang-toggle' id='langBtn' onclick='toggleLang()'>EN</button>")
+    p.append("<h1><span class='cn'>G-code \u8d28\u91cf\u62a5\u544a</span><span class='en hidden'>G-code Quality Report</span></h1>")
+    p.append("<div class='meta'>" + gcode_name + "<br>")
     if slicer_info:
-        parts.append("Slicer: " + slicer_info + "<br>")
+        p.append("<span class='cn'>\u5207\u7247\u5668: </span><span class='en hidden'>Slicer: </span>" + slicer_info + "<br>")
     if printer:
-        parts.append("Printer: " + printer + "<br>")
+        p.append("<span class='cn'>\u6253\u5370\u673a: </span><span class='en hidden'>Printer: </span>" + printer + "<br>")
     if material:
-        parts.append("Material: " + material + "<br>")
+        p.append("<span class='cn'>\u6750\u6599: </span><span class='en hidden'>Material: </span>" + material + "<br>")
     if physics_trust:
-        parts.append("Physics: " + physics_trust)
-    parts.append("</div>")
-    parts.append("<div class='score-card'><div class='score-num'>" + "{:.1f}".format(score) + "</div>")
-    parts.append("<div class='score-lbl'>" + str(summary) + crit + "</div></div>")
-    parts.append("<table><thead><tr><th>Dimension</th><th style='text-align:center'>Score</th><th>Severity</th><th>Verdict</th><th>Recommendation</th></tr></thead>")
-    parts.append("<tbody>" + rows + "</tbody></table>")
-    parts.append("</body></html>")
-    return "\n".join(parts)
+        p.append("<span class='cn'>\u7269\u7406\u9a8c\u8bc1: " + cn_physics + "</span><span class='en hidden'>Physics: " + physics_trust + "</span>")
+    if aniso:
+        p.append("<br>" + aniso)
+    p.append("</div>")
+    p.append("<div class='score-card'><div class='score-num'>" + "{:.1f}".format(score) + "</div>")
+    p.append("<div class='score-lbl'><span class='cn'>" + cn_summary)
+    if cn_crit:
+        p.append(' <span class="crit">' + cn_crit + "</span>")
+    p.append("</span><span class='en hidden'>" + summary)
+    if en_crit:
+        p.append(' <span class="crit">' + en_crit + "</span>")
+    p.append("</span></div></div>")
+    p.append("<table><thead><tr>")
+    p.append("<th><span class='cn'>\u7ef4\u5ea6</span><span class='en hidden'>Dimension</span></th>")
+    p.append("<th style='text-align:center'><span class='cn'>\u5206\u6570</span><span class='en hidden'>Score</span></th>")
+    p.append("<th><span class='cn'>\u4e25\u91cd\u6027</span><span class='en hidden'>Severity</span></th>")
+    p.append("<th><span class='cn'>\u8bca\u65ad</span><span class='en hidden'>Verdict</span></th>")
+    p.append("<th><span class='cn'>\u5efa\u8bae</span><span class='en hidden'>Recommendation</span></th>")
+    p.append("</tr></thead>")
+    p.append("<tbody>" + rows + "</tbody></table>")
+    p.append("</body></html>")
+    return "\n".join(p)
 
 # ---------------------------------------------------------------------------
 # Per-file report generation

@@ -2,6 +2,7 @@
 #include "I18N.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <locale>
 #include <mutex>
@@ -10,6 +11,7 @@
 #include <stdio.h>
 #include <filesystem>
 #include <stdexcept>
+#include <thread>
 
 #include "format.hpp"
 #include "Platform.hpp"
@@ -1674,36 +1676,150 @@ bool atomic_replace_directory(
         return false;
     }
 
-    {
-        boost::system::error_code ec;
-        fs::rename(target, backup, ec);
-        if (ec && ec != boost::system::errc::no_such_file_or_directory) {
-            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to backup %1%: %2%", target, ec.message());
-            remove_path(staging);
-            return false;
-        }
-    }
+    // Try to rename target -> backup, with retry and fallback for Windows file locks.
+    bool target_existed = fs::exists(target);
+    bool backup_done     = false;
 
-    {
+    auto try_rename_with_retry = [](const fs::path &from, const fs::path &to, const char *operation) -> bool {
         boost::system::error_code ec;
-        fs::rename(staging, target, ec);
-        if (ec) {
-            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to activate %1%: %2%", target, ec.message());
-            if (fs::exists(backup)) {
-                boost::system::error_code ec2;
-                fs::rename(backup, target, ec2);
-                if (ec2)
-                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to restore %1% from backup: %2%",
-                                                               target, ec2.message());
+        fs::rename(from, to, ec);
+        if (!ec)
+            return true;
+        if (ec == boost::system::errc::no_such_file_or_directory)
+            return true; // source gone = nothing to rename, not a failure
+
+        // On Windows, rename can fail with ACCESS_DENIED when files inside the
+        // directory are locked by another process (e.g. HTTP server serving
+        // flutter_web). Retry a few times with increasing backoff — the lock
+        // may be transient.
+        BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+            "atomic_replace_directory: %1 %2% -> %3% failed (%4%), retrying...",
+            operation, from, to, ec.message());
+
+        for (int retry = 0; retry < 5; ++retry) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 * (1 << retry)));
+            ec.clear();
+            fs::rename(from, to, ec);
+            if (!ec) {
+                BOOST_LOG_TRIVIAL(info) << Slic3r::format(
+                    "atomic_replace_directory: %1 succeeded after %2% retry(ies)",
+                    operation, retry + 1);
+                return true;
             }
+            if (ec == boost::system::errc::no_such_file_or_directory)
+                return true;
+        }
+        BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+            "atomic_replace_directory: %1 %2% -> %3% failed after retries: %4%",
+            operation, from, to, ec.message());
+        return false;
+    };
+
+    if (target_existed) {
+        backup_done = try_rename_with_retry(target, backup, "backup");
+        if (!backup_done) {
+            // Rename failed even after retries (likely locked files on Windows).
+            // Fallback: copy target to backup file-by-file, then delete target.
+            BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+                "atomic_replace_directory: rename backup failed, falling back to copy+delete for %1%", target);
+            if (copy_directory_recursively(target, backup)) {
+                boost::system::error_code ec;
+                fs::remove_all(target, ec);
+                if (!ec || !fs::exists(target)) {
+                    backup_done = true;
+                    BOOST_LOG_TRIVIAL(info) << "atomic_replace_directory: copy+delete backup succeeded";
+                } else {
+                    // Target still exists after copy — can't proceed with rename activation.
+                    // Fall through to direct-overwrite strategy below.
+                    BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+                        "atomic_replace_directory: could not delete target after copy backup: %1%", ec.message());
+                    remove_path(backup);
+                }
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << "atomic_replace_directory: copy backup also failed";
+            }
+        }
+    } else {
+        backup_done = true; // no existing target to backup
+    }
+
+    if (backup_done) {
+        // Normal path: activate staging by renaming it to target.
+        if (try_rename_with_retry(staging, target, "activate")) {
+            remove_path(backup);
+            BOOST_LOG_TRIVIAL(info) << Slic3r::format("atomic_replace_directory: replaced %1%", target);
+            return true;
+        }
+
+        // Activate rename failed — try to restore from backup.
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to activate %1%", target);
+        if (fs::exists(backup)) {
+            boost::system::error_code ec2;
+            fs::rename(backup, target, ec2);
+            if (ec2)
+                BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to restore %1% from backup: %2%",
+                                                           target, ec2.message());
+        }
+        remove_path(staging);
+        return false;
+    }
+
+    // Last-resort fallback: we could not backup the target (files are locked).
+    // Copy staging content directly into target, overwriting file-by-file.
+    // We cannot use copy_directory_recursively() here because it calls
+    // remove_all() on the target first, which would also fail on locked files.
+    // Instead, iterate staging and copy each file individually into the target.
+    BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+        "atomic_replace_directory: attempting direct overwrite from staging to %1%", target);
+
+    {
+        bool direct_ok = true;
+        if (!fs::exists(target))
+            fs::create_directories(target);
+
+        for (auto &dir_entry : fs::recursive_directory_iterator(staging)) {
+            const fs::path rel_path = fs::relative(dir_entry.path(), staging);
+            const fs::path dest_path = target / rel_path;
+
+            if (fs::is_directory(dir_entry)) {
+                boost::system::error_code ec;
+                fs::create_directories(dest_path, ec);
+                if (ec) {
+                    BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+                        "atomic_replace_directory: failed to create directory %1%: %2%",
+                        dest_path, ec.message());
+                    direct_ok = false;
+                }
+            } else {
+                // Skip filtered files
+                std::string filename = dir_entry.path().filename().string();
+                if (filter && filter(filename))
+                    continue;
+
+                boost::system::error_code ec;
+                fs::copy_file(dir_entry.path(), dest_path,
+                              fs::copy_option::overwrite_if_exists, ec);
+                if (ec) {
+                    BOOST_LOG_TRIVIAL(warning) << Slic3r::format(
+                        "atomic_replace_directory: failed to copy %1% -> %2%: %3%",
+                        dir_entry.path(), dest_path, ec.message());
+                    direct_ok = false;
+                }
+            }
+        }
+
+        if (direct_ok) {
             remove_path(staging);
-            return false;
+            BOOST_LOG_TRIVIAL(info) << Slic3r::format(
+                "atomic_replace_directory: direct-overwrite replaced %1%", target);
+            return true;
         }
     }
 
-    remove_path(backup);
-    BOOST_LOG_TRIVIAL(info) << Slic3r::format("atomic_replace_directory: replaced %1%", target);
-    return true;
+    BOOST_LOG_TRIVIAL(error) << Slic3r::format(
+        "atomic_replace_directory: direct overwrite also failed for %1%", target);
+    remove_path(staging);
+    return false;
 }
 
 void save_string_file(const boost::filesystem::path& p, const std::string& str)

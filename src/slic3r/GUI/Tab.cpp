@@ -1032,7 +1032,8 @@ void Tab::update_flow_variant_view_visibility()
     const bool active_page_supports_flow_variants = m_flow_variant_view &&
         std::any_of(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(),
                     [this](const PageShp& page) { return m_active_page == page.get(); });
-    const bool show = active_page_supports_flow_variants && m_flow_variant_view->selector;
+    const bool show = active_page_supports_flow_variants && m_flow_variant_view->selector
+                      && m_flow_variant_view->modes.size() > 1;
 
     if (m_flow_variant_view && m_flow_variant_view->selector) {
         // Reveal only this tab's selector; hide any sibling selector left visible by

@@ -3717,18 +3717,21 @@ PageShp TabFilament::add_filament_overrides_page()
     PageShp page = add_options_page(L("Setting Overrides"), "custom-gcode_setting_override"); // ORCA: icon only visible on placeholders
     ConfigOptionsGroupShp optgroup = page->new_optgroup(L("Retraction"), L"param_retraction");
 
-    auto append_single_option_line = [optgroup, this](const std::string& opt_key, int opt_index)
+    auto append_single_option_line = [optgroup, this](const std::string& opt_key)
     {
         Line line {"",""};
         //BBS
         line = optgroup->create_single_option_line(optgroup->get_option(opt_key));
 
-        line.near_label_widget = [this, optgroup_wk = ConfigOptionsGroupWkp(optgroup), opt_key, opt_index](wxWindow* parent) {
+        line.near_label_widget = [this, optgroup_wk = ConfigOptionsGroupWkp(optgroup), opt_key](wxWindow* parent) {
             auto check_box = new ::CheckBox(parent); // ORCA modernize checkboxes
-            check_box->Bind(wxEVT_TOGGLEBUTTON, [this, optgroup_wk, opt_key, opt_index](wxCommandEvent& evt) {
+            check_box->Bind(wxEVT_TOGGLEBUTTON, [this, optgroup_wk, opt_key](wxCommandEvent& evt) {
                 const bool is_checked = evt.IsChecked();
+                const int option_index = is_filament_flow_variant_option(opt_key)
+                    ? int(flow_variant_view_index())
+                    : 0;
                 if (auto optgroup_sh = optgroup_wk.lock(); optgroup_sh) {
-                    if (Field *field = optgroup_sh->get_fieldc(opt_key, opt_index); field != nullptr) {
+                    if (Field *field = optgroup_sh->get_fieldc(opt_key, option_index); field != nullptr) {
                         field->toggle(is_checked);
 
                         if (is_checked) {
@@ -3738,7 +3741,7 @@ PageShp TabFilament::add_filament_overrides_page()
                         else {
                             const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
                             const auto printer_config = m_preset_bundle->printers.get_edited_preset().config;
-                            const boost::any printer_config_value = optgroup_sh->get_config_value(printer_config, printer_opt_key, opt_index);
+                            const boost::any printer_config_value = optgroup_sh->get_config_value(printer_config, printer_opt_key, 0);
                             field->update_na_value(printer_config_value);
                             field->set_na_value();
                         }
@@ -3752,8 +3755,6 @@ PageShp TabFilament::add_filament_overrides_page()
 
         optgroup->append_line(line);
     };
-
-    const int extruder_idx = 0; // #ys_FIXME
 
     for (const std::string opt_key : {  "filament_retraction_length",
                                         "filament_z_hop",
@@ -3777,7 +3778,7 @@ PageShp TabFilament::add_filament_overrides_page()
                                         //SoftFever
                                         // "filament_seam_gap"
                                      })
-        append_single_option_line(opt_key, extruder_idx);
+        append_single_option_line(opt_key);
 
     return page;
 }
@@ -3821,20 +3822,26 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             // "filament_seam_gap"
                                         };
 
+    const int flow_index = int(flow_variant_view_index());
     const int extruder_idx = 0; // #ys_FIXME
+    const int retract_length_index = is_filament_flow_variant_option("filament_retraction_length") ? flow_index : extruder_idx;
 
-    const bool have_retract_length = m_config->option("filament_retraction_length")->is_nil() ||
-                                     m_config->opt_float("filament_retraction_length", extruder_idx) > 0;
+    const ConfigOptionVectorBase* retract_length =
+        dynamic_cast<const ConfigOptionVectorBase*>(m_config->option("filament_retraction_length"));
+    const bool have_retract_length = retract_length == nullptr || retract_length->is_nil(retract_length_index) ||
+                                     m_config->opt_float("filament_retraction_length", retract_length_index) > 0;
 
     for (const std::string& opt_key : opt_keys)
     {
+        const int option_index = is_filament_flow_variant_option(opt_key) ? flow_index : extruder_idx;
         bool is_checked = opt_key=="filament_retraction_length" ? true : have_retract_length;
         m_overrides_options[opt_key]->Enable(is_checked);
 
-        is_checked &= !m_config->option(opt_key)->is_nil();
+        const ConfigOptionVectorBase* option = dynamic_cast<const ConfigOptionVectorBase*>(m_config->option(opt_key));
+        is_checked &= option != nullptr && !option->is_nil(option_index);
         m_overrides_options[opt_key]->SetValue(is_checked);
 
-        Field* field = optgroup->get_fieldc(opt_key, extruder_idx);
+        Field* field = optgroup->get_fieldc(opt_key, option_index);
         if (field == nullptr) continue;
 
         if (opt_key == "filament_long_retractions_when_cut") {
@@ -3847,7 +3854,10 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
             int machine_enabled_level = printers_config->option<ConfigOptionInt>(
                 "enable_long_retraction_when_cut")->value;
             bool machine_enabled = machine_enabled_level == LongRectrationLevel::EnableFilament;
-            bool filament_enabled = m_config->option<ConfigOptionBools>("filament_long_retractions_when_cut")->values[extruder_idx] == 1;
+            const int long_retraction_index = is_filament_flow_variant_option("filament_long_retractions_when_cut")
+                ? flow_index
+                : extruder_idx;
+            bool filament_enabled = m_config->option<ConfigOptionBools>("filament_long_retractions_when_cut")->values[long_retraction_index] == 1;
             toggle_line(opt_key, filament_enabled && machine_enabled);
             field->toggle(is_checked && filament_enabled && machine_enabled);
         } else {

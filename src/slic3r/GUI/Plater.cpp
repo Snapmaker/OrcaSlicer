@@ -786,8 +786,10 @@ protected:
             int tabWidth = textWidth + 2 * m_tabPadding;
 
             if (isSelected) {
-                dc.SetPen(wxPen(m_dividerColor, 1));
-                dc.SetBrush(wxBrush(m_bgColor));
+                // teal background for the selected tab.
+                const wxColour selColor(0x00, 0x96, 0x88); // #009688
+                dc.SetPen(wxPen(selColor, 1));
+                dc.SetBrush(wxBrush(selColor));
                 wxRect selectedRect(xPos, 0, tabWidth, m_tabHeight + 2);
                 dc.DrawRectangle(selectedRect);
                 dc.DrawRoundedRectangle(selectedRect, m_roundRadius);
@@ -899,7 +901,7 @@ private:
             m_selectedTabColor  = wxColour(255, 255, 255);
             m_textColor         = wxColour(194, 194, 193);
             m_dividerColor      = wxColour(240, 240, 240);
-            m_selectedTextColor = wxColour(0, 0, 0);
+            m_selectedTextColor = wxColour(255, 255, 255); // white text on the teal selected tab
         } else {
             m_bgColor           = wxColour(45, 45, 49);
             m_borderColor       = wxColour(76, 76, 85);

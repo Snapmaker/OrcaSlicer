@@ -1,0 +1,46 @@
+{
+  "name": "snapmaker-cli-test-tool",
+  "version": "1.0.0",
+  "description": "Snapmaker CLI Slicing Batch Test Tool (Electron wrapper)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "com.snapmaker.cli-test-tool",
+    "productName": "Snapmaker CLI Test Tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "..",
+        "to": "server",
+        "filter": [
+          "app.py",
+          "templates/**"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ],
+      "icon": null
+    },
+    "portable": {
+      "artifactName": "Snapmaker-CLI-Test-Tool-${version}-${arch}.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.0"
+  }
+}

@@ -11,8 +11,17 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = 18964
 HERE = Path(__file__).resolve().parent
-DEFAULT_CLI_PATH = str(HERE.parent.parent / "build" / "src" / "Release" / "snapmaker-orca.exe")
-DEFAULT_DATADIR = str(HERE.parent.parent / "resources")
+PROJECT_ROOT = HERE.parent.parent
+
+def _resolve(path_str):
+    """Resolve a relative path against PROJECT_ROOT; absolute paths pass through."""
+    p = Path(str(path_str))
+    if p.is_absolute():
+        return str(p.resolve())
+    return str((PROJECT_ROOT / p).resolve())
+
+DEFAULT_CLI_PATH = r"build/src/Release/snapmaker-orca.exe"
+DEFAULT_DATADIR = r"resources"
 TOOL_LOG_PATH = HERE / "tool.log"
 
 # ---------------------------------------------------------------------------
@@ -26,7 +35,7 @@ def cli_binary_diagnostic(cli_path=None):
     if _CLI_DIAG_CACHE is not None:
         return _CLI_DIAG_CACHE
 
-    exe = cli_path or DEFAULT_CLI_PATH
+    exe = _resolve(cli_path or DEFAULT_CLI_PATH)
     exe_path = pathlib.Path(exe)
 
     if not exe_path.exists():
@@ -138,6 +147,57 @@ def analyze_log(log_text):
             hits.append({"keyword": desc, "suggestion": suggestion})
     return hits
 
+
+def extract_log_summary(log_lines, status="unknown"):
+    """Extract important/informative lines from the full log for quick review."""
+    if not log_lines:
+        return []
+    important = []
+    # Always include the CLI command (first line)
+    if log_lines and log_lines[0].startswith("$ "):
+        important.append(log_lines[0])
+        important.append("")
+    # Patterns that indicate important lines
+    key_patterns = [
+        "warning", "error", "critical", "fail", "exception",
+        "G92 E0", "incompatible", "validation", "cannot",
+        "Will start to read model", "Successfully",
+        "gcode file", "sliced", "slice finished",
+        "total cost", "estimated", "used time",
+    ]
+    seen = set()
+    for line in log_lines:
+        line_lower = line.lower().strip()
+        if not line_lower or line_lower in seen:
+            continue
+        for pat in key_patterns:
+            if pat.lower() in line_lower:
+                important.append(line)
+                seen.add(line_lower)
+                break
+    # Last 3 non-empty lines (summary info)
+    tail = []
+    for line in reversed(log_lines):
+        if line.strip():
+            tail.append(line)
+            if len(tail) >= 3:
+                break
+    for line in reversed(tail):
+        lk = line.strip().lower()
+        if lk and lk not in seen:
+            important.append(line)
+            seen.add(lk)
+    # Deduplicate while preserving order
+    result = []
+    seen2 = set()
+    for line in important:
+        lk = line.strip().lower()
+        if lk and lk not in seen2:
+            result.append(line)
+            seen2.add(lk)
+    return result
+
+
 class EventBroker:
     def __init__(self):
         self._subscribers = []
@@ -167,7 +227,10 @@ def tool_log(msg):
             f.write(line + "\n")
     except Exception:
         pass
-    print(line, flush=True)
+    try:
+        print(line, flush=True)
+    except OSError:
+        pass
 
 def _find_crash_log(cli_dir):
     log_dir = Path(cli_dir) / "log"
@@ -201,6 +264,7 @@ class SliceResult:
         self.gcode_files = []
         self.gcode_total_size = 0
         self.error_keywords = []
+        self.log_summary = []
         self.started_at = None
         self.finished_at = None
         self._start_ts = 0.0
@@ -214,6 +278,7 @@ class SliceResult:
             "log": "\n".join(self.log_lines),
             "gcode_files": self.gcode_files, "gcode_total_size": self.gcode_total_size,
             "error_keywords": self.error_keywords,
+            "log_summary": self.log_summary,
             "started_at": self.started_at, "finished_at": self.finished_at,
         }
 
@@ -262,9 +327,9 @@ def scan_3mf_files(path):
     return []
 
 def build_cli_command(file_path, config, output_dir):
-    cli = config["cli_path"]
+    cli = _resolve(config["cli_path"])
     cmd = [cli]
-    cmd += ["--datadir", config["datadir"]]
+    cmd += ["--datadir", _resolve(config["datadir"])]
     cmd += ["--outputdir", output_dir]
     cmd += ["--slice", str(config.get("slice_mode", 0))]
     mstpp = config.get("mstpp", 0)
@@ -278,7 +343,7 @@ def build_cli_command(file_path, config, output_dir):
         cmd += ["--debug", str(int(debug))]
     if config.get("allow_newer_file", True):
         cmd += ["--allow-newer-file"]
-    if config.get("no_relative_e", True):
+    if config.get("no_relative_e", False):
         cmd += ["--use-relative-e-distances=0"]
     extra = config.get("extra_args", "").strip()
     if extra:
@@ -292,7 +357,7 @@ def run_one_slice(result, config, output_base):
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     cmd = build_cli_command(result.file_path, config, out_dir)
     env = os.environ.copy()
-    cli_dir = str(Path(config["cli_path"]).parent)
+    cli_dir = str(Path(_resolve(config["cli_path"])).parent)
     env["PATH"] = cli_dir + os.pathsep + env.get("PATH", "")
     if config.get("allow_newer_file", True):
         env["SNAPMAKER_ORCA_ALLOW_NEWER_FILE"] = "1"
@@ -381,12 +446,13 @@ def run_one_slice(result, config, output_base):
     result.gcode_total_size = sum(f.stat().st_size for f in gcodes)
     full_log = "\n".join(result.log_lines)
     result.error_keywords = analyze_log(full_log)
+    result.log_summary = extract_log_summary(result.log_lines, result.status)
     result.finished_at = datetime.now().isoformat()
     broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
 
 def _run_batch(files, config):
     global session
-    output_base = config.get("output_dir", str(Path.cwd() / "slice_output"))
+    output_base = _resolve(config.get("output_dir", str(PROJECT_ROOT / "slice_output")))
     Path(output_base).mkdir(parents=True, exist_ok=True)
     session.results = [SliceResult(f) for f in files]
     session.config = config
@@ -431,7 +497,7 @@ def start_batch(files, config):
         return False, "A session is already running."
     if not files:
         return False, "No 3MF files selected."
-    if not Path(config.get("cli_path", "")).exists():
+    if not Path(_resolve(config.get("cli_path", ""))).exists():
         return False, f"CLI not found: {config.get('cli_path')}"
     t = threading.Thread(target=_run_batch, args=(files, config), daemon=True)
     session._thread = t
@@ -456,158 +522,66 @@ def native_pick(item_type, filetype=None):
         else:
             return (None, "Unknown pick type: %s" % item_type)
     except Exception as ex:
+        import traceback
+        tb = traceback.format_exc()
+        tool_log("PICKER CRASH: type=%s err=%s" % (item_type, ex))
+        for line in tb.splitlines()[-5:]:
+            tool_log("  " + line.strip())
         return (None, "Picker error: %s" % ex)
 
 
 def _win32_pick_folder():
-    """Pick a directory via SHBrowseForFolderW (thread-safe)."""
-    import ctypes
-    from ctypes import wintypes
-
-    class BROWSEINFOW(ctypes.Structure):
-        _fields_ = [
-            ("hwndOwner", wintypes.HWND),
-            ("pidlRoot", ctypes.c_void_p),
-            ("pszDisplayName", wintypes.LPWSTR),
-            ("lpszTitle", wintypes.LPCWSTR),
-            ("ulFlags", wintypes.UINT),
-            ("lpfnCallback", ctypes.c_void_p),
-            ("lParam", wintypes.LPARAM),
-            ("iImage", ctypes.c_int),
-        ]
-
-    buf = ctypes.create_unicode_buffer(260)
-    bi = BROWSEINFOW()
-    bi.hwndOwner = None
-    bi.pszDisplayName = buf
-    bi.lpszTitle = "Select a directory"
-    bi.ulFlags = 0x0040 | 0x0100  # BIF_NEWDIALOGSTYLE | BIF_RETURNONLYFSDIRS
-
-    pidl = ctypes.windll.shell32.SHBrowseForFolderW(ctypes.byref(bi))
-    if not pidl:
-        return (None, None)
-
-    path_buf = ctypes.create_unicode_buffer(260)
-    if not ctypes.windll.shell32.SHGetPathFromIDListW(pidl, path_buf):
-        ctypes.windll.ole32.CoTaskMemFree(pidl)
-        return (None, "Failed to resolve folder path")
-
-    ctypes.windll.ole32.CoTaskMemFree(pidl)
-    path = path_buf.value
-    return (path, None) if path else (None, "Empty folder path")
+    """Pick a directory via tkinter in a subprocess (each process has own message pump)."""
+    import subprocess, sys, json
+    code = "import ctypes; ctypes.windll.shcore.SetProcessDpiAwareness(1); import tkinter as tk, tkinter.filedialog, json; root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path = tkinter.filedialog.askdirectory(title='选择目录'); root.destroy(); print(json.dumps({'path': path}))"
+    try:
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        data = json.loads(r.stdout.strip() or "{}")
+        p = data.get("path")
+        return (p, None) if p else (None, None)
+    except subprocess.TimeoutExpired:
+        return (None, "Folder dialog timed out")
+    except Exception as ex:
+        return (None, "Folder picker error: " + str(ex))
 
 
 def _win32_pick_file(filetype=None):
-    """Pick a file via GetOpenFileNameW (thread-safe)."""
-    import ctypes
-    from ctypes import wintypes
-
-    class OPENFILENAMEW(ctypes.Structure):
-        _fields_ = [
-            ("lStructSize", wintypes.DWORD),
-            ("hwndOwner", wintypes.HWND),
-            ("hInstance", wintypes.HINSTANCE),
-            ("lpstrFilter", wintypes.LPCWSTR),
-            ("lpstrCustomFilter", wintypes.LPWSTR),
-            ("nMaxCustFilter", wintypes.DWORD),
-            ("nFilterIndex", wintypes.DWORD),
-            ("lpstrFile", wintypes.LPWSTR),
-            ("nMaxFile", wintypes.DWORD),
-            ("lpstrFileTitle", wintypes.LPWSTR),
-            ("nMaxFileTitle", wintypes.DWORD),
-            ("lpstrInitialDir", wintypes.LPCWSTR),
-            ("lpstrTitle", wintypes.LPCWSTR),
-            ("Flags", wintypes.DWORD),
-            ("nFileOffset", wintypes.WORD),
-            ("nFileExtension", wintypes.WORD),
-            ("lpstrDefExt", wintypes.LPCWSTR),
-            ("lCustData", ctypes.c_long),
-            ("lpfnHook", ctypes.c_void_p),
-            ("lpTemplateName", wintypes.LPCWSTR),
-            ("pvReserved", ctypes.c_void_p),
-            ("dwReserved", wintypes.DWORD),
-            ("FlagsEx", wintypes.DWORD),
-        ]
-
-    buf = ctypes.create_unicode_buffer(260)
-
+    """Pick a file via tkinter in a subprocess."""
+    import subprocess, sys, json
     if filetype == "exe":
-        filter_str = "Executable files (*.exe)\0*.exe\0All files (*.*)\0*.*\0"
         title = "Select snapmaker-orca.exe"
+        ftypes = "[('Executable files', '*.exe'), ('All files', '*.*')]"
     elif filetype == "3mf":
-        filter_str = "3MF files (*.3mf)\0*.3mf\0All files (*.*)\0*.*\0"
         title = "Select 3MF file"
+        ftypes = "[('3MF files', '*.3mf'), ('All files', '*.*')]"
     else:
-        filter_str = "All files (*.*)\0*.*\0"
         title = "Select file"
-
-    ofn = OPENFILENAMEW()
-    ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
-    ofn.hwndOwner = None
-    ofn.lpstrFilter = filter_str
-    ofn.lpstrFile = buf
-    ofn.nMaxFile = 260
-    ofn.lpstrTitle = title
-    ofn.Flags = 0x00000002 | 0x00001000 | 0x00000800
-
-    rc = ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn))
-    if not rc:
-        return (None, None)
-
-    path = buf.value
-    return (path, None) if path else (None, "Failed to get file path")
+        ftypes = "[('All files', '*.*')]"
+    code = "import ctypes; ctypes.windll.shcore.SetProcessDpiAwareness(1); import tkinter as tk, tkinter.filedialog, json; root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path = tkinter.filedialog.askopenfilename(title='" + title + "', filetypes=" + ftypes + "); root.destroy(); print(json.dumps({'path': path}))"
+    try:
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        data = json.loads(r.stdout.strip() or "{}")
+        p = data.get("path")
+        return (p, None) if p else (None, None)
+    except subprocess.TimeoutExpired:
+        return (None, "File dialog timed out")
+    except Exception as ex:
+        return (None, "File picker error: " + str(ex))
 
 
 def _win32_pick_save():
-    """Pick a save path via GetSaveFileNameW (thread-safe)."""
-    import ctypes
-    from ctypes import wintypes
-
-    class OPENFILENAMEW(ctypes.Structure):
-        _fields_ = [
-            ("lStructSize", wintypes.DWORD),
-            ("hwndOwner", wintypes.HWND),
-            ("hInstance", wintypes.HINSTANCE),
-            ("lpstrFilter", wintypes.LPCWSTR),
-            ("lpstrCustomFilter", wintypes.LPWSTR),
-            ("nMaxCustFilter", wintypes.DWORD),
-            ("nFilterIndex", wintypes.DWORD),
-            ("lpstrFile", wintypes.LPWSTR),
-            ("nMaxFile", wintypes.DWORD),
-            ("lpstrFileTitle", wintypes.LPWSTR),
-            ("nMaxFileTitle", wintypes.DWORD),
-            ("lpstrInitialDir", wintypes.LPCWSTR),
-            ("lpstrTitle", wintypes.LPCWSTR),
-            ("Flags", wintypes.DWORD),
-            ("nFileOffset", wintypes.WORD),
-            ("nFileExtension", wintypes.WORD),
-            ("lpstrDefExt", wintypes.LPCWSTR),
-            ("lCustData", ctypes.c_long),
-            ("lpfnHook", ctypes.c_void_p),
-            ("lpTemplateName", wintypes.LPCWSTR),
-            ("pvReserved", ctypes.c_void_p),
-            ("dwReserved", wintypes.DWORD),
-            ("FlagsEx", wintypes.DWORD),
-        ]
-
-    buf = ctypes.create_unicode_buffer(260)
-    filter_str = "HTML report (*.html)\0*.html\0JSON data (*.json)\0*.json\0All files (*.*)\0*.*\0"
-
-    ofn = OPENFILENAMEW()
-    ofn.lStructSize = ctypes.sizeof(OPENFILENAMEW)
-    ofn.hwndOwner = None
-    ofn.lpstrFilter = filter_str
-    ofn.lpstrFile = buf
-    ofn.nMaxFile = 260
-    ofn.lpstrTitle = "Save report"
-    ofn.Flags = 0x00000002 | 0x00001000 | 0x00000800
-
-    rc = ctypes.windll.comdlg32.GetSaveFileNameW(ctypes.byref(ofn))
-    if not rc:
-        return (None, None)
-
-    path = buf.value
-    return (path, None) if path else (None, "Failed to get save path")
+    """Pick a save path via tkinter in a subprocess."""
+    import subprocess, sys, json
+    code = "import ctypes; ctypes.windll.shcore.SetProcessDpiAwareness(1); import tkinter as tk, tkinter.filedialog, json; root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True); path = tkinter.filedialog.asksaveasfilename(title='保存报告', defaultextension='.html', filetypes=[('HTML report', '*.html'), ('JSON data', '*.json')]); root.destroy(); print(json.dumps({'path': path}))"
+    try:
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        data = json.loads(r.stdout.strip() or "{}")
+        p = data.get("path")
+        return (p, None) if p else (None, None)
+    except subprocess.TimeoutExpired:
+        return (None, "Save dialog timed out")
+    except Exception as ex:
+        return (None, "Save picker error: " + str(ex))
 def generate_html_report():
     data = session.to_dict()
     s = data["summary"]
@@ -666,7 +640,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"cli_path": DEFAULT_CLI_PATH, "datadir": DEFAULT_DATADIR})
         elif path == "/api/diag":
             d_ok, d_msg = cli_binary_diagnostic(
-                self.headers.get("X-Cli-Path") or DEFAULT_CLI_PATH)
+                _resolve(self.headers.get("X-Cli-Path") or DEFAULT_CLI_PATH))
             self._send_json({"ok": d_ok, "message": d_msg})
         elif path == "/api/session":
             self._send_json(session.to_dict())
@@ -678,6 +652,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": "not found"}, 404)
     def do_POST(self):
         path = urlparse(self.path).path
+        tool_log("POST: " + path)
         try:
             if path == "/api/browse":
                 body = self._read_body()

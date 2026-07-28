@@ -1,0 +1,10 @@
+# Electron build artifacts
+electron/node_modules/
+electron/dist/
+# Temp patch scripts
+_fix_*.py
+_test_*.py
+_patch_*.py
+# Packaging output (too large for git)
+packaging/Snapmaker-CLI-Package-*.zip
+packaging/build/

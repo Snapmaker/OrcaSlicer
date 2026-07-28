@@ -133,54 +133,54 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
 </head>
 <body>
 <div class="container">
-  <h1>Snapmaker CLI Slicing Test Tool</h1>
-  <div class="subtitle">Batch-test 3MF files with the Snapmaker CLI. Real-time progress, detailed logs, failure analysis.</div>
+  <h1>Snapmaker CLI 切片测试工具</h1>
+  <div class="subtitle">批量测试 3MF 文件切片。实时进度、详细日志、失败分析。</div>
 
-  <div id="errorBanner" class="error-banner hidden"></div>
+  <div id="errorBanner" class="error-banner hidden"><span id="errorBannerText"></span><span onclick="dismissError()" style="cursor:pointer;margin-left:12px;font-weight:700;">✖</span></div>
 
   <!-- Config Panel -->
   <div class="panel">
     <div class="panel-header" onclick="togglePanel('configPanel')">
-      <span>Settings</span>
-      <span style="font-size:12px;color:var(--text-secondary)">click to collapse</span>
+      <span>设置</span>
+      <span style="font-size:12px;color:var(--text-secondary)">点击折叠</span>
     </div>
     <div id="configPanel" class="panel-body">
       <div class="field-row">
-        <label>CLI Path</label>
-        <input type="text" id="cliPath" placeholder="snapmaker-orca.exe path">
-        <button class="btn-browse" onclick="browse('file','cliPath','exe')">Browse</button>
+        <label>CLI 路径</label>
+        <input type="text" id="cliPath" placeholder="snapmaker-orca.exe 路径">
+        <button class="btn-browse" onclick="browse('file','cliPath','exe')">浏览</button>
       </div>
       <div class="field-row">
-        <label>Data Directory</label>
-        <input type="text" id="datadir" placeholder="resources directory">
-        <button class="btn-browse" onclick="browse('dir','datadir')">Browse</button>
+        <label>数据目录</label>
+        <input type="text" id="datadir" placeholder="resources 目录">
+        <button class="btn-browse" onclick="browse('dir','datadir')">浏览</button>
       </div>
       <div class="field-row">
-        <label>Output Directory</label>
-        <input type="text" id="outputDir" placeholder="where to put G-code output">
-        <button class="btn-browse" onclick="browse('dir','outputDir')">Browse</button>
+        <label>输出目录</label>
+        <input type="text" id="outputDir" placeholder="G-code 输出目录">
+        <button class="btn-browse" onclick="browse('dir','outputDir')">浏览</button>
       </div>
-      <div class="advanced-toggle" onclick="toggleAdvanced()">Advanced options</div>
+      <div class="advanced-toggle" onclick="toggleAdvanced()">高级选项</div>
       <div id="advancedSection" class="advanced-section">
         <div class="field-row">
-          <label>Slice Mode</label>
+          <label>切片模式</label>
           <select id="sliceMode">
-            <option value="0">All plates (0)</option>
+            <option value="0">所有盘 (0)</option>
             <option value="1">Plate 1</option>
             <option value="2">Plate 2</option>
             <option value="3">Plate 3</option>
           </select>
         </div>
         <div class="field-row">
-          <label>Max Time/Plate (s)</label>
+          <label>每盘最大时间(秒)</label>
           <input type="number" id="mstpp" value="0" min="0" placeholder="0 = no limit">
         </div>
         <div class="field-row">
-          <label>Max Triangles</label>
+          <label>最大三角形数</label>
           <input type="number" id="mtcpp" value="0" min="0" placeholder="0 = no limit">
         </div>
         <div class="field-row">
-          <label>Debug Level</label>
+          <label>调试级别</label>
           <select id="debugLevel">
             <option value="0">0 (errors)</option>
             <option value="1">1</option>
@@ -191,20 +191,20 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
           </select>
         </div>
         <div class="field-row">
-          <label>Timeout (s)</label>
+          <label>超时(秒)</label>
           <input type="number" id="timeout" value="600" min="30">
         </div>
         <div class="field-row">
-          <label>Extra Args</label>
+          <label>额外参数</label>
           <input type="text" id="extraArgs" placeholder="--no-check --orient 1">
         </div>
         <div class="checkbox-row">
           <input type="checkbox" id="allowNewer" checked>
-          <label for="allowNewer">--allow-newer-file (skip version check)</label>
+          <label for="allowNewer">--allow-newer-file (跳过版本检查)</label>
         </div>
         <div class="checkbox-row">
-          <input type="checkbox" id="noRelativeE" checked>
-          <label for="noRelativeE">--use-relative-e-distances=0 (fix -51 errors)</label>
+          <input type="checkbox" id="noRelativeE">
+          <label for="noRelativeE">--use-relative-e-distances=0 (可能导致 G92 E0 冲突)</label>
         </div>
       </div>
     </div>
@@ -213,18 +213,18 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
   <!-- Input Panel -->
   <div class="panel">
     <div class="panel-header" onclick="togglePanel('inputPanel')">
-      <span>Input Files</span>
-      <span style="font-size:12px;color:var(--text-secondary)">select a 3MF file or directory</span>
+      <span>输入文件</span>
+      <span style="font-size:12px;color:var(--text-secondary)">选择 3MF 文件或目录</span>
     </div>
     <div id="inputPanel" class="panel-body">
       <div class="field-row">
-        <label>File / Directory</label>
-        <input type="text" id="inputPath" placeholder="path to a .3mf file or a directory containing .3mf files">
-        <button class="btn-browse" onclick="browse('file','inputPath','3mf')">File</button>
-        <button class="btn-browse" onclick="browse('dir','inputPath')">Dir</button>
+        <label>文件 / 目录</label>
+        <input type="text" id="inputPath" placeholder=".3mf 文件路径或包含 .3mf 的目录">
+        <button class="btn-browse" onclick="browse('file','inputPath','3mf')">文件</button>
+        <button class="btn-browse" onclick="browse('dir','inputPath')">目录</button>
       </div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn btn-secondary" onclick="scanFiles()">Scan for 3MF files</button>
+        <button class="btn btn-secondary" onclick="scanFiles()">扫描 3MF 文件</button>
         <span id="scanInfo" class="scan-info"></span>
       </div>
       <div id="fileListContainer" class="hidden">
@@ -235,32 +235,32 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
 
   <!-- Action Bar -->
   <div class="action-bar">
-    <button class="btn btn-primary" id="startBtn" onclick="startSlicing()">Start Slicing</button>
-    <button class="btn btn-danger hidden" id="stopBtn" onclick="stopSlicing()">Stop</button>
-    <button class="btn btn-secondary hidden" id="exportBtn" onclick="exportReport()">Export Report</button>
+    <button class="btn btn-primary" id="startBtn" onclick="startSlicing()">开始切片</button>
+    <button class="btn btn-danger hidden" id="stopBtn" onclick="stopSlicing()">停止</button>
+    <button class="btn btn-secondary hidden" id="exportBtn" onclick="exportReport()">导出报告</button>
     <span id="sessionState" class="scan-info"></span>
   </div>
 
   <!-- Progress Section -->
   <div id="progressSection" class="progress-section hidden">
-    <div class="section-title"><span class="spinner"></span> Slicing in progress</div>
+    <div class="section-title"><span class="spinner"></span> 切片进行中</div>
     <div class="progress-bar">
       <div class="progress-fill" id="progressFill" style="width:0%">0%</div>
     </div>
     <div class="current-task" id="currentTask"></div>
-    <div class="log-stream" id="liveLog">Waiting for output...</div>
+    <div class="log-stream" id="liveLog">等待输出...</div>
   </div>
 
   <!-- Results Section -->
   <div id="resultsSection" class="hidden">
-    <div class="section-title">Results</div>
+    <div class="section-title">结果</div>
     <div class="stats-grid" id="statsGrid"></div>
     <div class="filter-bar" id="filterBar"></div>
     <div id="resultsList"></div>
   </div>
 
   <div id="emptyState" class="empty-state">
-    Select a 3MF file or directory, then click Start Slicing.
+    选择一个 3MF 文件或包含 3MF 的目录，然后点击开始切片。
   </div>
 </div>
 
@@ -280,9 +280,13 @@ function toggleAdvanced() {
 }
 function showError(msg) {
   const el = document.getElementById('errorBanner');
-  el.textContent = msg;
+  const txt = document.getElementById('errorBannerText');
+  if (txt) txt.textContent = msg;
+  else el.textContent = msg;
   el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 5000);
+}
+function dismissError() {
+  document.getElementById('errorBanner').classList.add('hidden');
 }
 function fmtSize(n) {
   if (!n) return '0 B';
@@ -306,7 +310,7 @@ async function scanFiles() {
   if (!path) { showError('Please enter a file or directory path.'); return; }
   const data = await api('/api/scan', 'POST', {path});
   selectedFiles = data.files || [];
-  document.getElementById('scanInfo').textContent = data.count + ' file(s) found';
+  document.getElementById('scanInfo').textContent = data.count + ' 个文件';
   renderFileList();
 }
 function renderFileList() {
@@ -345,12 +349,12 @@ function getConfig() {
 }
 async function startSlicing() {
   const files = getSelectedFiles();
-  if (files.length === 0) { showError('No files selected. Scan a path first.'); return; }
+  if (files.length === 0) { showError('没有文件，请先扫描目录'); return; }
   const config = getConfig();
-  if (!config.cli_path) { showError('CLI path is required.'); return; }
-  if (!config.output_dir) { showError('Output directory is required.'); return; }
+  if (!config.cli_path) { showError('请输入 CLI 路径'); return; }
+  if (!config.output_dir) { showError('请输入输出目录'); return; }
   const data = await api('/api/start', 'POST', {files, config});
-  if (!data.ok) { showError(data.message || 'Failed to start.'); return; }
+  if (!data.ok) { showError(data.message || '启动失败'); return; }
   document.getElementById('startBtn').classList.add('hidden');
   document.getElementById('stopBtn').classList.remove('hidden');
   document.getElementById('progressSection').classList.remove('hidden');
@@ -358,7 +362,7 @@ async function startSlicing() {
   document.getElementById('emptyState').classList.add('hidden');
   document.getElementById('exportBtn').classList.add('hidden');
   liveLogLines = [];
-  document.getElementById('liveLog').textContent = 'Waiting for output...';
+  document.getElementById('liveLog').textContent = '等待输出...';
   connectSSE();
 }
 function stopSlicing() { api('/api/stop', 'POST'); }
@@ -382,13 +386,13 @@ function handleEvent(event) {
       }
       break;
     case 'session_started':
-      document.getElementById('currentTask').textContent = 'Starting session with ' + event.total + ' files...';
+      document.getElementById('currentTask').textContent = '开始会话，共 ' + event.total + ' 个文件...';
       break;
     case 'progress':
       const pct = Math.round((event.current / event.total) * 100);
       document.getElementById('progressFill').style.width = pct + '%';
       document.getElementById('progressFill').textContent = event.current + ' / ' + event.total + ' (' + pct + '%)';
-      document.getElementById('currentTask').textContent = 'Slicing: ' + event.file;
+      document.getElementById('currentTask').textContent = '切片中: ' + event.file;
       break;
     case 'slice_started':
       liveLogLines.push('=== ' + event.file + ' ===');
@@ -408,11 +412,11 @@ function handleEvent(event) {
       break;
     case 'session_done':
       document.getElementById('startBtn').classList.remove('hidden');
-      document.getElementById('startBtn').textContent = 'Start New Session';
+      document.getElementById('startBtn').textContent = '开始新任务';
       document.getElementById('stopBtn').classList.add('hidden');
       document.getElementById('exportBtn').classList.remove('hidden');
       document.getElementById('sessionState').textContent =
-        'Done: ' + event.summary.success + '/' + event.summary.total + ' success (' + event.summary.success_rate + '%)';
+        '完成: ' + event.summary.success + '/' + event.summary.total + ' 成功 (' + event.summary.success_rate + '%)';
       renderResults();
       break;
   }
@@ -435,39 +439,40 @@ function renderStats() {
   const counts = {success:0, failed:0, timeout:0, crashed:0, skipped:0, pending:0, running:0};
   let totalDuration = 0;
   allResults.forEach(r => {
-    counts[r.status] = (counts[r.status] || 0) + 1;
+    counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] = (counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] || 0) + 1;
     totalDuration += r.duration || 0;
   });
   const total = allResults.length;
   const successRate = total > 0 ? Math.round(counts.success / total * 100 * 10) / 10 : 0;
   const stats = [
-    {num: total, lbl: 'Total', color: ''},
-    {num: counts.success, lbl: 'Success', color: 'var(--success)'},
-    {num: counts.failed, lbl: 'Failed', color: 'var(--failed)'},
-    {num: counts.timeout, lbl: 'Timeout', color: 'var(--timeout)'},
-    {num: counts.crashed, lbl: 'Crashed', color: 'var(--crashed)'},
-    {num: successRate + '%', lbl: 'Success Rate', color: ''},
-    {num: totalDuration.toFixed(0) + 's', lbl: 'Total Time', color: ''},
+    {num: total, lbl: '总计', color: ''},
+    {num: counts.success, lbl: '成功', color: 'var(--success)'},
+    {num: counts.failed, lbl: '失败', color: 'var(--failed)'},
+    {num: counts.timeout, lbl: '超时', color: 'var(--timeout)'},
+    {num: counts.crashed, lbl: '崩溃', color: 'var(--crashed)'},
+    {num: successRate + '%', lbl: '成功率', color: ''},
+    {num: totalDuration.toFixed(0) + 's', lbl: '总时间', color: ''},
   ];
   document.getElementById('statsGrid').innerHTML = stats.map(s =>
     '<div class="stat-card"><div class="stat-num" style="color:' + (s.color||'') + '">' + s.num + '</div><div class="stat-lbl">' + s.lbl + '</div></div>'
   ).join('');
 }
 function renderFilters() {
-  const filters = ['all', 'success', 'failed', 'timeout', 'crashed', 'skipped'];
+  const filters = ['all', 'success', 'failed', 'timeout', 'crashed', 'skipped'];  // used for filtering
+  const filterLabels = {all:'全部', success:'成功', failed:'失败', timeout:'超时', crashed:'崩溃', skipped:'跳过'};
   const counts = {};
-  allResults.forEach(r => counts[r.status] = (counts[r.status]||0)+1);
+  allResults.forEach(r => counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] = (counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)]||0)+1);
   document.getElementById('filterBar').innerHTML = filters.map(f => {
     const count = f === 'all' ? allResults.length : (counts[f]||0);
     const active = currentFilter === f ? 'active' : '';
-    return '<button class="filter-btn ' + active + '" onclick="setFilter(\'' + f + '\')">' + f + ' (' + count + ')</button>';
+    return '<button class="filter-btn ' + active + '" onclick="setFilter(\'' + f + '\')">' + (filterLabels[f]||f) + ' (' + count + ')</button>';
   }).join('');
 }
 function setFilter(f) { currentFilter = f; renderFilters(); renderResultCards(); }
 function renderResultCards() {
-  const filtered = currentFilter === 'all' ? allResults : allResults.filter(r => r.status === currentFilter);
+  const filtered = currentFilter === 'all' ? allResults : allResults.filter(r => (r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) === currentFilter);
   if (filtered.length === 0) {
-    document.getElementById('resultsList').innerHTML = '<div class="empty-state">No results for this filter.</div>';
+    document.getElementById('resultsList').innerHTML = '<div class="empty-state">该筛选条件下无结果。</div>';
     return;
   }
   document.getElementById('resultsList').innerHTML = filtered.map(r => {
@@ -482,10 +487,10 @@ function renderResultCards() {
       keywordHtml += '</div>';
     }
     const logLines = (r.log||'').split('\n').length;
-    return '<div class="result-card ' + r.status + '">' +
+    return '<div class="result-card ' + (r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) + '">' +
       '<div class="result-header">' +
         '<span class="fname" title="' + r.file_path + '">' + r.file_name + '</span>' +
-        '<span class="badge ' + r.status + '">' + r.status + '</span>' +
+        '<span class="badge ' + r.status + '">' + ({success:'成功',failed:'失败',timeout:'超时',crashed:'崩溃',skipped:'跳过',running:'运行中',pending:'等待中'}[r.status]||r.status) + '</span>' +
         '<span class="duration-tag">' + (r.duration||0).toFixed(1) + 's</span>' +
         '<span class="exit-tag">exit ' + (r.exit_code !== null ? r.exit_code : 'N/A') + '</span>' +
       '</div>' +
@@ -495,7 +500,8 @@ function renderResultCards() {
         (r.label ? '<span>' + r.label + '</span>' : '') +
       '</div>' +
       suggestionHtml + keywordHtml +
-      '<details class="result-details"><summary>Full log (' + logLines + ' lines)</summary>' +
+      (r.log_summary && r.log_summary.length ? '<details class="result-details"' + ((r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) !== 'success' ? ' open' : '') + '><summary>日志摘要 (' + r.log_summary.length + ' lines)</summary><div class="result-log">' + r.log_summary.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div></details>' : '') +
+      '<details class="result-details"><summary>完整日志 (' + logLines + ' lines)</summary>' +
         '<div class="result-log">' + (r.log||'(empty)').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
       '</details>' +
     '</div>';
@@ -507,14 +513,16 @@ function exportReport() { window.open('/api/report/export', '_blank'); }
   const data = await api('/api/defaults');
   if (data.cli_path) document.getElementById('cliPath').value = data.cli_path;
   if (data.datadir) document.getElementById('datadir').value = data.datadir;
-  document.getElementById('outputDir').value = '';
+    document.getElementById('outputDir').value = 'slice_output';
   // Check CLI binary freshness
   const diag = await api('/api/diag');
   if (!diag.ok) {
-    const banner = document.getElementById('errorBanner');
-    banner.innerHTML = '<b>CLI Binary Issue:</b> ' + diag.message;
-    banner.classList.remove('hidden');
-    banner.style.background = '#ff9500';
+    const el = document.getElementById('errorBanner');
+    const txt = document.getElementById('errorBannerText');
+    if (txt) { txt.innerHTML = '<b>CLI 二进制问题:</b> ' + diag.message; }
+    else { el.innerHTML = '<b>CLI 二进制问题:</b> ' + diag.message; }
+    el.classList.remove('hidden');
+    el.style.background = '#ff9500';
   }
   connectSSE();
 })();

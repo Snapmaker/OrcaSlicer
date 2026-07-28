@@ -4,6 +4,17 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
 
+#include "libslic3r/GCodeReader.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <algorithm>
+#include <string>
+#include <vector>
+
 #include "test_data.hpp"
 
 using namespace Slic3r;
@@ -140,4 +151,100 @@ SCENARIO("Print: Brim generation", "[Print]") {
             }
         }
     }
+}
+
+// Peak Z of the first object printed in by-object G-code: the highest extrusion before Z drops back
+// to the first layer, which with by-object printing only happens at an object change.
+static double first_object_peak_z(const std::string &gcode)
+{
+    double first_object_peak_z = 0.0;
+    double running_peak        = 0.0;
+    GCodeReader reader;
+    reader.parse_buffer(gcode, [&] (GCodeReader& self, const GCodeReader::GCodeLine& line) {
+        if (first_object_peak_z != 0.0 || !line.extruding(self)) return; // ignore travels (e.g. start-gcode Z lift)
+        if (running_peak > 1.0 && self.z() < 1.0)
+            first_object_peak_z = running_peak;
+        else
+            running_peak = std::max(running_peak, static_cast<double>(self.z()));
+    });
+    return first_object_peak_z;
+}
+
+// 20 mm boxes of the given heights, in list order, 80 mm apart in X at the same Y, so they share a
+// Y band but are far enough apart for the toolhead radius rule. The rod is lowered to 25 mm, so a
+// 30 mm box reaches above it and a 10 mm one does not. init_print() arranges the objects, so they
+// are placed afterwards and the model re-applied.
+static void place_boxes_in_one_y_band(const std::vector<double> &heights, Print &print, Model &model)
+{
+    std::vector<TriangleMesh> meshes;
+    for (double height : heights)
+        meshes.push_back(TriangleMesh(its_make_cube(20, 20, height)));
+    DynamicPrintConfig config = Test::default_print_config();
+    config.set_deserialize_strict({
+        { "print_sequence",                   "by object" },
+        { "extruder_clearance_height_to_rod", 25 },
+        { "skirt_loops",                      0 },
+        { "layer_height",                     0.2 },
+        { "initial_layer_print_height",       0.2 },
+        { "z_hop",                            0 },
+        { "layer_change_gcode",               "G92 E0\n" }, // validate() relative-E reset
+        // validate() has one warning slot and later checks overwrite it; keep the default
+        // accelerations from triggering the acceleration warning.
+        { "default_acceleration",             0 }
+    });
+    Test::init_print(std::move(meshes), print, model, config);
+    for (size_t i = 0; i < model.objects.size(); ++i) {
+        ModelInstance *instance = model.objects[i]->instances.front();
+        instance->set_offset(Vec3d(90 + 80 * i, 90, instance->get_offset().z()));
+    }
+    print.apply(model, config);
+}
+
+TEST_CASE("Sequential printing accepts a taller object listed first and over the rod height", "[Print]")
+{
+    Print print;
+    Model model;
+    place_boxes_in_one_y_band({ 30, 10 }, print, model);
+
+    // The print no longer follows the object list, so the user is told about the taller object,
+    // which is held back to clear the rod, and the notification jumps to it.
+    StringObjectException warning;
+    const StringObjectException error = print.validate(&warning);
+    INFO(error.string);
+    REQUIRE(error.string.empty());
+    CHECK_THAT(warning.string, Catch::Matchers::ContainsSubstring("is printed later than its place in the object list"));
+    CHECK(warning.object == print.model().objects.front());
+    CHECK(warning.string.find('\n') == std::string::npos); // only the taller object is named
+}
+
+TEST_CASE("Sequential printing prints the shorter object first when the taller one is over the rod height", "[Print]")
+{
+    Print print;
+    Model model;
+    place_boxes_in_one_y_band({ 30, 10 }, print, model);
+
+    REQUIRE_THAT(first_object_peak_z(Test::gcode(print)), Catch::Matchers::WithinAbs(10.0, 0.3));
+}
+
+TEST_CASE("Sequential printing keeps a list order that already clears the rod", "[Print]")
+{
+    Print print;
+    Model model;
+    place_boxes_in_one_y_band({ 10, 30 }, print, model);
+
+    StringObjectException warning;
+    const StringObjectException error = print.validate(&warning);
+    INFO(error.string);
+    REQUIRE(error.string.empty());
+    CHECK(warning.string.empty());
+    REQUIRE_THAT(first_object_peak_z(Test::gcode(print)), Catch::Matchers::WithinAbs(10.0, 0.3));
+}
+
+TEST_CASE("Sequential printing still rejects two objects over the rod height that share a Y band", "[Print]")
+{
+    Print print;
+    Model model;
+    place_boxes_in_one_y_band({ 30, 30 }, print, model);
+
+    CHECK_THAT(print.validate().string, Catch::Matchers::ContainsSubstring("too tall"));
 }

@@ -236,6 +236,11 @@ Line* OptionsGroup::get_line(const std::string& opt_key)
     {
         if(l.is_separator())
             continue;
+        // A full-width widget-only line (e.g. a custom banner/toggle row) has no
+        // options, so it can never match an opt_key; skip it to avoid dereferencing
+        // an empty option vector in get_first_option_key().
+        if (l.get_options().empty())
+            continue;
         if (l.get_first_option_key() == opt_key)
             return &l;
     }

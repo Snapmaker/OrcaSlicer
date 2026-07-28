@@ -897,6 +897,15 @@ void Tab::register_flow_variant_view(ConfigFlowDomain domain,
                                      std::function<const std::vector<std::string>&()> options,
                                      std::function<bool(const std::string&)> is_option)
 {
+    // A previously-registered view's selector lives in the shared page header (the
+    // filament and printer tabs share one ParamsPanel); destroy it before replacing
+    // the view so re-registration (e.g. TabPrinter's kinematics-page rebuild) does
+    // not leave orphaned selectors stacked in the header.
+    if (m_flow_variant_view && m_flow_variant_view->selector) {
+        if (auto* header_sizer = m_parent->get_page_header_sizer())
+            header_sizer->Detach(m_flow_variant_view->selector);
+        m_flow_variant_view->selector->Destroy();
+    }
     m_flow_variant_view = std::make_unique<FlowVariantView>();
     m_flow_variant_view->domain = domain;
     m_flow_variant_view->pages = pages;
@@ -946,25 +955,29 @@ void Tab::refresh_flow_variant_view()
         }
 
         m_flow_variant_view->modes = modes;
+        const wxString lb(wxUniChar(0x3010)); // 【
+        const wxString rb(wxUniChar(0x3011)); // 】
         std::vector<wxString> labels;
         labels.reserve(modes.size());
         for (const std::string& mode : modes)
         {
             if (mode == FLOW_MODE_STANDARD)
-                labels.emplace_back(_L("Standard"));
+                labels.emplace_back(lb + _L("Standard flow") + rb);
             else if (mode == FLOW_MODE_HIGH_FLOW)
-                labels.emplace_back(_L("High flow"));
+                labels.emplace_back(lb + _L("High flow") + rb);
             else
             {
                 std::string label = mode;
                 std::replace(label.begin(), label.end(), '_', ' ');
-                labels.emplace_back(from_u8(label));
+                labels.emplace_back(lb + from_u8(label) + rb);
             }
         }
 
+        // Plain style = borderless teal/grey text (Figma), hosted in the frozen page header.
         m_flow_variant_view->selector = new SegmentedToggle(m_parent->get_page_header(),
                                                             labels,
-                                                            int(flow_variant_view_index()));
+                                                            int(flow_variant_view_index()),
+                                                            SegmentedToggle::Style::Plain);
         m_parent->get_page_header_sizer()->Add(m_flow_variant_view->selector,
                                                0,
                                                wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT | wxTOP | wxBOTTOM,
@@ -1007,15 +1020,30 @@ void Tab::refresh_flow_variant_view()
 
 void Tab::update_flow_variant_view_visibility()
 {
+    // The dialog page header is shared by the filament and printer tabs. Only the
+    // currently-active tab manages it; a background tab's refresh (e.g. a preset
+    // reload) must not stomp the active tab's header or show a stale selector.
+    if (m_parent->get_current_tab() != this) {
+        if (m_flow_variant_view && m_flow_variant_view->selector)
+            m_flow_variant_view->selector->Hide();
+        return;
+    }
+
     const bool active_page_supports_flow_variants = m_flow_variant_view &&
         std::any_of(m_flow_variant_view->pages.begin(), m_flow_variant_view->pages.end(),
                     [this](const PageShp& page) { return m_active_page == page.get(); });
-    const bool show = active_page_supports_flow_variants &&
-                      m_flow_variant_view->selector &&
-                      m_parent->get_current_tab() == this;
+    const bool show = active_page_supports_flow_variants && m_flow_variant_view->selector;
 
-    if (m_flow_variant_view && m_flow_variant_view->selector)
+    if (m_flow_variant_view && m_flow_variant_view->selector) {
+        // Reveal only this tab's selector; hide any sibling selector left visible by
+        // the other tab that shares this header.
+        if (show) {
+            for (wxWindow* sibling : m_parent->get_page_header()->GetChildren())
+                if (sibling != m_flow_variant_view->selector)
+                    sibling->Hide();
+        }
         m_flow_variant_view->selector->Show(show);
+    }
     m_parent->show_page_header(show);
 }
 
@@ -4154,12 +4182,6 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_multitool_ramming_volume");
         optgroup->append_single_option_line("filament_multitool_ramming_flow");
 
-    register_flow_variant_view(
-        ConfigFlowDomain::Filament,
-        {filament_page, cooling_page, overrides_page, multimaterial_page},
-        []() -> const std::vector<std::string>& { return filament_flow_variant_options(); },
-        [](const std::string& key) { return is_filament_flow_variant_option(key); });
-
     page = add_options_page(L("Dependencies"), "advanced");
         optgroup = page->new_optgroup(L("Compatible printers"), "param_dependencies_printers");
         create_line_with_widget(optgroup.get(), "compatible_printers", "", [this](wxWindow* parent) {
@@ -4188,6 +4210,12 @@ void TabFilament::build()
         optgroup->append_single_option_line(option);
 
         //build_preset_description_line(optgroup.get());
+
+    register_flow_variant_view(
+        ConfigFlowDomain::Filament,
+        {filament_page, cooling_page, overrides_page, multimaterial_page},
+        []() -> const std::vector<std::string>& { return filament_flow_variant_options(); },
+        [](const std::string& key) { return is_filament_flow_variant_option(key); });
 }
 
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
@@ -4872,8 +4900,18 @@ void TabPrinter::build_unregular_pages(bool from_initial_build/* = false*/)
         auto page = build_kinematics_page();
         if (from_initial_build && !is_marlin_flavor)
             page->clear();
-        else
+        else {
             m_pages.insert(m_pages.begin() + n_before_extruders, page);
+            // UI-only flow-variant selector on the Motion ability page: shows the
+            // 标准/高流量 header for visual consistency but binds no fields (there is
+            // no printer-domain flow-variant backend). Modes come from
+            // printer_flow_support via flow_support_key(Printer).
+            register_flow_variant_view(
+                ConfigFlowDomain::Printer,
+                page,
+                []() -> const std::vector<std::string>& { static const std::vector<std::string> none; return none; },
+                [](const std::string&) { return false; });
+        }
     }
 
 if (is_marlin_flavor)
@@ -5209,6 +5247,7 @@ void TabPrinter::update_pages()
 
 void TabPrinter::reload_config()
 {
+    refresh_flow_variant_view();
     Tab::reload_config();
 
     // "extruders_count" doesn't update from the update_config(),

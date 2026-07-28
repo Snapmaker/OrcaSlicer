@@ -36,7 +36,7 @@ def cli_binary_diagnostic(cli_path=None):
         return _CLI_DIAG_CACHE
 
     exe = _resolve(cli_path or DEFAULT_CLI_PATH)
-    exe_path = pathlib.Path(exe)
+    exe_path = Path(exe)
 
     if not exe_path.exists():
         _CLI_DIAG_CACHE = (False, "CLI not found: " + exe)
@@ -268,6 +268,9 @@ class SliceResult:
         self.started_at = None
         self.finished_at = None
         self._start_ts = 0.0
+        self.progress_pct = 0
+        self.stage_label = ""
+        self.quality_scores = []
     def to_dict(self):
         return {
             "file_path": self.file_path, "file_name": self.file_name,
@@ -280,6 +283,8 @@ class SliceResult:
             "error_keywords": self.error_keywords,
             "log_summary": self.log_summary,
             "started_at": self.started_at, "finished_at": self.finished_at,
+            "progress_pct": self.progress_pct, "stage_label": self.stage_label,
+            "quality_scores": self.quality_scores,
         }
 
 class SlicingSession:
@@ -290,8 +295,12 @@ class SlicingSession:
         self.started_at = None
         self.finished_at = None
         self.current_index = -1
+        self.current_file = ""
+        self.live_log = []
         self._stop_flag = threading.Event()
         self._thread = None
+        self._current_proc = None
+        self._proc_lock = threading.Lock()
     @property
     def summary(self):
         total = len(self.results)
@@ -313,7 +322,13 @@ class SlicingSession:
             "current_index": self.current_index,
         }
     def to_dict(self):
-        return {"summary": self.summary, "config": self.config, "results": [r.to_dict() for r in self.results]}
+        return {
+            "summary": self.summary,
+            "config": self.config,
+            "results": [r.to_dict() for r in self.results],
+            "live_log": self.live_log[-300:],
+            "current_file": self.current_file,
+        }
 
 session = SlicingSession()
 def scan_3mf_files(path):
@@ -325,6 +340,180 @@ def scan_3mf_files(path):
     if p.is_dir():
         return sorted(str(f) for f in p.rglob("*.3mf") if f.is_file())
     return []
+
+# ---------------------------------------------------------------------------
+# Slicing stage detection (for per-card progress bar)
+# ---------------------------------------------------------------------------
+_STAGE_PATTERNS = [
+    (re.compile(r"Will start to read model file", re.I),  5,  "读取模型文件"),
+    (re.compile(r"import 3mf IMPORT_STAGE_OPEN", re.I),   10, "打开 3MF"),
+    (re.compile(r"IMPORT_STAGE_READ_FILES", re.I),        15, "读取文件"),
+    (re.compile(r"load_3mf", re.I),                       20, "加载 3MF"),
+    (re.compile(r"load.*config|load.*preset", re.I),      30, "加载配置"),
+    (re.compile(r"Generating ground geometry", re.I),     35, "生成几何"),
+    (re.compile(r"validat|normative", re.I),              40, "参数校验"),
+    (re.compile(r"Fill|infill", re.I),                    55, "填充"),
+    (re.compile(r"Wall|wall_loops|perimeter", re.I),      50, "外壁"),
+    (re.compile(r"Slicing|layer_height|layer result", re.I), 45, "切片"),
+    (re.compile(r"Generat.*gcode|export.*gcode|gcode.*file", re.I), 70, "生成 G-code"),
+    (re.compile(r"wipe.*tower|brim|skirt|support", re.I), 60, "生成辅助结构"),
+    (re.compile(r"Successfully|finished|done|completed", re.I), 95, "完成"),
+]
+
+def _detect_stage(line, current_pct):
+    """Return (new_pct, stage_label) from a CLI output line."""
+    for pattern, pct, label in _STAGE_PATTERNS:
+        if pattern.search(line):
+            if pct > current_pct:
+                return pct, label
+    return current_pct, None
+
+# ---------------------------------------------------------------------------
+# Gcode-diff quality scoring
+# ---------------------------------------------------------------------------
+GCODE_DIFF_PATH = str(Path(r"C:\workDir\programing\Gcode-diff\gcode-diff-rs\target\release\gcode-diff.exe"))
+
+def _run_gcode_score(gcode_path, out_dir):
+    """Run gcode-diff --score on a gcode file. Returns dict with score + html path, or None."""
+    if not Path(GCODE_DIFF_PATH).exists():
+        return None
+    gcode_name = Path(gcode_path).stem
+    html_out = str(Path(out_dir) / f"quality_{gcode_name}.html")
+    json_out = str(Path(out_dir) / f"quality_{gcode_name}.json")
+    try:
+        r = subprocess.run(
+            [GCODE_DIFF_PATH, "--score", gcode_path, "--format", "json", "--no-overhang-viz"],
+            capture_output=True, text=True, timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        # gcode-diff exits 0 (pass) or 2 (below threshold) -- both mean it ran successfully
+        if r.returncode not in (0, 2):
+            return None
+        # The Rust binary writes score JSON to stdout (not to --json file)
+        stdout = r.stdout.strip()
+        if not stdout:
+            return None
+        data = json.loads(stdout)
+        score = data.get("overall_score") or data.get("score")
+        if score is None:
+            return None
+        # Save parsed JSON + generated HTML to disk
+        Path(json_out).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        Path(html_out).write_text(_generate_quality_html(data, Path(gcode_path).name), encoding="utf-8")
+        return {"score": score, "html": html_out, "json": json_out, "data": data}
+    except Exception as ex:
+        tool_log("gcode-diff score failed for " + gcode_path + ": " + str(ex))
+        pass
+    return None
+
+def _generate_quality_html(data, gcode_name):
+    """Build a standalone HTML quality report from gcode-diff score JSON."""
+    score = data.get("overall_score") or data.get("score", 0)
+    summary = data.get("summary", "")
+    has_critical = data.get("has_critical", False)
+    material = data.get("material", "")
+    slicer_info = data.get("slicer", "")
+    printer = data.get("printer_model", "")
+    physics_trust = data.get("physics_trust", "")
+    dimensions = data.get("dimensions", [])
+    if score >= 80:
+        sc = "#34c759"
+    elif score >= 60:
+        sc = "#ff9500"
+    else:
+        sc = "#ff3b30"
+    rows = ""
+    for d in dimensions:
+        ds = d.get("score", 0)
+        if isinstance(ds, (int, float)):
+            if ds >= 80:
+                dc = "#34c759"
+            elif ds >= 60:
+                dc = "#ff9500"
+            else:
+                dc = "#ff3b30"
+            ds_str = "{:.1f}".format(ds)
+        else:
+            dc = "#86868b"
+            ds_str = str(ds)
+        sev = d.get("severity", "")
+        rows += "<tr><td>" + str(d.get("name", "")) + "</td>"
+        rows += "<td style='text-align:center;font-weight:700;color:" + dc + "'>" + ds_str + "</td>"
+        rows += "<td>" + sev + "</td>"
+        rows += "<td>" + str(d.get("verdict", "")) + "</td>"
+        rows += "<td>" + str(d.get("recommendation", "")) + "</td></tr>"
+    crit = '<span class="crit">CRITICAL</span>' if has_critical else ""
+    parts = []
+    parts.append("<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>")
+    parts.append("<title>Quality Report - " + gcode_name + "</title>")
+    parts.append("<style>")
+    parts.append("body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;background:#f0f0f3;color:#1d1d1f;margin:0;padding:24px}")
+    parts.append("h1{font-size:20px;margin-bottom:4px}")
+    parts.append(".meta{color:#86868b;font-size:13px;margin-bottom:20px;line-height:1.6}")
+    parts.append(".score-card{background:#fff;border-radius:8px;padding:24px;text-align:center;margin-bottom:20px;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
+    parts.append(".score-num{font-size:48px;font-weight:800;color:" + sc + "}")
+    parts.append(".score-lbl{font-size:18px;font-weight:600;margin-top:4px}")
+    parts.append("table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08)}")
+    parts.append("th{padding:10px 14px;text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#86868b;border-bottom:2px solid #e0e0e5}")
+    parts.append("td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f0f0f3;vertical-align:top}")
+    parts.append("tr:last-child td{border-bottom:none}")
+    parts.append(".crit{display:inline-block;padding:2px 10px;border-radius:4px;font-size:11px;font-weight:700;color:#fff;background:#ff3b30;margin-left:8px}")
+    parts.append("</style></head><body>")
+    parts.append("<h1>G-code Quality Report</h1>")
+    parts.append("<div class='meta'>")
+    parts.append(gcode_name + "<br>")
+    if slicer_info:
+        parts.append("Slicer: " + slicer_info + "<br>")
+    if printer:
+        parts.append("Printer: " + printer + "<br>")
+    if material:
+        parts.append("Material: " + material + "<br>")
+    if physics_trust:
+        parts.append("Physics: " + physics_trust)
+    parts.append("</div>")
+    parts.append("<div class='score-card'><div class='score-num'>" + "{:.1f}".format(score) + "</div>")
+    parts.append("<div class='score-lbl'>" + str(summary) + crit + "</div></div>")
+    parts.append("<table><thead><tr><th>Dimension</th><th style='text-align:center'>Score</th><th>Severity</th><th>Verdict</th><th>Recommendation</th></tr></thead>")
+    parts.append("<tbody>" + rows + "</tbody></table>")
+    parts.append("</body></html>")
+    return "\n".join(parts)
+
+# ---------------------------------------------------------------------------
+# Per-file report generation
+# ---------------------------------------------------------------------------
+def _generate_single_report(result, output_base):
+    """Generate a JSON report for a single completed slice + run gcode-diff if applicable."""
+    report_dir = Path(output_base) / "_reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    file_name_safe = re.sub(r"[^\w\-.]", "_", result.file_name)
+    gcode_dir_name = re.sub(r"[^\w\-.]", "_", Path(result.file_name).stem)
+    gcode_dir = Path(output_base) / gcode_dir_name
+    json_path = report_dir / f"{file_name_safe}.json"
+    # Run gcode-diff on each generated gcode
+    quality_scores = []
+    if gcode_dir.exists():
+        for gc in sorted(gcode_dir.glob("*.gcode")):
+            result_info = _run_gcode_score(str(gc), str(gcode_dir))
+            if result_info:
+                rdata = result_info.get("data", {})
+                quality_scores.append({
+                    "file": gc.name,
+                    "plate": Path(gc.name).stem,
+                    "score": result_info["score"],
+                    "summary": rdata.get("summary", ""),
+                    "has_critical": rdata.get("has_critical", False),
+                    "material": rdata.get("material", ""),
+                    "html": str(Path(result_info["html"]).relative_to(output_base)),
+                    "dimensions": rdata.get("dimensions", []),
+                })
+                result.log_lines.append(f"[QUALITY] {gc.name}: score={result_info['score']}")
+    result.quality_scores = quality_scores
+    report_data = result.to_dict()
+    report_data["quality_scores"] = quality_scores
+    try:
+        json_path.write_text(json.dumps(report_data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 def build_cli_command(file_path, config, output_dir):
     cli = _resolve(config["cli_path"])
@@ -352,20 +541,62 @@ def build_cli_command(file_path, config, output_dir):
     return cmd
 
 def run_one_slice(result, config, output_base):
+    """Slice one file, streaming output, tracking stage progress, auto-retry on relative-e error."""
     file_name_safe = re.sub(r"[^\w\-.]", "_", Path(result.file_path).stem)
     out_dir = str(Path(output_base) / file_name_safe)
     Path(out_dir).mkdir(parents=True, exist_ok=True)
+    result.started_at = datetime.now().isoformat()
+    result.status = "running"
+    result.progress_pct = 0
+    result.stage_label = "启动中"
+    result._start_ts = time.time()
+    tool_log(f"START slicing: {result.file_path}")
+    broker.publish({"type": "slice_started", "file": result.file_name})
+
+    # First attempt
+    _do_slice_subprocess(result, config, out_dir)
+
+    # Auto-retry: if failed with relative extruder error, retry with --use-relative-e-distances=0
+    if result.exit_code and result.exit_code != 0:
+        full_log = "\n".join(result.log_lines)
+        if "relative" in full_log.lower() and "extrud" in full_log.lower():
+            tool_log(f"RETRY {result.file_name} with --use-relative-e-distances=0")
+            result.log_lines.append("")
+            result.log_lines.append("[TOOL] Auto-retry with --use-relative-e-distances=0")
+            result.log_lines.append("")
+            result.progress_pct = 0
+            result.stage_label = "重试中"
+            # Clone config and force the flag
+            retry_config = dict(config)
+            retry_config["no_relative_e"] = True
+            # Reset result state
+            result.log_lines = result.log_lines[:2]  # keep command header
+            _do_slice_subprocess(result, retry_config, out_dir)
+            if result.exit_code == 0:
+                result.label = "Success (auto-retry with --use-relative-e-distances=0)"
+
+    # Detect gcode files
+    gcodes = list(Path(out_dir).glob("*.gcode"))
+    result.gcode_files = [str(f.name) for f in gcodes]
+    result.gcode_total_size = sum(f.stat().st_size for f in gcodes)
+
+    full_log = "\n".join(result.log_lines)
+    result.error_keywords = analyze_log(full_log)
+    result.log_summary = extract_log_summary(result.log_lines, result.status)
+    result.progress_pct = 100 if result.status == "success" else result.progress_pct
+    result.stage_label = "完成" if result.status == "success" else result.stage_label
+    result.finished_at = datetime.now().isoformat()
+    broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+
+
+def _do_slice_subprocess(result, config, out_dir):
+    """Run the CLI subprocess, streaming output and tracking stage. Updates result in-place."""
     cmd = build_cli_command(result.file_path, config, out_dir)
     env = os.environ.copy()
     cli_dir = str(Path(_resolve(config["cli_path"])).parent)
     env["PATH"] = cli_dir + os.pathsep + env.get("PATH", "")
     if config.get("allow_newer_file", True):
         env["SNAPMAKER_ORCA_ALLOW_NEWER_FILE"] = "1"
-    result.started_at = datetime.now().isoformat()
-    result.status = "running"
-    result._start_ts = time.time()
-    tool_log(f"START slicing: {result.file_path}")
-    broker.publish({"type": "slice_started", "file": result.file_name})
     cmd_display = " ".join(f'"{a}"' if " " in a else a for a in cmd)
     result.log_lines.append(f"$ {cmd_display}")
     result.log_lines.append("")
@@ -376,14 +607,62 @@ def run_one_slice(result, config, output_base):
             cwd=cli_dir,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        try:
-            stdout_data, _ = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        # Register proc so stop can kill it
+        with session._proc_lock:
+            session._current_proc = proc
+        _line_q = queue.Queue()
+        def _reader():
+            for raw in iter(proc.stdout.readline, b""):
+                _line_q.put(raw)
+            _line_q.put(None)
+        _reader_t = threading.Thread(target=_reader, daemon=True)
+        _reader_t.start()
+        deadline = time.time() + timeout
+        timed_out = False
+        stopped = False
+        while True:
+            try:
+                raw = _line_q.get(timeout=0.3)
+            except queue.Empty:
+                if session._stop_flag.is_set():
+                    stopped = True
+                    break
+                if proc.poll() is not None:
+                    break
+                if time.time() > deadline:
+                    timed_out = True
+                    break
+                continue
+            if raw is None:
+                break
+            line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+            result.log_lines.append(line)
+            session.live_log.append(line)
+            # Stage detection
+            new_pct, stage = _detect_stage(line, result.progress_pct)
+            if stage:
+                result.progress_pct = new_pct
+                result.stage_label = stage
+                broker.publish({"type": "slice_progress", "file": result.file_name,
+                               "pct": result.progress_pct, "stage": result.stage_label})
+        # Unregister proc
+        with session._proc_lock:
+            session._current_proc = None
+        if stopped:
             proc.kill()
-            stdout_data, _ = proc.communicate()
-            if stdout_data:
-                for line in stdout_data.decode("utf-8", errors="replace").splitlines():
-                   result.log_lines.append(line)
+            proc.wait()
+            result.log_lines.append("\n[TOOL] Stopped by user.")
+            tool_log(f"STOPPED: {result.file_name}")
+            result.exit_code = -998
+            result.duration = time.time() - result._start_ts
+            result.status = "skipped"
+            result.category = "skipped"
+            result.label = "用户停止"
+            result.stage_label = "已停止"
+            return
+        if timed_out:
+            proc.kill()
+            proc.wait()
             result.log_lines.append(f"\n[TOOL] Process killed after {timeout}s timeout.")
             tool_log(f"TIMEOUT: {result.file_name} after {timeout}s")
             result.exit_code = -999
@@ -392,37 +671,34 @@ def run_one_slice(result, config, output_base):
             result.category = "timeout"
             result.label = f"Tool timeout ({timeout}s)"
             result.suggestion = "Increase timeout or investigate model complexity."
-            result.finished_at = datetime.now().isoformat()
-            broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+            result.stage_label = "超时"
             return
-        text = stdout_data.decode("utf-8", errors="replace") if stdout_data else ""
-        for line in text.splitlines():
-            result.log_lines.append(line)
+        proc.wait()
         result.exit_code = proc.returncode
+        result.duration = time.time() - result._start_ts
         tool_log(f"DONE: {result.file_name} exit={result.exit_code} (0x{result.exit_code & 0xFFFFFFFF:08X})")
     except FileNotFoundError:
         result.log_lines.append(f"[TOOL ERROR] CLI executable not found: {config['cli_path']}")
         tool_log(f"ERROR: CLI not found: {config['cli_path']}")
         result.duration = time.time() - result._start_ts
+        result.exit_code = -1
         result.status = "failed"
         result.category = "failed"
         result.label = "CLI not found"
         result.suggestion = "Check the CLI path in settings."
-        result.finished_at = datetime.now().isoformat()
-        broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+        result.stage_label = "CLI未找到"
         return
     except Exception as ex:
         result.log_lines.append(f"[TOOL ERROR] {ex}")
         result.log_lines.append(traceback.format_exc())
         tool_log(f"EXCEPTION: {result.file_name}: {ex}")
         result.duration = time.time() - result._start_ts
+        result.exit_code = -100
         result.status = "failed"
         result.category = "failed"
         result.label = f"Tool exception: {ex}"
-        result.finished_at = datetime.now().isoformat()
-        broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+        result.stage_label = "异常"
         return
-    result.duration = time.time() - result._start_ts
     cat, label, suggestion = analyze_exit_code(result.exit_code)
     result.category = cat
     result.label = label
@@ -441,14 +717,7 @@ def run_one_slice(result, config, output_base):
         result.status = "timeout"
     else:
         result.status = "failed"
-    gcodes = list(Path(out_dir).glob("*.gcode"))
-    result.gcode_files = [str(f.name) for f in gcodes]
-    result.gcode_total_size = sum(f.stat().st_size for f in gcodes)
-    full_log = "\n".join(result.log_lines)
-    result.error_keywords = analyze_log(full_log)
-    result.log_summary = extract_log_summary(result.log_lines, result.status)
-    result.finished_at = datetime.now().isoformat()
-    broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+
 
 def _run_batch(files, config):
     global session
@@ -459,14 +728,20 @@ def _run_batch(files, config):
     session.state = "running"
     session.started_at = datetime.now().isoformat()
     session.finished_at = None
+    session.current_file = ""
+    session.live_log = []
     session._stop_flag.clear()
+    session._current_proc = None
     broker.publish({"type": "session_started", "total": len(files)})
     for i, result in enumerate(session.results):
         if session._stop_flag.is_set():
             result.status = "skipped"
+            result.label = "已跳过"
+            result.stage_label = "已跳过"
             broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
             continue
         session.current_index = i
+        session.current_file = result.file_name
         broker.publish({"type": "progress", "current": i + 1, "total": len(files), "file": result.file_name})
         try:
             run_one_slice(result, config, output_base)
@@ -479,8 +754,17 @@ def _run_batch(files, config):
             result.label = f"Unhandled: {ex}"
             result.finished_at = datetime.now().isoformat()
             broker.publish({"type": "slice_done", "file": result.file_name, "result": result.to_dict()})
+        # Generate per-file report immediately after each slice
+        if result.status not in ("skipped", "pending"):
+            _generate_single_report(result, output_base)
+        # Append to session live_log
+        session.live_log.append(f"=== {result.file_name} ({result.status}) ===")
+        session.live_log.extend(result.log_lines[-20:])
+        session.live_log.append("")
+        session.current_file = ""
     session.state = "stopped" if session._stop_flag.is_set() else "done"
     session.finished_at = datetime.now().isoformat()
+    # Always generate final session report (even on stop)
     report_dir = Path(output_base) / "_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -489,8 +773,10 @@ def _run_batch(files, config):
         json_path.write_text(json.dumps(session.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+    tool_log(f"SESSION {session.state}: report saved to {json_path}")
     broker.publish({"type": "session_done", "summary": session.summary})
     session._thread = None
+
 
 def start_batch(files, config):
     if session.state == "running":
@@ -506,6 +792,15 @@ def start_batch(files, config):
 
 def stop_batch():
     session._stop_flag.set()
+    # Kill the currently running subprocess immediately
+    with session._proc_lock:
+        proc = session._current_proc
+    if proc:
+        try:
+            proc.kill()
+            tool_log("Killed current slicing subprocess on stop")
+        except Exception:
+            pass
     return True
 
 def native_pick(item_type, filetype=None):
@@ -648,6 +943,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_sse()
         elif path == "/api/report/export":
             self._send_html(generate_html_report())
+        elif path == "/api/quality":
+            qs = parse_qs(urlparse(self.path).query)
+            file_name = qs.get("file", [""])[0]
+            plate = qs.get("plate", [""])[0]
+            if not file_name or not plate:
+                self._send_json({"error": "file and plate required"}, 400)
+                return
+            output_base = _resolve(session.config.get("output_dir", str(PROJECT_ROOT / "slice_output")))
+            gcode_dir_name = re.sub(r"[^\w\-.]", "_", Path(file_name).stem)
+            html_file = Path(output_base) / gcode_dir_name / f"quality_{plate}.html"
+            if html_file.exists():
+                self._send_html(html_file.read_text(encoding="utf-8"))
+            else:
+                self._send_json({"error": "report not found: " + str(html_file)}, 404)
         else:
             self._send_json({"error": "not found"}, 404)
     def do_POST(self):

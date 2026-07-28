@@ -129,6 +129,39 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
 .hidden{display:none!important}
 .checkbox-row{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px}
 .checkbox-row label{color:var(--text-secondary)}
+.tab-bar{display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid var(--border)}
+.tab-btn{padding:8px 20px;font-size:14px;font-weight:600;cursor:pointer;border:none;
+  background:none;border-bottom:2px solid transparent;margin-bottom:-2px;color:var(--text-secondary);
+  font-family:inherit;transition:color .15s,border-color .15s}
+.tab-btn:hover{color:var(--primary)}
+.tab-btn.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.quality-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:4px;
+  font-size:11px;font-weight:700;margin-left:4px}
+.quality-badge.good{background:#e8f8ed;color:#1a8a3a}
+.quality-badge.warn{background:#fff3e0;color:#cc7a00}
+.quality-badge.bad{background:#fee;color:#cc3329}
+.quality-badge.na{background:#f0f0f3;color:var(--text-secondary)}
+.q-table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:var(--radius);
+  overflow:hidden;box-shadow:var(--shadow);margin-bottom:16px}
+.q-table th{padding:10px 14px;text-align:left;font-size:12px;text-transform:uppercase;
+  letter-spacing:.5px;color:var(--text-secondary);border-bottom:2px solid var(--border)}
+.q-table td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f0f0f3;vertical-align:top}
+.q-table tbody tr{cursor:pointer;transition:background .1s}
+.q-table tbody tr:hover td{background:#f5f5f7}
+.q-table tr:last-child td{border-bottom:none}
+.q-score{font-weight:700;font-size:14px}
+.q-empty{text-align:center;padding:40px 20px;color:var(--text-secondary);font-size:14px}
+.q-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);
+  z-index:9999;display:flex;flex-direction:column}
+.q-modal-header{background:var(--surface);padding:10px 16px;display:flex;
+  justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+.q-modal-header span{font-weight:600;font-size:14px}
+.q-modal-close{cursor:pointer;font-size:24px;color:var(--text-secondary);background:none;border:none;
+  font-family:inherit;line-height:1}
+.q-modal-body{flex:1;background:#fff;overflow:hidden}
+.q-modal-body iframe{width:100%;height:100%;border:none}
 </style>
 </head>
 <body>
@@ -241,6 +274,14 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
     <span id="sessionState" class="scan-info"></span>
   </div>
 
+  <!-- Tab Bar -->
+  <div class="tab-bar" id="tabBar">
+    <button class="tab-btn active" onclick="switchTab('slice')">切片结果</button>
+    <button class="tab-btn" onclick="switchTab('quality')">质量报告</button>
+  </div>
+
+  <!-- Tab: Slice Results -->
+  <div id="tabSlice" class="tab-content active">
   <!-- Progress Section -->
   <div id="progressSection" class="progress-section hidden">
     <div class="section-title"><span class="spinner"></span> 切片进行中</div>
@@ -262,37 +303,41 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
   <div id="emptyState" class="empty-state">
     选择一个 3MF 文件或包含 3MF 的目录，然后点击开始切片。
   </div>
+  </div><!-- /tabSlice -->
+
+  <!-- Tab: Quality Reports -->
+  <div id="tabQuality" class="tab-content">
+    <div id="qualityContent">
+      <div class="q-empty">切片完成后，质量报告将显示在此。</div>
+    </div>
+  </div>
 </div>
 
 <script>
 let selectedFiles = [];
 let allResults = [];
 let currentFilter = 'all';
-let eventSource = null;
-let liveLogLines = [];
+let pollTimer = null;
+let lastRenderedKey = '';  // Track what we last rendered to avoid unnecessary re-renders
+let lastQualityKey = '';
 
-function togglePanel(id) {
-  const body = document.getElementById(id);
-  body.classList.toggle('collapsed');
-}
-function toggleAdvanced() {
-  document.getElementById('advancedSection').classList.toggle('show');
-}
+function togglePanel(id) { document.getElementById(id).classList.toggle('collapsed'); }
+function toggleAdvanced() { document.getElementById('advancedSection').classList.toggle('show'); }
 function showError(msg) {
   const el = document.getElementById('errorBanner');
   const txt = document.getElementById('errorBannerText');
-  if (txt) txt.textContent = msg;
-  else el.textContent = msg;
+  if (txt) txt.textContent = msg; else el.textContent = msg;
   el.classList.remove('hidden');
 }
-function dismissError() {
-  document.getElementById('errorBanner').classList.add('hidden');
-}
+function dismissError() { document.getElementById('errorBanner').classList.add('hidden'); }
 function fmtSize(n) {
   if (!n) return '0 B';
   if (n < 1024) return n + ' B';
   if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
   return (n/1048576).toFixed(2) + ' MB';
+}
+function statusLabel(s) {
+  return {success:'成功',failed:'失败',timeout:'超时',crashed:'崩溃',skipped:'跳过',running:'运行中',pending:'等待中'}[s]||s;
 }
 async function api(path, method='GET', body=null) {
   const opts = {method, headers: {'Content-Type': 'application/json'}};
@@ -307,7 +352,7 @@ async function browse(type, inputId, filetype) {
 }
 async function scanFiles() {
   const path = document.getElementById('inputPath').value.trim();
-  if (!path) { showError('Please enter a file or directory path.'); return; }
+  if (!path) { showError('请输入文件或目录路径'); return; }
   const data = await api('/api/scan', 'POST', {path});
   selectedFiles = data.files || [];
   document.getElementById('scanInfo').textContent = data.count + ' 个文件';
@@ -320,16 +365,14 @@ function renderFileList() {
   container.classList.remove('hidden');
   list.innerHTML = selectedFiles.map((f, i) => {
     const name = f.split(/[\\/]/).pop();
-    return '<div class="file-item">' +
-      '<input type="checkbox" checked data-idx="' + i + '">' +
-      '<span class="fname" title="' + f + '">' + name + '</span>' +
-      '</div>';
+    return '<div class="file-item"><input type="checkbox" checked data-idx="' + i + '">' +
+      '<span class="fname" title="' + f + '">' + name + '</span></div>';
   }).join('');
 }
 function getSelectedFiles() {
-  const checkboxes = document.querySelectorAll('#fileList input[type=checkbox]');
+  const cbs = document.querySelectorAll('#fileList input[type=checkbox]');
   const files = [];
-  checkboxes.forEach(cb => { if (cb.checked) files.push(selectedFiles[cb.dataset.idx]); });
+  cbs.forEach(cb => { if (cb.checked) files.push(selectedFiles[cb.dataset.idx]); });
   return files.length > 0 ? files : selectedFiles;
 }
 function getConfig() {
@@ -361,72 +404,80 @@ async function startSlicing() {
   document.getElementById('resultsSection').classList.add('hidden');
   document.getElementById('emptyState').classList.add('hidden');
   document.getElementById('exportBtn').classList.add('hidden');
-  liveLogLines = [];
   document.getElementById('liveLog').textContent = '等待输出...';
-  connectSSE();
+  lastRenderedKey = '';
+  lastQualityKey = '';
+  startPolling();
 }
+function startPolling() { stopPolling(); pollTimer = setInterval(pollSession, 1500); pollSession(); }
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 function stopSlicing() { api('/api/stop', 'POST'); }
-function connectSSE() {
-  if (eventSource) eventSource.close();
-  eventSource = new EventSource('/api/stream');
-  eventSource.onmessage = function(e) {
-    const event = JSON.parse(e.data);
-    handleEvent(event);
-  };
-  eventSource.onerror = function() {
-    setTimeout(() => { if (document.getElementById('stopBtn').offsetParent !== null) connectSSE(); }, 2000);
-  };
-}
-function handleEvent(event) {
-  switch(event.type) {
-    case 'init':
-      if (event.session && event.session.results && event.session.results.length > 0) {
-        allResults = event.session.results;
-        renderResults();
-      }
-      break;
-    case 'session_started':
-      document.getElementById('currentTask').textContent = '开始会话，共 ' + event.total + ' 个文件...';
-      break;
-    case 'progress':
-      const pct = Math.round((event.current / event.total) * 100);
+
+async function pollSession() {
+  try {
+    const data = await api('/api/session');
+    const s = data.summary || {};
+    const prevResults = allResults;
+    allResults = data.results || [];
+    const isRunning = s.state === 'running';
+
+    // Overall progress bar (always visible during running)
+    if (isRunning) {
+      const total = s.total || allResults.length;
+      const done = allResults.filter(r => r.status !== 'pending' && r.status !== 'running').length;
+      const pct = total > 0 ? Math.round(done / total * 100) : 0;
       document.getElementById('progressFill').style.width = pct + '%';
-      document.getElementById('progressFill').textContent = event.current + ' / ' + event.total + ' (' + pct + '%)';
-      document.getElementById('currentTask').textContent = '切片中: ' + event.file;
-      break;
-    case 'slice_started':
-      liveLogLines.push('=== ' + event.file + ' ===');
-      updateLiveLog();
-      break;
-    case 'slice_done':
-      const log = event.result.log || '';
-      const lines = log.split('\n');
-      liveLogLines = liveLogLines.slice(0, -1);
-      liveLogLines.push('=== ' + event.file + ' ===');
-      lines.forEach(l => liveLogLines.push(l));
-      liveLogLines.push('');
-      updateLiveLog();
-      const idx = allResults.findIndex(r => r.file_name === event.result.file_name);
-      if (idx >= 0) allResults[idx] = event.result;
-      else allResults.push(event.result);
-      break;
-    case 'session_done':
+      document.getElementById('progressFill').textContent = done + ' / ' + total + ' (' + pct + '%)';
+      const cf = data.current_file || '';
+      document.getElementById('currentTask').textContent = cf ? ('切片中 (' + (s.current_index + 1) + '/' + total + '): ' + cf) : '处理中...';
+    }
+
+    // Live log
+    const liveLog = data.live_log || [];
+    if (liveLog.length > 0) {
+      const el = document.getElementById('liveLog');
+      el.textContent = liveLog.slice(-200).join('\n');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    // Smart re-render: only re-render cards if results actually changed
+    // Build a signature to detect changes
+   const sig = allResults.map(r => r.file_name + ':' + r.status + ':' + (r.progress_pct||0)).join('|');
+   const sig2 = allResults.map(r => (r.quality_scores||[]).map(q => q.score).join(',')).join(';');
+   const changed = sig !== lastRenderedKey || sig2 !== lastQualityKey;
+
+    if (!isRunning && s.state !== 'idle') {
+      // Session finished
+      stopPolling();
+      document.getElementById('progressSection').classList.add('hidden');
       document.getElementById('startBtn').classList.remove('hidden');
       document.getElementById('startBtn').textContent = '开始新任务';
       document.getElementById('stopBtn').classList.add('hidden');
       document.getElementById('exportBtn').classList.remove('hidden');
       document.getElementById('sessionState').textContent =
-        '完成: ' + event.summary.success + '/' + event.summary.total + ' 成功 (' + event.summary.success_rate + '%)';
+        '完成: ' + s.success + '/' + s.total + ' 成功 (' + s.success_rate + '%)';
+     renderResults();
+      lastRenderedKey = sig;
+      lastQualityKey = sig2;
+    } else if (isRunning) {
+      // Still running: show progress + results simultaneously
+      document.getElementById('resultsSection').classList.remove('hidden');
+      document.getElementById('emptyState').classList.add('hidden');
+      renderStats();
+      renderFilters();
+      if (changed) {
+        renderResultCards();
+        lastRenderedKey = sig;
+        lastQualityKey = sig2;
+      }
+    } else if (allResults.length > 0 && changed) {
       renderResults();
-      break;
-  }
+      lastRenderedKey = sig;
+      lastQualityKey = sig2;
+    }
+  } catch(e) { /* retry */ }
 }
-function updateLiveLog() {
-  const el = document.getElementById('liveLog');
-  const lines = liveLogLines.slice(-200);
-  el.textContent = lines.join('\n');
-  el.scrollTop = el.scrollHeight;
-}
+
 function renderResults() {
   document.getElementById('progressSection').classList.add('hidden');
   document.getElementById('resultsSection').classList.remove('hidden');
@@ -435,21 +486,22 @@ function renderResults() {
   renderFilters();
   renderResultCards();
 }
+
 function renderStats() {
-  const counts = {success:0, failed:0, timeout:0, crashed:0, skipped:0, pending:0, running:0};
+  const counts = {};
   let totalDuration = 0;
   allResults.forEach(r => {
-    counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] = (counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] || 0) + 1;
+    counts[r.status] = (counts[r.status] || 0) + 1;
     totalDuration += r.duration || 0;
   });
   const total = allResults.length;
-  const successRate = total > 0 ? Math.round(counts.success / total * 100 * 10) / 10 : 0;
+  const successRate = total > 0 ? Math.round((counts.success||0) / total * 100 * 10) / 10 : 0;
   const stats = [
     {num: total, lbl: '总计', color: ''},
-    {num: counts.success, lbl: '成功', color: 'var(--success)'},
-    {num: counts.failed, lbl: '失败', color: 'var(--failed)'},
-    {num: counts.timeout, lbl: '超时', color: 'var(--timeout)'},
-    {num: counts.crashed, lbl: '崩溃', color: 'var(--crashed)'},
+    {num: counts.success||0, lbl: '成功', color: 'var(--success)'},
+    {num: counts.failed||0, lbl: '失败', color: 'var(--failed)'},
+    {num: counts.timeout||0, lbl: '超时', color: 'var(--timeout)'},
+    {num: counts.crashed||0, lbl: '崩溃', color: 'var(--crashed)'},
     {num: successRate + '%', lbl: '成功率', color: ''},
     {num: totalDuration.toFixed(0) + 's', lbl: '总时间', color: ''},
   ];
@@ -457,11 +509,12 @@ function renderStats() {
     '<div class="stat-card"><div class="stat-num" style="color:' + (s.color||'') + '">' + s.num + '</div><div class="stat-lbl">' + s.lbl + '</div></div>'
   ).join('');
 }
+
 function renderFilters() {
-  const filters = ['all', 'success', 'failed', 'timeout', 'crashed', 'skipped'];  // used for filtering
+  const filters = ['all', 'success', 'failed', 'timeout', 'crashed', 'skipped'];
   const filterLabels = {all:'全部', success:'成功', failed:'失败', timeout:'超时', crashed:'崩溃', skipped:'跳过'};
   const counts = {};
-  allResults.forEach(r => counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)] = (counts[(r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status)]||0)+1);
+  allResults.forEach(r => counts[r.status] = (counts[r.status]||0)+1);
   document.getElementById('filterBar').innerHTML = filters.map(f => {
     const count = f === 'all' ? allResults.length : (counts[f]||0);
     const active = currentFilter === f ? 'active' : '';
@@ -469,14 +522,15 @@ function renderFilters() {
   }).join('');
 }
 function setFilter(f) { currentFilter = f; renderFilters(); renderResultCards(); }
+
 function renderResultCards() {
-  const filtered = currentFilter === 'all' ? allResults : allResults.filter(r => (r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) === currentFilter);
+  const filtered = currentFilter === 'all' ? allResults : allResults.filter(r => r.status === currentFilter);
   if (filtered.length === 0) {
     document.getElementById('resultsList').innerHTML = '<div class="empty-state">该筛选条件下无结果。</div>';
     return;
   }
   document.getElementById('resultsList').innerHTML = filtered.map(r => {
-    const gcodeStr = (r.gcode_files && r.gcode_files.length) ? r.gcode_files.join(', ') : 'N/A';
+    const gcodeStr = (r.gcode_files && r.gcode_files.length) ? r.gcode_files.join(', ') : '无';
     let suggestionHtml = r.suggestion ? '<div class="suggestion-box">' + r.suggestion + '</div>' : '';
     let keywordHtml = '';
     if (r.error_keywords && r.error_keywords.length) {
@@ -486,45 +540,153 @@ function renderResultCards() {
       });
       keywordHtml += '</div>';
     }
+    // Per-card progress bar for running slices
+    let progressHtml = '';
+    if (r.status === 'running') {
+      const pct = r.progress_pct || 0;
+      const stage = r.stage_label || '处理中';
+      progressHtml = '<div style="margin:4px 16px"><div style="background:#e8e8ed;height:18px;border-radius:4px;overflow:hidden">' +
+        '<div style="background:var(--primary);height:100%;width:' + pct + '%;transition:width 0.5s;' +
+        'display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:600;min-width:30px">' +
+        pct + '%</div></div><div style="font-size:11px;color:var(--text-secondary);margin-top:2px">' + stage + '</div></div>';
+    }
     const logLines = (r.log||'').split('\n').length;
-    return '<div class="result-card ' + (r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) + '">' +
+    // Quality badges
+    let qualityHtml = '';
+    if (r.quality_scores && r.quality_scores.length) {
+      qualityHtml = '<span style="margin-left:auto;display:flex;gap:4px">';
+      r.quality_scores.forEach(qs => {
+        const cls = qs.score >= 80 ? 'good' : qs.score >= 60 ? 'warn' : 'bad';
+        qualityHtml += '<span class="quality-badge ' + cls + '" onclick="openQualityReport(\'' + r.file_name.replace(/'/g,"\\'") + '\',\'' + (qs.plate||'') + '\')" style="cursor:pointer" title="点击查看详细报告">质量 ' + (typeof qs.score === 'number' ? qs.score.toFixed(1) : qs.score) + '</span>';
+      });
+      qualityHtml += '</span>';
+    }
+    return '<div class="result-card ' + r.status + '">' +
       '<div class="result-header">' +
         '<span class="fname" title="' + r.file_path + '">' + r.file_name + '</span>' +
-        '<span class="badge ' + r.status + '">' + ({success:'成功',failed:'失败',timeout:'超时',crashed:'崩溃',skipped:'跳过',running:'运行中',pending:'等待中'}[r.status]||r.status) + '</span>' +
+        '<span class="badge ' + r.status + '">' + statusLabel(r.status) + '</span>' +
         '<span class="duration-tag">' + (r.duration||0).toFixed(1) + 's</span>' +
-        '<span class="exit-tag">exit ' + (r.exit_code !== null ? r.exit_code : 'N/A') + '</span>' +
+        '<span class="exit-tag">exit ' + (r.exit_code !== null && r.exit_code !== undefined ? r.exit_code : 'N/A') + '</span>' +
+        qualityHtml +
       '</div>' +
       '<div class="result-meta">' +
         '<span>' + fmtSize(r.file_size) + '</span>' +
         '<span>G-code: ' + gcodeStr + ' (' + fmtSize(r.gcode_total_size) + ')</span>' +
         (r.label ? '<span>' + r.label + '</span>' : '') +
       '</div>' +
+      progressHtml +
       suggestionHtml + keywordHtml +
-      (r.log_summary && r.log_summary.length ? '<details class="result-details"' + ((r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : r.status === 'timeout' ? '超时' : r.status === 'crashed' ? '崩溃' : r.status === 'skipped' ? '跳过' : r.status === 'running' ? '运行中' : r.status) !== 'success' ? ' open' : '') + '><summary>日志摘要 (' + r.log_summary.length + ' lines)</summary><div class="result-log">' + r.log_summary.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div></details>' : '') +
-      '<details class="result-details"><summary>完整日志 (' + logLines + ' lines)</summary>' +
-        '<div class="result-log">' + (r.log||'(empty)').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
+      (r.log_summary && r.log_summary.length ? '<details class="result-details"' + (r.status !== 'success' ? ' open' : '') + '><summary>日志摘要 (' + r.log_summary.length + ' 行)</summary><div class="result-log">' + r.log_summary.join('\n').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div></details>' : '') +
+      '<details class="result-details"><summary>完整日志 (' + logLines + ' 行)</summary>' +
+        '<div class="result-log">' + (r.log||'(空)').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>' +
       '</details>' +
     '</div>';
   }).join('');
 }
+
 function exportReport() { window.open('/api/report/export', '_blank'); }
-// Init: load defaults
+
+function switchTab(tab) {
+  document.getElementById('tabSlice').classList.toggle('active', tab === 'slice');
+  document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', (tab === 'slice' && i === 0) || (tab === 'quality' && i === 1));
+  });
+  if (tab === 'quality') renderQualityTable();
+}
+
+function renderQualityTable() {
+  const entries = [];
+  allResults.forEach(r => {
+    if (r.quality_scores && r.quality_scores.length) {
+      r.quality_scores.forEach(qs => {
+        entries.push({
+          file3mf: r.file_name,
+          plate: qs.plate || '',
+          gcode: qs.file || '',
+          score: qs.score,
+          summary: qs.summary || '',
+          hasCritical: qs.has_critical,
+        });
+      });
+    }
+  });
+  const el = document.getElementById('qualityContent');
+  if (entries.length === 0) {
+    el.innerHTML = '<div class="q-empty">暂无质量报告。切片完成后将自动生成。</div>';
+    return;
+  }
+  // Summary stats
+  const scores = entries.map(e => e.score).filter(s => typeof s === 'number');
+  const avg = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(1) : '-';
+  const criticals = entries.filter(e => e.hasCritical).length;
+  let summaryHtml = '<div class="stats-grid" style="margin-bottom:16px">' +
+    '<div class="stat-card"><div class="stat-num">' + entries.length + '</div><div class="stat-lbl">G-code 报告数</div></div>' +
+    '<div class="stat-card"><div class="stat-num">' + avg + '</div><div class="stat-lbl">平均分数</div></div>' +
+    '<div class="stat-card"><div class="stat-num" style="color:var(--failed)">' + criticals + '</div><div class="stat-lbl">CRITICAL</div></div>' +
+    '</div>';
+  let html = summaryHtml + '<table class="q-table"><thead><tr><th>3MF 文件</th><th>G-code</th><th style="text-align:center">分数</th><th>评级</th><th>状态</th></tr></thead><tbody>';
+  entries.forEach(e => {
+    const col = e.score >= 80 ? 'var(--success)' : e.score >= 60 ? 'var(--timeout)' : 'var(--failed)';
+    const safeFile = e.file3mf.replace(/'/g, "\\'");
+    html += '<tr onclick="openQualityReport(\'' + safeFile + '\',\'' + e.plate + '\')">';
+    html += '<td>' + e.file3mf + '</td>';
+    html += '<td>' + e.gcode + '</td>';
+    html += '<td class="q-score" style="text-align:center;color:' + col + '">' + (typeof e.score === 'number' ? e.score.toFixed(1) : e.score) + '</td>';
+    html += '<td>' + (e.summary || '-') + '</td>';
+    html += '<td>' + (e.hasCritical ? '<span class="badge failed">CRITICAL</span>' : '<span class="badge success">OK</span>') + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function openQualityReport(file3mf, plate) {
+  // Remove any existing modal
+  closeQualityReport();
+  const url = '/api/quality?file=' + encodeURIComponent(file3mf) + '&plate=' + encodeURIComponent(plate);
+  const overlay = document.createElement('div');
+  overlay.className = 'q-modal-overlay';
+  overlay.innerHTML = '<div class="q-modal-header"><span>质量报告 — ' + plate + '</span>' +
+    '<button class="q-modal-close" onclick="closeQualityReport()">&times;</button></div>' +
+    '<div class="q-modal-body"><iframe src="' + url + '"></iframe></div>';
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) closeQualityReport(); });
+  document.body.appendChild(overlay);
+}
+
+function closeQualityReport() {
+  const overlay = document.querySelector('.q-modal-overlay');
+  if (overlay) overlay.remove();
+}
+
+// Init
 (async function() {
   const data = await api('/api/defaults');
   if (data.cli_path) document.getElementById('cliPath').value = data.cli_path;
   if (data.datadir) document.getElementById('datadir').value = data.datadir;
-    document.getElementById('outputDir').value = 'slice_output';
-  // Check CLI binary freshness
+  document.getElementById('outputDir').value = 'slice_output';
   const diag = await api('/api/diag');
   if (!diag.ok) {
     const el = document.getElementById('errorBanner');
     const txt = document.getElementById('errorBannerText');
-    if (txt) { txt.innerHTML = '<b>CLI 二进制问题:</b> ' + diag.message; }
-    else { el.innerHTML = '<b>CLI 二进制问题:</b> ' + diag.message; }
+    const msg = '<b>CLI 二进制问题:</b> ' + diag.message;
+    if (txt) txt.innerHTML = msg; else el.innerHTML = msg;
     el.classList.remove('hidden');
     el.style.background = '#ff9500';
   }
-  connectSSE();
+  // Resume existing session if running
+  const sess = await api('/api/session');
+  if (sess.summary && sess.summary.state === 'running') {
+    document.getElementById('startBtn').classList.add('hidden');
+    document.getElementById('stopBtn').classList.remove('hidden');
+    document.getElementById('progressSection').classList.remove('hidden');
+    document.getElementById('emptyState').classList.add('hidden');
+    allResults = sess.results || [];
+    startPolling();
+  } else if (sess.results && sess.results.length > 0) {
+    allResults = sess.results;
+    renderResults();
+  }
 })();
 </script>
 </body>

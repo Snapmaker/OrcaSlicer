@@ -101,7 +101,7 @@ public:
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         SetCursor(wxCursor(wxCURSOR_HAND));
         SetToolTip(_L("Swap the two groups"));
-        m_bitmap = ScalableBitmap(this, "icon_swap_groups", FromDIP(14));
+        m_bitmap = ScalableBitmap(this, "icon_swap_groups", 14);
         Bind(wxEVT_PAINT, &SwapButton::on_paint, this);
         Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &) {
             if (m_on_click)

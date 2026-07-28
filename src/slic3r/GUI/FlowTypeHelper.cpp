@@ -48,6 +48,14 @@ std::vector<std::string> nozzle_volume_types()
     return types;
 }
 
+size_t distinct_nozzle_flow_type_count()
+{
+    std::vector<std::string> types = nozzle_volume_types();
+    std::sort(types.begin(), types.end());
+    types.erase(std::unique(types.begin(), types.end()), types.end());
+    return types.empty() ? 1 : types.size();
+}
+
 void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type)
 {
     std::vector<std::string> types = nozzle_volume_types();

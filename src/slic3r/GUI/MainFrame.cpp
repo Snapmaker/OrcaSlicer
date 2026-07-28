@@ -1649,12 +1649,14 @@ wxBoxSizer* MainFrame::create_side_tools()
     sizer->Add(m_print_btn       , 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(19));
 
     // Snapmaker requirement 7.1: hover popup on the slice button for choosing the
-    // standard / custom filament grouping mode. Shown whenever the printer preset
-    // supports high flow (independent of the per-nozzle flow combos).
+    // standard / custom filament grouping mode. Shown only when the nozzles actually
+    // mix flow variant types (>= 2 distinct across the per-nozzle flow combos); when
+    // every nozzle uses the same type there is nothing to group, so slicing just
+    // routes every filament to that one type (get_config_idx / flow_variant_index).
     m_slice_mode_popup = new SliceModePopup(this);
     auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
         e.Skip();
-        if (m_slice_enable && GUI::FlowType::printer_supports_high_flow())
+        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2)
             m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
     };
     m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
@@ -1683,8 +1685,9 @@ wxBoxSizer* MainFrame::create_side_tools()
                 m_slice_mode_popup->HidePopup();
             // Snapmaker requirement 7.1: in custom grouping mode confirm the
             // filament-to-flow-type mapping before slicing (both "Slice plate"
-            // and "Slice all" go through this button).
-            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::printer_supports_high_flow()) {
+            // and "Slice all" go through this button). Only relevant when the
+            // nozzles mix flow variant types.
+            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2) {
                 GUI::FilamentGroupDialog dlg(this);
                 if (dlg.ShowModal() != wxID_OK)
                     return;

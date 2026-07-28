@@ -20,6 +20,13 @@ namespace Slic3r { namespace GUI { namespace FlowType {
 // True when the edited printer preset declares "high_flow" in printer_flow_support.
 bool printer_supports_high_flow();
 
+// Number of DISTINCT flow variants currently selected across the nozzles (from the
+// per-nozzle flow combos, via nozzle_volume_types()). 1 when every nozzle uses the
+// same type. The standard / custom slice-mode popup is only shown when this is >= 2
+// -- i.e. the nozzles actually mix flow types; if they are all the same there is
+// nothing to group and slicing routes every filament to that one type.
+size_t distinct_nozzle_flow_type_count();
+
 // Per-nozzle flow types from project config, resized to the nozzle count and
 // normalized (unknown entries -> standard; everything standard when the printer
 // preset does not support high flow).

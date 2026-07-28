@@ -818,6 +818,20 @@ def stop_batch():
             pass
     return True
 
+def reset_session():
+    """Clear all session state for a fresh start."""
+    if session.state == "running":
+        return False
+    session.results = []
+    session.state = "idle"
+    session.config = {}
+    session.started_at = None
+    session.finished_at = None
+    session.current_index = -1
+    session.current_file = ""
+    session.live_log = []
+    return True
+
 def native_pick(item_type, filetype=None):
     """Native Windows file/folder picker using Win32 API (thread-safe).
     Returns (path, error). path is None when cancelled or on error.
@@ -995,6 +1009,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"ok": ok, "message": msg})
             elif path == "/api/stop":
                 self._send_json({"ok": stop_batch()})
+            elif path == "/api/reset":
+                ok = reset_session()
+                self._send_json({"ok": ok, "message": "Session cleared." if ok else "Cannot reset while running."})
             else:
                 self._send_json({"error": "not found"}, 404)
         except Exception as ex:

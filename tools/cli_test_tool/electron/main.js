@@ -37,21 +37,33 @@ async function main() {
   const serverDir = getServerDir();
   const appPy = path.join(serverDir, "app.py");
 
-  if (!(await checkServerReady())) {
-    const pythonCmd = process.platform === "win32" ? "python" : "python3";
-    pythonProcess = spawn(pythonCmd, [appPy, String(PORT)], {
-      cwd: serverDir,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+  // Kill stale server from a previous session so we start clean
+  try {
+    require("child_process").execSync(
+      `powershell -NoProfile -Command "Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*app.py*' } | Stop-Process -Force"`,
+      { windowsHide: true, timeout: 3000 }
+    );
+    await new Promise((r) => setTimeout(r, 500));
+  } catch (_) {}
 
-    pythonProcess.stdout.on("data", (d) => console.log("[server]", d.toString().trim()));
-    pythonProcess.stderr.on("data", (d) => console.error("[server:err]", d.toString().trim()));
-    pythonProcess.on("exit", (code) => { pythonProcess = null; });
+  const pythonCmd = process.platform === "win32" ? "python" : "python3";
+  pythonProcess = spawn(pythonCmd, [appPy, String(PORT)], {
+    cwd: serverDir,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
 
-    const ready = await waitForServer();
-    if (!ready) { app.quit(); return; }
-  }
+  pythonProcess.stdout.on("data", (d) => console.log("[server]", d.toString().trim()));
+  pythonProcess.stderr.on("data", (d) => console.error("[server:err]", d.toString().trim()));
+  pythonProcess.on("exit", (code) => { pythonProcess = null; });
+
+  const ready = await waitForServer();
+  if (!ready) { app.quit(); return; }
+
+  // Reset session for a clean start
+  try {
+    await fetch(`http://${HOST}:${PORT}/api/reset`, { method: "POST" });
+  } catch (_) {}
 
   const win = new BrowserWindow({
     width: 1280, height: 860,

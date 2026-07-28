@@ -271,6 +271,7 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
     <button class="btn btn-primary" id="startBtn" onclick="startSlicing()">开始切片</button>
     <button class="btn btn-danger hidden" id="stopBtn" onclick="stopSlicing()">停止</button>
     <button class="btn btn-secondary hidden" id="exportBtn" onclick="exportReport()">导出报告</button>
+    <button class="btn btn-secondary hidden" id="clearBtn" onclick="clearSession()">清空</button>
     <span id="sessionState" class="scan-info"></span>
   </div>
 
@@ -404,6 +405,7 @@ async function startSlicing() {
   document.getElementById('resultsSection').classList.add('hidden');
   document.getElementById('emptyState').classList.add('hidden');
   document.getElementById('exportBtn').classList.add('hidden');
+  document.getElementById('clearBtn').classList.add('hidden');
   document.getElementById('liveLog').textContent = '等待输出...';
   lastRenderedKey = '';
   lastQualityKey = '';
@@ -454,6 +456,7 @@ async function pollSession() {
       document.getElementById('startBtn').textContent = '开始新任务';
       document.getElementById('stopBtn').classList.add('hidden');
       document.getElementById('exportBtn').classList.remove('hidden');
+      document.getElementById('clearBtn').classList.remove('hidden');
       document.getElementById('sessionState').textContent =
         '完成: ' + s.success + '/' + s.total + ' 成功 (' + s.success_rate + '%)';
      renderResults();
@@ -586,6 +589,23 @@ function renderResultCards() {
 
 function exportReport() { window.open('/api/report/export', '_blank'); }
 
+async function clearSession() {
+  const data = await api('/api/reset', 'POST');
+  if (!data.ok) { showError(data.message || '无法清空'); return; }
+  allResults = [];
+  lastRenderedKey = '';
+  lastQualityKey = '';
+  document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('progressSection').classList.add('hidden');
+  document.getElementById('emptyState').classList.remove('hidden');
+  document.getElementById('exportBtn').classList.add('hidden');
+  document.getElementById('clearBtn').classList.add('hidden');
+  document.getElementById('startBtn').classList.remove('hidden');
+  document.getElementById('startBtn').textContent = '开始切片';
+  document.getElementById('sessionState').textContent = '';
+  document.getElementById('liveLog').textContent = '等待输出...';
+  renderQualityTable();
+}
 function switchTab(tab) {
   document.getElementById('tabSlice').classList.toggle('active', tab === 'slice');
   document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
@@ -683,9 +703,9 @@ function closeQualityReport() {
     document.getElementById('emptyState').classList.add('hidden');
     allResults = sess.results || [];
     startPolling();
-  } else if (sess.results && sess.results.length > 0) {
-    allResults = sess.results;
-    renderResults();
+  } else {
+    // Clear any stale session data so next run starts clean
+    await api('/api/reset', 'POST');
   }
 })();
 </script>

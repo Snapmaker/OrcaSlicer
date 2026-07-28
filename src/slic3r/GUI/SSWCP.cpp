@@ -5547,10 +5547,11 @@ void SSWCP_UserLogin_Instance::push_timelapse_state(const std::string& sn,
         std::string script = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
 
         wxWebView* webview = sub->webview;
-        wxGetApp().CallAfter([webview, script]() {
+        wxGetApp().CallAfter([webview, script, json_str]() {
             if (webview && webview->GetRefData()) {
                 WebView::RunScript(webview, script);
             }
+            SSWCP::send_message_to_flutter(json_str);
         });
     }
 }

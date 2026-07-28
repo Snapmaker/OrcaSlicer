@@ -8045,12 +8045,12 @@ msgstr "Mondstuk"
 msgid "Nozzle temperature when printing"
 msgstr "Mondstuk temperatuur tijdens printen"
 
-msgid "Cool Steel Plate"
+msgid "Cool Plate (SuperTack)"
 msgstr ""
 
 msgid ""
-"Bed temperature when the Cool Steel Plate is installed. A value of 0 "
-"means the filament does not support printing on the Cool Steel Plate."
+"Bed temperature when the Cool Plate SuperTack is installed. A value of 0 "
+"means the filament does not support printing on the Cool Plate SuperTack."
 msgstr ""
 
 msgid "Cool Plate"
@@ -9929,7 +9929,7 @@ msgstr "Andere lagen"
 
 msgid ""
 "Bed temperature for layers except the initial one. A value of 0 means the "
-"filament does not support printing on the Cool Steel Plate."
+"filament does not support printing on the Cool Plate SuperTack."
 msgstr ""
 
 msgid ""
@@ -9974,7 +9974,7 @@ msgstr "Printbed temperatuur voor de eerste laag"
 
 msgid ""
 "Bed temperature of the initial layer. A value of 0 means the filament does "
-"not support printing on the Cool Steel Plate."
+"not support printing on the Cool Plate SuperTack."
 msgstr ""
 
 msgid ""

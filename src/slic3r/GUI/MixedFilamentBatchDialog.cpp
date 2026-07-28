@@ -103,14 +103,11 @@ static constexpr int MATCH_PREVIEW_DIP = 227;
 // RoundedPreviewPanel — a fixed-size square panel that draws a rounded-corner
 // thumbnail with an overlay badge ("Original Model" / "After Match").
 //
-// This is the codebase's proven pattern for "rounded image preview" (mirrors
-// ImageGrid.cpp's createShadowBorder + renderContent1): a single wxBG_STYLE_PAINT
-// handler draws (1) rounded bg, (2) thumbnail, (3) a cached ARGB corner mask that
-// paints the four corners opaque so the square bitmap reads as rounded, (4) the
-// badge. Avoids StaticBox + child windows — on MSW StaticBox composites its
-// rounded background in a memory DC and erases both the rounded corners (when an
-// opaque child wxStaticBitmap covers them) and absolutely-positioned child
-// panels (StepMeshDialog.cpp:92-115 documents the same dead-end).
+// Rounded corners are achieved by clipping the panel to a rounded rectangle
+// via SetWindowRgn (CreateRoundRectRgn on MSW).  The panel is physically
+// shaped by the OS — corners are transparent regardless of what is painted.
+// wxBG_STYLE_PAINT + wxAutoBufferedPaintDC then draws (1) rounded bg,
+// (2) thumbnail centered, (3) badge.
 // ---------------------------------------------------------------------------
 
 class RoundedPreviewPanel : public wxPanel
@@ -122,36 +119,19 @@ public:
         , m_radius_dip(radius_dip)
         , m_badge_label(badge_label)
     {
-        // wxBG_STYLE_PAINT + wxAutoBufferedPaintDC: the whole panel is painted in one
-        // handler (background + image + mask + badge), flicker-free. Same idiom as
-        // MixedColorMatchPanel::StripedPreviewPanel.
         SetBackgroundStyle(wxBG_STYLE_PAINT);
-        // Fixed square size via SetMinSize + FromDIP (the codebase's robust pattern for
-        // fixed-size preview areas, e.g. MixedFilamentDialog's m_strip_panel).
         SetMinSize(wxSize(FromDIP(side_dip), FromDIP(side_dip)));
         Bind(wxEVT_PAINT, &RoundedPreviewPanel::on_paint, this);
-        // The corner mask depends on the panel size + DPI, so rebuild it when those change.
-        // GetClientSize() is 0 during construction; the first wxEVT_SIZE rebuilds it.
-        Bind(wxEVT_DPI_CHANGED, [this](wxDPIChangedEvent& e) {
-            SetMinSize(wxSize(FromDIP(m_side_dip), FromDIP(m_side_dip)));
-            rebuild_corner_mask();
-            // Re-rasterize placeholder at the new DPI (ScalableBitmap convention, same as
-            // PrintingTaskPanel::msw_rescale rescaling monitor_placeholder).
-            if (m_placeholder_loaded) m_placeholder.msw_rescale();
-            Refresh();
-            e.Skip();
-        });
-        Bind(wxEVT_SIZE, [this](wxSizeEvent& e) {
-            rebuild_corner_mask();
-            Refresh();
-            e.Skip();
-        });
+        Bind(wxEVT_SIZE,  [this](wxSizeEvent& e) { apply_rounded_shape(); e.Skip(); });
     }
 
-    // Store the source thumbnail (kept as-is). The square bitmap is drawn centered in
-    // on_paint, then overlaid with the corner mask (see rebuild_corner_mask) which paints
-    // bg-colored corners over the bitmap's square corners. No alpha baking — the mask uses
-    // a color key for transparency (MSW-safe).
+    ~RoundedPreviewPanel() override
+    {
+#ifdef _WIN32
+        if (m_hRgn) { ::DeleteObject(m_hRgn); m_hRgn = nullptr; }
+#endif
+    }
+
     void set_bitmap(const wxBitmap& bmp)
     {
         m_src_bmp = bmp;
@@ -163,81 +143,56 @@ private:
     int      m_side_dip;
     int      m_radius_dip;
     wxString m_badge_label;
-    wxBitmap m_src_bmp;     // unscaled source thumbnail (for re-baking on size/DPI change)
-    wxBitmap m_bmp;         // square thumbnail drawn centered in on_paint
-    wxBitmap m_corner_mask; // ARGB mask: transparent inside rounded path, opaque bg corners
-    // mixed_filament_preview_placeholder.svg; shown until a real thumbnail is set.
-    // Loaded via ScalableBitmap — the codebase's standard SVG-load convention, same as
-    // StatusPanel's monitor_placeholder / Auxiliary's placeholder_excel/pdf/txt. msw_rescale()
-    // re-rasterizes on DPI change so Retina gets @2x automatically (see DPI_CHANGED handler).
-    // px_cnt is the *rasterization* target; on_paint still draws the bitmap scaled to ~60% of
-    // the panel's shorter side so the mountains/sun read centered with margins like a real
-    // render.
+    wxBitmap m_src_bmp;
+    wxBitmap m_bmp;
     ScalableBitmap m_placeholder;
     bool           m_placeholder_loaded = false;
+#ifdef _WIN32
+    HRGN     m_hRgn = nullptr;
+#endif
 
-    // Build the corner mask: a panel-sized opaque wxBitmap whose four corners (outside the
-    // rounded path) are filled with the panel bg color, and whose rounded-rect interior is a
-    // "magic" key color declared transparent via wxImage's color mask. Drawn over the square
-    // thumbnail in on_paint (DrawBitmap useMask=true), the key-color interior drops out and
-    // only the bg-colored corners remain — hiding the bitmap's square corners so the preview
-    // reads as rounded.
-    //
-    // Why color mask (not alpha): MSW's wxBitmap(wxImage) corrupts alpha=0 pixels (their RGB
-    // becomes black), and wxCOMPOSITION_DESTINATION_OUT is unavailable in this wx build. The
-    // color-mask path (wxImage::SetMaskColour → wxBitmap) is wxWidgets' oldest, most portable
-    // transparency mechanism and needs no alpha channel. The key color #FF00FF never appears
-    // in the bg-colored corners.
-    void rebuild_corner_mask()
+    void apply_rounded_shape()
     {
         const wxSize sz = GetClientSize();
         if (sz.x <= 0 || sz.y <= 0) return;
-        const int radius = FromDIP(m_radius_dip);
-        const wxColour bg = StateColor::darkModeColorFor(wxColour(231, 231, 231));
-        const wxColour key(255, 0, 255); // mask key — transparent where it appears
-
-        wxImage img(sz);
-        // Fill entire panel with bg (becomes the corner fill).
-        img.SetRGB(wxRect({0, 0}, sz), bg.Red(), bg.Green(), bg.Blue());
-        // Overpaint the rounded-rect interior with the key color (will be masked transparent).
-        wxBitmap tmp(img);
+        const int r = FromDIP(m_radius_dip);
+#ifdef _WIN32
+        if (m_hRgn) { ::DeleteObject(m_hRgn); m_hRgn = nullptr; }
+        m_hRgn = ::CreateRoundRectRgn(0, 0, sz.x + 1, sz.y + 1, r * 2, r * 2);
+        ::SetWindowRgn(GetHWND(), m_hRgn, TRUE);
+#else
+        // macOS / Linux: wxRegion round-rect fallback
+        wxRegion rgn(0, 0, sz.x, sz.y);
+        wxBitmap tmp(sz);
         {
-            wxMemoryDC memdc;
-            memdc.SelectObject(tmp);
-            memdc.SetBrush(wxBrush(key));
-            memdc.SetPen(*wxTRANSPARENT_PEN);
-            memdc.DrawRoundedRectangle(wxRect(sz), radius);
-            memdc.SelectObject(wxNullBitmap);
+            wxMemoryDC dc;
+            dc.SelectObject(tmp);
+            dc.SetBackground(*wxWHITE_BRUSH);
+            dc.Clear();
+            dc.SetBrush(*wxBLACK_BRUSH);
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, r);
+            dc.SelectObject(wxNullBitmap);
         }
-        img = tmp.ConvertToImage();
-        img.SetMaskColour(key.Red(), key.Green(), key.Blue());
-        img.SetMask(true);
-        m_corner_mask = wxBitmap(std::move(img));
+        wxRegion round(tmp, *wxWHITE);
+        rgn.Intersect(round);
+        SetShape(rgn);
+#endif
     }
 
     void on_paint(wxPaintEvent&)
     {
         wxAutoBufferedPaintDC dc(this);
         const wxSize sz = GetClientSize();
-        const int radius = FromDIP(m_radius_dip);
+        const int    r  = FromDIP(m_radius_dip);
 
-        // 1) Rounded background (#E7E7E7, theme-aware). Shows through the corner mask's
-        //    transparent center and any letterbox bars around the centered thumbnail.
+        // 1) Rounded background (#E7E7E7, theme-aware)
         dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(231, 231, 231))));
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawRoundedRectangle(wxRect(sz), radius);
+        dc.DrawRoundedRectangle(wxRect(sz), r);
 
-        // 2) Square thumbnail, centered, scaled to fit (preserve aspect ratio). The corners
-        //    will be covered by the mask in step 3 so the result reads as rounded.
-        //    Falls back to the mixed-filament placeholder SVG when no real thumbnail has
-        //    been set yet (e.g. Before-Match state on the After-Match panel, or while plate
-        //    thumbnails are still being generated). The placeholder goes through the same
-        //    corner mask so it reads as rounded like a real render. Loaded via ScalableBitmap
-        //    on first paint — the codebase's standard SVG-load convention (see m_placeholder).
+        // 2) Thumbnail centered
         if (!m_bmp.IsOk() && !m_placeholder_loaded) {
-            // px_cnt is the SVG's native height in DIP (110x60). ScalableBitmap applies
-            // FromDIP internally, so the bitmap is rasterized at 110x60 physical pixels on
-            // 100% DPI and @2x on Retina — drawn 1:1 centered, exactly as the SVG is authored.
             m_placeholder = ScalableBitmap(this, "mixed_filament_preview_placeholder", 60);
             m_placeholder_loaded = true;
         }
@@ -246,26 +201,11 @@ private:
         if (draw_bmp.IsOk()) {
             const int bw = draw_bmp.GetWidth();
             const int bh = draw_bmp.GetHeight();
-            if (bw > 0 && bh > 0) {
-                // Both paths draw 1:1 pixels (DrawBitmap does not scale): the real thumbnail is
-                // pre-scaled to the panel in thumbnail_to_bitmap; the placeholder is rasterized
-                // at its natural size by ScalableBitmap. Just center it.
+            if (bw > 0 && bh > 0)
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
-            }
         }
 
-        // 3) Corner mask overlay — bg-colored corners hide the square bitmap's corners; the
-        //    key-color interior is masked transparent so the thumbnail shows through.
-        //    useMask=true applies the color mask (set in rebuild_corner_mask).
-        if (m_corner_mask.IsOk())
-            dc.DrawBitmap(m_corner_mask, 0, 0, true);
-
-        // 4) Badge: square-cornered label, top-left, with white text. Drawn here (not a
-        // child window) so StaticBox-style compositing can't erase it.
-        // Style: bg (147,147,147) — the opaque equivalent of rgba(0,0,0,0.40) over the
-        // #E7E7E7 panel bg (no alpha blending needed; a plain wxDC DrawRectangle handles
-        // it). Dark mode maps #939393 → #000000 (pure black for max contrast). Square
-        // corners (no border-radius); the preview image keeps radius 8.
+        // 3) Badge
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);
@@ -490,8 +430,9 @@ void MixedFilamentBatchDialog::refresh_previews()
     }
 
     // After-Match panel: only push a real bitmap once a match has completed. Before that
-    // (initial open, re-match in progress) we leave m_bmp unset so RoundedPreviewPanel
-    // renders its placeholder — avoids showing the original render on the After-Match side.
+    // (initial open, re-match in progress) we leave the rounded bitmap unset so
+    // RoundedPreviewPanel renders its placeholder — avoids showing the original render
+    // on the After-Match side.
     if (m_preview_match_panel && m_match_completed &&
         idx < static_cast<int>(match.size()) && match[idx].IsOk())
         static_cast<RoundedPreviewPanel*>(m_preview_match_panel)->set_bitmap(match[idx]);

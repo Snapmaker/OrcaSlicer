@@ -371,7 +371,22 @@ def _detect_stage(line, current_pct):
 # ---------------------------------------------------------------------------
 # Gcode-diff quality scoring
 # ---------------------------------------------------------------------------
-GCODE_DIFF_PATH = str(Path(r"C:\workDir\programing\Gcode-diff\gcode-diff-rs\target\release\gcode-diff.exe"))
+_GCODE_DIFF_DEV = r"C:\workDir\programing\Gcode-diff\gcode-diff-rs\target\release\gcode-diff.exe"
+
+def _find_gcode_diff():
+    """Resolve gcode-diff.exe: bundled next to tool, then tools/ dir, then dev path."""
+    candidates = [
+        HERE / "gcode-diff.exe",
+        HERE.parent / "gcode-diff.exe",
+        PROJECT_ROOT / "tools" / "gcode-diff.exe",
+        Path(_GCODE_DIFF_DEV),
+    ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return str(candidates[-1])
+
+GCODE_DIFF_PATH = _find_gcode_diff()
 
 def _run_gcode_score(gcode_path, out_dir):
     """Run gcode-diff --score on a gcode file. Returns dict with score + html path, or None."""

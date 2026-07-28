@@ -5,6 +5,7 @@ ROOT = pathlib.Path("C:/workDir/programing/SnapMakerOracaRequirements/OrcaSlicer
 BUILD_DIR = ROOT / "build" / "src" / "Release"
 RESOURCES = ROOT / "resources"
 TOOL_DIR = ROOT / "tools" / "cli_test_tool"
+GCODE_DIFF = pathlib.Path("C:/workDir/programing/Gcode-diff/gcode-diff-rs/target/release/gcode-diff.exe")
 ELECTRON_EXE = TOOL_DIR / "electron" / "dist" / "Snapmaker-CLI-Test-Tool-1.0.0-x64.exe"
 OUTPUT = pathlib.Path("C:/workDir/programing/SnapMakerOracaRequirements/OrcaSlicer/tools/cli_test_tool/packaging/Snapmaker-CLI-Package-1.0.0.zip")
 
@@ -47,6 +48,23 @@ with zipfile.ZipFile(str(OUTPUT), "w", zipfile.ZIP_DEFLATED) as zf:
             rel = f.relative_to(TOOL_DIR)
             zf.write(str(f), str(rel))
     print("  Added test tool (app.py + templates/)")
+
+    # 3a. start.bat launcher
+    start_bat = TOOL_DIR / "start.bat"
+    if start_bat.exists():
+        zf.write(str(start_bat), "tools/cli_test_tool/start.bat")
+        print("  Added start.bat")
+    readme = TOOL_DIR / "README.md"
+    if readme.exists():
+        zf.write(str(readme), "tools/cli_test_tool/README.md")
+        print("  Added README.md")
+
+    # 3b. gcode-diff quality scoring engine
+    if GCODE_DIFF.exists():
+        zf.write(str(GCODE_DIFF), "tools/gcode-diff.exe")
+        print("  Added gcode-diff.exe")
+    else:
+        print("  WARNING: gcode-diff.exe not found")
 
     # 4. Electron portable exe (if exists)
     if ELECTRON_EXE.exists():

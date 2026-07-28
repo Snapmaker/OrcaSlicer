@@ -9335,6 +9335,11 @@ msgstr ""
 
 msgid ""
 "Bed temperature for layers except the initial one. A value of 0 means the "
+"filament does not support printing on this plate."
+msgstr ""
+
+msgid ""
+"Bed temperature for layers except the initial one. A value of 0 means the "
 "filament does not support printing on the Cool Plate."
 msgstr ""
 
@@ -9367,6 +9372,11 @@ msgstr ""
 msgid ""
 "Bed temperature of the initial layer. A value of 0 means the filament does "
 "not support printing on the Cool Steel Plate."
+msgstr ""
+
+msgid ""
+"Bed temperature of the initial layer. A value of 0 means the filament does "
+"not support printing on this plate."
 msgstr ""
 
 msgid ""

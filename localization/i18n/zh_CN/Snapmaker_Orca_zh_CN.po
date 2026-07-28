@@ -9022,6 +9022,9 @@ msgstr "其它层"
 msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Steel Plate."
 msgstr "除首层外的其他层的热床温度。0值表示该耗材丝不支持在Cool Steel Plate上打印。"
 
+msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on this plate."
+msgstr "除首层外的其他层的热床温度。0值表示该耗材丝不支持在此热床上打印。"
+
 msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate."
 msgstr "非首层热床温度。0值表示这个耗材丝不支持低温打印热床"
 
@@ -9045,6 +9048,9 @@ msgstr "首层床温"
 
 msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Steel Plate."
 msgstr ""
+
+msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on this plate."
+msgstr "首层热床温度。0值表示该耗材丝不支持在此热床上打印。"
 
 msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Plate."
 msgstr "首层热床温度。0值表示这个耗材丝不支持低温打印热床"

@@ -199,14 +199,14 @@ void TimelapseTaskRow::set_state(State s)
             break;
         case State::Downloading:
             if (m_status_text.empty() || m_status_text == _L("Waiting...")) {
-                m_status_text = wxString::Format("%d%% %s", m_percent, _L("Downloading"));
+                m_status_text = wxString::Format(_L("%d%%"), m_percent);
             }
             m_cancel_enabled = true;
             m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
             m_cancel_btn->SetCursor(wxCURSOR_HAND);
             break;
         case State::Completed:
-            m_status_text = _L("Download completed");
+            m_status_text = _L("Completed");
             m_percent = 100;
             disable_cancel();
             break;
@@ -217,6 +217,10 @@ void TimelapseTaskRow::set_state(State s)
             m_status_text = _L("Cancelled");
             disable_cancel();
             break;
+    }
+
+    if (s == State::Failed) {
+        m_status_text = _L("Download Failed");
     }
 
     if (auto* p = dynamic_cast<ProgressBar*>(m_progress_track)) {
@@ -240,7 +244,7 @@ void TimelapseTaskRow::set_progress(int percent)
     if (auto* p = dynamic_cast<ProgressBar*>(m_progress_track)) {
         p->set_percent(percent);
     }
-    m_status_text = wxString::Format("%d%% %s", percent, _L("Downloading"));
+    m_status_text = wxString::Format(_L("%d%%"), percent);
     m_status_label->SetLabel(m_status_text);
     m_status_label->Refresh();
 }
@@ -382,6 +386,7 @@ void TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
     for (size_t i = 0; i < tasks.size(); ++i) {
         auto* row = new TimelapseTaskRow(m_task_panel,
             wxString::FromUTF8(tasks[i].file_name.c_str()));
+        row->set_queue_position(static_cast<int>(i + 1));
         int idx = static_cast<int>(i);
         row->set_dismiss_callback([this, idx]() { dismiss_row(idx); });
         TaskRowInfo info;
@@ -433,9 +438,9 @@ void TimelapseDownloadPopup::mark_task_error(int index, const std::string& error
         return;
     }
     set_row_state(index, 3);
-    if (!error.empty()) {
-        m_rows[index].row->set_status_text(wxString::FromUTF8(error.c_str()));
-    }
+    m_rows[index].row->set_status_text(error.empty()
+        ? _L("Download Failed")
+        : wxString::FromUTF8(error.c_str()));
 }
 
 void TimelapseDownloadPopup::mark_task_cancelled(int index)
@@ -605,7 +610,7 @@ void TimelapseDownloadPopup::position_bottom_right()
     SetPosition(wxPoint(x, y));
 }
 
-void TimelapseDownloadPopup::on_dpi_changed(const wxRect&) { position_bottom_right(); }
+void TimelapseDownloadPopup::on_dpi_changed(const wxRect&) { update_layout_size(); }
 
 void TimelapseDownloadPopup::on_timer(wxTimerEvent&)
 {

@@ -4,7 +4,6 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "DownloadManager.hpp"
-#include "Timelapse/TimelapseDownloadDialog.hpp"
 #include "Timelapse/TimelapseDownloadPopup.hpp"
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
@@ -5159,7 +5158,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             result["available"]  = si.available;
             m_res_data = result;
             m_status   = -1;
-            m_msg      = "Insufficient disk space";
+            m_msg      = "insufficient_disk_space";
             send_to_js();
             finish_job();
             return;
@@ -5727,15 +5726,20 @@ void SSWCP_UserLogin_Instance::sw_GetFilesFromDir()
         return;
     }
 
-    boost::system::error_code ec;
-    if (!boost::filesystem::exists(dir_path, ec) || !boost::filesystem::is_directory(dir_path, ec)) {
-        handle_general_fail(-1, "dir_path does not exist or is not a directory");
-        return;
-    }
-
     json result;
     result["dir_path"] = dir_path;
     json files_arr = json::array();
+
+    boost::system::error_code ec;
+    if (!boost::filesystem::exists(dir_path, ec) || !boost::filesystem::is_directory(dir_path, ec)) {
+        result["files"] = files_arr;
+        m_res_data = result;
+        m_status = 200;
+        m_msg = "success";
+        send_to_js();
+        finish_job();
+        return;
+    }
 
     boost::filesystem::directory_iterator end_iter;
     boost::filesystem::directory_iterator it(dir_path, ec);
@@ -7274,8 +7278,8 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
                                                            UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
-                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE,
-                                                           GET_FILES_FROM_DIR};
+                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, 
+                                                           SUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

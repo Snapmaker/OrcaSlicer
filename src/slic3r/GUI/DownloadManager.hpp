@@ -8,7 +8,6 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
-#include <deque>
 #include "../Utils/Http.hpp"
 #include "SSWCP.hpp"
 #include <boost/filesystem/path.hpp>
@@ -177,14 +176,6 @@ private:
     // Track last progress update for throttling
     std::unordered_map<size_t, int> m_last_percent;
     std::unordered_map<size_t, std::chrono::steady_clock::time_point> m_last_update;
-
-    // Download queue
-    std::deque<size_t> m_pending_queue;
-    int m_max_concurrent_downloads = 1;
-    std::atomic<int> m_active_downloads{0};
-
-    // Process next pending task in queue
-    void process_queue();
     
     // ============================================================================
     // Internal Implementation

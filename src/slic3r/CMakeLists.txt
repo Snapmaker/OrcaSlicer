@@ -543,8 +543,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp
     GUI/GenericDownloadDialog.hpp
-    GUI/Timelapse/TimelapseDownloadDialog.cpp
-    GUI/Timelapse/TimelapseDownloadDialog.hpp
     GUI/Timelapse/TimelapseDownloadPopup.cpp
     GUI/Timelapse/TimelapseDownloadPopup.hpp
     GUI/WebPresetDialog.hpp

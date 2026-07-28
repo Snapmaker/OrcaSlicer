@@ -34,6 +34,7 @@ using tcp = asio::ip::tcp;
 #define DOWNLOAD_FILE_AND_OPEN "sw_DownLoadFileAndOpen"
 #define CANCEL_DOWNLOAD "sw_CancelDownload"
 #define SUBSCRIBE_DOWNLOAD_STATE "sw_SubscribeDownloadState"
+#define UNSUBSCRIBE_DOWNLOAD_STATE "sw_UnsubscribeDownloadState"
 #define DOWN_LOAD_FILE "sw_DownLoadFile"
 #define FILE_VIEW "sw_FileView"
 #define GET_FILES_FROM_DIR "sw_GetFilesFromDir"
@@ -565,6 +566,7 @@ private:
 
     void sw_FileView();
     void sw_SubscribeDownloadState();
+    void sw_UnsubscribeDownloadState();
     void sw_GetFilesFromDir();
     void sw_NotifyUploadTimelaspe();
 
@@ -580,11 +582,15 @@ public:
     };
     static std::unordered_map<std::string, std::shared_ptr<SubscribeInfo>> m_subscribe_map;  // event_id -> info
 
-    // Push a "download_complete" event to every subscriber whose sn matches.
-    // One-shot: matched entries are removed from the map.
-    static void notify_subscribers(const std::string& sn,
-                                   const std::vector<json>& files,
-                                   bool cancelled);
+    // Push a single file's download state to every subscriber whose sn matches.
+    // Does NOT remove subscribers (can be called multiple times).
+    // state: "success" | "failed" | "cancelled"
+    static void push_timelapse_state(const std::string& sn,
+                                     const std::string& file_name,
+                                     const std::string& file_url,
+                                     const std::string& date_index,
+                                     const std::string& save_path,
+                                     const std::string& state);
 };
 
 // Instance class for homepage business

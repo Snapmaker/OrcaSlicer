@@ -4598,6 +4598,8 @@ void SSWCP_UserLogin_Instance::process()
         sw_DownLoadFile();
     } else if (m_cmd == SUBSCRIBE_DOWNLOAD_STATE) {
         sw_SubscribeDownloadState();
+    } else if (m_cmd == UNSUBSCRIBE_DOWNLOAD_STATE) {
+        sw_UnsubscribeDownloadState();
     } else if (m_cmd == CANCEL_DOWNLOAD) {
         sw_CancelDownload();
     } else if (m_cmd == FILE_VIEW) {
@@ -4718,7 +4720,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
             }
             try {
                 wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
-                self->m_status = 200;
+                self->m_status = 0;
                 self->m_msg    = "success";
                 self->send_to_js();
                 self->finish_job();
@@ -4758,7 +4760,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
         response["file_name"] = fileName;
         response["file_url"] = fileUrl;
         m_res_data = response;
-        m_status = 200;
+        m_status = 0;
         m_msg = "success";
         send_to_js();
               
@@ -4793,6 +4795,7 @@ struct TimelapseQueueContext {
     size_t                                               current_task_id  = 0;
     bool                                                 cancelled        = false;
     std::set<int>                                        skipped_indices;
+    std::set<int>                                        pushed_indices;  // idx already pushed to subscribers
     std::function<void()>                                start_next;
     std::weak_ptr<SSWCP_UserLogin_Instance>              wcp_self;
     std::vector<json>                                    completed_files;
@@ -4806,8 +4809,22 @@ struct TimelapseQueueContext {
 // WAN: sw_DownLoadFile registers each file by date_index; sw_NotifyUploadTimelaspe
 // (flutter forwards device upload url) looks it up to kickoff the download.
 struct WanPendingEntry { std::shared_ptr<TimelapseQueueContext> ctx; int idx; };
+
 static std::unordered_map<std::string, WanPendingEntry> g_wan_pending;
 static std::mutex g_wan_pending_mtx;
+static std::mutex g_push_state_mtx;
+void push_file_state(std::shared_ptr<TimelapseQueueContext> ctx, int idx,
+                     const std::string& state, const std::string& save_path = "")
+{
+    std::lock_guard<std::mutex> lk(g_push_state_mtx);
+    if (!ctx || ctx->pushed_indices.count(idx)) {
+        return;
+    }
+    ctx->pushed_indices.insert(idx);
+    const auto& f = ctx->files[idx];
+    SSWCP_UserLogin_Instance::push_timelapse_state(
+        f.sn, f.file_name, f.url, f.date_index, save_path, state);
+}
 
 // Tear down the WAN upload-notification subscription. Safe to call when not in
 // WAN mode or when no subscription is active.
@@ -5023,9 +5040,6 @@ void SSWCP_UserLogin_Instance::sw_NotifyUploadTimelaspe()
         const std::string type       = item.value("type", "video");
         const std::string state      = item.value("state", "");
         const std::string url        = item.value("url", "");
-        BOOST_LOG_TRIVIAL(info)
-            << "NotifyUploadTimelaspe: date_index=" << date_index
-            << " type=" << type << " state=" << state << " url=" << url;
 
         // On success with a url, drive the WAN download that sw_DownLoadFile
         // registered (looked up by date_index). Run on main thread — ctx and
@@ -5223,6 +5237,10 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 if (!ctx->popup || ctx->popup->IsBeingDeleted()) { return; }
                 bool is_active = (i == ctx->current_index);
                 ctx->skipped_indices.insert(i);
+                // Notify subscribers this file was cancelled. Idempotent: if it
+                // already completed (success) the push is skipped; if the active
+                // download's on_error later fires, that push is also skipped.
+                push_file_state(ctx, i, "cancelled");
                 if (is_active && ctx->current_task_id != 0) {
                     size_t task_id = ctx->current_task_id;
                     // Defer cancel_download to avoid re-entrancy with HTTP callbacks
@@ -5278,6 +5296,14 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             };
 
             callbacks.on_complete = [ctx, idx](size_t, const std::string& file_path) {
+                if (ctx->skipped_indices.count(idx)) {
+                    ctx->current_task_id = 0;
+                    if (ctx->is_wan) {
+                        std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
+                        g_wan_pending.erase(ctx->files[idx].date_index);
+                    }
+                    return;
+                }
                 const auto& cur = ctx->files[idx];
                 json entry;
                 entry["sn"]         = cur.sn;
@@ -5291,6 +5317,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 {
                     ctx->popup->mark_task_complete(idx, file_path);
                 }
+
+                push_file_state(ctx, idx, "success", file_path);
 
                 ctx->completed_count++;
                 ctx->current_task_id = 0;
@@ -5311,15 +5339,6 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                                     ctx->save_path, latest_file);
                             }
                             if (auto wcp = ctx->wcp_self.lock()) {
-                                json result;
-                                result["completed_count"] = ctx->completed_count;
-                                result["failed_count"]    = ctx->failed_count;
-                                result["cancelled"]       = false;
-                                result["files"]           = ctx->completed_files;
-                                wcp->m_res_data = result;
-                                wcp->m_status    = 200;
-                                wcp->m_msg       = "download_complete";
-                                wcp->send_to_js();
                                 wcp->finish_job();
                             }
                         });
@@ -5337,6 +5356,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     {
                         ctx->popup->mark_task_cancelled(idx);
                     }
+                    push_file_state(ctx, idx, "cancelled");
                     ctx->failed_count++;
                     ctx->current_task_id = 0;
                     if (ctx->is_wan) {
@@ -5361,6 +5381,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     ctx->popup->mark_task_error(idx, error);
                 }
 
+                push_file_state(ctx, idx, "failed");
                 ctx->failed_count++;
                 ctx->current_task_id = 0;
                 if (ctx->is_wan) {
@@ -5377,15 +5398,6 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                                     ctx->save_path, "");
                             }
                             if (auto wcp = ctx->wcp_self.lock()) {
-                                json result;
-                                result["completed_count"] = ctx->completed_count;
-                                result["failed_count"]    = ctx->failed_count;
-                                result["cancelled"]       = false;
-                                result["files"]           = ctx->completed_files;
-                                wcp->m_res_data = result;
-                                wcp->m_status    = 200;
-                                wcp->m_msg       = "download_complete";
-                                wcp->send_to_js();
                                 wcp->finish_job();
                             }
                         });
@@ -5432,28 +5444,9 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                             ctx->completed_count, ctx->failed_count,
                             ctx->save_path, latest_file);
                     }
-                    // Group completed files by sn and push events to subscribers
-                    std::unordered_map<std::string, std::vector<json>> by_sn;
-                    for (const auto& f : ctx->completed_files) {
-                        std::string s = f.value("sn", "");
-                        if (!s.empty()) {
-                            by_sn[s].push_back(f);
-                        }
-                    }
-                    for (const auto& kv : by_sn) {
-                        SSWCP_UserLogin_Instance::notify_subscribers(
-                            kv.first, kv.second, ctx->cancelled);
-                    }
+                    // Per-file states were already pushed as each file
+                    // completed — no batch response (it would time out).
                     if (auto wcp = ctx->wcp_self.lock()) {
-                        json result;
-                        result["completed_count"] = ctx->completed_count;
-                        result["failed_count"]    = ctx->failed_count;
-                        result["cancelled"]       = ctx->cancelled;
-                        result["files"]           = ctx->completed_files;
-                        wcp->m_res_data = result;
-                        wcp->m_status    = 200;
-                        wcp->m_msg       = ctx->cancelled ? "download_cancelled" : "download_complete";
-                        wcp->send_to_js();
                         wcp->finish_job();
                     }
                 });
@@ -5498,28 +5491,10 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
                     ctx->popup->Close();
                 }
-                // Group completed files by sn and push cancelled events to subscribers
-                std::unordered_map<std::string, std::vector<json>> by_sn;
-                for (const auto& f : ctx->completed_files) {
-                    std::string s = f.value("sn", "");
-                    if (!s.empty()) {
-                        by_sn[s].push_back(f);
-                    }
-                }
-                for (const auto& kv : by_sn) {
-                    SSWCP_UserLogin_Instance::notify_subscribers(
-                        kv.first, kv.second, true);
+                for (int i = 0; i < ctx->total_count; ++i) {
+                    push_file_state(ctx, i, "cancelled");
                 }
                 if (auto wcp = ctx->wcp_self.lock()) {
-                    json result;
-                    result["completed_count"] = ctx->completed_count;
-                    result["failed_count"]    = ctx->failed_count;
-                    result["cancelled"]       = ctx->cancelled;
-                    result["files"]           = ctx->completed_files;
-                    wcp->m_res_data = result;
-                    wcp->m_status    = 200;
-                    wcp->m_msg       = "download_cancelled";
-                    wcp->send_to_js();
                     wcp->finish_job();
                 }
             });
@@ -5530,48 +5505,52 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
     });
 }
 
-// Notify every subscriber whose sn matches the downloaded files.
-// One-shot: matched entries are removed from m_subscribe_map.
-void SSWCP_UserLogin_Instance::notify_subscribers(const std::string& sn,
-                                                  const std::vector<json>& files,
-                                                  bool cancelled)
+// Push a single file's download state to every subscriber whose sn matches.
+void SSWCP_UserLogin_Instance::push_timelapse_state(const std::string& sn,
+                                                     const std::string& file_name,
+                                                     const std::string& file_url,
+                                                     const std::string& date_index,
+                                                     const std::string& save_path,
+                                                     const std::string& state)
 {
     if (sn.empty() || m_subscribe_map.empty()) {
         return;
     }
 
-    for (auto it = m_subscribe_map.begin(); it != m_subscribe_map.end(); ) {
-        auto& sub = it->second;
+    json item;
+    item["file_name"]  = file_name;
+    item["file_url"]   = file_url;
+    item["sn"]         = sn;
+    item["date_index"] = date_index;
+    item["save_path"]  = save_path;
+
+    for (const auto& kv : m_subscribe_map) {
+        const auto& sub = kv.second;
         if (!sub || sub->sn != sn) {
-            ++it;
             continue;
         }
 
-        wxWebView* webview = sub->webview;
-        std::string event_id = sub->event_id;
-
         json response, payload, data;
-        response["header"]["seqId"] = "";
-        payload["code"]    = 200;
-        payload["message"] = cancelled ? "download_cancelled" : "download_complete";
-        payload["event_id"] = event_id;
-        data["completed_count"] = files.size();
-        data["failed_count"]    = 0;
-        data["cancelled"]       = cancelled;
-        data["files"]           = files;
-        payload["data"]  = data;
+        response["header"]["event_id"] = sub->event_id;
+        payload["code"]     = 200;
+        payload["message"]  = "download_complete";
+        payload["state"]    = state;
+
+        json timelapse_arr = json::array();
+        timelapse_arr.push_back(item);
+        data["timelapse"]   = timelapse_arr;
+        payload["data"]     = data;
         response["payload"] = payload;
 
         std::string json_str = response.dump(4, ' ', true);
         std::string script = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
 
+        wxWebView* webview = sub->webview;
         wxGetApp().CallAfter([webview, script]() {
             if (webview && webview->GetRefData()) {
                 WebView::RunScript(webview, script);
             }
         });
-
-        it = m_subscribe_map.erase(it);
     }
 }
 
@@ -5617,32 +5596,42 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
 }
 
 
-void SSWCP_UserLogin_Instance::sw_CancelDownload() {
-    // Branch 1: Cancel by event_id — removes a passive subscription.
-    // Downloads themselves are cancelled via task_id (Branch 2).
+// Tear down a download-state subscription registered by sw_SubscribeDownloadState.
+// Mirrors the sw_UnsubscribePageStateChange pattern: if event_id is given, remove
+// that single subscription; otherwise remove every subscription from this webview
+// (i.e. global unsubscribe for the page).
+void SSWCP_UserLogin_Instance::sw_UnsubscribeDownloadState()
+{
     std::string event_id = m_param_data.count("event_id") && m_param_data["event_id"].is_string()
         ? m_param_data["event_id"].get<std::string>() : "";
 
-    if (!event_id.empty()) {
+    if (event_id.empty()) {
+        for (auto it = m_subscribe_map.begin(); it != m_subscribe_map.end();) {
+            auto& sub = it->second;
+            if (sub && sub->webview == m_webview) {
+                it = m_subscribe_map.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    } else {
         auto it = m_subscribe_map.find(event_id);
         if (it != m_subscribe_map.end()) {
             m_subscribe_map.erase(it);
-            json response;
-            response["event_id"] = event_id;
-            response["canceled"] = true;
-            m_res_data = response;
-            m_status = 200;
-            m_msg = "Subscription canceled";
-        } else {
-            m_status = -1;
-            m_msg = "event_id not found";
         }
-        send_to_js();
-        finish_job();
-        return;
     }
 
-    // Branch 2: Cancel by task_id (original behavior)
+    m_res_data = json::object();
+    m_status   = 200;
+    m_msg      = "success";
+    send_to_js();
+    finish_job();
+}
+
+
+void SSWCP_UserLogin_Instance::sw_CancelDownload() {
+    // Cancel a single download task by task_id.
+    // (Subscription teardown is handled by sw_UnsubscribeDownloadState.)
     size_t task_id = m_param_data.count("task_id") ? m_param_data["task_id"].get<size_t>() : 0;
         
         if (task_id == 0) {
@@ -7278,8 +7267,7 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
                                                            UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
-                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, 
-                                                           SUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
+                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

@@ -351,18 +351,17 @@ std::string transform_gcode(const std::string& gcode, Vec2f pos, const Vec2f& tr
     return gcode_out;
 }
 
-float get_wipe_avoid_pos_x(const Vec2f& wt_min, const Vec2f& wt_max, float offset)
+// Park X just outside the tower's X extent (right-pref, offset clearance, clamped to bed). gcode coords.
+float get_wipe_avoid_pos_x(const Vec2f& wt_min, const Vec2f& wt_max, float offset,
+                           float bed_min_x, float bed_max_x)
 {
-    float left = 100, right = 250;
-    float default_value = 110.f;
-    float a = 0.f, b = 0.f;
-    a = wt_max.x() + offset;
-    b = wt_min.x() - offset;
-    if (a > left && a < right) 
-        return a;
-    if (b > left && b < right) 
-        return b;
-    return default_value;
+    const float tower_max_x = wt_max.x();
+    const float tower_min_x = wt_min.x();
+    const float right = std::min(tower_max_x + offset, bed_max_x);
+    const float left  = std::max(tower_min_x - offset, bed_min_x);
+    if (right > tower_max_x)   return right;
+    if (left  < tower_min_x)   return left;
+    return 0.5f * (bed_min_x + bed_max_x);
 }
 
 // Orca:
@@ -784,7 +783,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         start_pos             = transform_wt_pt(start_pos);
         end_pos               = transform_wt_pt(end_pos);
         tool_change_start_pos = transform_wt_pt(tool_change_start_pos);
-        tool_change_start_pos = transform_wt_pt(tool_change_start_pos);
     }
 
     Vec2f wipe_tower_offset   = tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos;
@@ -894,26 +892,16 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         tower_bbx       = BoundingBox(pp.points);
         has_detour_bbox = true;
 
-        // Departure detour: route from the wipe tower to a safe position
-        // outside the tower bbox so the firmware tool-change movement
-        // does not cross through the tower.
-        // Safe-X: bbox edge + 3 mm, aligned with Bambu Studio
-        // get_wipe_avoid_pos_x (GCode.cpp:420, offset=3.0).
-        float safe_x;
-        {
-            double left  = unscale(tower_bbx.min).x() - 3.0;
-            double right = unscale(tower_bbx.max).x() + 3.0;
-            if (right > 100.0 && right < 250.0)
-                safe_x = right;
-            else if (left > 100.0 && left < 250.0)
-                safe_x = left;
-            else
-                safe_x = 110.0;
-        }
+        // safe_x = tower-edge park (right-pref, 3mm, bed-clamped); gcode coord — don't re-add plate_origin to X below.
+        BoundingBoxf bed_bbx(gcodegen.config().printable_area.values);
+        const Vec2f wt_min = transform_wt_pt(m_wipe_tower_bbx.min.cast<float>()) + plate_origin_2d;
+        const Vec2f wt_max = transform_wt_pt(m_wipe_tower_bbx.max.cast<float>()) + plate_origin_2d;
+        const float safe_x = get_wipe_avoid_pos_x(wt_min, wt_max, 3.0f,
+                                                   float(bed_bbx.min.x()), float(bed_bbx.max.x()));
         Point tower_obj = wipe_tower_point_to_object_point(
             gcodegen, start_pos + plate_origin_2d);
         Point safe_obj = wipe_tower_point_to_object_point(
-            gcodegen, Vec2f(safe_x, tool_change_start_pos.y()) + plate_origin_2d);
+            gcodegen, Vec2f(safe_x, tool_change_start_pos.y() + plate_origin_2d.y()));
 
         Polyline dep_detour = detour_around_wipe_tower(
             tower_obj, safe_obj, tower_bbx);

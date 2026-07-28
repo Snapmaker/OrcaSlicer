@@ -200,14 +200,20 @@ std::string NormalizeFilamentHexColor(const std::string& color, const std::strin
 std::vector<std::string> SplitFilamentMultiColors(const std::string& value)
 {
     std::vector<std::string> colors;
-    std::stringstream stream(value);
-    std::string token;
-
-    while (std::getline(stream, token, '|'))
+    size_t tokenBegin = 0;
+    while (tokenBegin < value.size())
     {
+        const size_t delimiterPosition = value.find('|', tokenBegin);
+        const size_t tokenLength = delimiterPosition == std::string::npos ?
+                                   value.size() - tokenBegin : delimiterPosition - tokenBegin;
+        const std::string token = value.substr(tokenBegin, tokenLength);
         const std::string normalized = NormalizeFilamentHexColor(token);
         if (!normalized.empty())
             colors.emplace_back(normalized);
+
+        if (delimiterPosition == std::string::npos)
+            break;
+        tokenBegin = delimiterPosition + 1;
     }
 
     return colors;

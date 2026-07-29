@@ -1749,6 +1749,23 @@ std::vector<std::string> recommend_best_filament_combo(
     if (model_colors.empty() || all_preset_colors.size() < 4)
         return {};
 
+    // Loose bounds only: this function scores colour COMBOS, it does not impose the
+    // final per-component cap (that is the Pass-2 batch_match_model_colors job, which
+    // independently validates min∈[0,50]/max∈[50,100]). So the legal range here is the
+    // full [0,100] for both — narrower limits (e.g. mirroring batch_match_model_colors's
+    // [0,50]/[50,100]) would wrongly reject valid callers like the worker's min=15.
+    // min>max is a genuine logic error: the search window is empty and every combo
+    // silently scores as "no valid recipe". Reject with a log instead of returning {}.
+    if (min_component_percent < 0 || min_component_percent > 100 ||
+        max_component_percent < 0 || max_component_percent > 100 ||
+        min_component_percent > max_component_percent) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "recommend_best_filament_combo: invalid percent range min="
+            << min_component_percent << " max=" << max_component_percent
+            << " (need 0..100 and min<=max); returning empty";
+        return {};
+    }
+
     // Step 1: Top-15 pre-filter by single-color ΔE
     const size_t top_n = std::min<size_t>(15, all_preset_colors.size());
     std::vector<std::pair<double, size_t>> ranked;
@@ -1785,11 +1802,19 @@ std::vector<std::string> recommend_best_filament_combo(
                         all_preset_colors[ranked[i3].second]
                     };
 
-                    // Score: average batch match ΔE over model colors (single-threaded, small loop)
+                    // Score: average batch match ΔE over model colors (single-threaded, small loop).
+                    // check_compatible=false: this function is called only from the RECOMMENDED-mode
+                    // worker, whose palette is a single Full Spectrum PLA preset (same material by
+                    // construction) — no cross-type pair can exist, so the filter is a no-op. It
+                    // also keeps the worker off preset_bundle: build_compatibility_matrix reads
+                    // preset_bundle->filament_presets unsynchronized, which would race the UI thread
+                    // (data-race UB) from this worker call site. The slice gate still enforces real
+                    // incompatibility at slice time.
                     double sum_de = 0.0;
                     int matched = 0;
                     for (const auto& mc : model_colors) {
-                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent, max_component_percent);
+                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent, max_component_percent,
+                                                                     /*check_compatible=*/ false);
                         if (recipe.valid) {
                             sum_de += recipe.delta_e;
                             ++matched;

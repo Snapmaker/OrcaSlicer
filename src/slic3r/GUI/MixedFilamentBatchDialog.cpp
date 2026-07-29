@@ -1270,12 +1270,13 @@ void MixedFilamentBatchDialog::build_mode_row()
         btn->SetBorderWidth(0);
         // Figma: tab label = 12px (Body_12).
         btn->SetFont(Label::Body_12);
+        // #FEFEFE (not #FFFFFF): dark map keeps it white; #FFFFFF maps to the dark bg.
         btn->SetBackgroundColor(StateColor(
-            std::pair(wxColour("#D9D9D9"), static_cast<int>(StateColor::Disabled)),
+            std::pair(wxColour("#DFDFDF"), static_cast<int>(StateColor::Disabled)),
             std::pair(wxColour("#009688"), static_cast<int>(StateColor::Normal))));
         btn->SetTextColor(StateColor(
-            std::pair(wxColour("#8F8F8F"), static_cast<int>(StateColor::Disabled)),
-            std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
+            std::pair(wxColour("#6B6A6A"), static_cast<int>(StateColor::Disabled)),
+            std::pair(wxColour("#FEFEFE"), static_cast<int>(StateColor::Normal))));
         slot = btn;
         return btn;
     };
@@ -1453,8 +1454,8 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     m_recommended_card = card;
     auto* s = new wxBoxSizer(wxVERTICAL);
 
-    // Title — generic "Filament Setup" (no longer "(CMYW)"); colors are now driven by the
-    // Full Spectrum preset, so the title doesn't hardcode a color model.
+    // Title — "Filament Setup"; colors are now driven by the Full Spectrum
+    // preset.
     {
         auto* lbl = new wxStaticText(card, wxID_ANY, _L("Filament Setup"));
         lbl->SetFont(Label::Body_14);
@@ -1756,9 +1757,10 @@ void MixedFilamentBatchDialog::build_footer()
     m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
     m_btn_stop_match->SetCornerRadius(FromDIP(4));
     m_btn_stop_match->SetBorderWidth(FromDIP(1));
-    m_btn_stop_match->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#E5E5E5")));
-    m_btn_stop_match->SetBackgroundColorNormal(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
-    m_btn_stop_match->SetTextColorNormal(StateColor::darkModeColorFor(wxColour("#242424")));
+    m_btn_stop_match->SetFont(Label::Body_14);
+    m_btn_stop_match->SetBorderColorNormal(wxColour("#DBDBDB"));
+    m_btn_stop_match->SetBackgroundColorNormal(wxColour("#F8F7F7"));
+    m_btn_stop_match->SetTextColorNormal(wxColour("#242424"));
     m_btn_stop_match->Hide();
     m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
     progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
@@ -1770,20 +1772,21 @@ void MixedFilamentBatchDialog::build_footer()
     m_btn_cancel_match->SetMinSize(wxSize(-1, FromDIP(36)));
     m_btn_cancel_match->SetCornerRadius(FromDIP(4));
     m_btn_cancel_match->SetBorderWidth(FromDIP(1));
-    m_btn_cancel_match->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#D9D9D9")));
-    m_btn_cancel_match->SetBackgroundColorNormal(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-    m_btn_cancel_match->SetTextColorNormal(StateColor::darkModeColorFor(wxColour("#242424")));
+    m_btn_cancel_match->SetBorderColorNormal(wxColour("#D1D5DC"));
+    m_btn_cancel_match->SetBackgroundColorNormal(wxColour("#FFFFFF"));
+    m_btn_cancel_match->SetTextColorNormal(wxColour("#242424"));
 
     m_btn_confirm = new Button(btn_panel, _L("Confirm"));
     m_btn_confirm->SetMinSize(wxSize(-1, FromDIP(36)));
     m_btn_confirm->SetCornerRadius(FromDIP(4));
     m_btn_confirm->SetBorderWidth(0);
+    // #FEFEFE (not #FFFFFF): stays white in dark mode; #FFFFFF maps to the dark bg.
     m_btn_confirm->SetBackgroundColor(StateColor(
         std::pair(wxColour("#DFDFDF"), static_cast<int>(StateColor::Disabled)),
-        std::pair(wxColour("#009688"), static_cast<int>(StateColor::Normal))));
+        std::pair(wxColour("#019687"), static_cast<int>(StateColor::Normal))));
     m_btn_confirm->SetTextColor(StateColor(
         std::pair(wxColour("#6B6A6A"), static_cast<int>(StateColor::Disabled)),
-        std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
+        std::pair(wxColour("#FEFEFE"), static_cast<int>(StateColor::Normal))));
 
     btn_sizer->Add(m_btn_cancel_match, 1, wxRIGHT, FromDIP(8));
     btn_sizer->Add(m_btn_confirm, 1);
@@ -1821,18 +1824,10 @@ void MixedFilamentBatchDialog::build_footer()
         }
     });
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        // Slot-overflow confirm gate: if applying this match would exceed the 64-filament
-        // limit, some mixes cannot be created and their model regions lose colour. Ask the
-        // user to proceed (or stay in the dialog) at the point of commitment — earlier than
-        // the silent drop add_batch_custom_filaments performs at apply time.
-        if (m_match_completed && m_result.success && predict_slot_overflow()) {
-            RichMessageDialog dlg(this,
-                _L("Applying this match will exceed the filament limit and some colors will be lost. Continue?"),
-                _L("Color Mixing Match"), wxYES_NO | wxICON_QUESTION);
-            dlg.SetYesNoLabels(_L("Continue"), _L("Cancel"));
-            dlg.CentreOnScreen();
-            if (dlg.ShowModal() != wxID_YES) return; // stay in the dialog, do not close
-        }
+        // The slot-overflow advisory is already shown as a red banner at match completion
+        // (see handle_batch_match_result), so there is nothing to re-check here — Confirm
+        // proceeds directly. Overflow, if any, is dropped silently at apply time by
+        // add_batch_custom_filaments.
         EndModal(wxID_OK);
     });
 
@@ -1908,6 +1903,19 @@ void MixedFilamentBatchDialog::set_error(const wxString& msg)
     Layout();
 }
 
+void MixedFilamentBatchDialog::display_error_advisory(const wxString& msg)
+{
+    // Like set_error (red #FDE8E8 banner) but does NOT disable Confirm — used when the
+    // situation is a serious advisory the user may still choose to proceed past (e.g. slot
+    // overflow will silently drop some mixes at apply time). Mirrors display_warning's
+    // mechanics (hide the other banner, set label, single Layout).
+    if (!m_error_panel || !m_error_text || !m_warning_panel) return;
+    m_warning_panel->Hide();
+    m_error_panel->Show();
+    m_error_text->SetLabel(msg);
+    Layout();
+}
+
 void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
 {
     m_btn_start_match->Enable(!matching && !m_match_completed);
@@ -1974,7 +1982,7 @@ void MixedFilamentBatchDialog::update_method_combo_tooltip()
     // adding a permanent subtitle row to the UI.
     m_method_combo->SetToolTip(m_matching_method == MANUAL
         ? _L("Manually select filaments from the current list for color mixing.")
-        : wxString::Format(_L("Automatically uses official Full Spectrum filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."),
+        : wxString::Format(_L("Automatically uses official CMYG filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."),
              kMinComponentPercent, kMaxComponentPercent));
 }
 
@@ -2067,15 +2075,14 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     }
     if (over_ids.empty()) return;
 
-    // Build "{x, y, z}" for the %s placeholder.
-    wxString id_list = "{";
+    // Build "x, y, z" for the %s placeholder.
+    wxString id_list;
     bool first = true;
     for (unsigned int id : over_ids) {
         if (!first) id_list += ", ";
         id_list << id;
         first = false;
     }
-    id_list << "}";
 
     display_warning(wxString::Format(
         _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"
@@ -2229,7 +2236,7 @@ void MixedFilamentBatchDialog::start_batch_match()
         }
         if (std::abs(nozzle - 0.4) > 1e-6) {
             RichMessageDialog dlg(this,
-                _L("The current nozzle diameter does not support automatic matching. Use manual matching mode or change the nozzle diameter."),
+                _L("Automatic color mixing match is not supported with the current nozzle diameter. Use Manual mode or switch to a 0.4 mm nozzle."),
                 _L("Color Mixing Match"), wxOK);
             dlg.SetOKLabel(_L("Got it"));
             dlg.CentreOnScreen();
@@ -2423,15 +2430,20 @@ void MixedFilamentBatchDialog::launch_background_match()
         // return-code model (result.success / error_code) and its whole call chain
         // has no throw sites, so no exception handling is needed here.
         //
-        // Per-component weight bounds AND the compatibility filter are mode-dependent:
-        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)] +
-        //     check_compatible=true (product spec: same-type only).
-        //   - MANUAL: [15, 100] + check_compatible=false — keep the 15% floor so a mix
-        //     always has minimum participation, allow >70% (surfaces as advisory via
-        //     check_manual_recipe_ratio after the match), AND allow cross-type recipes
-        //     (PLA+PETG etc.). The slice gate (Plater::has_incompatible_mixed_filament_in_use)
-        //     still blocks incompatible mixes at slice time — this only lets them be
-        //     created and stored.
+        // Per-component weight bounds are mode-dependent:
+        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)]
+        //   - MANUAL: [15, 100] — keep the 15% floor so a mix always has minimum
+        //     participation, allow >70% (surfaces as advisory via
+        //     check_manual_recipe_ratio after the match).
+        //
+        // check_compatible is false for BOTH modes. RECOMMENDED needs none: its
+        // physical_colors come from a single Full Spectrum preset (one PLA spool,
+        // multiple colours), so every pair is same-material by construction — a
+        // compatibility filter would be a no-op. Passing false also keeps this
+        // worker thread off preset_bundle: build_compatibility_matrix would read
+        // preset_bundle->filament_presets unsynchronized from here, racing the UI
+        // thread (data-race UB). The slice gate (Plater::has_incompatible_mixed_
+        // filament_in_use) still blocks genuinely incompatible mixes at slice time.
         const int match_min = (matching_method == MANUAL) ? 15 : kMinComponentPercent;
         const int match_max = (matching_method == MANUAL) ? 100 : kMaxComponentPercent;
         if (!unmatched_colors.empty()) {
@@ -2444,7 +2456,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                         });
                     }
                 },
-                /*check_compatible=*/ matching_method != MANUAL);
+                /*check_compatible=*/ false);
             if (sub_result.success) {
                 // Offset virtual IDs: start after all existing filaments
                 assign_batch_virtual_filament_ids(sub_result, physical_colors.size(), existing_mixed_count);
@@ -2606,11 +2618,20 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     if (result.is_recommended_mode)
         update_recommended_card();
     refresh_previews();
-    // Post-match ratio advisory (the "single component > 70%" quality hint, gap doc case 13).
-    // Runs here so the warning banner is in place when Confirm lights up. The slot-overflow
-    // (data-loss) case is NOT warned here anymore — it is surfaced as a confirm-time dialog
-    // by predict_slot_overflow() in the Confirm handler, where the user can choose to proceed.
-    check_manual_recipe_ratio();
+    // Post-match advisories — both run here so the relevant banner is in place when
+    // Confirm lights up:
+    //   • Slot overflow (data-loss): surfaced as a non-blocking red error banner. Runs at
+    //     match completion (not at confirm time) so the user sees the risk before deciding
+    //     to Confirm. Confirm stays enabled; overflow is dropped silently at apply time.
+    //   • Ratio hint ("single component > 70%", gap doc case 13): warning banner.
+    // The two banners are mutually exclusive (display_error_advisory / display_warning hide
+    // each other); overflow is the more serious condition, so check it first.
+    if (predict_slot_overflow()) {
+        display_error_advisory(
+            _L("Color mapping list limit reached (max 64 colors). Excess colors will be removed."));
+    } else {
+        check_manual_recipe_ratio();
+    }
     // Defer the button-state flip until AFTER refresh_previews() has rendered and
     // pushed the After-Match bitmap, so Confirm/Re-match light up in lockstep with
     // the preview — not a frame earlier. m_match_completed stays true throughout so

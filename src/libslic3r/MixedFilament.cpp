@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <boost/log/trivial.hpp>
 #include <cctype>
 #include <cmath>
@@ -1675,6 +1676,14 @@ uint64_t MixedFilamentManager::allocate_stable_id()
 {
     const uint64_t stable_id = std::max<uint64_t>(1, m_next_stable_id);
     m_next_stable_id = stable_id + 1;
+    // Contract: a non-zero stable_id is the invariant every live mixed row relies on —
+    // the batch remap's stable_id path (PresetBundle.cpp) only fires for stable_id != 0,
+    // and the pair-fallback path (a known silent-painting-loss bug when stable_id == 0)
+    // is unreachable precisely because this allocator never returns 0. assert it here so
+    // a future change that weakens the max(1,...) floor surfaces immediately (debug builds)
+    // rather than turning the [!shouldfail] sentinel test into a live wrong-delete. This
+    // guards all 3 callers (add_custom_filament, add_batch_custom_filaments, auto_generate).
+    assert(stable_id != 0);
     return stable_id;
 }
 

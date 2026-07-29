@@ -2321,7 +2321,7 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->SetToolTip(_L("Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\n"
                                         "Note:\n"
-                                        "1.Color mixing match is based on the official recommended CMYW filaments. The matched colors may differ from the original model.\n"
+                                        "1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n"
                                         "2.The order of the Color Mapping list may differ from that of the Color Mixing list."));
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
@@ -2365,11 +2365,11 @@ Sidebar::Sidebar(Plater *parent)
         // loop and its return value reflects skip/close state; there is no abort
         // button here so it's consumed but not acted on. wxPD_APP_MODAL blocks
         // interaction with the main window while the apply runs.
-        ProgressDialog progress(_L("Applying color match"),
-                                _L("Updating filament list and color mapping list..."),
+        ProgressDialog progress(_L("Loading"),
+                                _L("Updating the Filaments and Color Mixing list..."),
                                 100, find_toplevel_parent(this),
                                 wxPD_APP_MODAL | wxPD_AUTO_HIDE);
-        const wxString kMsg = _L("Updating filament list and color mapping list...");
+        const wxString kMsg = _L("Updating the Filaments and Color Mixing list...");
         auto set_progress = [&](int pct) {
             // Return value intentionally not acted on (no wxPD_CAN_ABORT button),
             // but consumed to satisfy §70 ("check the return value of Update()").

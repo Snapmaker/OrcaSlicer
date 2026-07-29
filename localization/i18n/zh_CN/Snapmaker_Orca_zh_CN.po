@@ -15233,6 +15233,9 @@ msgstr "删除最后一个混色"
 msgid "Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be subdivided for better color mixing results."
 msgstr "启用混色区域独立层高。启用后，使用混色区域的层高将被细分，以实现更好混色效果。"
 
+msgid "Configuration Conflict"
+msgstr "配置冲突"
+
 msgid "The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."
 msgstr "当前层高为 0.1 mm 或更小。启用混色细分层高后，细分后的层高可能超出打印机支持范围，从而影响打印质量。"
 

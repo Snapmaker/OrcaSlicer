@@ -453,16 +453,17 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                 std::max<LayerIndex>(0, data.begin() - z_distance_bottom_layers),
                 std::min<LayerIndex>(outlines.size(), data.end() + z_distance_top_layers));
             tbb::parallel_for(tbb::blocked_range<LayerIndex>(collision_areas_offsetted.begin(), collision_areas_offsetted.end()),
-                [&outlines, &machine_border = std::as_const(m_machine_border), offset_value = radius + xy_distance, &collision_areas_offsetted, &throw_on_cancel]
+                [&outlines, &machine_border = std::as_const(m_machine_border), offset_value = radius + xy_distance, &collision_areas_offsetted, min_resolution = m_min_resolution, &throw_on_cancel]
                 (const tbb::blocked_range<LayerIndex> &range) {
                 for (LayerIndex layer_idx = range.begin(); layer_idx != range.end(); ++ layer_idx) {
                     Polygons collision_areas = machine_border;
                     append(collision_areas, outlines[layer_idx]);
-                    // jtRound is not needed here, as the overshoot can not cause errors in the algorithm, because no assumptions are made about the model.
+                    // Use jtRound to avoid miter spikes at concave corners causing layer-to-layer contour inconsistency
+                    // after downstream polygons_simplify. The final simplify pass (line 527) cleans excess vertices.
                     // if a key does not exist when it is accessed it is added!
                     collision_areas_offsetted[layer_idx] = offset_value == 0 ?
                             union_(collision_areas) :
-                            offset(union_ex(collision_areas), offset_value, ClipperLib::jtMiter, 1.2);
+                            offset(union_ex(collision_areas), offset_value, ClipperLib::jtRound, float(min_resolution));
                     if(throw_on_cancel)
                         throw_on_cancel();
                 }
@@ -515,10 +516,10 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                                     // the conditional -0.5 ensures that plastic can never touch on the diagonal
                                     // downward when the z_distance_top_layers = 1. It is assumed to be better to
                                     // not support an overhang<90 degree than to risk fusing to it.
-                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtMiter, 1.2));
+                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtRound, float(min_resolution)));
                             }
                         collisions = processing_last_mesh && layer_idx < int(anti_overhang.size()) ? 
-                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtMiter, 1.2)) : 
+                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtRound, float(min_resolution))) :
                                 union_(collisions);
                         auto &dst = data[layer_idx];
                         if (processing_last_mesh) {

@@ -268,36 +268,25 @@ static std::string format_filament_slot_list(const std::vector<int>& slots_1base
 static const char* const s_cold_plate_bed_type_key = "Supertack Plate";
 
 /// \brief Compose error text for unsupported filaments on the Cool Steel Plate.
-/// \param[in] bed_index_1_based     CSP's 1-based position in the current bed-type combobox.
 /// \param[in] unsupported_slots_1based  Offending filament slots (1-based).
-/// \return Single-line string listing all offenders via filament_display_label.
+/// \return Single-line string in the form
+///         "Cool Steel Plate is not recommended for printing [filaments]. ..."
 static std::string cold_plate_error_text(
-    int                      bed_index_1_based,
     const std::vector<int>&  unsupported_slots_1based)
 {
-    std::string out = Slic3r::GUI::format(
-        _u8L("Heatbed %1%: The following filaments are not compatible with the Cool Steel Plate: "),
-        bed_index_1_based);
-    out += format_filament_slot_list(unsupported_slots_1based);
-    out += ". ";
-    out += _u8L("Set the corresponding bed temperature to a non-zero value to enable printing.");
-    return out;
+    return Slic3r::GUI::format(
+        _u8L("Cool Steel Plate is not recommended for printing %1% filaments. To continue, set the corresponding bed temperature to a non-zero value."),
+        format_filament_slot_list(unsupported_slots_1based));
 }
 
 /// \brief Compose TPU serious-warning text for the Cool Steel Plate.
-/// \param[in] bed_index_1_based  CSP's 1-based position in the current bed-type combobox.
 /// \param[in] tpu_slots_1based   TPU filament slots (1-based).
 static std::string cold_plate_serious_warning_text(
-    int                      bed_index_1_based,
     const std::vector<int>&  tpu_slots_1based)
 {
-    std::string out = Slic3r::GUI::format(
-        _u8L("Heatbed %1%: The following filaments may be hard to remove from the Cool Steel Plate: "),
-        bed_index_1_based);
-    out += format_filament_slot_list(tpu_slots_1based);
-    out += ". ";
-    out += _u8L("Use a textured PEI plate or heat the bed.");
-    return out;
+    return Slic3r::GUI::format(
+        _u8L("Cool Steel Plate is not recommended for printing %1% filaments. They may be hard to remove. Use a textured PEI plate or heat the bed."),
+        format_filament_slot_list(tpu_slots_1based));
 }
 
 /// \brief Compute CSP's 1-based position in the current bed-type combobox.
@@ -21207,8 +21196,7 @@ bool Plater::sync_cold_plate_notification()
         break;
     case ColdPlateCompatState::SeriousWarning: {
         // TPU is compatible but warrants a non-blocking serious warning.
-        const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
-        const std::string text    = cold_plate_serious_warning_text(bed_idx, compat.tpu_slots_1based);
+        const std::string text = cold_plate_serious_warning_text(compat.tpu_slots_1based);
         get_notification_manager()->push_slicing_serious_warning_notification(text, std::vector<ModelObject const*>());
         p->cold_plate_last_serious_warning_text = text;
         slicing_allowed = true;
@@ -21216,10 +21204,9 @@ bool Plater::sync_cold_plate_notification()
     }
     case ColdPlateCompatState::BlockedError: {
         // Merge all unsupported filaments (already collected in compat) into a single error notification.
-        const int         bed_idx = get_cold_plate_bed_index_1_based(p->sidebar->get_bed_type_combo_enum_values());
         StringObjectException err;
         err.type   = STRING_EXCEPT_COLD_PLATE_INCOMPATIBLE;
-        err.string = cold_plate_error_text(bed_idx, compat.unsupported_slots_1based);
+        err.string = cold_plate_error_text(compat.unsupported_slots_1based);
         get_notification_manager()->push_validate_error_notification(err);
         p->cold_plate_last_error_text = err.string;
         slicing_allowed = false;

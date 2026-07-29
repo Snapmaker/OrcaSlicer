@@ -1003,19 +1003,24 @@ void SSWCP_Instance::send_to_js()
 
     WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        wxGetApp().CallAfter([weak_self, str_res, json_str]() {
-            try {
-                auto self = weak_self.lock();
-                if (self && self->m_webview && self->m_webview->GetRefData()) {
-                    WebView::RunScript(self->m_webview, str_res);
-                }
-                SSWCP::send_message_to_flutter(json_str);
-            } catch (std::exception& e) {
-                WCP_Logger::getInstance().add_log(e.what(), false, "", "WCP", "info");
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    wxGetApp().CallAfter([weak_self, str_res, json_str]()
+    {
+        {
+            auto self = weak_self.lock();
+            if (!self)
+                return;
+
+            // Original communication path: send via WebView postMessage
+            if (self->m_webview && self->m_webview->GetRefData()) {
+                WebView::RunScript(self->m_webview, str_res);
             }
-        });
-    } catch (std::exception& e) {}
+
+            // Flutter debug: copy message to Flutter debug interface via WebSocket
+            // This is independent of the original communication path above
+            SSWCP::send_message_to_flutter(json_str);
+        } 
+    });
 
 }
 
@@ -5631,37 +5636,35 @@ void SSWCP_UserLogin_Instance::sw_UnsubscribeDownloadState()
 void SSWCP_UserLogin_Instance::sw_CancelDownload() {
     // Cancel a single download task by task_id.
     // (Subscription teardown is handled by sw_UnsubscribeDownloadState.)
-    try {
-        size_t task_id = m_param_data.count("task_id") ? m_param_data["task_id"].get<size_t>() : 0;
+    size_t task_id = m_param_data.count("task_id") ? m_param_data["task_id"].get<size_t>() : 0;
 
+    if (task_id == 0) {
+        handle_general_fail(-1, "task_id is required");
+        return;
+    }
 
-        if (task_id == 0) {
-            handle_general_fail(-1, "task_id is required");
-            return;
-        }
+    DownloadManager* download_mgr = wxGetApp().download_manager();
+    if (!download_mgr) {
+        handle_general_fail(-1, "WCP Download Manager not available");
+        return;
+    }
 
-        DownloadManager* download_mgr = wxGetApp().download_manager();
-        if (!download_mgr) {
-            handle_general_fail(-1, "WCP Download Manager not available");
-            return;
-        }
+    bool success = download_mgr->cancel_download(task_id);
 
-        bool success = download_mgr->cancel_download(task_id);
+    if (success) {
+        json response;
+        response["task_id"] = task_id;
+        response["canceled"] = true;
+        m_res_data = response;
+        m_status = 0;
+        m_msg = "Download canceled";
+    } else {
+        handle_general_fail(-1, "Failed to cancel download or task not found");
+        return;
+    }
 
-        if (success) {
-            json response;
-            response["task_id"] = task_id;
-            response["canceled"] = true;
-            m_res_data = response;
-            m_status = 200;
-            m_msg = "Download canceled";
-        } else {
-            handle_general_fail(-1, "Failed to cancel download or task not found");
-            return;
-        }
-
-        send_to_js();
-        finish_job();
+    send_to_js();
+    finish_job();
 }
 
 void SSWCP_UserLogin_Instance::sw_FileView() {
@@ -7176,6 +7179,7 @@ std::unordered_map<std::string, std::shared_ptr<SSWCP_UserLogin_Instance::Subscr
     SSWCP_UserLogin_Instance::m_subscribe_map;
 std::mutex  SSWCP::m_file_size_mutex;
 
+// WebSocket Debug Server static members
 std::unique_ptr<WebSocketDebugServer> SSWCP::m_debug_server = nullptr;
 std::mutex SSWCP::m_debug_server_mutex;
 bool SSWCP::m_debug_mode_enabled = false;
@@ -7765,85 +7769,6 @@ void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
         BOOST_LOG_TRIVIAL(warning) << "Cannot send message: no WebSocket client and no WebView available";
     }
 }
-
-
-// WebSocket Debug Server implementation
-void SSWCP::enable_debug_mode(bool enable, unsigned short port)
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-
-    if (enable && !m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "Enabling WebSocket debug mode on port " << port;
-
-        m_debug_server = std::make_unique<WebSocketDebugServer>(port);
-
-        m_debug_server->set_message_callback([](const std::string& message) {
-            BOOST_LOG_TRIVIAL(debug) << "Received message from Flutter Web via WebSocket";
-
-            wxGetApp().CallAfter([message]() {
-                SSWCP::handle_webmsg_for_debug(message);
-            });
-        });
-
-        if (m_debug_server->start()) {
-            m_debug_mode_enabled = true;
-            BOOST_LOG_TRIVIAL(info) << " WebSocket debug mode enabled successfully";
-            BOOST_LOG_TRIVIAL(info) << " Flutter Web can connect to: ws://localhost:" << port;
-        } else {
-            BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
-            m_debug_server.reset();
-            m_debug_mode_enabled = false;
-        }
-    } else if (!enable && m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "Disabling WebSocket debug mode";
-        m_debug_server->stop();
-        m_debug_server.reset();
-        m_debug_mode_enabled = false;
-    }
-}
-
-void SSWCP::disable_debug_mode()
-{
-    enable_debug_mode(false);
-}
-
-bool SSWCP::is_debug_mode_enabled()
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-    return m_debug_mode_enabled;
-}
-
-void SSWCP::send_message_to_flutter(const std::string& message)
-{
-    std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-
-    if (m_debug_server && m_debug_mode_enabled) {
-        m_debug_server->send_message(message);
-    }
-}
-
-void SSWCP::send_message_auto(const std::string& message, wxWebView* webview)
-{
-    if (webview && webview->GetRefData()) {
-        BOOST_LOG_TRIVIAL(debug) << "Sending message to Flutter via WebView postMessage";
-        std::string js_code = "window.postMessage(JSON.stringify(" + message + "), '*');";
-        WebView::RunScript(webview, js_code);
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(m_debug_server_mutex);
-        if (m_debug_mode_enabled && m_debug_server && m_debug_server->has_client()) {
-            BOOST_LOG_TRIVIAL(debug) << "[DEBUG] Sending message to Flutter via WebSocket";
-            m_debug_server->send_message(message);
-        }
-    }
-
-    if ((!webview || !webview->GetRefData()) &&
-        (!m_debug_mode_enabled || !m_debug_server || !m_debug_server->has_client())) {
-        BOOST_LOG_TRIVIAL(warning) << "Cannot send message: no WebSocket client and no WebView available";
-    }
-}
-
 
 }}; // namespace Slic3r::GUI
 

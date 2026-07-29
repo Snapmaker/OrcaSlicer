@@ -18,6 +18,7 @@
 #include "slic3r/Utils/PrintHost.hpp"
 #include "slic3r/Utils/MQTT.hpp"
 #include "libslic3r/SSWCPProtocol.hpp"
+#include "WebSocketDebugServer.hpp"
 
 
 using namespace nlohmann;
@@ -603,6 +604,9 @@ public:
     // Handle incoming web messages
     static void handle_web_message(std::string message, wxWebView* webview);
 
+    // Handle incoming web messages for Flutter debug (no webview required)
+    static void handle_webmsg_for_debug(std::string message);
+
     // Create new SSWCP instance
     static std::shared_ptr<SSWCP_Instance> create_sswcp_instance(
         std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview);
@@ -643,9 +647,16 @@ public:
 
     static std::mutex m_file_size_mutex;
     static long long m_active_file_size;
-    
-    
+
+
     static std::unordered_map<std::string, int> m_tab_map; // for switching tab
+
+    // WebSocket Debug Server methods
+    static void enable_debug_mode(bool enable = true, unsigned short port = 8766);
+    static void disable_debug_mode();
+    static bool is_debug_mode_enabled();
+    static void send_message_to_flutter(const std::string& message);
+    static void send_message_auto(const std::string& message, wxWebView* webview = nullptr);
 
 private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands
@@ -662,6 +673,11 @@ private:
 
     static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
     static std::string m_display_gcode_filename; // name for display
+
+    // WebSocket Debug Server
+    static std::unique_ptr<WebSocketDebugServer> m_debug_server;
+    static std::mutex m_debug_server_mutex;
+    static bool m_debug_mode_enabled;
 }; 
 
 class MachineIPType

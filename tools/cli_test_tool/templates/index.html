@@ -155,11 +155,15 @@ h1{font-size:22px;font-weight:700;margin-bottom:2px}
 .q-empty{text-align:center;padding:40px 20px;color:var(--text-secondary);font-size:14px}
 .q-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);
   z-index:9999;display:flex;flex-direction:column}
-.q-modal-header{background:var(--surface);padding:10px 16px;display:flex;
-  justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
+.q-modal-header{background:var(--surface);padding:10px 16px;display:grid;
+  grid-template-columns:1fr auto 1fr;align-items:center;border-bottom:1px solid var(--border)}
+.q-modal-back{cursor:pointer;font-size:20px;color:var(--primary);background:none;border:none;
+  font-family:inherit;padding:4px 8px;border-radius:4px}
+.q-modal-back:hover{background:#f0f0f3}
 .q-modal-header span{font-weight:600;font-size:14px}
 .q-modal-close{cursor:pointer;font-size:24px;color:var(--text-secondary);background:none;border:none;
   font-family:inherit;line-height:1}
+.q-modal-close-wrap{text-align:right}
 .q-modal-body{flex:1;background:#fff;overflow:hidden}
 .q-modal-body iframe{width:100%;height:100%;border:none}
 </style>
@@ -668,7 +672,9 @@ function openQualityReport(file3mf, plate) {
   const overlay = document.createElement('div');
   overlay.className = 'q-modal-overlay';
   overlay.innerHTML = '<div class="q-modal-header"><span>质量报告 — ' + plate + '</span>' +
-    '<button class="q-modal-close" onclick="closeQualityReport()">&times;</button></div>' +
+    '<button class="q-modal-back" onclick="closeQualityReport()" title="返回">&#8592; 返回</button>' +
+    '<span>质量报告 — ' + plate + '</span>' +
+    '<div class="q-modal-close-wrap"><button class="q-modal-close" onclick="closeQualityReport()" title="关闭">&times;</button></div></div>' +
     '<div class="q-modal-body"><iframe src="' + url + '"></iframe></div>';
   overlay.addEventListener('click', function(e) { if (e.target === overlay) closeQualityReport(); });
   document.body.appendChild(overlay);

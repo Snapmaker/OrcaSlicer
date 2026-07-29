@@ -1,6 +1,7 @@
 #include "MixedFilamentBatchDialog.hpp"
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
+#include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "PresetBundle.hpp"
@@ -103,14 +104,14 @@ static constexpr int MATCH_PREVIEW_DIP = 227;
 // RoundedPreviewPanel — a fixed-size square panel that draws a rounded-corner
 // thumbnail with an overlay badge ("Original Model" / "After Match").
 //
-// This is the codebase's proven pattern for "rounded image preview" (mirrors
-// ImageGrid.cpp's createShadowBorder + renderContent1): a single wxBG_STYLE_PAINT
-// handler draws (1) rounded bg, (2) thumbnail, (3) a cached ARGB corner mask that
-// paints the four corners opaque so the square bitmap reads as rounded, (4) the
-// badge. Avoids StaticBox + child windows — on MSW StaticBox composites its
-// rounded background in a memory DC and erases both the rounded corners (when an
-// opaque child wxStaticBitmap covers them) and absolutely-positioned child
-// panels (StepMeshDialog.cpp:92-115 documents the same dead-end).
+// Rounded corners: the panel is first filled entirely with white (parent card bg),
+// then a rounded-rect wxRegion clip is applied via SetDeviceClippingRegion before
+// drawing the rounded background (#E7E7E7) + thumbnail + badge.  The four corners
+// keep their white fill and sit transparently over the parent card.
+//
+// Uses plain wxDC (not wxGraphicsContext) to stay in the same coordinate space as
+// wxAutoBufferedPaintDC — no antialias transform, no off-by-one clipping artifacts.
+// Child-window safe on all platforms: no SetWindowRgn, no SetShape.
 // ---------------------------------------------------------------------------
 
 class RoundedPreviewPanel : public wxPanel
@@ -122,36 +123,20 @@ public:
         , m_radius_dip(radius_dip)
         , m_badge_label(badge_label)
     {
-        // wxBG_STYLE_PAINT + wxAutoBufferedPaintDC: the whole panel is painted in one
-        // handler (background + image + mask + badge), flicker-free. Same idiom as
-        // MixedColorMatchPanel::StripedPreviewPanel.
         SetBackgroundStyle(wxBG_STYLE_PAINT);
-        // Fixed square size via SetMinSize + FromDIP (the codebase's robust pattern for
-        // fixed-size preview areas, e.g. MixedFilamentDialog's m_strip_panel).
         SetMinSize(wxSize(FromDIP(side_dip), FromDIP(side_dip)));
         Bind(wxEVT_PAINT, &RoundedPreviewPanel::on_paint, this);
-        // The corner mask depends on the panel size + DPI, so rebuild it when those change.
-        // GetClientSize() is 0 during construction; the first wxEVT_SIZE rebuilds it.
+        // DPI change: the placeholder SVG (ScalableBitmap) caches its raster at the
+        // DPI in effect when first created.  Reset the loaded flag so on_paint re-
+        // rasterizes it at the new DPI.  The rounded-corner radius is already DIP-
+        // aware (FromDIP in on_paint), so no explicit size rebuild needed.
         Bind(wxEVT_DPI_CHANGED, [this](wxDPIChangedEvent& e) {
-            SetMinSize(wxSize(FromDIP(m_side_dip), FromDIP(m_side_dip)));
-            rebuild_corner_mask();
-            // Re-rasterize placeholder at the new DPI (ScalableBitmap convention, same as
-            // PrintingTaskPanel::msw_rescale rescaling monitor_placeholder).
-            if (m_placeholder_loaded) m_placeholder.msw_rescale();
-            Refresh();
-            e.Skip();
-        });
-        Bind(wxEVT_SIZE, [this](wxSizeEvent& e) {
-            rebuild_corner_mask();
+            m_placeholder_loaded = false;
             Refresh();
             e.Skip();
         });
     }
 
-    // Store the source thumbnail (kept as-is). The square bitmap is drawn centered in
-    // on_paint, then overlaid with the corner mask (see rebuild_corner_mask) which paints
-    // bg-colored corners over the bitmap's square corners. No alpha baking — the mask uses
-    // a color key for transparency (MSW-safe).
     void set_bitmap(const wxBitmap& bmp)
     {
         m_src_bmp = bmp;
@@ -163,81 +148,51 @@ private:
     int      m_side_dip;
     int      m_radius_dip;
     wxString m_badge_label;
-    wxBitmap m_src_bmp;     // unscaled source thumbnail (for re-baking on size/DPI change)
-    wxBitmap m_bmp;         // square thumbnail drawn centered in on_paint
-    wxBitmap m_corner_mask; // ARGB mask: transparent inside rounded path, opaque bg corners
-    // mixed_filament_preview_placeholder.svg; shown until a real thumbnail is set.
-    // Loaded via ScalableBitmap — the codebase's standard SVG-load convention, same as
-    // StatusPanel's monitor_placeholder / Auxiliary's placeholder_excel/pdf/txt. msw_rescale()
-    // re-rasterizes on DPI change so Retina gets @2x automatically (see DPI_CHANGED handler).
-    // px_cnt is the *rasterization* target; on_paint still draws the bitmap scaled to ~60% of
-    // the panel's shorter side so the mountains/sun read centered with margins like a real
-    // render.
+    wxBitmap m_src_bmp;
+    wxBitmap m_bmp;
     ScalableBitmap m_placeholder;
     bool           m_placeholder_loaded = false;
-
-    // Build the corner mask: a panel-sized opaque wxBitmap whose four corners (outside the
-    // rounded path) are filled with the panel bg color, and whose rounded-rect interior is a
-    // "magic" key color declared transparent via wxImage's color mask. Drawn over the square
-    // thumbnail in on_paint (DrawBitmap useMask=true), the key-color interior drops out and
-    // only the bg-colored corners remain — hiding the bitmap's square corners so the preview
-    // reads as rounded.
-    //
-    // Why color mask (not alpha): MSW's wxBitmap(wxImage) corrupts alpha=0 pixels (their RGB
-    // becomes black), and wxCOMPOSITION_DESTINATION_OUT is unavailable in this wx build. The
-    // color-mask path (wxImage::SetMaskColour → wxBitmap) is wxWidgets' oldest, most portable
-    // transparency mechanism and needs no alpha channel. The key color #FF00FF never appears
-    // in the bg-colored corners.
-    void rebuild_corner_mask()
-    {
-        const wxSize sz = GetClientSize();
-        if (sz.x <= 0 || sz.y <= 0) return;
-        const int radius = FromDIP(m_radius_dip);
-        const wxColour bg = StateColor::darkModeColorFor(wxColour(231, 231, 231));
-        const wxColour key(255, 0, 255); // mask key — transparent where it appears
-
-        wxImage img(sz);
-        // Fill entire panel with bg (becomes the corner fill).
-        img.SetRGB(wxRect({0, 0}, sz), bg.Red(), bg.Green(), bg.Blue());
-        // Overpaint the rounded-rect interior with the key color (will be masked transparent).
-        wxBitmap tmp(img);
-        {
-            wxMemoryDC memdc;
-            memdc.SelectObject(tmp);
-            memdc.SetBrush(wxBrush(key));
-            memdc.SetPen(*wxTRANSPARENT_PEN);
-            memdc.DrawRoundedRectangle(wxRect(sz), radius);
-            memdc.SelectObject(wxNullBitmap);
-        }
-        img = tmp.ConvertToImage();
-        img.SetMaskColour(key.Red(), key.Green(), key.Blue());
-        img.SetMask(true);
-        m_corner_mask = wxBitmap(std::move(img));
-    }
 
     void on_paint(wxPaintEvent&)
     {
         wxAutoBufferedPaintDC dc(this);
         const wxSize sz = GetClientSize();
-        const int radius = FromDIP(m_radius_dip);
+        if (sz.x <= 0 || sz.y <= 0) return;
+        const int r = FromDIP(m_radius_dip);
 
-        // 1) Rounded background (#E7E7E7, theme-aware). Shows through the corner mask's
-        //    transparent center and any letterbox bars around the centered thumbnail.
-        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(231, 231, 231))));
+        const wxColour card_white = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
+        const wxColour panel_bg   = StateColor::darkModeColorFor(wxColour(231, 231, 231));
+
+        // Step 1 — fill ENTIRE panel with white (parent card background).
+        // The four corners keep this color and read as transparent over the card.
+        dc.SetBrush(wxBrush(card_white));
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawRoundedRectangle(wxRect(sz), radius);
+        dc.DrawRectangle(wxRect(sz));
 
-        // 2) Square thumbnail, centered, scaled to fit (preserve aspect ratio). The corners
-        //    will be covered by the mask in step 3 so the result reads as rounded.
-        //    Falls back to the mixed-filament placeholder SVG when no real thumbnail has
-        //    been set yet (e.g. Before-Match state on the After-Match panel, or while plate
-        //    thumbnails are still being generated). The placeholder goes through the same
-        //    corner mask so it reads as rounded like a real render. Loaded via ScalableBitmap
-        //    on first paint — the codebase's standard SVG-load convention (see m_placeholder).
+        // Step 2 — build a rounded-rect clip region:
+        //   black rounded-rect on white → region = black interior
+        wxRegion clip_rgn;
+        {
+            wxBitmap mask(sz);
+            wxMemoryDC mdc;
+            mdc.SelectObject(mask);
+            mdc.SetBackground(*wxWHITE_BRUSH);
+            mdc.Clear();
+            mdc.SetBrush(*wxBLACK_BRUSH);
+            mdc.SetPen(*wxTRANSPARENT_PEN);
+            mdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, r);
+            mdc.SelectObject(wxNullBitmap);
+            clip_rgn = wxRegion(mask, *wxWHITE);
+        }
+        dc.SetDeviceClippingRegion(clip_rgn);
+
+        // Step 3 — rounded background (#E7E7E7) clipped to rounded rect
+        dc.SetBrush(wxBrush(panel_bg));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRoundedRectangle(wxRect(sz), r);
+
+        // Step 4 — thumbnail centered
         if (!m_bmp.IsOk() && !m_placeholder_loaded) {
-            // px_cnt is the SVG's native height in DIP (110x60). ScalableBitmap applies
-            // FromDIP internally, so the bitmap is rasterized at 110x60 physical pixels on
-            // 100% DPI and @2x on Retina — drawn 1:1 centered, exactly as the SVG is authored.
             m_placeholder = ScalableBitmap(this, "mixed_filament_preview_placeholder", 60);
             m_placeholder_loaded = true;
         }
@@ -246,26 +201,13 @@ private:
         if (draw_bmp.IsOk()) {
             const int bw = draw_bmp.GetWidth();
             const int bh = draw_bmp.GetHeight();
-            if (bw > 0 && bh > 0) {
-                // Both paths draw 1:1 pixels (DrawBitmap does not scale): the real thumbnail is
-                // pre-scaled to the panel in thumbnail_to_bitmap; the placeholder is rasterized
-                // at its natural size by ScalableBitmap. Just center it.
+            if (bw > 0 && bh > 0)
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
-            }
         }
 
-        // 3) Corner mask overlay — bg-colored corners hide the square bitmap's corners; the
-        //    key-color interior is masked transparent so the thumbnail shows through.
-        //    useMask=true applies the color mask (set in rebuild_corner_mask).
-        if (m_corner_mask.IsOk())
-            dc.DrawBitmap(m_corner_mask, 0, 0, true);
+        // Step 5 — badge (white text on gray bg, top-left)
+        dc.DestroyClippingRegion();
 
-        // 4) Badge: square-cornered label, top-left, with white text. Drawn here (not a
-        // child window) so StaticBox-style compositing can't erase it.
-        // Style: bg (147,147,147) — the opaque equivalent of rgba(0,0,0,0.40) over the
-        // #E7E7E7 panel bg (no alpha blending needed; a plain wxDC DrawRectangle handles
-        // it). Dark mode maps #939393 → #000000 (pure black for max contrast). Square
-        // corners (no border-radius); the preview image keeps radius 8.
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);
@@ -307,6 +249,20 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         // when filament_colour has fallen out of sync with filament_presets.
         if (auto* plater = wxGetApp().plater())
             m_physical_colors = plater->get_extruder_colors_from_plater_config(nullptr, false);
+        // Read multi-color data for dual-color filament rendering.
+        // Always initialise to match m_physical_colors.size() so downstream
+        // index access (m_physical_multi_colors[j]) is safe even when the
+        // project_config lacks either option.
+        {
+            auto& proj_cfg = wxGetApp().preset_bundle->project_config;
+            const size_t n = m_physical_colors.size();
+            if (const auto* mc_opt = proj_cfg.option<ConfigOptionStrings>("filament_multi_colors"))
+                m_physical_multi_colors = mc_opt->values;
+            m_physical_multi_colors.resize(n);          // default "" → solid fallback
+            if (const auto* mode_opt = proj_cfg.option<ConfigOptionInts>("filament_colour_mode"))
+                m_physical_color_modes = mode_opt->values;
+            m_physical_color_modes.resize(n);           // default 0  → Segment fallback
+        }
     }
     // Default the manual-mode filament count to the number of physical filaments,
     // capped at 4 (the max supported slots) and floored at 2 (the min).
@@ -490,8 +446,9 @@ void MixedFilamentBatchDialog::refresh_previews()
     }
 
     // After-Match panel: only push a real bitmap once a match has completed. Before that
-    // (initial open, re-match in progress) we leave m_bmp unset so RoundedPreviewPanel
-    // renders its placeholder — avoids showing the original render on the After-Match side.
+    // (initial open, re-match in progress) we leave the rounded bitmap unset so
+    // RoundedPreviewPanel renders its placeholder — avoids showing the original render
+    // on the After-Match side.
     if (m_preview_match_panel && m_match_completed &&
         idx < static_cast<int>(match.size()) && match[idx].IsOk())
         static_cast<RoundedPreviewPanel*>(m_preview_match_panel)->set_bitmap(match[idx]);
@@ -1412,7 +1369,10 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
                 if (preset) name = from_u8(preset->label(false));
             }
             if (name.empty()) name = wxString::Format("F%zu", j + 1);
-            wxBitmap* icon = get_extruder_color_icon(m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
+            const std::string&  multi_colors  = m_physical_multi_colors[j];
+            const FilamentColorMode color_mode = FilamentColorModeFromConfig(m_physical_color_modes[j]);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(multi_colors, color_mode, m_physical_colors[j],
+                std::to_string(j + 1), FromDIP(20), FromDIP(20));
             cb->Append(name, icon ? icon->ConvertToImage() : wxNullImage);
         }
         if (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
@@ -1929,9 +1889,9 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
     if (new_method == m_matching_method)
         return;
     m_matching_method = new_method;
-    // Preserve the previous match result; only Start/Re-match clears it.
     m_error_panel->Hide();
     m_warning_panel->Hide();
+    if (m_match_completed && new_method == MANUAL) check_manual_recipe_ratio();
     if (m_manual_card)
         m_manual_card->Show(m_matching_method == MANUAL);
     if (m_recommended_card)
@@ -2034,28 +1994,23 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     const size_t num_physical = m_physical_colors.size();
     if (num_physical == 0) return;
 
-    // Collect offending filament ids (1-based) in a set for de-dup + ascending order.
-    std::set<unsigned int> over_ids;
-    for (const ColorMappingEntry& e : m_result.mappings) {
-        if (e.is_pure_recipe) continue;        // pure = single component, ratio n/a
-        if (!e.recipe.valid) continue;         // nothing to check
-        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
-        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
-            if (weights[i] > kMaxComponentPercent)
-                over_ids.insert(static_cast<unsigned int>(i + 1));
-        }
-    }
-    if (over_ids.empty()) return;
-
-    // Build "{x, y, z}" for the %s placeholder.
-    wxString id_list = "{";
+    // Collect EVERY over-threshold occurrence (target_filament_id — legend badge). No dedup.
+    wxString id_list;
     bool first = true;
-    for (unsigned int id : over_ids) {
+    for (const ColorMappingEntry& e : m_result.mappings) {
+        if (e.is_pure_recipe) continue;
+        if (!e.recipe.valid) continue;
+        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
+        bool over = false;
+        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
+            if (weights[i] > kMaxComponentPercent) { over = true; break; }
+        }
+        if (!over) continue;
         if (!first) id_list += ", ";
-        id_list << id;
+        id_list += wxString::Format("%u", e.target_filament_id);
         first = false;
     }
-    id_list << "}";
+    if (id_list.empty()) return;
 
     display_warning(wxString::Format(
         _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"
@@ -2104,9 +2059,12 @@ void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
             }
     }
 
-    // Badge: use get_extruder_color_icon (numbered color swatch, opaque)
+    // Badge: use GetFilamentColorIcon for multi-color aware rendering (numbered color swatch, opaque)
     const int bx = pad + arr_w + gap;
-    wxBitmap* badge_bmp = get_extruder_color_icon(m_physical_colors[filament_idx],
+    const std::string&  multi_colors  = m_physical_multi_colors[filament_idx];
+    const FilamentColorMode color_mode = FilamentColorModeFromConfig(m_physical_color_modes[filament_idx]);
+    wxBitmap* badge_bmp = FilamentColorUtils::GetFilamentColorIcon(multi_colors, color_mode,
+        m_physical_colors[filament_idx],
         std::to_string(filament_idx + 1), FromDIP(20), FromDIP(20));
     if (badge_bmp) {
         wxImage bimg = badge_bmp->ConvertToImage();
@@ -2551,13 +2509,44 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             auto* s = new wxBoxSizer(wxHORIZONTAL);
 
             // Source swatch (20x20, square corners)
-            ColorBlockParams src;
-            src.mode = ColorBlockParams::Solid;
-            src.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
-            src.width  = FromDIP(20);
-            src.height = FromDIP(20);
-            auto* src_bmp = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(src));
-            s->Add(src_bmp, 0, wxALIGN_CENTER_VERTICAL);
+            // For pure-recipe mappings that target a single physical filament,
+            // render the source as a dual-color segment swatch when the physical
+            // filament has multi-color data — so a bicolor filament row shows
+            // its two colors side-by-side instead of a single averaged swatch.
+            wxBitmap* src_bmp = nullptr;
+            {
+                const unsigned int phy_id = mapping.recipe.component_a;
+                const bool is_pure = mapping.is_pure_recipe
+                    && phy_id >= 1
+                    && phy_id <= m_physical_multi_colors.size();
+                const std::string& multi = is_pure ? m_physical_multi_colors[phy_id - 1] : std::string();
+                const auto parts = FilamentColorUtils::SplitMultiColors(multi);
+                if (parts.size() > 1) {
+                    std::vector<wxColour> dual_colors;
+                    dual_colors.reserve(parts.size());
+                    for (const auto& h : parts) {
+                        wxColour c; try_parse_color_match_hex(h, c);
+                        if (c.IsOk()) dual_colors.push_back(c);
+                    }
+                    if (dual_colors.size() > 1) {
+                        const int mode_val = (phy_id >= 1 && phy_id <= m_physical_color_modes.size())
+                            ? m_physical_color_modes[phy_id - 1] : 0;
+                        bool is_gradient = (FilamentColorModeFromConfig(mode_val) == FilamentColorMode::Gradient);
+                        src_bmp = get_color_block_bitmap_cached(dual_colors, is_gradient,
+                            FromDIP(20), FromDIP(20), wxEmptyString, wxNullColour);
+                    }
+                }
+                if (!src_bmp) {
+                    ColorBlockParams src_params;
+                    src_params.mode = ColorBlockParams::Solid;
+                    src_params.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
+                    src_params.width  = FromDIP(20);
+                    src_params.height = FromDIP(20);
+                    src_bmp = get_color_block_bitmap_cached(src_params);
+                }
+            }
+            auto* src_bmp_ctrl = new wxStaticBitmap(item, wxID_ANY, *src_bmp);
+            s->Add(src_bmp_ctrl, 0, wxALIGN_CENTER_VERTICAL);
 
             // Stretch: source pinned left, target pinned right, arrow centered between them
             // (Figma's justify-between with the arrow as the middle flex item).
@@ -2611,7 +2600,7 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             // supported platforms (Win10+, macOS, mainstream Linux) has it.
             const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, mapping.delta_e);
             item->SetToolTip(tip);
-            src_bmp->SetToolTip(tip);
+            src_bmp_ctrl->SetToolTip(tip);
             arrow->SetToolTip(tip);
             tgt_bmp->SetToolTip(tip);
             m_legend_sizer->Add(item, 0, wxEXPAND | wxALL, FromDIP(3));

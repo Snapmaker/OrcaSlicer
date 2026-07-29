@@ -20,6 +20,11 @@ namespace Slic3r { namespace GUI { namespace FlowType {
 // True when the edited printer preset declares "high_flow" in printer_flow_support.
 bool printer_supports_high_flow();
 
+// True when at least one selected filament preset declares "high_flow" in its
+// filament_flow_support. The custom grouping popup/dialog only makes sense when some
+// filament can actually use the high-flow variant.
+bool any_filament_supports_high_flow();
+
 // Number of DISTINCT flow variants currently selected across the nozzles (from the
 // per-nozzle flow combos, via nozzle_volume_types()). 1 when every nozzle uses the
 // same type. The standard / custom slice-mode popup is only shown when this is >= 2

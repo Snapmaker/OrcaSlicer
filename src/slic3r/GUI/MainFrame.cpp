@@ -1649,14 +1649,15 @@ wxBoxSizer* MainFrame::create_side_tools()
     sizer->Add(m_print_btn       , 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(19));
 
     // Snapmaker requirement 7.1: hover popup on the slice button for choosing the
-    // standard / custom filament grouping mode. Shown only when the nozzles actually
-    // mix flow variant types (>= 2 distinct across the per-nozzle flow combos); when
-    // every nozzle uses the same type there is nothing to group, so slicing just
-    // routes every filament to that one type (get_config_idx / flow_variant_index).
+    // standard / custom filament grouping mode. Shown only when the nozzles mix flow
+    // variant types (>= 2 distinct across the per-nozzle flow combos) AND at least one
+    // filament actually supports high flow -- otherwise there is nothing to group, so
+    // slicing routes every filament to its single nozzle type.
     m_slice_mode_popup = new SliceModePopup(this);
     auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
         e.Skip();
-        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2)
+        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
+            && GUI::FlowType::any_filament_supports_high_flow())
             m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
     };
     m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
@@ -1689,7 +1690,8 @@ wxBoxSizer* MainFrame::create_side_tools()
             // button). Otherwise every filament follows the single selected nozzle
             // flow type (all standard -> standard, all high flow -> high flow; standard
             // mode with mixed nozzles falls back to standard), dropping stale mappings.
-            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2) {
+            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
+                && GUI::FlowType::any_filament_supports_high_flow()) {
                 GUI::FilamentGroupDialog dlg(this);
                 if (dlg.ShowModal() != wxID_OK)
                     return;

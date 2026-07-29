@@ -32,6 +32,21 @@ bool printer_supports_high_flow()
            std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end();
 }
 
+bool any_filament_supports_high_flow()
+{
+    const PresetBundle &bundle = *wxGetApp().preset_bundle;
+    for (const std::string &name : bundle.filament_presets) {
+        const Preset *preset = bundle.filaments.find_preset(name, false);
+        if (preset == nullptr)
+            continue;
+        const auto *support = preset->config.option<ConfigOptionStrings>("filament_flow_support");
+        if (support != nullptr &&
+            std::find(support->values.begin(), support->values.end(), FLOW_MODE_HIGH_FLOW) != support->values.end())
+            return true;
+    }
+    return false;
+}
+
 std::vector<std::string> nozzle_volume_types()
 {
     std::vector<std::string> types;

@@ -144,6 +144,12 @@ private:
 
     std::vector<ModelColorEntry> m_model_colors;
     std::vector<std::string>     m_physical_colors;
+    // Multi-color data for physical filaments: parallel arrays indexed the same as m_physical_colors.
+    // Each entry in m_physical_multi_colors may contain pipe-separated hex colors (e.g. "#FF0000|#0000FF")
+    // for dual-color filaments. m_physical_color_modes holds the render mode: 0=Segment, 1=Gradient.
+    // When empty, the filament is rendered as a single-color swatch (fallback to m_physical_colors[idx]).
+    std::vector<std::string>     m_physical_multi_colors;
+    std::vector<int>             m_physical_color_modes;
     bool                         m_pending_64_color_warning = false; // deferred from load_model_colors until after build_ui
 
     int m_filament_selections[4] = {0, 1, 2, 3};

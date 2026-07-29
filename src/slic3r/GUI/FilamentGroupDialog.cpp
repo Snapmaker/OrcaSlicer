@@ -39,7 +39,7 @@ class FilamentChip : public wxPanel
 public:
     FilamentChip(wxWindow *parent, size_t filament_idx, const wxColour &color, const wxString &label)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition,
-                  wxSize(parent->FromDIP(32), parent->FromDIP(38)))
+                  wxSize(parent->FromDIP(39), parent->FromDIP(38)))
         , m_idx(filament_idx)
         , m_color(color)
         , m_label(label)
@@ -73,7 +73,17 @@ private:
 
         dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#333333")));
         dc.SetFont(Label::Body_10);
-        const wxSize lext = dc.GetTextExtent(m_label);
+        wxSize lext = dc.GetTextExtent(m_label);
+        if (lext.x > GetSize().x)
+        {
+            dc.SetFont(Label::Body_9);
+            lext = dc.GetTextExtent(m_label);
+        }
+        if (lext.x > GetSize().x)
+        {
+            dc.SetFont(Label::Body_8);
+            lext = dc.GetTextExtent(m_label);
+        }
         dc.DrawText(m_label, (GetSize().x - lext.x) / 2, block + FromDIP(2));
     }
 
@@ -181,7 +191,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
         label->SetBackgroundColour(box_bg);
         box_sizer->Add(label, 0, wxLEFT | wxTOP | wxRIGHT, FromDIP(16));
         box_sizer->AddSpacer(FromDIP(16));
-        grid = new wxFlexGridSizer(0, 8, FromDIP(8), FromDIP(8));
+        grid = new wxFlexGridSizer(0, 8, FromDIP(8), 0);
         box_sizer->Add(grid, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
         box_sizer->AddStretchSpacer();
         box->SetSizer(box_sizer);

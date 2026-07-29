@@ -1,6 +1,7 @@
 #include "MixedFilamentBatchDialog.hpp"
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
+#include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "PresetBundle.hpp"
@@ -247,6 +248,20 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         // when filament_colour has fallen out of sync with filament_presets.
         if (auto* plater = wxGetApp().plater())
             m_physical_colors = plater->get_extruder_colors_from_plater_config(nullptr, false);
+        // Read multi-color data for dual-color filament rendering.
+        // Always initialise to match m_physical_colors.size() so downstream
+        // index access (m_physical_multi_colors[j]) is safe even when the
+        // project_config lacks either option.
+        {
+            auto& proj_cfg = wxGetApp().preset_bundle->project_config;
+            const size_t n = m_physical_colors.size();
+            if (const auto* mc_opt = proj_cfg.option<ConfigOptionStrings>("filament_multi_colors"))
+                m_physical_multi_colors = mc_opt->values;
+            m_physical_multi_colors.resize(n);          // default "" → solid fallback
+            if (const auto* mode_opt = proj_cfg.option<ConfigOptionInts>("filament_colour_mode"))
+                m_physical_color_modes = mode_opt->values;
+            m_physical_color_modes.resize(n);           // default 0  → Segment fallback
+        }
     }
     // Default the manual-mode filament count to the number of physical filaments,
     // capped at 4 (the max supported slots) and floored at 2 (the min).
@@ -1353,7 +1368,10 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
                 if (preset) name = from_u8(preset->label(false));
             }
             if (name.empty()) name = wxString::Format("F%zu", j + 1);
-            wxBitmap* icon = get_extruder_color_icon(m_physical_colors[j], std::to_string(j + 1), FromDIP(20), FromDIP(20));
+            const std::string&  multi_colors  = m_physical_multi_colors[j];
+            const FilamentColorMode color_mode = FilamentColorModeFromConfig(m_physical_color_modes[j]);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(multi_colors, color_mode, m_physical_colors[j],
+                std::to_string(j + 1), FromDIP(20), FromDIP(20));
             cb->Append(name, icon ? icon->ConvertToImage() : wxNullImage);
         }
         if (m_filament_selections[i] >= 0 && m_filament_selections[i] < static_cast<int>(m_physical_colors.size()))
@@ -2045,9 +2063,12 @@ void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
             }
     }
 
-    // Badge: use get_extruder_color_icon (numbered color swatch, opaque)
+    // Badge: use GetFilamentColorIcon for multi-color aware rendering (numbered color swatch, opaque)
     const int bx = pad + arr_w + gap;
-    wxBitmap* badge_bmp = get_extruder_color_icon(m_physical_colors[filament_idx],
+    const std::string&  multi_colors  = m_physical_multi_colors[filament_idx];
+    const FilamentColorMode color_mode = FilamentColorModeFromConfig(m_physical_color_modes[filament_idx]);
+    wxBitmap* badge_bmp = FilamentColorUtils::GetFilamentColorIcon(multi_colors, color_mode,
+        m_physical_colors[filament_idx],
         std::to_string(filament_idx + 1), FromDIP(20), FromDIP(20));
     if (badge_bmp) {
         wxImage bimg = badge_bmp->ConvertToImage();
@@ -2492,13 +2513,44 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             auto* s = new wxBoxSizer(wxHORIZONTAL);
 
             // Source swatch (20x20, square corners)
-            ColorBlockParams src;
-            src.mode = ColorBlockParams::Solid;
-            src.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
-            src.width  = FromDIP(20);
-            src.height = FromDIP(20);
-            auto* src_bmp = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(src));
-            s->Add(src_bmp, 0, wxALIGN_CENTER_VERTICAL);
+            // For pure-recipe mappings that target a single physical filament,
+            // render the source as a dual-color segment swatch when the physical
+            // filament has multi-color data — so a bicolor filament row shows
+            // its two colors side-by-side instead of a single averaged swatch.
+            wxBitmap* src_bmp = nullptr;
+            {
+                const unsigned int phy_id = mapping.recipe.component_a;
+                const bool is_pure = mapping.is_pure_recipe
+                    && phy_id >= 1
+                    && phy_id <= m_physical_multi_colors.size();
+                const std::string& multi = is_pure ? m_physical_multi_colors[phy_id - 1] : std::string();
+                const auto parts = FilamentColorUtils::SplitMultiColors(multi);
+                if (parts.size() > 1) {
+                    std::vector<wxColour> dual_colors;
+                    dual_colors.reserve(parts.size());
+                    for (const auto& h : parts) {
+                        wxColour c; try_parse_color_match_hex(h, c);
+                        if (c.IsOk()) dual_colors.push_back(c);
+                    }
+                    if (dual_colors.size() > 1) {
+                        const int mode_val = (phy_id >= 1 && phy_id <= m_physical_color_modes.size())
+                            ? m_physical_color_modes[phy_id - 1] : 0;
+                        bool is_gradient = (FilamentColorModeFromConfig(mode_val) == FilamentColorMode::Gradient);
+                        src_bmp = get_color_block_bitmap_cached(dual_colors, is_gradient,
+                            FromDIP(20), FromDIP(20), wxEmptyString, wxNullColour);
+                    }
+                }
+                if (!src_bmp) {
+                    ColorBlockParams src_params;
+                    src_params.mode = ColorBlockParams::Solid;
+                    src_params.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
+                    src_params.width  = FromDIP(20);
+                    src_params.height = FromDIP(20);
+                    src_bmp = get_color_block_bitmap_cached(src_params);
+                }
+            }
+            auto* src_bmp_ctrl = new wxStaticBitmap(item, wxID_ANY, *src_bmp);
+            s->Add(src_bmp_ctrl, 0, wxALIGN_CENTER_VERTICAL);
 
             // Stretch: source pinned left, target pinned right, arrow centered between them
             // (Figma's justify-between with the arrow as the middle flex item).
@@ -2552,7 +2604,7 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             // supported platforms (Win10+, macOS, mainstream Linux) has it.
             const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, mapping.delta_e);
             item->SetToolTip(tip);
-            src_bmp->SetToolTip(tip);
+            src_bmp_ctrl->SetToolTip(tip);
             arrow->SetToolTip(tip);
             tgt_bmp->SetToolTip(tip);
             m_legend_sizer->Add(item, 0, wxEXPAND | wxALL, FromDIP(3));

@@ -1447,9 +1447,14 @@ void PrintObject::detect_surfaces_type()
                         // that layer, not over the combined-away one right below.
                         if (const ExPolygons &exposed = lower_layer->m_regions[region_id]->combined_away_exposed(); ! exposed.empty())
                             unsupported = union_ex(unsupported, intersection_ex(layerm_slices_surfaces, exposed));
-                        if (const unsigned short count = layerm->combined_layer_count(); count > 1 && idx_layer >= size_t(count))
+                        if (const unsigned short count = layerm->combined_layer_count(); count > 1 && idx_layer >= size_t(count)) {
+                            // The below-group layer's own leftover band is unprinted too.
+                            const Layer *below_group = m_layers[idx_layer - count];
                             unsupported = union_ex(unsupported,
-                                diff_ex(layerm_slices_surfaces, m_layers[idx_layer - count]->lslices, ApplySafetyOffset::Yes));
+                                diff_ex(layerm_slices_surfaces, below_group->lslices, ApplySafetyOffset::Yes));
+                            if (const ExPolygons &exposed = below_group->m_regions[region_id]->combined_away_exposed(); ! exposed.empty())
+                                unsupported = union_ex(unsupported, intersection_ex(layerm_slices_surfaces, exposed));
+                        }
                         surfaces_append(bottom, opening_ex(unsupported, offset), surface_type_bottom_other);
                         // if user requested internal shells, we need to identify surfaces
                         // lying on other slices not belonging to this region

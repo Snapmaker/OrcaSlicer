@@ -1100,10 +1100,12 @@ void PrintObject::apply_extruder_layer_heights()
             }
             // Commit: move the common shape to the top layer of the run, drop the layers below.
             LayerRegion *top_layerm = m_layers[commit_top]->regions()[region_id];
+            ExPolygons top_remainder = to_expolygons(top_layerm->slices.surfaces);
             top_layerm->slices.set(std::move(merged), stInternal);
             top_layerm->m_combined_layer_count = (unsigned short)(commit_top - idx + 1);
             top_layerm->m_combined_height      = combined_height;
             const ExPolygons committed = to_expolygons(top_layerm->slices.surfaces);
+            top_layerm->m_combined_away_exposed = diff_ex(top_remainder, committed);
             for (size_t i = idx; i < commit_top; ++ i) {
                 LayerRegion *combined_away = m_layers[i]->regions()[region_id];
                 // The run prints only its common shape; this layer's own geometry outside it is

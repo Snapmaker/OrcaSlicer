@@ -121,9 +121,7 @@ public:
     // Layer right below the covered group; replaces Layer::lower_layer for overhang / bridge
     // detection of combined regions. May be nullptr.
     const Layer* combined_lower_layer() const;
-    // On combined-away layers: the part of this layer's own shape that the group's committed
-    // shape does not print. Layer::lslices still carry the uncombined shape, so surface
-    // detection uses this remainder to classify the exposed step faces as top / bottom.
+    // Shape of this layer that its combined group does not print; classifies exposed step faces.
     const ExPolygons& combined_away_exposed() const { return m_combined_away_exposed; }
 
     // ORCA: walls-only pitch (PrintObject::wall_layer_height_multiplier()). Number of object

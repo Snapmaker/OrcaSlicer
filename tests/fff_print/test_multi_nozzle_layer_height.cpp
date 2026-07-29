@@ -334,6 +334,49 @@ SCENARIO("Fixed mode keeps top surfaces on combined steps", "[MultiNozzleLayerHe
     }
 }
 
+SCENARIO("Fixed mode bridges lids that start inside a run", "[MultiNozzleLayerHeight]") {
+    // The runs spanning the lid's first layers print nothing there; it must still bridge.
+    GIVEN("A hollow tube capped by a lid whose bottom starts in the middle of a run") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.option<ConfigOptionEnum<ExtruderLayerHeightMode>>("extruder_layer_height_mode", true)->value = elhmFixed;
+        Print print;
+        Model model;
+        TriangleMesh tube = mesh(TestMesh::cube_with_hole);   // 20 x 20 x 10 mm, 10 mm hole through z
+        tube.scale(Vec3f(1.f, 1.f, 0.5f));                    // 5 mm tall: the lid starts mid-run
+        TriangleMesh lid = mesh(TestMesh::cube_20x20x20);
+        lid.scale(Vec3f(1.f, 1.f, 0.1f));
+        lid.translate(0.f, 0.f, 5.f);
+        ModelObject *object = model.add_object();
+        object->name = "capped_tube";
+        object->add_volume(std::move(tube));
+        object->add_volume(std::move(lid));
+        object->config.set("extruder", 2);
+        object->add_instance();
+        // This fork's arrangement engine rejects positions outside the (unset) plate even for
+        // an InfiniteBed; place the object at a fixed bed spot like init_two_part_print().
+        for (ModelObject *mo : model.objects) {
+            mo->center_around_origin();
+            mo->translate(120., 120., 0.);
+            mo->ensure_on_bed();
+        }
+        print.apply(model, config);
+        print.set_status_silent();
+        THEN("the lid interior is classified as an unsupported bottom") {
+            REQUIRE(print.validate().string.empty());
+            print.process();
+            const PrintObject &po = *print.objects().front();
+            double bridge_area = 0.;
+            for (size_t idx = 0; idx < po.layer_count(); ++ idx)
+                for (int r = 0; r < po.get_layer(int(idx))->region_count(); ++ r)
+                    for (const Surface &surface : po.get_layer(int(idx))->get_region(r)->fill_surfaces.surfaces)
+                        if (surface.surface_type == stBottomBridge)
+                            bridge_area += unscale<double>(unscale<double>(surface.expolygon.area()));
+            CAPTURE(bridge_area);
+            REQUIRE(bridge_area > 40.);
+        }
+    }
+}
+
 SCENARIO("Per-extruder layer height respects the extruder's minimum layer height", "[MultiNozzleLayerHeight]") {
     GIVEN("A 0.6 mm preferred layer height with a 0.4 mm minimum, on a part height leaving a 1-layer tail") {
         DynamicPrintConfig config = two_extruder_config(0.6);

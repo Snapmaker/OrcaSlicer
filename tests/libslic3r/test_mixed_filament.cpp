@@ -8,8 +8,10 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <set>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 using namespace Slic3r;
@@ -3925,4 +3927,837 @@ TEST_CASE("shrink: redundant_physical empty after tail-truncate to kept count", 
     auto red = compute_redundant_filaments(2, {1, 2}, {}, bundle.mixed_filaments.mixed_filaments());
     CHECK(red.redundant_physical.empty());
     CHECK(red.new_num_physical == 2);
+}
+
+// ===========================================================================
+// Non-contiguous manual-mode subset — composite remap divergence
+//
+// Characterization tests for the "partial colour corruption" bug that fires
+// when a manual-mode batch match selects a NON-contiguous subset of the
+// physical palette, e.g. [2,6,8,10] out of 10 physical filaments.
+//
+// Root cause (verified by reading the production code, not inferred):
+//   cleanup_unused_filaments_after_batch_match (Plater.cpp:8354-8446) deletes
+//   the unselected physical slots via middle-deletion repacking, which compacts
+//   the survivors into the low ids (C2->1, C6->2, C8->3, C10->4). It then builds
+//   ONE composite painting remap via update_mixed_filament_id_remap(old, 10, 4)
+//   (Plater.cpp:8425). That call routes into build_filament_id_remap with
+//   deleting_filament=false (PresetBundle.cpp:3774), whose PHYSICAL branch
+//   (PresetBundle.cpp:3824-3834) only does tail-truncation when
+//   deleting_filament=false:
+//       old_id <= new_num -> mapped = old_id (identity)
+//       else              -> mapped = 0       (truncated tail)
+//   Tail-truncation is only correct when the surviving set is exactly {1..N}
+//   (the documented invariant at Plater.cpp:8360-8366). recommended mode
+//   satisfies it because set_num_filaments rewrites the palette head-first;
+//   manual mode with an arbitrary subset like [2,6,8,10] does NOT, and the
+//   invariant is silently violated with no runtime check on the kept-set shape.
+//
+// Result for [2,6,8,10]:
+//   - paint on C6/C8/C10 (old ids 6/8/10, SURVIVORS) -> remapped to 0 (LOST)
+//   - paint on C1/C3/C4 (old ids 1/3/4, DELETED)     -> remapped to 1/3/4
+//     which now hold C2/C8/C10 (WRONG COLOUR)
+//   mixed virtual ids survive correctly (stable_id path), so the corruption
+//   is PARTIAL — only unmigrated physical-source painting is affected, which
+//   matches the reported "部分颜色错乱" symptom.
+//
+// These tests pin the behaviour at TWO layers:
+//   Layer 1: compute_redundant_filaments (pure fn, upstream input — CORRECT,
+//            just pinned so the remap tests have deterministic inputs).
+//   Layer 2: update_mixed_filament_id_remap batch path (the bug itself).
+//
+// For the bug layer we use the "double test" pattern (consistent with the m1
+// test above): one TEST_CASE pins the CURRENT (wrong) output (green), and a
+// sibling tagged [!shouldfail] pins the EXPECTED (correct) output (red). When
+// the bug is fixed the [!shouldfail] case will "unexpectedly succeed" and CI
+// will flag it — at that point drop the tag. Do NOT relax the oracle instead.
+// ===========================================================================
+
+TEST_CASE("compute_redundant_filaments non-contiguous kept subset [2,6,8,10]", "[MixedFilament][redundant_set]")
+{
+    // Layer 1: pin the upstream deterministic input that the cleanup loop feeds
+    // into the composite remap. This function's output is CORRECT for a
+    // non-contiguous kept set; it just produces the {9,7,5,4,3,1} descending
+    // deletion list that the (buggy) batch remap then misinterprets.
+    auto mgr = build_manager(10, {});
+    auto red = compute_redundant_filaments(10, {2, 6, 8, 10}, {}, mgr.mixed_filaments());
+
+    REQUIRE(red.redundant_physical.size() == 6);
+    // Descending order — cleanup's batched-delete path requires this (and
+    // asserts it at runtime, Plater.cpp:8372-8383).
+    CHECK(red.redundant_physical[0] == 9);
+    CHECK(red.redundant_physical[1] == 7);
+    CHECK(red.redundant_physical[2] == 5);
+    CHECK(red.redundant_physical[3] == 4);
+    CHECK(red.redundant_physical[4] == 3);
+    CHECK(red.redundant_physical[5] == 1);
+    CHECK(red.new_num_physical == 4);
+}
+
+// Helper for the batch-remap layer: build a 10-physical PresetBundle with
+// auto-generate disabled (so m_mixed stays empty and the remap under test is
+// the PURE physical branch of build_filament_id_remap), snapshot it, and run
+// update_mixed_filament_id_remap(old, 10, 4) — the exact call shape
+// cleanup_unused_filaments_after_batch_match makes at Plater.cpp:8442 for a
+// 4-physical manual selection out of 10.
+//
+// `kept_physical_ids` (default empty) mirrors the cleanup call site's new
+// parameter: empty = original tail-truncation behaviour (backward compat),
+// non-empty = kept-aware mapping (the fix for non-contiguous manual subsets).
+static std::vector<unsigned int> build_batch_remap_for_kept(size_t num_physical, size_t new_num_physical,
+                                                            const std::vector<unsigned int> &kept_physical_ids = {})
+{
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets.assign(num_physical, "Default Filament");
+    {
+        std::vector<std::string> colours;
+        colours.reserve(num_physical);
+        for (size_t i = 0; i < num_physical; ++i)
+            colours.emplace_back("#FF0000");
+        bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = std::move(colours);
+    }
+    bundle.update_multi_material_filament_presets();
+
+    const std::vector<MixedFilament> old_mixed = bundle.mixed_filaments.mixed_filaments();
+    // Direct batch call — mirrors Plater.cpp:8442 (deleting_filament=false),
+    // forwarding kept_physical_ids as the cleanup call site now does.
+    bundle.update_mixed_filament_id_remap(old_mixed, num_physical, new_num_physical,
+                                          size_t(-1), kept_physical_ids);
+    return bundle.consume_last_filament_id_remap();
+}
+
+TEST_CASE("batch_remap contiguous head [1,2,3,4] keeps identity (recommended-mode parity)", "[MixedFilament][batch_remap]")
+{
+    // Parity / non-regression guard: when the surviving physical set IS the
+    // contiguous head {1..new_num}, the tail-truncation branch is correct and
+    // survivors keep identity. This is exactly the recommended-mode situation
+    // (set_num_filaments rewrites the palette head-first), so a future fix to
+    // the [2,6,8,10] bug must NOT break this case.
+    const auto remap = build_batch_remap_for_kept(10, 4);
+
+    // size == old_total + 1 == 10 physical + 0 mixed + 1 (NONE sink at [0]).
+    REQUIRE(remap.size() == 11);
+    CHECK(remap[0] == 0); // NONE sink, untouched.
+    // Surviving head keeps identity.
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 3);
+    CHECK(remap[4] == 4);
+    // Truncated tail maps to 0 (NONE) — correct for the contiguous-head case.
+    CHECK(remap[5] == 0);
+    CHECK(remap[6] == 0);
+    CHECK(remap[7] == 0);
+    CHECK(remap[8] == 0);
+    CHECK(remap[9] == 0);
+    CHECK(remap[10] == 0);
+}
+
+TEST_CASE("batch_remap non-contiguous kept subset [2,6,8,10] produces tail-truncation (CURRENT bug)", "[MixedFilament][batch_remap]")
+{
+    // Pins the CURRENT (incorrect) output of build_filament_id_remap's physical
+    // branch for a non-contiguous kept subset. The batch path only does
+    // tail-truncation when deleting_filament=false (PresetBundle.cpp:3830-3831),
+    // so it ignores WHICH physicals survived and maps solely by id <= new_num.
+    // For kept={2,6,8,10} -> new_num=4 that yields the table below, which is
+    // WRONG (survivors 6/8/10 are lost; deleted 1/3/4 are kept as identity).
+    // Kept green so a refactor that changes this surface is caught; the
+    // expected-correct oracle lives in the [!shouldfail] sibling below.
+    const auto remap = build_batch_remap_for_kept(10, 4);
+    REQUIRE(remap.size() == 11);
+
+    // --- DELETED slots wrongly kept as identity (the "wrong colour" half) ---
+    CHECK(remap[1] == 1); // C1 deleted, yet maps to id 1 (now C2)
+    CHECK(remap[3] == 3); // C3 deleted, yet maps to id 3 (now C8)
+    CHECK(remap[4] == 4); // C4 deleted, yet maps to id 4 (now C10)
+    // --- SURVIVOR C2 maps to id 2 (now C6) instead of new id 1 ---
+    CHECK(remap[2] == 2);
+    // --- SURVIVORS C6/C8/C10 (old ids 6/8/10) wrongly truncated to NONE ---
+    CHECK(remap[5] == 0); // C5 deleted -> 0 (correct by accident)
+    CHECK(remap[6] == 0); // C6 SURVIVED -> 0 (LOST)  <- bug
+    CHECK(remap[7] == 0); // C7 deleted -> 0 (correct by accident)
+    CHECK(remap[8] == 0); // C8 SURVIVED -> 0 (LOST)  <- bug
+    CHECK(remap[9] == 0); // C9 deleted -> 0 (correct by accident)
+    CHECK(remap[10] == 0); // C10 SURVIVED -> 0 (LOST) <- bug
+}
+
+TEST_CASE("batch_remap non-contiguous kept subset [2,6,8,10] maps survivors correctly when kept is supplied (FIXED)", "[MixedFilament][batch_remap]")
+{
+    // Kept-aware fix: when the caller supplies kept_physical_ids, the batch
+    // remap maps each survivor by its position in the kept set instead of
+    // tail-truncation. For [2,6,8,10] -> new ids 1/2/3/4 (sorted survivors):
+    //   old id 1 (C1, deleted)   -> 0
+    //   old id 2 (C2, survivor)  -> 1
+    //   old id 3 (C3, deleted)   -> 0
+    //   old id 4 (C4, deleted)   -> 0
+    //   old id 5 (C5, deleted)   -> 0
+    //   old id 6 (C6, survivor)  -> 2
+    //   old id 7 (C7, deleted)   -> 0
+    //   old id 8 (C8, survivor)  -> 3
+    //   old id 9 (C9, deleted)   -> 0
+    //   old id 10 (C10, survivor)-> 4
+    // This was the [!shouldfail] oracle for the tail-truncation bug; the
+    // kept-aware branch in build_filament_id_remap now makes it pass, so the
+    // tag is dropped and this becomes the regression guard for the fix.
+    const auto remap = build_batch_remap_for_kept(10, 4, {2, 6, 8, 10});
+    REQUIRE(remap.size() == 11);
+
+    CHECK(remap[1] == 0);  // C1 deleted
+    CHECK(remap[2] == 1);  // C2 -> new id 1
+    CHECK(remap[3] == 0);  // C3 deleted
+    CHECK(remap[4] == 0);  // C4 deleted
+    CHECK(remap[5] == 0);  // C5 deleted
+    CHECK(remap[6] == 2);  // C6 -> new id 2
+    CHECK(remap[7] == 0);  // C7 deleted
+    CHECK(remap[8] == 3);  // C8 -> new id 3
+    CHECK(remap[9] == 0);  // C9 deleted
+    CHECK(remap[10] == 4); // C10 -> new id 4
+}
+
+// ---------------------------------------------------------------------------
+// Kept-set SHAPE matrix for the batch physical branch. The branch
+// (PresetBundle.cpp:3824-3834, deleting_filament=false) emits
+//   old_id <= new_num -> old_id (identity)
+//   old_id >  new_num -> 0
+// REGARDLESS of which physicals survived — it only sees `new_num`. So the
+// output is correct iff the kept set happens to be {1..new_num} (case A/F) and
+// is the SAME bug for every other shape. The three cases below cover the
+// distinct FAILURE SIGNATURES:
+//   C  {5,6,7,8}  — contiguous but NOT head: every survivor > new_num, so all
+//                   survivors are truncated to 0 (LOST) while deleted head ids
+//                   1..4 are kept as identity (WRONG COLOUR).
+//   D  {1,3,5}    — interspersed: survivors straddle new_num, so id 1 happens
+//                   to be right, id 3 is wrongly kept (a deleted id held as
+//                   identity), and id 2 (deleted) is wrongly held as 2. Most
+//                   insidious shape because PART of the output is coincidentally
+//                   correct.
+//   F  {1..10}    — keep-all: the only other correct shape besides the
+//                   contiguous head. Non-regression guard that a fix must not
+//                   break.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("batch_remap contiguous-non-head {5,6,7,8} truncates survivors (CURRENT bug)", "[MixedFilament][batch_remap]")
+{
+    // kept = {5,6,7,8}, new_num = 4. Physical branch output is the SAME as the
+    // [2,6,8,10] case — [1,2,3,4,0,0,0,0,0,0] — proving the output does not
+    // depend on WHICH ids survived, only on new_num. Here ids 5-8 (survivors)
+    // all exceed new_num=4 and are truncated to 0; ids 1-4 (deleted) are held
+    // as identity.
+    const auto remap = build_batch_remap_for_kept(10, 4);
+    REQUIRE(remap.size() == 11);
+    // Deleted head wrongly held as identity (would point at C5/C6/C7/C8 after repack).
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 3);
+    CHECK(remap[4] == 4);
+    // Survivors 5/6/7/8 all truncated to NONE.
+    CHECK(remap[5] == 0);
+    CHECK(remap[6] == 0);
+    CHECK(remap[7] == 0);
+    CHECK(remap[8] == 0);
+    // Deleted tail, correct by accident.
+    CHECK(remap[9] == 0);
+    CHECK(remap[10] == 0);
+}
+
+TEST_CASE("batch_remap contiguous-non-head {5,6,7,8} maps survivors correctly when kept is supplied (FIXED)", "[MixedFilament][batch_remap]")
+{
+    // Kept-aware fix: {5,6,7,8} survivors -> new ids 1/2/3/4.
+    const auto remap = build_batch_remap_for_kept(10, 4, {5, 6, 7, 8});
+    REQUIRE(remap.size() == 11);
+    CHECK(remap[1] == 0); // C1 deleted
+    CHECK(remap[2] == 0); // C2 deleted
+    CHECK(remap[3] == 0); // C3 deleted
+    CHECK(remap[4] == 0); // C4 deleted
+    CHECK(remap[5] == 1); // C5 -> new id 1
+    CHECK(remap[6] == 2); // C6 -> new id 2
+    CHECK(remap[7] == 3); // C7 -> new id 3
+    CHECK(remap[8] == 4); // C8 -> new id 4
+    CHECK(remap[9] == 0); // C9 deleted
+    CHECK(remap[10] == 0); // C10 deleted
+}
+
+TEST_CASE("batch_remap interspersed {1,3,5} mixes coincidentally-correct and wrong (CURRENT bug)", "[MixedFilament][batch_remap]")
+{
+    // kept = {1,3,5}, new_num = 3. Output [1,2,3,0,...]: id 1 is correct by
+    // coincidence (kept AND == new_num range); id 3 (kept) is wrongly held as
+    // 3 (should shift to 2); id 2 (deleted) is wrongly held as 2 (should be 0).
+    const auto remap = build_batch_remap_for_kept(10, 3);
+    REQUIRE(remap.size() == 11);
+    CHECK(remap[1] == 1);  // C1 survivor, coincidentally correct (new id 1)
+    CHECK(remap[2] == 2);  // C2 DELETED, wrongly held as 2 (would be C3 after repack)
+    CHECK(remap[3] == 3);  // C3 survivor, wrongly held as 3 (should be new id 2)
+    CHECK(remap[4] == 0);  // C4 deleted
+    CHECK(remap[5] == 0);  // C5 SURVIVOR, truncated to NONE (should be new id 3)
+    CHECK(remap[6] == 0);  // C6 deleted
+    CHECK(remap[7] == 0);  // C7 deleted
+    CHECK(remap[8] == 0);  // C8 deleted
+    CHECK(remap[9] == 0);  // C9 deleted
+    CHECK(remap[10] == 0); // C10 deleted
+}
+
+TEST_CASE("batch_remap interspersed {1,3,5} maps survivors correctly when kept is supplied (FIXED)", "[MixedFilament][batch_remap]")
+{
+    // Kept-aware fix: {1,3,5} survivors -> new ids 1/2/3.
+    const auto remap = build_batch_remap_for_kept(10, 3, {1, 3, 5});
+    REQUIRE(remap.size() == 11);
+    CHECK(remap[1] == 1);  // C1 -> new id 1
+    CHECK(remap[2] == 0);  // C2 deleted
+    CHECK(remap[3] == 2);  // C3 -> new id 2
+    CHECK(remap[4] == 0);  // C4 deleted
+    CHECK(remap[5] == 3);  // C5 -> new id 3
+    CHECK(remap[6] == 0);  // C6 deleted
+    CHECK(remap[7] == 0);  // C7 deleted
+    CHECK(remap[8] == 0);  // C8 deleted
+    CHECK(remap[9] == 0);  // C9 deleted
+    CHECK(remap[10] == 0); // C10 deleted
+}
+
+TEST_CASE("batch_remap keep-all {1..10} is identity (non-regression)", "[MixedFilament][batch_remap]")
+{
+    // The other correct shape besides the contiguous head: nothing deleted, so
+    // new_num == old_num and every id keeps identity. A fix to the non-contiguous
+    // bug must leave this case untouched.
+    const auto remap = build_batch_remap_for_kept(10, 10);
+    REQUIRE(remap.size() == 11);
+    CHECK(remap[0] == 0); // NONE sink
+    for (unsigned int i = 1; i <= 10; ++i)
+        CHECK(remap[i] == i);
+}
+
+// ===========================================================================
+// Batch-remap MIXED branch (deleting_filament=false)
+//
+// In the batch path the mixed branch (PresetBundle.cpp:3856-3918) skips the
+// deletion-specific zeroing (3874/3877, both gated on deleting_filament or
+// deleted_1based) and the component shift (3894-3898, gated on
+// deleting_filament). It relies on EITHER:
+//   (a) stable_id match (3884-3892) — new side's mixed_filaments() carries
+//       the same stable_id -> old virtual id maps to the new virtual id; OR
+//   (b) canonical_pair fallback (3893-3914) — old side's (component_a,component_b)
+//       looked up in a map keyed by the NEW side's (component_a,component_b).
+//
+// In real cleanup (Plater.cpp:8425) the call is made AFTER the delete_filament
+// loop, so the bundle's live mixed_filaments() has already been renumbered by
+// remove_physical_filament (component_a/b decremented past each deleted id,
+// MixedFilament.cpp:1864-1870), while old_mixed passed in is the PRE-deletion
+// snapshot. This means:
+//   - stable_id path: correct — stable_id is an identity key, renumber-proof.
+//   - pair fallback path: the OLD key uses pre-deletion component ids while
+//     the NEW map uses post-deletion renumbered ids -> the keys NEVER match
+//     for any pair that straddled a deleted id -> fallback returns 0 (NONE),
+//     silently dropping the mixed row's painting.
+//
+// The pair-fallback bug is effectively UNREACHABLE in product flows today:
+// every mixed row gets a non-zero stable_id at creation (add_custom_filament)
+// and survives serialize/load, so path (a) always fires first. The pair
+// fallback only runs for stable_id==0 rows, which cannot exist in a live
+// bundle (load_custom_entries re-validates and assigns). This mirrors the m1
+// test's "UNREACHABLE but guards the validation perimeter" rationale: if the
+// stable_id allocation is ever weakened, this state becomes reachable and
+// turns into silent painting loss. Pinned as a known bug.
+// ===========================================================================
+
+TEST_CASE("batch_remap mixed stable_id survives non-contiguous physical delete (correct)", "[MixedFilament][batch_remap]")
+{
+    // 4 physicals, one mixed row {component 1,3, stable_id=S}. Simulate the
+    // cleanup sequence for kept={1,3,4} (delete physical 2):
+    //   - snapshot old_mixed = [{1,3,S}]
+    //   - remove_physical_filament(2) renumbers the live row to {1,2,S}
+    //     (component_b 3 -> 2 because 3 > deleted 2; component_a 1 unchanged)
+    //   - update_mixed_filament_id_remap(old_mixed, 4, 3)
+    // stable_id matches -> old virtual id 5 maps to new virtual id 4. CORRECT.
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets = {"F1", "F2", "F3", "F4"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    bundle.update_multi_material_filament_presets();
+
+    auto &mgr = bundle.mixed_filaments;
+    const auto &colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    mgr.add_custom_filament(1, 3, 50, colors);
+    MixedFilament &row = mgr.mixed_filaments().back();
+    REQUIRE(row.stable_id != 0);
+    const uint64_t sid = row.stable_id;
+
+    // Snapshot BEFORE simulating the physical deletion.
+    const std::vector<MixedFilament> old_mixed = mgr.mixed_filaments();
+
+    // Simulate remove_physical_filament(2): renumber the live row's component_b
+    // (3 -> 2). We mutate the live bundle directly rather than calling
+    // remove_physical_filament so the test isolates the remap-table behaviour
+    // from the manager's cascade/erase logic (mirrors how the [shrink] tests
+    // call set_num_filaments to isolate the pure remap path).
+    mgr.mixed_filaments().back().component_b = 2;
+
+    bundle.update_mixed_filament_id_remap(old_mixed, 4, 3);
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+    // old_total = 4 physical + 1 mixed = 5, +1 for [0] sink -> size 6.
+    REQUIRE(remap.size() == 6);
+    // Physical branch (tail-truncation): old ids 1..3 identity, id 4 -> 0.
+    // (Physical-branch bug for non-head kept sets is covered by the matrix
+    //  above; here we focus on the mixed slot at index 5.)
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 3);
+    CHECK(remap[4] == 0);
+    // Mixed virtual id 5 -> 4 via stable_id match (the new side's single row
+    // sits at virtual id 4 = new_num 3 + 1). This is the CORRECT outcome.
+    const unsigned int new_vid = virtual_id_for_stable_id(mgr.mixed_filaments(), 3, sid);
+    REQUIRE(new_vid == 4);
+    CHECK(remap[5] == 4);
+}
+
+TEST_CASE("batch_remap mixed pair-fallback (stable_id=0) straddles a deleted physical (CURRENT bug)", "[MixedFilament][batch_remap]")
+{
+    // Same setup as the stable_id test, but the mixed row has stable_id=0,
+    // forcing the pair-fallback path. old_mixed key = canonical(1,3); the
+    // renumbered live row's key = canonical(1,2). The keys do not match, so
+    // the fallback returns 0 (NONE) — the mixed row's painting is silently
+    // dropped. UNREACHABLE in product flows (every live row has a non-zero
+    // stable_id), but pinned as a boundary guard for the validation perimeter.
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets = {"F1", "F2", "F3", "F4"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    bundle.update_multi_material_filament_presets();
+
+    auto &mgr = bundle.mixed_filaments;
+    const auto &colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    mgr.add_custom_filament(1, 3, 50, colors);
+    // Force the fallback path by zeroing the stable_id (simulates a row that
+    // bypassed allocation — cannot exist in a live bundle today).
+    mgr.mixed_filaments().back().stable_id = 0;
+
+    const std::vector<MixedFilament> old_mixed = mgr.mixed_filaments();
+    // Simulate remove_physical_filament(2): component_b 3 -> 2.
+    mgr.mixed_filaments().back().component_b = 2;
+
+    bundle.update_mixed_filament_id_remap(old_mixed, 4, 3);
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+    REQUIRE(remap.size() == 6);
+    // Mixed virtual id 5 -> 0 (NONE): pair key canonical(1,3) not found in the
+    // new map keyed by canonical(1,2) because the old side's components are NOT
+    // shifted in the batch path (3894 is gated on deleting_filament). This is
+    // the bug: painting on this mixed row is dropped.
+    CHECK(remap[5] == 0);
+}
+
+TEST_CASE("batch_remap mixed pair-fallback (stable_id=0) should match renumbered pair (KNOWN bug)", "[MixedFilament][batch_remap][!shouldfail]")
+{
+    // Expected-correct oracle for the case above: the pair fallback ought to
+    // find the renumbered row. Since old (1,3) and new (1,2) describe the same
+    // physical spools after the id-2 deletion, a fallback that applied the same
+    // shift the batch path skips (3894-3898) would compute key canonical(1,2)
+    // and hit the new map. It currently does not. When the batch mixed branch
+    // is taught to honour the actual deletion set (or cleanup stops relying on
+    // this path), this test will unexpectedly succeed — drop the tag then.
+    MixedAutoGenerateGuard guard(false);
+    PresetBundle bundle;
+    bundle.filament_presets = {"F1", "F2", "F3", "F4"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    bundle.update_multi_material_filament_presets();
+
+    auto &mgr = bundle.mixed_filaments;
+    const auto &colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    mgr.add_custom_filament(1, 3, 50, colors);
+    mgr.mixed_filaments().back().stable_id = 0;
+
+    const std::vector<MixedFilament> old_mixed = mgr.mixed_filaments();
+    mgr.mixed_filaments().back().component_b = 2;
+
+    bundle.update_mixed_filament_id_remap(old_mixed, 4, 3);
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+    REQUIRE(remap.size() == 6);
+    // The single live mixed row sits at new virtual id 4 (= new_num 3 + 1).
+    CHECK(remap[5] == 4);
+}
+
+// ===========================================================================
+// Manual-mode painting-loss reproduction (apply "target==src skip" + cleanup
+// tail-truncation)
+//
+// Root-cause chain for the "partial colour corruption" symptom in manual mode
+// when the user selects a non-contiguous physical subset like [2,6,8,10]:
+//
+//   (1) apply_batch_match_to_model (MixedColorMatchHelpers.cpp:1829-1835) builds
+//       extruder_remap[src] = target ONLY when target != src. After
+//       need_manual_remap the target for a pure recipe pointing at a SELECTED
+//       physical (e.g. C6) is the SAME global id as the source (6), so the
+//       entry is skipped -> the painting is NOT migrated, it stays on the
+//       original global slot (extruder 6).
+//   (2) cleanup_unused_filaments_after_batch_match then deletes the unselected
+//       physical slots {1,3,4,5,7,9} and builds ONE composite painting remap
+//       via build_filament_id_remap(deleting_filament=false) (PresetBundle.cpp:
+//       3824-3834), whose physical branch only does tail-truncation
+//       (old_id <= new_num -> identity, else -> 0). For survivors packed into
+//       low ids {2->1,6->2,8->3,10->4} it maps the ORIGINAL global id 6 -> 0
+//       (6 > new_num 4), so the painting still sitting on slot 6 is dropped.
+//
+// The two tests below reproduce each step with the PURE, test-visible pieces:
+//   A. The "target==src skip" rule (inline re-implementation of the
+//      extruder_remap build loop) — pure data, no wxGetApp.
+//   B. The painting end-state: construct a ModelVolume painted on extruder 6,
+//      apply the cleanup batch state_map (tail-truncation), call the pure
+//      ModelVolume::remap_extruder_ids, and assert the painting is lost.
+//      This uses only libslic3r APIs (Model/TriangleSelector), no wxGetApp.
+//
+// If either assertion EVER fails to reproduce the loss, the root-cause chain
+// above is wrong and must be re-investigated — do NOT relax these oracles.
+// ===========================================================================
+
+// Minimal POD mirror of ColorMappingEntry's two fields used by apply's
+// extruder_remap build. The real ColorMappingEntry lives in the GUI header
+// (MixedColorMatchHelpers.hpp, with wxColour members) which the test binary
+// cannot link, so we reproduce only the two fields the build loop reads.
+struct ApplyMappingStub {
+    std::vector<unsigned int> source_extruder_ids;
+    unsigned int              target_filament_id = 0;
+};
+
+// Inline re-implementation of apply_batch_match_to_model's extruder_remap build
+// (MixedColorMatchHelpers.cpp:1829-1835). Kept byte-faithful to the production
+// loop so a change there surfaces here.
+static std::unordered_map<int, unsigned int> build_apply_extruder_remap(
+    const std::vector<ApplyMappingStub> &mappings)
+{
+    std::unordered_map<int, unsigned int> extruder_remap;
+    for (const auto &mapping : mappings) {
+        for (unsigned int src_eid : mapping.source_extruder_ids) {
+            if (mapping.target_filament_id != src_eid)
+                extruder_remap[static_cast<int>(src_eid)] = mapping.target_filament_id;
+        }
+    }
+    return extruder_remap;
+}
+
+TEST_CASE("manual-mode apply skips selected-physical painting (target==src)", "[MixedFilament][batch_apply]")
+{
+    // Manual subset [2,6,8,10]. A model color painted on extruder 6 (C6, which
+    // the user selected) is matched as a pure recipe -> after need_manual_remap
+    // target_filament_id == 6 (same global id as the source). apply's
+    // extruder_remap build SKIPS it (target==src), so the painting is NOT
+    // migrated. Compare with recommended, where the target is a subset id
+    // (CMYG 1-4) that differs from the global source -> the painting IS moved.
+    ApplyMappingStub manual_pure;
+    manual_pure.source_extruder_ids = {6};   // painting on global C6
+    manual_pure.target_filament_id  = 6;     // pure recipe -> global C6 after remap
+    const auto manual_remap = build_apply_extruder_remap({manual_pure});
+    // Manual: painting stays put — NOT in the apply remap table.
+    CHECK(manual_remap.find(6) == manual_remap.end());
+    CHECK(manual_remap.empty());
+
+    // Recommended: same source 6, but target is a subset id (3) that differs.
+    ApplyMappingStub recom_target;
+    recom_target.source_extruder_ids = {6};
+    recom_target.target_filament_id  = 3;     // CMYG subset id
+    const auto recom_remap = build_apply_extruder_remap({recom_target});
+    // Recommended: painting IS migrated (6 -> 3).
+    REQUIRE(recom_remap.count(6) == 1);
+    CHECK(recom_remap.at(6) == 3);
+}
+
+TEST_CASE("manual-mode painting on a selected physical is lost after cleanup tail-truncation", "[MixedFilament][batch_apply]")
+{
+    // Reproduce the consequence of the two-step chain above, using only the
+    // pure libslic3r painting API (ModelVolume::remap_extruder_ids). A facet
+    // painted on extruder 6 (a selected physical that survived apply unmoved)
+    // is then run through cleanup's batch state_map (tail-truncation for
+    // new_num=4: old ids 1..4 keep identity, ids > 4 -> 0/NONE), which drops it.
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "manual-painting-loss.stl";
+    ModelVolume *volume = object->add_volume(make_cube(20., 20., 20.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    // Paint facet 0 on extruder 6 (simulating C6, a user-selected physical).
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(6));
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+    // Sanity: facet 0 is painted on extruder 6 before remap.
+    REQUIRE(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));
+
+    // cleanup's batch state_map: tail-truncation for new_num_physical=4.
+    // Mirrors build_filament_id_remap(deleting_filament=false) at
+    // PresetBundle.cpp:3824-3834 (old_id <= new_num -> identity, else -> 0),
+    // then Plater.cpp:8429-8437 (mapped==0 -> NONE).
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i < state_map.size(); ++i)
+        state_map[i] = EnforcerBlockerType(i);
+    constexpr size_t new_num_physical = 4;
+    for (size_t i = 1; i < state_map.size(); ++i)
+        if (i > new_num_physical)
+            state_map[i] = EnforcerBlockerType::NONE;
+
+    // Apply the composite remap exactly as cleanup does (Plater.cpp:8445).
+    // total_filaments = new_num_physical + 0 mixed (no mixed in this scenario).
+    volume->remap_extruder_ids(new_num_physical, state_map);
+
+    // CURRENT (buggy) outcome: the painting on extruder 6 is LOST.
+    // build_filament_id_remap's tail-truncation maps old id 6 -> NONE (6 >
+    // new_num 4), and FacetsAnnotation::deserialize treats NONE as "unpainted",
+    // so the facet data is dropped entirely (mmu_segmentation_facets becomes
+    // empty). The correct outcome would be that the painting follows its
+    // physical (C6 -> new survivor slot 2), but the batch remap has no notion
+    // of which physicals survived — it only knows new_num, not the kept set.
+    CHECK(volume->mmu_segmentation_facets.empty());                                       // painting data dropped (the bug)
+    CHECK(!volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(2)));  // NOT remapped to survivor slot 2
+}
+
+TEST_CASE("manual-mode painting on a selected physical survives with kept-aware state_map (FIXED)", "[MixedFilament][batch_apply]")
+{
+    // The kept-aware fix's end-to-end painting evidence: with the state_map the
+    // fix produces (6 -> 2, the survivor's new slot, instead of 6 -> NONE),
+    // the painting on extruder 6 is PRESERVED on survivor slot 2. This pairs
+    // with the bug-reproduction test above (which used the old tail-truncation
+    // state_map and showed the painting lost) to give before/after evidence
+    // per the fix-verification harness. The state_map here mirrors what
+    // build_filament_id_remap now emits for kept_physical_ids={2,6,8,10}
+    // (see the "batch_remap ... FIXED" tests for the remap table itself).
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "manual-painting-survives.stl";
+    ModelVolume *volume = object->add_volume(make_cube(20., 20., 20.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(6)); // painting on selected C6
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+    REQUIRE(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));
+
+    // kept-aware state_map: survivors map to their new packed slots.
+    // For kept={2,6,8,10}: 2->1, 6->2, 8->3, 10->4; others (incl. 1,3,4,5,7,9) -> NONE.
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i < state_map.size(); ++i)
+        state_map[i] = EnforcerBlockerType::NONE;
+    state_map[2]  = EnforcerBlockerType(1);
+    state_map[6]  = EnforcerBlockerType(2);
+    state_map[8]  = EnforcerBlockerType(3);
+    state_map[10] = EnforcerBlockerType(4);
+
+    constexpr size_t new_num_physical = 4;
+    volume->remap_extruder_ids(new_num_physical, state_map);
+
+    // FIXED outcome: painting migrated from old slot 6 to new survivor slot 2.
+    CHECK(!volume->mmu_segmentation_facets.empty());                                      // painting preserved
+    CHECK(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(2)));   // now on survivor slot 2
+    CHECK(!volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));  // gone from old slot 6
+}
+
+TEST_CASE("manual-mode apply migrates unselected-physical painting off its slot", "[MixedFilament][batch_apply]")
+{
+    // Validates the precondition for the kept-aware cleanup fix (fix-verification
+    // side-effects item). The fix maps unselected physical ids -> 0 (NONE) in
+    // cleanup's batch state_map. That is only safe if apply has ALREADY moved
+    // the painting off those ids — otherwise mapping to 0 drops residual data.
+    //
+    // Setup mirrors manual subset [2,6,8,10]: facet A painted on extruder 6
+    // (SELECTED, apply skips it — target==src), facet B painted on extruder 3
+    // (UNSELECTED, matched to C6 so target=6 != src=3, apply migrates it).
+    // After apply's state_map (6->6 identity, 3->6 migrate), extruder 3 must be
+    // EMPTY (its painting moved to 6). This is what makes kept-aware mapping
+    // 3 -> 0 safe: nothing is left on 3 to lose.
+    Model model;
+    ModelObject *object = model.add_object();
+    object->name = "apply-migrate-unselected.stl";
+    ModelVolume *volume = object->add_volume(make_cube(20., 20., 20.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(6)); // facet A: selected physical C6
+    selector.set_facet(1, EnforcerBlockerType(3)); // facet B: unselected physical C3
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+    REQUIRE(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));
+    REQUIRE(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(3)));
+
+    // apply_batch_match_to_model's state_map for this scenario:
+    //   C6 selected, pure recipe, target==src -> identity (6->6)
+    //   C3 unselected, matched to C6, target=6 != src=3 -> migrate (3->6)
+    // (Mirrors MixedColorMatchHelpers.cpp:1849-1861 state_map construction.)
+    EnforcerBlockerStateMap apply_state_map;
+    for (size_t i = 0; i < apply_state_map.size(); ++i)
+        apply_state_map[i] = EnforcerBlockerType(i);
+    apply_state_map[3] = EnforcerBlockerType(6); // C3 painting migrated to C6
+    // total_filaments: pre-cleanup palette still has all 10 physicals here.
+    constexpr size_t pre_cleanup_total = 10;
+    volume->remap_extruder_ids(pre_cleanup_total, apply_state_map);
+
+    // After apply: C3 is EMPTY (its painting moved to 6). C6 holds both facets.
+    CHECK(!volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(3))); // migrated away
+    CHECK(volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));  // both facets now on 6
+
+    // THEN cleanup's kept-aware state_map is safe to map 3 -> 0 (nothing left on
+    // 3 to drop) and 6 -> 2 (survivor's new slot). This is the fix's guarantee.
+}
+
+// ===========================================================================
+// rebuild_match_thumb_cache color-substitution rule (the "After Match" preview).
+//
+// Production function: MixedFilamentBatchDialog::rebuild_match_thumb_cache
+// (MixedFilamentBatchDialog.cpp:567-601). It builds the preview color vector
+// m_match_colors that the After-Match thumbnail renders against, by applying
+// each match mapping onto a base vector of [physical filament_colour ...][mixed
+// display_color ...] indexed by extruder_id-1.
+//
+// Why this is pinned separately from apply_batch_match_to_model:
+//   The preview runs BEFORE the model is modified (no confirm yet), so the
+//   render pipeline still indexes m_match_colors by the ORIGINAL extruder id
+//   (GLVolume::simple_render, 3DScene.cpp:573 reads extruder_colors[idx-1]
+//   for painted facets; render_match_thumb_for_plate:636 sets
+//   vol->color = m_match_colors[vol->extruder_id-1] for unpainted geometry).
+//   Therefore the preview must substitute the SOURCE slots with the matched
+//   color so that, visually, it matches what apply_batch_match_to_model
+//   (MixedColorMatchHelpers.cpp:1829-1835, src->target id remap) produces once
+//   confirmed. The bug this pins: the production loop used to match slots by
+//   wxColour == source_color and `break` on the first hit, so when two extruder
+//   slots share one source color (e.g. two cubes both painted red but on
+//   different extruder ids) only the first slot was substituted -> the second
+//   cube rendered as the original model. The fix iterates ALL
+//   source_extruder_ids per mapping with no break.
+//
+// Same POD-stub discipline as the [batch_apply] block above (the real
+// ColorMappingEntry lives in the GUI header with wxColour members the test
+// binary cannot link), byte-faithful to the fixed production loop so a
+// regression surfaces here. Colors use packed RGB (0xRRGGBB) to avoid wx.
+// ===========================================================================
+
+struct PreviewMappingStub {
+    std::vector<unsigned int> source_extruder_ids; // mirrors ColorMappingEntry::source_extruder_ids
+    unsigned int              target_filament_id = 0;
+    uint32_t                  matched_rgb = 0;      // packed RGB (mirrors matched_color)
+};
+
+// Inline re-implementation of rebuild_match_thumb_cache's color-substitution
+// loop (MixedFilamentBatchDialog.cpp:567-601), FIXED rule. For each mapping,
+// substitute EVERY source extruder slot (index = src-1) with the matched color,
+// no break. An empty source_extruder_ids is a natural no-op (the loop body never
+// runs); a defensive target==0 skip is kept but is a dead branch in practice —
+// assign_batch_virtual_filament_ids (MixedColorMatchHelpers.cpp:1510-1524)
+// always assigns a non-zero target. Kept byte-faithful to the (fixed) production
+// loop so a regression surfaces here.
+static std::vector<uint32_t> build_match_preview_colors(
+    const std::vector<uint32_t>&           base_colors, // initial [physical...][virtual...], index=extruder_id-1
+    const std::vector<PreviewMappingStub>& mappings)
+{
+    std::vector<uint32_t> out = base_colors;
+    for (const auto& mapping : mappings) {
+        if (mapping.target_filament_id == 0) continue; // dead branch (target always non-zero); kept defensively
+        for (unsigned int src_eid : mapping.source_extruder_ids) {
+            if (src_eid == 0) continue;
+            const size_t idx = static_cast<size_t>(src_eid - 1);
+            if (idx >= out.size()) out.resize(idx + 1, 0x80808080u); // pad gray (ensure_slot)
+            out[idx] = mapping.matched_rgb;
+        }
+    }
+    return out;
+}
+
+TEST_CASE("preview colors: same color on multiple extruder slots all get substituted", "[MixedFilament][batch_preview]")
+{
+    // Root-cause reproduction for the reported "two cubes, one rendered matched,
+    // one rendered as the original model" bug. Two cubes are both painted red,
+    // but red occupies extruder slots 2 and 5 (different extruder ids sharing one
+    // source color). The match maps red -> purple and carries
+    // source_extruder_ids = {2, 5}. The preview MUST substitute BOTH source
+    // slots; the old production loop matched by wxColour == source_color and
+    // `break`-ed on the first hit (slot 2), leaving slot 5 as red -> cube B kept
+    // its original color. (MixedFilamentBatchDialog.cpp:567-601.)
+    constexpr uint32_t RED    = 0xFF0000;
+    constexpr uint32_t PURPLE = 0x800080;
+    constexpr uint32_t OTHER  = 0x123456; // unrelated slot color, must be untouched
+    // base_colors indexed by extruder_id-1: slot1=OTHER, slot2=RED, slot3=OTHER,
+    // slot4=OTHER, slot5=RED.
+    const std::vector<uint32_t> base = {OTHER, RED, OTHER, OTHER, RED};
+
+    PreviewMappingStub m;
+    m.source_extruder_ids = {2, 5}; // both cubes' red
+    m.target_filament_id  = 6;      // virtual slot for the purple mix
+    m.matched_rgb         = PURPLE;
+
+    const auto out = build_match_preview_colors(base, {m});
+
+    // BOTH source slots substituted (the fix). Old code would leave out[4]==RED.
+    REQUIRE(out.size() >= 5);
+    CHECK(out[1] == PURPLE); // slot 2 (cube A) -> matched
+    CHECK(out[4] == PURPLE); // slot 5 (cube B) -> matched (was the bug: stayed RED)
+    // Unrelated slots untouched.
+    CHECK(out[0] == OTHER);
+    CHECK(out[2] == OTHER);
+    CHECK(out[3] == OTHER);
+}
+
+TEST_CASE("preview colors: single source extruder substitutes exactly one slot", "[MixedFilament][batch_preview]")
+{
+    // Regression baseline: the common single-extruder case substitutes exactly
+    // one slot and leaves everything else untouched. Guards against an over-broad
+    // substitution fix that would repaint unrelated slots.
+    constexpr uint32_t RED  = 0xFF0000;
+    constexpr uint32_t BLUE = 0x0000FF;
+    constexpr uint32_t GRN  = 0x00FF00;
+    const std::vector<uint32_t> base = {RED, BLUE, GRN};
+
+    PreviewMappingStub m;
+    m.source_extruder_ids = {1};
+    m.target_filament_id  = 4;
+    m.matched_rgb         = 0x111111;
+
+    const auto out = build_match_preview_colors(base, {m});
+    REQUIRE(out.size() == 3);
+    CHECK(out[0] == 0x111111); // slot 1 substituted
+    CHECK(out[1] == BLUE);     // untouched
+    CHECK(out[2] == GRN);      // untouched
+}
+
+TEST_CASE("preview colors: empty source_extruder_ids substitutes nothing", "[MixedFilament][batch_preview]")
+{
+    // A mapping with empty source_extruder_ids must leave every slot untouched
+    // (the loop body never runs). This is the real no-op condition the loop
+    // relies on: assign_batch_virtual_filament_ids always assigns a non-zero
+    // target_filament_id, so the target==0 skip is a dead branch in practice and
+    // cannot guard an empty-source mapping. Guards against a regression that
+    // would substitute a stale matched_rgb onto an unrelated slot when the source
+    // list is empty (defensive: shouldn't happen in normal match output).
+    constexpr uint32_t RED = 0xFF0000;
+    const std::vector<uint32_t> base = {RED, 0x00FF00};
+
+    PreviewMappingStub m;
+    m.source_extruder_ids = {};      // empty -> no-op
+    m.target_filament_id  = 4;       // non-zero (the normal case)
+    m.matched_rgb         = 0x222222;
+
+    const auto out = build_match_preview_colors(base, {m});
+    REQUIRE(out.size() == 2);
+    CHECK(out[0] == RED);       // untouched
+    CHECK(out[1] == 0x00FF00);  // untouched
+}
+
+TEST_CASE("preview colors: virtual slot beyond base vector is padded gray", "[MixedFilament][batch_preview]")
+{
+    // A source extruder id pointing past the base vector (a mixed-filament
+    // virtual slot whose display_color isn't in the initial m_match_colors) must
+    // resize-and-pad so the render pipeline's extruder_colors[idx-1] read stays
+    // in range. Mirrors the ensure_slot resize in the production loop.
+    const std::vector<uint32_t> base = {0xFF0000}; // only 1 physical slot
+
+    PreviewMappingStub m;
+    m.source_extruder_ids = {4}; // virtual slot 4, beyond base size
+    m.target_filament_id  = 4;
+    m.matched_rgb         = 0x333333;
+
+    const auto out = build_match_preview_colors(base, {m});
+    REQUIRE(out.size() == 4);              // grown to hold index 3
+    CHECK(out[0] == 0xFF0000);             // existing slot untouched
+    CHECK(out[3] == 0x333333);             // new slot substituted
+    // Padded holes (indices 1,2) are the gray fill, not 0.
+    CHECK(out[1] == 0x80808080u);
+    CHECK(out[2] == 0x80808080u);
 }

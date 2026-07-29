@@ -88,6 +88,21 @@ private:
 
     void set_match_buttons_state(bool matching);
     void update_recommended_card();
+    // Predict whether applying m_result would exceed MAXIMUM_FILAMENT_NUMBER (64).
+    // Unlike a naive "physical + existing_mixed + new_mixed" sum, this accounts for
+    // the mixed rows cleanup_unused_filaments_after_batch_match will DELETE
+    // (compute_redundant_filaments' redundant_mixed — cascades and unselected rows),
+    // so the warning only fires when colour will actually be lost. Called from the
+    // Confirm button handler so the user is asked to proceed (or cancel) at the
+    // point of commitment, not as a banner at match-completion time.
+    bool predict_slot_overflow() const;
+    // Re-layout the scrolled region after its content height changes (add/remove filament row,
+    // mode switch, legend rebuild). Layout() alone re-arranges within the existing virtual size;
+    // FitInside() also re-computes the virtual (scrollable) extent from the children's best size,
+    // so downstream cards (preview, Color Mapping) keep a stable position and the scrollbar range
+    // tracks reality. Refresh() forces a repaint so the new layout shows up immediately instead of
+    // on the next idle paint. Call after any change that alters a card's height.
+    void relayout_scrolled_content();
     // Enumerate target colors from the model's painted volumes (legacy path; currently NOT
     // called by the ctor — kept for reference / future use). See load_palette_colors.
     void load_model_colors();

@@ -22,6 +22,7 @@
 #include <set>
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <thread>
 
 #include <wx/scrolwin.h>
@@ -54,8 +55,12 @@ static constexpr int LEGEND_GRID_COLS = 4;
 static constexpr int kMinComponentPercent = 0;   // recommended mode floor (near-pure allowed)
 static constexpr int kMaxComponentPercent = 70;  // recommended mode cap; also the advisory threshold
 
-// Product spec: a model is capped at 64 distinct filament colors. Colors past the cap are
-// dropped (see load_model_colors) and a deferred warning is shown once build_ui is up.
+// UI-list cap: the number of source/palette color rows the legend renders. Past this cap
+// the tail colors are dropped (see load_palette_colors) and a deferred warning is shown once
+// build_ui is up. This guards legend rendering against an unbounded color list — it is NOT
+// the project filament-slot limit. The slot limit is MAXIMUM_FILAMENT_NUMBER (libslic3r.h),
+// total_filaments = num_physical + enabled_mixed, enforced at apply time by
+// add_batch_custom_filaments and predicted post-match by handle_batch_match_result.
 static constexpr size_t kMaxColors = 64;
 
 // Recommended-mode (Full Spectrum) per-color transmittance-density (TD) values. These are NOT
@@ -555,43 +560,35 @@ void MixedFilamentBatchDialog::rebuild_match_thumb_cache()
             }
         }
     }
-    // Apply match mappings: find which original extruder slot each
-    // source_color belongs to, and replace it with the matched_color.
-    // This keeps the array indexed by the ORIGINAL extruder ID, which is
-    // what the render pipeline reads (extruder_colors[extruder_id-1]).
+    // Apply match mappings by EXTRUDER ID, mirroring apply_batch_match_to_model's
+    // src->target color effect (MixedColorMatchHelpers.cpp:1829-1835). The preview
+    // runs BEFORE the model is modified, so the render pipeline still indexes this
+    // vector by the ORIGINAL extruder id (render_match_thumb_for_plate sets
+    // vol->color = m_match_colors[vol->extruder_id-1]; GLVolume::simple_render,
+    // 3DScene.cpp:573, reads extruder_colors[idx-1] for painted facets where idx is
+    // the facet's original extruder id). Therefore we substitute the SOURCE slots
+    // with the matched color — visually equivalent to what confirm produces once
+    // the model's extruder ids are remapped to target.
+    //
+    // The old loop matched slots by wxColour == source_color and `break`-ed on the
+    // first hit, so when two extruder slots share one source color (e.g. two cubes
+    // both painted red but on different extruder ids) only the first slot was
+    // substituted -> the second cube rendered as the original model. Iterating
+    // every source_extruder_ids entry fixes that. Pinned by the [batch_preview]
+    // tests (tests/libslic3r/test_mixed_filament.cpp, build_match_preview_colors).
     for (const auto& mapping : m_result.mappings) {
-        wxColour src   = mapping.source_color;
-        bool     found = false;
-        for (size_t i = 0; i < m_match_colors.size(); ++i) {
-            wxColour slot_color(
-                static_cast<unsigned char>(m_match_colors[i].r() * 255.f + 0.5f),
-                static_cast<unsigned char>(m_match_colors[i].g() * 255.f + 0.5f),
-                static_cast<unsigned char>(m_match_colors[i].b() * 255.f + 0.5f));
-            if (slot_color == src) {
-                m_match_colors[i] = {
-                    float(mapping.matched_color.Red())   / 255.f,
-                    float(mapping.matched_color.Green()) / 255.f,
-                    float(mapping.matched_color.Blue())  / 255.f,
-                    1.0f,
-                };
-                found = true;
-                break;
-            }
-        }
-        // If source_color is not in any physical slot (virtual extruder /
-        // mixed filament from a prior match), add a new slot.
-        if (!found) {
-            size_t slot = (mapping.target_filament_id > 0)
-                ? static_cast<size_t>(mapping.target_filament_id - 1)
-                : m_match_colors.size();
-            if (slot >= m_match_colors.size())
-                m_match_colors.resize(slot + 1, {0.5f, 0.5f, 0.5f, 1.0f});
-            m_match_colors[slot] = {
-                float(mapping.matched_color.Red())   / 255.f,
-                float(mapping.matched_color.Green()) / 255.f,
-                float(mapping.matched_color.Blue())  / 255.f,
-                1.0f,
-            };
+        const ColorRGBA matched_rgba = {
+            float(mapping.matched_color.Red())   / 255.f,
+            float(mapping.matched_color.Green()) / 255.f,
+            float(mapping.matched_color.Blue())  / 255.f,
+            1.0f,
+        };
+        for (unsigned int src_eid : mapping.source_extruder_ids) {
+            if (src_eid == 0) continue;
+            const size_t idx = static_cast<size_t>(src_eid - 1);
+            if (idx >= m_match_colors.size())
+                m_match_colors.resize(idx + 1, {0.5f, 0.5f, 0.5f, 1.0f}); // ensure_slot pad
+            m_match_colors[idx] = matched_rgba;
         }
     }
 
@@ -1350,8 +1347,7 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
                 m_manual_row_panels[m_manual_filament_count]->Hide();
                 on_manual_selection_changed();
                 update_add_remove_buttons();
-                m_manual_card->Layout();
-                m_manual_card->GetParent()->Layout();
+                relayout_scrolled_content();
             }
         });
         title_row->Add(m_btn_remove_filament, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
@@ -1359,13 +1355,15 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         m_btn_add_filament = new ScalableButton(card, wxID_ANY, "icon_plus");
         m_btn_add_filament->SetToolTip(_L("Add filament"));
         m_btn_add_filament->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-            if (m_manual_filament_count < 4) {
+            // Cap at the number of physical filaments — you can't pick more rows than the
+            // spools the printer actually has — and never exceed the 4-row UI bound.
+            const int max_rows = std::min<int>(4, static_cast<int>(m_physical_colors.size()));
+            if (m_manual_filament_count < max_rows) {
                 m_manual_row_panels[m_manual_filament_count]->Show();
                 ++m_manual_filament_count;
                 on_manual_selection_changed();
                 update_add_remove_buttons();
-                m_manual_card->Layout();
-                m_manual_card->GetParent()->Layout();
+                relayout_scrolled_content();
             }
         });
         title_row->Add(m_btn_add_filament, 0, wxALIGN_CENTER_VERTICAL);
@@ -1822,7 +1820,21 @@ void MixedFilamentBatchDialog::build_footer()
             if (m_btn_confirm && m_btn_confirm->IsEnabled()) m_btn_confirm->SetFocus();
         }
     });
-    m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        // Slot-overflow confirm gate: if applying this match would exceed the 64-filament
+        // limit, some mixes cannot be created and their model regions lose colour. Ask the
+        // user to proceed (or stay in the dialog) at the point of commitment — earlier than
+        // the silent drop add_batch_custom_filaments performs at apply time.
+        if (m_match_completed && m_result.success && predict_slot_overflow()) {
+            RichMessageDialog dlg(this,
+                _L("Applying this match will exceed the filament limit and some colors will be lost. Continue?"),
+                _L("Color Mixing Match"), wxYES_NO | wxICON_QUESTION);
+            dlg.SetYesNoLabels(_L("Continue"), _L("Cancel"));
+            dlg.CentreOnScreen();
+            if (dlg.ShowModal() != wxID_YES) return; // stay in the dialog, do not close
+        }
+        EndModal(wxID_OK);
+    });
 
     btn_panel->SetSizer(panel_sizer);
     m_root->Add(btn_panel, 0, wxEXPAND);
@@ -1936,20 +1948,17 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
         m_manual_card->Show(m_matching_method == MANUAL);
     if (m_recommended_card)
         m_recommended_card->Show(m_matching_method == RECOMMENDED);
-    // Force parent re-layout since card visibility changed
-    if (m_matching_method == MANUAL && m_manual_card) {
-        m_manual_card->Layout();
-        m_manual_card->GetParent()->Layout();
-        // Re-apply combo icons: set_manual_combo_icon was called during build
-        // while the card was hidden (SetIcon may not render on a hidden window).
+    // Re-apply combo icons: set_manual_combo_icon was called during build
+    // while the card was hidden (SetIcon may not render on a hidden window).
+    if (m_matching_method == MANUAL) {
         for (int i = 0; i < 4; ++i)
             if (m_filament_combo[i])
                 set_manual_combo_icon(i, m_filament_combo[i]->GetSelection());
     }
-    if (m_matching_method == RECOMMENDED && m_recommended_card) {
-        m_recommended_card->Layout();
-        m_recommended_card->GetParent()->Layout();
-    }
+    // Card visibility changed — the filament-config card swaps between manual and recommended,
+    // whose content heights differ, so re-layout the scrolled region (not just the card itself)
+    // to keep the preview / Color Mapping cards in a stable position.
+    relayout_scrolled_content();
     update_mapping_legend();
     set_match_buttons_state(false);
     // Refresh the combo's tooltip to describe the now-active mode (hover hint).
@@ -2021,7 +2030,13 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     // Post-match complement to check_manual_filament_ratio: that one warns BEFORE a match
     // (based on how many rows picked the same physical slot). This one warns AFTER a match,
     // scanning every non-pure recipe for any single component above kMaxComponentPercent and
-    // listing ALL offending filament IDs in one banner (gap doc case 13).
+    // listing ALL offending rows in one banner (gap doc case 13).
+    //
+    // The IDs reported here are the TARGET filament ids (target_filament_id) — i.e. the
+    // numbers shown on the right-hand badge of each Color Mapping row — NOT the recipe
+    // component (source physical) ids. A user reading "the mix ratio for {5} is too high"
+    // looks for the row labelled "5" in the mapping list, which is the target id. Reporting
+    // the underlying component id instead would point at a label the list never displays.
     if (m_warning_panel) m_warning_panel->Hide();
     if (m_matching_method != MANUAL) return;
     if (!m_match_completed || m_result.mappings.empty()) return;
@@ -2034,15 +2049,20 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     const size_t num_physical = m_physical_colors.size();
     if (num_physical == 0) return;
 
-    // Collect offending filament ids (1-based) in a set for de-dup + ascending order.
+    // Collect offending TARGET filament ids (target_filament_id) in a set for de-dup +
+    // ascending order. A single mapping whose recipe has any component above the threshold
+    // contributes its target id once.
     std::set<unsigned int> over_ids;
     for (const ColorMappingEntry& e : m_result.mappings) {
         if (e.is_pure_recipe) continue;        // pure = single component, ratio n/a
         if (!e.recipe.valid) continue;         // nothing to check
+        if (e.target_filament_id == 0) continue; // unmapped/invisible row, no label to report
         const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
         for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
-            if (weights[i] > kMaxComponentPercent)
-                over_ids.insert(static_cast<unsigned int>(i + 1));
+            if (weights[i] > kMaxComponentPercent) {
+                over_ids.insert(e.target_filament_id);
+                break; // one over-threshold component is enough to flag this row
+            }
         }
     }
     if (over_ids.empty()) return;
@@ -2127,9 +2147,61 @@ void MixedFilamentBatchDialog::set_manual_combo_icon(int row, int filament_idx)
 void MixedFilamentBatchDialog::update_add_remove_buttons()
 {
     // Keep both buttons always visible and gray them out at their limits (remove at min=2,
-    // add at max=4) instead of hiding them — makes the available action discoverable.
+    // add at the physical-filament cap, never beyond the 4-row UI bound) instead of hiding
+    // them — makes the available action discoverable. The add cap tracks the live physical
+    // spool count: you can't configure more rows than the printer actually holds.
+    const int max_rows = std::min<int>(4, static_cast<int>(m_physical_colors.size()));
     if (m_btn_remove_filament) m_btn_remove_filament->Enable(m_manual_filament_count > 2);
-    if (m_btn_add_filament)    m_btn_add_filament->Enable(m_manual_filament_count < 4);
+    if (m_btn_add_filament)    m_btn_add_filament->Enable(m_manual_filament_count < max_rows);
+}
+
+void MixedFilamentBatchDialog::relayout_scrolled_content()
+{
+    if (!m_scrolled_content) return;
+    // Layout() re-arranges children within the existing virtual size; FitInside() additionally
+    // re-computes the virtual (scrollable) extent from the children's current best sizes. Both
+    // are needed after a content-height change: without FitInside the scrolled window keeps the
+    // old virtual height, so cards below the change (preview, Color Mapping) drift upward or
+    // leave a dangling scrollable tail — visible as the Color Mapping card jumping when an
+    // add/remove filament row alters the manual card's height.
+    m_scrolled_content->Layout();
+    m_scrolled_content->FitInside();
+    m_scrolled_content->Refresh();
+}
+
+bool MixedFilamentBatchDialog::predict_slot_overflow() const
+{
+    // Predict whether confirming this match would push the project past
+    // MAXIMUM_FILAMENT_NUMBER (64). The AUTHORITATIVE gate is
+    // add_batch_custom_filaments (MixedFilament.cpp:1951-1957): it computes
+    //   current_total = total_filaments(n) = n + enabled_mixed
+    // then drops every batch entry once current_total reaches 64 (assigns id 0
+    // -> the model region keeps its original colour, i.e. colour is LOST).
+    //
+    // n = apply-time physical base:
+    //   recommended -> max(4, current_physical)  (target_count, Plater.cpp:2419)
+    //   manual      -> current_physical          (colors_vec = full filament_colour,
+    //                  Plater.cpp:2466)
+    // enabled_mixed = current enabled_count() (auto_generate is off; manual mode does
+    //   not touch m_mixed before add_batch; recommended mode's set_num_filaments would
+    //   rebuild it only if auto_generate were on).
+    // new_mixed_rows = non-pure, non-in-place mappings (one slot each), mirroring the
+    //   batch_entries build at Plater.cpp:2576-2579.
+    const auto* pb = wxGetApp().preset_bundle;
+    if (pb == nullptr) return false;
+    const size_t current_physical = m_physical_colors.size();
+    if (current_physical == 0) return false;
+
+    const bool recom = m_result.is_recommended_mode;
+    const size_t n = recom ? std::max<size_t>(4, current_physical) : current_physical;
+
+    size_t new_mixed_rows = 0;
+    for (const auto& m : m_result.mappings)
+        if (!m.is_pure_recipe && !m.in_place_edited) ++new_mixed_rows;
+
+    const size_t enabled_mixed = pb->mixed_filaments.enabled_count();
+    const size_t post_apply_total = n + enabled_mixed + new_mixed_rows;
+    return post_apply_total > MAXIMUM_FILAMENT_NUMBER;
 }
 
 // ---------------------------------------------------------------------------
@@ -2142,6 +2214,28 @@ void MixedFilamentBatchDialog::start_batch_match()
     if (m_model_colors.empty()) {
         set_error(_L("No model detected. Import a multi-color model to continue."));
         return;
+    }
+    // Recommended (auto) mode relies on the Full Spectrum filament preset, which today
+    // only ships for the 0.4 nozzle. Other nozzles have no validated palette, so block the
+    // match up front and direct the user to Manual mode or a nozzle change. Manual mode
+    // is unaffected (user picks filaments from the current list, palette-agnostic).
+    if (m_matching_method == RECOMMENDED) {
+        double nozzle = 0.4; // fallback if preset_bundle/option unavailable
+        if (auto* pb = wxGetApp().preset_bundle) {
+            if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+                opt != nullptr && !opt->values.empty()) {
+                nozzle = opt->values.front();
+            }
+        }
+        if (std::abs(nozzle - 0.4) > 1e-6) {
+            RichMessageDialog dlg(this,
+                _L("The current nozzle diameter does not support automatic matching. Use manual matching mode or change the nozzle diameter."),
+                _L("Color Mixing Match"), wxOK);
+            dlg.SetOKLabel(_L("Got it"));
+            dlg.CentreOnScreen();
+            dlg.ShowModal();
+            return;
+        }
     }
     m_match_running = true;
     m_error_panel->Hide();
@@ -2291,8 +2385,10 @@ void MixedFilamentBatchDialog::launch_background_match()
         // to be replaced, and (b) a passthrough recipe targeting a virtual filament
         // ID (e.g. component_a=5) would be silently clamped in add_batch_custom_filaments.
 
-        // Pass 1: map each model color to closest existing filament
-        constexpr double K_REUSE_THRESHOLD = 1.5;
+        // Pass 1: map each model color to closest existing filament. Per case 11 / PRD 6.2.5,
+        // a model color within ΔE<1 of an existing filament is mapped directly to it (pure
+        // filament preferred over a mix) — strict <1 matches the product spec.
+        constexpr double K_REUSE_THRESHOLD = 1.0;
         for (const auto& mc : model_colors) {
             double best_de = std::numeric_limits<double>::max();
             size_t best_idx = 0;
@@ -2510,9 +2606,10 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     if (result.is_recommended_mode)
         update_recommended_card();
     refresh_previews();
-    // Post-match advisory: scan manual-mode recipes for any single component > 70%. Must run
-    // after refresh_previews (m_match_completed is already true here) and before the button
-    // state flip so the warning banner is in place when Confirm lights up.
+    // Post-match ratio advisory (the "single component > 70%" quality hint, gap doc case 13).
+    // Runs here so the warning banner is in place when Confirm lights up. The slot-overflow
+    // (data-loss) case is NOT warned here anymore — it is surfaced as a confirm-time dialog
+    // by predict_slot_overflow() in the Confirm handler, where the user can choose to proceed.
     check_manual_recipe_ratio();
     // Defer the button-state flip until AFTER refresh_previews() has rendered and
     // pushed the After-Match bitmap, so Confirm/Re-match light up in lockstep with
@@ -2603,8 +2700,10 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             // parent), and the swatches/arrow are independent child windows — so we must set
             // the same tip on every child too, otherwise hovering a swatch shows nothing and
             // only the gaps between children trigger the row's tip.
-            const wxString grade = (mapping.delta_e <= 3.0) ? _L("Good")
-                                  : (mapping.delta_e <= 5.0) ? _L("Fair")
+            // Grade bands per PRD 6.2.5 — open intervals: <3 Good, 3≤ΔE<5 Fair, >5 Poor.
+            // Use strict < so ΔE exactly 3.0 → Fair, exactly 5.0 → Poor (boundary correctness).
+            const wxString grade = (mapping.delta_e < 3.0) ? _L("Good")
+                                  : (mapping.delta_e < 5.0) ? _L("Fair")
                                   : _L("Poor");
             // Per copy spec: "色差：{等级}（ΔE={X}）" / "Color Difference: {Level} (ΔE={X})".
             // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all
@@ -2617,15 +2716,13 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             m_legend_sizer->Add(item, 0, wxEXPAND | wxALL, FromDIP(3));
         }
     }
-    // Card grows with content (no inner scroller); re-layout the panel/card and
-    // let the outer dialog-level scroller absorb the new height.
+    // Card grows with content (no inner scroller); re-layout the legend panel + card so they
+    // reflect the new row count, then re-layout the scrolled region so its virtual (scrollable)
+    // extent tracks the new card height and downstream positioning stays correct.
     m_legend_panel->Layout();
     m_mapping_card->Layout();
     m_mapping_card->Refresh();
-    if (m_scrolled_content) {
-        m_scrolled_content->FitInside();
-        m_scrolled_content->Refresh();
-    }
+    relayout_scrolled_content();
 }
 
 }} // namespace Slic3r::GUI

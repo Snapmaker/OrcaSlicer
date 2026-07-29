@@ -160,7 +160,13 @@ public:
     void delete_filament(size_t filament_id  = size_t(-1), int replace_filament_id = -1,
                          bool skip_dependency_check = false,
                          bool skip_update = false); // 0 base, -1 means default
-    void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result);
+    // on_progress (optional) is invoked once per physical-filament deletion inside the
+    // batch loop, passing (current, total) where total = redundant physical count.
+    // Callers that show a progress dialog map (current/total) to a percentage and
+    // call progress.Update so the bar reflects real progress during the (potentially
+    // many-second) deletion loop. Default-empty: existing callers see no change.
+    void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result,
+                                                    std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
     void add_custom_filament(wxColour new_col);
     void edit_filament();
 

@@ -1054,11 +1054,30 @@ void Tab::update_changed_ui()
     if (m_postpone_update_ui)
         return;
 
-    const bool deep_compare = (m_flow_variant_view != nullptr ||
-                               m_type == Slic3r::Preset::TYPE_PRINTER ||
+    const bool deep_compare = (m_type == Slic3r::Preset::TYPE_PRINTER ||
                                m_type == Slic3r::Preset::TYPE_SLA_MATERIAL);
     auto dirty_options = m_presets->current_dirty_options(deep_compare);
     auto nonsys_options = m_presets->current_different_from_parent_options(deep_compare);
+
+    if (m_flow_variant_view && !deep_compare)
+    {
+        auto merge_flow_variant_options = [this](std::vector<std::string>& options,
+                                                  std::vector<std::string> deep_options) {
+            options.erase(std::remove_if(options.begin(), options.end(), [this](const std::string& key) {
+                return m_flow_variant_view->is_option(key);
+            }), options.end());
+            for (const std::string& key : deep_options)
+            {
+                const size_t index_separator = key.find('#');
+                const std::string base_key = key.substr(0, index_separator);
+                if (m_flow_variant_view->is_option(base_key))
+                    options.emplace_back(key);
+            }
+        };
+
+        merge_flow_variant_options(dirty_options, m_presets->current_dirty_options(true));
+        merge_flow_variant_options(nonsys_options, m_presets->current_different_from_parent_options(true));
+    }
     if (m_type == Preset::TYPE_PRINTER && static_cast<TabPrinter*>(this)->m_printer_technology == ptFFF) {
         TabPrinter* tab = static_cast<TabPrinter*>(this);
         if (tab->m_initial_extruders_count != tab->m_extruders_count)

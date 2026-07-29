@@ -5,6 +5,7 @@
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
 
 #include "FlushVolCalc.hpp"
+#include "FlushVolHighFlow.hpp"
 
 
 namespace Slic3r {
@@ -204,21 +205,6 @@ static float calc_triangle_3rd_edge(float edge_a, float edge_b, float degree_ab)
     return std::sqrt(edge_a * edge_a + edge_b * edge_b - 2 * edge_a * edge_b * std::cos(to_radians(degree_ab)));
 }
 
-static float smoothstep(float edge0, float edge1, float x)
-{
-    if (edge0 == edge1)
-        return x < edge0 ? 0.f : 1.f;
-
-    float t = std::clamp((x - edge0) / (edge1 - edge0), 0.f, 1.f);
-    return t * t * (3.f - 2.f * t);
-}
-
-static float normalize_hue(float hue)
-{
-    hue = std::fmod(hue, 360.f);
-    return hue < 0.f ? hue + 360.f : hue;
-}
-
 // ---- Formula coefficient sets (V5 abs opt calibration) ----
 
 static const FlushFormulaParams s_normal_params = {
@@ -231,16 +217,16 @@ static const FlushFormulaParams s_normal_params = {
     0.30f    // hs_cap
 };
 
-// HighFlow coefficients — calibrated against HighFlow measured matrix (2026-07-18).
-// Optimization target: 实测-30 < 预测 < 实测+100 (50k random + 20k hill-climb).
+// HighFlow coefficients — v6 calibration (2026-07-23).
+// K compensation rules in FlushVolHighFlow.hpp.
 static const FlushFormulaParams s_highflow_params = {
-    0.617f,   // lumi_pow_exp
-    339.4f,   // lumi_pow_scale
-    128.0f,   // lumi_linear_scale
-    0.605f,   // inter_hsv_from_w (weight of from_hsv_v)
-    1163.1f,  // hs_scale
-    72.8f,    // triangle_angle (degrees)
-    0.147f    // hs_cap
+    0.957f,   // lumi_pow_exp
+    406.1f,   // lumi_pow_scale
+    190.2f,   // lumi_linear_scale
+    0.125f,   // inter_hsv_from_w (weight of from_hsv_v)
+    1114.3f,  // hs_scale
+    76.7f,    // triangle_angle (degrees)
+    0.221f    // hs_cap
 };
 
 static float DeltaHS_BBS(float h1, float s1, float v1, float h2, float s2, float v2, float hs_cap)
@@ -335,9 +321,16 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
     // Lookup miss — fall through to Path B (HSV formula with stain-risk compensation)
     float flush_volume = (float)calc_flush_vol_rgb(src_r, src_g, src_b, dst_r, dst_g, dst_b, params);
 
-    // Apply special color correction coefficient K only for Path B (red / pearl white / cold white / gray)
-    float k = get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
-    int   final_volume = (int) ((float) flush_volume * k);
+    // Apply special color correction K (Path B).
+    // HighFlow uses calibrated K (FlushVolHighFlow.hpp) and rounds; Standard is unchanged.
+    bool is_highflow = (m_flush_dataset == static_cast<int>(FlushDataset::HighFlow));
+    float k = is_highflow
+        ? get_special_k_highflow(src_r, src_g, src_b, dst_r, dst_g, dst_b)
+        : get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
+    int   final_volume = is_highflow
+        ? (int) ((float) flush_volume * k + 0.5f)
+        : (int) ((float) flush_volume * k);
+
 
     // Per-flow clamping with flow-specific thresholds — user-specified (2026-07-20).
     const auto& thresholds = get_flush_thresholds(m_flush_dataset);

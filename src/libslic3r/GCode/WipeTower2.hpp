@@ -237,6 +237,7 @@ private:
     std::vector<int> m_filament_categories; // 粘接性类别
     bool m_tower_framework = false; // 内支撑肋
     bool m_enable_tower_interface_features = false;
+    bool m_enable_tower_interface_cooldown_during_tower = false;
     size_t m_cur_layer_id;
     bool m_use_rib_wall;
     Vec2f m_rib_offset;

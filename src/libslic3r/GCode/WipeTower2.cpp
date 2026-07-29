@@ -1485,12 +1485,14 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_enable_arc_fitting(config.enable_arc_fitting)
     , m_used_fillet(config.wipe_tower_fillet_wall)
     , m_use_gap_wall(config.wipe_tower_wall_gap.value)
+    , m_tower_framework(config.prime_tower_enable_framework.value)
     , m_rib_width(config.wipe_tower_rib_width)
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
     , m_wall_type((int) config.wipe_tower_wall_type)
     , m_use_rib_wall(config.wipe_tower_wall_type == WipeTowerWallType::wtwRib)
     , m_wall_filament(config.wipe_tower_filament)
     , m_enable_tower_interface_features(config.enable_tower_interface_features)
+    , m_enable_tower_interface_cooldown_during_tower(config.enable_tower_interface_cooldown_during_tower)
 {
     m_contact_speed = 20 * 60.f;
 
@@ -1884,7 +1886,23 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
         writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_Start) + "\n");
         toolchange_Change(writer, new_tool, m_filpar[new_tool].material); // Change the tool, set a speed override for soluble and flex materials.
         toolchange_Load(writer, cleaning_box);
+
+        bool interface_layer = solid_toolchange && m_enable_tower_interface_features;
+        int base_temp = is_first_layer() ? m_filpar[m_current_tool].first_layer_temperature : m_filpar[m_current_tool].temperature;
+        if (interface_layer) {
+            int interface_temp = m_filpar[m_current_tool].filament_tower_interface_print_temp;
+            if (interface_temp > 0 && interface_temp != base_temp)
+                writer.set_extruder_temp(interface_temp, true);
+            if (m_enable_tower_interface_cooldown_during_tower && interface_temp > 0 && interface_temp != base_temp)
+                writer.set_extruder_temp(base_temp, false);
+        }
         toolchange_wipe_new(writer, cleaning_box, wipe_length, solid_toolchange);
+        if (interface_layer) {
+            int interface_temp = m_filpar[m_current_tool].filament_tower_interface_print_temp;
+            if (!m_enable_tower_interface_cooldown_during_tower && interface_temp > 0 && interface_temp != base_temp)
+                writer.set_extruder_temp(base_temp, false);
+        }
+
         writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");
         ++m_num_tool_changes;
     }
@@ -2326,8 +2344,6 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
         .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
         .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
             Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
-
-    writer.append("[deretraction_from_wipe_tower_generator]");
 
     writer.set_tool(new_tool); // This outputs nothing, the writer just needs to know the tool has changed.
     //writer.append("[filament_start_gcode]\n");

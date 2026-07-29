@@ -275,7 +275,7 @@ static std::string cold_plate_error_text(
     const std::vector<int>&  unsupported_slots_1based)
 {
     return Slic3r::GUI::format(
-        _u8L("Cool Steel Plate is not recommended for printing %1% filaments. To continue, set the corresponding bed temperature to a non-zero value."),
+        _u8L("The Cool Steel Plate is not recommended for %1%. To continue printing, set the bed temperature above 0°C for this filament."),
         format_filament_slot_list(unsupported_slots_1based));
 }
 
@@ -285,7 +285,7 @@ static std::string cold_plate_serious_warning_text(
     const std::vector<int>&  tpu_slots_1based)
 {
     return Slic3r::GUI::format(
-        _u8L("Cool Steel Plate is not recommended for printing %1% filaments. They may be hard to remove. Use a textured PEI plate or heat the bed."),
+        _u8L("The Cool Steel Plate is not recommended for %1%. They may be hard to remove. Use a textured PEI plate or heat the bed."),
         format_filament_slot_list(tpu_slots_1based));
 }
 

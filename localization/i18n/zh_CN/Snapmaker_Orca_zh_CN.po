@@ -7448,44 +7448,26 @@ msgstr "打印时的喷嘴温度"
 msgid "Cool Plate (SuperTack)"
 msgstr "低温打印板（超强粘附）"
 
-msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
-msgstr "安装低温打印板（超强粘附）时的热床温度。0值表示该耗材丝不支持在低温打印板（超强粘附）上打印。"
-
 msgid "Cool Steel Plate"
 msgstr "低温冷打钢板"
-
-msgid "Bed temperature when the Cool Steel Plate is installed. A value of 0 means the filament does not support printing on the Cool Steel Plate."
-msgstr "安装低温冷打钢板时的热床温度。0值表示该材料不支持在低温冷打钢板上打印。"
 
 msgid "Cool Plate"
 msgstr "低温打印热床"
 
-msgid "Bed temperature when the Cool Plate is installed. A value of 0 means the filament does not support printing on the Cool Plate."
-msgstr "安装低温打印热床时的热床温度。0值表示这个耗材丝不支持低温打印热床"
-
 msgid "Textured Cool Plate"
 msgstr "纹理的低温打印床"
-
-msgid "Bed temperature when the Textured Cool Plate is installed. A value of 0 means the filament does not support printing on the Textured Cool Plate."
-msgstr "安装纹理低温打印热床时的热床温度。0值表示这个耗材丝不支持纹理低温打印热床"
 
 msgid "Engineering Plate"
 msgstr "工程材料热床"
 
-msgid "Bed temperature when the Engineering Plate is installed. A value of 0 means the filament does not support printing on the Engineering Plate."
-msgstr "安装工程材料热床时的热床温度。0值表示这个耗材丝不支持工程材料热床"
-
 msgid "Smooth PEI Plate / High Temp Plate"
 msgstr "光滑PEI板/高温板"
-
-msgid "Bed temperature when the Smooth PEI Plate/High Temperature Plate is installed. A value of 0 means the filament does not support printing on the Smooth PEI Plate/High Temp Plate."
-msgstr "使用光滑PEI热床或高温打印热床时的床温。值0表示耗材不支持在光滑PEI热床或高温打印热床上打印"
 
 msgid "Textured PEI Plate"
 msgstr "纹理PEI热床"
 
-msgid "Bed temperature when the Textured PEI Plate is installed. A value of 0 means the filament does not support printing on the Textured PEI Plate."
-msgstr "安装纹理PEI热床时的热床温度。0值表示这个耗材丝不支持纹理PEI热床"
+msgid "Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate."
+msgstr "安装此热床时的热床温度。0值表示该耗材丝不支持在此热床上打印。"
 
 msgid "Volumetric speed limitation"
 msgstr "体积速度限制"
@@ -15163,9 +15145,6 @@ msgstr "提示：当前耗材与特效纹理热床的粘附力较低，打印失
 
 msgid "Note: Using a %s mm %s nozzle for %s is not recommended."
 msgstr "提示：不推荐使用 %s mm %s热端打印 %s。"
-
-msgid "Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate."
-msgstr "安装特效纹理热床时的热床温度。0值表示这个耗材丝不支持特效纹理热床"
 
 #~ msgid "Improve shell precision by adjusting outer wall spacing. This also improves layer consistency."
 #~ msgstr "优化外墙刀路以提高外墙精度。这个优化同时减少层纹"

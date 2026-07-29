@@ -2321,7 +2321,7 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->SetToolTip(_L("Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\n"
                                         "Note:\n"
-                                        "1.Color mixing match is based on the official recommended CMYW filaments. The matched colors may differ from the original model.\n"
+                                        "1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n"
                                         "2.The order of the Color Mapping list may differ from that of the Color Mixing list."));
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
@@ -2356,18 +2356,26 @@ Sidebar::Sidebar(Plater *parent)
 
         // Applying batch-match results involves palette rewrite, mixed-filament
         // creation, painting remap and cleanup — all synchronous on the main
-        // thread.  Show a progress dialog so the user sees "processing" instead
-        // of "not responding".
-        // wxWidgets pitfall (§70): Update() pumps the event loop and its return
-        // value reflects skip/close state — check it. wxPD_AUTO_HIDE only fires
-        // at 100%, so the final step must reach 100 or the bar visibly aborts.
-        ProgressDialog progress(_L("Applying color match"), _L("Preparing palette..."), 100,
-                                find_toplevel_parent(this), wxPD_APP_MODAL | wxPD_AUTO_HIDE);
-        auto update_progress = [&](int value, const wxString& msg) {
+        // thread. Show a determinate progress dialog so the user sees real
+        // progress instead of "not responding". Profiling showed ~96% of apply
+        // time is the physical-filament deletion loop inside cleanup_unused_, so
+        // the bar is mapped by time share: quick pre-steps → 0..5, the deletion
+        // loop → 5..95 (reported back per-deletion via on_progress), the final UI
+        // refresh → 95..100. wxWidgets pitfall (§70): Update() pumps the event
+        // loop and its return value reflects skip/close state; there is no abort
+        // button here so it's consumed but not acted on. wxPD_APP_MODAL blocks
+        // interaction with the main window while the apply runs.
+        ProgressDialog progress(_L("Loading"),
+                                _L("Updating the Filaments and Color Mixing list..."),
+                                100, find_toplevel_parent(this),
+                                wxPD_APP_MODAL | wxPD_AUTO_HIDE);
+        const wxString kMsg = _L("Updating the Filaments and Color Mixing list...");
+        auto set_progress = [&](int pct) {
             // Return value intentionally not acted on (no wxPD_CAN_ABORT button),
             // but consumed to satisfy §70 ("check the return value of Update()").
-            (void) progress.Update(value, msg);
+            (void) progress.Update(pct, kMsg);
         };
+        set_progress(1);
 
         auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
 
@@ -2582,7 +2590,7 @@ Sidebar::Sidebar(Plater *parent)
             batch_entries.push_back(std::move(entry));
         }
         std::vector<unsigned int> assigned_ids;
-        update_progress(20, _L("Creating mixed filaments..."));
+        set_progress(3);
         mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids);
 
         // Replace dialog-computed target ids with the actual virtual ids assigned by
@@ -2609,15 +2617,25 @@ Sidebar::Sidebar(Plater *parent)
                     << "or invalid components); regions left on original filament.";
         }
         // Apply matched recipes to model painting data
-        update_progress(40, _L("Mapping model colors..."));
+        set_progress(5);
         apply_batch_match_to_model(model_result, wxGetApp().plater()->fff_print());
 
-        // Remove physical/mixed filaments left unreferenced by the match.
-        update_progress(60, _L("Cleaning up unused filaments..."));
-        cleanup_unused_filaments_after_batch_match(model_result);
+        // Remove physical/mixed filaments left unreferenced by the match. This is
+        // ~96% of apply time (per-deletion combo rebuild). Map the deletion loop's
+        // (current, total) onto 5..95 so the bar advances steadily and reflects
+        // real remaining work, not just a spinner.
+        cleanup_unused_filaments_after_batch_match(
+            model_result,
+            [&set_progress](int current, int total) {
+                // Map current/total ∈ [1,total] to 5..95. total==0 can't happen
+                // here (the loop only runs when redundant_physical is non-empty),
+                // but guard anyway to avoid divide-by-zero if the contract changes.
+                const int span = (total > 0) ? (90 * current / total) : 0;
+                set_progress(5 + span);
+            });
 
         // cleanup already serializes; only panel refresh needed.
-        update_progress(80, _L("Updating UI..."));
+        set_progress(95);
         update_mixed_filament_panel(false);
         update_ui_from_settings();
         update_dynamic_filament_list();
@@ -2632,9 +2650,9 @@ Sidebar::Sidebar(Plater *parent)
         for (size_t i = 0; i < fcombos.size(); ++i) {
             if (fcombos[i]) fcombos[i]->update();
         }
-        // §70: reach 100% so wxPD_AUTO_HIDE dismisses cleanly (the dialog would
-        // otherwise disappear mid-fill at 80% when it goes out of scope).
-        update_progress(100, _L("Done"));
+        // §70: wxPD_AUTO_HIDE only fires at 100%, so reach 100 here for a clean
+        // dismiss (otherwise the bar visibly aborts when the dialog leaves scope).
+        set_progress(100);
     });
     bSizer39->Add(p->m_btn_batch_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
 
@@ -8264,7 +8282,8 @@ static void extract_batch_kept_sets(const BatchMatchResult &result,
     }
 }
 
-void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result)
+void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result,
+                                                          std::function<void(int, int)> on_progress)
 {
     PresetBundle *pb = wxGetApp().preset_bundle;
     if (pb == nullptr || pb->filament_presets.empty()) return;
@@ -8380,15 +8399,55 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             // rebuild and painting remap. Exception- and reentrancy-safe.
             Plater *plater = wxGetApp().plater();
             Plater::BatchPhysicalDeletionGuard guard(*plater);
-            for (unsigned int redundant_id : red.redundant_physical)
-                delete_filament(redundant_id - 1, -1,
-                                /*skip_dependency_check=*/true,
-                                /*skip_update=*/true);
+            // Freeze the sidebar for the duration of the deletion loop only. This
+            // is the KEY to keeping apply fast (~10.7s) instead of slow (~29.9s):
+            // without it, each progress.Update's internal YieldFor(UI) flushes the
+            // paints that on_filaments_delete/Layout enqueued, and processing those
+            // paints triggers further Layout cascades — a positive feedback loop
+            // that inflates per-deletion time ~3.5x (measured 80ms→280ms). Freezing
+            // suppresses both the paints and the cascades, so yield finds an empty
+            // paint queue and stays cheap, while delete work runs at baseline speed
+            // (harness wxwidgets-3-1-5 §132). Scoped to a nested block so the RAII
+            // Thaw fires right after the loop — BEFORE the composite remap and panel
+            // rebuild below, which need the sidebar unfrozen to repaint the final
+            // state. §132: call Layout()+Refresh() after Thaw when children were
+            // removed while frozen (we destroyed N combos), otherwise the region
+            // repaints blank.
+            const int total = static_cast<int>(red.redundant_physical.size());
+            {
+                wxWindowUpdateLocker freeze_sidebar(this);
+                // Report (current, total) per deletion so the caller can drive a
+                // real progress bar. Each Update internally YieldFor(UI|USER_INPUT),
+                // keeping the window responsive (harness §119/§70) AND advancing
+                // the bar. With the sidebar frozen these yields process only the
+                // progress dialog's own paint (parented to MainFrame, outside this
+                // frozen subtree), so the bar animates while the sidebar stays
+                // visually frozen until the Thaw just below.
+                for (int i = 0; i < total; ++i) {
+                    delete_filament(red.redundant_physical[i] - 1, -1,
+                                    /*skip_dependency_check=*/true,
+                                    /*skip_update=*/true);
+                    if (on_progress) on_progress(i + 1, total);
+                }
+            } // freeze_sidebar Thaws here
+            // §132: children (combos) were destroyed while frozen — re-layout then
+            // force a repaint so the final state fills in instead of leaving the
+            // region blank until the next paint event.
+            Layout();
+            Refresh();
 
             // ONE composite painting remap: build old→new from the snapshot, apply
             // to every volume.  Equivalent to K sequential single-deletion remaps
             // (remap is a pure pointwise state_map lookup, composable).
-            pb->update_mixed_filament_id_remap(old_mixed_snapshot, old_num_physical, new_num_physical);
+            // Pass kept_physical so the batch remap maps physical ids by their
+            // position in the surviving set (kept-aware), not by the
+            // tail-truncation assumption (survivors == {1..new_num}). The
+            // assumption only holds when the palette is head-rewritten
+            // (recommended mode); for non-contiguous manual selections like
+            // [2,6,8,10] tail-truncation maps survivors to NONE and loses
+            // painting. kept-aware is a no-op when kept == {1..new_num}.
+            pb->update_mixed_filament_id_remap(old_mixed_snapshot, old_num_physical, new_num_physical,
+                                                size_t(-1), kept_physical);
             const std::vector<unsigned int> composite_remap = pb->consume_last_filament_id_remap();
             if (!composite_remap.empty()) {
                 EnforcerBlockerStateMap state_map;
@@ -8457,6 +8516,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // and is NOT skippable.
     if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
         opt->value = pb->mixed_filaments.serialize_custom_entries();
+
     // Rebuild panels once (skipped per-deletion in the loop above).
     update_mixed_filament_panel();
     update_color_mix_panel();

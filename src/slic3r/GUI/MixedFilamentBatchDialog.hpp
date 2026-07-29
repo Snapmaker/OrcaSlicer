@@ -78,6 +78,9 @@ private:
 
     void display_warning(const wxString& msg);
     void set_error(const wxString& msg);
+    // Red error banner, but unlike set_error it leaves Confirm enabled — for serious
+    // advisories the user may still choose to proceed past (e.g. slot overflow).
+    void display_error_advisory(const wxString& msg);
     // Manual-mode pre-match ratio guard: if a single physical filament is picked by more than
     // kManualDominantRatioPct of the rows, warn that the mix is lopsided.
     void check_manual_filament_ratio();
@@ -88,6 +91,26 @@ private:
 
     void set_match_buttons_state(bool matching);
     void update_recommended_card();
+    // Predict whether applying m_result would exceed MAXIMUM_FILAMENT_NUMBER (64)
+    // at the add_batch_custom_filaments gate (the authoritative cap). The estimate
+    // is an UPPER BOUND: post_apply_total = n + enabled_mixed + new_mixed_rows.
+    // It does NOT subtract the mixed rows cleanup_unused_filaments_after_batch_match
+    // will delete, because cleanup runs AFTER add_batch (Plater.cpp: add_batch at
+    // 2594, cleanup at 2627) — so the cap is hit at add_batch time, before any
+    // redundant_mixed deletion can lower the count. The bound is therefore
+    // conservative (may over-warn) but never under-warns: if it predicts overflow,
+    // colour will in fact be lost at the gate. Called from the Confirm button
+    // handler so the user is asked to proceed (or cancel) at the point of
+    // commitment, not as a banner at match-completion time. See the .cpp impl for
+    // the precise n / enabled_mixed / new_mixed_rows derivations.
+    bool predict_slot_overflow() const;
+    // Re-layout the scrolled region after its content height changes (add/remove filament row,
+    // mode switch, legend rebuild). Layout() alone re-arranges within the existing virtual size;
+    // FitInside() also re-computes the virtual (scrollable) extent from the children's best size,
+    // so downstream cards (preview, Color Mapping) keep a stable position and the scrollbar range
+    // tracks reality. Refresh() forces a repaint so the new layout shows up immediately instead of
+    // on the next idle paint. Call after any change that alters a card's height.
+    void relayout_scrolled_content();
     // Enumerate target colors from the model's painted volumes (legacy path; currently NOT
     // called by the ctor — kept for reference / future use). See load_palette_colors.
     void load_model_colors();

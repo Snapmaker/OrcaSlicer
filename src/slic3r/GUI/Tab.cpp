@@ -1562,13 +1562,15 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
             set_project_bool("dithering_local_z_infill", new_conf.opt_bool("dithering_local_z_infill"));
 
         // Advisory: enabling Subdivide Mix Layer with a layer height at or below 0.1 mm
-        // risks subdividing below the printer's supported range.
+        // risks subdividing below the printer's supported range. Uses the same
+        // RichMessageDialog control as the other batch-match prompts (e.g. "No model
+        // detected") so the warning reads as the same dialog family.
         if (local_z_enabled && m_config->has("layer_height") &&
             m_config->opt_float("layer_height") <= 0.1 + EPSILON) {
-            MessageDialog dialog(wxGetApp().plater(),
+            RichMessageDialog dlg(wxGetApp().plater(),
                 _L("The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."),
-                _L("Warning"), wxICON_WARNING | wxOK);
-            dialog.ShowModal();
+                _L("Configuration Conflict"), wxOK);
+            dlg.ShowModal();
         }
 
         if (auto* plater = wxGetApp().plater())
@@ -1812,13 +1814,15 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
         // Advisory: Subdivide Mix Layer enabled while layer height is in range but
         // at or below 0.1 mm — the subdivided height may fall outside the supported range.
+        // Uses the same RichMessageDialog control as the other batch-match/Subdivide prompts
+        // so the warning reads as the same dialog family.
         if (!exceed_minimum_flag && !exceed_maximum_flag &&
             m_config->has("dithering_local_z_mode") && m_config->opt_bool("dithering_local_z_mode") &&
             lh <= 0.1 + EPSILON) {
-            MessageDialog dialog(wxGetApp().plater(),
+            RichMessageDialog dlg(wxGetApp().plater(),
                 _L("Subdivide Mixing Layers is enabled. At a layer height of 0.1 mm or below, the subdivided layer height may fall outside the printer's supported range. This could affect print quality."),
-                _L("Warning"), wxICON_WARNING | wxOK);
-            dialog.ShowModal();
+                _L("Configuration Conflict"), wxOK);
+            dlg.ShowModal();
         }
     }
 

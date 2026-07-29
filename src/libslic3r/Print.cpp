@@ -1653,7 +1653,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     // Custom layering is not allowed for tree supports as of now.
     for (size_t print_object_idx = 0; print_object_idx < m_objects.size(); ++ print_object_idx)
         if (const PrintObject &print_object = *m_objects[print_object_idx];
-            print_object.has_support_material() && is_tree(print_object.config().support_type.value) && (print_object.config().support_style.value == smsTreeOrganic || 
+            print_object.has_support() && is_tree(print_object.config().support_type.value) && (print_object.config().support_style.value == smsTreeOrganic || 
                 // Orca: use organic as default
                 print_object.config().support_style.value == smsDefault) &&
             print_object.model_object()->has_custom_layering()) {

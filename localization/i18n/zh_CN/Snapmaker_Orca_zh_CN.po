@@ -3350,6 +3350,18 @@ msgstr "热床调平"
 msgid "Timelapse"
 msgstr "延时摄影"
 
+msgid "Download Lists"
+msgstr "下载列表"
+
+msgid "Download Lists (%d)"
+msgstr "下载列表 (%d)"
+
+msgid "Downloaded"
+msgstr "下载完成"
+
+msgid "Download Cancelled"
+msgstr "下载已取消"
+
 msgid "Download Failed"
 msgstr "下载失败"
 

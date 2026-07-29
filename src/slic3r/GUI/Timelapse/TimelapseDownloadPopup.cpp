@@ -206,7 +206,7 @@ void TimelapseTaskRow::set_state(State s)
             m_cancel_btn->SetCursor(wxCURSOR_HAND);
             break;
         case State::Completed:
-            m_status_text = _L("Completed");
+            m_status_text = _L("Downloaded");
             m_percent = 100;
             disable_cancel();
             break;
@@ -214,7 +214,7 @@ void TimelapseTaskRow::set_state(State s)
             disable_cancel();
             break;
         case State::Cancelled:
-            m_status_text = _L("Cancelled");
+            m_status_text = _L("Download Cancelled");
             disable_cancel();
             break;
     }
@@ -323,7 +323,7 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 
     wxBoxSizer* title_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-    m_title_label = new Label(m_title_bar, _L("Download List"));
+    m_title_label = new Label(m_title_bar, _L("Download Lists"));
     m_title_label->SetFont(::Label::Head_13);
     m_title_label->SetForegroundColour(make_color(COL_TITLE_TEXT));
     title_sizer->Add(m_title_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(14));
@@ -381,7 +381,7 @@ void TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
 {
     m_task_count = static_cast<int>(tasks.size());
     m_title_label->SetLabel(
-        wxString::Format(_L("Download List (%d)"), m_task_count));
+        wxString::Format(_L("Download Lists (%d)"), m_task_count));
 
     for (size_t i = 0; i < tasks.size(); ++i) {
         auto* row = new TimelapseTaskRow(m_task_panel,
@@ -544,7 +544,7 @@ void TimelapseDownloadPopup::dismiss_row(int index)
         }
     }
     m_title_label->SetLabel(
-        wxString::Format(_L("Download List (%d)"), visible_count));
+        wxString::Format(_L("Download Lists (%d)"), visible_count));
     if (visible_count == 0) {
         wxGetApp().CallAfter([this]() {
             if (!IsBeingDeleted()) {

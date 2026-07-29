@@ -5466,7 +5466,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 }
                 wxString status = ctx->is_wan
                     ? _L("Waiting for device upload...")
-                    : _L("Downloading...");
+                    : _L("Downloading");
                 ctx->popup->set_task_status(cur_idx,
                     wxString::FromUTF8(status.ToUTF8().data()));
             });

@@ -667,8 +667,8 @@ public:
 
     static std::mutex m_file_size_mutex;
     static long long m_active_file_size;
-    
-    
+
+
     static std::unordered_map<std::string, int> m_tab_map; // for switching tab
 
     // WebSocket Debug Server methods

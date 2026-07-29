@@ -919,12 +919,18 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     if (tcr.priming || (new_extruder_id >= 0 && needs_toolchange)) {
         if (is_ramming)
             gcodegen.m_wipe.reset_path();
-        toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z);
+        toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z, false);
         if (gcodegen.config().enable_prime_tower) {
             deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
             Vec3d position{gcodegen.writer().get_position()};
             position.z() = z;
             gcodegen.writer().set_position(position);
+
+            if (tcr.is_contact && gcodegen.m_config.enable_tower_interface_features) {
+                float load_length = gcodegen.m_config.filament_tower_interface_pre_extrusion_length.get_at(tcr.new_tool);
+                if (load_length > 0.f)
+                    gcodegen.writer().extruder()->set_retracted(load_length, 0.0);
+            }
             deretraction_str += gcodegen.unretract();
         }
     }
@@ -947,12 +953,10 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         }
         gcodegen.set_last_pos(target_obj);
     }
-
-    // Insert the toolchange and deretraction gcode into the generated gcode.
+    toolchange_gcode_str += deretraction_str;
 
     DynamicConfig config;
     config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
-    config.set_key_value("deretraction_from_wipe_tower_generator", new ConfigOptionString(deretraction_str));
     config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
     config.set_key_value("layer_z", new ConfigOptionFloat(tcr.print_z));
     config.set_key_value("toolchange_z", new ConfigOptionFloat(z));
@@ -8842,7 +8846,6 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
     dyn_config.set_key_value("travel_point_3_y", new ConfigOptionFloat(float(travel_point_3.y())));
 
     dyn_config.set_key_value("flush_length", new ConfigOptionFloat(wipe_length));
-
     int   flush_count = std::min(g_max_flush_count, (int) std::round(wipe_volume / g_purge_volume_one_time));
     float flush_unit  = wipe_length / flush_count;
     int   flush_idx   = 0;

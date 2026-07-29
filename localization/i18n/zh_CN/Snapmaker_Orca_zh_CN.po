@@ -15376,3 +15376,20 @@ msgstr "最大速度"
 
 msgid "The maximum printing speed on the prime tower excluding ramming."
 msgstr "擦料塔上除了预冲刷外的最大打印速度。"
+
+msgid "Cool down from interface boost during prime tower"
+msgstr "擦拭塔期间从接触层加速状态冷却"
+
+msgid ""
+"When interface-layer temperature boost is active, set the nozzle back to "
+"print temperature at the start of the prime tower so it cools down during "
+"the tower."
+msgstr ""
+"当接触层温度提升处于活动状态时，在擦拭塔开始时将喷嘴温度恢复到打印温度，以便"
+"在打印塔期间降温。"
+
+msgid "Internal ribs"
+msgstr "内支撑肋"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "启用内支撑肋以增强擦料塔的稳定性。"

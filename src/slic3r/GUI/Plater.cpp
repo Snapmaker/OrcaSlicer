@@ -285,7 +285,7 @@ static std::string cold_plate_serious_warning_text(
     const std::vector<int>&  tpu_slots_1based)
 {
     return Slic3r::GUI::format(
-        _u8L("The Cool Steel Plate is not recommended for %1%. They may be hard to remove. Use a textured PEI plate or heat the bed."),
+        _u8L("The Cool Steel Plate is not recommended for %1%. It may be hard to remove. Use a textured PEI plate or heat the bed."),
         format_filament_slot_list(tpu_slots_1based));
 }
 

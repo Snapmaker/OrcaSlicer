@@ -15341,7 +15341,7 @@ msgstr "检测到高温材料与低温材料同时使用。混合打印可能导
 msgid "The Cool Steel Plate is not recommended for %1%. To continue printing, set the bed temperature above 0°C for this filament."
 msgstr "低温冷打钢板不建议被用于 %1%。如需继续打印，请将该耗材的热床温度设置为大于 0°C。"
 
-msgid "The Cool Steel Plate is not recommended for %1%. They may be hard to remove. Use a textured PEI plate or heat the bed."
+msgid "The Cool Steel Plate is not recommended for %1%. It may be hard to remove. Use a textured PEI plate or heat the bed."
 msgstr "低温冷打钢板不建议被用于 %1%，可能脱模困难。请使用纹理PEI热床或开启热床。"
 
 msgid "This material combination may cause risks. Do you want to continue?"

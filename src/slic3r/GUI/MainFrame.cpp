@@ -1683,14 +1683,18 @@ wxBoxSizer* MainFrame::create_side_tools()
         {
             if (m_slice_mode_popup)
                 m_slice_mode_popup->HidePopup();
-            // Snapmaker requirement 7.1: in custom grouping mode confirm the
-            // filament-to-flow-type mapping before slicing (both "Slice plate"
-            // and "Slice all" go through this button). Only relevant when the
-            // nozzles mix flow variant types.
+            // Snapmaker requirement 7.1: the custom per-filament grouping applies only
+            // in custom mode with mixed nozzle flow types -- then confirm the mapping
+            // before slicing (both "Slice plate" and "Slice all" go through this
+            // button). Otherwise every filament follows the single selected nozzle
+            // flow type (all standard -> standard, all high flow -> high flow; standard
+            // mode with mixed nozzles falls back to standard), dropping stale mappings.
             if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2) {
                 GUI::FilamentGroupDialog dlg(this);
                 if (dlg.ShowModal() != wxID_OK)
                     return;
+            } else {
+                GUI::FlowType::sync_filament_volume_types_for_slice();
             }
             //this->m_plater->select_view_3D("Preview");
             m_plater->exit_gizmo();

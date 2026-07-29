@@ -48,6 +48,13 @@ void set_grouping_mode(const std::string &mode);
 // Writes the dialog's per-filament mapping and invalidates the slice result.
 void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 
+// Normalizes the per-filament flow mapping for slicing when the custom grouping
+// does not apply: when the nozzles are not mixing flow types every filament follows
+// that single nozzle type (all standard -> standard, all high flow -> high flow); in
+// standard mode with mixed nozzles everything falls back to standard. No-op when the
+// mapping already matches. Only meaningful outside the custom+mixed case.
+void sync_filament_volume_types_for_slice();
+
 }}} // namespace Slic3r::GUI::FlowType
 
 #endif // slic3r_GUI_FlowTypeHelper_hpp_

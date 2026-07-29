@@ -102,4 +102,23 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping)
     notify_plater();
 }
 
+void sync_filament_volume_types_for_slice()
+{
+    // Flow type every filament should use when the custom per-filament mapping does
+    // not apply: follow the single nozzle type when the nozzles are not mixing types
+    // (all standard -> standard, all high flow -> high flow); in standard mode with
+    // mixed nozzles, fall back to standard.
+    FilamentVolumeType type = fvtStandard;
+    if (distinct_nozzle_flow_type_count() < 2) {
+        const std::vector<std::string> nozzles = nozzle_volume_types();
+        if (!nozzles.empty() && nozzles.front() == FLOW_MODE_HIGH_FLOW)
+            type = fvtHighFlow;
+    }
+    const std::vector<FilamentVolumeType> current = wxGetApp().preset_bundle->get_filament_volume_types();
+    if (std::all_of(current.begin(), current.end(), [type](FilamentVolumeType t) { return t == type; }))
+        return; // already uniform at the target type
+    const size_t n = wxGetApp().preset_bundle->filament_presets.size();
+    apply_custom_mapping(std::vector<FilamentVolumeType>(std::max<size_t>(n, size_t(1)), type));
+}
+
 }}} // namespace Slic3r::GUI::FlowType

@@ -1888,9 +1888,9 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
     if (new_method == m_matching_method)
         return;
     m_matching_method = new_method;
-    // Preserve the previous match result; only Start/Re-match clears it.
     m_error_panel->Hide();
     m_warning_panel->Hide();
+    if (m_match_completed && new_method == MANUAL) check_manual_recipe_ratio();
     if (m_manual_card)
         m_manual_card->Show(m_matching_method == MANUAL);
     if (m_recommended_card)
@@ -1993,28 +1993,23 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     const size_t num_physical = m_physical_colors.size();
     if (num_physical == 0) return;
 
-    // Collect offending filament ids (1-based) in a set for de-dup + ascending order.
-    std::set<unsigned int> over_ids;
-    for (const ColorMappingEntry& e : m_result.mappings) {
-        if (e.is_pure_recipe) continue;        // pure = single component, ratio n/a
-        if (!e.recipe.valid) continue;         // nothing to check
-        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
-        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
-            if (weights[i] > kMaxComponentPercent)
-                over_ids.insert(static_cast<unsigned int>(i + 1));
-        }
-    }
-    if (over_ids.empty()) return;
-
-    // Build "{x, y, z}" for the %s placeholder.
-    wxString id_list = "{";
+    // Collect EVERY over-threshold occurrence (target_filament_id — legend badge). No dedup.
+    wxString id_list;
     bool first = true;
-    for (unsigned int id : over_ids) {
+    for (const ColorMappingEntry& e : m_result.mappings) {
+        if (e.is_pure_recipe) continue;
+        if (!e.recipe.valid) continue;
+        const auto weights = expand_color_match_recipe_weights(e.recipe, num_physical);
+        bool over = false;
+        for (size_t i = 0; i < weights.size() && i < num_physical; ++i) {
+            if (weights[i] > kMaxComponentPercent) { over = true; break; }
+        }
+        if (!over) continue;
         if (!first) id_list += ", ";
-        id_list << id;
+        id_list += wxString::Format("%u", e.target_filament_id);
         first = false;
     }
-    id_list << "}";
+    if (id_list.empty()) return;
 
     display_warning(wxString::Format(
         _L("The mix ratios for %s in the Color Mapping list are outside the recommended %d"

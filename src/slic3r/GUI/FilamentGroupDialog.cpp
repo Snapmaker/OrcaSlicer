@@ -209,7 +209,8 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     v_sizer->Add(m_warning_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
     auto *dlg_btns = new DialogButtons(this, {"Cancel", "Confirm"});
-    dlg_btns->GetCONFIRM()->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+    m_confirm_button = dlg_btns->GetCONFIRM();
+    m_confirm_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
         FlowType::apply_custom_mapping(m_mapping);
         EndModal(wxID_OK);
     });
@@ -291,34 +292,88 @@ void FilamentGroupDialog::update_warnings()
 {
     m_warning_sizer->Clear(true);
 
-    std::vector<std::string> reasons;
-    for (const FilamentInfo &info : m_filaments) {
+    std::vector<HighFlowCompat::CompatibilityResult> warnings;
+    bool has_unsupported = false;
+    for (const FilamentInfo &info : m_filaments)
+    {
         if (m_mapping[info.filament_idx] != fvtHighFlow)
             continue;
-        auto reason = HighFlowCompat::incompat_reason(info.type_raw, info.preset_name);
-        if (reason.has_value() && std::find(reasons.begin(), reasons.end(), *reason) == reasons.end())
-            reasons.push_back(*reason);
+
+        const HighFlowCompat::CompatibilityResult result = HighFlowCompat::check(info.type_raw, info.preset_name);
+        if (result.level == HighFlowCompat::CompatibilityLevel::Compatible)
+            continue;
+
+        has_unsupported |= result.level == HighFlowCompat::CompatibilityLevel::Unsupported;
+        const auto duplicate = std::find_if(warnings.begin(), warnings.end(), [&result](const auto &warning) {
+            return warning.level == result.level && warning.material == result.material;
+        });
+        if (duplicate == warnings.end())
+            warnings.push_back(result);
     }
 
     const std::string diameter =
         wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_variant");
-    for (const std::string &reason : reasons) {
-        wxPanel *bar = new wxPanel(this);
-        bar->SetBackgroundColour(wxGetApp().dark_mode() ? wxColour("#3A2E1E") : wxColour("#FFFAF2"));
+    wxString not_recommended_materials;
+    wxString unsupported_materials;
+    for (const HighFlowCompat::CompatibilityResult &warning : warnings)
+    {
+        wxString material;
+        if (warning.material == "CF or GF based filaments")
+            material = _L("CF or GF based filaments");
+        else
+            material = from_u8(warning.material);
+
+        wxString &materials = warning.level == HighFlowCompat::CompatibilityLevel::Unsupported ?
+                                  unsupported_materials :
+                                  not_recommended_materials;
+        if (!materials.empty())
+            materials += ", ";
+        materials += material;
+    }
+
+    auto add_warning = [this](const wxString &message, bool is_error) {
+        const wxColour background = StateColor::darkModeColorFor(wxColour(is_error ? "#FDE8E8" : "#FFFAF2"));
+        const wxColour foreground = StateColor::darkModeColorFor(wxColour(is_error ? "#D32F2F" : "#FF8400"));
+        const char *icon_name = is_error ? "error_icon_red_exclamation" : "icon_warning_triangle";
+
+        StaticBox *bar = new StaticBox(this, wxID_ANY);
+        bar->SetCornerRadius(FromDIP(4));
+        bar->SetBorderWidth(0);
+        bar->SetBackgroundColorNormal(background);
+        bar->SetBackgroundColour(background);
+        bar->SetMinSize(wxSize(-1, FromDIP(34)));
+
         auto *bar_sizer = new wxBoxSizer(wxHORIZONTAL);
-        auto *icon      = new wxStaticBitmap(bar, wxID_ANY, create_scaled_bitmap("icon_warning_triangle", bar, 14));
-        auto *text      = new wxStaticText(bar, wxID_ANY,
-                                           format_wxstr(_L("It is not recommended to print %1% with the %2%mm high flow nozzle"),
-                                                        from_u8(reason), from_u8(diameter)));
-        text->SetForegroundColour(wxColour("#FF8400"));
-        bar_sizer->Add(icon, 0, wxALIGN_CENTER_VERTICAL | wxALL, FromDIP(8));
+        auto *icon = new wxStaticBitmap(bar, wxID_ANY, create_scaled_bitmap(icon_name, bar, 14));
+        auto *text = new wxStaticText(bar, wxID_ANY, message);
+        text->Wrap(FromDIP(660));
+        icon->SetBackgroundColour(background);
+        text->SetBackgroundColour(background);
+        text->SetForegroundColour(foreground);
+        bar_sizer->Add(icon, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxTOP | wxBOTTOM, FromDIP(8));
+        bar_sizer->AddSpacer(FromDIP(10));
         bar_sizer->Add(text, 1, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM | wxRIGHT, FromDIP(8));
         bar->SetSizer(bar_sizer);
         m_warning_sizer->Add(bar, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
+    };
+
+    if (!not_recommended_materials.empty())
+    {
+        add_warning(format_wxstr(_L("It is not recommended to print these filaments with the %1%mm high flow nozzle: %2%"),
+                                 from_u8(diameter), not_recommended_materials),
+                    false);
+    }
+    if (!unsupported_materials.empty())
+    {
+        add_warning(format_wxstr(_L("These filaments cannot be printed with the %1%mm high flow nozzle: %2%"),
+                                 from_u8(diameter), unsupported_materials),
+                    true);
     }
 
+    m_confirm_button->Enable(!has_unsupported);
     Layout();
     Fit();
+    Refresh();
 }
 
 void FilamentGroupDialog::on_dpi_changed(const wxRect &)

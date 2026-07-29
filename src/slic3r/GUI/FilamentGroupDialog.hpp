@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+class Button;
 class StaticBox;
 class wxFlexGridSizer;
 
@@ -55,6 +56,7 @@ private:
     wxFlexGridSizer *m_std_grid  { nullptr };
     wxFlexGridSizer *m_high_grid { nullptr };
     wxBoxSizer      *m_warning_sizer { nullptr };
+    Button          *m_confirm_button { nullptr };
 };
 
 }} // namespace Slic3r::GUI

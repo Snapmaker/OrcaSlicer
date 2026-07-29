@@ -15384,11 +15384,14 @@ msgstr "高流量喷嘴"
 msgid "Tip: You can drag filaments to assign them to different nozzles"
 msgstr "提示：您可以拖动耗材将其分配到不同的喷嘴"
 
-msgid "It is not recommended to print %1% with the %2%mm high flow nozzle"
-msgstr "不推荐使用%2%mm 高流量喷嘴打印材料：%1%"
+msgid "It is not recommended to print these filaments with the %1%mm high flow nozzle: %2%"
+msgstr "不推荐使用%1%mm 高流量喷嘴打印材料：%2%"
 
-msgid "CF or GF based materials"
-msgstr "CF或GF类材料"
+msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
+msgstr "不可以使用%1%mm 高流量喷嘴打印材料：%2%"
+
+msgid "CF or GF based filaments"
+msgstr "CF或GF材料"
 
 msgid "Swap the two groups"
 msgstr "交换两组耗材"

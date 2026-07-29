@@ -955,8 +955,10 @@ void Tab::refresh_flow_variant_view()
         }
 
         m_flow_variant_view->modes = modes;
-        const wxString lb(wxUniChar(0x3010)); // 【
-        const wxString rb(wxUniChar(0x3011)); // 】
+        // Chinese uses the CJK brackets 【】; every other language uses ASCII [ ].
+        const bool is_zh = wxGetApp().current_language_code_safe().BeforeFirst('_') == "zh";
+        const wxString lb = is_zh ? wxString(wxUniChar(0x3010)) : wxString("[");
+        const wxString rb = is_zh ? wxString(wxUniChar(0x3011)) : wxString("]");
         std::vector<wxString> labels;
         labels.reserve(modes.size());
         for (const std::string& mode : modes)

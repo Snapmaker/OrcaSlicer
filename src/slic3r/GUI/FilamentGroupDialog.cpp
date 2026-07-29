@@ -170,7 +170,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
 
     auto *v_sizer = new wxBoxSizer(wxVERTICAL);
 
-    auto *intro = new wxStaticText(this, wxID_ANY, _L("We will slice based on the current assignment:"));
+    auto *intro = new wxStaticText(this, wxID_ANY, _L("Slicing will follow the nozzle assignment below:"));
     intro->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
     v_sizer->Add(intro, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
@@ -211,7 +211,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     groups_sizer->Add(m_high_box, 0, wxALIGN_TOP);
     v_sizer->Add(groups_sizer, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
-    auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: You can drag filaments to assign them to different nozzles"));
+    auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: Drag and drop filaments to assign them to a different nozzle"));
     tip->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
     v_sizer->Add(tip, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 

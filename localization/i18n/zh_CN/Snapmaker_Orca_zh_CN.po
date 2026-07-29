@@ -15372,7 +15372,7 @@ msgstr "手动分配耗材给喷嘴"
 msgid "Custom Filament Grouping"
 msgstr "自定义耗材分组"
 
-msgid "We will slice based on the current assignment:"
+msgid "Slicing will follow the nozzle assignment below:"
 msgstr "我们将基于当前分配方案切片："
 
 msgid "Standard Nozzle"
@@ -15381,7 +15381,7 @@ msgstr "标准喷嘴"
 msgid "High Flow Nozzle"
 msgstr "高流量喷嘴"
 
-msgid "Tip: You can drag filaments to assign them to different nozzles"
+msgid "Tip: Drag and drop filaments to assign them to a different nozzle"
 msgstr "提示：您可以拖动耗材将其分配到不同的喷嘴"
 
 msgid "It is not recommended to print these filaments with the %1%mm high flow nozzle: %2%"

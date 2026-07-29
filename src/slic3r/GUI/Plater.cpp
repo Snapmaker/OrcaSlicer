@@ -899,14 +899,14 @@ private:
             m_bgColor           = wxColour(255, 255, 255);
             m_borderColor       = wxColour(240, 240, 240);
             m_selectedTabColor  = wxColour(255, 255, 255);
-            m_textColor         = wxColour(194, 194, 193);
+            m_textColor         = wxColour(107, 107, 107); // #6B6B6B: match the process flow toggle's unselected grey
             m_dividerColor      = wxColour(240, 240, 240);
             m_selectedTextColor = wxColour(255, 255, 255); // white text on the teal selected tab
         } else {
             m_bgColor           = wxColour(45, 45, 49);
             m_borderColor       = wxColour(76, 76, 85);
             m_selectedTabColor  = wxColour(45, 45, 49);
-            m_textColor         = wxColour(104, 105, 107);
+            m_textColor         = wxColour(107, 107, 107); // #6B6B6B: match the process flow toggle's unselected grey
             m_dividerColor      = wxColour(51, 51, 55);
             m_selectedTextColor = wxColour(255, 255, 255);
         }

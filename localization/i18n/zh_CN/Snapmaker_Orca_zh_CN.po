@@ -9004,21 +9004,6 @@ msgstr "其它层"
 msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on this plate."
 msgstr "除首层外的其他层的热床温度。0值表示该耗材丝不支持在此热床上打印。"
 
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Cool Plate."
-msgstr "非首层热床温度。0值表示这个耗材丝不支持低温打印热床"
-
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Textured Cool Plate."
-msgstr "非首层热床温度。0值表示这个耗材丝不支持纹理低温打印热床"
-
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Engineering Plate."
-msgstr "非首层热床温度。0值表示这个耗材丝不支持工程材料热床"
-
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the High Temp Plate."
-msgstr "非首层热床温度。0值表示这个耗材丝不支持高温打印热床"
-
-msgid "Bed temperature for layers except the initial one. A value of 0 means the filament does not support printing on the Textured PEI Plate."
-msgstr "非首层热床温度。0值表示这个耗材丝不支持纹理PEI热床"
-
 msgid "Initial layer"
 msgstr "首层"
 
@@ -9027,21 +9012,6 @@ msgstr "首层床温"
 
 msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on this plate."
 msgstr "首层热床温度。0值表示该耗材丝不支持在此热床上打印。"
-
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Cool Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持低温打印热床"
-
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Textured Cool Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持纹理低温打印热床"
-
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Engineering Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持工程材料热床"
-
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the High Temp Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持高温打印热床"
-
-msgid "Bed temperature of the initial layer. A value of 0 means the filament does not support printing on the Textured PEI Plate."
-msgstr "首层热床温度。0值表示这个耗材丝不支持纹理PEI热床"
 
 msgid "Bed types supported by the printer."
 msgstr "打印机所支持的热床类型"

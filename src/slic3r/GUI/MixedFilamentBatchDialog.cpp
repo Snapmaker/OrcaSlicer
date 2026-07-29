@@ -104,11 +104,14 @@ static constexpr int MATCH_PREVIEW_DIP = 227;
 // RoundedPreviewPanel — a fixed-size square panel that draws a rounded-corner
 // thumbnail with an overlay badge ("Original Model" / "After Match").
 //
-// Rounded corners are achieved by clipping the panel to a rounded rectangle
-// via SetWindowRgn (CreateRoundRectRgn on MSW).  The panel is physically
-// shaped by the OS — corners are transparent regardless of what is painted.
-// wxBG_STYLE_PAINT + wxAutoBufferedPaintDC then draws (1) rounded bg,
-// (2) thumbnail centered, (3) badge.
+// Rounded corners: the panel is first filled entirely with white (parent card bg),
+// then a rounded-rect wxRegion clip is applied via SetDeviceClippingRegion before
+// drawing the rounded background (#E7E7E7) + thumbnail + badge.  The four corners
+// keep their white fill and sit transparently over the parent card.
+//
+// Uses plain wxDC (not wxGraphicsContext) to stay in the same coordinate space as
+// wxAutoBufferedPaintDC — no antialias transform, no off-by-one clipping artifacts.
+// Child-window safe on all platforms: no SetWindowRgn, no SetShape.
 // ---------------------------------------------------------------------------
 
 class RoundedPreviewPanel : public wxPanel
@@ -123,14 +126,15 @@ public:
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         SetMinSize(wxSize(FromDIP(side_dip), FromDIP(side_dip)));
         Bind(wxEVT_PAINT, &RoundedPreviewPanel::on_paint, this);
-        Bind(wxEVT_SIZE,  [this](wxSizeEvent& e) { apply_rounded_shape(); e.Skip(); });
-    }
-
-    ~RoundedPreviewPanel() override
-    {
-#ifdef _WIN32
-        if (m_hRgn) { ::DeleteObject(m_hRgn); m_hRgn = nullptr; }
-#endif
+        // DPI change: the placeholder SVG (ScalableBitmap) caches its raster at the
+        // DPI in effect when first created.  Reset the loaded flag so on_paint re-
+        // rasterizes it at the new DPI.  The rounded-corner radius is already DIP-
+        // aware (FromDIP in on_paint), so no explicit size rebuild needed.
+        Bind(wxEVT_DPI_CHANGED, [this](wxDPIChangedEvent& e) {
+            m_placeholder_loaded = false;
+            Refresh();
+            e.Skip();
+        });
     }
 
     void set_bitmap(const wxBitmap& bmp)
@@ -148,51 +152,46 @@ private:
     wxBitmap m_bmp;
     ScalableBitmap m_placeholder;
     bool           m_placeholder_loaded = false;
-#ifdef _WIN32
-    HRGN     m_hRgn = nullptr;
-#endif
-
-    void apply_rounded_shape()
-    {
-        const wxSize sz = GetClientSize();
-        if (sz.x <= 0 || sz.y <= 0) return;
-        const int r = FromDIP(m_radius_dip);
-#ifdef _WIN32
-        if (m_hRgn) { ::DeleteObject(m_hRgn); m_hRgn = nullptr; }
-        m_hRgn = ::CreateRoundRectRgn(0, 0, sz.x + 1, sz.y + 1, r * 2, r * 2);
-        ::SetWindowRgn(GetHWND(), m_hRgn, TRUE);
-#else
-        // macOS / Linux: wxRegion round-rect fallback
-        wxRegion rgn(0, 0, sz.x, sz.y);
-        wxBitmap tmp(sz);
-        {
-            wxMemoryDC dc;
-            dc.SelectObject(tmp);
-            dc.SetBackground(*wxWHITE_BRUSH);
-            dc.Clear();
-            dc.SetBrush(*wxBLACK_BRUSH);
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, r);
-            dc.SelectObject(wxNullBitmap);
-        }
-        wxRegion round(tmp, *wxWHITE);
-        rgn.Intersect(round);
-        SetShape(rgn);
-#endif
-    }
 
     void on_paint(wxPaintEvent&)
     {
         wxAutoBufferedPaintDC dc(this);
         const wxSize sz = GetClientSize();
-        const int    r  = FromDIP(m_radius_dip);
+        if (sz.x <= 0 || sz.y <= 0) return;
+        const int r = FromDIP(m_radius_dip);
 
-        // 1) Rounded background (#E7E7E7, theme-aware)
-        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(231, 231, 231))));
+        const wxColour card_white = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
+        const wxColour panel_bg   = StateColor::darkModeColorFor(wxColour(231, 231, 231));
+
+        // Step 1 — fill ENTIRE panel with white (parent card background).
+        // The four corners keep this color and read as transparent over the card.
+        dc.SetBrush(wxBrush(card_white));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(wxRect(sz));
+
+        // Step 2 — build a rounded-rect clip region:
+        //   black rounded-rect on white → region = black interior
+        wxRegion clip_rgn;
+        {
+            wxBitmap mask(sz);
+            wxMemoryDC mdc;
+            mdc.SelectObject(mask);
+            mdc.SetBackground(*wxWHITE_BRUSH);
+            mdc.Clear();
+            mdc.SetBrush(*wxBLACK_BRUSH);
+            mdc.SetPen(*wxTRANSPARENT_PEN);
+            mdc.DrawRoundedRectangle(0, 0, sz.x, sz.y, r);
+            mdc.SelectObject(wxNullBitmap);
+            clip_rgn = wxRegion(mask, *wxWHITE);
+        }
+        dc.SetDeviceClippingRegion(clip_rgn);
+
+        // Step 3 — rounded background (#E7E7E7) clipped to rounded rect
+        dc.SetBrush(wxBrush(panel_bg));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRoundedRectangle(wxRect(sz), r);
 
-        // 2) Thumbnail centered
+        // Step 4 — thumbnail centered
         if (!m_bmp.IsOk() && !m_placeholder_loaded) {
             m_placeholder = ScalableBitmap(this, "mixed_filament_preview_placeholder", 60);
             m_placeholder_loaded = true;
@@ -206,7 +205,9 @@ private:
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
         }
 
-        // 3) Badge
+        // Step 5 — badge (white text on gray bg, top-left)
+        dc.DestroyClippingRegion();
+
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);

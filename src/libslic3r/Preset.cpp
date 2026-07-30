@@ -450,6 +450,16 @@ void Preset::normalize(DynamicPrintConfig &config)
                     config.set_key_value(key, default_opt->clone());
             }
         }
+
+        const auto *process_flow_support = config.option<ConfigOptionStrings>(flow_support_key(ConfigFlowDomain::Process));
+        const size_t flow_variant_count = process_flow_support == nullptr || process_flow_support->values.empty()
+            ? 1
+            : process_flow_support->values.size();
+        for (const std::string &key : process_flow_variant_options()) {
+            auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key, false));
+            if (option != nullptr && option->size() < flow_variant_count)
+                option->resize(flow_variant_count, defaults.option(key));
+        }
     } else if (config.option("nozzle_diameter") != nullptr) {
         // Printer config: ensure all expected options exist in the loaded profile.
         for (const std::string &key : Preset::printer_options()) {
@@ -3025,6 +3035,114 @@ bool PresetCollection::is_dirty(const Preset *edited, const Preset *reference)
                 return true;
     }
     return false;
+}
+
+template<class T>
+void add_flow_variant_opts_to_diff(const std::string &opt_key,
+                                   t_config_option_keys &diff,
+                                   const ConfigBase &edited,
+                                   const ConfigBase &reference,
+                                   const ConfigOptionStrings &edited_modes,
+                                   const ConfigOptionStrings *reference_modes)
+{
+    const auto *edited_values = dynamic_cast<const T *>(edited.option(opt_key));
+    const auto *reference_values = dynamic_cast<const T *>(reference.option(opt_key));
+    const ConfigOptionDef *option_def = edited.def() == nullptr ? nullptr : edited.def()->get(opt_key);
+    const auto *default_values = option_def == nullptr ? nullptr :
+        dynamic_cast<const T *>(option_def->default_value.get());
+    if (edited_values == nullptr || reference_values == nullptr)
+        return;
+
+    for (size_t edited_index = 0; edited_index < edited_modes.values.size() && edited_index < edited_values->values.size(); ++edited_index) {
+        const T *comparison_values = nullptr;
+        size_t comparison_index = 0;
+        if (reference_modes == nullptr) {
+            if (edited_index == 0 && !reference_values->values.empty())
+                comparison_values = reference_values;
+        } else {
+            const auto mode = std::find(reference_modes->values.begin(), reference_modes->values.end(),
+                                        edited_modes.values[edited_index]);
+            if (mode != reference_modes->values.end()) {
+                const size_t reference_index = size_t(std::distance(reference_modes->values.begin(), mode));
+                if (reference_index < reference_values->values.size()) {
+                    comparison_values = reference_values;
+                    comparison_index = reference_index;
+                }
+            }
+        }
+
+        // A mode not declared by the reference preset has no inherited override.
+        // Compare it with the option default instead of borrowing the standard-flow value.
+        if (comparison_values == nullptr && default_values != nullptr && !default_values->values.empty()) {
+            comparison_values = default_values;
+            comparison_index = std::min(edited_index, default_values->values.size() - 1);
+        }
+        if (comparison_values == nullptr && !reference_values->values.empty())
+            comparison_values = reference_values;
+
+        bool differs = comparison_values == nullptr;
+        if (!differs && edited_values->nullable()) {
+            const bool edited_is_nil = edited_values->is_nil(edited_index);
+            const bool comparison_is_nil = comparison_values->is_nil(comparison_index);
+            differs = edited_is_nil != comparison_is_nil;
+            if (!differs && edited_is_nil)
+                continue;
+        }
+        if (!differs)
+            differs = edited_values->values[edited_index] != comparison_values->values[comparison_index];
+        if (differs)
+            diff.emplace_back(opt_key + "#" + std::to_string(edited_index));
+    }
+}
+
+std::vector<std::string> PresetCollection::flow_variant_dirty_options(
+    const Preset *edited,
+    const Preset *reference,
+    ConfigFlowDomain domain,
+    const std::vector<std::string> &option_keys)
+{
+    std::vector<std::string> changed;
+    if (edited == nullptr || reference == nullptr)
+        return changed;
+
+    const auto *edited_support = edited->config.option<ConfigOptionStrings>(flow_support_key(domain));
+    const auto *reference_support = reference->config.option<ConfigOptionStrings>(flow_support_key(domain));
+    if (edited_support == nullptr)
+        return changed;
+
+    for (const std::string &key : option_keys) {
+        const ConfigOption *edited_option = edited->config.option(key);
+        const ConfigOption *reference_option = reference->config.option(key);
+        if (edited_option == nullptr || reference_option == nullptr ||
+            edited_option->type() != reference_option->type())
+            continue;
+        if (*edited_option == *reference_option)
+            continue;
+
+        switch (edited_option->type()) {
+        case coInts:     add_flow_variant_opts_to_diff<ConfigOptionInts>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
+        case coBools:
+            if (edited_option->nullable())
+                add_flow_variant_opts_to_diff<ConfigOptionBoolsNullable>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            else
+                add_flow_variant_opts_to_diff<ConfigOptionBools>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            break;
+        case coFloats:
+            if (edited_option->nullable())
+                add_flow_variant_opts_to_diff<ConfigOptionFloatsNullable>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            else
+                add_flow_variant_opts_to_diff<ConfigOptionFloats>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            break;
+        case coStrings:  add_flow_variant_opts_to_diff<ConfigOptionStrings>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
+        case coPercents: add_flow_variant_opts_to_diff<ConfigOptionPercents>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
+        case coEnums:    add_flow_variant_opts_to_diff<ConfigOptionInts>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
+        default:         changed.emplace_back(key); break;
+        }
+    }
+
+    std::sort(changed.begin(), changed.end());
+    changed.erase(std::unique(changed.begin(), changed.end()), changed.end());
+    return changed;
 }
 
 std::vector<std::string> PresetCollection::dirty_options(const Preset *edited, const Preset *reference, const bool deep_compare /*= false*/)

@@ -1077,8 +1077,14 @@ void Tab::update_changed_ui()
             }
         };
 
-        merge_flow_variant_options(dirty_options, m_presets->current_dirty_options(true));
-        merge_flow_variant_options(nonsys_options, m_presets->current_different_from_parent_options(true));
+        merge_flow_variant_options(
+            dirty_options,
+            m_presets->current_flow_variant_dirty_options(m_flow_variant_view->domain,
+                                                          m_flow_variant_view->options()));
+        merge_flow_variant_options(
+            nonsys_options,
+            m_presets->current_flow_variant_different_from_parent_options(m_flow_variant_view->domain,
+                                                                          m_flow_variant_view->options()));
     }
     if (m_type == Preset::TYPE_PRINTER && static_cast<TabPrinter*>(this)->m_printer_technology == ptFFF) {
         TabPrinter* tab = static_cast<TabPrinter*>(this);
@@ -3793,7 +3799,17 @@ PageShp TabFilament::add_filament_overrides_page()
                             const auto printer_config = m_preset_bundle->printers.get_edited_preset().config;
                             const boost::any printer_config_value = optgroup_sh->get_config_value(printer_config, printer_opt_key, 0);
                             field->update_na_value(printer_config_value);
-                            field->set_na_value();
+                            const ConfigOptionDef *option_def = m_config->def()->get(opt_key);
+                            if (option_def != nullptr &&
+                                (option_def->type == coFloats || option_def->type == coPercents)) {
+                                const double nil_value = ConfigOptionFloatsNullable::nil_value();
+                                Slic3r::GUI::change_opt_value(*m_config, opt_key, nil_value, option_index);
+                                field->set_value(printer_config_value, false);
+                                on_value_change(opt_key, nil_value);
+                                update_dirty();
+                            } else {
+                                field->set_na_value();
+                            }
                         }
                     }
                 }

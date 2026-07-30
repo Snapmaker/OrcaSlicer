@@ -2421,8 +2421,26 @@ Sidebar::Sidebar(Plater *parent)
             // Build full palette: CMYG in slots 1-4, original in 5+.
             colors_vec = fc ? fc->values : std::vector<std::string>{};
             colors_vec.resize(target_count);
-            for (size_t i = 0; i < 4 && i < cm.size(); ++i)
+
+            // Recommended-mode colors are plain single-color filaments.
+            // Clear any left-over dual-color / gradient metadata on the
+            // first 4 slots so the UI renders the new palette instead of
+            // the old multi-color swatches.  (filament_multi_colors is
+            // indexed the same as filament_colour; a non-empty entry
+            // takes precedence over the single-color value.)
+            auto* multi_colors = pb->project_config.option<ConfigOptionStrings>("filament_multi_colors");
+            auto* color_modes  = pb->project_config.option<ConfigOptionInts>("filament_colour_mode");
+            if (multi_colors)
+                multi_colors->values.resize(target_count);
+            if (color_modes)
+                color_modes->values.resize(target_count);
+            for (size_t i = 0; i < 4 && i < cm.size(); ++i) {
                 colors_vec[i] = cm[i];
+                if (multi_colors)
+                    multi_colors->values[i].clear();
+                if (color_modes)
+                    color_modes->values[i] = 0;
+            }
 
             // Write before set_num_filaments so auto_generate sees CMYG palette.
             if (fc) fc->values = colors_vec;

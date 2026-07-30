@@ -279,8 +279,7 @@ static std::string filament_temp_mixing_error_text(const Plater::FilamentTempMix
     out += "\n\n";
     append_filament_temp_mixing_groups(out, detail);
     out += "\n";
-    out += _u8L("To continue printing, enable \"Allow mixed printing "
-                "of high and low temperature materials\" in Preferences.");
+    out += _u8L("To continue printing, enable \"Allow high/low temperature filament mixing\" in Preferences.");
     return out;
 }
 
@@ -311,8 +310,7 @@ static std::string filament_temp_mixing_error_text_slice_all(const std::vector<P
         append_filament_temp_mixing_groups(out, info.detail);
         out += "\n";
     }
-    out += _u8L("To continue printing, enable \"Allow mixed printing "
-                "of high and low temperature materials\" in Preferences.");
+    out += _u8L("To continue printing, enable \"Allow high/low temperature filament mixing\" in Preferences.");
     return out;
 }
 

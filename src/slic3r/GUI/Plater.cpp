@@ -2020,11 +2020,15 @@ Sidebar::Sidebar(Plater *parent)
 
                         wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
                         wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
 
-                        // Apply synchronized nozzle flow types in one batch
+                        // Apply synchronized nozzle flow types BEFORE rebuilding the nozzle
+                        // UI: update_nozzle_settings rebuilds the per-nozzle flow combos by
+                        // reading nozzle_volume_type from config, so the write must land first
+                        // or the combos show stale values.
                         if (!nozzle_volume_types.empty())
                             GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
+
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
 
                         wxTheApp->CallAfter([this]() {
                             MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),

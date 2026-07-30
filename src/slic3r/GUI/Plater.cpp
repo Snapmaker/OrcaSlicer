@@ -263,10 +263,6 @@ static std::string format_filament_slot_list(const std::vector<int>& slots_1base
     return out;
 }
 
-// Cool Steel Plate shares the Supertack bed-type enumerator (enum key string
-// "Supertack Plate"), so we reuse that key for combobox lookups.
-static const char* const s_cold_plate_bed_type_key = "Supertack Plate";
-
 /// \brief Compose error text for unsupported filaments on the Cool Steel Plate.
 /// \param[in] unsupported_slots_1based  Offending filament slots (1-based).
 /// \return Single-line string in the form
@@ -287,23 +283,6 @@ static std::string cold_plate_serious_warning_text(
     return Slic3r::GUI::format(
         _u8L("The Cool Steel Plate is not recommended for %1%. It may be hard to remove. Use a textured PEI plate or heat the bed."),
         format_filament_slot_list(tpu_slots_1based));
-}
-
-/// \brief Compute CSP's 1-based position in the current bed-type combobox.
-/// \param[in] combo_enum_values The bed-type combobox enum values currently shown to the user
-///                              (sidebar.get_bed_type_combo_enum_values()).
-/// \return 1-based index of "Cool Steel Plate" if present; otherwise 1 as a safe
-///         fallback (logs an error — never silently returns a misleading value).
-static int get_cold_plate_bed_index_1_based(const std::vector<std::string>& combo_enum_values)
-{
-    for (size_t i = 0; i < combo_enum_values.size(); ++i) {
-        if (combo_enum_values[i] == s_cold_plate_bed_type_key)
-            return static_cast<int>(i + 1);
-    }
-    BOOST_LOG_TRIVIAL(error) << "[Plater] get_cold_plate_bed_index_1_based: \""
-                             << s_cold_plate_bed_type_key
-                             << "\" not found in current bed-type combobox; falling back to index 1";
-    return 1;
 }
 
 static bool model_object_is_on_plate(PartPlate* plate, size_t obj_idx, const ModelObject* model_object)
@@ -21002,6 +20981,16 @@ bool Plater::has_sliceable_plate_for_slice_all()
     return find_next_sliceable_plate_for_slice_all(0) >= 0;
 }
 
+bool Plater::is_plate_sliceable(int plate_index)
+{
+    PartPlate* plate = p->partplate_list.get_plate(plate_index);
+    if (plate == nullptr || !plate->can_slice())
+        return false;
+    if (is_plate_blocked_by_filament_temp_mixing(plate_index))
+        return false;
+    return !is_plate_blocked_by_cold_plate(plate_index);
+}
+
 int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
 {
     const int plate_count = p->partplate_list.get_plate_count();
@@ -21010,11 +20999,7 @@ int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
 
     for (int plate_index = start_plate_index; plate_index < plate_count; ++plate_index)
     {
-        PartPlate* plate = p->partplate_list.get_plate(plate_index);
-        if (plate != nullptr
-            && plate->can_slice()
-            && !is_plate_blocked_by_filament_temp_mixing(plate_index)
-            && !is_plate_blocked_by_cold_plate(plate_index))
+        if (is_plate_sliceable(plate_index))
             return plate_index;
     }
 
@@ -21078,7 +21063,7 @@ bool Plater::sync_filament_temp_mixing_notification()
     return slicing_allowed;
 }
 
-Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_index)
+Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_index) const
 {
     ColdPlateCompatResult result;
 
@@ -21158,7 +21143,7 @@ Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_inde
     return result;
 }
 
-bool Plater::is_plate_blocked_by_cold_plate(int plate_index)
+bool Plater::is_plate_blocked_by_cold_plate(int plate_index) const
 {
     return get_cold_plate_compat_state(plate_index).state == ColdPlateCompatState::BlockedError;
 }

@@ -560,6 +560,15 @@ public:
     /// @brief Check whether slice-all has at least one plate that can be sliced.
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
+    /// @brief Unified per-plate sliceability predicate.
+    /// @details Combines PartPlate::can_slice() with the two GUI-layer blockers
+    ///          (filament temp mixing, cold-plate incompatibility) so plate-toolbar
+    ///          rendering, slice-all iteration, and MainFrame button gating cannot drift.
+    ///          Mirrors has_sliceable_plate_for_slice_all's non-const contract (relies on
+    ///          is_plate_blocked_by_filament_temp_mixing, which is historical non-const).
+    /// @param[in] plate_index 0-based plate index.
+    /// @return true iff the plate exists, can_slice(), and is not blocked by mixing / cold-plate.
+    bool is_plate_sliceable(int plate_index);
     /// @brief Find the next plate that can be sliced by slice-all.
     /// @param start_plate_index First plate index to check.
     /// @return Plate index if found; otherwise -1.
@@ -572,10 +581,10 @@ public:
     ///          {state, unsupported filaments, TPU flag} in one traversal.
     /// @param[in] plate_index 0-based plate index.
     /// @return Result struct; state is Compatible when curr_bed_type != btCSP or plate is empty.
-    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index);
+    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index) const;
     /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
     /// @param[in] plate_index 0-based plate index.
-    bool is_plate_blocked_by_cold_plate(int plate_index);
+    bool is_plate_blocked_by_cold_plate(int plate_index) const;
     /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
     /// @return True if slicing is allowed on current plate after sync.
     bool sync_cold_plate_notification();

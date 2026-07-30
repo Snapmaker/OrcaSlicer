@@ -98,6 +98,13 @@ void set_nozzle_volume_types(const std::vector<std::string> &volume_types)
     notify_plater();
 }
 
+void reset_nozzle_volume_types_to_standard()
+{
+    auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+    opt->values.assign(nozzle_count(), fvtStandard);
+    notify_plater();
+}
+
 std::string grouping_mode()
 {
     const auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("filament_grouping_mode");

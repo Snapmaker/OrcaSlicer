@@ -40,6 +40,12 @@ std::vector<std::string> nozzle_volume_types();
 // Writes one nozzle's flow type and marks the project dirty.
 void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type);
 
+// Resets every nozzle's flow type to standard (one entry per nozzle), sized to the
+// current nozzle count. Used on New Project: the printer preset carries no nozzle
+// flow-type field, so the per-nozzle flow types must fall back to standard instead
+// of inheriting whatever the previous project left in the shared project config.
+void reset_nozzle_volume_types_to_standard();
+
 // Batch-writes all nozzle flow types from connected machine data.
 // Silently ignores mismatches between the vector size and the nozzle count.
 void set_nozzle_volume_types(const std::vector<std::string> &volume_types);

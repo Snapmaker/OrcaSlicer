@@ -16248,6 +16248,12 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
 
     up_to_date(true, false);
     up_to_date(true, true);
+
+    // Snapmaker: the printer preset carries no per-nozzle flow-type field, so a new
+    // project must start every nozzle at standard flow rather than inheriting the
+    // previous project's nozzle_volume_type (which lives in the shared project config).
+    GUI::FlowType::reset_nozzle_volume_types_to_standard();
+
     return wxID_YES;
 }
 

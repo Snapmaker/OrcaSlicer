@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
@@ -2067,6 +2068,8 @@ GUI_App::~GUI_App()
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy preset updater");
         delete preset_updater;
     }
+
+    AllowlistManager::uninit();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
 

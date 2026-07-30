@@ -1,23 +1,18 @@
 #include "HighFlowCompat.hpp"
 
+#include "libslic3r/AllowlistManager.hpp"
+
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/trim.hpp>
 
 #include <algorithm>
 #include <cctype>
-#include <iterator>
 #include <string_view>
 
 namespace Slic3r { namespace GUI { namespace HighFlowCompat {
 
 namespace {
 
-constexpr const char *g_mock_not_recommended[] = {
-    "Snapmaker PLA Wood"
-};
-constexpr const char *g_mock_unsupported[] = {
-    "Snapmaker TPU 85A"
-};
 constexpr std::string_view g_vendor_prefix = "snapmaker ";
 
 std::string normalize(const std::string &value)
@@ -58,22 +53,16 @@ bool has_material_token(const std::string &value, const std::string_view token)
     return false;
 }
 
-bool matches_blacklist_entry(const std::string &value, const std::string &entry)
+bool matches_list_entry(const std::string &value, const std::string &entry)
 {
     const std::string normalized_entry = normalize(entry);
-    if (value == normalized_entry)
-        return true;
-
-    return value.size() > normalized_entry.size() + 2 &&
-           value.compare(0, normalized_entry.size(), normalized_entry) == 0 &&
-           value.compare(normalized_entry.size(), 2, " @") == 0;
+    return !normalized_entry.empty() && value.find(normalized_entry) != std::string::npos;
 }
 
-template<size_t Size>
-bool is_blacklisted(const std::string &name, const char *const (&blacklist)[Size])
+bool is_listed(const std::string &name, const AllowlistManager::StringList &list)
 {
-    return std::any_of(std::begin(blacklist), std::end(blacklist), [&name](const char *entry) {
-        return matches_blacklist_entry(name, entry);
+    return std::any_of(list.begin(), list.end(), [&name](const std::string &entry) {
+        return matches_list_entry(name, entry);
     });
 }
 
@@ -102,14 +91,17 @@ CompatibilityResult check(const std::string &filament_type, const std::string &p
     const std::string type = normalize(filament_type);
     const std::string name = normalize(preset_name);
 
-    if (is_blacklisted(name, g_mock_unsupported))
+    AllowlistManager &manager = AllowlistManager::instance();
+    const AllowlistManager::StringList unavailable_filaments = manager.get_list("high_flow", "unavailable_filaments");
+    if (is_listed(name, unavailable_filaments))
         return { CompatibilityLevel::Unsupported, display_name_without_vendor(preset_name) };
 
     if (has_material_token(type, "cf") || has_material_token(name, "cf") ||
         has_material_token(type, "gf") || has_material_token(name, "gf"))
         return { CompatibilityLevel::NotRecommended, "CF or GF based filaments" };
 
-    if (is_blacklisted(name, g_mock_not_recommended))
+    const AllowlistManager::StringList not_recommended_filaments = manager.get_list("high_flow", "not_recommended_filaments");
+    if (is_listed(name, not_recommended_filaments))
         return { CompatibilityLevel::NotRecommended, display_name_without_vendor(preset_name) };
 
     return {};

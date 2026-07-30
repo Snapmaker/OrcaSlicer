@@ -6806,6 +6806,14 @@ SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHo
             mi.nozzle_volume_types = std::move(obj_flows);
     }
 
+    // If the machine reported nozzle diameters but no flow types (neither system_info
+    // nor objects.query carried them), default to standard -- one per nozzle. This
+    // matches the read-side semantics (FlowType::nozzle_volume_types() pads missing
+    // entries with standard) and lets sync always write a complete, usable vector
+    // instead of silently skipping the update.
+    if (!mi.nozzle_diameters.empty() && mi.nozzle_volume_types.empty())
+        mi.nozzle_volume_types.assign(mi.nozzle_diameters.size(), FLOW_MODE_STANDARD);
+
     // Determine status
     if (mi.model.empty())
         result.status = SSWCPProtocol::ResolveStatus::NoResponse;

@@ -209,7 +209,7 @@ namespace GUI {
 
 // Safe translation helper: returns the UTF-8 form of a translated string as a
 // std::string. This avoids a dangling-pointer trap in I18N::translate_utf8()
-// (which returns wxGetTranslation(...).ToUTF8().data() — a pointer into a
+// (which returns wxGetTranslation(...).ToUTF8().data() - a pointer into a
 // temporary wxString). We keep the translated wxString alive across the
 // utf8_str() call and copy the bytes into a std::string before returning.
 static std::string tr_u8(const char* s)
@@ -221,7 +221,7 @@ static std::string tr_u8(const char* s)
 
 // Build a user-facing label for a single filament slot, in the form
 // "[n] PresetName". Falls back to "[n] (unknown)" if the preset can't be
-// resolved — same defensive style as the null checks in check_filament_temp_mixing.
+// resolved - same defensive style as the null checks in check_filament_temp_mixing.
 static std::string filament_display_label(int slot_1based)
 {
     const int slot_0_based = slot_1based - 1;
@@ -10859,6 +10859,16 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 // flow_ratio_zero pre-slice banner (which also names the
                                 // specific offending filament slot). Skip it here to avoid
                                 // a redundant, less informative notification.
+                                //
+                                // KNOWN LIMITATION: flow_ratio_zero only fires for slots
+                                // actually used by an object on the current plate. If the
+                                // loaded 3MF has flow_ratio == 0 on a slot that no object
+                                // references, this skip suppresses the generic 3mf warning
+                                // AND flow_ratio_zero does not fire either -> the offender
+                                // is invisible at load time. It will surface only when the
+                                // user later assigns an object to that slot. Accepted
+                                // trade-off: silent on unused slots is better than two
+                                // competing notifications on used slots.
                                 if (it->first == "filament_flow_ratio")
                                     continue;
                                 error_message += "-" + it->first + ": " + it->second + "\n";
@@ -12442,7 +12452,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
                 return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
             }
             // flow_ratio_zero sync MUST run after the blanket close_notification_of_type
-            // (ValidateError) above — otherwise our banner gets closed immediately.
+            // (ValidateError) above - otherwise our banner gets closed immediately.
             // Its return value gates UPDATE_BACKGROUND_PROCESS_INVALID so that
             // restart_background_process() refuses to start the slice when the
             // plate is blocked (Preview-tab switch / reslice path).
@@ -17758,7 +17768,7 @@ void Plater::load_gcode(const wxString& filename)
         return;
 
     // Reject a missing / inaccessible file up front. Without this check the
-    // code below would walk through process_file → parse_file_raw_internal,
+    // code below would walk through process_file -> parse_file_raw_internal,
     // which used to crash on a NULL FILE* (now it just returns false), and
     // surface the misleading "does not contain valid G-code" message even when
     // the real problem is that the file doesn't exist at all.
@@ -20124,9 +20134,13 @@ int Plater::start_next_slice()
         return -1;
     }
 
-    // Independent dimension: flow_ratio == 0. Two separate blockers (see
-    // top_cover_design.md 14.7) — both must be checked, never collapsed into
-    // an else-if chain that would let one mask the other.
+    // Second blocker: flow_ratio == 0. NOTE: this uses first-blocker
+    // early-return - if temp_mixing above already blocked the plate, this
+    // branch never runs and only the temp_mixing banner is shown. Blocking
+    // itself still takes effect (single-plate returns -1; slice_all posts
+    // Finished to skip the current plate). If both banners must be shown
+    // simultaneously, hoist sync_flow_ratio_zero_notification() into the
+    // temp_mixing branch before its early return.
     if (is_plate_blocked_by_flow_ratio_zero(p->partplate_list.get_curr_plate_index()))
     {
         sync_flow_ratio_zero_notification();
@@ -20990,7 +21004,7 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
 
         // Collect from the Plater working config. The approach balances
         // sensitivity against false positives:
-        // - Global features (wipe tower, support) always apply → always collected.
+        // - Global features (wipe tower, support) always apply -> always collected.
         // - Feature-specific keys (wall_filament, infill) depend on the global
         //   process defaults. They are only collected when at least one object
         //   on the plate uses the default extruder (e=0), which means those
@@ -21058,7 +21072,7 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
 
     const bool compatible = !(has_high && has_low);
     if (compatible) {
-        // No conflict — clear detail so callers can't read stale partial data.
+        // No conflict - clear detail so callers can't read stale partial data.
         detail.high_temp_slots_1based.clear();
         detail.low_temp_slots_1based.clear();
     }
@@ -21127,7 +21141,7 @@ bool Plater::sync_filament_temp_mixing_notification()
 
     // 1. Always close the previously-pushed notifications using their exact
     //    cached text. NotificationManager::close_validate_* matches on text,
-    //    so we cannot use a freshly regenerated template string here — it
+    //    so we cannot use a freshly regenerated template string here - it
     //    would not match the previous (possibly different) body.
     NotificationManager* nm = get_notification_manager();
     if (!p->filament_temp_mixing_last_error_text.empty()) {
@@ -21147,7 +21161,7 @@ bool Plater::sync_filament_temp_mixing_notification()
     switch (mixing_state)
     {
     case FilamentTempMixingState::Compatible:
-        // Filament temp mixing is compatible — only clear our own notification,
+        // Filament temp mixing is compatible - only clear our own notification,
         // do NOT touch m_apply_invalid. Bed type mismatch or other validation
         // errors must not be cleared by the filament temp mixing system.
         slicing_allowed = true;
@@ -21170,7 +21184,7 @@ bool Plater::sync_filament_temp_mixing_notification()
         p->filament_temp_mixing_last_error_text = err.string;
         // Blocking is enforced through get_enable_slice_status() / find_next_sliceable_plate_for_slice_all()
         // which independently check is_plate_blocked_by_filament_temp_mixing().
-        // Do NOT set m_apply_invalid — that flag belongs to the background validation system.
+        // Do NOT set m_apply_invalid - that flag belongs to the background validation system.
         slicing_allowed = false;
         break;
     }

@@ -1922,6 +1922,7 @@ void PrintConfigDef::init_fff_params()
                      "This setting changes all extrusion flow of this filament in G-code proportionally. "
                      "The recommended value range is between 0.95 and 1.05. "
                      "You may be able to tune this value to get a nice flat surface if there is slight overflow or underflow.");
+    def->min = 0;
     def->max = 2;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 1. });

@@ -1950,8 +1950,13 @@ void MixedFilamentBatchDialog::on_manual_selection_changed()
 {
     // Preserve the previous match result; only Start/Re-match clears it.
     set_match_buttons_state(false);
-    // Manual mode only: re-evaluate the dominance warning whenever a combo flips.
+    // Manual mode only: re-evaluate both the dominance warning (before match) and
+    // the recipe ratio warning (after match) whenever a combo flips or a filament
+    // row is added/removed.  Either check may hide a prior warning, so both must
+    // run — their mutual Hide is safe inside each function.
     check_manual_filament_ratio();
+    if (m_match_completed)
+        check_manual_recipe_ratio();
 }
 
 void MixedFilamentBatchDialog::check_manual_filament_ratio()

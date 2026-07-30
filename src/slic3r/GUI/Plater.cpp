@@ -207,29 +207,18 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
-// Safe translation helper: returns the UTF-8 form of a translated string as a
-// std::string. This avoids a dangling-pointer trap in I18N::translate_utf8()
-// (which returns wxGetTranslation(...).ToUTF8().data() — a pointer into a
-// temporary wxString). We keep the translated wxString alive across the
-// utf8_str() call and copy the bytes into a std::string before returning.
-static std::string tr_u8(const char* s)
-{
-    const wxString ws = _L(s);
-    const wxScopedCharBuffer buf = ws.utf8_str();
-    return std::string(buf.data(), buf.length());
-}
-
 // Build a user-facing label for a single filament slot, in the form
 // "[n] PresetName". Falls back to "[n] (unknown)" if the preset can't be
 // resolved — same defensive style as the null checks in check_filament_temp_mixing.
 static std::string filament_display_label(int slot_1based)
 {
-    const int slot_0_based = slot_1based - 1;
-    PresetBundle* bundle = wxGetApp().preset_bundle;
-    std::string name = tr_u8("unknown");
+    const int      slot_0_based = slot_1based - 1;
+    PresetBundle*  bundle       = wxGetApp().preset_bundle;
+    std::string    name         = _u8L("unknown");
     if (bundle != nullptr
         && slot_0_based >= 0
-        && slot_0_based < static_cast<int>(bundle->filament_presets.size())) {
+        && slot_0_based < static_cast<int>(bundle->filament_presets.size()))
+    {
         const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot_0_based], true);
         if (preset != nullptr)
             name = preset->name;
@@ -242,7 +231,8 @@ static std::string filament_display_label(int slot_1based)
 static std::string format_filament_slot_list(const std::vector<int>& slots_1based)
 {
     std::string out;
-    for (size_t i = 0; i < slots_1based.size(); ++i) {
+    for (size_t i = 0; i < slots_1based.size(); ++i)
+    {
         if (i != 0)
             out += ", ";
         out += filament_display_label(slots_1based[i]);
@@ -255,14 +245,16 @@ static std::string format_filament_slot_list(const std::vector<int>& slots_1base
 // text builders so the layout stays identical.
 static void append_filament_temp_mixing_groups(std::string& out, const Plater::FilamentTempMixingDetail& detail)
 {
-    if (!detail.high_temp_slots_1based.empty()) {
-        out += tr_u8("High temperature:");
+    if (!detail.high_temp_slots_1based.empty())
+    {
+        out += _u8L("High temperature:");
         out += " ";
         out += format_filament_slot_list(detail.high_temp_slots_1based);
         out += "\n";
     }
-    if (!detail.low_temp_slots_1based.empty()) {
-        out += tr_u8("Low temperature:");
+    if (!detail.low_temp_slots_1based.empty())
+    {
+        out += _u8L("Low temperature:");
         out += " ";
         out += format_filament_slot_list(detail.low_temp_slots_1based);
         out += "\n";
@@ -271,9 +263,9 @@ static void append_filament_temp_mixing_groups(std::string& out, const Plater::F
 
 static std::string filament_temp_mixing_warning_text(const Plater::FilamentTempMixingDetail& detail)
 {
-    std::string out = tr_u8("Detected both high and low temperature materials. "
-                            "Mixed printing may result in extruder clogging, "
-                            "nozzle damage, or layer adhesion issues.");
+    std::string out = _u8L("Detected both high and low temperature materials. "
+                           "Mixed printing may result in extruder clogging, "
+                           "nozzle damage, or layer adhesion issues.");
     out += "\n\n";
     append_filament_temp_mixing_groups(out, detail);
     return out;
@@ -281,13 +273,13 @@ static std::string filament_temp_mixing_warning_text(const Plater::FilamentTempM
 
 static std::string filament_temp_mixing_error_text(const Plater::FilamentTempMixingDetail& detail)
 {
-    std::string out = tr_u8("Detected both high and low temperature materials. "
-                            "Mixed printing may result in extruder clogging, "
-                            "nozzle damage, or layer adhesion issues.");
+    std::string out = _u8L("Detected both high and low temperature materials. "
+                           "Mixed printing may result in extruder clogging, "
+                           "nozzle damage, or layer adhesion issues.");
     out += "\n\n";
     append_filament_temp_mixing_groups(out, detail);
     out += "\n";
-    out += tr_u8("To continue printing, enable \"Allow mixed printing "
+    out += _u8L("To continue printing, enable \"Allow mixed printing "
                 "of high and low temperature materials\" in Preferences.");
     return out;
 }
@@ -296,10 +288,11 @@ static std::string filament_temp_mixing_error_text(const Plater::FilamentTempMix
 // its own High/Low grouping. Plates without conflicts are not shown.
 static std::string filament_temp_mixing_warning_text_slice_all(const std::vector<Plater::PlateMixingInfo>& plates)
 {
-    std::string out = tr_u8("The following plates contain mixed high and low temperature materials:");
+    std::string out = _u8L("The following plates contain mixed high and low temperature materials:");
     out += "\n\n";
-    for (const Plater::PlateMixingInfo& info : plates) {
-        out += tr_u8("Plate");
+    for (const Plater::PlateMixingInfo& info : plates)
+    {
+        out += _u8L("Plate");
         out += " " + std::to_string(info.plate_index_1based) + "\n";
         append_filament_temp_mixing_groups(out, info.detail);
         out += "\n";
@@ -309,15 +302,16 @@ static std::string filament_temp_mixing_warning_text_slice_all(const std::vector
 
 static std::string filament_temp_mixing_error_text_slice_all(const std::vector<Plater::PlateMixingInfo>& plates)
 {
-    std::string out = tr_u8("The following plates contain mixed high and low temperature materials:");
+    std::string out = _u8L("The following plates contain mixed high and low temperature materials:");
     out += "\n\n";
-    for (const Plater::PlateMixingInfo& info : plates) {
-        out += tr_u8("Plate");
+    for (const Plater::PlateMixingInfo& info : plates)
+    {
+        out += _u8L("Plate");
         out += " " + std::to_string(info.plate_index_1based) + "\n";
         append_filament_temp_mixing_groups(out, info.detail);
         out += "\n";
     }
-    out += tr_u8("To continue printing, enable \"Allow mixed printing "
+    out += _u8L("To continue printing, enable \"Allow mixed printing "
                 "of high and low temperature materials\" in Preferences.");
     return out;
 }
@@ -8946,6 +8940,13 @@ struct Plater::priv
     // regenerated ones) to close the previous notification. Empty = nothing pushed.
     std::string filament_temp_mixing_last_error_text;
     std::string filament_temp_mixing_last_warning_text;
+
+    // Per-plate cached "blocked by filament temp mixing" flags, refreshed in
+    // sync_filament_temp_mixing_notification() (which already runs at every
+    // state-changing event). Read by hot rendering paths to avoid recomputing
+    // check_filament_temp_mixing() for every plate every frame. Indexed by
+    // plate index; default-empty / default-false means "not blocked".
+    std::vector<bool> filament_temp_mixing_blocked_cache;
 
     MenuFactory menus;
 
@@ -20884,9 +20885,11 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
             return true;
 
         bool has_object_on_plate = false;
-        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
+        {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
-            if (model_object_is_on_plate(plate, obj_idx, model_object)) {
+            if (model_object_is_on_plate(plate, obj_idx, model_object))
+            {
                 has_object_on_plate = true;
                 break;
             }
@@ -20904,7 +20907,8 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
 
         // ModelObject config
         bool uses_default_extruder = false;
-        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
+        {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
@@ -20914,9 +20918,11 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
                 uses_default_extruder = true;
 
             // ModelVolume config
-            for (const ModelVolume* model_volume : model_object->volumes) {
+            for (const ModelVolume* model_volume : model_object->volumes)
+            {
                 collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
-                for (int extruder_id : model_volume->get_extruders()) {
+                for (int extruder_id : model_volume->get_extruders())
+                {
                     if (extruder_id >= 1 && extruder_id <= num_filaments)
                         used_slots_0_based.insert(extruder_id - 1);
                 }
@@ -20933,7 +20939,8 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
         {
             // Always collect: features that cannot be overridden per-object.
             static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
-            for (const char* key : always_collect) {
+            for (const char* key : always_collect)
+            {
                 const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
                 if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
                     used_slots_0_based.insert(option->value - 1);
@@ -20941,9 +20948,11 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
 
             // If any object uses e=0, the global process defaults for
             // wall / infill extruders apply and must be collected.
-            if (uses_default_extruder) {
+            if (uses_default_extruder)
+            {
                 static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-                for (const char* key : default_keys) {
+                for (const char* key : default_keys)
+                {
                     const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
                     if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
                         used_slots_0_based.insert(option->value - 1);
@@ -20955,7 +20964,8 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
         // uses extruder=0. p->config does not include the "extruder" key
         // (it is not in the initializer list at priv constructor), so we
         // must read it from full_config() instead.
-        if (uses_default_extruder) {
+        if (uses_default_extruder)
+        {
             const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
             if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
                 used_slots_0_based.insert(extruder_opt->value - 1);
@@ -20974,17 +20984,21 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
     bool has_high = false, has_low = false;
     {
         PresetBundle* bundle = wxGetApp().preset_bundle;
-        for (int slot : used_slots_0_based) {
+        for (int slot : used_slots_0_based)
+        {
             if (slot < 0 || slot >= static_cast<int>(bundle->filament_presets.size()))
                 continue;
             const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
             if (preset == nullptr)
                 continue;
             const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
-            if (is_high) {
+            if (is_high)
+            {
                 has_high = true;
                 detail.high_temp_slots_1based.push_back(slot + 1);
-            } else {
+            }
+            else
+            {
                 has_low = true;
                 detail.low_temp_slots_1based.push_back(slot + 1);
             }
@@ -20992,7 +21006,8 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
     }
 
     const bool compatible = !(has_high && has_low);
-    if (compatible) {
+    if (compatible)
+    {
         // No conflict — clear detail so callers can't read stale partial data.
         detail.high_temp_slots_1based.clear();
         detail.low_temp_slots_1based.clear();
@@ -21025,6 +21040,13 @@ bool Plater::is_plate_blocked_by_filament_temp_mixing(int plate_index)
     return get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::BlockedError;
 }
 
+bool Plater::is_plate_blocked_by_filament_temp_mixing_cached(int plate_index) const
+{
+    if (plate_index < 0 || plate_index >= static_cast<int>(p->filament_temp_mixing_blocked_cache.size()))
+        return false;
+    return p->filament_temp_mixing_blocked_cache[plate_index];
+}
+
 bool Plater::has_sliceable_plate_for_slice_all()
 {
     return find_next_sliceable_plate_for_slice_all(0) >= 0;
@@ -21048,8 +21070,40 @@ int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
 
 bool Plater::sync_filament_temp_mixing_notification()
 {
+    // 1. Always close the previously-pushed notifications using their exact
+    //    cached text. NotificationManager::close_validate_* matches on text,
+    //    so we cannot use a freshly regenerated template string here — it
+    //    would not match the previous (possibly different) body.
+    //    This runs before the curr_plate null check so that an early return
+    //    does not leak a stale notification on the screen.
+    NotificationManager* nm = get_notification_manager();
+    if (!p->filament_temp_mixing_last_error_text.empty())
+    {
+        nm->close_validate_error_notification(p->filament_temp_mixing_last_error_text);
+        p->filament_temp_mixing_last_error_text.clear();
+    }
+    if (!p->filament_temp_mixing_last_warning_text.empty())
+    {
+        nm->close_validate_warning_notification(p->filament_temp_mixing_last_warning_text);
+        p->filament_temp_mixing_last_warning_text.clear();
+    }
+
+    // 2. Refresh the per-plate blocked cache used by hot rendering paths.
+    //    sync_filament_temp_mixing_notification() is invoked at every state-
+    //    changing event (plate switch, filament change, bed-type change, etc.),
+    //    so refreshing here keeps the cache fresh without recomputing every
+    //    frame in GLCanvas3D::_render_imgui_select_plate_toolbar.
+    const int plate_count = p->partplate_list.get_plate_count();
+    p->filament_temp_mixing_blocked_cache.assign(plate_count, false);
+    for (int i = 0; i < plate_count; ++i)
+    {
+        p->filament_temp_mixing_blocked_cache[i] =
+            (get_filament_temp_mixing_state(i) == FilamentTempMixingState::BlockedError);
+    }
+
     PartPlate* curr_plate = get_partplate_list().get_curr_plate();
-    if (curr_plate == nullptr) {
+    if (curr_plate == nullptr)
+    {
         BOOST_LOG_TRIVIAL(warning) << "[Plater] sync_filament_temp_mixing_notification: curr_plate is null";
         return true;
     }
@@ -21058,21 +21112,7 @@ bool Plater::sync_filament_temp_mixing_notification()
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
     bool slicing_allowed = true;
 
-    // 1. Always close the previously-pushed notifications using their exact
-    //    cached text. NotificationManager::close_validate_* matches on text,
-    //    so we cannot use a freshly regenerated template string here — it
-    //    would not match the previous (possibly different) body.
-    NotificationManager* nm = get_notification_manager();
-    if (!p->filament_temp_mixing_last_error_text.empty()) {
-        nm->close_validate_error_notification(p->filament_temp_mixing_last_error_text);
-        p->filament_temp_mixing_last_error_text.clear();
-    }
-    if (!p->filament_temp_mixing_last_warning_text.empty()) {
-        nm->close_validate_warning_notification(p->filament_temp_mixing_last_warning_text);
-        p->filament_temp_mixing_last_warning_text.clear();
-    }
-
-    // 2. Compute the per-plate detail (used by both warning and error text).
+    // 3. Compute the per-plate detail (used by both warning and error text).
     FilamentTempMixingDetail detail;
     if (mixing_state != FilamentTempMixingState::Compatible)
         check_filament_temp_mixing(curr_plate_index, detail);
@@ -21086,12 +21126,17 @@ bool Plater::sync_filament_temp_mixing_notification()
         slicing_allowed = true;
         break;
     case FilamentTempMixingState::AllowedWarning: {
-        const std::string body = tr_u8("WARNING:") + "\n" + filament_temp_mixing_warning_text(detail);
+        // push_notification stores the body verbatim (no auto prefix), while
+        // close_validate_warning_notification(text) compares against
+        // "WARNING:\n" + text. So the pushed body must include the WARNING
+        // prefix, but the cached value must NOT — that way close-time text
+        // matches the pushed text exactly.
+        const std::string warning_body = filament_temp_mixing_warning_text(detail);
         nm->push_notification(
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
-            body);
-        p->filament_temp_mixing_last_warning_text = body;
+            _u8L("WARNING:") + "\n" + warning_body);
+        p->filament_temp_mixing_last_warning_text = warning_body;
         slicing_allowed = true;
         break;
     }
@@ -21158,7 +21203,7 @@ bool Plater::confirm_filament_temp_mixing_before_slice()
     check_filament_temp_mixing(p->partplate_list.get_curr_plate_index(), detail);
     const std::string body = filament_temp_mixing_warning_text(detail)
                              + "\n"
-                             + tr_u8("Do you want to continue?");
+                             + _u8L("Do you want to continue?");
 
     MessageDialog dlg(this, wxString::FromUTF8(body.c_str()),
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
@@ -21197,7 +21242,7 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
 
     const std::string body = filament_temp_mixing_warning_text_slice_all(mixing_plates)
                              + "\n"
-                             + tr_u8("Do you want to continue?");
+                             + _u8L("Do you want to continue?");
 
     MessageDialog dlg(this, wxString::FromUTF8(body.c_str()),
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);

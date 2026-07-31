@@ -659,11 +659,11 @@ WipingPanel::WipingPanel(wxWindow* parent, const std::vector<float>& matrix, con
     });
 }
 
-int WipingPanel::calc_flushing_volume(const wxColour& from_, const wxColour& to_ ,int min_flush_volume, int flush_dataset)
+int WipingPanel::calc_flushing_volume(const wxColour& from_, const wxColour& to_ ,int min_flush_volume, int flush_dataset, const std::string& from_type, const std::string& to_type)
 {
     Slic3r::FlushVolCalculator calculator(min_flush_volume, m_max_flush_volume, 1.0f, flush_dataset);
 
-    return calculator.calc_flush_vol(from_.Alpha(), from_.Red(), from_.Green(), from_.Blue(), to_.Alpha(), to_.Red(), to_.Green(), to_.Blue());
+    return calculator.calc_flush_vol(from_.Alpha(), from_.Red(), from_.Green(), from_.Blue(), to_.Alpha(), to_.Red(), to_.Green(), to_.Blue(), from_type, to_type);
 }
 
 void WipingPanel::update_warning_texts()
@@ -721,6 +721,12 @@ void WipingPanel::calc_flushing_volumes()
     }
     const auto& flush_thr = Slic3r::get_flush_thresholds(flush_dataset);
     m_max_flush_volume = flush_thr.max_flush_volume;
+    const auto* ft_opt = full_config.option<ConfigOptionStrings>("filament_type");
+    auto get_type = [&](int idx) -> std::string {
+        if (ft_opt && idx >= 0 && idx < (int)ft_opt->values.size())
+            return ft_opt->values[idx];
+        return {};
+    };
     std::vector<std::vector<wxColour>> multi_colors;
 
     // Support for multi-color filament
@@ -757,7 +763,7 @@ void WipingPanel::calc_flushing_volumes()
                         const wxColour& from = multi_colors[from_idx][i];
                         for (int j = 0; j < multi_colors[to_idx].size(); ++j) {
                             const wxColour& to = multi_colors[to_idx][j];
-                            int volume = calc_flushing_volume(from, to, m_min_flush_volume[from_idx], flush_dataset);
+                            int volume = calc_flushing_volume(from, to, m_min_flush_volume[from_idx], flush_dataset, get_type(from_idx), get_type(to_idx));
                             flushing_volume = std::max(flushing_volume, volume);
                         }
                     }

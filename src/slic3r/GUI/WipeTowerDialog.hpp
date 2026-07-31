@@ -70,7 +70,7 @@ public:
 private:
     void fill_in_matrix();
     bool advanced_matches_simple();
-    int calc_flushing_volume(const wxColour& from, const wxColour& to,int min_flush_volume, int flush_dataset = static_cast<int>(FlushDataset::StandardFlow));
+    int calc_flushing_volume(const wxColour& from, const wxColour& to,int min_flush_volume, int flush_dataset = static_cast<int>(FlushDataset::StandardFlow), const std::string& from_type = "", const std::string& to_type = "");
     void update_warning_texts();
         
     std::vector<wxSpinCtrl*> m_old;

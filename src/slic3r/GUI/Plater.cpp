@@ -20986,6 +20986,15 @@ bool Plater::is_plate_sliceable(int plate_index)
     PartPlate* plate = p->partplate_list.get_plate(plate_index);
     if (plate == nullptr || !plate->can_slice())
         return false;
+    // GUI-layer blockers live here so call sites cannot drift. Add new
+    // blockers as additional early-returns in this function; do NOT branch
+    // on them at individual GLCanvas3D / MainFrame call sites.
+    //
+    // Pending blockers (not yet on this branch):
+    //   - is_plate_blocked_by_flow_ratio_zero (PR #626)
+    //   - is_plate_blocked_by_filament_temp_mixing_cached (PR #589 perf
+    //     variant; non-cached call below is the temporary form until #589
+    //     rebases on top and swaps in the cached lookup).
     if (is_plate_blocked_by_filament_temp_mixing(plate_index))
         return false;
     return !is_plate_blocked_by_cold_plate(plate_index);

@@ -561,13 +561,16 @@ public:
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
     /// @brief Unified per-plate sliceability predicate.
-    /// @details Combines PartPlate::can_slice() with the two GUI-layer blockers
-    ///          (filament temp mixing, cold-plate incompatibility) so plate-toolbar
-    ///          rendering, slice-all iteration, and MainFrame button gating cannot drift.
-    ///          Mirrors has_sliceable_plate_for_slice_all's non-const contract (relies on
-    ///          is_plate_blocked_by_filament_temp_mixing, which is historical non-const).
+    /// @details Combines PartPlate::can_slice() with the GUI-layer blockers
+    ///          (filament temp mixing, cold-plate incompatibility, and future
+    ///          flow_ratio_zero) so plate-toolbar rendering, slice-all iteration,
+    ///          and MainFrame button gating cannot drift. Add new blockers as
+    ///          early-returns inside this function; do not branch on them at
+    ///          individual call sites. Mirrors has_sliceable_plate_for_slice_all's
+    ///          non-const contract (relies on is_plate_blocked_by_filament_temp_mixing,
+    ///          which is historical non-const).
     /// @param[in] plate_index 0-based plate index.
-    /// @return true iff the plate exists, can_slice(), and is not blocked by mixing / cold-plate.
+    /// @return true iff the plate exists, can_slice(), and is not blocked by any GUI-layer blocker.
     bool is_plate_sliceable(int plate_index);
     /// @brief Find the next plate that can be sliced by slice-all.
     /// @param start_plate_index First plate index to check.

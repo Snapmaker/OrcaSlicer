@@ -73,10 +73,19 @@ private:
     void on_paint(wxPaintEvent&) {
         wxPaintDC dc(this);
         wxRect r = GetClientSize();
+        if (!m_visible) {
+            // Hidden: fill with parent background so the track fully disappears
+            // on completed/failed/cancelled rows (only icon + text shown).
+            wxColour bg = GetParent() ? GetParent()->GetBackgroundColour() : *wxWHITE;
+            dc.SetBrush(wxBrush(bg));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawRectangle(r);
+            return;
+        }
         dc.SetBrush(make_color(COL_PROGRESS_TRACK));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(r);
-        if (!m_visible || m_percent <= 0) {
+        if (m_percent <= 0) {
             return;
         }
         int fill_w = (r.width * m_percent) / 100;
@@ -377,18 +386,17 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 
 TimelapseDownloadPopup::~TimelapseDownloadPopup() = default;
 
-void TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
+int TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
 {
-    m_task_count = static_cast<int>(tasks.size());
-    m_title_label->SetLabel(
-        wxString::Format(_L("Download Lists (%d)"), m_task_count));
+    int row_offset = static_cast<int>(m_rows.size());
+    m_task_count += static_cast<int>(tasks.size());
 
     for (size_t i = 0; i < tasks.size(); ++i) {
+        int global_idx = row_offset + static_cast<int>(i);
         auto* row = new TimelapseTaskRow(m_task_panel,
             wxString::FromUTF8(tasks[i].file_name.c_str()));
-        row->set_queue_position(static_cast<int>(i + 1));
-        int idx = static_cast<int>(i);
-        row->set_dismiss_callback([this, idx]() { dismiss_row(idx); });
+        row->set_queue_position(global_idx + 1);
+        row->set_dismiss_callback([this, global_idx]() { dismiss_row(global_idx); });
         TaskRowInfo info;
         info.row = row;
         info.state = 0;
@@ -396,8 +404,17 @@ void TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
         m_rows.push_back(std::move(info));
     }
 
+    // Refresh title with total visible count (across all batches)
+    int visible = 0;
+    for (const auto& r : m_rows) {
+        if (r.visible) { ++visible; }
+    }
+    m_title_label->SetLabel(
+        wxString::Format(_L("Download Lists (%d)"), visible));
+
     reorder_rows();
     update_layout_size();
+    return row_offset;
 }
 
 void TimelapseDownloadPopup::set_task_progress(int index, int percent,

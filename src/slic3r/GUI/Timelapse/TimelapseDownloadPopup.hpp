@@ -36,7 +36,9 @@ public:
     TimelapseDownloadPopup(wxWindow* parent);
     ~TimelapseDownloadPopup();
 
-    void add_tasks(const std::vector<TaskInfo>& tasks);
+    // Append tasks. Returns the global row offset where this batch starts
+    // (caller uses offset + per-batch idx to address rows in a shared popup).
+    int add_tasks(const std::vector<TaskInfo>& tasks);
 
     void set_task_progress(int index, int percent,
                            size_t downloaded, size_t total);

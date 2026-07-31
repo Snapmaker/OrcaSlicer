@@ -16253,6 +16253,15 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     // project must start every nozzle at standard flow rather than inheriting the
     // previous project's nozzle_volume_type (which lives in the shared project config).
     GUI::FlowType::reset_nozzle_volume_types_to_standard();
+    // Rebuild the nozzle panel so the flow combos reflect the reset. Entry points that
+    // select a preset first (e.g. the home-page device card -> sw_NewProject) already
+    // rebuilt the panel via on_select_preset BEFORE this reset ran, so without an
+    // explicit rebuild here the combos would keep showing the pre-reset flow types.
+    // Deferred with CallAfter to avoid destroying a combo mid-event on the select path.
+    wxTheApp->CallAfter([]() {
+        if (wxGetApp().plater() != nullptr)
+            wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+    });
 
     return wxID_YES;
 }

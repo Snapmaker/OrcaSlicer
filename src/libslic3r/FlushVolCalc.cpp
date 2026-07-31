@@ -310,32 +310,31 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
         dst_r = dst_g = dst_b = 255;
     }
 
-    // Path A: always try lookup table first — lookup data is pre-calibrated, no extra correction
+    // Path A: color lookup table. On hit, use the pre-calibrated value directly
+    // (no formula, no K correction). On miss, fall through to Path B.
     float lookup_volume;
-    //if (get_flush_vol_from_data(src_r, src_g, src_b, dst_r, dst_g, dst_b, lookup_volume)) {
-    //    return std::min((int)lookup_volume, m_max_flush_vol);
-    //}
+    bool lookup_hit = get_flush_vol_from_data(src_r, src_g, src_b, dst_r, dst_g, dst_b, lookup_volume);
 
-    // Select formula coefficients: StandardFlow vs HighFlow
-    const auto& params = (m_flush_dataset == static_cast<int>(FlushDataset::HighFlow))
-        ? s_highflow_params : s_normal_params;
+    int final_volume;
+    if (lookup_hit) {
+        final_volume = (int)lookup_volume;
+    } else {
+        // Path B: HSV color-distance formula with stain-risk K compensation.
+        const auto& params = (m_flush_dataset == static_cast<int>(FlushDataset::HighFlow))
+            ? s_highflow_params : s_normal_params;
+        float flush_volume = (float)calc_flush_vol_rgb(src_r, src_g, src_b, dst_r, dst_g, dst_b, params);
 
-    // Lookup miss — fall through to Path B (HSV formula with stain-risk compensation)
-    float flush_volume = (float)calc_flush_vol_rgb(src_r, src_g, src_b, dst_r, dst_g, dst_b, params);
+        bool is_highflow = (m_flush_dataset == static_cast<int>(FlushDataset::HighFlow));
+        float k = is_highflow
+            ? get_special_k_highflow(src_r, src_g, src_b, dst_r, dst_g, dst_b)
+            : get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
+        final_volume = is_highflow
+            ? (int) ((float) flush_volume * k + 0.5f)
+            : (int) ((float) flush_volume * k);
+    }
 
-    // Apply special color correction K (Path B).
-    // HighFlow uses calibrated K (FlushVolHighFlow.hpp) and rounds; Standard is unchanged.
-    bool is_highflow = (m_flush_dataset == static_cast<int>(FlushDataset::HighFlow));
-    float k = is_highflow
-        ? get_special_k_highflow(src_r, src_g, src_b, dst_r, dst_g, dst_b)
-        : get_special_k(src_r, src_g, src_b, dst_r, dst_g, dst_b);
-    int   final_volume = is_highflow
-        ? (int) ((float) flush_volume * k + 0.5f)
-        : (int) ((float) flush_volume * k);
-
-
-    // Material-pair measured purge override (per-flow). No-op when material types
-    // are empty (falls back to the pure-color path).
+    // Material-pair measured purge override (per-flow). Applied to both Path A and
+    // Path B results. No-op when material types are empty.
     if (!from_type.empty() && !to_type.empty()) {
         float measured = 0.f;
         if (query_material_purge_volume(normalize_material_family(from_type),
@@ -344,7 +343,7 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
             final_volume = std::max(final_volume, (int)measured);
     }
 
-    // Per-flow clamping with flow-specific thresholds — user-specified (2026-07-20).
+    // Per-flow clamping with flow-specific thresholds.
     const auto& thresholds = get_flush_thresholds(m_flush_dataset);
     return std::clamp(final_volume, thresholds.min_flush_volume, thresholds.max_flush_volume);
 }

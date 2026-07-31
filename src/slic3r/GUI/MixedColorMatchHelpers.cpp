@@ -1897,27 +1897,18 @@ void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
                 mv->remap_extruder_ids(total_filaments, state_map);
 
             // Level 2: config-level extruder (always needed — even for
-            // painted volumes, get_extruders() includes extruder_id()).
-            // extract_model_colors collects the *inherited* object extruder
-            // as a remap source (vol->get_extruders() -> extruder_id()
-            // falls back to the object config), so the remap has to be
-            // applied at the same level that carries the value:
-            //   - volume carries its OWN explicit extruder  -> remap volume
-            //   - volume inherits (no own "extruder")       -> remap OBJECT,
-            //     but only if the object has a real (non-default) extruder.
-            //   A genuinely default object/volume (no/zero extruder) is not remapped.
-            const ConfigOption* vol_ext_opt = mv->config.option("extruder");
-            if (vol_ext_opt && vol_ext_opt->getInt() > 0) {
-                auto it = extruder_remap.find(vol_ext_opt->getInt());
-                if (it != extruder_remap.end())
-                    mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            } else {
-                const ConfigOption* obj_ext_opt = mo->config.option("extruder");
-                if (!obj_ext_opt || obj_ext_opt->getInt() <= 0) continue;
-                auto it = extruder_remap.find(obj_ext_opt->getInt());
-                if (it != extruder_remap.end())
-                    mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            }
+            // painted volumes, get_extruders() includes extruder_id())
+            int old_eid = mv->extruder_id();
+            if (old_eid <= 0) continue;
+            auto it = extruder_remap.find(old_eid);
+            if (it == extruder_remap.end()) continue;
+
+            const unsigned int new_eid = it->second;
+            const ConfigOption* vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0)
+                mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+            else
+                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
         }
     }
 

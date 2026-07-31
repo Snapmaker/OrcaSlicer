@@ -1905,7 +1905,7 @@ void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
             //   - volume carries its OWN explicit extruder  -> remap volume
             //   - volume inherits (no own "extruder")       -> remap OBJECT,
             //     but only if the object has a real (non-default) extruder.
-            //   A truly "缺省" object/volume (no/zero extruder) stays default.
+            //   A genuinely default object/volume (no/zero extruder) is not remapped.
             const ConfigOption* vol_ext_opt = mv->config.option("extruder");
             if (vol_ext_opt && vol_ext_opt->getInt() > 0) {
                 auto it = extruder_remap.find(vol_ext_opt->getInt());

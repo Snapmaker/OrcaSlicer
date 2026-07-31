@@ -865,12 +865,12 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
         auto     object = (*m_objects)[i];
         wxString extruder;
         if (!object->config.has("extruder")) {
-            // Keep this object "缺省" (default): do NOT materialize a
+            // Keep this object set to "default": do NOT materialize a
             // non-zero extruder here.  Materializing (e.g. 1) would pin the
-            // object — and every inheriting ("缺省") child volume — to a
+            // object — and every inheriting ("default") child volume — to a
             // specific filament after a filament is deleted, silently
             // changing the real print material.  Leaving the config unset
-            // keeps the object default; a "缺省" child volume shows the
+            // keeps the object default; a "default" child volume shows the
             // default icon (see UpdateExtruderAndColorIcon), not the
             // parent's color.
             extruder = "0";

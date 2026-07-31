@@ -390,7 +390,7 @@ void ObjectDataViewModelNode::UpdateExtruderAndColorIcon(wxString extruder /*= "
     if (extruder_idx == 0) {
         if (m_type & itObject);
         else if (m_type & itVolume && m_volume_type == ModelVolumeType::MODEL_PART) {
-            // A part explicitly set to "缺省" (extruder 0) shows the default
+            // A part explicitly set to "default" (extruder 0) shows the default
             // icon — do NOT inherit the parent object's color.  Volumes that
             // truly inherit (no own extruder config) already had the object's
             // value baked into m_extruder by update_filament_values_for_items,

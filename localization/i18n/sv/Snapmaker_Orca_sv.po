@@ -9130,6 +9130,13 @@ msgstr "Kontrollera custom G-kod elleranvänd standard custom G-kod."
 msgid "Generating G-code: layer %1%"
 msgstr "Skapar G-kod: lager %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Inre vägg"
 

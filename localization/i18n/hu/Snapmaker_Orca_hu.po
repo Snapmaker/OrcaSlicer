@@ -9153,6 +9153,13 @@ msgstr ""
 msgid "Generating G-code: layer %1%"
 msgstr "G-kód generálása: %1% réteg"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Belső fal"
 

@@ -9222,6 +9222,13 @@ msgstr "사용자 정의 Gcode를 확인하거나 기본 사용자 정의 Gcode�
 msgid "Generating G-code: layer %1%"
 msgstr "Gcode 생성 중: 레이어 %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "내벽"
 

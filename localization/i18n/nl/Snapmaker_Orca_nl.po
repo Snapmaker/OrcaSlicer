@@ -9294,6 +9294,13 @@ msgstr "Controleer de aangepaste G-code of gebruik de standaard G-code."
 msgid "Generating G-code: layer %1%"
 msgstr "Genereren G-code: laag %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Binnenste wand"
 

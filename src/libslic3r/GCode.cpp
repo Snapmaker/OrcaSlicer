@@ -2168,6 +2168,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
     m_layer_count = 0;
+    m_model_only_layer_count = 0;
+    for (auto object : print.objects())
+        m_model_only_layer_count += (unsigned int)(object->layers().size() * object->instances().size());
     if (print.config().print_sequence == PrintSequence::ByObject) {
         // Add each of the object's layers separately.
         for (auto object : print.objects()) {
@@ -2510,7 +2513,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
     this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
     // Set variable for total layer count so it can be used in custom gcode.
-    this->placeholder_parser().set("total_layer_count", m_layer_count);
+    this->placeholder_parser().set("total_layer_count", m_model_only_layer_count);
     // Useful for sequential prints.
     this->placeholder_parser().set("current_object_idx", 0);
     // For the start / end G-code to do the priming and final filament pull in case there is no wipe tower provided.
@@ -3073,7 +3076,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
         if (print.m_print_statistics.total_toolchanges > 0)
             file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
-        file.write_format("; total layers count = %i\n", m_layer_count);
+        file.write_format("; total layers count = %i\n", m_model_only_layer_count);
         file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
         file.write("\n");
         file.write("; CONFIG_BLOCK_START\n");
@@ -3123,10 +3126,12 @@ void GCode::process_layers(const Print&                                         
 {
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
+    size_t     model_layer_idx    = 0;
+    size_t     support_layer_idx  = 0;
     const auto generator          = tbb::make_filter<void, LayerResult>(
         slic3r_tbb_filtermode::serial_in_order,
         [this, &print, &tool_ordering, &print_object_instances_ordering, &layers_to_print,
-         &layer_to_print_idx](tbb::flow_control& fc) -> LayerResult {
+         &layer_to_print_idx, &model_layer_idx, &support_layer_idx](tbb::flow_control& fc) -> LayerResult {
             if (layer_to_print_idx >= layers_to_print.size()) {
                 if (layer_to_print_idx == layers_to_print.size() + (m_pressure_equalizer ? 1 : 0)) {
                     fc.stop();
@@ -3140,7 +3145,20 @@ void GCode::process_layers(const Print&                                         
             } else {
                 const std::pair<coordf_t, std::vector<LayerToPrint>>& layer       = layers_to_print[layer_to_print_idx++];
                 const LayerTools&                                     layer_tools = tool_ordering.tools_for_layer(layer.first);
-                print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(layer_to_print_idx)));
+                // Check if this Z-height has any object layers (not support-only)
+                bool has_obj_layer = false;
+                for (const auto& ltp : layer.second) {
+                    if (ltp.object_layer != nullptr) { has_obj_layer = true; break; }
+                }
+                if (has_obj_layer) {
+                    ++model_layer_idx;
+                    print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(model_layer_idx)));
+                } else {
+                    ++support_layer_idx;
+                    std::string msg = Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(support_layer_idx));
+                    msg += " (" + _(L("Support")) + ")";
+                    print.set_status(80, msg);
+                }
                 if (m_wipe_tower && layer_tools.has_wipe_tower)
                     m_wipe_tower->next_layer();
                 // BBS
@@ -3228,9 +3246,11 @@ void GCode::process_layers(const Print&              print,
 {
     // The pipeline is variable: The vase mode filter is optional.
     size_t     layer_to_print_idx = 0;
+    size_t     model_layer_idx    = 0;
+    size_t     support_layer_idx  = 0;
     const auto generator =
         tbb::make_filter<void, LayerResult>(slic3r_tbb_filtermode::serial_in_order,
-                                            [this, &print, &tool_ordering, &layers_to_print, &layer_to_print_idx, single_object_idx,
+                                            [this, &print, &tool_ordering, &layers_to_print, &layer_to_print_idx, &model_layer_idx, &support_layer_idx, single_object_idx,
                                              prime_extruder](tbb::flow_control& fc) -> LayerResult {
                                                 if (layer_to_print_idx >= layers_to_print.size()) {
                                                     if (layer_to_print_idx == layers_to_print.size() + (m_pressure_equalizer ? 1 : 0)) {
@@ -3244,8 +3264,16 @@ void GCode::process_layers(const Print&              print,
                                                     }
                                                 } else {
                                                     LayerToPrint& layer = layers_to_print[layer_to_print_idx++];
-                                                    print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")),
-                                                                                        std::to_string(layer_to_print_idx)));
+                                                    if (layer.object_layer != nullptr) {
+                                                        ++model_layer_idx;
+                                                        print.set_status(80, Slic3r::format(_(L("Generating G-code: layer %1%")),
+                                                                                            std::to_string(model_layer_idx)));
+                                                    } else {
+                                                        ++support_layer_idx;
+                                                        std::string msg = Slic3r::format(_(L("Generating G-code: layer %1%")), std::to_string(support_layer_idx));
+                                                        msg += " (" + _(L("Support")) + ")";
+                                                        print.set_status(80, msg);
+                                                    }
                                                     // BBS
                                                     check_placeholder_parser_failed();
                                                     print.throw_if_canceled();

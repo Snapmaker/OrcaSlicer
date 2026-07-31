@@ -1000,30 +1000,36 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
             window->DrawList->AddLine(lower_handle_center + ImVec2(0.0f, -0.5f * line_length), lower_handle_center + ImVec2(0.0f, 0.5f * line_length), white_bg, line_width);
         }
 
-        // draw higher label
-        auto text_utf8 = into_u8(higher_label);
-        text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
-        text_size = text_content_size + text_padding * 2;
-        ImVec2 text_start = ImVec2(higher_handle.Min.x - text_size.x - triangle_offsets[2].x, higher_handle_center.y - text_size.y);
-        ImRect text_rect(text_start, text_start + text_size);
-        ImGui::RenderFrame(text_rect.Min, text_rect.Max, white_bg, false, text_frame_rounding);
-        ImVec2 pos_1 = text_rect.Max - triangle_offsets[0];
-        ImVec2 pos_2 = pos_1 - triangle_offsets[1];
-        ImVec2 pos_3 = pos_1 + triangle_offsets[2];
-        window->DrawList->AddTriangleFilled(pos_1, pos_2, pos_3, white_bg);
-        ImGui::RenderText(text_start + text_padding, higher_label.c_str());
-        // draw lower label
-        text_utf8 = into_u8(lower_label);
-        text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
-        text_size = text_content_size + text_padding * 2;
-        text_start        = ImVec2(lower_handle.Min.x - text_size.x - triangle_offsets[2].x, lower_handle_center.y);
-        text_rect = ImRect(text_start, text_start + text_size);
-        ImGui::RenderFrame(text_rect.Min, text_rect.Max, white_bg, false, text_frame_rounding);
-        pos_1 = ImVec2(text_rect.Max.x, text_rect.Min.y) - triangle_offsets[0];
-        pos_2 = pos_1 + triangle_offsets[1];
-        pos_3 = pos_1 + triangle_offsets[2];
-        window->DrawList->AddTriangleFilled(pos_1, pos_2, pos_3, white_bg);
-        ImGui::RenderText(text_start + text_padding, lower_label.c_str());
+        // draw higher label on foreground draw list to avoid clipping by child window
+        {
+            auto text_utf8 = into_u8(higher_label);
+            text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
+            text_size = text_content_size + text_padding * 2;
+            ImVec2 text_start = ImVec2(higher_handle.Min.x - text_size.x - triangle_offsets[2].x, higher_handle_center.y - text_size.y);
+            ImRect text_rect(text_start, text_start + text_size);
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            fg->AddRectFilled(text_rect.Min, text_rect.Max, white_bg, text_frame_rounding);
+            ImVec2 pos_1 = text_rect.Max - triangle_offsets[0];
+            ImVec2 pos_2 = pos_1 - triangle_offsets[1];
+            ImVec2 pos_3 = pos_1 + triangle_offsets[2];
+            fg->AddTriangleFilled(pos_1, pos_2, pos_3, white_bg);
+            fg->AddText(text_start + text_padding, ImGui::GetColorU32(ImGuiCol_Text), higher_label.c_str());
+        }
+        // draw lower label on foreground draw list to avoid clipping by child window
+        {
+            auto text_utf8 = into_u8(lower_label);
+            text_content_size = ImGui::CalcTextSize(text_utf8.c_str());
+            text_size = text_content_size + text_padding * 2;
+            ImVec2 text_start = ImVec2(lower_handle.Min.x - text_size.x - triangle_offsets[2].x, lower_handle_center.y);
+            ImRect text_rect(text_start, text_start + text_size);
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            fg->AddRectFilled(text_rect.Min, text_rect.Max, white_bg, text_frame_rounding);
+            ImVec2 pos_1 = ImVec2(text_rect.Max.x, text_rect.Min.y) - triangle_offsets[0];
+            ImVec2 pos_2 = pos_1 + triangle_offsets[1];
+            ImVec2 pos_3 = pos_1 + triangle_offsets[2];
+            fg->AddTriangleFilled(pos_1, pos_2, pos_3, white_bg);
+            fg->AddText(text_start + text_padding, ImGui::GetColorU32(ImGuiCol_Text), lower_label.c_str());
+        }
         
         // draw mouse position
         if (hovered) {
@@ -1582,10 +1588,22 @@ std::string IMSlider::get_label(int tick, LabelType label_type)
         ::sprintf(layer_height, "%.2f", m_values.empty() ? m_label_koef * value : m_values[value]);
         if (label_type == ltHeight) return std::string(layer_height);
         if (label_type == ltHeightWithLayer) {
-            char   buffer[64];
+            char   buffer[96];
             size_t layer_number;
             layer_number = m_draw_mode == dmSequentialFffPrint ? (m_values.empty() ? value : value + 1) : m_is_wipe_tower ? get_layer_number(value, label_type) + 1 : (m_values.empty() ? value : value + 1);
-            ::sprintf(buffer, "%5s\n%5s", std::to_string(layer_number).c_str(), layer_height);
+            // if mapping exists, use non-support layer number for display
+            // positive = model layer number, negative = support layer number
+            if (!m_preview_to_non_support_layer.empty() && value >= 0 &&
+                static_cast<size_t>(value) < m_preview_to_non_support_layer.size()) {
+                int mapped = m_preview_to_non_support_layer[static_cast<size_t>(value)];
+                if (mapped > 0)
+                    ::sprintf(buffer, "%s\n%s", std::to_string(mapped).c_str(), layer_height);
+                else
+                    ::sprintf(buffer, "%s\n%s\n%s",
+                              std::to_string(-mapped).c_str(), layer_height, _u8L("Support").c_str());
+            } else {
+                ::sprintf(buffer, "%s\n%s", std::to_string(layer_number).c_str(), layer_height);
+            }
             return std::string(buffer);
         }
     }

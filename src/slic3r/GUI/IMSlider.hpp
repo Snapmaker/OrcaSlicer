@@ -80,6 +80,7 @@ public:
     void SetKoefForLabels(const double koef) { m_label_koef = koef; }
     void SetSliderValues(const std::vector<double> &values);
     void SetSliderAlternateValues(const std::vector<double> &values) { m_alternate_values = values; }
+    void SetPreviewToNonSupportLayer(const std::vector<int>& mapping, size_t count) { m_preview_to_non_support_layer = mapping; m_non_support_layer_count = count; }
 
     Info GetTicksValues() const;
     void SetTicksValues(const Info &custom_gcode_per_print_z);
@@ -224,6 +225,8 @@ private:
     TickCodeInfo             m_ticks;
     std::vector<double>      m_layers_times;
     std::vector<double>      m_layers_values;
+    std::vector<int>         m_preview_to_non_support_layer; // -1 for support-only Z, 1..N for non-support layer number
+    size_t                   m_non_support_layer_count{ 0 };
     std::vector<std::string> m_extruder_colors;
     bool                     m_can_change_color;
     std::string              m_print_obj_idxs;

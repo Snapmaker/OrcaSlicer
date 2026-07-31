@@ -1954,21 +1954,18 @@ void MixedFilamentBatchDialog::on_manual_selection_changed()
 {
     // Preserve the previous match result; only Start/Re-match clears it.
     set_match_buttons_state(false);
-    // Two warning-banner cases, branched on whether a match is still on screen:
-    //  - m_match_completed: the previous match's preview is still displayed, so keep its
-    //    recipe-ratio advisory current. check_manual_recipe_ratio() internally Hides the
-    //    banner first, then re-evaluates against m_result.mappings (the still-shown result)
-    //    and may re-show it. There is no pre-match ratio guard; ratio warnings come only
-    //    from this post-match check.
-    //  - else: no match result is shown, so clear any stale banner (e.g. the 64-color
-    //    limit advisory from display_warning at build_ui, which fires while
-    //    m_match_completed is false). This Hide replaces the unconditional Hide that used
-    //    to live in the now-removed check_manual_filament_ratio(); dropping this branch
-    //    would leave stale banners stuck on screen.
+    // Re-evaluate the post-match ratio advisory only when a previous match is still on
+    // screen. check_manual_recipe_ratio() internally Hides the banner first, then
+    // re-evaluates against m_result.mappings (the still-shown result) and may re-show it.
+    // There is no pre-match ratio guard; ratio warnings come only from this post-match check.
+    //
+    // Note: when no match is shown (m_match_completed == false), a pre-existing banner —
+    // e.g. the 64-color limit advisory from display_warning at build_ui — is intentionally
+    // NOT cleared here. It persists until the next Start/Re-match (which Hides all banners).
+    // This is acceptable: the advisory is still contextually relevant while the user is
+    // picking filaments for the over-limit model.
     if (m_match_completed)
         check_manual_recipe_ratio();
-    else if (m_warning_panel)
-        m_warning_panel->Hide();
 }
 
 void MixedFilamentBatchDialog::check_manual_recipe_ratio()

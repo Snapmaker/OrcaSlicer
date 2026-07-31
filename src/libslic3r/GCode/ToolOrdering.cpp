@@ -378,7 +378,8 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
 	assert(region.config().bottom_surface_filament_id.value > 0);
     if (extrusions.has_infill()) {
         ExtrusionRole role = extrusions.entities.empty() ? erNone : extrusions.entities.front()->role();
-        // gap fill inherits the filament of the surface it fills; derive the role from the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+        // Gap fill inherits the filament of the surface it fills; derive the role from
+        // the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
         if (role == erGapFill)
             for (const ExtrusionEntity *ee : extrusions.entities)
                 if (ee->role() != erGapFill) {
@@ -387,7 +388,8 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
                 }
         if (extrusions.has_solid_infill()) {
             ExtrusionRole solid_role = extrusions.role();
-            // gap fill inherits the filament of the surface it fills; derive the role from the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            // Gap fill inherits the filament of the surface it fills; derive the role from
+            // the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
             if (solid_role == erMixed)
                 for (const ExtrusionEntity *ee : extrusions.entities)
                     if (ee->role() != erGapFill) {
@@ -885,7 +887,11 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                             firstLayerExtruders.emplace_back(wall_ext);
                     };
                     emplace_wall_filament((extruder_override == 0) ? region.config().outer_wall_filament_id.value : extruder_override, true);
-                    // alternate_extra_wall should add an inner loop on odd layers (mirrors PerimeterGenerator's loop_number and the spiral gate of LayerRegion::make_perimeters()); layers dropping the loop again (only_one_wall_top / only_one_wall_first_layer) may reserve the filament unused, which merely costs a toolchange.
+                    // alternate_extra_wall should add an inner loop on odd layers (mirrors
+                    // PerimeterGenerator's loop_number and the spiral gate of
+                    // LayerRegion::make_perimeters()); layers dropping the loop again
+                    // (only_one_wall_top / only_one_wall_first_layer) may reserve the filament
+                    // unused, which merely costs a toolchange.
                     const bool spiral_vase_layer = object.print()->config().spiral_mode.value &&
                         layer->id() >= size_t(region.config().bottom_shell_layers.value) &&
                         layer->print_z >= region.config().bottom_shell_thickness - EPSILON;
@@ -1206,10 +1212,10 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     // and maybe other problems. We will therefore go through layer_tools and detect and fix this.
     // So, if there is a non-object layer starting with different extruder than the last one ended with (or containing more than one extruder),
     // we'll mark it with has_wipe tower.
-    // Per-extruder layer height combines layers away, leaving many LayerTools empty; skip them and compare against the last printing layer.
-    // Without the feature keep the historic behavior of stopping at the first empty layer.
-    const bool skip_empty_layer_tools = std::any_of(config.extruder_layer_height.values.begin(),
-        config.extruder_layer_height.values.end(), [](double h) { return h > 0.; });
+    // Per-extruder layer height combines layers away, leaving many LayerTools empty; skip them and
+    // compare against the last printing layer. Without the feature keep the historic behavior of
+    // stopping at the first empty layer.
+    const bool skip_empty_layer_tools = has_extruder_layer_heights(config);
     const LayerTools *lt_last_printing = nullptr;
     for (unsigned int i=0; i+1<m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
@@ -1563,10 +1569,9 @@ int WipingExtrusions::last_nonsoluble_extruder_on_layer(const PrintConfig& print
 }
 
 // diameter of the nozzle a 0-based filament prints through.
-// On classic multi-tool printers the filament index is the extruder index.
 static double filament_nozzle_diameter(const Print &print, unsigned int filament_id)
 {
-    return print.config().nozzle_diameter.get_at(filament_id);
+    return print.config().nozzle_diameter.get_at(print.extruder_index_of(filament_id));
 }
 
 // Decides whether this entity could be overridden

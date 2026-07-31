@@ -80,13 +80,17 @@ double LayerRegion::combined_height() const
     return m_combined_height > 0. ? m_combined_height : m_layer->height;
 }
 
-const Layer* LayerRegion::combined_lower_layer() const
+static const Layer* nth_lower_layer(const Layer *layer, unsigned short count)
 {
-    const Layer *layer = m_layer;
-    // count == 0 (layer combined away into a group top) is treated as 1; it produces no extrusions anyway.
-    for (unsigned short i = 0, count = std::max<unsigned short>(m_combined_layer_count, 1); layer != nullptr && i < count; ++ i)
+    for (unsigned short i = 0; layer != nullptr && i < count; ++ i)
         layer = layer->lower_layer;
     return layer;
+}
+
+const Layer* LayerRegion::combined_lower_layer() const
+{
+    // count == 0 (layer combined away into a group top) is treated as 1; it produces no extrusions anyway.
+    return nth_lower_layer(m_layer, std::max<unsigned short>(m_combined_layer_count, 1));
 }
 
 // ORCA: walls-only pitch, see PrintObject::wall_layer_height_multiplier().
@@ -97,24 +101,16 @@ double LayerRegion::wall_combined_height() const
 
 const Layer* LayerRegion::wall_combined_lower_layer() const
 {
-    if (m_wall_combined_count <= 1)
-        // count == 0 (walls extrude at the run top above) produces no wall extrusions anyway.
-        return this->combined_lower_layer();
-    const Layer *layer = m_layer;
-    for (unsigned short i = 0; layer != nullptr && i < m_wall_combined_count; ++ i)
-        layer = layer->lower_layer;
-    return layer;
+    // count == 0 (walls extrude at the run top above) produces no wall extrusions anyway.
+    return m_wall_combined_count <= 1 ? this->combined_lower_layer() :
+                                        nth_lower_layer(m_layer, m_wall_combined_count);
 }
 
 // ORCA: split wall layer heights, see PrintObject::wall_split_pitches().
 const Layer* LayerRegion::wall_split_lower_layer() const
 {
-    if (m_wall_split_count <= 1)
-        return this->wall_combined_lower_layer();
-    const Layer *layer = m_layer;
-    for (unsigned short i = 0; layer != nullptr && i < m_wall_split_count; ++ i)
-        layer = layer->lower_layer;
-    return layer;
+    return m_wall_split_count <= 1 ? this->wall_combined_lower_layer() :
+                                     nth_lower_layer(m_layer, m_wall_split_count);
 }
 
 // merge all regions' slices to get islands

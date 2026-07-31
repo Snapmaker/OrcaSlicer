@@ -7700,11 +7700,7 @@ void DynamicPrintConfig::normalize_fdm_1()
         }
     }
 
-    // Note: no cross-propagation between the per-feature filament selectors here. Filling one
-    // selector from another (sparse -> internal solid, internal solid <-> top/bottom) silently
-    // overwrote "Default" (0), which means "use the part's filament", with an unrelated feature's
-    // explicit filament - e.g. assigning internal solid infill dragged the top/bottom surfaces along.
-    // Each selector resolves its own "Default" at slicing time (PrintRegion::extruder()).
+    // No cross-propagation between the per-feature filament selectors (see normalize_fdm() above).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {

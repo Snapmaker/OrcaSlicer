@@ -8269,6 +8269,14 @@ static wxString nozzle_combo_label(double value)
     return wxString(oss.str()) + "mm";
 }
 
+// Numeric part of a nozzle_combo_label() item ("0.4mm" -> "0.4"); parse with ToCDouble().
+static wxString nozzle_combo_number(wxString label)
+{
+    if (label.EndsWith("mm"))
+        label.RemoveLast(2);
+    return label;
+}
+
 // Show THIS nozzle's own diameter (per-nozzle sizes are supported), selecting the matching
 // "x.xmm" item so the read-only combo accepts it. Falls back to the uniform printer_variant
 // label only when the per-nozzle value is unavailable.
@@ -8276,12 +8284,9 @@ static void select_nozzle_diameter_label(ComboBox *diameter_combo, double this_n
 {
     wxString this_label;
     for (unsigned int n = 0; n < diameter_combo->GetCount(); ++n) {
-        wxString item = diameter_combo->GetString(n);
-        wxString num  = item;
-        if (num.EndsWith("mm"))
-            num.RemoveLast(2);
+        const wxString item = diameter_combo->GetString(n);
         double item_nd = 0.;
-        if (num.ToCDouble(&item_nd) && std::abs(item_nd - this_nd) < EPSILON) {
+        if (nozzle_combo_number(item).ToCDouble(&item_nd) && std::abs(item_nd - this_nd) < EPSILON) {
             this_label = item;
             break;
         }
@@ -8412,9 +8417,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             // per-nozzle sizes, which the slicer now supports.
 
             // Parse the selected diameter from the "0.4mm" combo item.
-            wxString sel_num = diameter_combo->GetValue();
-            if (sel_num.EndsWith("mm"))
-                sel_num.RemoveLast(2);
+            const wxString sel_num = nozzle_combo_number(diameter_combo->GetValue());
             double new_nd = 0.;
             if (!sel_num.ToCDouble(&new_nd) || new_nd <= 0.)
                 return;
@@ -8522,11 +8525,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         lh_combo->Bind(wxEVT_COMBOBOX, [lh_combo, i](wxCommandEvent& event) {
             // "Default" (or anything non-numeric) clears the preference: 0 = object layer height.
-            wxString sel = lh_combo->GetValue();
-            if (sel.EndsWith("mm"))
-                sel.RemoveLast(2);
             double new_height = 0.;
-            if (!sel.ToCDouble(&new_height) || new_height < 0.)
+            if (!nozzle_combo_number(lh_combo->GetValue()).ToCDouble(&new_height) || new_height < 0.)
                 new_height = 0.;
 
             Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);

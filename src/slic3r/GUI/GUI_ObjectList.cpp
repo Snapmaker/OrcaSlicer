@@ -683,6 +683,12 @@ ModelConfig& ObjectList::get_item_config(const wxDataViewItem& item) const
                             (*m_objects)[obj_idx]->config;
 }
 
+// ORCA: per-object/per-part support and feature filament selectors. They must track filament
+// count changes alongside the "extruder" selector, or a stale id lands on the wrong filament.
+static const char *filament_selector_keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                               "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
+                                               "support_filament", "support_interface_filament"};
+
 void ObjectList::update_filament_values_for_items(const size_t filaments_count)
 {
     for (size_t i = 0; i < m_objects->size(); ++i)
@@ -701,10 +707,7 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
         }
         m_objects_model->SetExtruder(extruder, item);
 
-        static const char *keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
-                                     "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
-                                     "support_filament", "support_interface_filament"};
-        for (auto key : keys)
+        for (auto key : filament_selector_keys)
             if (object->config.has(key) && object->config.opt_int(key) > filaments_count)
                 object->config.erase(key);
 
@@ -722,7 +725,7 @@ void ObjectList::update_filament_values_for_items(const size_t filaments_count)
 
                 m_objects_model->SetExtruder(extruder, item);
 
-                for (auto key : keys)
+                for (auto key : filament_selector_keys)
                     if (object->volumes[id]->config.has(key) && object->volumes[id]->config.opt_int(key) > filaments_count)
                         object->volumes[id]->config.erase(key);
             }
@@ -878,10 +881,7 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
         }
         m_objects_model->SetExtruder(extruder, item);
 
-        static const char* keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
-                                     "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
-                                     "support_filament", "support_interface_filament"};
-        for (auto key : keys) {
+        for (auto key : filament_selector_keys) {
             if (object->config.has(key)) {
                 if (object->config.opt_int(key) == filament_id + 1)
                     object->config.erase(key);
@@ -899,7 +899,7 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
             if (!item)
                 continue;
 
-            for (auto key : keys) {
+            for (auto key : filament_selector_keys) {
                 if (object->volumes[id]->config.has(key)) {
                     if (object->volumes[id]->config.opt_int(key) == filament_id + 1)
                         object->volumes[id]->config.erase(key);
@@ -957,7 +957,7 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
                     }
                     // Height ranges carry the per-feature selectors too (the engine reads them from
                     // layer_config_ranges); remap them like the object / volume configs above.
-                    for (auto key : keys) {
+                    for (auto key : filament_selector_keys) {
                         if (layer_range_item.second.has(key)) {
                             if (layer_range_item.second.option(key)->getInt() == int(filament_id) + 1)
                                 layer_range_item.second.erase(key);

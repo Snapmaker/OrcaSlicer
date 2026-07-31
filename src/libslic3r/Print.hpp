@@ -502,6 +502,10 @@ public:
     // Do inner-wall loops print in this region? Besides wall_loops > 1, the alternating extra
     // wall and the extra perimeters on overhangs add inner loops even at a single wall loop.
     static bool  region_prints_inner_walls(const PrintRegionConfig &config);
+    // Does the given 0-based filament print nothing in this region? True only for a sparse infill
+    // selector at 100% density (the solid interior belongs to the internal solid filament) that
+    // prints no other feature of the region.
+    static bool  region_filament_prints_nothing(const PrintRegionConfig &config, unsigned int filament);
     // Walls-only pitch multiplier: when the region as a whole cannot follow its wall filaments'
     // preferred pitch (region_layer_height_multiplier() == 1, e.g. a finer-nozzle filament prints
     // the region's other features), the walls alone combine to it while everything else keeps
@@ -1093,6 +1097,9 @@ public:
     //SoftFever
     bool &is_BBL_printer() { return m_isBBLPrinter; }
     const bool is_BBL_printer() const { return m_isBBLPrinter; }
+    // Per-extruder vector index of a 0-based filament: this fork's classic multi-tool printers
+    // index per-extruder options by the filament directly.
+    size_t extruder_index_of(unsigned int filament_idx) const { return size_t(filament_idx); }
     CalibMode& calib_mode() { return m_calib_params.mode; }
     const CalibMode calib_mode() const { return m_calib_params.mode; }
     void set_calib_params(const Calib_Params& params);

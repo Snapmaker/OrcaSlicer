@@ -1979,6 +1979,17 @@ private:
     static uint64_t             s_last_timestamp;
 };
 
+// 0-based filament of a 1-based feature filament selector ("Default" = 0 falls back to filament 1).
+inline unsigned int feature_filament_idx(int filament_id) { return filament_id > 1 ? (unsigned int)(filament_id - 1) : 0u; }
+
+// True when any extruder carries a per-extruder preferred layer height.
+inline bool has_extruder_layer_heights(const PrintConfig &config) {
+    for (double h : config.extruder_layer_height.values)
+        if (h > 0.)
+            return true;
+    return false;
+}
+
 } // namespace Slic3r
 
 // Serialization through the Cereal library

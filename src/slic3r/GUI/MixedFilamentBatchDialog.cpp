@@ -64,6 +64,13 @@ static constexpr int kMaxComponentPercent = 70;  // recommended mode cap; also t
 // add_batch_custom_filaments and predicted post-match by handle_batch_match_result.
 static constexpr size_t kMaxColors = 64;
 
+// ΔE color-difference grade thresholds (PRD 6.2.5). The match-quality tooltip bands a
+// mapping's delta_e into Good / Fair / Poor. Product-owned values — adjust here when the
+// spec changes (recently 3/5 → 4/8). Open intervals: <kDeltaEGoodMax Good,
+// [kDeltaEGoodMax, kDeltaEFairMax) Fair, ≥kDeltaEFairMax Poor.
+static constexpr double kDeltaEGoodMax = 4.0;  // <4.0 → Good
+static constexpr double kDeltaEFairMax = 8.0;  // <8.0 → Fair, else Poor
+
 // Recommended-mode (Full Spectrum) per-color transmittance-density (TD) values. These are NOT
 // in the filament data model (filaments_colours.json carries no TD field), so they are pinned
 // here as product constants — provided by product spec (snapshot in code per request).
@@ -219,7 +226,8 @@ private:
         const int pad_y = FromDIP(4);
         const int inset = FromDIP(8);
         wxRect badge(inset, inset, text_sz.x + pad_x * 2, text_sz.y + pad_y * 2);
-        dc.SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour(147, 147, 147))));
+        // Inline resolve — not the shared dark map, to avoid the #000000 reverse-lookup collision.
+        dc.SetBrush(wxBrush(wxGetApp().dark_mode() ? *wxBLACK : wxColour(147, 147, 147)));
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.DrawRectangle(badge);
         dc.SetTextForeground(*wxWHITE);
@@ -1550,9 +1558,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     {
         auto* prow = new wxBoxSizer(wxHORIZONTAL);
         m_preview_orig_panel = new RoundedPreviewPanel(m_preview_card, 180, 8, _L("Original"));
-        // Top-align so the smaller (180h) original lines up with the 227h match panel at the
-        // top; the 47px difference shows as empty space below the original.
-        prow->Add(m_preview_orig_panel, 0, wxALIGN_TOP | wxRIGHT, FromDIP(12));
+        // Top-align: the smaller (180h) original lines up with the 227h match panel; 20 DIP gap per Figma.
+        prow->Add(m_preview_orig_panel, 0, wxALIGN_TOP | wxRIGHT, FromDIP(20));
 
         m_preview_match_panel = new RoundedPreviewPanel(m_preview_card, 227, 8, _L("Matched"));
         prow->Add(m_preview_match_panel, 0, wxALIGN_TOP);
@@ -1653,7 +1660,7 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
     m_mapping_card->SetMaxSize(wxSize(FromDIP(CARD_WIDTH_DIP), -1));
     auto* cs = new wxBoxSizer(wxVERTICAL);
 
-    // Title row: label + info icon
+    // Title row: label
     {
         auto* tr = new wxBoxSizer(wxHORIZONTAL);
         auto* lbl = new wxStaticText(m_mapping_card, wxID_ANY, _L("Color Mapping"));
@@ -1661,9 +1668,6 @@ void MixedFilamentBatchDialog::build_mapping_card(wxBoxSizer& parent)
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         tr->Add(lbl, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-        m_mapping_info_icon = new ScalableButton(m_mapping_card, wxID_ANY, "info");
-        m_mapping_info_icon->SetToolTip(_L("Hover a row to see its color difference."));
-        tr->Add(m_mapping_info_icon, 0, wxALIGN_CENTER_VERTICAL);
         cs->Add(tr, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
     }
     // 10px gap between the title row and the legend grid (no divider — see commit history).
@@ -1950,60 +1954,21 @@ void MixedFilamentBatchDialog::on_manual_selection_changed()
 {
     // Preserve the previous match result; only Start/Re-match clears it.
     set_match_buttons_state(false);
-    // Manual mode only: re-evaluate both the dominance warning (before match) and
-    // the recipe ratio warning (after match) whenever a combo flips or a filament
-    // row is added/removed.  Either check may hide a prior warning, so both must
-    // run — their mutual Hide is safe inside each function.
-    check_manual_filament_ratio();
+    // A combo change invalidates any prior match result, so retire the warning banner
+    // (e.g. a leftover recipe-ratio advisory from the previous match). There is no
+    // pre-match ratio guard: any ratio warning now comes from check_manual_recipe_ratio
+    // after a match completes.
     if (m_match_completed)
         check_manual_recipe_ratio();
-}
-
-void MixedFilamentBatchDialog::check_manual_filament_ratio()
-{
-    // Tally how many rows currently point at each physical filament slot. If the most-picked
-    // slot accounts for more than kManualDominantRatioPct of the visible rows, the mix is
-    // lopsided — surface the advisory warning (Confirm stays enabled; this is not a hard
-    // error). Hidden rows (beyond m_manual_filament_count) are skipped so the ratio reflects
-    // only the filaments actually in play.
-    //
-    // Mirrors MixedFilamentDialog::get_ratio_warning_msg: same threshold semantics, same
-    // "Filament %d ratio is too high" message shape, just computed from combo selections
-    // (no gradient/tri-slider here — manual mode has no continuous weights, only which
-    // physical slot each row picks).
-    if (m_warning_panel) m_warning_panel->Hide();
-
-    std::unordered_map<int, int> picks; // combo-selection -> row count
-    int total = 0;
-    for (int i = 0; i < m_manual_filament_count && i < 4; ++i) {
-        if (!m_filament_combo[i]) continue;
-        const int sel = m_filament_combo[i]->GetSelection();
-        if (sel < 0) continue;
-        ++picks[sel];
-        ++total;
-    }
-    if (total < 2) return; // need at least 2 rows for "ratio" to be meaningful
-
-    int max_count = 0;
-    int max_sel   = -1;
-    for (const auto& kv : picks) {
-        if (kv.second > max_count) {
-            max_count = kv.second;
-            max_sel   = kv.first;
-        }
-    }
-    const double ratio = double(max_count) / double(total);
-    if (max_sel < 0 || ratio <= kManualDominantRatioPct) return;
-
-    display_warning(wxString::Format(_L("Filament %d ratio is too high. Mix may be affected."), max_sel + 1));
+    else if (m_warning_panel)
+        m_warning_panel->Hide();
 }
 
 void MixedFilamentBatchDialog::check_manual_recipe_ratio()
 {
-    // Post-match complement to check_manual_filament_ratio: that one warns BEFORE a match
-    // (based on how many rows picked the same physical slot). This one warns AFTER a match,
-    // scanning every non-pure recipe for any single component above kMaxComponentPercent and
-    // listing ALL offending rows in one banner (gap doc case 13).
+    // Manual-mode post-match ratio guard: after a match completes, scan every non-pure
+    // recipe for any single component above kMaxComponentPercent and list ALL such
+    // over-threshold colors in the warning banner (gap doc case 13).
     //
     // The IDs reported here are the TARGET filament ids (target_filament_id) — i.e. the
     // numbers shown on the right-hand badge of each Color Mapping row — NOT the recipe
@@ -2186,27 +2151,21 @@ void MixedFilamentBatchDialog::start_batch_match()
         set_error(_L("No model detected. Import a multi-color model to continue."));
         return;
     }
-    // Recommended (auto) mode relies on the Full Spectrum filament preset, which today
-    // only ships for the 0.4 nozzle. Other nozzles have no validated palette, so block the
-    // match up front and direct the user to Manual mode or a nozzle change. Manual mode
-    // is unaffected (user picks filaments from the current list, palette-agnostic).
-    if (m_matching_method == RECOMMENDED) {
-        double nozzle = 0.4; // fallback if preset_bundle/option unavailable
-        if (auto* pb = wxGetApp().preset_bundle) {
-            if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-                opt != nullptr && !opt->values.empty()) {
-                nozzle = opt->values.front();
-            }
-        }
-        if (std::abs(nozzle - 0.4) > 1e-6) {
-            RichMessageDialog dlg(this,
-                _L("Automatic color mixing match is not supported with the current nozzle diameter. Use Manual mode or switch to a 0.4 mm nozzle."),
-                _L("Color Mixing Match"), wxOK);
-            dlg.SetOKLabel(_L("Got it"));
-            dlg.CentreOnScreen();
-            dlg.ShowModal();
-            return;
-        }
+    // Recommended (auto) mode relies on the Full Spectrum filament preset, whose
+    // palette is validated per-nozzle. Gate on whether a Full Spectrum preset
+    // actually exists for the *current* nozzle diameter (instead of a hard-coded
+    // 0.4) -- shipping a new nozzle variant just needs its preset JSON, and this
+    // opens up automatically. When no preset exists, block up front and direct
+    // the user to Manual mode or a nozzle change. Manual mode itself is
+    // unaffected (user picks filaments from the current list, palette-agnostic).
+    if (m_matching_method == RECOMMENDED && !full_spectrum_preset_exists_for_current_nozzle()) {
+        RichMessageDialog dlg(this,
+            _L("Automatic color mixing match is not supported with the current nozzle diameter. Use Manual mode or switch to a 0.4 mm nozzle."),
+            _L("Color Mixing Match"), wxOK);
+        dlg.SetOKLabel(_L("Got it"));
+        dlg.CentreOnScreen();
+        dlg.ShowModal();
+        return;
     }
     m_match_running = true;
     m_error_panel->Hide();
@@ -2716,12 +2675,13 @@ void MixedFilamentBatchDialog::update_mapping_legend()
             // parent), and the swatches/arrow are independent child windows — so we must set
             // the same tip on every child too, otherwise hovering a swatch shows nothing and
             // only the gaps between children trigger the row's tip.
-            // Grade bands per PRD 6.2.5 — open intervals: <3 Good, 3≤ΔE<5 Fair, >5 Poor.
-            // Use strict < so ΔE exactly 3.0 → Fair, exactly 5.0 → Poor (boundary correctness).
-            const wxString grade = (mapping.delta_e < 3.0) ? _L("Good")
-                                  : (mapping.delta_e < 5.0) ? _L("Fair")
+            // Grade bands per PRD 6.2.5 — open intervals: <kDeltaEGoodMax Good,
+            // kDeltaEGoodMax≤ΔE<kDeltaEFairMax Fair, ≥kDeltaEFairMax Poor. Strict < so a value
+            // exactly on the boundary lands in the worse band (4.0→Fair, 8.0→Poor).
+            const wxString grade = (mapping.delta_e < kDeltaEGoodMax) ? _L("Good")
+                                  : (mapping.delta_e < kDeltaEFairMax) ? _L("Fair")
                                   : _L("Poor");
-            // Per copy spec: "色差：{等级}（ΔE={X}）" / "Color Difference: {Level} (ΔE={X})".
+            // Per copy spec, tooltip format: "Color Difference: {Level} (ΔE={X})".
             // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all
             // supported platforms (Win10+, macOS, mainstream Linux) has it.
             const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, mapping.delta_e);

@@ -81,9 +81,6 @@ private:
     // Red error banner, but unlike set_error it leaves Confirm enabled — for serious
     // advisories the user may still choose to proceed past (e.g. slot overflow).
     void display_error_advisory(const wxString& msg);
-    // Manual-mode pre-match ratio guard: if a single physical filament is picked by more than
-    // kManualDominantRatioPct of the rows, warn that the mix is lopsided.
-    void check_manual_filament_ratio();
     // Manual-mode post-match ratio guard: after a match completes, scan every non-pure
     // recipe for any component > kMaxComponentPercent and list ALL such over-threshold
     // colors in the warning banner (gap doc case 13).
@@ -188,11 +185,6 @@ private:
     // Bucket count is derived from the enum, not a magic 8, so adding a viewpoint fails
     // the static_assert below instead of silently going out of bounds.
     static constexpr size_t kNumThumbnailViews = static_cast<size_t>(ThumbnailView::Rear) + 1;
-    // Manual-mode dominance threshold: when one physical filament accounts for more than
-    // this fraction of the selected rows, the mix is lopsided and we warn the user.
-    // 0.7 = 70%. Kept as a named constant (not a literal) so the threshold is grep-able
-    // and adjustable in one place.
-    static constexpr double kManualDominantRatioPct = 0.7;
     // Model colors whose ΔE to the closest physical is below this threshold
     std::array<std::vector<wxBitmap>, kNumThumbnailViews> m_thumb_cache_by_view;
     std::array<std::vector<wxBitmap>, kNumThumbnailViews> m_match_cache_by_view;
@@ -260,7 +252,6 @@ private:
     StaticBox*      m_mapping_card      = nullptr; // grows in height with content (no inner scroller)
     wxPanel*        m_legend_panel      = nullptr; // plain panel holding the legend grid
     wxGridSizer*    m_legend_sizer      = nullptr; // fixed-col grid (Mac-safe; wxWrapSizer miscomputes height on macOS)
-    ScalableButton* m_mapping_info_icon = nullptr; // info tooltip next to "Color Mapping" title
 
     // Error / warning
     wxPanel* m_error_panel   = nullptr;

@@ -3055,7 +3055,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
         }
     }
 
-    // build mapping: preview Z index -> non-support layer number (1-based), -1 for support-only Z
+    // build mapping: preview Z index -> model layer number (positive), support layer number (negative)
     {
         const auto& zs = m_layers.get_zs();
         m_preview_to_non_support_layer.assign(zs.size(), -1);
@@ -3074,9 +3074,12 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
             }
         }
         int count = 0;
+        int support_count = 0;
         for (size_t zi = 0; zi < zs.size(); ++zi) {
             if (m_preview_to_non_support_layer[zi] != -1) {
-                m_preview_to_non_support_layer[zi] = ++count;
+                m_preview_to_non_support_layer[zi] = ++count;         // model: 1, 2, 3...
+            } else {
+                m_preview_to_non_support_layer[zi] = --support_count; // support: -1, -2, -3...
             }
         }
         m_non_support_layer_count = static_cast<size_t>(count);

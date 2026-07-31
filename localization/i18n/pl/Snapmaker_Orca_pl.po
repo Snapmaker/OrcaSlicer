@@ -9471,6 +9471,13 @@ msgstr ""
 msgid "Generating G-code: layer %1%"
 msgstr "Generowanie G-code: warstwa %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Wewnętrzna ściana"
 

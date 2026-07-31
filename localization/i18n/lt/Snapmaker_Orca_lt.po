@@ -9467,6 +9467,13 @@ msgstr ""
 msgid "Generating G-code: layer %1%"
 msgstr "G-kodo generavimas: sluoksnis %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Vidinė siena"
 

@@ -9244,6 +9244,13 @@ msgstr "Zkontrolujte prosím vlastní G-kód nebo použijte výchozí vlastní G
 msgid "Generating G-code: layer %1%"
 msgstr "Generování G-kódu: vrstva %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Vnitřní stěna"
 

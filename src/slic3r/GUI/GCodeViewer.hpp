@@ -757,7 +757,9 @@ private:
     std::array<unsigned int, 2> m_layers_z_range;
     // count of Z heights that contain at least one non-support extrusion (i.e. model geometry layers)
     size_t m_non_support_layer_count{ 0 };
-    // mapping: preview Z index -> non-support layer number (1-based), -1 for support-only Z
+    // count of Z heights that contain only support extrusion (support-only layers)
+    size_t m_support_layer_count{ 0 };
+    // mapping: preview Z index -> model layer number (positive), support layer number (negative)
     std::vector<int> m_preview_to_non_support_layer;
     std::vector<ExtrusionRole> m_roles;
     size_t m_extruders_count;
@@ -838,6 +840,7 @@ public:
     const std::vector<double>& get_layers_zs() const { return m_layers.get_zs(); }
     const std::array<unsigned int,2> &get_layers_z_range() const { return m_layers_z_range; }
     size_t get_non_support_layer_count() const { return m_non_support_layer_count; }
+    size_t get_support_layer_count() const { return m_support_layer_count; }
     const std::vector<int>& get_preview_to_non_support_layer() const { return m_preview_to_non_support_layer; }
 
     const SequentialView& get_sequential_view() const { return m_sequential_view; }

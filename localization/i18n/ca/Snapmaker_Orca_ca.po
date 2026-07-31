@@ -9521,6 +9521,13 @@ msgstr ""
 msgid "Generating G-code: layer %1%"
 msgstr "Generant Codi-G: capa %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Perímetre interior"
 

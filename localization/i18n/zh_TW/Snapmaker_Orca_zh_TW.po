@@ -9026,6 +9026,13 @@ msgstr "請檢查自訂 G-code，或者使用預設的。"
 msgid "Generating G-code: layer %1%"
 msgstr "正在產生 G-code：第 %1% 層"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr "正在產生 G-code：第 %1% 層（支撐）"
+
+msgid "(support)"
+msgstr "（支撐）"
+
 msgid "Inner wall"
 msgstr "內牆"
 

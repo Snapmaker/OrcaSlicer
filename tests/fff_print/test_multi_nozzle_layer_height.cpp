@@ -1256,6 +1256,64 @@ SCENARIO("Top surfaces combine to their filament's pitch by absorbing the shells
     }
 }
 
+SCENARIO("Internal solid infill combines to its filament's pitch", "[MultiNozzleLayerHeight]") {
+    GIVEN("Disagreeing wall preferences with the internal solid infill on the 0.8 mm nozzle filament") {
+        // The wall filaments' explicit preferences disagree (0.12 vs 0.24 mm), so the part keeps
+        // the object layer height and the walls split. The internal solid infill used to fall
+        // through every combining pass here, printing 0.12 mm layers on the 0.8 mm nozzle - below
+        // its own 0.16 mm minimum layer height.
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("outer_wall_filament_id",     new ConfigOptionInt(1));
+        config.set_key_value("inner_wall_filament_id",     new ConfigOptionInt(2));
+        config.set_key_value("sparse_infill_filament_id",  new ConfigOptionInt(3));
+        config.set_key_value("internal_solid_filament_id", new ConfigOptionInt(4));
+        config.set_key_value("top_surface_filament_id",    new ConfigOptionInt(4));
+        config.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(4));
+        config.set_key_value("top_shell_layers",           new ConfigOptionInt(4));
+        config.set_key_value("bottom_shell_layers",        new ConfigOptionInt(5));
+        config.set_key_value("sparse_infill_density",      new ConfigOptionPercent(15));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("the solid interior prints 0.48 mm groups and never below the extruder's minimum") {
+            StringObjectException warning;
+            REQUIRE(print.validate(&warning).string.empty());
+            // The bottom surfaces (also filament 4) keep printing the object layer height: warned.
+            REQUIRE(warning.string.find("minimum layer") != std::string::npos);
+            print.process();
+
+            const PrintObject &object = *print.objects().front();
+            // The one legitimate below-minimum leftover: the single solid layer an internal
+            // bridge rests on. It is tied to its own layer (sparse below, the bridge above), so
+            // no combining can lift it to the minimum.
+            auto seats_internal_bridge = [&object](size_t idx) {
+                if (idx + 1 >= object.layer_count())
+                    return false;
+                const Surfaces &above = object.get_layer(int(idx + 1))->get_region(0)->fill_surfaces.surfaces;
+                return std::any_of(above.begin(), above.end(),
+                    [](const Surface &surface) { return surface.surface_type == stInternalBridge; });
+            };
+            size_t tall_solid_paths = 0, below_min_paths = 0;
+            std::vector<size_t> below_min_layers;
+            for (size_t idx = 1; idx < object.layer_count(); ++ idx)
+                for_each_path(object.get_layer(int(idx))->get_region(0)->fills, [&](const ExtrusionPath &path) {
+                    if (path.role() != erSolidInfill)
+                        return;
+                    if (path.height > 0.48f - 1e-3f)
+                        ++ tall_solid_paths;
+                    else if (path.height < 0.16f - 1e-3f && ! seats_internal_bridge(idx)) {
+                        ++ below_min_paths;
+                        if (below_min_layers.empty() || below_min_layers.back() != idx)
+                            below_min_layers.push_back(idx);
+                    }
+                });
+            CAPTURE(below_min_layers);
+            CHECK(tall_solid_paths > 0);
+            CHECK(below_min_paths == 0);
+        }
+    }
+}
+
 SCENARIO("A preference-less fine-nozzle wall filament vetoes the walls-only pitch", "[MultiNozzleLayerHeight]") {
     GIVEN("Outer walls on the 0.8 mm nozzle preferring 0.48 mm, inner walls on a 0.2 mm nozzle with no preference") {
         DynamicPrintConfig config = four_nozzle_config();

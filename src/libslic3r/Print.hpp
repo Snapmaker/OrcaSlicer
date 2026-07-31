@@ -618,6 +618,9 @@ private:
     // Per-extruder layer height: top surfaces print at their filament's preferred pitch by
     // absorbing the internal solid layers right below them into one thick pass.
     void combine_top_surfaces();
+    // Per-extruder layer height: the remaining internal solid infill (shell backing and other
+    // solid interior) combines to its own filament's preferred pitch.
+    void combine_internal_solid_infill();
     void _generate_support_material();
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;

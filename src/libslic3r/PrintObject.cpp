@@ -521,6 +521,11 @@ void PrintObject::prepare_infill()
     this->combine_top_surfaces();
     m_print->throw_if_canceled();
 
+    // Per-extruder layer height: the solid interior the top surfaces did not absorb combines to
+    // its own filament's preferred height.
+    this->combine_internal_solid_infill();
+    m_print->throw_if_canceled();
+
     // combine fill surfaces to honor the "infill every N layers" option
     this->combine_infill();
     m_print->throw_if_canceled();
@@ -4860,6 +4865,114 @@ void PrintObject::combine_top_surfaces()
                 top_layerm->fill_surfaces.append(std::move(combined), templ);
             }
         }
+    }
+}
+
+// Per-extruder layer height: print the internal solid infill left over after
+// combine_top_surfaces() - shell backing and other solid interior - with the preferred layer
+// height of its filament by combining runs of solid layers into one thick pass, leaving VOID
+// surfaces behind like the other combining passes. Groups anchor top-down at the top of each
+// solid column, because shell bands start wherever their surface sits, not on a fixed grid.
+// Leftovers that cannot reach the full preferred height re-group over ever shorter runs down to
+// the filament's min layer height (isolated single layers stay at the object layer height and
+// Print::validate() warns).
+void PrintObject::combine_internal_solid_infill()
+{
+    for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
+        const PrintRegion       &region = this->printing_region(region_id);
+        const PrintRegionConfig &config = region.config();
+        // At 100% sparse density the whole interior is solid and combine_infill() owns it.
+        if (std::fabs(config.sparse_infill_density.value - 100.) < EPSILON)
+            continue;
+        // Only for regions printing at the object layer height: combined regions already extrude
+        // everything - solid infill included - once per group over their group tops.
+        if (this->region_layer_height_multiplier(region) > 1)
+            continue;
+        const unsigned int mult = this->layer_height_multiplier_for_filament(
+            (unsigned int)std::max(0, config.internal_solid_filament_id.value));
+        if (mult <= 1)
+            continue;
+        // Surfaces not combined yet (groups formed by an earlier sweep have their thickness set).
+        auto leftover_solid = [](const LayerRegion *layerm) {
+            ExPolygons out;
+            for (const Surface &surface : layerm->fill_surfaces.surfaces)
+                if (surface.surface_type == stInternalSolid && surface.thickness < 0.)
+                    out.emplace_back(surface.expolygon);
+            return out;
+        };
+        auto combine_solid_runs = [&](size_t m) {
+            for (size_t layer_idx = m_layers.size(); layer_idx-- > 0; ) {
+                m_print->throw_if_canceled();
+                if (layer_idx + 1 < m)
+                    break;
+                // Never absorb the first print layer: it keeps its own height for bed adhesion.
+                if (m_layers[layer_idx - m + 1]->id() == 0)
+                    continue;
+                LayerRegion *top_layerm = m_layers[layer_idx]->regions()[region_id];
+                ExPolygons   combined   = leftover_solid(top_layerm);
+                if (combined.empty())
+                    continue;
+                // Uniform layer heights only (mirrors apply_extruder_layer_heights()).
+                bool uniform = true;
+                for (size_t i = layer_idx - m + 1; uniform && i < layer_idx; ++ i)
+                    uniform = std::abs(m_layers[i]->height - m_layers[layer_idx]->height) < EPSILON;
+                if (! uniform)
+                    continue;
+                std::vector<LayerRegion*> layerms; // the whole group, bottom-up
+                for (size_t i = layer_idx - m + 1; i <= layer_idx; ++ i)
+                    layerms.emplace_back(m_layers[i]->regions()[region_id]);
+                for (size_t i = 0; i + 1 < layerms.size() && ! combined.empty(); ++ i)
+                    combined = intersection_ex(leftover_solid(layerms[i]), combined);
+                remove_small_expolygons(combined, top_layerm->infill_area_threshold());
+                if (combined.empty())
+                    continue;
+                // Clearance against the group's remaining solid infill, which is grown later to
+                // overlap perimeters (mirrors combine_top_surfaces()'s clearance).
+                Polygons combined_with_clearance;
+                combined_with_clearance.reserve(combined.size());
+                const float clearance_offset = 0.5f * top_layerm->flow(frPerimeter).scaled_width() +
+                                               1.5f * top_layerm->flow(frSolidInfill).scaled_width();
+                for (const ExPolygon &expoly : combined)
+                    polygons_append(combined_with_clearance, offset(expoly, clearance_offset));
+                for (LayerRegion *layerm : layerms) {
+                    // Take out only the uncombined surfaces; earlier groups keep their heights.
+                    Polygons leftover;
+                    Surfaces kept;
+                    kept.reserve(layerm->fill_surfaces.surfaces.size());
+                    for (Surface &surface : layerm->fill_surfaces.surfaces) {
+                        if (surface.surface_type == stInternalSolid && surface.thickness < 0.)
+                            polygons_append(leftover, to_polygons(std::move(surface.expolygon)));
+                        else
+                            kept.emplace_back(std::move(surface));
+                    }
+                    layerm->fill_surfaces.surfaces = std::move(kept);
+                    layerm->fill_surfaces.append(diff_ex(leftover, combined_with_clearance), stInternalSolid);
+                    if (layerm == layerms.back()) {
+                        // The combined areas extrude once with the whole group's thickness (Fill
+                        // resolves the flow from Surface::thickness).
+                        Surface templ(stInternalSolid, ExPolygon());
+                        templ.thickness = 0.;
+                        for (const LayerRegion *layerm2 : layerms)
+                            templ.thickness += layerm2->layer()->height;
+                        templ.thickness_layers = (unsigned short)m;
+                        layerm->fill_surfaces.append(std::move(combined), templ);
+                    } else {
+                        layerm->fill_surfaces.append(intersection_ex(leftover, combined_with_clearance), stInternalVoid);
+                    }
+                }
+            }
+        };
+        combine_solid_runs(mult);
+        // Where the layer stack cannot reach the full preferred height it falls back to the
+        // object layer height, possibly below the solid filament's minimum layer height: re-group
+        // with ever shorter runs down to the smallest count reaching the minimum, so odd-length
+        // bands don't strand a below-minimum single layer.
+        const double min_layer_height = m_print->config().min_layer_height.get_at(
+            m_print->extruder_index_of(feature_filament_idx(config.internal_solid_filament_id.value)));
+        const auto   min_mult         = (unsigned int)std::ceil(min_layer_height / m_config.layer_height.value - EPSILON);
+        if (min_mult > 1)
+            for (unsigned int m = mult - 1; m >= min_mult; -- m)
+                combine_solid_runs(m);
     }
 }
 

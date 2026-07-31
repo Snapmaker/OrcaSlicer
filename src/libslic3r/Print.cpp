@@ -2027,9 +2027,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         return region_config.top_shell_layers.value > 0 &&
                                filament == feature_filament_idx(region_config.top_surface_filament_id.value);
                     };
-                    auto prints_bottom_or_solid = [&](unsigned int filament) {
-                        return (region_config.bottom_shell_layers.value > 0 && filament == feature_filament_idx(region_config.bottom_surface_filament_id.value)) ||
-                               (! solid_combined_infill && filament == feature_filament_idx(region_config.internal_solid_filament_id.value));
+                    auto prints_bottom = [&](unsigned int filament) {
+                        return region_config.bottom_shell_layers.value > 0 &&
+                               filament == feature_filament_idx(region_config.bottom_surface_filament_id.value);
+                    };
+                    auto prints_solid = [&](unsigned int filament) {
+                        return ! solid_combined_infill && filament == feature_filament_idx(region_config.internal_solid_filament_id.value);
                     };
                     // Mirrors PrintObject::combine_top_surfaces(): a conforming preferred pitch of a
                     // full-density top surface absorbs the solid layers below whenever the region itself
@@ -2043,6 +2046,18 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                         const unsigned int m = conforming_multiplier(m_config.extruder_layer_height.get_at(top_extruder_idx), top_extruder_idx);
                         if (m > 1)
                             top_candidate = m;
+                    }
+                    // Mirrors PrintObject::combine_internal_solid_infill(): a conforming preferred
+                    // pitch of the internal solid filament combines the leftover solid interior
+                    // whenever the region itself prints at the object layer height (at 100% density
+                    // the solid interior is the combined infill instead). Geometry decides per
+                    // area, so this gates warnings only.
+                    unsigned int solid_candidate = 1;
+                    if (! solid_combined_infill) {
+                        const size_t       solid_extruder_idx = selector_extruder_idx(region_config.internal_solid_filament_id.value);
+                        const unsigned int m = conforming_multiplier(m_config.extruder_layer_height.get_at(solid_extruder_idx), solid_extruder_idx);
+                        if (m > 1)
+                            solid_candidate = m;
                     }
                     // Walls-only pitch (mirrors PrintObject::wall_layer_height_multiplier()): when the
                     // rest of the part vetoes the walls' pitch, the walls still combine to it on their
@@ -2234,18 +2249,25 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     // feature is not fully covered by the combined height (at 100% density the internal
                     // solid infill IS the combined infill).
                     auto prints_pitch_features = [&](unsigned int filament) {
-                        return prints_walls(filament) || prints_top(filament) || prints_bottom_or_solid(filament);
+                        return prints_walls(filament) || prints_top(filament) || prints_bottom(filament) || prints_solid(filament);
                     };
-                    // The top surfaces combine only while the region prints at the object layer height.
+                    // The top surfaces and the solid interior combine only while the region prints
+                    // at the object layer height.
                     const unsigned int top_multiplier = region_multiplier == 1 ? top_candidate : 1;
                     if (top_multiplier > 1)
                         warn_above_max(top_multiplier * layer_height,
                                        feature_filament_idx(region_config.top_surface_filament_id.value),
                                        m_config.max_layer_height.get_at(selector_extruder_idx(region_config.top_surface_filament_id.value)));
+                    const unsigned int solid_multiplier = region_multiplier == 1 ? solid_candidate : 1;
+                    if (solid_multiplier > 1)
+                        warn_above_max(solid_multiplier * layer_height,
+                                       feature_filament_idx(region_config.internal_solid_filament_id.value),
+                                       m_config.max_layer_height.get_at(selector_extruder_idx(region_config.internal_solid_filament_id.value)));
                     // Heights the filament's pitch-bound features print at: walls at their class's
                     // pitch when active, top surfaces at the top pitch when active, everything else
                     // at the region pitch (also used by the unhonored-heights check below).
-                    const double top_print_height = top_multiplier > 1 ? top_multiplier * layer_height : region_pitch;
+                    const double top_print_height   = top_multiplier > 1 ? top_multiplier * layer_height : region_pitch;
+                    const double solid_print_height = solid_multiplier > 1 ? solid_multiplier * layer_height : region_pitch;
                     auto lowest_feature_height = [&](unsigned int filament) {
                         double h = std::numeric_limits<double>::max();
                         if (prints_outer_wall(filament))
@@ -2254,8 +2276,10 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                             h = std::min(h, inner_wall_height);
                         if (prints_top(filament))
                             h = std::min(h, top_print_height);
-                        if (prints_bottom_or_solid(filament))
+                        if (prints_bottom(filament))
                             h = std::min(h, region_pitch);
+                        if (prints_solid(filament))
+                            h = std::min(h, solid_print_height);
                         // No pitch-bound feature (e.g. the sparse filament): prints at the region pitch.
                         return h == std::numeric_limits<double>::max() ? region_pitch : h;
                     };
@@ -2274,7 +2298,8 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                             // the minimum.
                             const bool fallback_below_min = (region_multiplier > 1 ||
                                                              ((wall_multiplier > 1 || wall_split) && prints_walls(filament)) ||
-                                                             (top_multiplier > 1 && prints_top(filament))) &&
+                                                             (top_multiplier > 1 && prints_top(filament)) ||
+                                                             (solid_multiplier > 1 && prints_solid(filament))) &&
                                                             layer_height < min_lh - EPSILON;
                             if (! pitch_below_min && ! fallback_below_min)
                                 continue;
@@ -2314,8 +2339,10 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                                     honored &= adjusted_inner || std::abs(inner_wall_height - preferred) < EPSILON;
                                 if (prints_top(filament))
                                     honored &= std::abs(top_print_height - preferred) < EPSILON;
-                                if (prints_bottom_or_solid(filament))
+                                if (prints_bottom(filament))
                                     honored &= std::abs(region_pitch - preferred) < EPSILON;
+                                if (prints_solid(filament))
+                                    honored &= std::abs(solid_print_height - preferred) < EPSILON;
                                 if (honored)
                                     continue;
                             } else if (std::abs(preferred - region_pitch) < EPSILON ||
@@ -2334,7 +2361,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                                  "extruder_layer_height", object);
                             break;
                         }
-                    if (region_multiplier > 1 || wall_multiplier > 1 || top_multiplier > 1 || wall_split) {
+                    if (region_multiplier > 1 || wall_multiplier > 1 || top_multiplier > 1 || solid_multiplier > 1 || wall_split) {
                         object_has_combined_regions = true;
                         // Combined extrusions are thicker: explicit line widths must stay above the
                         // height each feature prints at, resolved per role against the region's own
@@ -2347,7 +2374,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                             { region_config.outer_wall_filament_id.value,     "outer_wall_line_width",            outer_wall_height, region_config.wall_loops.value > 0 },
                             { region_config.inner_wall_filament_id.value,     "inner_wall_line_width",            inner_wall_height, region_config.wall_loops.value > 0 },
                             { region_config.sparse_infill_filament_id.value,  "sparse_infill_line_width",         region_pitch,      region_config.sparse_infill_density.value > 0 && ! solid_combined_infill },
-                            { region_config.internal_solid_filament_id.value, "internal_solid_infill_line_width", region_pitch,      true },
+                            { region_config.internal_solid_filament_id.value, "internal_solid_infill_line_width", solid_print_height, true },
                             { region_config.top_surface_filament_id.value,    "top_surface_line_width",           top_print_height,  region_config.top_shell_layers.value > 0 },
                             { region_config.bottom_surface_filament_id.value, "internal_solid_infill_line_width", region_pitch,      region_config.bottom_shell_layers.value > 0 },
                         };

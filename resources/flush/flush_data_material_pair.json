@@ -1,0 +1,8 @@
+{
+    "version": 1,
+    "comment": "Measured purge volume per directional material-family pair (From 'from' To 'to'). Keyed by normalized filament_type family (e.g. PLA, PETG, ABS). Direction matters: From A To B may differ from From B To A. purge may be a number (same value for both flows) or an object {standard, highflow}. Final flush = clamp(max(predicted_color, measured[flow]), flow_min, flow_max). StandardFlow clamp [40,350], HighFlow clamp [80,700]. PLA<->PETG calibrated for Snapmaker self machines (2026-07-30). Add other pairs as they are calibrated. Drop this file into orca3: resources/flush/flush_data_material_pair.json.",
+    "pairs": [
+        { "from": "PLA",  "to": "PETG", "purge": { "standard": 80,  "highflow": 200 } },
+        { "from": "PETG", "to": "PLA",  "purge": { "standard": 100, "highflow": 250 } }
+    ]
+}

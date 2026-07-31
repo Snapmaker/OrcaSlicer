@@ -6,6 +6,7 @@
 
 #include "FlushVolCalc.hpp"
 #include "FlushVolHighFlow.hpp"
+#include "MaterialPurgeTable.hpp"
 
 
 namespace Slic3r {
@@ -298,7 +299,8 @@ int FlushVolCalculator::calc_flush_vol_rgb(unsigned char src_r, unsigned char sr
 }
 
 int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r, unsigned char src_g, unsigned char src_b,
-    unsigned char dst_a, unsigned char dst_r, unsigned char dst_g, unsigned char dst_b)
+    unsigned char dst_a, unsigned char dst_r, unsigned char dst_g, unsigned char dst_b,
+    const std::string& from_type, const std::string& to_type)
 {
     // BBS: Transparent materials are treated as white materials
     if (src_a == 0) {
@@ -331,6 +333,16 @@ int FlushVolCalculator::calc_flush_vol(unsigned char src_a, unsigned char src_r,
         ? (int) ((float) flush_volume * k + 0.5f)
         : (int) ((float) flush_volume * k);
 
+
+    // Material-pair measured purge override (per-flow). No-op when material types
+    // are empty (falls back to the pure-color path).
+    if (!from_type.empty() && !to_type.empty()) {
+        float measured = 0.f;
+        if (query_material_purge_volume(normalize_material_family(from_type),
+                                        normalize_material_family(to_type),
+                                        m_flush_dataset, measured))
+            final_volume = std::max(final_volume, (int)measured);
+    }
 
     // Per-flow clamping with flow-specific thresholds — user-specified (2026-07-20).
     const auto& thresholds = get_flush_thresholds(m_flush_dataset);

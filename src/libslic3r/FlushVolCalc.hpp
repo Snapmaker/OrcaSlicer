@@ -49,7 +49,8 @@ public:
     }
 
     int calc_flush_vol(unsigned char src_a, unsigned char src_r, unsigned char src_g, unsigned char src_b,
-        unsigned char dst_a, unsigned char dst_r, unsigned char dst_g, unsigned char dst_b);
+        unsigned char dst_a, unsigned char dst_r, unsigned char dst_g, unsigned char dst_b,
+        const std::string& from_type = "", const std::string& to_type = "");
 
     // Path B: Full HSV color-distance formula with stain-risk compensation.
     // params selects the coefficient set for StandardFlow or HighFlow.

@@ -5,6 +5,8 @@
 #include <cmath>
 #include <optional>
 #include <mutex>
+#include <boost/log/trivial.hpp>
+#include "MaterialPurgeTable.hpp"
 
 namespace FlushPredict
 {
@@ -364,4 +366,27 @@ int GenericFlushPredictor::get_min_flush_volume()
     if (!predictor)
         return std::numeric_limits<int>::max();
     return predictor->get_min_flush_volume();
+}
+
+static std::mutex                                          s_material_purge_mutex;
+static std::unordered_map<std::string, MaterialPurgeTable> s_material_purge_instances;
+
+bool query_material_purge_volume(const std::string& from_family, const std::string& to_family,
+                                 int flow_dataset, float& purge)
+{
+    if (from_family.empty() || to_family.empty())
+        return false;
+    static const std::string path = Slic3r::resources_dir() + "/flush/flush_data_material_pair.json";
+    const MaterialPurgeTable* table = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(s_material_purge_mutex);
+        auto it = s_material_purge_instances.find(path);
+        if (it == s_material_purge_instances.end()) {
+            it = s_material_purge_instances.emplace(path, MaterialPurgeTable(path)).first;
+            BOOST_LOG_TRIVIAL(info) << "query_material_purge_volume: loaded " << it->second.size()
+                                    << " pair(s) from " << path;
+        }
+        table = &it->second;
+    }
+    return table->lookup(from_family, to_family, flow_dataset, purge);
 }

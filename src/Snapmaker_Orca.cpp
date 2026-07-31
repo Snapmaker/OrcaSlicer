@@ -2837,6 +2837,7 @@ int CLI::run(int argc, char **argv)
 
             //computing
             ConfigOptionBools* filament_is_support = m_print_config.option<ConfigOptionBools>("filament_is_support", true);
+            const ConfigOptionStrings* filament_types = m_print_config.option<ConfigOptionStrings>("filament_type", true);
             std::vector<double>& flush_vol_matrix = m_print_config.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values;
             //std::vector<float>& flush_vol_vector = m_print_config.option<ConfigOptionFloats>("flush_volumes_vector", true)->values;
             flush_vol_matrix.resize(project_filament_count*project_filament_count, 0.f);
@@ -2893,12 +2894,24 @@ int CLI::run(int argc, char **argv)
 
                             Slic3r::FlushVolCalculator calculator(min_flush_volumes[from_idx], flush_thr.max_flush_volume, 1.0f, nozzle_flush_dataset[from_idx]);
 
-                            flushing_volume = calculator.calc_flush_vol(from_rgb[3], from_rgb[0], from_rgb[1], from_rgb[2], to_rgb[3], to_rgb[0], to_rgb[1], to_rgb[2]);
+                            std::string from_type;
+                            if (filament_types != nullptr && from_idx < (int)filament_types->values.size()) {
+                                from_type = filament_types->get_at(from_idx);
+                            } else {
+                                from_type = "";
+                            }
+                            std::string to_type;
+                            if (filament_types != nullptr && to_idx < (int)filament_types->values.size()) {
+                                to_type = filament_types->get_at(to_idx);
+                            } else {
+                                to_type = "";
+                            }
+                            flushing_volume = calculator.calc_flush_vol(from_rgb[3], from_rgb[0], from_rgb[1], from_rgb[2], to_rgb[3], to_rgb[0], to_rgb[1], to_rgb[2], from_type, to_type);
                             if (is_from_support) {
                                 flushing_volume = std::max(flush_thr.min_flush_volume_from_support, flushing_volume);
                             }
                         }
-
+                        
                         flush_vol_matrix[project_filament_count * from_idx + to_idx] = flushing_volume;
                         //flushing_volume = int(flushing_volume * get_flush_multiplier());
                     }

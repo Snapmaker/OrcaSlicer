@@ -8240,6 +8240,13 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
 
     const std::vector<int>&   min_flush_volumes= get_min_flush_volumes(full_config);
 
+    const auto* filament_type_opt = full_config.option<ConfigOptionStrings>("filament_type");
+    auto get_filament_type = [&](int idx) -> std::string {
+        if (filament_type_opt && idx >= 0 && idx < (int)filament_type_opt->values.size())
+            return filament_type_opt->values[idx];
+        return {};
+    };
+
     int nozzle_flush_dataset = static_cast<int>(FlushDataset::StandardFlow);
     if (auto* flush_ds_opt = full_config.option<ConfigOptionIntsNullable>("nozzle_flush_dataset")) {
         if (!flush_ds_opt->values.empty())
@@ -8291,7 +8298,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                         const wxColour& from = multi_colours[from_idx][j];
                         for (int k = 0; k < multi_colours[modify_id].size(); ++k) {
                             const wxColour& to = multi_colours[modify_id][k];
-                            int volume = calculator.calc_flush_vol(from.Alpha(), from.Red(), from.Green(), from.Blue(), to.Alpha(), to.Red(), to.Green(), to.Blue());
+                            int volume = calculator.calc_flush_vol(from.Alpha(), from.Red(), from.Green(), from.Blue(), to.Alpha(), to.Red(), to.Green(), to.Blue(), get_filament_type(from_idx), get_filament_type(modify_id));
                             flushing_volume = std::max(flushing_volume, volume);
                         }
                     }
@@ -8316,7 +8323,7 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
                         const wxColour& from = multi_colours[modify_id][j];
                         for (int k = 0; k < multi_colours[to_idx].size(); ++k) {
                             const wxColour& to = multi_colours[to_idx][k];
-                            int volume = calculator.calc_flush_vol(from.Alpha(), from.Red(), from.Green(), from.Blue(), to.Alpha(), to.Red(), to.Green(), to.Blue());
+                            int volume = calculator.calc_flush_vol(from.Alpha(), from.Red(), from.Green(), from.Blue(), to.Alpha(), to.Red(), to.Green(), to.Blue(), get_filament_type(modify_id), get_filament_type(to_idx));
                             flushing_volume = std::max(flushing_volume, volume);
                         }
                     }

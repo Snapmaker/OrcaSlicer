@@ -36,3 +36,5 @@ Follow these steps to improve security when using Snapmaker_Orca.
 We suggest you goto #2 if this happens.
 
 Why? Through experience we have found it is best to goto #2 in this situation.
+
+NOTE: For FullSpectrum virtual filaments, when a painted area and the default filament share the same toolhead, they should be merged into a single tool path at each layer. If you are painting with the same virtual filament as the default filament and wish to remove the paint assignment, please use the paint tool and reselect the default filament color to effectively erase unwanted paint regions, restoring them to the default filament assignment so the slicer can treat them as one continuous tool path.

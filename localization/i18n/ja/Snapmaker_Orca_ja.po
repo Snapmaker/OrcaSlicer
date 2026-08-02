@@ -13519,9 +13519,9 @@ msgid "Support wall loops"
 msgstr "サポートのウォール数"
 
 msgid ""
-"This setting specifies the count of support walls in the range of [0,2]. 0 "
-"means auto."
-msgstr "サポートの壁面（ウォール）層数を0から2の範囲で指定します。0は自動。"
+"This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
+msgstr "サポートの壁面（ウォール）層数を-1から2の範囲で指定します。-1は自動、0はサポートが十分に厚い場合にインフィルのみを生成します。"
 
 msgid "Tree support with infill"
 msgstr "ツリーサポートインフィル使用"

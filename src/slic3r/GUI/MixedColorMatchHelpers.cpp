@@ -1462,9 +1462,17 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
                     continue;
                 }
 
-                // Deduplicate by hex value — accumulate extruder IDs for this color
+                // Deduplicate by NORMALIZED hex value — same RGB written differently
+                // (e.g. "#ff0000" vs "#FF0000", "FF0000" vs "#FF0000", or alpha variants
+                // "#RRGGBBAA" vs "#RRGGBB") must collapse to one entry. Comparing raw
+                // strings would double-count such colors and waste virtual slots. Mirrors
+                // the normalized dedup in build_color_match_presets (line ~213). The
+                // stored hex_value keeps its original form for display.
+                const std::string color_key = normalize_color_match_hex(color_hex).ToStdString();
                 auto it = std::find_if(colors.begin(), colors.end(),
-                    [&](const ModelColorEntry& e) { return e.hex_value == color_hex; });
+                    [&](const ModelColorEntry& e) {
+                        return normalize_color_match_hex(e.hex_value).ToStdString() == color_key;
+                    });
                 if (it != colors.end()) {
                     it->extruder_ids.push_back(static_cast<unsigned int>(eid));
                     continue;

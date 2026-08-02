@@ -1294,9 +1294,19 @@ SCENARIO("Internal solid infill combines to its filament's pitch", "[MultiNozzle
                     [](const Surface &surface) { return surface.surface_type == stInternalBridge; });
             };
             size_t tall_solid_paths = 0, below_min_paths = 0;
+            size_t tall_sparse_paths = 0, below_min_sparse_paths = 0;
             std::vector<size_t> below_min_layers;
             for (size_t idx = 1; idx < object.layer_count(); ++ idx)
                 for_each_path(object.get_layer(int(idx))->get_region(0)->fills, [&](const ExtrusionPath &path) {
+                    if (path.role() == erInternalInfill) {
+                        // The sparse infill (filament 3, preferring 0.36 mm) must honor its own
+                        // 0.14 mm minimum too: band-edge leftovers re-group instead of stranding.
+                        if (path.height > 0.36f - 1e-3f)
+                            ++ tall_sparse_paths;
+                        else if (path.height < 0.14f - 1e-3f)
+                            ++ below_min_sparse_paths;
+                        return;
+                    }
                     if (path.role() != erSolidInfill)
                         return;
                     if (path.height > 0.48f - 1e-3f)
@@ -1307,9 +1317,23 @@ SCENARIO("Internal solid infill combines to its filament's pitch", "[MultiNozzle
                             below_min_layers.push_back(idx);
                     }
                 });
+            // Phase coherence: the uniform interior must extrude on the same layers everywhere;
+            // phase-shifted areas would leave a permanent one-course step along their seam.
+            size_t sparse_layers = 0;
+            for (size_t idx = 10; idx < 40; ++ idx) {
+                bool has_sparse = false;
+                for_each_path(object.get_layer(int(idx))->get_region(0)->fills, [&](const ExtrusionPath &path) {
+                    has_sparse |= path.role() == erInternalInfill;
+                });
+                if (has_sparse)
+                    ++ sparse_layers;
+            }
             CAPTURE(below_min_layers);
             CHECK(tall_solid_paths > 0);
             CHECK(below_min_paths == 0);
+            CHECK(tall_sparse_paths > 0);
+            CHECK(below_min_sparse_paths == 0);
+            CHECK(sparse_layers <= 12);
         }
     }
 }

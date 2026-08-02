@@ -10,6 +10,7 @@
 #include "Flow.hpp"
 #include "Point.hpp"
 #include "Slicing.hpp"
+#include "Surface.hpp"
 #include "TriangleMeshSlicer.hpp"
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
@@ -621,6 +622,9 @@ private:
     // Per-extruder layer height: the remaining internal solid infill (shell backing and other
     // solid interior) combines to its own filament's preferred pitch.
     void combine_internal_solid_infill();
+    // Shared machinery of the passes above: combine runs of a region's fill surfaces, anchored
+    // at the top of each column, honoring the extruder's min layer height for leftovers.
+    void combine_surface_runs(size_t region_id, SurfaceType surface_type, unsigned int mult, unsigned int min_mult, float fill_clearance_factor, bool grid_aligned);
     void _generate_support_material();
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;

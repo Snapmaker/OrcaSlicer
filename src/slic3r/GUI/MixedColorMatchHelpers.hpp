@@ -36,6 +36,12 @@ namespace Slic3r { namespace GUI {
 // off preset_bundle (see load_full_spectrum_colors's safety note).
 std::string full_spectrum_preset_name();
 
+// True iff a Full Spectrum preset exists for the printer's *current* nozzle
+// diameter (no 0.4 fallback, unlike full_spectrum_preset_name). UI-thread only
+// (reads preset_bundle, same convention as above). Used by the batch-match guard
+// to gate Recommended mode on preset availability rather than a hard-coded 0.4.
+bool full_spectrum_preset_exists_for_current_nozzle();
+
 // ---- CIELAB color space types ----
 
 struct CIELab {

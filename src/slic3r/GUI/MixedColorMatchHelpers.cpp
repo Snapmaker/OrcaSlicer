@@ -613,27 +613,31 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     return best;
 }
 
-// Full Spectrum preset name, with nozzle diameter resolved from the current
-// printer's nozzle_diameter (mirrors PresetComboBoxes.cpp's @U1 <nozzle> nozzle
-// convention). Falls back to the canonical 0.4 SKU when no matching preset
-// exists for the current nozzle. Follows the same preset_bundle-access pattern
-// as build_mixed_filament_display_context below (null-check + warning log +
-// std::max clamp) -- see the header doc for the UI-thread convention.
-std::string full_spectrum_preset_name()
+// Shared constants + helpers for Full Spectrum preset-name resolution. Kept in
+// an anonymous namespace so the table is not visible outside this TU (these are
+// pure implementation details of the two functions below).
+namespace {
+constexpr const char*  kFullSpectrumBase  = "Snapmaker PLA Full Spectrum @U1 ";
+constexpr double       kFallbackNozzle    = 0.4;   // the only SKU shipped historically
+constexpr double       kMinNozzle         = 0.05;  // matches build_mixed_filament_display_context
+
+// Format a nozzle diameter the same way the preset JSON names do ("0.4", "0.2"):
+// two decimals, trailing zeros and a dangling dot stripped.
+std::string format_nozzle_label(double mm)
 {
-    static const std::string kBase           = "Snapmaker PLA Full Spectrum @U1 ";
-    static constexpr double  kFallbackNozzle = 0.4;
-    static constexpr double  kMinNozzle      = 0.05; // matches build_mixed_filament_display_context
+    std::string s = float_to_string_decimal_point(mm, 2);
+    while (!s.empty() && s.back() == '0') s.pop_back();
+    if (!s.empty() && s.back() == '.') s.pop_back();
+    return s;
+}
 
-    auto format_nozzle = [](double mm) -> std::string {
-        std::string s = float_to_string_decimal_point(mm, 2);
-        while (!s.empty() && s.back() == '0') s.pop_back();
-        if (!s.empty() && s.back() == '.') s.pop_back();
-        return s;
-    };
-
+// Read the current printer's nozzle_diameter from preset_bundle with the same
+// null-check + kMinNozzle clamp as build_mixed_filament_display_context. Falls
+// back to kFallbackNozzle when preset_bundle / the option is unavailable.
+double current_nozzle_diameter()
+{
     double nozzle = kFallbackNozzle;
-    auto* pb = wxGetApp().preset_bundle;
+    auto*  pb     = wxGetApp().preset_bundle;
     if (pb != nullptr) {
         if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             opt != nullptr && !opt->values.empty()) {
@@ -642,19 +646,50 @@ std::string full_spectrum_preset_name()
         }
     } else {
         BOOST_LOG_TRIVIAL(warning)
-            << "full_spectrum_preset_name: preset_bundle null; falling back to "
-            << kBase << format_nozzle(kFallbackNozzle) << " nozzle";
+            << "full_spectrum nozzle resolution: preset_bundle null; falling back to "
+            << kFullSpectrumBase << format_nozzle_label(kFallbackNozzle) << " nozzle";
     }
+    return nozzle;
+}
+} // namespace
+
+// Full Spectrum preset name, with nozzle diameter resolved from the current
+// printer's nozzle_diameter (mirrors PresetComboBoxes.cpp's @U1 <nozzle> nozzle
+// convention). Falls back to the canonical 0.4 SKU when no matching preset
+// exists for the current nozzle. Follows the same preset_bundle-access pattern
+// as build_mixed_filament_display_context below (null-check + warning log +
+// std::max clamp) -- see the header doc for the UI-thread convention.
+//
+// NOTE: because this function falls back to the 0.4 name on a miss, its return
+// value alone cannot tell you whether the *current* nozzle actually has a preset
+// -- use full_spectrum_preset_exists_for_current_nozzle() for that.
+std::string full_spectrum_preset_name()
+{
+    const double  nozzle    = current_nozzle_diameter();
+    auto*         pb        = wxGetApp().preset_bundle;
+    const std::string candidate = std::string(kFullSpectrumBase) + format_nozzle_label(nozzle) + " nozzle";
 
     // Candidate for the current nozzle; verify the preset actually exists.
-    const std::string candidate = kBase + format_nozzle(nozzle) + " nozzle";
     if (pb != nullptr && pb->filaments.find_preset(candidate) != nullptr)
         return candidate;
 
     // Fallback: the canonical 0.4 SKU (shipped today). If even that is missing
     // (profile not loaded), return the literal name so upstream fallback chains
     // (load_full_spectrum_colors -> canonical CMYW palette) take over.
-    return kBase + format_nozzle(kFallbackNozzle) + " nozzle";
+    return std::string(kFullSpectrumBase) + format_nozzle_label(kFallbackNozzle) + " nozzle";
+}
+
+// True iff a Full Spectrum preset exists for the printer's *current* nozzle
+// diameter (no fallback). Used by the batch-match guard to decide whether
+// Recommended mode is available, instead of hard-coding 0.4 mm: shipping a new
+// nozzle variant (e.g. 0.2/0.6/0.8) just requires adding its preset JSON under
+// resources/profiles/Snapmaker/filament/, and this returns true automatically.
+bool full_spectrum_preset_exists_for_current_nozzle()
+{
+    const double     nozzle    = current_nozzle_diameter();
+    auto*            pb        = wxGetApp().preset_bundle;
+    const std::string candidate = std::string(kFullSpectrumBase) + format_nozzle_label(nozzle) + " nozzle";
+    return pb != nullptr && pb->filaments.find_preset(candidate) != nullptr;
 }
 
 MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string>& physical_colors)
@@ -1427,9 +1462,17 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
                     continue;
                 }
 
-                // Deduplicate by hex value — accumulate extruder IDs for this color
+                // Deduplicate by NORMALIZED hex value — same RGB written differently
+                // (e.g. "#ff0000" vs "#FF0000", "FF0000" vs "#FF0000", or alpha variants
+                // "#RRGGBBAA" vs "#RRGGBB") must collapse to one entry. Comparing raw
+                // strings would double-count such colors and waste virtual slots. Mirrors
+                // the normalized dedup in build_color_match_presets (line ~213). The
+                // stored hex_value keeps its original form for display.
+                const std::string color_key = normalize_color_match_hex(color_hex).ToStdString();
                 auto it = std::find_if(colors.begin(), colors.end(),
-                    [&](const ModelColorEntry& e) { return e.hex_value == color_hex; });
+                    [&](const ModelColorEntry& e) {
+                        return normalize_color_match_hex(e.hex_value).ToStdString() == color_key;
+                    });
                 if (it != colors.end()) {
                     it->extruder_ids.push_back(static_cast<unsigned int>(eid));
                     continue;

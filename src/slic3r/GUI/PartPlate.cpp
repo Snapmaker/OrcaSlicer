@@ -3988,6 +3988,16 @@ PartPlate* PartPlateList::get_plate(int index)
 	return plate;
 }
 
+const PartPlate* PartPlateList::get_plate(int index) const
+{
+	if (index >= (int) m_plate_list.size())
+	{
+		BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":can not find index %1%, size %2%") % index % m_plate_list.size();
+		return nullptr;
+	}
+	return m_plate_list[index];
+}
+
 PartPlate* PartPlateList::get_selected_plate()
 {
 	if (m_current_plate < 0 || m_current_plate >= m_plate_list.size()) {

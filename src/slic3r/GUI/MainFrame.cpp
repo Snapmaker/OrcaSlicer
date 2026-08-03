@@ -1923,6 +1923,10 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }
+        else if (m_plater->is_plate_blocked_by_cold_plate(part_plate_list.get_curr_plate_index()))
+        {
+            enable = false;
+        }
         else if (m_plater->is_plate_blocked_by_flow_ratio_zero(part_plate_list.get_curr_plate_index()))
         {
             enable = false;

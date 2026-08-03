@@ -21334,15 +21334,6 @@ bool Plater::sync_filament_temp_mixing_notification()
     return slicing_allowed;
 }
 
-// flow_ratio_zero per-plate validation. Mirrors check_filament_temp_mixing /
-// sync_filament_temp_mixing_notification structure. Only two states (ok / blocked)
-// because there is no user-pref override for flow_ratio == 0.
-bool Plater::check_flow_ratio_zero(int plate_index)
-{
-    FlowRatioZeroDetail unused;
-    return check_flow_ratio_zero(plate_index, unused);
-}
-
 bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
 {
     detail.offender_slots_1based.clear();
@@ -21449,7 +21440,8 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
 
 bool Plater::is_plate_blocked_by_flow_ratio_zero(int plate_index)
 {
-    return !check_flow_ratio_zero(plate_index);
+    FlowRatioZeroDetail unused;
+    return !check_flow_ratio_zero(plate_index, unused);
 }
 
 bool Plater::sync_flow_ratio_zero_notification()

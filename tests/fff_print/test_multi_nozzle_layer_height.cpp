@@ -1338,6 +1338,75 @@ SCENARIO("Internal solid infill combines to its filament's pitch", "[MultiNozzle
     }
 }
 
+SCENARIO("Support materials exclude filaments of other types", "[MultiNozzleLayerHeight]") {
+    GIVEN("PETG loaded twice, the support base material set to PETG") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("filament_type",         new ConfigOptionStrings({"PLA", "PETG", "PETG", "PLA"}));
+        config.set_key_value("enable_support",        new ConfigOptionBool(true));
+        config.set_key_value("support_base_material", new ConfigOptionString("PETG"));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("only the PETG filaments may print the base and the selector stays on default") {
+            const PrintObject &object = *print.objects().front();
+            CHECK(object.config().support_filament.value == 0);
+            CHECK(! object.support_filament_allowed(1, false));
+            CHECK(object.support_filament_allowed(2, false));
+            CHECK(object.support_filament_allowed(3, false));
+            CHECK(! object.support_filament_allowed(4, false));
+            CHECK(object.resolved_default_support_filament(false) == 2);
+        }
+        THEN("the interface without a material stays unrestricted") {
+            const PrintObject &object = *print.objects().front();
+            CHECK(object.support_filament_allowed(1, true));
+            CHECK(object.support_filament_allowed(4, true));
+            CHECK(object.resolved_default_support_filament(true) == 0);
+        }
+    }
+    GIVEN("the support nozzle size and the interface material combined") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("filament_type",              new ConfigOptionStrings({"PLA", "PETG", "PETG", "PLA"}));
+        config.set_key_value("enable_support",             new ConfigOptionBool(true));
+        config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.6));
+        config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("only the PETG filament on the 0.6 mm nozzle may print the interface") {
+            const PrintObject &object = *print.objects().front();
+            CHECK(! object.support_filament_allowed(2, true));
+            CHECK(object.support_filament_allowed(3, true));
+            CHECK(object.resolved_default_support_filament(true) == 3);
+            CHECK(print.validate().string.empty());
+        }
+    }
+    GIVEN("a material no loaded filament matches") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("filament_type",         new ConfigOptionStrings({"PLA", "PETG", "PETG", "PLA"}));
+        config.set_key_value("enable_support",        new ConfigOptionBool(true));
+        config.set_key_value("support_base_material", new ConfigOptionString("TPU"));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("validation rejects the setup") {
+            CHECK(print.validate().string.find("base material") != std::string::npos);
+        }
+    }
+    GIVEN("an explicit base filament of another type") {
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("filament_type",         new ConfigOptionStrings({"PLA", "PETG", "PETG", "PLA"}));
+        config.set_key_value("enable_support",        new ConfigOptionBool(true));
+        config.set_key_value("support_base_material", new ConfigOptionString("PETG"));
+        config.set_key_value("support_filament",      new ConfigOptionInt(1));
+        Print print;
+        Model model;
+        init_cube_print(print, model, config);
+        THEN("validation flags the conflict") {
+            CHECK(print.validate().string.find("base filament") != std::string::npos);
+        }
+    }
+}
+
 SCENARIO("A preference-less fine-nozzle wall filament vetoes the walls-only pitch", "[MultiNozzleLayerHeight]") {
     GIVEN("Outer walls on the 0.8 mm nozzle preferring 0.48 mm, inner walls on a 0.2 mm nozzle with no preference") {
         DynamicPrintConfig config = four_nozzle_config();

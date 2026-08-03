@@ -916,10 +916,10 @@ std::vector<unsigned int> Print::support_material_extruders() const
 
     for (PrintObject *object : m_objects) {
         if (object->has_support_material()) {
-            // Under a support nozzle diameter restriction a "default" (0) support filament resolves to a matching-nozzle filament: one of the object's own or the deterministic fallback.
-            const unsigned int resolved_default = object->resolved_default_support_filament();
-            auto add_support_filament = [&](int configured) {
+            // Under support restrictions (nozzle diameter, material) a "default" (0) support filament resolves to a passing filament: one of the object's own or the deterministic fallback.
+            auto add_support_filament = [&](int configured, bool interface_role) {
                 assert(configured >= 0);
+                const unsigned int resolved_default = object->resolved_default_support_filament(interface_role);
                 if (configured == 0 && resolved_default == 0) {
                     support_uses_current_extruder = true;
                 } else {
@@ -927,8 +927,8 @@ std::vector<unsigned int> Print::support_material_extruders() const
                     extruders.emplace_back((i >= num_extruders) ? 0 : i);
                 }
             };
-            add_support_filament(object->config().support_filament);
-            add_support_filament(object->config().support_interface_filament);
+            add_support_filament(object->config().support_filament, false);
+            add_support_filament(object->config().support_interface_filament, true);
         }
     }
 
@@ -1861,6 +1861,27 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                            "nozzle diameter (or explicit support and interface filaments) to keep the support "
                            "on one nozzle size."), "support_nozzle_diameter", object);
                     warned_support_mixed_nozzles = true;
+                }
+
+                // ORCA: support material selections ("support_base_material" / "support_interface_material")
+                // exclude filaments of other types; a selection must leave at least one usable filament and
+                // agree with an explicitly selected support filament.
+                for (const bool interface_role : {false, true}) {
+                    if ((interface_role ? object->config().support_interface_material :
+                                          object->config().support_base_material).value.empty())
+                        continue;
+                    if (object->resolved_default_support_filament(interface_role) == 0)
+                        return {interface_role ?
+                                    L("No loaded filament matches the support/raft interface material (and the support nozzle diameter).") :
+                                    L("No loaded filament matches the support/raft base material (and the support nozzle diameter)."),
+                                object, interface_role ? "support_interface_material" : "support_base_material"};
+                    if (const int configured = (interface_role ? object->config().support_interface_filament :
+                                                                 object->config().support_filament).value;
+                        configured > 0 && ! object->support_filament_allowed((unsigned int)configured, interface_role))
+                        return {interface_role ?
+                                    L("The support/raft interface filament is not of the support/raft interface material.") :
+                                    L("The support/raft base filament is not of the support/raft base material."),
+                                object, interface_role ? "support_interface_filament" : "support_filament"};
                 }
 
                 // Prusa: Fixing crashes with invalid tip diameter or branch diameter

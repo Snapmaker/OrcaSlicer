@@ -889,6 +889,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_filament))
     // ORCA: restrict support/raft/interface printing to filaments of this nozzle diameter (0 = no restriction).
     ((ConfigOptionFloat,               support_nozzle_diameter))
+    ((ConfigOptionString,              support_base_material))
+    ((ConfigOptionString,              support_interface_material))
     ((ConfigOptionFloatOrPercent,      support_line_width))
     ((ConfigOptionBool,                support_interface_not_for_body))
     ((ConfigOptionBool,                support_interface_loop_pattern))

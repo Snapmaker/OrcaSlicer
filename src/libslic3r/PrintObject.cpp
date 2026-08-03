@@ -1064,6 +1064,8 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "enforce_support_layers"
             || opt_key == "support_filament"
             || opt_key == "support_nozzle_diameter"
+            || opt_key == "support_base_material"
+            || opt_key == "support_interface_material"
             || opt_key == "support_line_width"
             || opt_key == "support_interface_top_layers"
             || opt_key == "support_interface_bottom_layers"
@@ -3821,24 +3823,37 @@ bool PrintObject::has_combined_layer_regions() const
     return false;
 }
 
-bool PrintObject::support_filament_allowed(unsigned int filament_id) const
+bool PrintObject::support_filament_allowed(unsigned int filament_id, bool interface_role) const
 {
-    const double restriction = m_config.support_nozzle_diameter.value;
-    if (restriction <= 0. || filament_id == 0)
+    if (filament_id == 0)
         return true;
-    return std::abs(m_print->config().nozzle_diameter.get_at(filament_id - 1) - restriction) < EPSILON;
+    if (const double nozzle = m_config.support_nozzle_diameter.value; nozzle > 0. &&
+        std::abs(m_print->config().nozzle_diameter.get_at(filament_id - 1) - nozzle) > EPSILON)
+        return false;
+    const std::string &material = (interface_role ? m_config.support_interface_material :
+                                                    m_config.support_base_material).value;
+    return material.empty() || m_print->config().filament_type.get_at(filament_id - 1) == material;
 }
 
-unsigned int PrintObject::resolved_default_support_filament() const
+bool PrintObject::has_support_filament_restriction() const
 {
-    if (m_config.support_nozzle_diameter.value <= 0.)
+    return m_config.support_nozzle_diameter.value > 0. ||
+           ! m_config.support_base_material.value.empty() ||
+           ! m_config.support_interface_material.value.empty();
+}
+
+unsigned int PrintObject::resolved_default_support_filament(bool interface_role) const
+{
+    if (m_config.support_nozzle_diameter.value <= 0. &&
+        (interface_role ? m_config.support_interface_material :
+                          m_config.support_base_material).value.empty())
         return 0;
     const PrintConfig &print_config = m_print->config();
     const size_t num_filaments = std::max(print_config.nozzle_diameter.values.size(),
                                           print_config.filament_diameter.values.size());
     unsigned int soluble_fallback = 0;
     for (size_t i = 0; i < num_filaments; ++ i)
-        if (this->support_filament_allowed((unsigned int)(i + 1))) {
+        if (this->support_filament_allowed((unsigned int)(i + 1), interface_role)) {
             if (! print_config.filament_soluble.get_at(i))
                 return (unsigned int)(i + 1);
             if (soluble_fallback == 0)

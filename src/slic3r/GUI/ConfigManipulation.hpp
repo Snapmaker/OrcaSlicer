@@ -91,6 +91,9 @@ public:
         m_support_material_overhangs_queried = queried;
     }
     int    show_spiral_mode_settings_dialog(bool is_object_config = false);
+    // ORCA: support filament dialog for printers with differing nozzle sizes.
+    int    show_support_filament_dialog(DynamicPrintConfig* config, DynamicPrintConfig* new_conf);
+    static bool printer_has_mixed_nozzle_sizes();
 
 private:
     bool get_temperature_range(DynamicPrintConfig *config, int &range_low, int &range_high);

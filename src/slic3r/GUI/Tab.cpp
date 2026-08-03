@@ -1504,6 +1504,16 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
+    // ORCA: support enabled by the user on a printer with differing nozzle sizes: ask which
+    // nozzle size prints the support and which materials serve as raft/base and interface.
+    // Only here, on a real edit - preset and project loading must not raise dialogs.
+    if (opt_key == "enable_support" && m_type == Preset::TYPE_PRINT && m_config->opt_bool("enable_support") &&
+        ConfigManipulation::printer_has_mixed_nozzle_sizes()) {
+        DynamicPrintConfig new_conf = *m_config;
+        if (m_config_manipulation.show_support_filament_dialog(m_config, &new_conf) == wxID_OK)
+            m_config_manipulation.apply(m_config, &new_conf);
+    }
+
     if (opt_key == "single_extruder_multi_material" || opt_key == "extruders_count" )
         update_wiping_button_visibility();
 
@@ -2502,9 +2512,30 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Support filament"), L"param_support_filament");
         optgroup->append_single_option_line("support_nozzle_diameter", "support_settings_filament");
+        optgroup->append_single_option_line("support_base_material", "support_settings_filament");
+        optgroup->append_single_option_line("support_interface_material", "support_settings_filament");
         optgroup->append_single_option_line("support_filament", "support_settings_filament#base");
         optgroup->append_single_option_line("support_interface_filament", "support_settings_filament#interface");
         optgroup->append_single_option_line("support_interface_not_for_body", "support_settings_filament#avoid-interface-filament-for-base");
+        // ORCA: on mixed-nozzle printers the support filament dialog owns the base/interface
+        // choice; this toggle reveals the legacy selectors above for older projects.
+        auto legacy_support_toggle = [this](wxWindow* parent) {
+            auto *sizer = new wxBoxSizer(wxHORIZONTAL);
+            auto *check = new ::CheckBox(parent);
+            check->SetValue(wxGetApp().app_config->get_bool("show_legacy_support_filament"));
+            check->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent &evt) {
+                wxGetApp().app_config->set_bool("show_legacy_support_filament", evt.IsChecked());
+                update();
+                evt.Skip();
+            });
+            sizer->Add(check, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+            sizer->Add(new wxStaticText(parent, wxID_ANY, _(L("Show legacy filament selection"))), 0, wxALIGN_CENTER_VERTICAL);
+            return sizer;
+        };
+        Line legacy_support_line = Line{ "", "" };
+        legacy_support_line.full_width = 1;
+        legacy_support_line.append_widget(legacy_support_toggle);
+        optgroup->append_line(legacy_support_line);
 
         optgroup = page->new_optgroup(L("Support ironing"), L"param_ironing");
         optgroup->append_single_option_line("support_ironing", "support_settings_ironing");

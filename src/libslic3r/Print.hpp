@@ -526,13 +526,18 @@ public:
     bool         wall_split_pitches(const PrintRegion &region, unsigned int &fine, unsigned int &coarse, bool &coarse_is_outer) const;
     // Any region of this object printing with a layer height multiplier > 1?
     bool         has_combined_layer_regions() const;
-    // Multi-nozzle support restriction ("support_nozzle_diameter" print option): may the given 1-based filament print this object's support / raft?
-    // Always true when the restriction is disabled or for the "default" filament 0.
-    bool         support_filament_allowed(unsigned int filament_id) const;
-    // 1-based filament a "default" (0) support filament resolves to under the support nozzle
-    // diameter restriction when none of a layer's own filaments match: the first non-soluble
-    // matching-nozzle filament, else the first matching one; 0 when the restriction is disabled or nothing matches.
-    unsigned int resolved_default_support_filament() const;
+    // Multi-nozzle support restrictions ("support_nozzle_diameter" plus the "support_base_material" /
+    // "support_interface_material" print options): may the given 1-based filament print this object's
+    // support / raft base (interface_role false) or interface (interface_role true)? A filament passes
+    // when its nozzle matches the support nozzle diameter and its type matches the role's material;
+    // an unset restriction does not exclude. Always true for the "default" filament 0.
+    bool         support_filament_allowed(unsigned int filament_id, bool interface_role = false) const;
+    // Any support filament restriction configured (nozzle diameter or either material)?
+    bool         has_support_filament_restriction() const;
+    // 1-based filament a "default" (0) support filament of the role resolves to when none of a layer's
+    // own filaments pass the restrictions: the first non-soluble passing filament, else the first
+    // passing one; 0 when the role is unrestricted or nothing passes.
+    unsigned int resolved_default_support_filament(bool interface_role = false) const;
 
     // Called by make_perimeters()
     void slice();

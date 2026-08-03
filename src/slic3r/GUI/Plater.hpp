@@ -259,8 +259,8 @@ public:
     struct ColdPlateCompatResult
     {
         ColdPlateCompatState   state = ColdPlateCompatState::Compatible;
-        std::vector<int>       unsupported_slots_1based;
-        std::vector<int>       tpu_slots_1based;
+        std::vector<int>       unsupported_slots_1_based{};
+        std::vector<int>       tpu_slots_1_based{};
         bool                   uses_tpu = false;
     };
 

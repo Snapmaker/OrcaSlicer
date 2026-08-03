@@ -3749,44 +3749,54 @@ void TabFilament::build()
         optgroup->append_line(line);
 
         optgroup = page->new_optgroup(L("Bed temperature"), L"param_bed_temp");
-        line = { L("Cool Plate (SuperTack)"),
-                 L("Bed temperature when the Cool Plate SuperTack is installed. A value of 0 means the filament does not support printing on the Cool Plate SuperTack.") };
+        // Initial label/tooltip are picked based on the printer selected at build time;
+        // toggle_options() re-applies them whenever the user switches printers, so the
+        // row stays in sync with the bed-type combobox (U1 = Cool Steel Plate, others =
+        // Cool Plate (SuperTack)). Both names map to the same btSuperTack enumerator.
+        bool        is_u1_at_build = false;
+        const auto *printer_model_opt_build = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model");
+        if (printer_model_opt_build) {
+            const std::string &pm = printer_model_opt_build->value;
+            is_u1_at_build = boost::icontains(pm, "Snapmaker") && boost::icontains(pm, "U1");
+        }
+        line = { is_u1_at_build ? L("Cool Steel Plate") : L("Cool Plate (SuperTack)"),
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("supertack_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("supertack_plate_temp"));
         optgroup->append_line(line);
 
         line = { L("Cool Plate"),
-                 L("Bed temperature when the Cool Plate is installed. A value of 0 means the filament does not support printing on the Cool Plate.") };
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("cool_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("cool_plate_temp"));
         optgroup->append_line(line);
 
         line = { L("Textured Cool Plate"),
-                 L("Bed temperature when the Textured Cool Plate is installed. A value of 0 means the filament does not support printing on the Textured Cool Plate.") };
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("textured_cool_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("textured_cool_plate_temp"));
         optgroup->append_line(line);
 
         line = { L("Engineering Plate"),
-                 L("Bed temperature when the Engineering Plate is installed. A value of 0 means the filament does not support printing on the Engineering Plate.") };
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("eng_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("eng_plate_temp"));
         optgroup->append_line(line);
 
         line = { L("Smooth PEI Plate / High Temp Plate"),
-                 L("Bed temperature when the Smooth PEI Plate/High Temperature Plate is installed. A value of 0 means the filament does not support printing on the Smooth PEI Plate/High Temp Plate.") };
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("hot_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("hot_plate_temp"));
         optgroup->append_line(line);
 
         line = { L("Textured PEI Plate"),
-                 L("Bed temperature when the Textured PEI Plate is installed. A value of 0 means the filament does not support printing on the Textured PEI Plate.") };
+                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.append_option(optgroup->get_option("textured_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("textured_plate_temp"));
         optgroup->append_line(line);
 
-        line = {L("Graphic Effect Plate"), 
-                L("Bed temperature when the Graphic Effect Plate is installed. A value of 0 means the filament does not support printing on the Graphic Effect Plate.")};
+        line = {L("Graphic Effect Plate"),
+                L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.")};
         line.append_option(optgroup->get_option("graphic_effect_plate_temp_initial_layer"));
         line.append_option(optgroup->get_option("graphic_effect_plate_temp"));
         optgroup->append_line(line);
@@ -4055,10 +4065,18 @@ void TabFilament::toggle_options()
                 ? _L("Smooth PEI Plate")
                 : _L("Smooth PEI Plate / High Temp Plate");
         }
+        // Supertack slot: U1 renames btSuperTack to "Cool Steel Plate"; keep the filament
+        // temperature row in sync with the bed-type combobox so the names match.
+        if (Line* supertack_line = get_line("supertack_plate_temp_initial_layer")) {
+            supertack_line->label = is_snapmaker_u1
+                ? _L("Cool Steel Plate")
+                : _L("Cool Plate (SuperTack)");
+            supertack_line->label_tooltip = _L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.");
+        }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
-            // U1 default show 3 plates
-            toggle_line("supertack_plate_temp_initial_layer", false);
-            toggle_line("supertack_plate_temp", false);
+            // U1 default show 4 plates
+            toggle_line("supertack_plate_temp_initial_layer", true);
+            toggle_line("supertack_plate_temp", true);
             toggle_line("cool_plate_temp_initial_layer", false);
             toggle_line("cool_plate_temp", false);
             toggle_line("textured_cool_plate_temp_initial_layer", false);

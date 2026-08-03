@@ -4,6 +4,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -238,6 +239,29 @@ public:
         Compatible,
         AllowedWarning,
         BlockedError
+    };
+
+    /// \brief Cold plate (CSP) per-plate compatibility state.
+    enum class ColdPlateCompatState
+    {
+        /// \brief All used filaments compatible and no TPU in use.
+        Compatible,
+        /// \brief All used filaments compatible but TPU in use; non-blocking warning.
+        SeriousWarning,
+        /// \brief At least one used filament has zero cold-plate bed temperature; blocks slicing.
+        BlockedError
+    };
+
+    /// \brief Aggregate per-plate cold-plate compatibility result, computed in one pass.
+    /// \details Combines state with the data that produced it (unsupported filament slots,
+    ///          TPU slots) so callers can render notifications without re-querying.
+    ///          Slot lists are 1-based to match filament_display_label / FlowRatioZeroDetail.
+    struct ColdPlateCompatResult
+    {
+        ColdPlateCompatState   state = ColdPlateCompatState::Compatible;
+        std::vector<int>       unsupported_slots_1_based{};
+        std::vector<int>       tpu_slots_1_based{};
+        bool                   uses_tpu = false;
     };
 
     Plater(wxWindow *parent, MainFrame *main_frame);
@@ -536,6 +560,18 @@ public:
     /// @brief Check whether slice-all has at least one plate that can be sliced.
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
+    /// @brief Unified per-plate sliceability predicate.
+    /// @details Combines PartPlate::can_slice() with the GUI-layer blockers
+    ///          (filament temp mixing, cold-plate incompatibility, and future
+    ///          flow_ratio_zero) so plate-toolbar rendering, slice-all iteration,
+    ///          and MainFrame button gating cannot drift. Add new blockers as
+    ///          early-returns inside this function; do not branch on them at
+    ///          individual call sites. Mirrors has_sliceable_plate_for_slice_all's
+    ///          non-const contract (relies on is_plate_blocked_by_filament_temp_mixing,
+    ///          which is historical non-const).
+    /// @param[in] plate_index 0-based plate index.
+    /// @return true iff the plate exists, can_slice(), and is not blocked by any GUI-layer blocker.
+    bool is_plate_sliceable(int plate_index);
     /// @brief Find the next plate that can be sliced by slice-all.
     /// @param start_plate_index First plate index to check.
     /// @return Plate index if found; otherwise -1.
@@ -543,6 +579,18 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// @brief Compute the per-plate cold-plate compatibility state in a single pass.
+    /// @details Collects used filament slots once and walks them once, producing
+    ///          {state, unsupported filaments, TPU flag} in one traversal.
+    /// @param[in] plate_index 0-based plate index.
+    /// @return Result struct; state is Compatible when curr_bed_type != btCSP or plate is empty.
+    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index) const;
+    /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
+    /// @param[in] plate_index 0-based plate index.
+    bool is_plate_blocked_by_cold_plate(int plate_index) const;
+    /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
+    /// @return True if slicing is allowed on current plate after sync.
+    bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Check and guard filament temp mixing before slicing all plates.

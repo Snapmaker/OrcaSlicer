@@ -74,6 +74,9 @@
 #include <wx/utils.h>
 #include <wx/thread.h>
 #include <wx/secretstore.h>
+#if defined(__linux__)
+#include <libsecret/secret.h>
+#endif
 #include "slic3r/Utils/SnapmakerAccount.hpp"
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
@@ -2476,8 +2479,18 @@ bool GUI_App::OnInit()
     }
 }
 
+#if defined(__linux__)
+// Defined with the other sm_login helpers below.
+static GCancellable* sm_login_cancellable();
+#endif
+
 int GUI_App::OnExit()
 {
+#if defined(__linux__)
+    // Abort any in-flight secret-store operation so its completion callback
+    // cannot fire against the application object during teardown.
+    g_cancellable_cancel(sm_login_cancellable());
+#endif
     // Session revalidation: drop the liveness token, then cancel the
     // request. Both are best-effort and deliberately so -- Http::cancel()
     // only aborts a transfer still in progress, and a callback that already
@@ -4359,7 +4372,124 @@ static void sm_discard_persisted_session(unsigned epoch)
     sm_set_session_marker(false, epoch);
 }
 
-#if wxUSE_SECRETSTORE
+#if defined(__linux__)
+// Storage via libsecret's async password API: inside a Flatpak, libsecret
+// automatically uses its file backend + the Secret portal, keeping the token
+// in an encrypted per-app keyring with no org.freedesktop.secrets access
+// needed; unsandboxed it talks to the normal Secret Service. Async because
+// the *_sync variants can block a UI thread on a D-Bus round trip (the
+// wxSecretStore branch below stays synchronous: Keychain and Credential
+// Manager are local and fast). A fixed schema/attribute set makes each store
+// replace the previous item, so exactly one item ever exists.
+static const SecretSchema* sm_login_schema()
+{
+    static const SecretSchema schema = {
+        "io.github.Snapmaker.Snapmaker_Orca.Login",
+        SECRET_SCHEMA_NONE,
+        {
+            { "service", SECRET_SCHEMA_ATTRIBUTE_STRING },
+            { nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING },
+        }
+    };
+    return &schema;
+}
+static const char SM_LOGIN_SERVICE_ATTR[] = "Snapmaker_Orca/login";
+
+// Cancelled in OnExit so completion callbacks cannot outlive the app.
+static GCancellable* sm_login_cancellable()
+{
+    static GCancellable* cancellable = g_cancellable_new();
+    return cancellable;
+}
+
+static void sm_secret_store_save(const std::string& token, unsigned epoch)
+{
+    // libsecret copies the label/password/attribute strings during this call,
+    // so caller-owned temporaries are safe despite the async completion. The
+    // callback runs on the GLib main loop, which wxGTK iterates. The login
+    // epoch rides in user_data so a store that completes after a logout
+    // neither re-creates the session marker nor leaves the item behind.
+    secret_password_store(sm_login_schema(), SECRET_COLLECTION_DEFAULT,
+                          "Snapmaker_Orca login token", token.c_str(),
+                          sm_login_cancellable(),
+                          [](GObject*, GAsyncResult* res, gpointer user_data) {
+                              GError*        error = nullptr;
+                              const unsigned epoch = GPOINTER_TO_UINT(user_data);
+                              if (secret_password_store_finish(res, &error)) {
+                                  // If the session moved on while this was in
+                                  // flight, the newer login owns the stored
+                                  // item (same schema and attributes, so its
+                                  // write replaced this one) and its own
+                                  // callback owns the marker: nothing to do.
+                                  sm_set_session_marker(true, epoch);
+                              } else {
+                                  if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+                                      BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable, token not persisted: "
+                                                              << (error ? error->message : "unknown error");
+                                      sm_discard_persisted_session(epoch);
+                                  }
+                                  if (error)
+                                      g_error_free(error);
+                              }
+                          },
+                          GUINT_TO_POINTER(epoch),
+                          "service", SM_LOGIN_SERVICE_ATTR,
+                          nullptr);
+}
+
+// Reads the stored token. `done` is invoked with store_available=false when
+// the secret store itself could not be consulted (leave the session marker
+// alone and retry next launch), or true with a possibly-empty token. Every
+// platform below uses this same shape so callers need no #if.
+static void sm_secret_store_load(unsigned epoch, std::function<void(bool, std::string)> done)
+{
+    using Ctx = std::pair<unsigned, std::function<void(bool, std::string)>>;
+    auto* ctx = new Ctx(epoch, std::move(done));
+    secret_password_lookup(sm_login_schema(), sm_login_cancellable(),
+                           [](GObject*, GAsyncResult* res, gpointer user_data) {
+                               std::unique_ptr<Ctx> ctx(static_cast<Ctx*>(user_data));
+                               GError* error  = nullptr;
+                               gchar*  secret = secret_password_lookup_finish(res, &error);
+                               if (error) {
+                                   if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+                                       BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable: " << error->message;
+                                   g_error_free(error);
+                                   ctx->second(false, std::string());
+                                   return;
+                               }
+                               std::string token;
+                               if (secret) {
+                                   token = secret;
+                                   secret_password_free(secret);
+                               }
+                               ctx->second(true, std::move(token));
+                           },
+                           ctx,
+                           "service", SM_LOGIN_SERVICE_ATTR,
+                           nullptr);
+}
+
+static void sm_secret_store_clear()
+{
+    // Best-effort async delete: quitting immediately after logout can leave
+    // the item behind, which is acceptable -- logout revokes the token
+    // server-side first, so any residue is inert and replaced on next login.
+    secret_password_clear(sm_login_schema(), sm_login_cancellable(),
+                          [](GObject*, GAsyncResult* res, gpointer) {
+                              GError* error = nullptr;
+                              // Returns FALSE without error when nothing was stored.
+                              secret_password_clear_finish(res, &error);
+                              if (error) {
+                                  if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+                                      BOOST_LOG_TRIVIAL(warning) << "[sm_login] failed to clear stored token: " << error->message;
+                                  g_error_free(error);
+                              }
+                          },
+                          nullptr,
+                          "service", SM_LOGIN_SERVICE_ATTR,
+                          nullptr);
+}
+#elif wxUSE_SECRETSTORE
 static const wxString SM_LOGIN_SECRET_SERVICE = "Snapmaker_Orca/login";
 
 static void sm_secret_store_save(const std::string& token, unsigned epoch)
@@ -4413,7 +4543,7 @@ static void sm_secret_store_clear()
 static void sm_secret_store_save(const std::string&, unsigned) {}
 static void sm_secret_store_load(unsigned, std::function<void(bool, std::string)> done) { done(false, std::string()); }
 static void sm_secret_store_clear() {}
-#endif // wxUSE_SECRETSTORE
+#endif // __linux__ / wxUSE_SECRETSTORE
 
 void GUI_App::sm_save_login_to_config()
 {

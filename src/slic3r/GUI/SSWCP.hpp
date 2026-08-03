@@ -38,6 +38,7 @@ using tcp = asio::ip::tcp;
 #define UNSUBSCRIBE_DOWNLOAD_STATE "sw_UnsubscribeDownloadState"
 #define DOWN_LOAD_FILE "sw_DownLoadFile"
 #define FILE_VIEW "sw_FileView"
+#define OPEN_TIMELAPSE_FOLDER "sw_OpenTimelapseFolder"
 #define GET_FILES_FROM_DIR "sw_GetFilesFromDir"
 #define NOTIFY_UPLOAD_TIMELASPE "sw_NotifyUploadTimelaspe"
 
@@ -566,6 +567,7 @@ private:
     void sw_CancelDownload();
 
     void sw_FileView();
+    void sw_OpenTimelapseFolder();
     void sw_SubscribeDownloadState();
     void sw_UnsubscribeDownloadState();
     void sw_GetFilesFromDir();

@@ -4041,6 +4041,10 @@ void SSWCP_MachineOption_Instance::sw_GetDeviceDataStorageSpace()
     }
 }
 
+// Forward decl: defined after g_active_ctxs. Used here to abort an in-progress
+// PC download when the file is deleted from the device.
+namespace { void cancel_active_timelapse_by_date_index(const std::string& date_index); }
+
 void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
 {
     try {
@@ -4050,6 +4054,13 @@ void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
         if (!host) {
             handle_general_fail(-1, "Connection lost!");
             return;
+        }
+
+        // If this file is currently downloading to PC, abort that download too
+        // (deleting a file mid-download must terminate the task, not leave it).
+        std::string date_index = m_param_data.value("date_index", "");
+        if (!date_index.empty()) {
+            cancel_active_timelapse_by_date_index(date_index);
         }
 
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
@@ -4607,6 +4618,8 @@ void SSWCP_UserLogin_Instance::process()
         sw_CancelDownload();
     } else if (m_cmd == FILE_VIEW) {
         sw_FileView();
+    } else if (m_cmd == OPEN_TIMELAPSE_FOLDER) {
+        sw_OpenTimelapseFolder();
     } else if (m_cmd == GET_FILES_FROM_DIR) {
         sw_GetFilesFromDir();
     } else if (m_cmd == NOTIFY_UPLOAD_TIMELASPE) {
@@ -4793,6 +4806,7 @@ struct TimelapseQueueContext {
     TimelapseDownloadPopup*                              popup            = nullptr;
     int                                                  total_count      = 0;
     int                                                  row_offset       = 0;  // first row index in the shared popup
+    std::string                                          sn;               // device SN (files[0].sn)
     int                                                  current_index    = 0;
     int                                                  completed_count  = 0;
     int                                                  failed_count     = 0;
@@ -4851,6 +4865,80 @@ void push_file_state(std::shared_ptr<TimelapseQueueContext> ctx, int idx,
     const auto& f = ctx->files[idx];
     SSWCP_UserLogin_Instance::push_timelapse_state(
         f.sn, f.file_name, f.url, f.date_index, save_path, state);
+}
+
+// Abort the in-progress download of a file (matched by date_index) — used when
+// the file is deleted from the device while still downloading to PC.
+void cancel_active_timelapse_by_date_index(const std::string& date_index)
+{
+    if (date_index.empty()) { return; }
+    std::vector<std::shared_ptr<TimelapseQueueContext>> ctxs;
+    {
+        std::lock_guard<std::mutex> lk(g_active_ctx_mtx);
+        ctxs = g_active_ctxs;
+    }
+    for (auto& ctx : ctxs) {
+        for (int i = 0; i < ctx->total_count; ++i) {
+            if (ctx->files[i].date_index != date_index) {
+                continue;
+            }
+            ctx->skipped_indices.insert(i);
+            push_file_state(ctx, i, "cancelled");
+            // WAN: drop from g_wan_pending so a late upload notification can't
+            // re-kickoff this file.
+            if (ctx->is_wan) {
+                std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
+                g_wan_pending.erase(date_index);
+            }
+            // Stop the active HTTP download if this is the one in flight.
+            if (i == ctx->current_index && ctx->current_task_id != 0) {
+                DownloadManager::getInstance().cancel_download(ctx->current_task_id);
+                ctx->current_task_id = 0;
+            }
+            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                ctx->popup->mark_task_cancelled(ctx->row_offset + i);
+            }
+            release_date_index(date_index);
+            return;
+        }
+    }
+}
+
+// Cancel ALL active timelapse downloads, marking each unfinished file as
+// failed ("Download Failed"). Used when the user switches device — every
+// in-flight download becomes stale and must stop.
+void cancel_all_active_timelapse()
+{
+    std::vector<std::shared_ptr<TimelapseQueueContext>> to_cancel;
+    {
+        std::lock_guard<std::mutex> lk(g_active_ctx_mtx);
+        to_cancel = g_active_ctxs;
+    }
+    for (auto& ctx : to_cancel) {
+        ctx->cancelled = true;
+        if (ctx->current_task_id != 0) {
+            DownloadManager::getInstance().cancel_download(ctx->current_task_id);
+            ctx->current_task_id = 0;
+        }
+        if (ctx->is_wan) {
+            std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
+            for (int i = 0; i < ctx->total_count; ++i) {
+                g_wan_pending.erase(ctx->files[i].date_index);
+            }
+        }
+        for (int i = 0; i < ctx->total_count; ++i) {
+            if (ctx->pushed_indices.count(i)) {
+                continue;   // already reached a terminal state
+            }
+            ctx->skipped_indices.insert(i);
+            push_file_state(ctx, i, "failed");
+            release_date_index(ctx->files[i].date_index);
+            if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                // Empty reason → mark_task_error falls back to "Download Failed".
+                ctx->popup->mark_task_error(ctx->row_offset + i, "");
+            }
+        }
+    }
 }
 
 // Tear down the WAN upload-notification subscription. Safe to call when not in
@@ -5087,6 +5175,11 @@ void SSWCP_UserLogin_Instance::sw_NotifyUploadTimelaspe()
                 if (!ctx || ctx->cancelled) {
                     return;
                 }
+                if (ctx->skipped_indices.count(idx)) {
+                    // Cancelled between the upload notification arriving and this
+                    // deferred kickoff — don't start (or restart) the download.
+                    return;
+                }
                 // WAN: kickoff directly — kickoff_download's callbacks use idx
                 // (not current_index), so no race with other files.
                 ctx->kickoff_download(idx, url);
@@ -5181,6 +5274,20 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
     boost::filesystem::create_directories(save_path_fs, mk_ec);
     std::string save_path = save_path_fs.string();
 
+    if (mk_ec) {
+        // Download path invalid (e.g. configured USB drive was removed).
+        // Bail out before starting any download — otherwise file writes crash.
+        json result;
+        result["error"] = "invalid_download_path";
+        result["path"]  = save_path;
+        m_res_data = result;
+        m_status   = -1;
+        m_msg      = "invalid_download_path";
+        send_to_js();
+        finish_job();
+        return;
+    }
+
     {
         size_t total_file_size = 0;
         for (const auto& f : files) {
@@ -5192,7 +5299,19 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         }
         boost::system::error_code space_ec;
         boost::filesystem::space_info si = boost::filesystem::space(save_path, space_ec);
-        if (!space_ec && si.available < required) {
+        if (space_ec) {
+            // Can't query disk space (drive gone / path not on a real filesystem).
+            json result;
+            result["error"] = "invalid_download_path";
+            result["path"]  = save_path;
+            m_res_data = result;
+            m_status   = -1;
+            m_msg      = "invalid_download_path";
+            send_to_js();
+            finish_job();
+            return;
+        }
+        if (si.available < required) {
             json result;
             result["error"]      = "insufficient_disk_space";
             result["required"]   = required;
@@ -5265,6 +5384,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         ctx->cancelled       = false;
         ctx->wcp_self        = wcp_self;
         ctx->is_wan          = !unique_files.empty() && unique_files[0].mode == "wan";
+        ctx->sn              = unique_files.empty() ? "" : unique_files[0].sn;
 
         // Register this batch's date_indices + ctx as active.
         {
@@ -5288,7 +5408,10 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
         // Set per-task cancel callbacks for independent cancel.
         // i is the per-batch index (ctx->files[i]); global_row = row_offset + i
-        // addresses the row in the shared popup.
+        // addresses the row in the shared popup. Cancel runs immediately (no
+        // CallAfter) so Http::cancel interrupts before the download completes —
+        // otherwise the file finishes during the deferred window and shows as
+        // "open folder" instead of staying downloadable.
         for (int i = 0; i < total_count; i++) {
             int global_row = ctx->row_offset + i;
             popup->set_task_cancel_callback(global_row, [ctx, i, global_row]() {
@@ -5297,34 +5420,34 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 ctx->skipped_indices.insert(i);
                 push_file_state(ctx, i, "cancelled");
                 release_date_index(ctx->files[i].date_index);
+                // WAN: drop from g_wan_pending so a late sw_NotifyUploadTimelaspe
+                // can't re-kickoff this cancelled file.
+                if (ctx->is_wan) {
+                    std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
+                    g_wan_pending.erase(ctx->files[i].date_index);
+                }
                 if (is_active && ctx->current_task_id != 0) {
                     size_t task_id = ctx->current_task_id;
-                    wxGetApp().CallAfter([ctx, i, global_row, task_id]() {
-                        DownloadManager::getInstance().cancel_download(task_id);
-                        ctx->current_task_id = 0;
-                        if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                            ctx->popup->mark_task_cancelled(global_row);
-                        }
-                        ctx->current_index++;
-                        if (ctx->start_next) { ctx->start_next(); }
-                    });
+                    DownloadManager::getInstance().cancel_download(task_id);
+                    ctx->current_task_id = 0;
+                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                        ctx->popup->mark_task_cancelled(global_row);
+                    }
+                    ctx->current_index++;
+                    if (ctx->start_next) { ctx->start_next(); }
                 } else if (is_active && ctx->waiting_for_upload) {
-                    wxGetApp().CallAfter([ctx, i, global_row]() {
-                        const auto& info = ctx->files[i];
-                        ctx->pending_wan_date_to_idx.erase(info.date_index);
-                        if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                            ctx->popup->mark_task_cancelled(global_row);
-                        }
-                        ctx->waiting_for_upload = false;
-                        ctx->current_index++;
-                        if (ctx->start_next) { ctx->start_next(); }
-                    });
+                    const auto& info = ctx->files[i];
+                    ctx->pending_wan_date_to_idx.erase(info.date_index);
+                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                        ctx->popup->mark_task_cancelled(global_row);
+                    }
+                    ctx->waiting_for_upload = false;
+                    ctx->current_index++;
+                    if (ctx->start_next) { ctx->start_next(); }
                 } else {
-                    wxGetApp().CallAfter([ctx, global_row]() {
-                        if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                            ctx->popup->mark_task_cancelled(global_row);
-                        }
-                    });
+                    if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
+                        ctx->popup->mark_task_cancelled(global_row);
+                    }
                 }
             });
         }
@@ -5407,7 +5530,12 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
             callbacks.on_error = [ctx, idx, global_row](size_t, const std::string& error) {
                 if (ctx->skipped_indices.count(idx)) {
-                    if (ctx->popup && !ctx->popup->IsBeingDeleted())
+                    // ctx->cancelled is set by device-switch (cancel_all) and popup
+                    // close — in those cases the row was already marked (failed /
+                    // closing), so don't override with "cancelled" here. Only the
+                    // per-task cancel button path (ctx->cancelled stays false)
+                    // wants mark_task_cancelled.
+                    if (!ctx->cancelled && ctx->popup && !ctx->popup->IsBeingDeleted())
                     {
                         ctx->popup->mark_task_cancelled(global_row);
                     }
@@ -5764,6 +5892,36 @@ void SSWCP_UserLogin_Instance::sw_FileView() {
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+// Timelapse-specific: open the containing folder. Unlike sw_FileView, if the
+// file was deleted externally we still open the folder (just can't locate the
+// file) instead of failing — matches the "open folder" button expectation.
+void SSWCP_UserLogin_Instance::sw_OpenTimelapseFolder() {
+    std::string file_path = m_param_data.count("file_path") ? m_param_data["file_path"].get<std::string>() : "";
+    wxFileName  file(file_path);
+
+    std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
+
+    wxGetApp().CallAfter([file_path, file, weak_self]() {
+        auto self = weak_self.lock();
+        if (!self) {
+            return;
+        }
+
+        if (file.FileExists()) {
+            desktop_open_any_folderEx(file_path);
+        } else {
+            wxString dir = file.GetPath();
+            if (!dir.empty()) {
+                desktop_open_folder(std::string(dir.ToUTF8().data()));
+            }
+        }
+
+        self->send_to_js();
+        self->finish_job();
+
+    });
 }
 
 void SSWCP_UserLogin_Instance::sw_GetFilesFromDir()
@@ -6611,6 +6769,10 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
         wxGetApp().set_connect_host(tmp_host);
         wxGetApp().set_host_config(config);
 
+        // Device switch: every in-progress timelapse download is now stale —
+        // stop them all and mark each unfinished file as "Download Failed".
+        cancel_all_active_timelapse();
+
         std::shared_ptr<Moonraker_Mqtt> host = dynamic_pointer_cast<Moonraker_Mqtt>(tmp_host);
         if (host) {
             auto engine = get_current_engine();
@@ -7344,7 +7506,7 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
 
 std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
                                                            UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
-                                                           FILE_VIEW, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
+                                                           FILE_VIEW, OPEN_TIMELAPSE_FOLDER, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
     "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"

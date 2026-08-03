@@ -225,8 +225,6 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                     percent = (int)(progress.dlnow * 100 / progress.dltotal);
                 }
 
-                task->percent = percent;
-
                 std::lock_guard<std::mutex> lock(m_tasks_mutex);
 
                 if (m_tasks.find(task->task_id) == m_tasks.end()) {
@@ -236,6 +234,13 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
 
                 auto& last_pct = m_last_percent[task->task_id];
                 auto& last_upd = m_last_update[task->task_id];
+
+                // Monotonic progress: weak networks can report dlnow fluctuation
+                // (retry/buffer) that would otherwise make the bar jump backwards.
+                if (percent < last_pct) {
+                    percent = last_pct;
+                }
+                task->percent = percent;
 
                 auto now = std::chrono::steady_clock::now();
                 bool should_update = false;

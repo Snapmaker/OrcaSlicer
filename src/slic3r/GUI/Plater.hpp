@@ -241,6 +241,27 @@ public:
         BlockedError
     };
 
+    // Per-plate breakdown of used filaments that participate in a high/low
+    // temperature mixing conflict. Slot numbers are 1-based to match what the
+    // user sees in the UI. Vectors are sorted ascending and de-duplicated.
+    struct FilamentTempMixingDetail {
+        std::vector<int> high_temp_slots_1based;
+        std::vector<int> low_temp_slots_1based;
+    };
+
+    // One plate's mixing detail, paired with its 1-based plate number.
+    // Used to build the Slice All notification body.
+    struct PlateMixingInfo {
+        int                     plate_index_1based;
+        FilamentTempMixingDetail detail;
+    };
+
+    // Per-plate breakdown of filaments whose flow ratio is 0 and would produce
+    // zero extrusion. Slot numbers are 1-based to match the UI display.
+    struct FlowRatioZeroDetail {
+        std::vector<int> offender_slots_1based;
+    };
+
     /// \brief Cold plate (CSP) per-plate compatibility state.
     enum class ColdPlateCompatState
     {
@@ -546,6 +567,10 @@ public:
     /// @param plate_index Plate index to check.
     /// @return True if compatible or plate index is invalid; false if high/low temperature materials are mixed.
     bool check_filament_temp_mixing(int plate_index);
+    /// @brief Same as above, plus fills `detail` with the 1-based used slots on the plate grouped by
+    ///        high/low temperature. `detail` is only meaningful when this overload returns false
+    ///        (i.e. a mixing conflict exists). On compatible / invalid plates, `detail` is cleared.
+    bool check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail);
     /// @brief Get high/low temperature material mixing state for the current plate.
     /// @return Current plate material mixing state.
     FilamentTempMixingState get_filament_temp_mixing_state();
@@ -579,6 +604,16 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// @brief Same as above, plus fills `detail` with the 1-based slots of offending filaments.
+    ///        `detail` is only meaningful when this overload returns false. On valid plates, `detail` is cleared.
+    bool check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail);
+    /// @brief Check whether a specific plate is blocked because one of its used filaments has flow ratio == 0.
+    /// @param plate_index Plate index to check.
+    /// @return True if slicing this plate is blocked; otherwise false.
+    bool is_plate_blocked_by_flow_ratio_zero(int plate_index);
+    /// Sync notification state with current flow-ratio-zero status.
+    /// Returns true if slicing is allowed, false if any used filament has flow ratio == 0.
+    bool sync_flow_ratio_zero_notification();
     /// @brief Compute the per-plate cold-plate compatibility state in a single pass.
     /// @details Collects used filament slots once and walks them once, producing
     ///          {state, unsupported filaments, TPU flag} in one traversal.

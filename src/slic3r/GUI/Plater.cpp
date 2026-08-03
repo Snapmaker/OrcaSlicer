@@ -208,23 +208,11 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
-static std::string filament_temp_mixing_warning_text()
-{
-    return _u8L("Detected both high and low temperature materials. "
-                "Mixed printing may result in extruder clogging, "
-                "nozzle damage, or layer adhesion issues.");
-}
-
-static std::string filament_temp_mixing_error_text()
-{
-    return _u8L("Detected both high and low temperature materials. "
-                "Mixed printing may result in extruder clogging, "
-                "nozzle damage, or layer adhesion issues. "
-                "To continue printing, enable \"Allow mixed printing "
-                "of high and low temperature materials\" in Preferences.");
-}
-
-// Translate a source string to a UTF-8 std::string (immediate lookup).
+// Safe translation helper: returns the UTF-8 form of a translated string as a
+// std::string. This avoids a dangling-pointer trap in I18N::translate_utf8()
+// (which returns wxGetTranslation(...).ToUTF8().data() - a pointer into a
+// temporary wxString). We keep the translated wxString alive across the
+// utf8_str() call and copy the bytes into a std::string before returning.
 static std::string tr_u8(const char* s)
 {
     const wxString ws = _L(s);
@@ -234,8 +222,7 @@ static std::string tr_u8(const char* s)
 
 // Build a user-facing label for a single filament slot, in the form
 // "[n] PresetName". Falls back to "[n] (unknown)" if the preset can't be
-// resolved. Shared across cold-plate / flow-ratio / temp-mixing notifications
-// so all three features present filaments in the same shape.
+// resolved - same defensive style as the null checks in check_filament_temp_mixing.
 static std::string filament_display_label(int slot_1based)
 {
     const int slot_0_based = slot_1based - 1;
@@ -251,7 +238,8 @@ static std::string filament_display_label(int slot_1based)
     return std::string("[") + std::to_string(slot_1based) + "] " + name;
 }
 
-// Comma-separated list of "[n] PresetName" labels from 1-based slot numbers.
+// Compose a single comma-separated line of "[n] Preset" labels from a list
+// of 1-based slot numbers. Used inside High/Low temperature group lines.
 static std::string format_filament_slot_list(const std::vector<int>& slots_1based)
 {
     std::string out;
@@ -260,6 +248,99 @@ static std::string format_filament_slot_list(const std::vector<int>& slots_1base
             out += ", ";
         out += filament_display_label(slots_1based[i]);
     }
+    return out;
+}
+
+// Append the High/Low temperature grouping block (two lines, only groups that
+// are non-empty) to `out`. Called by both the single-plate and slice-all
+// text builders so the layout stays identical.
+static void append_filament_temp_mixing_groups(std::string& out, const Plater::FilamentTempMixingDetail& detail)
+{
+    if (!detail.high_temp_slots_1based.empty()) {
+        out += tr_u8("High temperature:");
+        out += " ";
+        out += format_filament_slot_list(detail.high_temp_slots_1based);
+        out += "\n";
+    }
+    if (!detail.low_temp_slots_1based.empty()) {
+        out += tr_u8("Low temperature:");
+        out += " ";
+        out += format_filament_slot_list(detail.low_temp_slots_1based);
+        out += "\n";
+    }
+}
+
+static std::string filament_temp_mixing_warning_text(const Plater::FilamentTempMixingDetail& detail)
+{
+    std::string out = tr_u8("Detected both high and low temperature materials. "
+                            "Mixed printing may result in extruder clogging, "
+                            "nozzle damage, or layer adhesion issues.");
+    out += "\n\n";
+    append_filament_temp_mixing_groups(out, detail);
+    return out;
+}
+
+static std::string filament_temp_mixing_error_text(const Plater::FilamentTempMixingDetail& detail)
+{
+    std::string out = tr_u8("Detected both high and low temperature materials. "
+                            "Mixed printing may result in extruder clogging, "
+                            "nozzle damage, or layer adhesion issues.");
+    out += "\n\n";
+    append_filament_temp_mixing_groups(out, detail);
+    out += "\n";
+    out += tr_u8("To continue printing, enable \"Allow mixed printing "
+                "of high and low temperature materials\" in Preferences.");
+    return out;
+}
+
+// Build the single-line banner for the flow-ratio-zero pre-slice blocker.
+// Layout (single line, semicolon-separated):
+//   "Flow ratio is 0%, ... no valid toolpath. Filament(s): [1] PLA White; [3] PETG Black. Please set ..."
+// Uses std::string += concatenation (no boost::format) to avoid format_error exceptions,
+// matching the filament_temp_mixing_*_text blueprints above.
+static std::string flow_ratio_zero_error_text(const Plater::FlowRatioZeroDetail& detail)
+{
+    std::string out = tr_u8("Flow ratio is 0%, resulting in zero extrusion "
+                            "and no valid toolpath. ");
+    out += tr_u8("Filament(s):");
+    out += " ";
+    for (size_t i = 0; i < detail.offender_slots_1based.size(); ++i) {
+        if (i != 0)
+            out += "; ";
+        out += filament_display_label(detail.offender_slots_1based[i]);
+    }
+    out += ". ";
+    out += tr_u8("Please set the flow ratio to a value greater than 0.");
+    return out;
+}
+
+// Slice-all variants: list every plate that has a mixing conflict, each with
+// its own High/Low grouping. Plates without conflicts are not shown.
+static std::string filament_temp_mixing_warning_text_slice_all(const std::vector<Plater::PlateMixingInfo>& plates)
+{
+    std::string out = tr_u8("The following plates contain mixed high and low temperature materials:");
+    out += "\n\n";
+    for (const Plater::PlateMixingInfo& info : plates) {
+        out += tr_u8("Plate");
+        out += " " + std::to_string(info.plate_index_1based) + "\n";
+        append_filament_temp_mixing_groups(out, info.detail);
+        out += "\n";
+    }
+    return out;
+}
+
+static std::string filament_temp_mixing_error_text_slice_all(const std::vector<Plater::PlateMixingInfo>& plates)
+{
+    std::string out = tr_u8("The following plates contain mixed high and low temperature materials:");
+    out += "\n\n";
+    for (const Plater::PlateMixingInfo& info : plates) {
+        out += tr_u8("Plate");
+        out += " " + std::to_string(info.plate_index_1based) + "\n";
+        append_filament_temp_mixing_groups(out, info.detail);
+        out += "\n";
+    }
+    out += tr_u8("To continue printing, enable \"Allow mixed printing "
+                "of high and low temperature materials\" in Preferences.");
     return out;
 }
 
@@ -8976,6 +9057,13 @@ struct Plater::priv
     bool filament_temp_mixing_notification_initialized = false;
     int filament_temp_mixing_notification_plate = -1;
     FilamentTempMixingState filament_temp_mixing_notification_state = FilamentTempMixingState::Compatible;
+    // NotificationManager::close_validate_* uses exact-text match, so we must
+    // remember the exact strings we last pushed and use those (not freshly
+    // regenerated ones) to close the previous notification. Empty = nothing pushed.
+    std::string filament_temp_mixing_last_error_text;
+    std::string filament_temp_mixing_last_warning_text;
+    // Same pattern as above, for the flow_ratio_zero banner.
+    std::string flow_ratio_zero_last_error_text;
 
     bool                 cold_plate_notification_initialized = false;
     int                  cold_plate_notification_plate       = -1;
@@ -9638,6 +9726,7 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     this->q->Bind(EVT_FILAMENT_USAGE_CHANGED, [this](SimpleEvent&) {
         filament_usage_sync_pending = false;
         this->q->sync_filament_temp_mixing_notification();
+        this->q->sync_flow_ratio_zero_notification();
         this->q->sync_cold_plate_notification();
     });
     main_frame->m_tabpanel->Bind(wxEVT_NOTEBOOK_PAGE_CHANGING, &priv::on_tab_selection_changing, this);
@@ -9902,8 +9991,10 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
                 PartPlate* curr = q->get_partplate_list().get_curr_plate();
                 if (curr && (!curr->can_slice() ||
                     q->is_plate_blocked_by_filament_temp_mixing(q->get_partplate_list().get_curr_plate_index()) ||
+                    q->is_plate_blocked_by_flow_ratio_zero(q->get_partplate_list().get_curr_plate_index()) ||
                     q->is_plate_blocked_by_cold_plate(q->get_partplate_list().get_curr_plate_index()))) {
                     q->sync_filament_temp_mixing_notification();
+                    q->sync_flow_ratio_zero_notification();
                     q->sync_cold_plate_notification();
                     q->select_view_3D("Preview", true);
                     return;
@@ -10868,11 +10959,32 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             NotificationManager *notify_manager = q->get_notification_manager();
                             std::string error_message = L("Invalid values found in the 3mf:");
                             error_message += "\n";
-                            for (std::map<std::string, std::string>::iterator it=validity.begin(); it!=validity.end(); ++it)
+                            bool any_entry = false;
+                            for (std::map<std::string, std::string>::iterator it=validity.begin(); it!=validity.end(); ++it) {
+                                // filament_flow_ratio == 0 is handled by the dedicated
+                                // flow_ratio_zero pre-slice banner (which also names the
+                                // specific offending filament slot). Skip it here to avoid
+                                // a redundant, less informative notification.
+                                //
+                                // KNOWN LIMITATION: flow_ratio_zero only fires for slots
+                                // actually used by an object on the current plate. If the
+                                // loaded 3MF has flow_ratio == 0 on a slot that no object
+                                // references, this skip suppresses the generic 3mf warning
+                                // AND flow_ratio_zero does not fire either -> the offender
+                                // is invisible at load time. It will surface only when the
+                                // user later assigns an object to that slot. Accepted
+                                // trade-off: silent on unused slots is better than two
+                                // competing notifications on used slots.
+                                if (it->first == "filament_flow_ratio")
+                                    continue;
                                 error_message += "-" + it->first + ": " + it->second + "\n";
-                            error_message += "\n";
-                            error_message += L("Please correct them in the param tabs");
-                            notify_manager->bbl_show_3mf_warn_notification(error_message);
+                                any_entry = true;
+                            }
+                            if (any_entry) {
+                                error_message += "\n";
+                                error_message += L("Please correct them in the param tabs");
+                                notify_manager->bbl_show_3mf_warn_notification(error_message);
+                            }
                         }
                     }
                     if (!config_substitutions.empty()) show_substitutions_info(config_substitutions.substitutions, filename.string());
@@ -12446,7 +12558,15 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             else {
                 return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
             }
-            if (filament_ok && cold_ok && invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
+            // flow_ratio_zero sync MUST run after the blanket close_notification_of_type
+            // (ValidateError) above - otherwise our banner gets closed immediately.
+            // Its return value gates UPDATE_BACKGROUND_PROCESS_INVALID so that
+            // restart_background_process() refuses to start the slice when the
+            // plate is blocked (Preview-tab switch / reslice path).
+            const bool flow_ratio_ok = q->sync_flow_ratio_zero_notification();
+            if (!flow_ratio_ok)
+                return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
+            if (filament_ok && cold_ok && flow_ratio_ok && invalidated != Print::APPLY_STATUS_UNCHANGED && background_processing_enabled())
                 return_state |= UPDATE_BACKGROUND_PROCESS_RESTART;
 
             if (printer_technology == ptFFF) {
@@ -12463,6 +12583,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             //also update the warnings
             process_validation_warning(warning);
             q->sync_filament_temp_mixing_notification();
+            q->sync_flow_ratio_zero_notification();
             q->sync_cold_plate_notification();
             return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
             if (printer_technology == ptFFF) {
@@ -12486,6 +12607,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         if (background_process.empty()) {
             process_validation_warning({});
             q->sync_filament_temp_mixing_notification();
+            q->sync_flow_ratio_zero_notification();
             q->sync_cold_plate_notification();
         }
         actualize_slicing_warnings(*this->background_process.current_print());
@@ -17928,6 +18050,7 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
         // m_apply_invalid; no per-plate flag initialization is needed.
         notify_filament_usage_changed();
         sync_filament_temp_mixing_notification();
+        sync_flow_ratio_zero_notification();
         sync_cold_plate_notification();
     }
     return loaded;
@@ -20124,6 +20247,27 @@ int Plater::start_next_slice()
         return -1;
     }
 
+    // Second blocker: flow_ratio == 0. NOTE: this uses first-blocker
+    // early-return - if temp_mixing above already blocked the plate, this
+    // branch never runs and only the temp_mixing banner is shown. Blocking
+    // itself still takes effect (single-plate returns -1; slice_all posts
+    // Finished to skip the current plate). If both banners must be shown
+    // simultaneously, hoist sync_flow_ratio_zero_notification() into the
+    // temp_mixing branch before its early return.
+    if (is_plate_blocked_by_flow_ratio_zero(p->partplate_list.get_curr_plate_index()))
+    {
+        sync_flow_ratio_zero_notification();
+        if (p->m_slice_all)
+        {
+            SlicingProcessCompletedEvent evt(EVT_PROCESS_COMPLETED, 0,
+                    SlicingProcessCompletedEvent::Finished, nullptr);
+            wxQueueEvent(this, evt.Clone());
+            return 0;
+        }
+        p->process_completed_with_error = p->partplate_list.get_curr_plate_index();
+        return -1;
+    }
+
     //FIXME Don't reslice if export of G-code or sending to OctoPrint is running.
     // bitmask of UpdateBackgroundProcessReturnState
     unsigned int state = this->p->update_background_process(true, false, false);
@@ -20906,6 +21050,15 @@ void Plater::config_change_notification(const DynamicPrintConfig &config, const 
 
 bool Plater::check_filament_temp_mixing(int plate_index)
 {
+    FilamentTempMixingDetail unused;
+    return check_filament_temp_mixing(plate_index, unused);
+}
+
+bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail)
+{
+    detail.high_temp_slots_1based.clear();
+    detail.low_temp_slots_1based.clear();
+
     // Boundary checks
     PartPlate* plate = nullptr;
     const DynamicPrintConfig&  full_cfg             = wxGetApp().preset_bundle->full_config();
@@ -20934,10 +21087,72 @@ bool Plater::check_filament_temp_mixing(int plate_index)
             return true;
     }
 
-    // Collect filament slots actually used on this plate (shared with cold-plate check).
+    // Collect filament slots actually used on this plate
     std::set<int> used_slots_0_based;
-    const int num_filaments = static_cast<int>(filament_type_option->values.size());
-    collect_used_filament_slots_on_plate(plate, num_filaments, this->config(), full_cfg, used_slots_0_based);
+    {
+        // Plate config
+        const int num_filaments = static_cast<int>(filament_type_option->values.size());
+        collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
+
+        // ModelObject config
+        bool uses_default_extruder = false;
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+            const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+            if (!model_object_is_on_plate(plate, obj_idx, model_object))
+                continue;
+            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+
+            if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
+                uses_default_extruder = true;
+
+            // ModelVolume config
+            for (const ModelVolume* model_volume : model_object->volumes) {
+                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+                for (int extruder_id : model_volume->get_extruders()) {
+                    if (extruder_id >= 1 && extruder_id <= num_filaments)
+                        used_slots_0_based.insert(extruder_id - 1);
+                }
+            }
+        }
+
+        // Collect from the Plater working config. The approach balances
+        // sensitivity against false positives:
+        // - Global features (wipe tower, support) always apply -> always collected.
+        // - Feature-specific keys (wall_filament, infill) depend on the global
+        //   process defaults. They are only collected when at least one object
+        //   on the plate uses the default extruder (e=0), which means those
+        //   defaults WILL affect the actual slicing output.
+        {
+            // Always collect: features that cannot be overridden per-object.
+            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
+            for (const char* key : always_collect) {
+                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots_0_based.insert(option->value - 1);
+            }
+
+            // If any object uses e=0, the global process defaults for
+            // wall / infill extruders apply and must be collected.
+            if (uses_default_extruder) {
+                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+                for (const char* key : default_keys) {
+                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
+                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                        used_slots_0_based.insert(option->value - 1);
+                }
+            }
+        }
+
+        // Resolve the global default extruder if any object on this plate
+        // uses extruder=0. p->config does not include the "extruder" key
+        // (it is not in the initializer list at priv constructor), so we
+        // must read it from full_config() instead.
+        if (uses_default_extruder) {
+            const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
+            if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
+                used_slots_0_based.insert(extruder_opt->value - 1);
+        }
+    }
     if (used_slots_0_based.empty())
         return true;
 
@@ -20945,24 +21160,35 @@ bool Plater::check_filament_temp_mixing(int plate_index)
     // own config rather than through full_config(). full_config() builds a
     // merged snapshot that may lag behind when called from Sidebar hooks
     // (the edited preset config hasn't been committed yet).
+    //
+    // `used_slots_0_based` is a std::set<int> so iteration is ascending and
+    // de-duplicated; the 1-based vectors we fill here inherit that ordering.
     bool has_high = false, has_low = false;
     {
         PresetBundle* bundle = wxGetApp().preset_bundle;
         for (int slot : used_slots_0_based) {
-            if (slot < static_cast<int>(bundle->filament_presets.size())) {
-                const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
-                if (preset != nullptr) {
-                    const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
-                    if (is_high)
-                        has_high = true;
-                    else
-                        has_low = true;
-                }
+            if (slot < 0 || slot >= static_cast<int>(bundle->filament_presets.size()))
+                continue;
+            const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
+            if (preset == nullptr)
+                continue;
+            const bool is_high = preset->config.opt_bool("filament_is_high_temperature", 0);
+            if (is_high) {
+                has_high = true;
+                detail.high_temp_slots_1based.push_back(slot + 1);
+            } else {
+                has_low = true;
+                detail.low_temp_slots_1based.push_back(slot + 1);
             }
         }
     }
 
     const bool compatible = !(has_high && has_low);
+    if (compatible) {
+        // No conflict - clear detail so callers can't read stale partial data.
+        detail.high_temp_slots_1based.clear();
+        detail.low_temp_slots_1based.clear();
+    }
     return compatible;
 }
 
@@ -21006,13 +21232,16 @@ bool Plater::is_plate_sliceable(int plate_index)
     // on them at individual GLCanvas3D / MainFrame call sites.
     //
     // Pending blockers (not yet on this branch):
-    //   - is_plate_blocked_by_flow_ratio_zero (PR #626)
     //   - is_plate_blocked_by_filament_temp_mixing_cached (PR #589 perf
     //     variant; non-cached call below is the temporary form until #589
     //     rebases on top and swaps in the cached lookup).
     if (is_plate_blocked_by_filament_temp_mixing(plate_index))
         return false;
-    return !is_plate_blocked_by_cold_plate(plate_index);
+    if (is_plate_blocked_by_cold_plate(plate_index))
+        return false;
+    if (is_plate_blocked_by_flow_ratio_zero(plate_index))
+        return false;
+    return true;
 }
 
 int Plater::find_next_sliceable_plate_for_slice_all(int start_plate_index)
@@ -21042,33 +21271,52 @@ bool Plater::sync_filament_temp_mixing_notification()
     const FilamentTempMixingState mixing_state = get_filament_temp_mixing_state(curr_plate_index);
     bool slicing_allowed = true;
 
+    // 1. Always close the previously-pushed notifications using their exact
+    //    cached text. NotificationManager::close_validate_* matches on text,
+    //    so we cannot use a freshly regenerated template string here - it
+    //    would not match the previous (possibly different) body.
+    NotificationManager* nm = get_notification_manager();
+    if (!p->filament_temp_mixing_last_error_text.empty()) {
+        nm->close_validate_error_notification(p->filament_temp_mixing_last_error_text);
+        p->filament_temp_mixing_last_error_text.clear();
+    }
+    if (!p->filament_temp_mixing_last_warning_text.empty()) {
+        nm->close_validate_warning_notification(p->filament_temp_mixing_last_warning_text);
+        p->filament_temp_mixing_last_warning_text.clear();
+    }
+
+    // 2. Compute the per-plate detail (used by both warning and error text).
+    FilamentTempMixingDetail detail;
+    if (mixing_state != FilamentTempMixingState::Compatible)
+        check_filament_temp_mixing(curr_plate_index, detail);
+
     switch (mixing_state)
     {
     case FilamentTempMixingState::Compatible:
-        get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
-        get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
-        // Filament temp mixing is compatible — only clear our own notification,
+        // Filament temp mixing is compatible - only clear our own notification,
         // do NOT touch m_apply_invalid. Bed type mismatch or other validation
         // errors must not be cleared by the filament temp mixing system.
         slicing_allowed = true;
         break;
-    case FilamentTempMixingState::AllowedWarning:
-        get_notification_manager()->close_validate_error_notification(filament_temp_mixing_error_text());
-        get_notification_manager()->push_notification(
+    case FilamentTempMixingState::AllowedWarning: {
+        const std::string body = tr_u8("WARNING:") + "\n" + filament_temp_mixing_warning_text(detail);
+        nm->push_notification(
             NotificationType::ValidateWarning,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
-            _u8L("WARNING:") + "\n" + filament_temp_mixing_warning_text());
+            body);
+        p->filament_temp_mixing_last_warning_text = body;
         slicing_allowed = true;
         break;
+    }
     case FilamentTempMixingState::BlockedError: {
         StringObjectException err;
         err.type   = STRING_EXCEPT_FILAMENTS_MIXING_TEMP;
-        err.string = filament_temp_mixing_error_text();
-        get_notification_manager()->close_validate_warning_notification(filament_temp_mixing_warning_text());
-        get_notification_manager()->push_validate_error_notification(err);
+        err.string = filament_temp_mixing_error_text(detail);
+        nm->push_validate_error_notification(err);
+        p->filament_temp_mixing_last_error_text = err.string;
         // Blocking is enforced through get_enable_slice_status() / find_next_sliceable_plate_for_slice_all()
         // which independently check is_plate_blocked_by_filament_temp_mixing().
-        // Do NOT set m_apply_invalid — that flag belongs to the background validation system.
+        // Do NOT set m_apply_invalid - that flag belongs to the background validation system.
         slicing_allowed = false;
         break;
     }
@@ -21081,6 +21329,157 @@ bool Plater::sync_filament_temp_mixing_notification()
     p->filament_temp_mixing_notification_initialized = true;
     p->filament_temp_mixing_notification_plate = curr_plate_index;
     p->filament_temp_mixing_notification_state = mixing_state;
+
+    const bool can_slice = curr_plate->can_slice() && slicing_allowed;
+    p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
+    return slicing_allowed;
+}
+
+bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
+{
+    detail.offender_slots_1based.clear();
+
+    // Boundary checks (mirror check_filament_temp_mixing).
+    PartPlate* plate = nullptr;
+    const DynamicPrintConfig&  full_cfg             = wxGetApp().preset_bundle->full_config();
+    const ConfigOptionStrings* filament_type_option = full_cfg.option<ConfigOptionStrings>("filament_type");
+    {
+        if (filament_type_option == nullptr || filament_type_option->values.empty())
+            return true;
+
+        const int plate_count = p->partplate_list.get_plate_count();
+        if (plate_index < 0 || plate_index >= plate_count)
+            return true;
+
+        plate = p->partplate_list.get_plate(plate_index);
+        if (plate == nullptr)
+            return true;
+
+        bool has_object_on_plate = false;
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+            const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+            if (model_object_is_on_plate(plate, obj_idx, model_object)) {
+                has_object_on_plate = true;
+                break;
+            }
+        }
+        if (!has_object_on_plate)
+            return true;
+    }
+
+    // Collect filament slots actually used on this plate (same shared logic).
+    std::set<int> used_slots_0_based;
+    {
+        const int num_filaments = static_cast<int>(filament_type_option->values.size());
+        collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
+
+        bool uses_default_extruder = false;
+        for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
+            const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
+            if (!model_object_is_on_plate(plate, obj_idx, model_object))
+                continue;
+            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+
+            if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
+                uses_default_extruder = true;
+
+            for (const ModelVolume* model_volume : model_object->volumes) {
+                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+                for (int extruder_id : model_volume->get_extruders()) {
+                    if (extruder_id >= 1 && extruder_id <= num_filaments)
+                        used_slots_0_based.insert(extruder_id - 1);
+                }
+            }
+        }
+
+        {
+            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
+            for (const char* key : always_collect) {
+                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots_0_based.insert(option->value - 1);
+            }
+
+            if (uses_default_extruder) {
+                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+                for (const char* key : default_keys) {
+                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
+                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                        used_slots_0_based.insert(option->value - 1);
+                }
+            }
+        }
+
+        if (uses_default_extruder) {
+            const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
+            if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
+                used_slots_0_based.insert(extruder_opt->value - 1);
+        }
+    }
+    if (used_slots_0_based.empty())
+        return true;
+
+    // Read filament_flow_ratio from each used preset's own config (same defensive
+    // pattern as filament_is_high_temperature in check_filament_temp_mixing).
+    // `<=` rather than `== 0.0` to dodge floating-point comparison traps.
+    {
+        PresetBundle* bundle = wxGetApp().preset_bundle;
+        for (int slot : used_slots_0_based) {
+            if (slot < 0 || slot >= static_cast<int>(bundle->filament_presets.size()))
+                continue;
+            const Preset* preset = bundle->filaments.find_preset(bundle->filament_presets[slot], true);
+            if (preset == nullptr)
+                continue;
+            const double ratio = preset->config.opt_float("filament_flow_ratio", 0);
+            if (ratio <= 0.0)
+                detail.offender_slots_1based.push_back(slot + 1);
+        }
+    }
+
+    return detail.offender_slots_1based.empty();
+}
+
+bool Plater::is_plate_blocked_by_flow_ratio_zero(int plate_index)
+{
+    FlowRatioZeroDetail unused;
+    return !check_flow_ratio_zero(plate_index, unused);
+}
+
+bool Plater::sync_flow_ratio_zero_notification()
+{
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    if (curr_plate == nullptr) {
+        BOOST_LOG_TRIVIAL(warning) << "[Plater] sync_flow_ratio_zero_notification: curr_plate is null";
+        return true;
+    }
+
+    const int curr_plate_index = get_partplate_list().get_curr_plate_index();
+    FlowRatioZeroDetail detail;
+    const bool blocked = !check_flow_ratio_zero(curr_plate_index, detail);
+    bool slicing_allowed = true;
+
+    NotificationManager* nm = get_notification_manager();
+
+    // 1. Close any previously-pushed banner using its exact cached text.
+    //    close_validate_error_notification() matches by text, so we must use
+    //    the cached string (which may differ from a freshly regenerated body).
+    if (!p->flow_ratio_zero_last_error_text.empty()) {
+        nm->close_validate_error_notification(p->flow_ratio_zero_last_error_text);
+        p->flow_ratio_zero_last_error_text.clear();
+    }
+
+    // 2. Push a fresh banner only if blocked. Blocking itself is enforced
+    //    independently by get_enable_slice_status() / find_next_sliceable_plate_for_slice_all()
+    //    via is_plate_blocked_by_flow_ratio_zero(), so we do NOT touch m_apply_invalid
+    //    (that flag belongs to the background validation system).
+    if (blocked) {
+        StringObjectException err;
+        err.type   = STRING_EXCEPT_FLOW_RATIO_ZERO;
+        err.string = flow_ratio_zero_error_text(detail);
+        nm->push_validate_error_notification(err);
+        p->flow_ratio_zero_last_error_text = err.string;
+        slicing_allowed = false;
+    }
 
     const bool can_slice = curr_plate->can_slice() && slicing_allowed;
     p->main_frame->update_slice_print_status(MainFrame::eEventPlateUpdate, can_slice);
@@ -21243,18 +21642,21 @@ bool Plater::sync_cold_plate_notification()
 bool Plater::guard_before_slice_plate()
 {
     sync_filament_temp_mixing_notification();
+    sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
     return confirm_filament_temp_mixing_before_slice();
 }
 
 bool Plater::guard_before_slice_all()
 {
+    sync_flow_ratio_zero_notification();
     return confirm_filament_temp_mixing_before_slice_all();
 }
 
 bool Plater::confirm_filament_temp_mixing_before_slice()
 {
-    switch (get_filament_temp_mixing_state())
+    const FilamentTempMixingState state = get_filament_temp_mixing_state();
+    switch (state)
     {
     case FilamentTempMixingState::Compatible:
         return true;
@@ -21266,11 +21668,20 @@ bool Plater::confirm_filament_temp_mixing_before_slice()
         break;
     default:
         BOOST_LOG_TRIVIAL(warning) << "[Plater] confirm_filament_temp_mixing_before_slice: unknown state "
-                                   << static_cast<int>(get_filament_temp_mixing_state());
+                                   << static_cast<int>(state);
         return true;
     }
 
-    MessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+    // Show the actual high/low filament breakdown so the user can see which
+    // slots are involved before deciding. MessageDialog takes wxString, so
+    // convert the UTF-8 body produced by the text builder.
+    FilamentTempMixingDetail detail;
+    check_filament_temp_mixing(p->partplate_list.get_curr_plate_index(), detail);
+    const std::string body = filament_temp_mixing_warning_text(detail)
+                             + "\n"
+                             + tr_u8("Do you want to continue?");
+
+    MessageDialog dlg(this, wxString::FromUTF8(body.c_str()),
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
     dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
     dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
@@ -21282,25 +21693,34 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
     if (!has_sliceable_plate_for_slice_all())
         return false;
 
-    // Only count plates that can be sliced AND haven't been sliced
-    // yet. Already-sliced plates don't need re-confirmation.
-    bool has_allowed_warning = false;
+    // Collect every sliceable, not-yet-sliced plate that is currently in the
+    // AllowedWarning state, along with its high/low filament breakdown so the
+    // confirmation dialog can show per-plate details.
+    std::vector<PlateMixingInfo> mixing_plates;
     for (int plate_index = 0; plate_index < p->partplate_list.get_plate_count(); ++plate_index)
     {
         PartPlate* plate = p->partplate_list.get_plate(plate_index);
-        if (plate != nullptr && plate->can_slice() &&
-            !plate->is_slice_result_valid() &&
-            get_filament_temp_mixing_state(plate_index) == FilamentTempMixingState::AllowedWarning)
-        {
-            has_allowed_warning = true;
-            break;
-        }
+        if (plate == nullptr || !plate->can_slice() || plate->is_slice_result_valid())
+            continue;
+        if (get_filament_temp_mixing_state(plate_index) != FilamentTempMixingState::AllowedWarning)
+            continue;
+
+        PlateMixingInfo info;
+        info.plate_index_1based = plate_index + 1;
+        // state == AllowedWarning guarantees a mixing conflict exists, so the
+        // detail will be populated.
+        check_filament_temp_mixing(plate_index, info.detail);
+        mixing_plates.push_back(info);
     }
 
-    if (!has_allowed_warning)
+    if (mixing_plates.empty())
         return true;
 
-    MessageDialog dlg(this, _L("This material combination may cause risks. Do you want to continue?"),
+    const std::string body = filament_temp_mixing_warning_text_slice_all(mixing_plates)
+                             + "\n"
+                             + tr_u8("Do you want to continue?");
+
+    MessageDialog dlg(this, wxString::FromUTF8(body.c_str()),
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
     dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
     dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
@@ -22161,6 +22581,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
     SimpleEvent event(EVT_GLCANVAS_PLATE_SELECT);
     p->on_plate_selected(event);
     sync_filament_temp_mixing_notification();
+    sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;
@@ -22243,6 +22664,7 @@ void Plater::validate_current_plate(bool& model_fits, bool& validate_error)
         }
 
         sync_filament_temp_mixing_notification();
+        sync_flow_ratio_zero_notification();
         sync_cold_plate_notification();
     }
 

@@ -770,6 +770,11 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
         if (param == "allow_filament_temp_mixing" && wxGetApp().plater())
             wxGetApp().plater()->notify_filament_usage_changed();
 
+        // Turning "Stay signed in" off must drop what is already stored,
+        // not just stop storing from now on.
+        if (param == "remember_login" && !checkbox->GetValue())
+            wxGetApp().sm_forget_persisted_login();
+
         if (param == PRIVACY_POLICY_FLAGS)
             {
             app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());
@@ -1234,6 +1239,12 @@ wxWindow* PreferencesDialog::create_general_page()
     #endif
             50, "single_instance");
 
+    auto item_remember_login = create_item_checkbox(_L("Stay signed in"), page,
+        _L("Keep your Snapmaker account signed in between sessions. The access token is stored in the "
+           "operating system's secret store (Credential Manager, Keychain or the desktop keyring), never in "
+           "a configuration file. Turning this off signs you out of the stored session."),
+        50, "remember_login");
+
     std::vector<wxString> DefaultPage = {_L("Home"), _L("Prepare")};
     auto item_default_page = create_item_combobox(_L("Default Page"), page, _L("Set the page opened on startup."), "default_page", DefaultPage);
 
@@ -1360,6 +1371,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_default_page, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_camera_navigation_style, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_single_instance, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_remember_login, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_mouse_zoom_settings, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_use_free_camera_settings, 0, wxTOP, FromDIP(3));
     sizer_page->Add(swap_pan_rotate, 0, wxTOP, FromDIP(3));

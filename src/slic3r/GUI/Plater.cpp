@@ -17879,9 +17879,10 @@ void Plater::load_gcode(const wxString& filename)
     // Reject a missing / inaccessible file up front. Without this check the
     // code below would walk through process_file -> parse_file_raw_internal,
     // which used to crash on a NULL FILE* (now it just returns false), and
-    // surface the misleading "does not contain valid G-code" message even when
-    // the real problem is that the file doesn't exist at all.
-    if (!wxFileExists(filename)) {
+    // would otherwise surface the misleading "does not contain valid G-code"
+    // message even when the real problem is that the file doesn't exist at all.
+    if (!wxFileExists(filename))
+    {
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": file does not exist: " << filename;
         MessageDialog(this,
             _L("The selected file") + ":\n" + filename + "\n" + _L("does not exist."),

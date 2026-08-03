@@ -15339,4 +15339,7 @@ msgid ""
 "To continue printing, enable \"Allow mixed printing of high and low "
 "temperature materials\" in Preferences."
 msgstr ""
-"如需继续打印，请在「偏好设置」中开启「允许高低温耗材混打」。"
+"如需继续打印，请在「偏好设置」中开启「允许高低温耗材混打」。"msgstr "多色"
+
+msgid "does not exist."
+msgstr "不存在。"

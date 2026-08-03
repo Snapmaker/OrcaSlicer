@@ -127,9 +127,10 @@ bool GCodeReader::parse_file_raw_internal(const std::string &filename, ParseLine
 {
     FilePtr in{ boost::nowide::fopen(filename.c_str(), "rb") };
     if (in.f == nullptr) {
-        // fopen failed — file missing, inaccessible, or path invalid.
+        // fopen failed: file missing, inaccessible, or path invalid.
         // Returning false here prevents ::fread(buffer.data(), 1, ..., NULL)
-        // below, which would otherwise trigger a CRT invalid-parameter crash.
+        // below, which would otherwise trigger a CRT invalid-parameter crash
+        // on Windows (and similarly undefined behavior elsewhere).
         BOOST_LOG_TRIVIAL(error) << "GCodeReader::parse_file_raw_internal: "
                                  << "failed to open file '" << filename << "'";
         return false;

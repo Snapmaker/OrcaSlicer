@@ -926,12 +926,22 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             position.z() = z;
             gcodegen.writer().set_position(position);
 
+            if (new_extruder_id >= 0 && !gcodegen.config().single_extruder_multi_material.value) {
+                double tlc = gcodegen.config().retract_length_toolchange.get_at(new_extruder_id);
+                if (tlc > 0.) {
+                    double cur = gcodegen.writer().extruder()->retracted();
+                    if (cur < tlc - EPSILON)
+                        gcodegen.writer().extruder()->set_retracted(tlc,
+                            gcodegen.config().retract_restart_extra_toolchange.get_at(new_extruder_id));
+                }
+            }
+
             if (tcr.is_contact && gcodegen.m_config.enable_tower_interface_features) {
                 float load_length = gcodegen.m_config.filament_tower_interface_pre_extrusion_length.get_at(tcr.new_tool);
                 if (load_length > 0.f)
                     gcodegen.writer().extruder()->set_retracted(load_length, 0.0);
             }
-            deretraction_str += gcodegen.unretract();
+
         }
     }
 
@@ -953,7 +963,10 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         }
         gcodegen.set_last_pos(target_obj);
     }
+    if (gcodegen.config().enable_prime_tower)
+        deretraction_str += gcodegen.unretract();
     toolchange_gcode_str += deretraction_str;
+
 
     DynamicConfig config;
     config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));

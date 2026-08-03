@@ -2558,9 +2558,24 @@ void priv::create_face_types(FaceTypeMap           &map,
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
 bool priv::clip_cut(SurfacePatch &cut, CutMesh clipper)
 {
-    CutMesh& tm = cut.mesh; 
+    CutMesh& tm = cut.mesh;
+    auto is_mesh_usable_for_clip = [](const CutMesh &mesh) {
+        return !mesh.is_empty() &&
+               mesh.number_of_vertices() >= 3 &&
+               mesh.number_of_faces() > 0 &&
+               mesh.is_valid(false);
+    };
+
+    if (!is_mesh_usable_for_clip(tm) || !is_mesh_usable_for_clip(clipper))
+        return false;
+
+    // Hard-stop pathological inputs before entering corefinement internals.
+    if (CGAL::Polygon_mesh_processing::does_self_intersect(tm) ||
+        CGAL::Polygon_mesh_processing::does_self_intersect(clipper))
+        return false;
+
     // create backup for case that there is no intersection
-    CutMesh backup_copy = tm; 
+    CutMesh backup_copy = tm;
 
     class ExistIntersectionClipVisitor: public CGAL::Polygon_mesh_processing::Corefinement::Default_visitor<CutMesh>
     {

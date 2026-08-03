@@ -5249,9 +5249,19 @@ void PrintObject::slice_volumes()
     this->apply_conical_overhang();
 
     // Is any ModelVolume multi-material painted?
+    // Fixed: require >1 used_states to avoid triggering MMU on unpainted models
+    // that have non-empty mmu_segmentation_facets data structure.
     if (const auto& volumes = this->model_object()->volumes;
         m_print->config().filament_diameter.size() > 1 && // BBS
-        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume* v) { return !v->mmu_segmentation_facets.empty(); }) != volumes.end()) {
+        std::find_if(volumes.begin(), volumes.end(), [](const ModelVolume* v) {
+            const auto& d = v->mmu_segmentation_facets.get_data();
+            if (d.triangles_to_split.empty())
+                return false;
+            int used = 0;
+            for (bool b : d.used_states)
+                if (b) ++used;
+            return used > 1;
+        }) != volumes.end()) {
 
         // If XY Size compensation is also enabled, notify the user that XY Size compensation
         // would not be used because the object is multi-material painted.

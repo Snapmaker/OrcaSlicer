@@ -69,5 +69,8 @@
     "slow_down_layer_time": [
         "10"
     ],
-    "filament_z_hop_types": ["Slope Lift"]
+    "filament_z_hop_types": ["Slope Lift"],
+  "supertack_plate_temp": ["40"],
+  "supertack_plate_temp_initial_layer": ["40"],
+  "filament_type": ["TPU"]
 }

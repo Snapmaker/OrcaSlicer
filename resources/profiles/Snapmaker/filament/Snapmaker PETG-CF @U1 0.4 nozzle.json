@@ -39,5 +39,8 @@
   "pressure_advance": ["0.02"],
   "temperature_vitrification": ["70"],
   "textured_plate_temp": ["80"],
-  "textured_plate_temp_initial_layer": ["80"]
+  "textured_plate_temp_initial_layer": ["80"],
+  "supertack_plate_temp": ["60"],
+  "supertack_plate_temp_initial_layer": ["60"],
+  "filament_type": ["PETG-CF"]
 }

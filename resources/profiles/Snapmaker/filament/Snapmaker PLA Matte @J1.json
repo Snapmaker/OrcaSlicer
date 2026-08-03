@@ -22,5 +22,6 @@
   ],
   "slow_down_layer_time": [
       "16"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

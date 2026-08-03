@@ -38,5 +38,7 @@
   "nozzle_temperature_range_low": ["190"],
   "pressure_advance": ["0.03"],
   "textured_plate_temp": ["65"],
-  "textured_plate_temp_initial_layer": ["65"]
+  "textured_plate_temp_initial_layer": ["65"],
+  "supertack_plate_temp": ["40"],
+  "supertack_plate_temp_initial_layer": ["40"]
 }

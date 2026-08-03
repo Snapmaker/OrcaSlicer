@@ -18,5 +18,6 @@
   ],
   "filament_max_volumetric_speed": [
     "12.8"
-  ]
+  ],
+  "filament_type": ["PLA-CF"]
 }

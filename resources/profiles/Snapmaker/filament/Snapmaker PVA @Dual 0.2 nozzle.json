@@ -24,5 +24,6 @@
   ],
   "nozzle_temperature": [
     "220"
-  ]
+  ],
+  "filament_type": ["PVA"]
 }

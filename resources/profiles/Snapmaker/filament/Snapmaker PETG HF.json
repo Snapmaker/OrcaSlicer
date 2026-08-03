@@ -65,5 +65,8 @@
     "filament_deretraction_speed": ["nil", "40"],
     "filament_z_hop_types": ["nil", "Slope Lift"],
     "filament_wipe_distance": ["nil", "1"],
-    "filament_flow_support": ["standard", "high_flow"]
+    "filament_flow_support": ["standard", "high_flow"],
+  "supertack_plate_temp": ["60"],
+  "supertack_plate_temp_initial_layer": ["60"],
+  "filament_type": ["PETG"]
 }

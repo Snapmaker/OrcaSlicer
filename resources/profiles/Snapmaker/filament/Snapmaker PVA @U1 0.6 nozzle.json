@@ -43,5 +43,6 @@
   "filament_multitool_ramming_volume": ["5"],
   "filament_unloading_speed": ["90"],
   "filament_unloading_speed_start": ["100"],
-  "fan_min_speed": ["100"]
+  "fan_min_speed": ["100"],
+  "filament_type": ["PVA"]
 }

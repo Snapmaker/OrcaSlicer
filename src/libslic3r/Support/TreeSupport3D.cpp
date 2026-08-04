@@ -3525,15 +3525,14 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
             auto t_place = std::chrono::high_resolution_clock::now();
             // DEBUG_CROSS_MACHINE: log nodes after placement
             {
-                size_t total_nodes = 0;
+                size_t total_elements = 0;
                 size_t nonempty_layers = 0;
                 for (const auto& mb : move_bounds) {
                     if (!mb.empty()) nonempty_layers++;
-                    for (const auto& elem : mb)
-                        if (elem.state.node_placed) total_nodes++;
+                    total_elements += mb.size();
                 }
                 BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] create_nodes_from_area done: nonempty_layers="
-                    << nonempty_layers << " total_nodes=" << total_nodes;
+                    << nonempty_layers << " total_elements=" << total_elements;
             }
 
             // ### draw these points as circles

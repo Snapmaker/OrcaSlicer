@@ -1812,6 +1812,25 @@ void GLCanvas3D::zoom_to_plate(int plate_idx)
     }
 }
 
+void GLCanvas3D::ZoomToFit()
+{
+    select_view("plate");
+
+    if (!m_selection.is_empty())
+    {
+        zoom_to_selection();
+        return;
+    }
+
+    if (m_canvas_type == ECanvasType::CanvasAssembleView)
+    {
+        zoom_to_volumes();
+        return;
+    }
+
+    zoom_to_bed();
+}
+
 void GLCanvas3D::select_view(const std::string& direction)
 {
     wxGetApp().plater()->get_camera().select_view(direction);
@@ -5901,6 +5920,63 @@ void GLCanvas3D::_render_3d_navigator()
 
         request_extra_frame();
     }
+
+    const float fitButtonSize = ImGui::GetFontSize() * 2.5f;
+    const float fitButtonGap = 8.0f * sc;
+    const float fitButtonLeft = viewManipulateLeft + size + fitButtonGap;
+    const float fitButtonTop = viewManipulateTop - fitButtonSize - 20.0f * sc;
+    RenderFitCameraButton(fitButtonLeft, fitButtonTop, fitButtonSize);
+}
+
+void GLCanvas3D::RenderFitCameraButton(float left, float top, float buttonSize)
+{
+    if (buttonSize <= 0.0f)
+    {
+        return;
+    }
+
+    const GLGizmosManager::MENU_ICON_NAME normalIcon = m_is_dark ?
+        GLGizmosManager::IC_FIT_CAMERA_DARK : GLGizmosManager::IC_FIT_CAMERA;
+    const GLGizmosManager::MENU_ICON_NAME hoverIcon = m_is_dark ?
+        GLGizmosManager::IC_FIT_CAMERA_DARK_HOVER : GLGizmosManager::IC_FIT_CAMERA_HOVER;
+
+    if (!m_gizmos.init_icon_textures())
+    {
+        return;
+    }
+
+    const ImTextureID normalId = m_gizmos.get_icon_texture_id(normalIcon);
+    const ImTextureID hoverId = m_gizmos.get_icon_texture_id(hoverIcon);
+    if (normalId == nullptr || hoverId == nullptr)
+    {
+        return;
+    }
+
+    ImGuiWrapper& imgui = *wxGetApp().imgui();
+    imgui.set_next_window_pos(left, top, ImGuiCond_Always, 0.0f, 0.0f);
+    imgui.set_next_window_size(buttonSize, buttonSize, ImGuiCond_Always);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    imgui.begin(std::string("FitCameraButtonWindow"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground |
+                                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
+                                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                                      ImGuiWindowFlags_NoSavedSettings);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    if (ImGui::ImageButton3(normalId, hoverId, ImVec2(buttonSize, buttonSize)))
+    {
+        ZoomToFit();
+    }
+
+    if (ImGui::IsItemHovered())
+    {
+        imgui.tooltip(_L("Fit in all view"), ImGui::GetFontSize() * 20.0f);
+    }
+
+    ImGui::PopStyleVar(2);
+    imgui.end();
+    ImGui::PopStyleVar();
 }
 
 #define ENABLE_THUMBNAIL_GENERATOR_DEBUG_OUTPUT 0

@@ -2,9 +2,9 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Polymaker Silk PLA Family @U1",
+    "name": "Polymaker Silk PLA Family @U1 0.4 nozzle",
     "setting_id": "POLY_SILK_PLA_U1_001",
-    "inherits": "fdm_filament_pla_silk_category",
+    "inherits": "Polymaker Silk PLA Family @U1 base",
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],

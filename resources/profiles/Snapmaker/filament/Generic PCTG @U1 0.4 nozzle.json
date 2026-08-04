@@ -2,9 +2,9 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Generic PCTG",
+    "name": "Generic PCTG @U1 0.4 nozzle",
     "setting_id": "GFSG97_001",
-    "inherits": "fdm_filament_pctg_category",
+    "inherits": "Generic PCTG @U1 base",
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],

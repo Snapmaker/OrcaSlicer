@@ -589,36 +589,44 @@
       "sub_path": "filament/fdm_filament_pa_category.json"
     },
     {
-      "name": "Generic PA",
-      "sub_path": "filament/Generic PA.json"
+      "name": "Generic PA @U1 base",
+      "sub_path": "filament/Generic PA @U1 base.json"
+    },
+    {
+      "name": "Generic PA @U1 0.4 nozzle",
+      "sub_path": "filament/Generic PA @U1 0.4 nozzle.json"
     },
     {
       "name": "fdm_filament_pa_cf_category",
       "sub_path": "filament/fdm_filament_pa_cf_category.json"
     },
     {
-      "name": "Generic PA-CF",
-      "sub_path": "filament/Generic PA-CF.json"
+      "name": "Generic PA-CF @U1 base",
+      "sub_path": "filament/Generic PA-CF @U1 base.json"
+    },
+    {
+      "name": "Generic PA-CF @U1 0.4 nozzle",
+      "sub_path": "filament/Generic PA-CF @U1 0.4 nozzle.json"
     },
     {
       "name": "fdm_filament_pc_category",
       "sub_path": "filament/fdm_filament_pc_category.json"
     },
     {
-      "name": "fdm_filament_support_pva_category",
-      "sub_path": "filament/fdm_filament_support_pva_category.json"
+      "name": "fdm_filament_pva_category",
+      "sub_path": "filament/fdm_filament_pva_category.json"
     },
     {
       "name": "fdm_filament_support_pla_category",
       "sub_path": "filament/fdm_filament_support_pla_category.json"
     },
     {
-      "name": "fdm_filament_unknown_category",
-      "sub_path": "filament/fdm_filament_unknown_category.json"
+      "name": "Generic PVA @U1 base",
+      "sub_path": "filament/Generic PVA @U1 base.json"
     },
     {
-      "name": "Generic PVA",
-      "sub_path": "filament/Generic PVA.json"
+      "name": "Generic PVA @U1 0.4 nozzle",
+      "sub_path": "filament/Generic PVA @U1 0.4 nozzle.json"
     },
     {
       "name": "fdm_filament_petg_category",
@@ -633,8 +641,12 @@
       "sub_path": "filament/fdm_filament_pctg_category.json"
     },
     {
-      "name": "Generic PCTG",
-      "sub_path": "filament/Generic PCTG.json"
+      "name": "Generic PCTG @U1 base",
+      "sub_path": "filament/Generic PCTG @U1 base.json"
+    },
+    {
+      "name": "Generic PCTG @U1 0.4 nozzle",
+      "sub_path": "filament/Generic PCTG @U1 0.4 nozzle.json"
     },
     {
       "name": "fdm_filament_petg_hf_category",
@@ -669,16 +681,16 @@
       "sub_path": "filament/fdm_filament_support_bvoh_category.json"
     },
     {
-      "name": "Generic BVOH",
-      "sub_path": "filament/Generic BVOH.json"
+      "name": "Generic BVOH @U1 base",
+      "sub_path": "filament/Generic BVOH @U1 base.json"
+    },
+    {
+      "name": "Generic BVOH @U1 0.4 nozzle",
+      "sub_path": "filament/Generic BVOH @U1 0.4 nozzle.json"
     },
     {
       "name": "fdm_filament_tpu_95a_hf_category",
       "sub_path": "filament/fdm_filament_tpu_95a_hf_category.json"
-    },
-    {
-      "name": "fdm_filament_pla",
-      "sub_path": "filament/fdm_filament_pla.json"
     },
     {
       "name": "Snapmaker ABS",
@@ -1201,16 +1213,28 @@
       "sub_path": "filament/Snapmaker PVA @U1 base.json"
     },
     {
-      "name": "Polymaker General PLA Family @U1",
-      "sub_path": "filament/Polymaker General PLA Family @U1.json"
+      "name": "Polymaker General PLA Family @U1 base",
+      "sub_path": "filament/Polymaker General PLA Family @U1 base.json"
     },
     {
-      "name": "Polymaker Silk PLA Family @U1",
-      "sub_path": "filament/Polymaker Silk PLA Family @U1.json"
+      "name": "Polymaker General PLA Family @U1 0.4 nozzle",
+      "sub_path": "filament/Polymaker General PLA Family @U1 0.4 nozzle.json"
     },
     {
-      "name": "Polymaker Tough PLA Family @U1",
-      "sub_path": "filament/Polymaker Tough PLA Family @U1.json"
+      "name": "Polymaker Silk PLA Family @U1 base",
+      "sub_path": "filament/Polymaker Silk PLA Family @U1 base.json"
+    },
+    {
+      "name": "Polymaker Silk PLA Family @U1 0.4 nozzle",
+      "sub_path": "filament/Polymaker Silk PLA Family @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Polymaker Tough PLA Family @U1 base",
+      "sub_path": "filament/Polymaker Tough PLA Family @U1 base.json"
+    },
+    {
+      "name": "Polymaker Tough PLA Family @U1 0.4 nozzle",
+      "sub_path": "filament/Polymaker Tough PLA Family @U1 0.4 nozzle.json"
     },
     {
       "name": "Snapmaker PLA Wood @U1 base",

@@ -2,41 +2,87 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Polymaker General PLA Family @U1",
-    "setting_id": "POLY_GENERAL_PLA_U1_001",
-    "inherits": "fdm_filament_pla_category",
+    "name": "Generic PA @U1 0.4 nozzle",
+    "setting_id": "GFSN98",
+    "filament_id": "GFN99",
+    "inherits": "Generic PA @U1 base",
+    "chamber_temperatures": [
+        "60"
+    ],
+    "fan_cooling_layer_time": [
+        "65"
+    ],
+    "fan_max_speed": [
+        "85"
+    ],
+    "fan_min_speed": [
+        "40"
+    ],
+    "filament_max_volumetric_speed": [
+        "12"
+    ],
+    "nozzle_temperature": [
+        "260"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "260"
+    ],
+    "nozzle_temperature_range_high": [
+        "280"
+    ],
+    "nozzle_temperature_range_low": [
+        "240"
+    ],
+    "overhang_fan_speed": [
+        "95"
+    ],
+    "overhang_fan_threshold": [
+        "10%"
+    ],
+    "required_nozzle_HRC": [
+        "3"
+    ],
+    "slow_down_layer_time": [
+        "8"
+    ],
+    "slow_down_min_speed": [
+        "10"
+    ],
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],
     "enable_pressure_advance": [
         "0"
     ],
-    "filament_max_volumetric_speed": [
-        "15"
+    "filament_end_gcode": [
+        ""
     ],
-    "filament_settings_id": [
-        "Polymaker General PLA Family @U1"
+    "filament_multitool_ramming": [
+        "1"
+    ],
+    "filament_multitool_ramming_flow": [
+        "12"
+    ],
+    "filament_multitool_ramming_volume": [
+        "0.5"
+    ],
+    "filament_retract_length_toolchange": [
+        "10"
+    ],
+    "filament_start_gcode": [
+        ""
     ],
     "filament_vendor": [
-        "Polymaker"
+        "Generic"
     ],
-    "nozzle_temperature_range_high": [
-        "230"
-    ],
-    "temperature_vitrification": [
-        "62"
-    ],
-    "textured_plate_temp": [
-        "65"
-    ],
-    "textured_plate_temp_initial_layer": [
-        "65"
+    "filament_is_high_temperature": [
+        "1"
     ],
     "filament_type": [
-        "PLA"
+        "PA"
     ],
     "activate_air_filtration": [
-        "0"
+        "1"
     ],
     "activate_chamber_temp_control": [
         "0"
@@ -54,13 +100,13 @@
         "0"
     ],
     "additional_cooling_fan_speed": [
-        "70"
+        "0"
     ],
     "chamber_temperature": [
         "0"
     ],
     "close_fan_the_first_x_layers": [
-        "1"
+        "3"
     ],
     "compatible_printers_condition": "",
     "compatible_prints": [],
@@ -69,10 +115,10 @@
         "70"
     ],
     "cool_plate_temp": [
-        "35"
+        "0"
     ],
     "cool_plate_temp_initial_layer": [
-        "35"
+        "0"
     ],
     "default_filament_colour": [
         ""
@@ -87,18 +133,9 @@
         "1"
     ],
     "eng_plate_temp": [
-        "0"
+        "100"
     ],
     "eng_plate_temp_initial_layer": [
-        "0"
-    ],
-    "fan_cooling_layer_time": [
-        "100"
-    ],
-    "fan_max_speed": [
-        "100"
-    ],
-    "fan_min_speed": [
         "100"
     ],
     "filament_cooling_final_speed": [
@@ -114,7 +151,7 @@
         "20"
     ],
     "filament_density": [
-        "1.24"
+        "1.04"
     ],
     "filament_deretraction_speed": [
         "nil"
@@ -122,17 +159,11 @@
     "filament_diameter": [
         "1.75"
     ],
-    "filament_end_gcode": [
-        "; filament end gcode\n"
-    ],
     "filament_flow_ratio": [
-        "0.98"
+        "1"
     ],
     "filament_flow_support": [
         "standard"
-    ],
-    "filament_is_high_temperature": [
-        "0"
     ],
     "filament_is_support": [
         "0"
@@ -149,15 +180,6 @@
     "filament_minimal_purge_on_wipe_tower": [
         "15"
     ],
-    "filament_multitool_ramming": [
-        "0"
-    ],
-    "filament_multitool_ramming_flow": [
-        "10"
-    ],
-    "filament_multitool_ramming_volume": [
-        "10"
-    ],
     "filament_notes": [
         ""
     ],
@@ -165,9 +187,6 @@
         "120 100 6.6 6.8 7.2 7.6 7.9 8.2 8.7 9.4 9.9 10.0| 0.05 6.6 0.45 6.8 0.95 7.8 1.45 8.3 1.95 9.7 2.45 10 2.95 7.6 3.45 7.6 3.95 7.6 4.45 7.6 4.95 7.6"
     ],
     "filament_retract_before_wipe": [
-        "nil"
-    ],
-    "filament_retract_length_toolchange": [
         "nil"
     ],
     "filament_retract_lift_above": [
@@ -200,6 +219,9 @@
     "filament_retraction_speed": [
         "nil"
     ],
+    "filament_settings_id": [
+        ""
+    ],
     "filament_shrink": [
         "100%"
     ],
@@ -214,9 +236,6 @@
     ],
     "filament_stamping_loading_speed": [
         "0"
-    ],
-    "filament_start_gcode": [
-        "; Filament gcode\n"
     ],
     "filament_toolchange_delay": [
         "0"
@@ -252,10 +271,10 @@
         "0"
     ],
     "hot_plate_temp": [
-        "55"
+        "100"
     ],
     "hot_plate_temp_initial_layer": [
-        "55"
+        "100"
     ],
     "idle_temperature": [
         "0"
@@ -266,21 +285,6 @@
     "ironing_fan_speed": [
         "-1"
     ],
-    "nozzle_temperature": [
-        "220"
-    ],
-    "nozzle_temperature_initial_layer": [
-        "220"
-    ],
-    "nozzle_temperature_range_low": [
-        "190"
-    ],
-    "overhang_fan_speed": [
-        "100"
-    ],
-    "overhang_fan_threshold": [
-        "50%"
-    ],
     "pellet_flow_coefficient": [
         "0.4157"
     ],
@@ -288,28 +292,22 @@
         "0.02"
     ],
     "reduce_fan_stop_start_freq": [
-        "1"
-    ],
-    "required_nozzle_HRC": [
-        "3"
+        "0"
     ],
     "slow_down_for_layer_cooling": [
         "1"
     ],
-    "slow_down_layer_time": [
-        "4"
-    ],
-    "slow_down_min_speed": [
-        "10"
-    ],
     "supertack_plate_temp": [
-        "45"
+        "35"
     ],
     "supertack_plate_temp_initial_layer": [
-        "45"
+        "35"
     ],
     "support_material_interface_fan_speed": [
         "-1"
+    ],
+    "temperature_vitrification": [
+        "108"
     ],
     "textured_cool_plate_temp": [
         "40"
@@ -317,20 +315,11 @@
     "textured_cool_plate_temp_initial_layer": [
         "40"
     ],
-    "version": "0.0.0.0",
-    "chamber_temperatures": [
-        "0"
+    "textured_plate_temp": [
+        "100"
     ],
-    "filament_scarf_seam_type": [
-        "none"
+    "textured_plate_temp_initial_layer": [
+        "100"
     ],
-    "filament_scarf_height": [
-        "10%"
-    ],
-    "filament_scarf_gap": [
-        "15%"
-    ],
-    "filament_scarf_length": [
-        "10"
-    ]
+    "version": "0.0.0.0"
 }

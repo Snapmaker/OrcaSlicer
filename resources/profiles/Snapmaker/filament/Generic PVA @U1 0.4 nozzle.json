@@ -2,9 +2,9 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Generic PVA",
+    "name": "Generic PVA @U1 0.4 nozzle",
     "setting_id": "GFSS99",
-    "inherits": "fdm_filament_support_pva_category",
+    "inherits": "Generic PVA @U1 base",
     "compatible_printers": [
         "Snapmaker U1 (0.4 nozzle)"
     ],

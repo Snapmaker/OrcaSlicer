@@ -4,11 +4,131 @@
   "instantiation": "false",
   "name": "Snapmaker PVA @J1 base",
   "filament_id": "4227461134",
-  "inherits": "fdm_filament_pva",
+  "inherits": "fdm_filament_unknown_category",
   "filament_end_gcode": [
     ""
   ],
   "slow_down_layer_time": [
     "8"
+  ],
+  "additional_cooling_fan_speed": [
+    "50"
+  ],
+  "close_fan_the_first_x_layers": [
+    "2"
+  ],
+  "complete_print_exhaust_fan_speed": [
+    "80"
+  ],
+  "cool_plate_temp": [
+    "0"
+  ],
+  "cool_plate_temp_initial_layer": [
+    "0"
+  ],
+  "during_print_exhaust_fan_speed": [
+    "60"
+  ],
+  "fan_min_speed": [
+    "35"
+  ],
+  "filament_cooling_final_speed": [
+    "3.4"
+  ],
+  "filament_cooling_initial_speed": [
+    "2.2"
+  ],
+  "filament_cooling_moves": [
+    "0"
+  ],
+  "filament_cost": [
+    "100"
+  ],
+  "filament_density": [
+    "1.27"
+  ],
+  "filament_deretraction_speed": [
+    "15"
+  ],
+  "filament_flow_ratio": [
+    "1"
+  ],
+  "filament_flow_support": [
+    "standard"
+  ],
+  "filament_loading_speed": [
+    "25"
+  ],
+  "filament_loading_speed_start": [
+    "3"
+  ],
+  "filament_max_volumetric_speed": [
+    "6"
+  ],
+  "filament_minimal_purge_on_wipe_tower": [
+    "0"
+  ],
+  "filament_multitool_ramming_flow": [
+    "10"
+  ],
+  "filament_multitool_ramming_volume": [
+    "0"
+  ],
+  "filament_retraction_length": [
+    "2"
+  ],
+  "filament_retraction_speed": [
+    "28"
+  ],
+  "filament_settings_id": [
+    "Snapmaker_PVA"
+  ],
+  "filament_soluble": [
+    "0"
+  ],
+  "filament_start_gcode": [
+    ""
+  ],
+  "filament_type": [
+    "PVA"
+  ],
+  "filament_unloading_speed": [
+    "25"
+  ],
+  "filament_unloading_speed_start": [
+    "3"
+  ],
+  "hot_plate_temp": [
+    "65"
+  ],
+  "hot_plate_temp_initial_layer": [
+    "70"
+  ],
+  "nozzle_temperature": [
+    "210"
+  ],
+  "nozzle_temperature_range_high": [
+    "230"
+  ],
+  "pellet_flow_coefficient": [
+    "0.4157"
+  ],
+  "pressure_advance": [
+    "0.04"
+  ],
+  "textured_plate_temp": [
+    "0"
+  ],
+  "textured_plate_temp_initial_layer": [
+    "0"
+  ],
+  "bed_type": [
+    "Hot Plate"
+  ],
+  "filament_load_time": [
+    "0"
+  ],
+  "filament_unload_time": [
+    "0"
   ]
 }

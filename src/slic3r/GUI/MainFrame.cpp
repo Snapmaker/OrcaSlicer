@@ -8,6 +8,7 @@
 #include <wx/sizer.h>
 #include <wx/menu.h>
 #include <wx/progdlg.h>
+#include <wx/textentry.h>
 #include <wx/tooltip.h>
 //#include <wx/glcanvas.h>
 #include <wx/filename.h>
@@ -96,6 +97,54 @@ wxDEFINE_EVENT(EVT_NETWORK_TEST_LOG_UPDATE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_BACKUP_POST, wxCommandEvent);
 wxDEFINE_EVENT(EVT_LOAD_URL, wxCommandEvent);
 wxDEFINE_EVENT(EVT_LOAD_PRINTER_URL, LoadPrinterViewEvent);
+
+/**
+ * @brief Checks whether a wxWidgets text input currently owns the focus.
+ * @return True when keyboard input belongs to a text control.
+ */
+static bool IsTextEntryFocused()
+{
+    for (wxWindow* window = wxWindow::FindFocus(); window != nullptr; window = window->GetParent())
+    {
+        if (dynamic_cast<wxTextEntry*>(window) != nullptr)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/**
+ * @brief Checks whether the Fit Camera shortcut must be passed through.
+ * @param plater Current plater instance.
+ * @return True when the shortcut must not trigger Fit Camera.
+ */
+static bool ShouldSkipFitCameraShortcut(Plater* plater)
+{
+    if (plater == nullptr || IsTextEntryFocused())
+    {
+        return true;
+    }
+
+    ImGuiWrapper* const imgui = wxGetApp().imgui();
+    if (imgui != nullptr && (imgui->want_keyboard() || imgui->want_text_input()))
+    {
+        return true;
+    }
+
+    GLCanvas3D* const currentCanvas = plater->get_current_canvas3D();
+    if (currentCanvas == nullptr)
+    {
+        return true;
+    }
+
+    GLCanvas3D* const viewCanvas = plater->get_view3D_canvas3D();
+    GLCanvas3D* const assembleCanvas = plater->get_assmeble_canvas3D();
+    return (viewCanvas != nullptr && viewCanvas->get_gizmos_manager().is_running()) ||
+           (assembleCanvas != nullptr && assembleCanvas->get_gizmos_manager().is_running()) ||
+           currentCanvas->get_gizmos_manager().is_running();
+}
 
 enum class ERescaleTarget
 {
@@ -618,6 +667,23 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             if (m_plater) { m_plater->add_file(); }
             return;
         }
+
+        const bool isFitCameraShortcut = !evt.HasAnyModifiers() &&
+                                         (evt.GetKeyCode() == 'Z' || evt.GetKeyCode() == 'z');
+        if (isFitCameraShortcut)
+        {
+            if (ShouldSkipFitCameraShortcut(m_plater) || !can_change_view())
+            {
+                evt.Skip();
+            }
+            else
+            {
+                ZoomCameraToFit();
+            }
+
+            return;
+        }
+
         evt.Skip();
     });
 
@@ -2383,6 +2449,15 @@ static void add_common_view_menu_items(wxMenu* view_menu, MainFrame* mainFrame, 
         "", nullptr, [can_change_view]() { return can_change_view(); }, mainFrame);
     append_menu_item(view_menu, wxID_ANY, _L("Right") + "\t" + ctrl + "6", _L("Right View"), [mainFrame](wxCommandEvent&) { mainFrame->select_view("right"); },
         "", nullptr, [can_change_view]() { return can_change_view(); }, mainFrame);
+
+#ifdef __APPLE__
+    const wxString fitCameraLabel = _L("Fit in all view");
+#else
+    const wxString fitCameraLabel = _L("Fit in all view") + "\tZ";
+#endif
+    append_menu_item(view_menu, wxID_ANY, fitCameraLabel, _L("Fit in all view"),
+        [mainFrame](wxCommandEvent&) { mainFrame->ZoomCameraToFit(); },
+        "", nullptr, [can_change_view]() { return can_change_view(); }, mainFrame);
 }
 
 void MainFrame::init_menubar_as_editor()
@@ -3566,6 +3641,20 @@ void MainFrame::select_view(const std::string& direction)
 {
      if (m_plater)
          m_plater->select_view(direction);
+}
+
+void MainFrame::ZoomCameraToFit() const
+{
+    if (m_plater == nullptr || !can_change_view())
+    {
+        return;
+    }
+
+    GLCanvas3D* const canvas = m_plater->canvas3D();
+    if (canvas != nullptr)
+    {
+        canvas->ZoomToFit();
+    }
 }
 
 // #ys_FIXME_to_delete

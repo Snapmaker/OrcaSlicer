@@ -855,6 +855,7 @@ public:
     void zoom_to_gcode();
     //BBS -1 for current plate
     void zoom_to_plate(int plate_idx = -1);
+    void ZoomToFit();
     void select_view(const std::string& direction);
     //BBS: add part plate related logic
     void select_plate();
@@ -1209,6 +1210,13 @@ private:
     bool _render_orient_menu(float left, float right, float bottom, float top);
     bool _render_arrange_menu(float left, float right, float bottom, float top);
     void _render_3d_navigator();
+    /**
+     * @brief Renders the fit-camera button next to the 3D navigator.
+     * @param left Left position in ImGui screen coordinates.
+     * @param top Top position in ImGui screen coordinates.
+     * @param buttonSize Width and height of the square button.
+     */
+    void RenderFitCameraButton(float left, float top, float buttonSize);
     // render thumbnail using the default framebuffer
     void render_thumbnail_legacy(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params, PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors, GLShaderProgram* shader, Camera::EType camera_type);
 

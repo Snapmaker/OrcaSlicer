@@ -10619,6 +10619,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     const float INIT_MODEL_RATIO             = 0.75;
     const float CENTER_AROUND_ORIGIN_RATIO   = 0.8;
     const float LOAD_MODEL_RATIO             = 0.9;
+    bool hasRawGeometryImport = false;
 
     for (size_t i = 0; i < input_files.size(); ++i) {
         int file_percent = 0;
@@ -10643,6 +10644,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
         // const bool type_zip_amf = !type_3mf && std::regex_match(path.string(), pattern_zip_amf);
         const bool type_any_amf = !type_3mf && std::regex_match(path.string(), pattern_any_amf);
         // const bool type_prusa   = std::regex_match(path.string(), pattern_prusa);
+        const bool shouldInitializeAssemblyPosition = boost::algorithm::iends_with(path.string(), ".stl") ||
+                                                      boost::algorithm::iends_with(path.string(), ".obj") ||
+                                                      boost::algorithm::iends_with(path.string(), ".glb") ||
+                                                      boost::algorithm::iends_with(path.string(), ".gltf") ||
+                                                      boost::algorithm::iends_with(path.string(), ".fbx");
+        hasRawGeometryImport = hasRawGeometryImport || shouldInitializeAssemblyPosition;
 
         Slic3r::Model model;
         // BBS: add auxiliary files related logic
@@ -11455,6 +11462,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", before load_model_objects, count %1%")%model.objects.size();
             auto loaded_idxs = load_model_objects(model.objects, is_project_file);
             obj_idxs.insert(obj_idxs.end(), loaded_idxs.begin(), loaded_idxs.end());
+            if (shouldInitializeAssemblyPosition)
+            {
+                ModelObjectPtrs loadedObjects;
+                loadedObjects.reserve(loaded_idxs.size());
+                for (const size_t objectIndex : loaded_idxs)
+                {
+                    if (objectIndex < q->model().objects.size())
+                    {
+                        loadedObjects.push_back(q->model().objects[objectIndex]);
+                    }
+                }
+                q->model().InitializeAssemblyPositions(loadedObjects);
+            }
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", finished load_model_objects");
             wxString msg = wxString::Format(_L("Loading file: %s"), from_path(real_filename));
@@ -11490,6 +11510,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
         auto loaded_idxs = load_model_objects(new_model->objects);
         obj_idxs.insert(obj_idxs.end(), loaded_idxs.begin(), loaded_idxs.end());
+        if (hasRawGeometryImport)
+        {
+            ModelObjectPtrs loadedObjects;
+            loadedObjects.reserve(loaded_idxs.size());
+            for (const size_t objectIndex : loaded_idxs)
+            {
+                if (objectIndex < q->model().objects.size())
+                {
+                    loadedObjects.push_back(q->model().objects[objectIndex]);
+                }
+            }
+            q->model().InitializeAssemblyPositions(loadedObjects);
+        }
     }
 
     if (new_model) delete new_model;

@@ -636,8 +636,7 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
         << " support_style=" << int(m_support_params.support_style)
         << " top_z_distance=" << top_z_distance
         << " support_type=" << int(m_object_config->support_type.value)
-        << " radius_0=" << m_radius_0
-        << " support_xy_distance=" << m_object_config->support_xy_distance.value;
+        << " base_radius=" << base_radius;
     if (top_z_distance > EPSILON) top_z_distance = std::max(top_z_distance, float(m_slicing_params.min_layer_height));
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
     SVG svg(debug_out_path("machine_boarder.svg"), m_object->bounding_box());

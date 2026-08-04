@@ -124,7 +124,7 @@ TreeModelVolumes::TreeModelVolumes(
         m_min_resolution = std::min(m_min_resolution, data_pair.first.resolution);
     }
     // DEBUG_CROSS_MACHINE: log resolution and outline info
-    BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] TreeModelVolumes init: "
+    BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] TreeModelVolumes init: "
         << "m_min_resolution=" << m_min_resolution
         << " layer_outlines_count=" << m_layer_outlines.size()
         << " outline_layer_count=" << (m_layer_outlines.empty() ? 0 : m_layer_outlines.front().second.size());
@@ -591,7 +591,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
             }
             total_area += area(data[li]);
         }
-        BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] calculateCollision: radius=" << radius
+        BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] calculateCollision: radius=" << radius
             << " total_layers=" << total_layers << " total_vertices=" << total_vertices
             << " total_area=" << total_area;
     }

@@ -631,7 +631,7 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
     top_z_distance                            = m_object_config->support_top_z_distance.value;
     minimum_roof_area                         = scaled<double>(scaled<double>(m_object_config->support_interface_min_area.value));
     // DEBUG_CROSS_MACHINE: log key tree support params
-    BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] TreeSupport init: "
+    BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] TreeSupport init: "
         << "minimum_roof_area=" << minimum_roof_area
         << " support_style=" << int(m_support_params.support_style)
         << " top_z_distance=" << top_z_distance

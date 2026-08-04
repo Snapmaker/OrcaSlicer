@@ -5,6 +5,18 @@
 #include <boost/filesystem/fstream.hpp>
 #include <future>
 #include <fstream>
+#include <chrono>
+
+namespace {
+
+// Paho throws when disconnect() is called while already disconnected / handle gone.
+bool is_soft_disconnect_error(const mqtt::exception& e)
+{
+    const int rc = e.get_return_code();
+    return rc == MQTTASYNC_DISCONNECTED || rc == MQTTASYNC_FAILURE;
+}
+
+} // namespace
 
 // Constructor: Initialize MQTT client with server address and client ID
 // @param server_address: Address of the MQTT broker
@@ -188,23 +200,38 @@ bool MqttClient::Connect(std::string& msg)
 // Disconnect from the MQTT broker
 // @return: true if disconnection successful, false otherwise
 bool MqttClient::Disconnect(std::string& msg)
-{        
-    {
-        if (client_) {
-            {
-                
-                auto disctok = client_->disconnect();         
-                if (!disctok->wait_for(std::chrono::seconds(5))) {
-                    BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect timeout";
-                }
-            }
-        }
+{
+    connected_.store(false, std::memory_order_release);
 
-        connected_.store(false, std::memory_order_release);
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect completed";
+    if (!client_) {
+        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect completed (no client)";
         msg = "success";
         return true;
     }
+
+    // Always call disconnect(): even if already down, C lib clears shouldBeConnected
+    // (stops auto-reconnect) then returns MQTTASYNC_DISCONNECTED which C++ throws.
+    try {
+        auto disctok = client_->disconnect();
+        if (!disctok->wait_for(std::chrono::seconds(5))) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect timeout";
+        }
+    } catch (const mqtt::exception& e) {
+        if (is_soft_disconnect_error(e)) {
+            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT disconnect soft error (already disconnected), rc="
+                                      << e.get_return_code();
+            msg = "success";
+            return true;
+        }
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect failed: " << e.what()
+                                 << ", rc=" << e.get_return_code();
+        msg = e.what();
+        return false;
+    }
+
+    BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Disconnect completed";
+    msg = "success";
+    return true;
 }
 
 // Subscribe to a specific MQTT topic
@@ -515,14 +542,11 @@ MqttClient::~MqttClient()
             BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] timeout waiting for reconnect checks, forcing destruction";
         }
                 
-        if (client_ && client_->is_connected()) {
-            {                  
-                auto disctok = client_->disconnect();
-                if (disctok) {
-                    disctok->wait_for(std::chrono::seconds(5));
-                }
-            } 
-        }        
+        if (client_) {
+            // Reuse Disconnect: soft-catches already-disconnected and clears shouldBeConnected.
+            std::string dc_msg;
+            Disconnect(dc_msg);
+        }
      
         topics_to_resubscribe_.clear();             
         message_callback_ = nullptr;

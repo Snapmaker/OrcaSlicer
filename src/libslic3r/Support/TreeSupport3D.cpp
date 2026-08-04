@@ -3476,9 +3476,20 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
 
             // ### Place tips of the support tree
             for (size_t mesh_idx : processing.second)
-                generate_initial_areas(*print.get_object(mesh_idx), volumes, config, overhangs, 
+                generate_initial_areas(*print.get_object(mesh_idx), volumes, config, overhangs,
                     move_bounds, interface_placer, throw_on_cancel);
             auto t_gen = std::chrono::high_resolution_clock::now();
+            // DEBUG_CROSS_MACHINE: log initial areas
+            {
+                size_t total_elements = 0;
+                size_t nonempty_layers = 0;
+                for (const auto& mb : move_bounds) {
+                    if (!mb.empty()) nonempty_layers++;
+                    total_elements += mb.size();
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] generate_initial_areas done: nonempty_layers="
+                    << nonempty_layers << " total_elements=" << total_elements;
+            }
 
 #ifdef TREESUPPORT_DEBUG_SVG
             for (size_t layer_idx = 0; layer_idx < move_bounds.size(); ++layer_idx) {
@@ -3497,10 +3508,33 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
             print.set_status(60, _L("Generating support"));
             create_layer_pathing(volumes, config, move_bounds, throw_on_cancel);
             auto t_path = std::chrono::high_resolution_clock::now();
+            // DEBUG_CROSS_MACHINE: log after layer pathing
+            {
+                size_t total_elements = 0;
+                size_t nonempty_layers = 0;
+                for (const auto& mb : move_bounds) {
+                    if (!mb.empty()) nonempty_layers++;
+                    total_elements += mb.size();
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] create_layer_pathing done: nonempty_layers="
+                    << nonempty_layers << " total_elements=" << total_elements;
+            }
 
             // ### Set a point in each influence area
             create_nodes_from_area(volumes, config, move_bounds, throw_on_cancel);
             auto t_place = std::chrono::high_resolution_clock::now();
+            // DEBUG_CROSS_MACHINE: log nodes after placement
+            {
+                size_t total_nodes = 0;
+                size_t nonempty_layers = 0;
+                for (const auto& mb : move_bounds) {
+                    if (!mb.empty()) nonempty_layers++;
+                    for (const auto& elem : mb)
+                        if (elem.state.node_placed) total_nodes++;
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] create_nodes_from_area done: nonempty_layers="
+                    << nonempty_layers << " total_nodes=" << total_nodes;
+            }
 
             // ### draw these points as circles
             // this new function give correct result when raft is also enabled
@@ -3510,6 +3544,21 @@ static void generate_support_areas(Print &print, TreeSupport* tree_support, cons
                 throw_on_cancel);
 
             //tree_support->move_bounds_to_contact_nodes(move_bounds, print_object, config);
+
+            // DEBUG_CROSS_MACHINE: log final support layer output
+            {
+                size_t total_support_layers = 0;
+                double total_support_area = 0;
+                for (size_t i = 0; i < print_object.support_layer_count(); ++i) {
+                    const SupportLayer* sl = print_object.get_support_layer(i);
+                    if (sl && sl->print_z > 0) {
+                        total_support_layers++;
+                        total_support_area += area(sl->base_areas);
+                    }
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] organic_draw_branches done: support_layers="
+                    << total_support_layers << " total_base_area=" << total_support_area;
+            }
 
             remove_undefined_layers();
 

@@ -628,6 +628,16 @@ void TreeModelVolumes::calculateCollisionHolefree(const std::vector<RadiusLayerP
                         throw_on_cancel();
                 }
         }
+        // DEBUG_CROSS_MACHINE: log holefree collision checksum
+        {
+            size_t total_vertices = 0;
+            for (const auto& d : data) {
+                for (const auto& poly : d.second)
+                    total_vertices += poly.size();
+            }
+            BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] calculateCollisionHolefree: entries=" << data.size()
+                << " total_vertices=" << total_vertices;
+        }
         m_collision_cache_holefree.insert(std::move(data));
     });
 }
@@ -791,6 +801,16 @@ void TreeModelVolumes::calculatePlaceables(const coord_t radius, const LayerInde
         }
     }
 #endif
+    // DEBUG_CROSS_MACHINE: log placeable area checksum
+    {
+        size_t total_vertices = 0;
+        for (const auto& p : data) {
+            for (const auto& poly : p)
+                total_vertices += poly.size();
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] calculatePlaceables: radius=" << radius
+            << " layers=" << data.size() << " total_vertices=" << total_vertices;
+    }
     m_placeable_areas_cache.insert(std::move(data), start_layer, radius);
 }
 
@@ -857,6 +877,16 @@ void TreeModelVolumes::calculateWallRestrictions(const std::vector<RadiusLayerPa
                         throw_on_cancel();
                 }
             });
+            // DEBUG_CROSS_MACHINE: log wall restriction checksum (per-task batch)
+            {
+                size_t total_vertices = 0;
+                for (const auto& p : data) {
+                    for (const auto& poly : p)
+                        total_vertices += poly.size();
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] calculateWallRestrictions: radius=" << radius
+                    << " layers=" << data.size() << " total_vertices=" << total_vertices;
+            }
             m_wall_restrictions_cache.insert(std::move(data), min_layer_bottom, radius);
             if (! data_min.empty())
                 m_wall_restrictions_cache_min.insert(std::move(data_min), min_layer_bottom, radius);

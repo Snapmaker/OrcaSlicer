@@ -1104,6 +1104,18 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     }
 
     BOOST_LOG_TRIVIAL(info) << "Tree support overhang detection done. " << layers_with_overhangs << " layers with overhangs. nEnforced=" << layers_with_enforcers;
+    // DEBUG_CROSS_MACHINE: log overhang detection summary
+    {
+        size_t total_overhang_polys = 0;
+        double total_overhang_area = 0;
+        for (const Layer* layer : m_object->layers()) {
+            total_overhang_polys += layer->loverhangs.size();
+            total_overhang_area += area(layer->loverhangs);
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] detect_overhangs done: layers_with_overhangs=" << layers_with_overhangs
+            << " total_overhang_polys=" << total_overhang_polys << " total_overhang_area=" << total_overhang_area
+            << " has_cantilever=" << has_cantilever;
+    }
 
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
     for (const Layer* layer : m_object->layers()) {

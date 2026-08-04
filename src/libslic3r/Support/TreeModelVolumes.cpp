@@ -598,7 +598,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
     // Apply safety margin to collision areas: tiny positive offset (5 units = 0.005mm)
     // absorbs ±1 unit vertex FP differences across machines, preventing
     // influence areas from landing exactly on collision boundaries.
-    static constexpr coord_t COLLISION_SAFETY_MARGIN = 5;
+    static constexpr coord_t COLLISION_SAFETY_MARGIN = 20; // 0.02mm, absorbs cumulative FP drift across serial propagation
     for (auto& layer_polys : data.polygons_mutable())
         layer_polys = offset(layer_polys, COLLISION_SAFETY_MARGIN, ClipperLib::jtRound, float(m_min_resolution));
     m_collision_cache.insert(std::move(data), radius);

@@ -1071,6 +1071,10 @@ int ConfigManipulation::show_support_filament_dialog(DynamicPrintConfig* config,
     auto *base_choice      = add_choice(_(L("Raft and support base")),  type_items, type_selection("support_base_material"));
     auto *interface_choice = add_choice(_(L("Support interface")),      type_items, type_selection("support_interface_material"));
     sizer->Add(dlg.CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, 10);
+    if (wxWindow *btn = dlg.FindWindow(wxID_OK); btn != nullptr)
+        btn->SetLabel(_(L("OK")));
+    if (wxWindow *btn = dlg.FindWindow(wxID_CANCEL); btn != nullptr)
+        btn->SetLabel(_(L("Cancel")));
     dlg.SetSizerAndFit(sizer);
     dlg.CentreOnScreen();
     const int answer = dlg.ShowModal();

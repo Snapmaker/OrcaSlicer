@@ -2465,9 +2465,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
 
     new_object->ensure_on_bed();
 
-    //BBS init assmeble transformation
-    Geometry::Transformation t = new_object->instances[0]->get_transformation();
-    new_object->instances[0]->set_assemble_transformation(t);
+    model.InitializeAssemblyPositions({new_object});
 
     object_idxs.push_back(model.objects.size() - 1);
 #ifdef _DEBUG

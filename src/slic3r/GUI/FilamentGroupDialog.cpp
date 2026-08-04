@@ -19,6 +19,8 @@
 
 #include <wx/dcbuffer.h>
 #include <wx/dnd.h>
+#include <wx/scrolwin.h>
+#include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/statbmp.h>
 #include <wx/stattext.h>
@@ -33,13 +35,20 @@ namespace {
 
 const char *DRAG_PREFIX = "sm_filament:";
 
+// Colour-chip grid geometry, shared by the group boxes and the scroll sizing.
+constexpr int kChipCols    = 8;   // chips per row
+constexpr int kChipCellW   = 39;  // chip cell width  (DIP)
+constexpr int kChipCellH   = 38;  // chip cell height (DIP)
+constexpr int kChipVGap    = 8;   // gap between chip rows (DIP)
+constexpr int kVisibleRows = 3;   // rows visible before the group scrolls
+
 // 20x20 colour block with the filament number inside and the material name below.
 class FilamentChip : public wxPanel
 {
 public:
     FilamentChip(wxWindow *parent, size_t filament_idx, const wxColour &color, const wxString &label)
         : wxPanel(parent, wxID_ANY, wxDefaultPosition,
-                  wxSize(parent->FromDIP(39), parent->FromDIP(38)))
+                  wxSize(parent->FromDIP(kChipCellW), parent->FromDIP(kChipCellH)))
         , m_idx(filament_idx)
         , m_color(color)
         , m_label(label)
@@ -155,6 +164,18 @@ private:
     bool                 m_high_flow;
 };
 
+// Resize the scrollable region's virtual area to the chip grid so the vertical
+// scrollbar appears once the colours overflow the fixed visible height.
+void update_group_scroll(wxScrolledWindow *scroll, wxFlexGridSizer *grid)
+{
+    scroll->Layout();
+    const int count     = int(grid->GetItemCount());
+    const int rows      = (count + kChipCols - 1) / kChipCols;
+    const int grid_w    = scroll->FromDIP(kChipCellW) * kChipCols;
+    const int content_h = rows > 0 ? scroll->FromDIP(kChipCellH) * rows + scroll->FromDIP(kChipVGap) * (rows - 1) : 0;
+    scroll->SetVirtualSize(grid_w, content_h);
+}
+
 } // anonymous namespace
 
 FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
@@ -175,9 +196,23 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     v_sizer->Add(intro, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
     // Group panel per Figma 27673:62102: #F3F3F3 rounded-8 background box,
-    // title with 16px inset, chip grid with 8px inset.
-    auto make_group = [this](const wxString &title, wxFlexGridSizer *&grid, bool high_flow) -> StaticBox * {
-        StaticBox *box = new StaticBox(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(328), -1));
+    // title with 16px inset, chip grid with 8px inset. The chip grid lives in a
+    // fixed-height scrolled window: with many filaments the colours overflow into
+    // a scrollable region instead of being clipped (previously the box height was
+    // pinned by SetMinSize, so any row past the ~2 that fit was cut off). A
+    // vertical-scrollbar gutter is reserved so the 8-column grid still fits once
+    // the scrollbar appears.
+    auto make_group = [this](const wxString &title, wxFlexGridSizer *&grid,
+                             wxScrolledWindow *&scroll, bool high_flow) -> StaticBox * {
+        const int grid_w = FromDIP(kChipCellW) * kChipCols;
+        int       sb_w   = wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this);
+        if (sb_w <= 0)
+            sb_w = FromDIP(16);
+        const int scroll_w = grid_w + sb_w;
+        const int scroll_h = FromDIP(kChipCellH) * kVisibleRows + FromDIP(kChipVGap) * (kVisibleRows - 1);
+        const int box_w    = scroll_w + FromDIP(16); // 8px inset on each side
+
+        StaticBox *box = new StaticBox(this, wxID_ANY, wxDefaultPosition, wxSize(box_w, -1));
         box->SetCornerRadius(FromDIP(8));
         box->SetBorderWidth(0);
         const wxColour box_bg = StateColor::darkModeColorFor(wxColour("#F3F3F3"));
@@ -191,18 +226,31 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
         label->SetBackgroundColour(box_bg);
         box_sizer->Add(label, 0, wxLEFT | wxTOP | wxRIGHT, FromDIP(16));
         box_sizer->AddSpacer(FromDIP(16));
-        grid = new wxFlexGridSizer(0, 8, FromDIP(8), 0);
-        box_sizer->Add(grid, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
-        box_sizer->AddStretchSpacer();
+
+        scroll = new wxScrolledWindow(box, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+        scroll->SetBackgroundColour(box_bg);
+        scroll->SetMinSize(wxSize(scroll_w, scroll_h));
+        scroll->SetMaxSize(wxSize(scroll_w, scroll_h));
+        scroll->EnableScrolling(false, true);
+        scroll->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_DEFAULT);
+        scroll->SetScrollRate(0, FromDIP(10));
+        grid = new wxFlexGridSizer(0, kChipCols, FromDIP(kChipVGap), 0);
+        scroll->SetSizer(grid); // chips left-aligned, matching the original layout
+        box_sizer->Add(scroll, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+
         box->SetSizer(box_sizer);
-        box->SetMinSize(wxSize(FromDIP(328), FromDIP(148)));
+        // Pin the width only; the height follows the fixed-height chip area so the
+        // box (and thus the dialog) keeps a constant size regardless of chip count.
+        box->SetMinSize(wxSize(box_w, wxDefaultCoord));
+        // Accept chip drops anywhere on the card (title strip and chip area).
         box->SetDropTarget(new GroupDropTarget(this, high_flow));
+        scroll->SetDropTarget(new GroupDropTarget(this, high_flow));
         return box;
     };
 
     auto *groups_sizer = new wxBoxSizer(wxHORIZONTAL);
-    m_std_box          = make_group(_L("Standard Nozzle"), m_std_grid, false);
-    m_high_box         = make_group(_L("High Flow Nozzle"), m_high_grid, true);
+    m_std_box          = make_group(_L("Standard Nozzle"), m_std_grid, m_std_scroll, false);
+    m_high_box         = make_group(_L("High Flow Nozzle"), m_high_grid, m_high_scroll, true);
 
     auto *swap = new SwapButton(this, [this]() { swap_groups(); });
 
@@ -287,11 +335,13 @@ void FilamentGroupDialog::rebuild_chips()
     m_std_grid->Clear(true);
     m_high_grid->Clear(true);
     for (const FilamentInfo &info : m_filaments) {
-        const bool       high = m_mapping[info.filament_idx] == fvtHighFlow;
-        StaticBox       *box  = high ? m_high_box : m_std_box;
-        wxFlexGridSizer *grid = high ? m_high_grid : m_std_grid;
-        grid->Add(new FilamentChip(box, info.filament_idx, info.color, info.label));
+        const bool        high   = m_mapping[info.filament_idx] == fvtHighFlow;
+        wxScrolledWindow *parent = high ? m_high_scroll : m_std_scroll;
+        wxFlexGridSizer  *grid   = high ? m_high_grid : m_std_grid;
+        grid->Add(new FilamentChip(parent, info.filament_idx, info.color, info.label));
     }
+    update_group_scroll(m_std_scroll, m_std_grid);
+    update_group_scroll(m_high_scroll, m_high_grid);
     m_std_box->Layout();
     m_high_box->Layout();
     Layout();

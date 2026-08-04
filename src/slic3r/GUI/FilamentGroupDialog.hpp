@@ -10,6 +10,7 @@
 class Button;
 class StaticBox;
 class wxFlexGridSizer;
+class wxScrolledWindow;
 
 namespace Slic3r { namespace GUI {
 
@@ -53,6 +54,8 @@ private:
 
     StaticBox       *m_std_box   { nullptr };
     StaticBox       *m_high_box  { nullptr };
+    wxScrolledWindow *m_std_scroll  { nullptr };
+    wxScrolledWindow *m_high_scroll { nullptr };
     wxFlexGridSizer *m_std_grid  { nullptr };
     wxFlexGridSizer *m_high_grid { nullptr };
     wxBoxSizer      *m_warning_sizer { nullptr };

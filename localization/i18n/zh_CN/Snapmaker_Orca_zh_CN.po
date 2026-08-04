@@ -15337,3 +15337,6 @@ msgstr "如需继续打印，请在「偏好设置」中开启「允许高/低�
 
 msgid "does not exist."
 msgstr "不存在。"
+
+msgid "Fit in all view"
+msgstr "相机适配"

@@ -728,6 +728,18 @@ void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &ke
                 }
             }
 #endif
+            // DEBUG_CROSS_MACHINE: log avoidance checksums
+            {
+                size_t total_layers = data.size();
+                size_t total_vertices = 0;
+                for (size_t i = 0; i < total_layers && i < 5; ++i) {
+                    for (const auto& poly : data[i].second)
+                        total_vertices += poly.size();
+                }
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] calculateAvoidance: radius=" << task.radius
+                    << " type=" << int(task.type) << " to_model=" << task.to_model
+                    << " total_layers=" << total_layers << " first5layers_vertices=" << total_vertices;
+            }
             avoidance_cache(task.type, task.to_model).insert(std::move(data));
         }
     });

@@ -950,7 +950,7 @@ public:
     void set_shells_on_previewing(bool is_preview) { m_gcode_viewer.set_shells_on_preview(is_preview); }
 
     //BBS: add only gcode mode
-    void load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode);
+    void load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode, bool skip_toolpaths = false);
     void refresh_gcode_preview_render_paths();
     void set_gcode_view_preview_type(GCodeViewer::EViewType type) { return m_gcode_viewer.set_view_type(type); }
     GCodeViewer::EViewType get_gcode_view_preview_type() const { return m_gcode_viewer.get_view_type(); }

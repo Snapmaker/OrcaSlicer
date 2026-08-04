@@ -11843,10 +11843,26 @@ void Plater::priv::reset(bool apply_presets_change)
     view3D->get_canvas3d()->reset_all_gizmos();
 
     reset_gcode_toolpaths();
-    //BBS: update gcode to current partplate's
-    //GCodeProcessorResult* current_result = this->background_process.get_current_plate()->get_slice_result();
-    //current_result->reset();
-    //gcode_result.reset();
+    // Explicitly free the previous slice's GCodeProcessorResult data before
+    // the partplate list is reinit'd.  Without this, large moves vectors
+    // (potentially several GB) from the previous slice stay alive until the
+    // new slice's do_export replaces them — a major contributor to crashes
+    // when loading a new 3MF after a heavy slice.
+    {
+        GCodeProcessorResult* prev_result = this->background_process.get_current_gcode_result();
+        if (prev_result != nullptr) {
+            BOOST_LOG_TRIVIAL(info) << "priv::reset: freeing GCodeProcessorResult moves="
+                << prev_result->moves.size();
+            prev_result->moves.clear();
+            prev_result->moves.shrink_to_fit();
+            prev_result->lines_ends.clear();
+            prev_result->lines_ends.shrink_to_fit();
+        }
+    }
+    // Reset the skip flag so a newly loaded project renders normally.
+    // Without this, the flag from a previous heavy-slice session persists
+    // and makes even small models show an empty preview.
+    preview->set_skip_toolpath_preview(false);
 
     view3D->get_canvas3d()->reset_sequential_print_clearance();
 
@@ -13224,6 +13240,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
             bool current_has_print_instances = current_plate->has_printable_instances();
             if (current_plate->is_slice_result_valid() && this->model.objects.empty() && !current_has_print_instances)
                 only_has_gcode_need_preview = true;
+            bool slice_cancelled = false;
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": from set_current_panel, no_slice %1%, export_in_progress %2%, model_fits %3%, m_is_slicing %4%")%no_slice%export_in_progress%model_fits%m_is_slicing;
 
@@ -13234,9 +13251,9 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                    this->m_slice_all = false;
-                    this->q->reslice();
-                }
+                   this->m_slice_all = false;
+                    slice_cancelled = !(this->q->reslice());
+               }
                 else {
                     //reset current plate to the slicing plate
                     int plate_index = this->background_process.get_current_plate()->get_index();
@@ -13246,7 +13263,7 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
             else if (only_has_gcode_need_preview)
             {
                 this->m_slice_all = false;
-                this->q->reslice();
+                slice_cancelled = !this->q->reslice();
             }
             //BBS: process empty plate, reset previous toolpath
             else
@@ -13270,7 +13287,11 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 this->partplate_list.select_plate_view();*/
 
             // keeps current gcode preview, if any
-            if (this->m_slice_all) {
+            if (slice_cancelled) {
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": slicing cancelled by user, showing shells only";
+                this->update_fff_scene_only_shells();
+            }
+            else if (this->m_slice_all) {
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": slicing all, just reload shells");
                 this->update_fff_scene_only_shells();
             }
@@ -14235,7 +14256,14 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
         if (!q->guard_before_slice_plate())
             return;
 
-        q->reslice();
+        // Slice first, then switch to preview regardless of cancel,
+        // so the user stays on the preview page.
+        bool slice_cancelled = !q->reslice();
+        if (slice_cancelled) {
+            // User chose "No" in the memory warning dialog.
+            // Load only shells (no gcode toolpaths) to avoid OOM.
+            this->update_fff_scene_only_shells();
+        }
         q->select_view_3D("Preview");
     }
 }
@@ -14267,11 +14295,16 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         }
         //select plate
         q->select_plate(m_cur_slice_plate);
-        q->reslice();
+        bool slice_cancelled = !q->reslice();
+        if (slice_cancelled) {
+            m_slice_all = false;
+            m_slice_all_only_has_gcode = false;
+        }
+        //BBS: wish to select all plates stats item
         if (!m_is_publishing)
             q->select_view_3D("Preview");
-        //BBS: wish to select all plates stats item
-        preview->get_canvas3d()->_update_select_plate_toolbar_stats_item(true);
+        if (!slice_cancelled)
+            preview->get_canvas3d()->_update_select_plate_toolbar_stats_item(true);
     }
 }
 
@@ -19760,7 +19793,7 @@ void Plater::export_toolpaths_to_obj() const
 }
 
 //BBS: add multiple plate reslice logic
-void Plater::reslice()
+bool Plater::reslice()
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     // There is "invalid data" button instead "slice now"
@@ -19768,13 +19801,13 @@ void Plater::reslice()
     {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": process_completed_with_error, return directly");
         reset_gcode_toolpaths();
-        return;
+        return true;
     }
 
     // In case SLA gizmo is in editing mode, refuse to continue
     // and notify user that he should leave it first.
     if (get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true))
-        return;
+        return true;
     
     // Stop the running (and queued) UI jobs and only proceed if they actually
     // get stopped.
@@ -19782,7 +19815,7 @@ void Plater::reslice()
     if (!stop_queue(this->get_ui_job_worker(), timeout_ms)) {
         BOOST_LOG_TRIVIAL(error) << "Could not stop UI job within "
                                  << timeout_ms << " milliseconds timeout!";
-        return;
+        return true;
     }
 
     // Orca: regenerate CalibPressureAdvancePattern custom G-code to apply changes
@@ -19809,8 +19842,58 @@ void Plater::reslice()
             NotificationManager::NotificationLevel::ErrorNotificationLevel,
             into_u8(_L("Mixed filaments contain incompatible material types. Please correct the mixed filaments settings before slicing.")));
         reset_gcode_toolpaths();
-        return;
+        return true;
     }
+
+    // Runtime memory guard: register a callback that fires DURING slicing
+    // when available physical memory drops below the threshold (PrintBase.hpp).
+    // The guard checks every 500ms at the 138 throw_if_canceled() checkpoints.
+    p->preview->set_skip_toolpath_preview(false);
+    if (printer_technology() == ptFFF) {
+        Print* print_ptr = p->background_process.fff_print();
+        if (print_ptr) {
+            print_ptr->set_memory_guard_callback([this]() -> bool {
+                auto promise = std::make_shared<std::promise<bool>>();
+                auto future  = promise->get_future();
+
+                this->CallAfter([this, promise]() {
+                    wxString msg = _L("Available system memory is critically low during slicing. "
+                                      "Continuing may cause the application to freeze or crash.")
+                        + "\n\n"
+                        + _L("Do you want to continue slicing?")
+                        + "\n\n"
+                        + "\n- "
+                        + _L("Select \"Yes\" to attempt slicing, but the software may lag or freeze.")
+                        + "\n- "
+                        + _L("Select \"No\" to terminate the slicing task immediately.");
+                    RichMessageDialog dlg(this, msg,
+                        _L("Memory Usage Warning"), wxYES_NO | wxNO_DEFAULT | wxICON_WARNING);
+                    dlg.SetYesNoLabels(_L("Yes, Continue"), _L("No, Stop"));
+
+                    bool result = (dlg.ShowModal() == wxID_YES);
+                    if (result) {
+                        // Skip toolpath preview to reduce memory usage on
+                        // the subsequent load_toolpaths / load_shells phase.
+                        this->p->preview->set_skip_toolpath_preview(true);
+                    } else {
+                        // User chose to cancel: aggressively free the partial
+                        // slicing data to reclaim memory before the preview
+                        // page loads any rendering buffers.
+                        this->p->preview->set_skip_toolpath_preview(true);
+                        GCodeProcessorResult* gcode_res = this->p->preview->get_gcode_result();
+                        if (gcode_res != nullptr) {
+                            gcode_res->moves.clear();
+                            gcode_res->moves.shrink_to_fit();
+                        }
+                    }
+                    promise->set_value(result);
+                });
+
+                return future.get();
+            });
+        }
+    }
+
     this->p->background_process.set_task(PrintBase::TaskParams());
     // Only restarts if the state is valid.
     //BBS: jusdge the result
@@ -19821,7 +19904,7 @@ void Plater::reslice()
         //BBS: add logs
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": state %1% is UPDATE_BACKGROUND_PROCESS_INVALID, can not slice") % state;
         p->update_fff_scene_only_shells();
-        return;
+        return true;
     }
 
     if ((!result) && p->m_slice_all && (p->m_cur_slice_plate < (p->partplate_list.get_plate_count() - 1)))
@@ -19835,7 +19918,7 @@ void Plater::reslice()
         p->m_is_slicing = true;
         if (p->m_cur_slice_plate == 0)
             reset_gcode_toolpaths();
-        return;
+        return true;
     }
 
     if (result) {
@@ -19880,6 +19963,7 @@ void Plater::reslice()
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, started slicing for plate %1%") % p->partplate_list.get_curr_plate_index();
 
     record_slice_preset("slicing");
+    return true;
 }
 
 void Plater::record_slice_preset(std::string action)
@@ -21799,7 +21883,8 @@ int Plater::select_plate(int plate_index, bool need_slice)
                         reset_gcode_toolpaths();
                         if (!guard_before_slice_plate())
                             return ret;
-                        reslice();
+                        if (!reslice())
+                            return ret;
                     }
                     else {
                         validate_current_plate(model_fits, validate_err);
@@ -21860,7 +21945,8 @@ int Plater::select_plate(int plate_index, bool need_slice)
                     {
                         if (!guard_before_slice_plate())
                             return ret;
-                        reslice();
+                        if (!reslice())
+                            return ret;
                     }
                     else
                     {

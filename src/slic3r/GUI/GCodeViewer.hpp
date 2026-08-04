@@ -801,8 +801,11 @@ public:
 
     // extract rendering data from the given parameters
     //BBS: add only gcode mode
-    void load(const GCodeProcessorResult& gcode_result, const Print& print, const BuildVolume& build_volume,
-            const std::vector<BoundingBoxf3>& exclude_bounding_box, ConfigOptionMode mode, bool only_gcode = false);
+   void load(const GCodeProcessorResult& gcode_result, const Print& print, const BuildVolume& build_volume,
+           const std::vector<BoundingBoxf3>& exclude_bounding_box, ConfigOptionMode mode, bool only_gcode = false,
+           bool skip_toolpaths = false);
+    // skip_toolpaths: when true, always take Z-scan path (no GPU vertex buffers)
+    //                  used by the memory-warning dialog when user chooses to continue without preview
     // recalculate ranges in dependence of what is visible and sets tool/print colors
     void refresh(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors);
     void refresh_render_paths();
@@ -889,6 +892,7 @@ public:
     void pop_combo_style();
 
 private:
+    void extract_layer_metadata(const GCodeProcessorResult& gcode_result);
     void load_toolpaths(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box);
     //BBS: always load shell at preview
     //void load_shells(const Print& print);

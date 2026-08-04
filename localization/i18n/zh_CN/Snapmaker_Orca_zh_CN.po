@@ -15349,3 +15349,24 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+
+msgid "Memory Usage Warning"
+msgstr "内存占用预警"
+
+msgid "Available system memory is critically low during slicing. Continuing may cause the application to freeze or crash."
+msgstr "切片过程中系统可用内存严重不足，继续可能导致软件卡死或崩溃。"
+
+msgid "Do you want to continue slicing?"
+msgstr "是否继续执行切片？"
+
+msgid "Select \"Yes\" to attempt slicing, but the software may lag or freeze."
+msgstr "选择\"是\"可尝试切片，但可能出现软件卡顿或无响应的问题"
+
+msgid "Select \"No\" to terminate the slicing task immediately."
+msgstr "选择\"否\"将立即停止切片任务"
+
+msgid "Yes, Continue"
+msgstr "是，继续"
+
+msgid "No, Stop"
+msgstr "否，停止"

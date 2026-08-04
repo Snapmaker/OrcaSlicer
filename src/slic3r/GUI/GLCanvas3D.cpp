@@ -2924,7 +2924,7 @@ void GLCanvas3D::set_shell_transparence(float alpha){
 
 }
 //BBS: add only gcode mode
-void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode)
+void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode, bool skip_toolpaths)
 {
     PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
     PartPlate* plate = partplate_list.get_curr_plate();
@@ -2934,7 +2934,7 @@ void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, co
     //when load gcode directly, it is too late
     m_gcode_viewer.init(wxGetApp().get_mode(), wxGetApp().preset_bundle);
     m_gcode_viewer.load(gcode_result, *this->fff_print(), wxGetApp().plater()->build_volume(), exclude_bounding_box,
-        wxGetApp().get_mode(), only_gcode);
+        wxGetApp().get_mode(), only_gcode, skip_toolpaths);
     m_gcode_viewer.get_moves_slider()->SetHigherValue(m_gcode_viewer.get_moves_slider()->GetMaxValue());
 
     if (wxGetApp().is_editor()) {

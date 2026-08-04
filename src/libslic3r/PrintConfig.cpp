@@ -719,7 +719,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("supertack_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the Cool Plate SuperTack.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -729,7 +729,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("cool_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the Cool Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -739,7 +739,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("textured_cool_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the Textured Cool Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -749,7 +749,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("eng_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the Engineering Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -759,7 +759,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("hot_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the High Temp Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -769,7 +769,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("textured_plate_temp", coInts);
     def->label = L("Other layers");
     def->tooltip = L("Bed temperature for layers except the initial one. "
-                     "A value of 0 means the filament does not support printing on the Textured PEI Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min = 0;
@@ -779,7 +779,7 @@ void PrintConfigDef::init_fff_params()
     def             = this->add("graphic_effect_plate_temp", coInts);
     def->label      = L("Other layers");
     def->tooltip    = L("Bed temperature for layers except the initial one. "
-                           "A value of 0 means the filament does not support printing on the Graphic Effect Plate.");
+                           "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
     def->full_label = L("Bed temperature");
     def->min        = 0;
@@ -790,7 +790,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the Cool Plate SuperTack.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 120;
@@ -800,7 +800,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the Cool Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 120;
@@ -810,7 +810,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the Textured Cool Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 120;
@@ -820,7 +820,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the Engineering Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 300;
@@ -830,7 +830,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the High Temp Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->max = 300;
     def->set_default_value(new ConfigOptionInts{ 45 });
@@ -839,7 +839,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip = L("Bed temperature of the initial layer. "
-                     "A value of 0 means the filament does not support printing on the Textured PEI Plate.");
+                     "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext = u8"\u2103" /* °C */;	// degrees Celsius, don't need translation
     def->min = 0;
     def->max = 300;
@@ -849,7 +849,7 @@ void PrintConfigDef::init_fff_params()
     def->label      = L("Initial layer");
     def->full_label = L("Initial layer bed temperature");
     def->tooltip    = L("Bed temperature of the initial layer. "
-                           "A value of 0 means the filament does not support printing on the Graphic Effect Plate.");
+                           "A value of 0 means the filament does not support printing on this plate.");
     def->sidetext   = u8"\u2103" /* °C */; // degrees Celsius, don't need translation
     def->min        = 0;
     def->max        = 300;
@@ -873,13 +873,15 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.emplace_back(L("Textured PEI Plate"));
     def->enum_labels.emplace_back(L("Textured Cool Plate"));
     def->enum_labels.emplace_back(L("Cool Plate (SuperTack)"));
-    // U1 only 3
+    // U1 only 4
     def->enum_values_u1.emplace_back("Textured PEI Plate");
     def->enum_values_u1.emplace_back("High Temp Plate");
     def->enum_values_u1.emplace_back("Graphic Effect Plate");
+    def->enum_values_u1.emplace_back("Supertack Plate");
     def->enum_labels_u1.emplace_back(L("Textured PEI Plate"));
     def->enum_labels_u1.emplace_back(L("Smooth PEI Plate"));
     def->enum_labels_u1.emplace_back(L("Graphic Effect Plate"));
+    def->enum_labels_u1.emplace_back(L("Cool Steel Plate"));
     // U1 use 7 when open support_multi_bed_types
     def->enum_values_ex.emplace_back("Cool Plate");
     def->enum_values_ex.emplace_back("Engineering Plate");
@@ -893,7 +895,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels_ex.emplace_back(L("Smooth PEI Plate"));
     def->enum_labels_ex.emplace_back(L("Textured PEI Plate"));
     def->enum_labels_ex.emplace_back(L("Textured Cool Plate"));
-    def->enum_labels_ex.emplace_back(L("Cool Plate (SuperTack)"));
+    def->enum_labels_ex.emplace_back(L("Cool Steel Plate"));
     def->enum_labels_ex.emplace_back(L("Graphic Effect Plate"));
     def->set_default_value(new ConfigOptionEnum<BedType>(btPC));
 
@@ -1922,6 +1924,7 @@ void PrintConfigDef::init_fff_params()
                      "This setting changes all extrusion flow of this filament in G-code proportionally. "
                      "The recommended value range is between 0.95 and 1.05. "
                      "You may be able to tune this value to get a nice flat surface if there is slight overflow or underflow.");
+    def->min = 0;
     def->max = 2;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 1. });

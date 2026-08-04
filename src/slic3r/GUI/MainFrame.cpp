@@ -1923,6 +1923,14 @@ bool MainFrame::get_enable_slice_status()
         {
             enable = false;
         }
+        else if (m_plater->is_plate_blocked_by_cold_plate(part_plate_list.get_curr_plate_index()))
+        {
+            enable = false;
+        }
+        else if (m_plater->is_plate_blocked_by_flow_ratio_zero(part_plate_list.get_curr_plate_index()))
+        {
+            enable = false;
+        }
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": m_slice_select %1%, enable= %2% ")%m_slice_select %enable;

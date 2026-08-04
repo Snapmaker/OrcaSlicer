@@ -4,6 +4,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
@@ -238,6 +239,50 @@ public:
         Compatible,
         AllowedWarning,
         BlockedError
+    };
+
+    // Per-plate breakdown of used filaments that participate in a high/low
+    // temperature mixing conflict. Slot numbers are 1-based to match what the
+    // user sees in the UI. Vectors are sorted ascending and de-duplicated.
+    struct FilamentTempMixingDetail {
+        std::vector<int> high_temp_slots_1based;
+        std::vector<int> low_temp_slots_1based;
+    };
+
+    // One plate's mixing detail, paired with its 1-based plate number.
+    // Used to build the Slice All notification body.
+    struct PlateMixingInfo {
+        int                     plate_index_1based;
+        FilamentTempMixingDetail detail;
+    };
+
+    // Per-plate breakdown of filaments whose flow ratio is 0 and would produce
+    // zero extrusion. Slot numbers are 1-based to match the UI display.
+    struct FlowRatioZeroDetail {
+        std::vector<int> offender_slots_1based;
+    };
+
+    /// \brief Cold plate (CSP) per-plate compatibility state.
+    enum class ColdPlateCompatState
+    {
+        /// \brief All used filaments compatible and no TPU in use.
+        Compatible,
+        /// \brief All used filaments compatible but TPU in use; non-blocking warning.
+        SeriousWarning,
+        /// \brief At least one used filament has zero cold-plate bed temperature; blocks slicing.
+        BlockedError
+    };
+
+    /// \brief Aggregate per-plate cold-plate compatibility result, computed in one pass.
+    /// \details Combines state with the data that produced it (unsupported filament slots,
+    ///          TPU slots) so callers can render notifications without re-querying.
+    ///          Slot lists are 1-based to match filament_display_label / FlowRatioZeroDetail.
+    struct ColdPlateCompatResult
+    {
+        ColdPlateCompatState   state = ColdPlateCompatState::Compatible;
+        std::vector<int>       unsupported_slots_1_based{};
+        std::vector<int>       tpu_slots_1_based{};
+        bool                   uses_tpu = false;
     };
 
     Plater(wxWindow *parent, MainFrame *main_frame);
@@ -522,6 +567,10 @@ public:
     /// @param plate_index Plate index to check.
     /// @return True if compatible or plate index is invalid; false if high/low temperature materials are mixed.
     bool check_filament_temp_mixing(int plate_index);
+    /// @brief Same as above, plus fills `detail` with the 1-based used slots on the plate grouped by
+    ///        high/low temperature. `detail` is only meaningful when this overload returns false
+    ///        (i.e. a mixing conflict exists). On compatible / invalid plates, `detail` is cleared.
+    bool check_filament_temp_mixing(int plate_index, FilamentTempMixingDetail& detail);
     /// @brief Get high/low temperature material mixing state for the current plate.
     /// @return Current plate material mixing state.
     FilamentTempMixingState get_filament_temp_mixing_state();
@@ -533,9 +582,28 @@ public:
     /// @param plate_index Plate index to check.
     /// @return True if slicing this plate is blocked; otherwise false.
     bool is_plate_blocked_by_filament_temp_mixing(int plate_index);
+    /// @brief Cached variant for hot paths (per-frame plate-thumbnail rendering).
+    ///        Refreshed once per sync_filament_temp_mixing_notification() call (which already
+    ///        runs at every state-changing event), so reads are O(1). Returns false for any
+    ///        index not yet populated by a sync (safe default — same as "not blocked").
+    /// @param plate_index Plate index to check.
+    /// @return True if the cached state for this plate is BlockedError; otherwise false.
+    bool is_plate_blocked_by_filament_temp_mixing_cached(int plate_index) const;
     /// @brief Check whether slice-all has at least one plate that can be sliced.
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();
+    /// @brief Unified per-plate sliceability predicate.
+    /// @details Combines PartPlate::can_slice() with the GUI-layer blockers
+    ///          (filament temp mixing, cold-plate incompatibility, and future
+    ///          flow_ratio_zero) so plate-toolbar rendering, slice-all iteration,
+    ///          and MainFrame button gating cannot drift. Add new blockers as
+    ///          early-returns inside this function; do not branch on them at
+    ///          individual call sites. Mirrors has_sliceable_plate_for_slice_all's
+    ///          non-const contract (relies on is_plate_blocked_by_filament_temp_mixing,
+    ///          which is historical non-const).
+    /// @param[in] plate_index 0-based plate index.
+    /// @return true iff the plate exists, can_slice(), and is not blocked by any GUI-layer blocker.
+    bool is_plate_sliceable(int plate_index);
     /// @brief Find the next plate that can be sliced by slice-all.
     /// @param start_plate_index First plate index to check.
     /// @return Plate index if found; otherwise -1.
@@ -543,6 +611,28 @@ public:
     /// Sync notification state with current filament temp mixing status.
     /// Returns true if slicing is allowed, false if high/low temperature mixing blocks slicing.
     bool sync_filament_temp_mixing_notification();
+    /// @brief Same as above, plus fills `detail` with the 1-based slots of offending filaments.
+    ///        `detail` is only meaningful when this overload returns false. On valid plates, `detail` is cleared.
+    bool check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail);
+    /// @brief Check whether a specific plate is blocked because one of its used filaments has flow ratio == 0.
+    /// @param plate_index Plate index to check.
+    /// @return True if slicing this plate is blocked; otherwise false.
+    bool is_plate_blocked_by_flow_ratio_zero(int plate_index);
+    /// Sync notification state with current flow-ratio-zero status.
+    /// Returns true if slicing is allowed, false if any used filament has flow ratio == 0.
+    bool sync_flow_ratio_zero_notification();
+    /// @brief Compute the per-plate cold-plate compatibility state in a single pass.
+    /// @details Collects used filament slots once and walks them once, producing
+    ///          {state, unsupported filaments, TPU flag} in one traversal.
+    /// @param[in] plate_index 0-based plate index.
+    /// @return Result struct; state is Compatible when curr_bed_type != btCSP or plate is empty.
+    ColdPlateCompatResult get_cold_plate_compat_state(int plate_index) const;
+    /// @brief Returns true if the plate is blocked from slicing by cold-plate incompatibility.
+    /// @param[in] plate_index 0-based plate index.
+    bool is_plate_blocked_by_cold_plate(int plate_index) const;
+    /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
+    /// @return True if slicing is allowed on current plate after sync.
+    bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Check and guard filament temp mixing before slicing all plates.

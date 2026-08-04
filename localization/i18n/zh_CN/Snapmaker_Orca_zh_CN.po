@@ -15284,8 +15284,8 @@ msgstr "擦拭塔的起始点熨烫面积"
 msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues."
 msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。"
 
-msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow mixed printing of high and low temperature materials\" in Preferences."
-msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启 \"允许高/低温材料混合打印\"。"
+msgid "Detected both high and low temperature materials. Mixed printing may result in extruder clogging, nozzle damage, or layer adhesion issues. To continue printing, enable \"Allow high/low temperature filament mixing\" in Preferences."
+msgstr "检测到高温材料与低温材料同时使用。混合打印可能导致挤出机堵塞、喷嘴损坏或层间粘附问题。如需继续打印，请在「偏好设置」中开启「允许高/低温材料混合打印」。"
 
 msgid "Flow ratio is 0%, resulting in zero extrusion and no valid toolpath. "
 msgstr "流量比例为 0%，挤出量为零，无法生成有效打印路径。"
@@ -15332,14 +15332,8 @@ msgstr "以下盘存在高温与低温耗材混用："
 msgid "unknown"
 msgstr "未知"
 
-msgid "does not exist."
-msgstr "不存在。"
-
-msgid ""
-"To continue printing, enable \"Allow mixed printing of high and low "
-"temperature materials\" in Preferences."
-msgstr ""
-"如需继续打印，请在「偏好设置」中开启「允许高低温耗材混打」。"msgstr "多色"
+msgid "To continue printing, enable \"Allow high/low temperature filament mixing\" in Preferences."
+msgstr "如需继续打印，请在「偏好设置」中开启「允许高/低温材料混合打印」。"
 
 msgid "does not exist."
 msgstr "不存在。"

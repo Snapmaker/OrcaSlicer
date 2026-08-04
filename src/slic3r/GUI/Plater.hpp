@@ -582,6 +582,13 @@ public:
     /// @param plate_index Plate index to check.
     /// @return True if slicing this plate is blocked; otherwise false.
     bool is_plate_blocked_by_filament_temp_mixing(int plate_index);
+    /// @brief Cached variant for hot paths (per-frame plate-thumbnail rendering).
+    ///        Refreshed once per sync_filament_temp_mixing_notification() call (which already
+    ///        runs at every state-changing event), so reads are O(1). Returns false for any
+    ///        index not yet populated by a sync (safe default — same as "not blocked").
+    /// @param plate_index Plate index to check.
+    /// @return True if the cached state for this plate is BlockedError; otherwise false.
+    bool is_plate_blocked_by_filament_temp_mixing_cached(int plate_index) const;
     /// @brief Check whether slice-all has at least one plate that can be sliced.
     /// @return True if any plate can be sliced and is not blocked by material mixing.
     bool has_sliceable_plate_for_slice_all();

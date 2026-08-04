@@ -208,15 +208,30 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
-// Safe translation helper: returns the UTF-8 form of a translated string as a
-// std::string. This avoids a dangling-pointer trap in I18N::translate_utf8()
-// (which returns wxGetTranslation(...).ToUTF8().data() - a pointer into a
-// temporary wxString). We keep the translated wxString alive across the
-// utf8_str() call and copy the bytes into a std::string before returning.
+// Defensive UTF-8 translation helper.
+//
+// I18N::translate_utf8() (and the _u8L macro) returns std::string constructed
+// from a chain of temporaries: wxGetTranslation(...).ToUTF8().data(). The
+// C++ standard says this is safe — the temporaries live until the end of the
+// full expression, which includes the std::string copy construction. In
+// practice, however, MSVC has historically mis-optimized such chains under
+// /O2 (the buffer sometimes gets destroyed before the std::string reads it),
+// producing reads from freed memory. The classic #648 NULL-FILE* crash was a
+// similar temporary-chain pattern backfiring. Naming each step as a local
+// variable makes the lifetime unambiguous to the optimizer and avoids the
+// whole class of bugs across compilers and build flags.
+//
+// Null defenses: wxGetTranslation / wxString(nullptr, wxConvUTF8) are UB on
+// null input, and std::string(nullptr, 0) is UB even with zero length, so we
+// short-circuit both. Returns "" on null input.
 static std::string tr_u8(const char* s)
 {
-    const wxString ws = _L(s);
+    if (s == nullptr)
+        return std::string();
+    const wxString        ws  = _L(s);
     const wxScopedCharBuffer buf = ws.utf8_str();
+    if (buf.data() == nullptr)
+        return std::string();
     return std::string(buf.data(), buf.length());
 }
 

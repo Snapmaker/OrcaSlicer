@@ -2938,6 +2938,22 @@ void TreeSupport::drop_nodes()
     }
 
     BOOST_LOG_TRIVIAL(debug) << "after m_avoidance_cache.size()=" << m_ts_data->m_avoidance_cache.size();
+    // DEBUG_CROSS_MACHINE: log final support output checksum
+    {
+        size_t total_layers = 0;
+        double total_base_area = 0;
+        double total_roof_area = 0;
+        for (size_t i = 0; i < m_object->support_layer_count(); ++i) {
+            const SupportLayer* sl = m_object->get_support_layer(i);
+            if (sl && sl->print_z > 0) {
+                total_layers++;
+                total_base_area += area(sl->base_areas);
+                total_roof_area += area(sl->roof_areas);
+            }
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] draw_circles done: total_layers=" << total_layers
+            << " total_base_area=" << total_base_area << " total_roof_area=" << total_roof_area;
+    }
 }
 
 void TreeSupport::smooth_nodes()
@@ -3380,6 +3396,12 @@ void TreeSupport::generate_contact_points()
 
         BOOST_LOG_TRIVIAL(info) << "avg_node_per_layer=" << avg_node_per_layer << ", nodes_angle=" << nodes_angle;
     }
+    // DEBUG_CROSS_MACHINE: log total contact nodes count
+    size_t total_contact_nodes = 0;
+    for (const auto& layer_nodes : contact_nodes)
+        total_contact_nodes += layer_nodes.size();
+    BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] generate_contact_points done: total_nodes=" << total_contact_nodes
+        << " nonempty_layers=" << nonempty_layers << " avg_node_per_layer=" << avg_node_per_layer;
 }
 
 void TreeSupport::insert_dropped_node(std::vector<SupportNode*>& nodes_layer, SupportNode* p_node)

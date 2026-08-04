@@ -2495,7 +2495,7 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
                         // This area was removed completely due to collisions.
                         return true;
                     if (elem.areas.to_bp_areas.empty() && elem.areas.to_model_areas.empty()) {
-                        if (area(elem.areas.influence_areas) < _tiny_area_threshold) {
+                        if (area(elem.areas.influence_areas) <= _tiny_area_threshold) {
                             BOOST_LOG_TRIVIAL(warning) << "Insert Error of Influence area bypass on layer " << layer_idx - 1;
                             tree_supports_show_error("Insert error of area after bypassing merge.\n"sv, true);
                         }
@@ -2528,7 +2528,7 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
             for (SupportElementMerging &elem : influence_areas)
                 if (! elem.areas.influence_areas.empty()) {
                     Polygons new_area = safe_union(elem.areas.influence_areas);
-                    if (area(new_area) < _tiny_area_threshold) {
+                    if (area(new_area) <= _tiny_area_threshold) {
                         BOOST_LOG_TRIVIAL(warning) << "Insert Error of Influence area on layer " << layer_idx - 1 << ". Origin of " << elem.parents.size() << " areas. Was to bp " << elem.state.to_buildplate;
                         tree_supports_show_error("Insert error of area after merge.\n"sv, true);
                     }

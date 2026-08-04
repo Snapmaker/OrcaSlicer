@@ -447,6 +447,12 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                                                     smaller_carves = (pid_current <= pid_other);
                                                 else
                                                     smaller_carves = (area_current <= area_other);
+                                                // DEBUG_CROSS_MACHINE: log carving decision
+                                                BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] slices_to_regions carving: "
+                                                    << "pid_current=" << pid_current << " pid_other=" << pid_other
+                                                    << " area_current=" << area_current << " area_other=" << area_other
+                                                    << " ratio=" << (std::max(area_current, area_other) / std::min(area_current, area_other))
+                                                    << " smaller_carves=" << smaller_carves;
                                                 if (smaller_carves)
                                                     temp_slices[idx_region2].expolygons = diff_ex(temp_slices[idx_region2].expolygons, temp_slices[idx_region].expolygons);
                                                 else

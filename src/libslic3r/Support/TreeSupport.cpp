@@ -630,6 +630,14 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
     m_machine_border.translate(Point(scale_(plate_offset(0)), scale_(plate_offset(1))) - m_object->instances().front().shift);
     top_z_distance                            = m_object_config->support_top_z_distance.value;
     minimum_roof_area                         = scaled<double>(scaled<double>(m_object_config->support_interface_min_area.value));
+    // DEBUG_CROSS_MACHINE: log key tree support params
+    BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] TreeSupport init: "
+        << "minimum_roof_area=" << minimum_roof_area
+        << " support_style=" << int(m_support_params.support_style)
+        << " top_z_distance=" << top_z_distance
+        << " support_type=" << int(m_object_config->support_type.value)
+        << " radius_0=" << m_radius_0
+        << " support_xy_distance=" << m_object_config->support_xy_distance.value;
     if (top_z_distance > EPSILON) top_z_distance = std::max(top_z_distance, float(m_slicing_params.min_layer_height));
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
     SVG svg(debug_out_path("machine_boarder.svg"), m_object->bounding_box());

@@ -123,6 +123,11 @@ TreeModelVolumes::TreeModelVolumes(
         m_support_rests_on_model |= ! data_pair.first.support_material_buildplate_only;
         m_min_resolution = std::min(m_min_resolution, data_pair.first.resolution);
     }
+    // DEBUG_CROSS_MACHINE: log resolution and outline info
+    BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] TreeModelVolumes init: "
+        << "m_min_resolution=" << m_min_resolution
+        << " layer_outlines_count=" << m_layer_outlines.size()
+        << " outline_layer_count=" << (m_layer_outlines.empty() ? 0 : m_layer_outlines.front().second.size());
 
 #if 0
     for (size_t mesh_idx = 0; mesh_idx < storage.meshes.size(); mesh_idx++) {
@@ -518,7 +523,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                                     // not support an overhang<90 degree than to risk fusing to it.
                                 append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtRound, float(min_resolution)));
                             }
-                        collisions = processing_last_mesh && layer_idx < int(anti_overhang.size()) ? 
+                        collisions = processing_last_mesh && layer_idx < int(anti_overhang.size()) ?
                                 union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtRound, float(min_resolution))) :
                                 union_(collisions);
                         auto &dst = data[layer_idx];
@@ -575,6 +580,21 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
 #endif
     if (throw_on_cancel)
         throw_on_cancel();
+    // DEBUG_CROSS_MACHINE: log collision area checksums at key layers (before move)
+    {
+        size_t total_layers = data.size();
+        size_t total_vertices = 0;
+        double total_area = 0;
+        for (size_t li = 0; li < total_layers; ++li) {
+            for (const auto& poly : data[li]) {
+                total_vertices += poly.size();
+            }
+            total_area += area(data[li]);
+        }
+        BOOST_LOG_TRIVIAL(info) << "[DEBUG_CROSS_MACHINE] calculateCollision: radius=" << radius
+            << " total_layers=" << total_layers << " total_vertices=" << total_vertices
+            << " total_area=" << total_area;
+    }
     m_collision_cache.insert(std::move(data), radius);
     if (calculate_placable)
         m_placeable_areas_cache.insert(std::move(data_placeable), radius);

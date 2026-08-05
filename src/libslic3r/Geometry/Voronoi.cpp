@@ -28,43 +28,35 @@ typename boost::polygon::enable_if<
 VoronoiDiagram::construct_voronoi(const SegmentIterator segment_begin, const SegmentIterator segment_end, const bool try_to_repair_if_needed) {
     boost::polygon::construct_voronoi(segment_begin, segment_end, &m_voronoi_diagram);
     if (try_to_repair_if_needed) {
-        if (m_issue_type = detect_known_issues(*this, segment_begin, segment_end); m_issue_type != IssueType::NO_ISSUE_DETECTED) {
+        m_issue_type = detect_known_issues(*this, segment_begin, segment_end);
+        if (m_issue_type == IssueType::MISSING_VORONOI_VERTEX) {
+            BOOST_LOG_TRIVIAL(warning) << "Detected missing Voronoi vertex, input polygons will be rotated back and forth.";
+        } else if (m_issue_type == IssueType::NON_PLANAR_VORONOI_DIAGRAM) {
+            BOOST_LOG_TRIVIAL(warning) << "Detected non-planar Voronoi diagram, input polygons will be rotated back and forth.";
+        } else if (m_issue_type == IssueType::VORONOI_EDGE_INTERSECTING_INPUT_SEGMENT) {
+            BOOST_LOG_TRIVIAL(warning) << "Detected Voronoi edge intersecting input segment, input polygons will be rotated back and forth.";
+        } else if (m_issue_type == IssueType::FINITE_EDGE_WITH_NON_FINITE_VERTEX) {
+            BOOST_LOG_TRIVIAL(warning) << "Detected finite Voronoi vertex with non finite vertex, input polygons will be rotated back and forth.";
+        } else if (m_issue_type == IssueType::PARABOLIC_VORONOI_EDGE_WITHOUT_FOCUS_POINT) {
+            BOOST_LOG_TRIVIAL(warning) << "Detected parabolic Voronoi edges without focus point, input polygons will be rotated back and forth.";
+        } else if (m_issue_type != IssueType::NO_ISSUE_DETECTED) {
+            BOOST_LOG_TRIVIAL(error) << "Detected unknown Voronoi diagram issue, input polygons will be rotated back and forth.";
+        }
+        // Always attempt repair to ensure consistent Voronoi output across different CPUs.
+        // The detection may differ between Intel and AMD due to floating-point sensitivity,
+        // but the rotation repair itself is deterministic given the same input.
+        if (m_issue_type = try_to_repair_degenerated_voronoi_diagram(segment_begin, segment_end);
+            m_issue_type != IssueType::NO_ISSUE_DETECTED) {
             if (m_issue_type == IssueType::MISSING_VORONOI_VERTEX) {
-                BOOST_LOG_TRIVIAL(warning) << "Detected missing Voronoi vertex, input polygons will be rotated back and forth.";
+                BOOST_LOG_TRIVIAL(error) << "Detected missing Voronoi vertex even after the rotation of input.";
             } else if (m_issue_type == IssueType::NON_PLANAR_VORONOI_DIAGRAM) {
-                BOOST_LOG_TRIVIAL(warning) << "Detected non-planar Voronoi diagram, input polygons will be rotated back and forth.";
-            } else if (m_issue_type == IssueType::VORONOI_EDGE_INTERSECTING_INPUT_SEGMENT) {
-                BOOST_LOG_TRIVIAL(warning) << "Detected Voronoi edge intersecting input segment, input polygons will be rotated back and forth.";
-            } else if (m_issue_type == IssueType::FINITE_EDGE_WITH_NON_FINITE_VERTEX) {
-                BOOST_LOG_TRIVIAL(warning) << "Detected finite Voronoi vertex with non finite vertex, input polygons will be rotated back and forth.";
-            } else if (m_issue_type == IssueType::PARABOLIC_VORONOI_EDGE_WITHOUT_FOCUS_POINT) {
-                BOOST_LOG_TRIVIAL(warning) << "Detected parabolic Voronoi edges without focus point, input polygons will be rotated back and forth.";
+                BOOST_LOG_TRIVIAL(error) << "Detected non-planar Voronoi diagram even after the rotation of input.";
             } else {
-                BOOST_LOG_TRIVIAL(error) << "Detected unknown Voronoi diagram issue, input polygons will be rotated back and forth.";
+                BOOST_LOG_TRIVIAL(error) << "Detected Voronoi diagram issue even after the rotation of input.";
             }
-
-            if (m_issue_type = try_to_repair_degenerated_voronoi_diagram(segment_begin, segment_end); m_issue_type != IssueType::NO_ISSUE_DETECTED) {
-                if (m_issue_type == IssueType::MISSING_VORONOI_VERTEX) {
-                    BOOST_LOG_TRIVIAL(error) << "Detected missing Voronoi vertex even after the rotation of input.";
-                } else if (m_issue_type == IssueType::NON_PLANAR_VORONOI_DIAGRAM) {
-                    BOOST_LOG_TRIVIAL(error) << "Detected non-planar Voronoi diagram even after the rotation of input.";
-                } else if (m_issue_type == IssueType::VORONOI_EDGE_INTERSECTING_INPUT_SEGMENT) {
-                    BOOST_LOG_TRIVIAL(error) << "Detected Voronoi edge intersecting input segment even after the rotation of input.";
-                } else if (m_issue_type == IssueType::FINITE_EDGE_WITH_NON_FINITE_VERTEX) {
-                    BOOST_LOG_TRIVIAL(error) << "Detected finite Voronoi vertex with non finite vertex even after the rotation of input.";
-                } else if (m_issue_type == IssueType::PARABOLIC_VORONOI_EDGE_WITHOUT_FOCUS_POINT) {
-                    BOOST_LOG_TRIVIAL(error) << "Detected parabolic Voronoi edges without focus point even after the rotation of input.";
-                } else {
-                    BOOST_LOG_TRIVIAL(error) << "Detected unknown Voronoi diagram issue even after the rotation of input.";
-                }
-
-                m_state = State::REPAIR_UNSUCCESSFUL;
-            } else {
-                m_state = State::REPAIR_SUCCESSFUL;
-            }
+            m_state = State::REPAIR_UNSUCCESSFUL;
         } else {
-            m_state      = State::REPAIR_NOT_NEEDED;
-            m_issue_type = IssueType::NO_ISSUE_DETECTED;
+            m_state = State::REPAIR_SUCCESSFUL;
         }
     } else {
         m_state      = State::UNKNOWN;

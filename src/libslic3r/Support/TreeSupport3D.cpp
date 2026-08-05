@@ -2385,14 +2385,10 @@ static void merge_influence_areas(
     // Initial number of buckets for 1st round of merging.
     size_t num_buckets_initial;
     {
-        // How many buckets per first merge iteration?
-        const size_t num_threads     = tbb::this_task_arena::max_concurrency();
-        // 4 buckets per thread if possible,
-        const size_t num_buckets_min = (input_size + 2) / 4;
-        // 2 buckets per thread otherwise.
-        const size_t num_buckets_max = input_size / 2;
-        num_buckets_initial          = num_buckets_min >= num_threads ? num_buckets_min : num_buckets_max;
-        const size_t bucket_size     = num_buckets_min >= num_threads ? 4 : 2;
+        // Fixed bucket_size=2 for deterministic merge results across machines with different
+        // thread counts. The merge operation is not associative, so execution order matters.
+        constexpr size_t bucket_size = 2;
+        num_buckets_initial = input_size / bucket_size;
         // Fill in the buckets.
         SupportElementMerging *it = influence_areas.data();
         // Reserve one more bucket to keep a single influence area which will not be merged in the first iteration.

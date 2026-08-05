@@ -28,6 +28,9 @@
     "filament_type": [
         "PETG"
     ],
+    "filament_adhesiveness_category": [
+      "300"
+    ],
     "hot_plate_temp": [
         "80"
     ],

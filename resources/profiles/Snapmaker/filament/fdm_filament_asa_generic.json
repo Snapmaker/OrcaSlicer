@@ -11,6 +11,9 @@
     "during_print_exhaust_fan_speed": [
         "70"
     ],
+    "filament_adhesiveness_category": [
+        "200"
+    ],
     "filament_deretraction_speed": [
         "nil"
     ],

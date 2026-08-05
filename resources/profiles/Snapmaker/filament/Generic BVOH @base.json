@@ -3,6 +3,9 @@
     "name": "Generic BVOH @base",
     "inherits": "fdm_filament_bvoh_generic",
     "from": "system",
+    "filament_adhesiveness_category": [
+        "797"
+    ],
     "filament_id": "GFS97",
     "instantiation": "false"
 }

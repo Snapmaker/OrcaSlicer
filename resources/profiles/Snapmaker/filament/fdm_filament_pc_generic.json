@@ -4,6 +4,9 @@
     "inherits": "fdm_filament_common_generic",
     "from": "system",
     "instantiation": "false",
+    "filament_adhesiveness_category": [
+        "500"
+    ],
     "cool_plate_temp": [
         "0"
     ],

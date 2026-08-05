@@ -19,6 +19,9 @@
   "fan_cooling_layer_time": [
     "7"
   ],
+  "filament_adhesiveness_category": [
+      "300"
+  ],
   "filament_cost": [
     "8"
   ],

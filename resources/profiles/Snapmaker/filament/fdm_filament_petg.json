@@ -32,6 +32,7 @@
   "enable_pressure_advance": ["1"],
 
   "filament_type": ["PETG"],
+  "filament_adhesiveness_category": ["300"],
   "nozzle_temperature_range_low": ["220"],
   "nozzle_temperature_range_high": ["270"]
 }

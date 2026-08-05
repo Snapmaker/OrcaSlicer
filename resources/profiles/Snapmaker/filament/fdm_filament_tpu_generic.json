@@ -4,6 +4,9 @@
     "inherits": "fdm_filament_common_generic",
     "from": "system",
     "instantiation": "false",
+    "filament_adhesiveness_category": [
+        "600"
+    ],
     "additional_cooling_fan_speed": [
         "70"
     ],

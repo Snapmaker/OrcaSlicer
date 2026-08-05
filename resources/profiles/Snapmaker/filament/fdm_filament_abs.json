@@ -4,6 +4,7 @@
   "instantiation": "false",
   "name": "fdm_filament_abs",
   "inherits": "fdm_filament_common",
+  "filament_adhesiveness_category": ["200"],
   "filament_cost": ["100"],
   "filament_density": ["1.04"],
   "filament_max_volumetric_speed": ["16"],

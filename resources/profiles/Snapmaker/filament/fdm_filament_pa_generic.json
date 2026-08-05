@@ -4,6 +4,9 @@
     "inherits": "fdm_filament_common_generic",
     "from": "system",
     "instantiation": "false",
+    "filament_adhesiveness_category": [
+        "400"
+    ],
     "activate_air_filtration": [
         "1"
     ],

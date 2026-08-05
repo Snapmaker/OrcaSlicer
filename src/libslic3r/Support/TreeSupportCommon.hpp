@@ -591,7 +591,7 @@ private:
 
 static constexpr const bool polygons_strictly_simple = false;
 
-inline double tiny_area_threshold() { return sqr(scaled<double>(0.003)); } // Increased from 0.001 to add tolerance for cross-machine FP differences
+inline double tiny_area_threshold() { return sqr(scaled<double>(0.001)); }
 
 inline void tree_supports_show_error(std::string_view message, bool critical)
 { // todo Remove!  ONLY FOR PUBLIC BETA!!

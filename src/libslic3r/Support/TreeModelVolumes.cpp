@@ -463,12 +463,12 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                 for (LayerIndex layer_idx = range.begin(); layer_idx != range.end(); ++ layer_idx) {
                     Polygons collision_areas = machine_border;
                     append(collision_areas, outlines[layer_idx]);
-                    // Use jtSquare for cross-machine consistency: pure integer math, no sin/cos,
-                    // avoiding Intel vs AMD floating-point differences in jtRound arc approximation.
+                    // Use jtRound to avoid miter spikes at concave corners causing layer-to-layer contour inconsistency
+                    // after downstream polygons_simplify. The final simplify pass (line 527) cleans excess vertices.
                     // if a key does not exist when it is accessed it is added!
                     collision_areas_offsetted[layer_idx] = offset_value == 0 ?
                             union_(collision_areas) :
-                            offset(union_ex(collision_areas), offset_value, ClipperLib::jtSquare, 0.);
+                            offset(union_ex(collision_areas), offset_value, ClipperLib::jtRound, float(min_resolution));
                     if(throw_on_cancel)
                         throw_on_cancel();
                 }
@@ -521,10 +521,10 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                                     // the conditional -0.5 ensures that plastic can never touch on the diagonal
                                     // downward when the z_distance_top_layers = 1. It is assumed to be better to
                                     // not support an overhang<90 degree than to risk fusing to it.
-                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtSquare, 0.));
+                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtRound, float(min_resolution)));
                             }
                         collisions = processing_last_mesh && layer_idx < int(anti_overhang.size()) ?
-                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtSquare, 0.)) :
+                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtRound, float(min_resolution))) :
                                 union_(collisions);
                         auto &dst = data[layer_idx];
                         if (processing_last_mesh) {
@@ -595,12 +595,6 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
             << " total_layers=" << total_layers << " total_vertices=" << total_vertices
             << " total_area=" << total_area;
     }
-    // Apply safety margin to collision areas: tiny positive offset (5 units = 0.005mm)
-    // absorbs ±1 unit vertex FP differences across machines, preventing
-    // influence areas from landing exactly on collision boundaries.
-    static constexpr coord_t COLLISION_SAFETY_MARGIN = 20; // 0.02mm, absorbs cumulative FP drift across serial propagation
-    for (auto& layer_polys : data.polygons_mutable())
-        layer_polys = offset(layer_polys, COLLISION_SAFETY_MARGIN, ClipperLib::jtSquare, 0.);
     m_collision_cache.insert(std::move(data), radius);
     if (calculate_placable)
         m_placeable_areas_cache.insert(std::move(data_placeable), radius);
@@ -628,7 +622,7 @@ void TreeModelVolumes::calculateCollisionHolefree(const std::vector<RadiusLayerP
                     // this union is important as otherwise holes(in form of lines that will increase to holes in a later step) can get unioned onto the area.
                     data.emplace_back(RadiusLayerPair(radius, layer_idx), polygons_simplify(
                         offset(union_ex(this->getCollision(m_increase_until_radius, layer_idx, false)),
-                            5 - increase_radius_ceil, ClipperLib::jtSquare, 0.),
+                            5 - increase_radius_ceil, ClipperLib::jtRound, float(min_resolution)),
                         m_min_resolution, polygons_strictly_simple));
                     if (throw_on_cancel)
                         throw_on_cancel();
@@ -725,7 +719,7 @@ void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &ke
                     latest_avoidance = union_(current_layer_collisions,
                         offset(latest_avoidance,
                             istep + 1 == move_steps ? - last_move_step : - move_step,
-                            ClipperLib::jtSquare, 0.));
+                            ClipperLib::jtRound, float(min_resolution)));
                 if (task.to_model)
                     latest_avoidance = diff(latest_avoidance, getPlaceableAreas(task.radius, layer_idx, throw_on_cancel));
                 latest_avoidance = polygons_simplify(latest_avoidance, m_min_resolution, polygons_strictly_simple);
@@ -793,7 +787,7 @@ void TreeModelVolumes::calculatePlaceables(const coord_t radius, const LayerInde
                     // it can happen that a small line is considered a flat area to place something onto, even though it is mostly 
                     // xy_distance that cant support it. Making the area smaller by xy_distance fixes this.
                     - (radius + m_current_min_xy_dist + m_current_min_xy_dist_delta),
-                    jtSquare, 0.);
+                    jtMiter, 1.2);
                 if(throw_on_cancel)
                     throw_on_cancel();
             }

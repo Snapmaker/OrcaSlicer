@@ -56,6 +56,8 @@ public:
 
     void Close();
 
+    void refresh_dark_mode(); // re-apply colors & bitmaps after theme switch
+
     wxWindow* GetPopupParent() { return DPIDialog::GetParent(); }
 
 private:
@@ -77,6 +79,7 @@ private:
     };
 
     wxPanel*           m_title_bar;
+    wxPanel*           m_title_divider;
     Label*             m_title_label;
     wxStaticBitmap*    m_collapse_btn;
     wxScrolledWindow*  m_task_panel;
@@ -92,6 +95,7 @@ private:
     std::function<void()> m_close_callback;
 
     wxTimer* m_position_timer;
+    bool     m_was_dark_mode;  // for detecting theme switch in on_timer
 
     // Design constants (match Figma spec, in raw px — converted via FromDIP)
     static constexpr int TITLE_BAR_HEIGHT   = 40;
@@ -129,6 +133,7 @@ public:
     void set_dismiss_callback(std::function<void()> cb);
     void disable_cancel(); // visual gray-out + switch click behavior to dismiss
     void set_queue_position(int pos) { m_queue_position = pos; }
+    void refresh_dark_mode(); // re-apply colors & bitmaps after theme switch
 
     // Figma design sizes (raw px — converted via FromDIP at use sites)
     static constexpr int ROW_WIDTH        = 375;

@@ -20,16 +20,34 @@ namespace GUI {
 // Design color palette (from Figma)
 // ===========================================================================
 namespace {
-constexpr wxUint32 COL_TITLE_TEXT    = 0x242424;
-constexpr wxUint32 COL_FILE_NAME     = 0x333333;
-constexpr wxUint32 COL_STATUS_TEXT   = 0x8F8F8F;
+// Light mode (Figma)
+constexpr wxUint32 COL_BG_LIGHT           = 0xFFFFFF;
+constexpr wxUint32 COL_TITLE_TEXT_LIGHT    = 0x242424;
+constexpr wxUint32 COL_FILE_NAME_LIGHT     = 0x333333;
+constexpr wxUint32 COL_STATUS_TEXT_LIGHT   = 0x8F8F8F;
+constexpr wxUint32 COL_DIVIDER_LIGHT       = 0xD9D9D9;
+
+// Dark mode (Figma)
+constexpr wxUint32 COL_BG_DARK            = 0x2D2D31;
+constexpr wxUint32 COL_TITLE_TEXT_DARK     = 0xE0E0E0;
+constexpr wxUint32 COL_FILE_NAME_DARK      = 0xE0E0E0;
+constexpr wxUint32 COL_STATUS_TEXT_DARK    = 0x909090;
+constexpr wxUint32 COL_DIVIDER_DARK        = 0x3E3E45;
+
+// Shared across modes (unchanged in dark mode per Figma)
 constexpr wxUint32 COL_PROGRESS_FILL = 0x009988;
 constexpr wxUint32 COL_PROGRESS_TRACK= 0xD9D9D9;
-constexpr wxUint32 COL_DIVIDER       = 0xD9D9D9;
 
 inline wxColour make_color(wxUint32 rgb) {
     return wxColour((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
 }
+
+// Dynamic color accessors (switches on dark_mode())
+inline wxColour bg_color()         { return wxGetApp().dark_mode() ? make_color(COL_BG_DARK)         : make_color(COL_BG_LIGHT); }
+inline wxColour title_text_color() { return wxGetApp().dark_mode() ? make_color(COL_TITLE_TEXT_DARK)  : make_color(COL_TITLE_TEXT_LIGHT); }
+inline wxColour file_name_color()  { return wxGetApp().dark_mode() ? make_color(COL_FILE_NAME_DARK)   : make_color(COL_FILE_NAME_LIGHT); }
+inline wxColour status_text_color(){ return wxGetApp().dark_mode() ? make_color(COL_STATUS_TEXT_DARK) : make_color(COL_STATUS_TEXT_LIGHT); }
+inline wxColour divider_color()    { return wxGetApp().dark_mode() ? make_color(COL_DIVIDER_DARK)     : make_color(COL_DIVIDER_LIGHT); }
 } // namespace
 
 // ===========================================================================
@@ -111,7 +129,7 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
     , m_cancel_enabled(true)
     , m_status_text(_L("Waiting..."))
 {
-    SetBackgroundColour(*wxWHITE);
+    SetBackgroundColour(bg_color());
     SetMinSize(wxSize(FromDIP(ROW_WIDTH), FromDIP(ROW_HEIGHT)));
     SetMaxSize(wxSize(FromDIP(ROW_WIDTH), FromDIP(ROW_HEIGHT)));
 
@@ -122,7 +140,7 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
 
     m_name_label = new Label(this, file_name, wxST_ELLIPSIZE_MIDDLE);
     m_name_label->SetFont(::Label::Body_13);
-    m_name_label->SetForegroundColour(make_color(COL_FILE_NAME));
+    m_name_label->SetForegroundColour(file_name_color());
     m_name_label->SetMinSize(wxSize(FromDIP(PROGRESS_WIDTH), -1));
     m_name_label->SetMaxSize(wxSize(FromDIP(PROGRESS_WIDTH), -1));
     left_sizer->Add(m_name_label, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
@@ -140,7 +158,7 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
 
     m_status_label = new Label(this, m_status_text);
     m_status_label->SetFont(::Label::Body_13);
-    m_status_label->SetForegroundColour(make_color(COL_STATUS_TEXT));
+    m_status_label->SetForegroundColour(status_text_color());
     m_status_sizer->Add(m_status_label, 1, wxALIGN_CENTER_VERTICAL);
 
     left_sizer->Add(m_status_sizer, 0, wxEXPAND);
@@ -278,8 +296,26 @@ void TimelapseTaskRow::set_dismiss_callback(std::function<void()> cb)
 void TimelapseTaskRow::disable_cancel()
 {
     m_cancel_enabled = false;
-    m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_disabled", this, CANCEL_SIZE));
+    m_cancel_btn->SetBitmap(create_scaled_bitmap(
+        wxGetApp().dark_mode() ? "timelapse_cancel_disabled_dark" : "timelapse_cancel_disabled",
+        this, CANCEL_SIZE));
     m_cancel_btn->SetCursor(wxCURSOR_HAND);
+}
+
+void TimelapseTaskRow::refresh_dark_mode()
+{
+    SetBackgroundColour(bg_color());
+    m_name_label->SetForegroundColour(file_name_color());
+    m_status_label->SetForegroundColour(status_text_color());
+    // Re-apply cancel button bitmap for current state
+    if (m_cancel_enabled) {
+        m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
+    } else {
+        m_cancel_btn->SetBitmap(create_scaled_bitmap(
+            wxGetApp().dark_mode() ? "timelapse_cancel_disabled_dark" : "timelapse_cancel_disabled",
+            this, CANCEL_SIZE));
+    }
+    Refresh();
 }
 
 void TimelapseTaskRow::on_cancel_down(wxMouseEvent&)
@@ -314,6 +350,7 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
                 wxDefaultSize,
                 wxSTAY_ON_TOP | wxBORDER_SIMPLE)
     , m_title_bar(nullptr)
+    , m_title_divider(nullptr)
     , m_title_label(nullptr)
     , m_collapse_btn(nullptr)
     , m_task_panel(nullptr)
@@ -321,12 +358,13 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     , m_collapsed(false)
     , m_all_complete(false)
     , m_task_count(0)
+    , m_was_dark_mode(wxGetApp().dark_mode())
 {
-    SetBackgroundColour(*wxWHITE);
+    SetBackgroundColour(bg_color());
 
     // ---- Title bar (375×40) ----
     m_title_bar = new wxPanel(this, wxID_ANY);
-    m_title_bar->SetBackgroundColour(*wxWHITE);
+    m_title_bar->SetBackgroundColour(bg_color());
     m_title_bar->SetMinSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT)));
     m_title_bar->SetMaxSize(wxSize(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT)));
 
@@ -334,13 +372,15 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 
     m_title_label = new Label(m_title_bar, _L("Download Lists"));
     m_title_label->SetFont(::Label::Head_13);
-    m_title_label->SetForegroundColour(make_color(COL_TITLE_TEXT));
+    m_title_label->SetForegroundColour(title_text_color());
     title_sizer->Add(m_title_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(14));
 
     title_sizer->AddStretchSpacer(1);
 
     // Collapse button — SVG bitmap (down arrow when expanded, up arrow when collapsed)
-    wxBitmap collapse_bmp = create_scaled_bitmap("timelapse_collapse_down", m_title_bar, 16);
+    wxBitmap collapse_bmp = create_scaled_bitmap(
+        wxGetApp().dark_mode() ? "timelapse_collapse_down_dark" : "timelapse_collapse_down",
+        m_title_bar, 16);
     m_collapse_btn = new wxStaticBitmap(m_title_bar, wxID_ANY, collapse_bmp);
     m_collapse_btn->SetMinSize(wxSize(FromDIP(16), FromDIP(16)));
     m_collapse_btn->SetMaxSize(wxSize(FromDIP(16), FromDIP(16)));
@@ -352,7 +392,7 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 
     // ---- Task panel (scrolled window) ----
     m_task_panel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
-    m_task_panel->SetBackgroundColour(*wxWHITE);
+    m_task_panel->SetBackgroundColour(bg_color());
     m_task_panel->SetScrollRate(0, FromDIP(SCROLL_RATE));
     m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
     m_task_sizer = new wxBoxSizer(wxVERTICAL);
@@ -361,6 +401,14 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     // ---- Main layout ----
     wxBoxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
     main_sizer->Add(m_title_bar, 0, wxEXPAND);
+
+    // Title divider (Figma: border-bottom: 1px solid #D9D9D9)
+    m_title_divider = new wxPanel(this, wxID_ANY);
+    m_title_divider->SetBackgroundColour(divider_color());
+    m_title_divider->SetMinSize(wxSize(FromDIP(345), FromDIP(1)));
+    m_title_divider->SetMaxSize(wxSize(FromDIP(345), FromDIP(1)));
+    main_sizer->Add(m_title_divider, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, FromDIP(14));
+
     main_sizer->Add(m_task_panel, 0, wxEXPAND);
     SetSizer(main_sizer);
 
@@ -604,7 +652,7 @@ void TimelapseDownloadPopup::reorder_rows()
         m_task_sizer->Add(m_rows[order[i]].row, 0, wxEXPAND);
         if (i + 1 < order.size()) {
             auto* divider = new wxPanel(m_task_panel, wxID_ANY);
-            divider->SetBackgroundColour(make_color(COL_DIVIDER));
+            divider->SetBackgroundColour(divider_color());
             divider->SetMinSize(wxSize(FromDIP(345), FromDIP(1)));
             divider->SetMaxSize(wxSize(FromDIP(345), FromDIP(1)));
             m_task_sizer->Add(divider, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, FromDIP(14));
@@ -644,13 +692,21 @@ void TimelapseDownloadPopup::on_timer(wxTimerEvent&)
         return;
     }
     if (!IsShown()) { Show(); }
+    // Detect dark mode switch and refresh theme
+    bool cur_dark = wxGetApp().dark_mode();
+    if (m_was_dark_mode != cur_dark) {
+        m_was_dark_mode = cur_dark;
+        refresh_dark_mode();
+    }
     position_bottom_right();
 }
 
 void TimelapseDownloadPopup::toggle_collapse()
 {
     m_collapsed = !m_collapsed;
-    const char* icon = m_collapsed ? "timelapse_collapse_up" : "timelapse_collapse_down";
+    const char* icon_down = wxGetApp().dark_mode() ? "timelapse_collapse_down_dark" : "timelapse_collapse_down";
+    const char* icon_up   = wxGetApp().dark_mode() ? "timelapse_collapse_up_dark"   : "timelapse_collapse_up";
+    const char* icon = m_collapsed ? icon_up : icon_down;
     m_collapse_btn->SetBitmap(create_scaled_bitmap(icon, m_title_bar, 16));
     update_layout_size();
 }
@@ -666,6 +722,7 @@ void TimelapseDownloadPopup::update_layout_size()
 
     if (m_collapsed) {
         m_task_panel->Hide();
+        m_title_divider->Hide();
         wxSize target(FromDIP(DIALOG_WIDTH), FromDIP(TITLE_BAR_HEIGHT));
         SetMinSize(target);
         SetMaxSize(target);
@@ -676,6 +733,7 @@ void TimelapseDownloadPopup::update_layout_size()
     }
 
     m_task_panel->Show();
+    m_title_divider->Show();
 
     int rows_to_show = total_rows;
     bool needs_scroll = false;
@@ -706,7 +764,7 @@ void TimelapseDownloadPopup::update_layout_size()
         m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
     }
 
-    int dialog_h = FromDIP(TITLE_BAR_HEIGHT) + panel_h;
+    int dialog_h = FromDIP(TITLE_BAR_HEIGHT) + FromDIP(1) /* title divider */ + panel_h;
     wxSize target(FromDIP(DIALOG_WIDTH), dialog_h);
     SetMinSize(target);
     SetMaxSize(target);
@@ -723,6 +781,39 @@ void TimelapseDownloadPopup::Close()
     }
     this->Hide();
     this->Destroy();
+}
+
+void TimelapseDownloadPopup::refresh_dark_mode()
+{
+    // Popup-level colors
+    SetBackgroundColour(bg_color());
+    m_title_bar->SetBackgroundColour(bg_color());
+    m_title_label->SetForegroundColour(title_text_color());
+    m_task_panel->SetBackgroundColour(bg_color());
+    m_title_divider->SetBackgroundColour(divider_color());
+
+    // Collapse button bitmap
+    const char* icon_down = wxGetApp().dark_mode() ? "timelapse_collapse_down_dark" : "timelapse_collapse_down";
+    const char* icon_up   = wxGetApp().dark_mode() ? "timelapse_collapse_up_dark"   : "timelapse_collapse_up";
+    m_collapse_btn->SetBitmap(create_scaled_bitmap(
+        m_collapsed ? icon_up : icon_down, m_title_bar, 16));
+
+    // Row dividers (inside m_task_panel)
+    for (wxWindow* child : m_task_panel->GetChildren()) {
+        if (dynamic_cast<TimelapseTaskRow*>(child) == nullptr) {
+            child->SetBackgroundColour(divider_color());
+        }
+    }
+
+    // Each task row
+    for (auto& info : m_rows) {
+        if (info.row) {
+            info.row->refresh_dark_mode();
+        }
+    }
+
+    Refresh();
+    Layout();
 }
 
 }} // namespace Slic3r::GUI

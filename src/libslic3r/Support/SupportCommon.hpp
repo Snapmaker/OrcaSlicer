@@ -4,6 +4,8 @@
 #include "../Layer.hpp"
 #include "../Polygon.hpp"
 #include "../Print.hpp"
+#include "../ClipperUtils.hpp"
+#include "../ExPolygon.hpp"
 #include "SupportLayer.hpp"
 #include "SupportParameters.hpp"
 
@@ -150,6 +152,59 @@ template<typename T, typename FN_LOWER_EQUAL>
 int idx_lower_or_equal(const std::vector<T*> &vec, int idx, FN_LOWER_EQUAL fn_lower_equal)
 {
     return idx_lower_or_equal(vec.begin(), vec.end(), idx, fn_lower_equal);
+}
+
+/*!
+ * \brief Safely offset ExPolygons in steps, checking collision each step.
+ *
+ * Ported from Bambu Studio to fix tree-support transition-layer fragmentation.
+ * Uses union_ex instead of safe_union to avoid an extra ExPolygons dependency.
+ */
+template<typename CollisionPolyType>
+[[nodiscard]] ExPolygons safe_offset_inc(
+    const ExPolygons &me, coord_t distance, const CollisionPolyType &collision, coord_t safe_step_size, coord_t last_step_offset_without_check, size_t min_amount_offset)
+{
+    bool     do_final_difference = last_step_offset_without_check == 0;
+    ExPolygons ret               = union_ex(me); // ensure sane input
+
+    Polygons collision_trimmed_buffer;
+    auto     collision_trimmed = [&collision_trimmed_buffer, &collision, &ret, distance]() -> const Polygons &{
+        if (collision_trimmed_buffer.empty() && !collision.empty())
+            collision_trimmed_buffer = ClipperUtils::clip_clipper_polygons_with_subject_bbox(collision, get_extents(ret).inflated(std::max<coord_t>(0, distance) + SCALED_EPSILON));
+        return collision_trimmed_buffer;
+    };
+
+    if (distance == 0) return do_final_difference ? diff_ex(ret, collision_trimmed()) : union_ex(ret);
+    if (safe_step_size < 0 || last_step_offset_without_check < 0) {
+        return do_final_difference ? diff_ex(ret, collision_trimmed()) : union_ex(ret);
+    }
+
+    coord_t step_size = safe_step_size;
+    int     steps     = distance > last_step_offset_without_check ? (distance - last_step_offset_without_check) / step_size : 0;
+    if (distance - steps * step_size > last_step_offset_without_check) {
+        if ((steps + 1) * step_size <= distance)
+            ++steps;
+        else
+            do_final_difference = true;
+    }
+    if (steps + (distance < last_step_offset_without_check || (distance % step_size) != 0) < int(min_amount_offset) && min_amount_offset > 1) {
+        step_size = distance / min_amount_offset;
+        if (step_size >= safe_step_size) {
+            step_size = safe_step_size;
+            steps     = min_amount_offset;
+        } else
+            steps = distance / step_size;
+    }
+    for (int i = 0; i < steps; ++i) {
+        ret = diff_ex(offset_ex(ret, step_size, ClipperLib::jtRound, scaled<float>(0.01)), collision_trimmed());
+        if (i % 10 == 7) ret = expolygons_simplify(ret, scaled<double>(0.015));
+    }
+    float last_offset = distance - steps * step_size;
+    if (last_offset > SCALED_EPSILON) ret = offset_ex(ret, distance - steps * step_size, ClipperLib::jtRound, scaled<float>(0.01));
+    ret = expolygons_simplify(ret, scaled<double>(0.015));
+
+    if (do_final_difference) ret = diff_ex(ret, collision_trimmed());
+    return union_ex(ret);
 }
 
 } // namespace Slic3r

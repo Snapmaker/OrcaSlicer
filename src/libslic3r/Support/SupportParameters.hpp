@@ -291,7 +291,10 @@ struct SupportParameters {
     	{ return this->raft_angle_interface + ((interface_id & 1) ? float(- M_PI / 4.) : float(+ M_PI / 4.)); }
 		
     bool independent_layer_height = false;
-    const double thresh_big_overhang = Slic3r::sqr(scale_(10));
+    // Changed from sqr(scale_(10)) [area, 100mm^2] to scale_(10) [length, 10mm].
+    // check_polygon_node applies SQ() internally to restore area comparison.
+    // Ported from Bambu 976b5062c.
+    const double thresh_big_overhang = scale_(10);
 
 	bool          ironing;
     Flow          ironing_flow; // Flow at the interface ironing.

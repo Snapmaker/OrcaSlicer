@@ -3273,7 +3273,7 @@ void TreeSupport::generate_contact_points()
             // take the least restrictive avoidance possible
             ExPolygons relevant_forbidden = offset_ex(m_ts_data->m_layer_outlines[layer_nr - 1], scale_(MIN_BRANCH_RADIUS));
             // prevent rounding errors down the line, points placed directly on the line of the forbidden area may not be added otherwise.
-            relevant_forbidden = offset_ex(union_ex(relevant_forbidden), scaled<float>(0.005), jtMiter, 1.2);
+            relevant_forbidden = offset_ex(union_ex(relevant_forbidden), scaled<float>(0.005), jtSquare, 0.);
 
 
             auto insert_point = [&](Point pt, const ExPolygon& overhang, double radius, bool force_add = false, bool add_interface=true) {

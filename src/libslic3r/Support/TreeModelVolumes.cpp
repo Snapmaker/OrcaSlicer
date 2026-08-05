@@ -793,7 +793,7 @@ void TreeModelVolumes::calculatePlaceables(const coord_t radius, const LayerInde
                     // it can happen that a small line is considered a flat area to place something onto, even though it is mostly 
                     // xy_distance that cant support it. Making the area smaller by xy_distance fixes this.
                     - (radius + m_current_min_xy_dist + m_current_min_xy_dist_delta),
-                    jtMiter, 1.2);
+                    jtSquare, 0.);
                 if(throw_on_cancel)
                     throw_on_cancel();
             }

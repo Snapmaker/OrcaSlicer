@@ -2,7 +2,7 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Generic PCTG @U1 0.4 nozzle",
+    "name": "Generic PCTG",
     "setting_id": "GFSG97_001",
     "inherits": "Generic PCTG @U1 base",
     "compatible_printers": [

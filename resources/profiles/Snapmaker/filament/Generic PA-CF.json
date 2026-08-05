@@ -2,7 +2,7 @@
     "type": "filament",
     "from": "system",
     "instantiation": "true",
-    "name": "Generic PA-CF @U1 0.4 nozzle",
+    "name": "Generic PA-CF",
     "setting_id": "GFSN99",
     "filament_id": "GFN98",
     "inherits": "Generic PA-CF @U1 base",

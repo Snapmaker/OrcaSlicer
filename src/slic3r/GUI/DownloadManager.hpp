@@ -30,6 +30,8 @@ struct DownloadCallbacks {
     std::function<void(size_t task_id, int percent, size_t downloaded, size_t total)> on_progress;
     std::function<void(size_t task_id, const std::string& file_path)> on_complete;
     std::function<void(size_t task_id, const std::string& error)> on_error;
+    // Called right before writing the downloaded body to disk.
+    std::function<bool()> on_should_write;
     
     DownloadCallbacks() = default;
     DownloadCallbacks(

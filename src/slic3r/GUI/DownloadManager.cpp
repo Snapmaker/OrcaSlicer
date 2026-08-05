@@ -271,6 +271,11 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         return;
                     }
 
+                    if (task->callbacks.on_should_write && !task->callbacks.on_should_write()) {
+                        cleanup_task(task->task_id);
+                        return;
+                    }
+
                     try {
                         boost::nowide::ofstream file(task->dest_path, std::ios::binary);
                         if (!file.is_open()) {

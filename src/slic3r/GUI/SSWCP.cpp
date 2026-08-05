@@ -4830,6 +4830,7 @@ struct WanPendingEntry { std::shared_ptr<TimelapseQueueContext> ctx; int idx; };
 
 static std::unordered_map<std::string, WanPendingEntry> g_wan_pending;
 static std::mutex g_wan_pending_mtx;
+static std::unordered_map<std::string, std::string> g_pending_upload_notifications;
 
 // Shared download popup (one at a time) + active batch list + date_index dedup.
 // Multiple sw_DownLoadFile calls append to the same popup; a file whose
@@ -4934,8 +4935,8 @@ void cancel_all_active_timelapse()
             push_file_state(ctx, i, "failed");
             release_date_index(ctx->files[i].date_index);
             if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
-                // Empty reason → mark_task_error falls back to "Download Failed".
-                ctx->popup->mark_task_error(ctx->row_offset + i, "");
+                ctx->popup->mark_task_error(ctx->row_offset + i,
+                    std::string(_L("File was removed. Download canceled.").ToUTF8().data()));
             }
         }
     }
@@ -5165,6 +5166,7 @@ void SSWCP_UserLogin_Instance::sw_NotifyUploadTimelaspe()
                 std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
                 auto it = g_wan_pending.find(date_index);
                 if (it == g_wan_pending.end()) {
+                    g_pending_upload_notifications[date_index] = url;
                     continue;
                 }
                 entry = it->second;
@@ -5400,9 +5402,27 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
         // WAN: register each file by date_index so sw_NotifyUploadTimelaspe can
         // find it when flutter forwards the device upload url.
         if (ctx->is_wan) {
-            std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
-            for (int i = 0; i < total_count; ++i) {
-                g_wan_pending[unique_files[i].date_index] = { ctx, i };
+            // Register each date_index and replay any upload notification that arrived before this registration
+            std::vector<std::pair<int, std::string>> replay;
+            {
+                std::lock_guard<std::mutex> lk(g_wan_pending_mtx);
+                for (int i = 0; i < total_count; ++i) {
+                    g_wan_pending[unique_files[i].date_index] = { ctx, i };
+                    auto nit = g_pending_upload_notifications.find(unique_files[i].date_index);
+                    if (nit != g_pending_upload_notifications.end()) {
+                        replay.emplace_back(i, nit->second);
+                        g_pending_upload_notifications.erase(nit);
+                    }
+                }
+            }
+            for (auto& r : replay) {
+                int idx = r.first;
+                std::string url = r.second;
+                wxGetApp().CallAfter([ctx, idx, url]() {
+                    if (!ctx || ctx->cancelled) return;
+                    if (ctx->skipped_indices.count(idx)) return;
+                    ctx->kickoff_download(idx, url);
+                });
             }
         }
 
@@ -5562,7 +5582,14 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
                 if (ctx->popup && !ctx->popup->IsBeingDeleted())
                 {
-                    ctx->popup->mark_task_error(global_row, error);
+                    // Map Http timeout to a friendly reason.
+                    bool is_timeout = error.find("timeout") != std::string::npos
+                                   || error.find("Timeout") != std::string::npos
+                                   || error.find("timed out") != std::string::npos;
+                    std::string reason = is_timeout
+                        ? std::string(_L("Network timeout").ToUTF8().data())
+                        : error;
+                    ctx->popup->mark_task_error(global_row, reason);
                 }
 
                 push_file_state(ctx, idx, "failed");
@@ -5591,6 +5618,10 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     ctx->current_index = idx + 1;
                     if (ctx->start_next) { ctx->start_next(); }
                 }
+            };
+
+            callbacks.on_should_write = [ctx, idx]() {
+                return !ctx->skipped_indices.count(idx);
             };
 
             ctx->current_task_id = DownloadManager::getInstance().start_internal_download(
@@ -5680,7 +5711,14 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                 }
                 unsubscribe_wan_upload(c);
                 c->cancelled = true;
+                c->popup = nullptr;
             }
+
+            if (g_timelapse_popup && !g_timelapse_popup->IsBeingDeleted()) {
+                g_timelapse_popup->Destroy();
+            }
+            g_timelapse_popup = nullptr;
+            // Push cancelled state on next idle (doesn't touch the popup).
             wxGetApp().CallAfter([ctxs]() {
                 for (auto& c : ctxs) {
                     for (int i = 0; i < c->total_count; ++i) {
@@ -5690,12 +5728,6 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                         wcp->finish_job();
                     }
                 }
-                // Destroy the shared popup and clear the singleton pointer so
-                // the next sw_DownLoadFile creates a fresh one.
-                if (g_timelapse_popup && !g_timelapse_popup->IsBeingDeleted()) {
-                    g_timelapse_popup->Destroy();
-                }
-                g_timelapse_popup = nullptr;
             });
         });
 

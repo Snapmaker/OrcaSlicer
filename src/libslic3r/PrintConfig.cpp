@@ -5492,6 +5492,32 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    def = this->add("support_base_material", coString);
+    def->label    = L("Support/raft base material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft base only with filaments of this material type; "
+                      "extruders loaded with other types are not used for it. Combines with the "
+                      "support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft base filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("support_interface_material", coString);
+    def->label    = L("Support/raft interface material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft interface only with filaments of this material "
+                      "type; extruders loaded with other types are not used for it. Combines with "
+                      "the support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft interface filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
     def = this->add("support_line_width", coFloatOrPercent);
     def->label = L("Support");
     def->category = L("Quality");

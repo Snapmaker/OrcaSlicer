@@ -786,25 +786,25 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                                                         float(support_layer->print_z),
                                                         float(support_layer->height),
                                                         &object);
-        // support nozzle diameter restriction, resolve a "default" (0) support filament to a nozzle-matching one here, preferring a filament this layer already prints with to save toolchanges.
+        // support nozzle diameter / material restrictions, resolve a "default" (0) support filament to a passing one here, preferring a filament this layer already prints with to save toolchanges.
         // Note: this fork collects support before the object's own layers, so the preference scan
         // only sees filaments of previously collected objects and otherwise settles on the
         // deterministic resolved_default_support_filament(); GCode::process_layer() re-prefers
         // layer-scheduled extruders for "don't care" support when the G-code is emitted.
-        if (object.config().support_nozzle_diameter.value > 0.) {
-            auto restrict_default_filament = [&object, &layer_tools](unsigned int configured) -> unsigned int {
+        if (object.has_support_filament_restriction()) {
+            auto restrict_default_filament = [&object, &layer_tools](unsigned int configured, bool interface_role) -> unsigned int {
                 if (configured != 0)
                     return configured;
                 const PrintConfig &print_config = object.print()->config();
                 for (unsigned int filament : layer_tools.extruders) // 1 based at this point
-                    if (filament > 0 && object.support_filament_allowed(filament) &&
+                    if (filament > 0 && object.support_filament_allowed(filament, interface_role) &&
                         ! print_config.filament_soluble.get_at(filament - 1))
                         return filament;
-                unsigned int resolved = object.resolved_default_support_filament();
+                unsigned int resolved = object.resolved_default_support_filament(interface_role);
                 return resolved > 0 ? resolved : configured;
             };
-            extruder_support   = restrict_default_filament(extruder_support);
-            extruder_interface = restrict_default_filament(extruder_interface);
+            extruder_support   = restrict_default_filament(extruder_support, false);
+            extruder_interface = restrict_default_filament(extruder_interface, true);
         }
         if (has_support)
             layer_tools.extruders.push_back(extruder_support);
@@ -1739,9 +1739,9 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                     if (this_support_layer == nullptr)
                         break;
 
-                    // Only a nozzle matching the object's support nozzle diameter restriction may flush into its support.
-                    bool support_overriddable = object_config.support_filament == 0 && object->support_filament_allowed(new_extruder + 1);
-                    bool support_intf_overriddable = object_config.support_interface_filament == 0 && object->support_filament_allowed(new_extruder + 1);
+                    // Only a filament passing the object's support restrictions (nozzle diameter, material) may flush into its support.
+                    bool support_overriddable = object_config.support_filament == 0 && object->support_filament_allowed(new_extruder + 1, false);
+                    bool support_intf_overriddable = object_config.support_interface_filament == 0 && object->support_filament_allowed(new_extruder + 1, true);
                     if (!support_overriddable && !support_intf_overriddable)
                         break;
 

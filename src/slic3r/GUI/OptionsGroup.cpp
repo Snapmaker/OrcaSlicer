@@ -233,6 +233,10 @@ Line* OptionsGroup::get_line(const std::string& opt_key)
     {
         if(l.is_separator())
             continue;
+        // ORCA: widget-only lines (e.g. the legacy support selection toggle) carry no options;
+        // get_first_option_key() would index an empty vector.
+        if (l.get_options().empty())
+            continue;
         if (l.get_first_option_key() == opt_key)
             return &l;
     }

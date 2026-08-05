@@ -1064,6 +1064,8 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "enforce_support_layers"
             || opt_key == "support_filament"
             || opt_key == "support_nozzle_diameter"
+            || opt_key == "support_base_material"
+            || opt_key == "support_interface_material"
             || opt_key == "support_line_width"
             || opt_key == "support_interface_top_layers"
             || opt_key == "support_interface_bottom_layers"
@@ -3821,24 +3823,37 @@ bool PrintObject::has_combined_layer_regions() const
     return false;
 }
 
-bool PrintObject::support_filament_allowed(unsigned int filament_id) const
+bool PrintObject::support_filament_allowed(unsigned int filament_id, bool interface_role) const
 {
-    const double restriction = m_config.support_nozzle_diameter.value;
-    if (restriction <= 0. || filament_id == 0)
+    if (filament_id == 0)
         return true;
-    return std::abs(m_print->config().nozzle_diameter.get_at(filament_id - 1) - restriction) < EPSILON;
+    if (const double nozzle = m_config.support_nozzle_diameter.value; nozzle > 0. &&
+        std::abs(m_print->config().nozzle_diameter.get_at(filament_id - 1) - nozzle) > EPSILON)
+        return false;
+    const std::string &material = (interface_role ? m_config.support_interface_material :
+                                                    m_config.support_base_material).value;
+    return material.empty() || m_print->config().filament_type.get_at(filament_id - 1) == material;
 }
 
-unsigned int PrintObject::resolved_default_support_filament() const
+bool PrintObject::has_support_filament_restriction() const
 {
-    if (m_config.support_nozzle_diameter.value <= 0.)
+    return m_config.support_nozzle_diameter.value > 0. ||
+           ! m_config.support_base_material.value.empty() ||
+           ! m_config.support_interface_material.value.empty();
+}
+
+unsigned int PrintObject::resolved_default_support_filament(bool interface_role) const
+{
+    if (m_config.support_nozzle_diameter.value <= 0. &&
+        (interface_role ? m_config.support_interface_material :
+                          m_config.support_base_material).value.empty())
         return 0;
     const PrintConfig &print_config = m_print->config();
     const size_t num_filaments = std::max(print_config.nozzle_diameter.values.size(),
                                           print_config.filament_diameter.values.size());
     unsigned int soluble_fallback = 0;
     for (size_t i = 0; i < num_filaments; ++ i)
-        if (this->support_filament_allowed((unsigned int)(i + 1))) {
+        if (this->support_filament_allowed((unsigned int)(i + 1), interface_role)) {
             if (! print_config.filament_soluble.get_at(i))
                 return (unsigned int)(i + 1);
             if (soluble_fallback == 0)
@@ -4868,14 +4883,126 @@ void PrintObject::combine_top_surfaces()
     }
 }
 
+// Per-extruder layer height: combine runs of a region's not-yet-combined fill surfaces of the
+// given type into one thick pass extruding at the run top (Fill resolves the flow from
+// Surface::thickness), leaving VOID surfaces behind like combine_infill(). grid_aligned anchors
+// the full-height runs on one global grid so a contiguous field extrudes on the same layers
+// (bands whose tops differ would combine phase-shifted, stepping one course at the seam);
+// without it runs anchor at each column's top (solid shell bands rarely fit the grid). Leftover
+// bands re-group over ever shorter runs down to min_mult, the smallest count reaching the
+// extruder's min layer height; one-layer lookaheads at both band ends split off pairs instead
+// of stranding a single below-minimum layer (a true single layer between other features stays
+// at the object layer height and Print::validate() warns).
+void PrintObject::combine_surface_runs(size_t region_id, SurfaceType surface_type, unsigned int mult, unsigned int min_mult, float fill_clearance_factor, bool grid_aligned)
+{
+    // Surfaces not combined yet (groups formed by an earlier sweep have their thickness set).
+    auto leftover = [surface_type, region_id](const Layer *layer) {
+        ExPolygons out;
+        for (const Surface &surface : layer->regions()[region_id]->fill_surfaces.surfaces)
+            if (surface.surface_type == surface_type && surface.thickness < 0.)
+                out.emplace_back(surface.expolygon);
+        return out;
+    };
+    // One combined pass over the run [layer_idx - m + 1, layer_idx] limited to the given areas.
+    auto commit_run = [&](size_t layer_idx, size_t m, ExPolygons &&combined) {
+        if (combined.empty())
+            return;
+        LayerRegion *top_layerm = m_layers[layer_idx]->regions()[region_id];
+        // Clearance against the run's remaining fills, which are grown later to overlap
+        // perimeters (mirrors combine_infill()'s clearance).
+        Polygons combined_with_clearance;
+        combined_with_clearance.reserve(combined.size());
+        const float clearance_offset = 0.5f * top_layerm->flow(frPerimeter).scaled_width() +
+                                       fill_clearance_factor * top_layerm->flow(frSolidInfill).scaled_width();
+        for (const ExPolygon &expoly : combined)
+            polygons_append(combined_with_clearance, offset(expoly, clearance_offset));
+        for (size_t i = layer_idx + 1 - m; i <= layer_idx; ++ i) {
+            LayerRegion *layerm = m_layers[i]->regions()[region_id];
+            // Take out only the uncombined surfaces; earlier runs keep their heights.
+            Polygons pieces;
+            Surfaces kept;
+            kept.reserve(layerm->fill_surfaces.surfaces.size());
+            for (Surface &surface : layerm->fill_surfaces.surfaces) {
+                if (surface.surface_type == surface_type && surface.thickness < 0.)
+                    polygons_append(pieces, to_polygons(std::move(surface.expolygon)));
+                else
+                    kept.emplace_back(std::move(surface));
+            }
+            layerm->fill_surfaces.surfaces = std::move(kept);
+            layerm->fill_surfaces.append(diff_ex(pieces, combined_with_clearance), surface_type);
+            if (i == layer_idx) {
+                // The combined areas extrude once with the whole run's thickness.
+                Surface templ(surface_type, ExPolygon());
+                templ.thickness = 0.;
+                for (size_t j = layer_idx + 1 - m; j <= layer_idx; ++ j)
+                    templ.thickness += m_layers[j]->height;
+                templ.thickness_layers = (unsigned short)m;
+                layerm->fill_surfaces.append(std::move(combined), templ);
+            } else {
+                layerm->fill_surfaces.append(intersection_ex(pieces, combined_with_clearance), stInternalVoid);
+            }
+        }
+    };
+    auto combine_runs = [&](size_t m, bool aligned) {
+        for (size_t layer_idx = m_layers.size(); layer_idx-- > 0; ) {
+            m_print->throw_if_canceled();
+            if (layer_idx + 1 < m)
+                break;
+            if (aligned && layer_idx % m != 0)
+                continue;
+            // Never absorb the first print layer: it keeps its own height for bed adhesion.
+            if (m_layers[layer_idx - m + 1]->id() == 0)
+                continue;
+            ExPolygons combined = leftover(m_layers[layer_idx]);
+            if (combined.empty())
+                continue;
+            // Uniform layer heights only (mirrors apply_extruder_layer_heights()).
+            bool uniform = true;
+            for (size_t i = layer_idx - m + 1; uniform && i < layer_idx; ++ i)
+                uniform = std::abs(m_layers[i]->height - m_layers[layer_idx]->height) < EPSILON;
+            if (! uniform)
+                continue;
+            for (size_t i = layer_idx - m + 1; i < layer_idx && ! combined.empty(); ++ i)
+                combined = intersection_ex(leftover(m_layers[i]), combined);
+            remove_small_expolygons(combined, m_layers[layer_idx]->regions()[region_id]->infill_area_threshold());
+            if (combined.empty())
+                continue;
+            // Where a band ends exactly one layer above an aligned run (free runs anchor at band
+            // tops), committing would strand that layer below the minimum: leave the area to the
+            // shorter runs, which split the m + 1 layers into printable groups.
+            if (aligned && min_mult > 1 && mult > min_mult && layer_idx + 1 < m_layers.size()) {
+                ExPolygons above = intersection_ex(leftover(m_layers[layer_idx + 1]), combined);
+                if (! above.empty() && layer_idx + 2 < m_layers.size())
+                    above = diff_ex(above, leftover(m_layers[layer_idx + 2]));
+                if (! above.empty()) {
+                    combined = diff_ex(combined, above);
+                    if (combined.empty())
+                        continue;
+                }
+            }
+            // Where the band continues exactly one layer below the run, take one layer less so
+            // the leftover pair re-groups instead of stranding below the minimum.
+            ExPolygons shrunk;
+            if (min_mult > 1 && m > min_mult && layer_idx >= m && m_layers[layer_idx - m]->id() != 0) {
+                shrunk = intersection_ex(leftover(m_layers[layer_idx - m]), combined);
+                if (! shrunk.empty() && layer_idx > m)
+                    shrunk = diff_ex(shrunk, leftover(m_layers[layer_idx - m - 1]));
+                if (! shrunk.empty())
+                    combined = diff_ex(combined, shrunk);
+            }
+            commit_run(layer_idx, m, std::move(combined));
+            commit_run(layer_idx, m - 1, std::move(shrunk));
+        }
+    };
+    combine_runs(mult, grid_aligned);
+    if (min_mult > 1)
+        for (unsigned int m = mult - 1; m >= min_mult; -- m)
+            combine_runs(m, false);
+}
+
 // Per-extruder layer height: print the internal solid infill left over after
 // combine_top_surfaces() - shell backing and other solid interior - with the preferred layer
-// height of its filament by combining runs of solid layers into one thick pass, leaving VOID
-// surfaces behind like the other combining passes. Groups anchor top-down at the top of each
-// solid column, because shell bands start wherever their surface sits, not on a fixed grid.
-// Leftovers that cannot reach the full preferred height re-group over ever shorter runs down to
-// the filament's min layer height (isolated single layers stay at the object layer height and
-// Print::validate() warns).
+// height of its filament.
 void PrintObject::combine_internal_solid_infill()
 {
     for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
@@ -4892,87 +5019,10 @@ void PrintObject::combine_internal_solid_infill()
             (unsigned int)std::max(0, config.internal_solid_filament_id.value));
         if (mult <= 1)
             continue;
-        // Surfaces not combined yet (groups formed by an earlier sweep have their thickness set).
-        auto leftover_solid = [](const LayerRegion *layerm) {
-            ExPolygons out;
-            for (const Surface &surface : layerm->fill_surfaces.surfaces)
-                if (surface.surface_type == stInternalSolid && surface.thickness < 0.)
-                    out.emplace_back(surface.expolygon);
-            return out;
-        };
-        auto combine_solid_runs = [&](size_t m) {
-            for (size_t layer_idx = m_layers.size(); layer_idx-- > 0; ) {
-                m_print->throw_if_canceled();
-                if (layer_idx + 1 < m)
-                    break;
-                // Never absorb the first print layer: it keeps its own height for bed adhesion.
-                if (m_layers[layer_idx - m + 1]->id() == 0)
-                    continue;
-                LayerRegion *top_layerm = m_layers[layer_idx]->regions()[region_id];
-                ExPolygons   combined   = leftover_solid(top_layerm);
-                if (combined.empty())
-                    continue;
-                // Uniform layer heights only (mirrors apply_extruder_layer_heights()).
-                bool uniform = true;
-                for (size_t i = layer_idx - m + 1; uniform && i < layer_idx; ++ i)
-                    uniform = std::abs(m_layers[i]->height - m_layers[layer_idx]->height) < EPSILON;
-                if (! uniform)
-                    continue;
-                std::vector<LayerRegion*> layerms; // the whole group, bottom-up
-                for (size_t i = layer_idx - m + 1; i <= layer_idx; ++ i)
-                    layerms.emplace_back(m_layers[i]->regions()[region_id]);
-                for (size_t i = 0; i + 1 < layerms.size() && ! combined.empty(); ++ i)
-                    combined = intersection_ex(leftover_solid(layerms[i]), combined);
-                remove_small_expolygons(combined, top_layerm->infill_area_threshold());
-                if (combined.empty())
-                    continue;
-                // Clearance against the group's remaining solid infill, which is grown later to
-                // overlap perimeters (mirrors combine_top_surfaces()'s clearance).
-                Polygons combined_with_clearance;
-                combined_with_clearance.reserve(combined.size());
-                const float clearance_offset = 0.5f * top_layerm->flow(frPerimeter).scaled_width() +
-                                               1.5f * top_layerm->flow(frSolidInfill).scaled_width();
-                for (const ExPolygon &expoly : combined)
-                    polygons_append(combined_with_clearance, offset(expoly, clearance_offset));
-                for (LayerRegion *layerm : layerms) {
-                    // Take out only the uncombined surfaces; earlier groups keep their heights.
-                    Polygons leftover;
-                    Surfaces kept;
-                    kept.reserve(layerm->fill_surfaces.surfaces.size());
-                    for (Surface &surface : layerm->fill_surfaces.surfaces) {
-                        if (surface.surface_type == stInternalSolid && surface.thickness < 0.)
-                            polygons_append(leftover, to_polygons(std::move(surface.expolygon)));
-                        else
-                            kept.emplace_back(std::move(surface));
-                    }
-                    layerm->fill_surfaces.surfaces = std::move(kept);
-                    layerm->fill_surfaces.append(diff_ex(leftover, combined_with_clearance), stInternalSolid);
-                    if (layerm == layerms.back()) {
-                        // The combined areas extrude once with the whole group's thickness (Fill
-                        // resolves the flow from Surface::thickness).
-                        Surface templ(stInternalSolid, ExPolygon());
-                        templ.thickness = 0.;
-                        for (const LayerRegion *layerm2 : layerms)
-                            templ.thickness += layerm2->layer()->height;
-                        templ.thickness_layers = (unsigned short)m;
-                        layerm->fill_surfaces.append(std::move(combined), templ);
-                    } else {
-                        layerm->fill_surfaces.append(intersection_ex(leftover, combined_with_clearance), stInternalVoid);
-                    }
-                }
-            }
-        };
-        combine_solid_runs(mult);
-        // Where the layer stack cannot reach the full preferred height it falls back to the
-        // object layer height, possibly below the solid filament's minimum layer height: re-group
-        // with ever shorter runs down to the smallest count reaching the minimum, so odd-length
-        // bands don't strand a below-minimum single layer.
         const double min_layer_height = m_print->config().min_layer_height.get_at(
             m_print->extruder_index_of(feature_filament_idx(config.internal_solid_filament_id.value)));
         const auto   min_mult         = (unsigned int)std::ceil(min_layer_height / m_config.layer_height.value - EPSILON);
-        if (min_mult > 1)
-            for (unsigned int m = mult - 1; m >= min_mult; -- m)
-                combine_solid_runs(m);
+        this->combine_surface_runs(region_id, stInternalSolid, mult, min_mult, 1.5f, false);
     }
 }
 
@@ -5023,9 +5073,27 @@ void PrintObject::combine_infill()
         // Per-extruder layer height: the preferred height is an explicit target overriding the
         // caps above, limited only by the bore of the nozzle extruding it (max_layer_height is a
         // soft limit, Print::validate() warns). Plain infill_combination keeps its own cap.
-        if (preferred_infill_height > 0.)
+        if (preferred_infill_height > 0.) {
             nozzle_diameter = std::min(preferred_infill_height,
                 this->print()->config().nozzle_diameter.get_at(combine_extruder_idx));
+            // An explicit preference combines through combine_surface_runs() instead of the
+            // fixed window grid below, honoring the extruder's min layer height at the band
+            // edges the grid would strand at the object layer height.
+            const auto mult     = (unsigned int)std::max(1, int(std::floor(nozzle_diameter / m_config.layer_height.value + EPSILON)));
+            const auto min_mult = (unsigned int)std::ceil(
+                this->print()->config().min_layer_height.get_at(combine_extruder_idx) / m_config.layer_height.value - EPSILON);
+            if (mult > 1)
+                this->combine_surface_runs(region_id, surface_type, mult, min_mult,
+                                           (infill_pattern == ipRectilinear   ||
+                                            infill_pattern == ipMonotonic     ||
+                                            infill_pattern == ipGrid          ||
+                                            infill_pattern == ipLateralLattice||
+                                            infill_pattern == ipLine          ||
+                                            infill_pattern == ipHoneycomb     ||
+                                            infill_pattern == ipLateralHoneycomb) ? 1.5f : 0.5f,
+                                           true);
+            continue;
+        }
 
         // define the combinations
         std::vector<size_t> combine(m_layers.size(), 0);
@@ -5114,103 +5182,6 @@ void PrintObject::combine_infill()
                     layerm->fill_surfaces.append(
                         intersection_ex(internal, intersection_with_clearance),
                         stInternalVoid);
-                }
-            }
-        }
-
-        // Per-extruder layer height: leftovers the pass above could not combine to the full group height print at the object layer height.
-        // Where that is below the infill extruder's min layer height, re-group them over the smallest layer count reaching the minimum (isolated leftovers with no matching neighbors stay as-is; Print::validate() warns).
-        const double combine_min_layer_height = this->print()->config().min_layer_height.get_at(combine_extruder_idx);
-        const double min_window = combine_min_layer_height > 0. ?
-            std::ceil(combine_min_layer_height / m_config.layer_height.value - EPSILON) * m_config.layer_height.value : 0.;
-        // Re-grouped windows must stay within the main pass' caps (a min_layer_height above them is
-        // a misconfiguration).
-        if (preferred_infill_height > 0. && combine_min_layer_height > m_config.layer_height.value + EPSILON &&
-            min_window <= nozzle_diameter + EPSILON) {
-            // Assign leftover windows exactly like the pass above, just with the shorter target.
-            std::vector<size_t> recombine(m_layers.size(), 0);
-            {
-                double current_height = 0.;
-                size_t num_layers = 0;
-                for (size_t layer_idx = 0; layer_idx < m_layers.size(); ++ layer_idx) {
-                    m_print->throw_if_canceled();
-                    const Layer *layer = m_layers[layer_idx];
-                    if (layer->id() == 0)
-                        // Skip first print layer (which may not be first layer in array because of raft).
-                        continue;
-                    if (current_height + layer->height >= min_window + EPSILON) {
-                        recombine[layer_idx - 1] = num_layers;
-                        current_height = 0.;
-                        num_layers = 0;
-                    }
-                    current_height += layer->height;
-                    ++ num_layers;
-                }
-                recombine[m_layers.size() - 1] = num_layers;
-            }
-            // Leftovers are surfaces of the combined type whose thickness is still unset.
-            auto leftover_expolygons = [surface_type](const LayerRegion *layerm) {
-                ExPolygons out;
-                for (const Surface &surface : layerm->fill_surfaces.surfaces)
-                    if (surface.surface_type == surface_type && surface.thickness < 0.)
-                        out.emplace_back(surface.expolygon);
-                return out;
-            };
-            for (size_t layer_idx = 0; layer_idx < m_layers.size(); ++ layer_idx) {
-                m_print->throw_if_canceled();
-                size_t num_layers = recombine[layer_idx];
-                if (num_layers <= 1)
-                    continue;
-                std::vector<LayerRegion*> layerms;
-                layerms.reserve(num_layers);
-                for (size_t i = layer_idx + 1 - num_layers; i <= layer_idx; ++ i)
-                    layerms.emplace_back(m_layers[i]->regions()[region_id]);
-                ExPolygons intersection = leftover_expolygons(layerms.front());
-                for (size_t i = 1; i < layerms.size() && ! intersection.empty(); ++ i)
-                    intersection = intersection_ex(leftover_expolygons(layerms[i]), intersection);
-                remove_small_expolygons(intersection, layerms.front()->infill_area_threshold());
-                if (intersection.empty())
-                    continue;
-                // Same clearance as the pass above: the leftover fills also grow to overlap perimeters.
-                Polygons intersection_with_clearance;
-                intersection_with_clearance.reserve(intersection.size());
-                float clearance_offset =
-                    0.5f * layerms.back()->flow(frPerimeter).scaled_width() +
-                    ((infill_pattern == ipRectilinear   ||
-                      infill_pattern == ipMonotonic     ||
-                      infill_pattern == ipGrid          ||
-                      infill_pattern == ipLateralLattice||
-                      infill_pattern == ipLine          ||
-                      infill_pattern == ipHoneycomb     ||
-                      infill_pattern == ipLateralHoneycomb) ? 1.5f : 0.5f) *
-                        layerms.back()->flow(frSolidInfill).scaled_width();
-                for (ExPolygon &expoly : intersection)
-                    polygons_append(intersection_with_clearance, offset(expoly, clearance_offset));
-                for (LayerRegion *layerm : layerms) {
-                    // Take out only the leftover surfaces; surfaces combined above keep their heights.
-                    Polygons leftover;
-                    Surfaces kept;
-                    kept.reserve(layerm->fill_surfaces.surfaces.size());
-                    for (Surface &surface : layerm->fill_surfaces.surfaces) {
-                        if (surface.surface_type == surface_type && surface.thickness < 0.)
-                            polygons_append(leftover, to_polygons(std::move(surface.expolygon)));
-                        else
-                            kept.emplace_back(std::move(surface));
-                    }
-                    layerm->fill_surfaces.surfaces = std::move(kept);
-                    layerm->fill_surfaces.append(diff_ex(leftover, intersection_with_clearance), surface_type);
-                    if (layerm == layerms.back()) {
-                        Surface templ(surface_type, ExPolygon());
-                        templ.thickness = 0.;
-                        for (LayerRegion *layerm2 : layerms)
-                            templ.thickness += layerm2->layer()->height;
-                        templ.thickness_layers = (unsigned short)layerms.size();
-                        layerm->fill_surfaces.append(intersection, templ);
-                    } else {
-                        layerm->fill_surfaces.append(
-                            intersection_ex(leftover, intersection_with_clearance),
-                            stInternalVoid);
-                    }
                 }
             }
         }

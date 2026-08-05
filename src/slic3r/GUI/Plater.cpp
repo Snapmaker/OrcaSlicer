@@ -10977,6 +10977,26 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (wipe_tower_y_opt)
                                 file_wipe_tower_y = *wipe_tower_y_opt;
 
+                            // ORCA: a project carrying an explicit legacy support filament
+                            // selection reveals the legacy selectors in the Support page.
+                            {
+                                auto assigned = [](const DynamicPrintConfig &c) {
+                                    const auto *base = c.option<ConfigOptionInt>("support_filament");
+                                    const auto *intf = c.option<ConfigOptionInt>("support_interface_filament");
+                                    return (base != nullptr && base->value > 0) || (intf != nullptr && intf->value > 0);
+                                };
+                                bool legacy_assigned = assigned(config);
+                                for (const ModelObject *object : model.objects) {
+                                    legacy_assigned |= assigned(object->config.get());
+                                    for (const ModelVolume *volume : object->volumes)
+                                        legacy_assigned |= assigned(volume->config.get());
+                                    for (const auto &range : object->layer_config_ranges)
+                                        legacy_assigned |= assigned(range.second.get());
+                                }
+                                if (legacy_assigned)
+                                    wxGetApp().app_config->set_bool("show_legacy_support_filament", true);
+                            }
+
                             preset_bundle->load_config_model(filename.string(), std::move(config), file_version);
 
                             ConfigOption* bed_type_opt = preset_bundle->project_config.option("curr_bed_type");

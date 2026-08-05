@@ -9,7 +9,13 @@
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
+#include <algorithm>
+
 #include <wx/msgdlg.h>
+#include <wx/combobox.h>
+#include <wx/dialog.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
 
 namespace Slic3r {
 namespace GUI {
@@ -28,6 +34,18 @@ void ConfigManipulation::apply(DynamicPrintConfig* config, DynamicPrintConfig* n
 }
 
 bool ConfigManipulation::is_applying() const { return is_msg_dlg_already_exist; }
+
+// ORCA: printers whose extruders have differing nozzle diameters.
+bool ConfigManipulation::printer_has_mixed_nozzle_sizes()
+{
+    const auto *diameters = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (diameters == nullptr || diameters->values.empty())
+        return false;
+    for (double d : diameters->values)
+        if (std::abs(d - diameters->values.front()) > EPSILON)
+            return true;
+    return false;
+}
 
 t_config_option_keys const &ConfigManipulation::applying_keys() const
 {
@@ -742,13 +760,17 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_field("inner_wall_line_width", have_perimeters || have_skirt || have_brim);
     toggle_field("support_filament", have_support_material || have_skirt);
 
-    // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing nozzle diameters.
-    bool mixed_nozzle_sizes = false;
-    if (const auto *nozzle_diameters = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-        nozzle_diameters != nullptr && ! nozzle_diameters->values.empty())
-        for (double d : nozzle_diameters->values)
-            mixed_nozzle_sizes |= std::abs(d - nozzle_diameters->values.front()) > EPSILON;
-    toggle_line("support_nozzle_diameter", have_support_material && mixed_nozzle_sizes);
+    // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing
+    // nozzle diameters; the material options serve any multi-filament setup and stay visible
+    // like the other support rows. The legacy base/interface selectors show only while the
+    // "Show legacy filament selection" toggle is on; opening a 3mf project with an assigned
+    // selector switches the toggle on (see Plater's project loading).
+    toggle_line("support_nozzle_diameter", have_support_material && printer_has_mixed_nozzle_sizes());
+    toggle_field("support_base_material", have_support_material || have_skirt);
+    toggle_field("support_interface_material", have_support_material);
+    const bool legacy_support_selectors = wxGetApp().app_config->get_bool("show_legacy_support_filament");
+    toggle_line("support_filament", legacy_support_selectors);
+    toggle_line("support_interface_filament", legacy_support_selectors);
 
     toggle_line("raft_contact_distance", have_raft && !have_support_soluble);
 
@@ -982,6 +1004,91 @@ void ConfigManipulation::toggle_print_sla_options(DynamicPrintConfig* config)
     toggle_field("pad_object_connector_stride", zero_elev);
     toggle_field("pad_object_connector_width", zero_elev);
     toggle_field("pad_object_connector_penetration", zero_elev);
+}
+
+// ORCA: dialog raised when the user enables support on a printer with differing nozzle sizes:
+// the nozzle size that prints the support, and the loaded filament types used for the raft/base
+// and the interface. Writes support_nozzle_diameter and the two support material options, which
+// exclude extruders of other types at slice time; the legacy selectors stay untouched.
+int ConfigManipulation::show_support_filament_dialog(DynamicPrintConfig* config, DynamicPrintConfig* new_conf)
+{
+    PresetBundle &bundle = *wxGetApp().preset_bundle;
+    const auto *nozzle_opt = bundle.printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (nozzle_opt == nullptr || nozzle_opt->values.empty())
+        return wxID_CANCEL;
+    const std::vector<double> &nozzles = nozzle_opt->values;
+
+    // The distinct nozzle sizes and the loaded filaments' types, keeping extruder / slot order.
+    std::vector<double> sizes;
+    for (double d : nozzles)
+        if (std::find_if(sizes.begin(), sizes.end(), [d](double s) { return std::abs(s - d) < EPSILON; }) == sizes.end())
+            sizes.emplace_back(d);
+    std::vector<std::string> types;
+    for (const std::string &name : bundle.filament_presets) {
+        const Preset *preset = bundle.filaments.find_preset(name);
+        const std::string type = preset != nullptr ? preset->config.opt_string("filament_type", 0u) : std::string();
+        if (! type.empty() && std::find(types.begin(), types.end(), type) == types.end())
+            types.emplace_back(type);
+    }
+
+    wxDialog dlg(m_msg_dlg_parent, wxID_ANY, _(L("Support for mixed nozzle sizes")));
+    auto *sizer = new wxBoxSizer(wxVERTICAL);
+    auto *intro = new wxStaticText(&dlg, wxID_ANY,
+        _(L("This printer uses different nozzle sizes. Select the nozzle size that prints the "
+            "support, and the filament types used for the raft and the support interface.")));
+    intro->Wrap(dlg.FromDIP(400));
+    sizer->Add(intro, 0, wxALL, 10);
+    auto add_choice = [&dlg, sizer](const wxString &label, const wxArrayString &items, int selection) {
+        auto *row = new wxBoxSizer(wxHORIZONTAL);
+        row->Add(new wxStaticText(&dlg, wxID_ANY, label), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        auto *choice = new wxComboBox(&dlg, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, items, wxCB_READONLY);
+        choice->SetSelection(selection);
+        row->Add(choice, 1, wxALIGN_CENTER_VERTICAL);
+        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+        return choice;
+    };
+
+    wxArrayString size_items;
+    int size_selection = 0;
+    for (size_t i = 0; i < sizes.size(); ++ i) {
+        size_items.Add(wxString::Format("%g mm", sizes[i]));
+        if (std::abs(sizes[i] - config->opt_float("support_nozzle_diameter")) < EPSILON)
+            size_selection = int(i);
+    }
+    wxArrayString type_items;
+    type_items.Add(_(L("Default")));
+    for (const std::string &type : types)
+        type_items.Add(wxString::FromUTF8(type));
+    // Preselect the currently configured materials.
+    auto type_selection = [&](const char *key) {
+        const std::string &material = config->opt_string(key);
+        for (size_t i = 0; i < types.size(); ++ i)
+            if (types[i] == material)
+                return int(i) + 1;
+        return 0;
+    };
+    auto *size_choice      = add_choice(_(L("Support nozzle size")),    size_items, size_selection);
+    auto *base_choice      = add_choice(_(L("Raft and support base")),  type_items, type_selection("support_base_material"));
+    auto *interface_choice = add_choice(_(L("Support interface")),      type_items, type_selection("support_interface_material"));
+    sizer->Add(dlg.CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, 10);
+    if (wxWindow *btn = dlg.FindWindow(wxID_OK); btn != nullptr)
+        btn->SetLabel(_(L("OK")));
+    if (wxWindow *btn = dlg.FindWindow(wxID_CANCEL); btn != nullptr)
+        btn->SetLabel(_(L("Cancel")));
+    dlg.SetSizerAndFit(sizer);
+    dlg.CentreOnScreen();
+    const int answer = dlg.ShowModal();
+    if (answer != wxID_OK)
+        return answer;
+
+    const double size = sizes[std::max(0, size_choice->GetSelection())];
+    auto material_of = [&types](int choice) {
+        return choice <= 0 ? std::string() : types[choice - 1];
+    };
+    new_conf->set_key_value("support_nozzle_diameter", new ConfigOptionFloat(size));
+    new_conf->set_key_value("support_base_material", new ConfigOptionString(material_of(base_choice->GetSelection())));
+    new_conf->set_key_value("support_interface_material", new ConfigOptionString(material_of(interface_choice->GetSelection())));
+    return answer;
 }
 
 int ConfigManipulation::show_spiral_mode_settings_dialog(bool is_object_config)

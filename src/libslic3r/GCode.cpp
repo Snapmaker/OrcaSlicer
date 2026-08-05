@@ -5420,15 +5420,15 @@ LayerResult GCode::process_layer(const Print& print,
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
                 }
-                // ORCA: with a support nozzle diameter restriction, ("don't care") support/interface may only use a nozzle-matching extruder; prefer one scheduled on this layer (as ToolOrdering did).
-                if (object.config().support_nozzle_diameter.value > 0.) {
-                    auto restrict_to_support_nozzle = [&print, &object, &layer_tools](unsigned int extruder_id) -> unsigned int {
-                        if (object.support_filament_allowed(extruder_id + 1))
+                // ORCA: with support nozzle diameter / material restrictions, ("don't care") support/interface may only use a passing extruder; prefer one scheduled on this layer (as ToolOrdering did).
+                if (object.has_support_filament_restriction()) {
+                    auto restrict_to_support_filaments = [&print, &object, &layer_tools](unsigned int extruder_id, bool interface_role) -> unsigned int {
+                        if (object.support_filament_allowed(extruder_id + 1, interface_role))
                             return extruder_id;
                         unsigned int fallback   = extruder_id;
                         bool have_fallback      = false;
                         for (unsigned int candidate : layer_tools.extruders) // 0 based at this point
-                            if (object.support_filament_allowed(candidate + 1)) {
+                            if (object.support_filament_allowed(candidate + 1, interface_role)) {
                                 if (! print.config().filament_soluble.get_at(candidate))
                                     return candidate;
                                 if (! have_fallback) {
@@ -5439,9 +5439,9 @@ LayerResult GCode::process_layer(const Print& print,
                         return fallback;
                     };
                     if (support_dontcare)
-                        support_extruder = restrict_to_support_nozzle(support_extruder);
+                        support_extruder = restrict_to_support_filaments(support_extruder, false);
                     if (interface_dontcare)
-                        interface_extruder = restrict_to_support_nozzle(interface_extruder);
+                        interface_extruder = restrict_to_support_filaments(interface_extruder, true);
                 }
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.

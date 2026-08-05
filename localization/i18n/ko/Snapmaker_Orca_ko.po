@@ -20144,3 +20144,219 @@ msgstr ""
 #~ "유효한 값을 입력하십시오:\n"
 #~ "시작 > 10 단계 >= 0\n"
 #~ "끝 > 시작 + 단계)"
+msgid "Adjust wall layer height"
+msgstr "벽 레이어 높이 조정"
+
+msgid "Adjusted walls"
+msgstr "조정되는 벽"
+
+msgid "Adjustment direction"
+msgstr "조정 방향"
+
+msgid "Consistent"
+msgstr "일관"
+
+msgid "Decrease"
+msgstr "낮추기"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "하단 표면을 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "내벽을 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "내부 솔리드 채우기를 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "내부 드문 채우기를 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "외벽을 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "기본 서포트 및 라프트를 출력하기 위한 필라멘트. \"기본값\"은 지원을 위한 특정 필라멘트가 없으며 현재 필라멘트가 사용됨을 의미합니다"
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "서포트 및 라프트 접점을 출력하기 위한 필라멘트. \"기본값\"은 지원을 위한 특정 필라멘트가 없으며 현재 필라멘트가 사용됨을 의미합니다"
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "상단 표면을 출력할 필라멘트.\n\"기본값\"은 개체/부품의 현재 필라멘트를 사용합니다."
+
+msgid "Fixed"
+msgstr "고정"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "더 두꺼운 선호 레이어 높이의 압출기에 할당된 부품을 얼마나 적극적으로 두꺼운 레이어로 결합할지 정합니다.\n일관: 부품은 최대 두 가지 레이어 높이로 출력됩니다. 완전한 레이어 묶음이 들어가는 곳은 압출기 레이어 높이, 그 외에는 개체 레이어 높이입니다. 벽이 가장 균일해집니다.\n적응형: 묶음을 개체 레이어 높이의 중간 배수로도 결합할 수 있어 부품의 더 많은 부분이 두꺼운 레이어로 출력되지만, 곡면 경계에 레이어 높이가 변하는 띠가 생깁니다.\n고정: 결합된 레이어 사이에서 형상이 변하거나 오버행이 있어도 부품은 항상 압출기 레이어 높이로 출력됩니다. 곡면 경계는 계단이 되고 두꺼운 레이어보다 미세한 디테일은 사라집니다. 두꺼운 레이어 하나에 못 미치는 형상(부품 상단과 첫 레이어)만 더 얇게 출력됩니다."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "더 두꺼운 선호 레이어 높이의 압출기에 할당된 부품의 윤곽이 하나의 두꺼운 묶음의 레이어들 사이에서 옆으로 얼마나 이동해도 결합될 수 있는지를 해당 압출기 노즐 직경의 백분율로 지정합니다. 값이 클수록 곡면 경계가 더 많이 두꺼운 레이어로 결합되지만 경계 벽은 거칠어집니다. 노즐 직경의 이 비율까지의 편차는 두꺼운 압출선에 흡수됩니다."
+
+msgid "Increase"
+msgstr "높이기"
+
+msgid "Inner walls"
+msgstr "내벽"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "이 압출기가 출력해야 하는 레이어 높이로, 압출기마다 노즐 크기가 다른 프린터용입니다. 개체 레이어 높이의 정수배여야 합니다. 모든 피처가 이 압출기를 따르는 부품은 형상이 허용하는 곳에서 N번째 레이어마다 그만큼 두꺼운 압출로 출력되며, 그 외에는 개체 레이어 높이로 돌아갑니다. 부품의 나머지가 따라갈 수 없으면 이 압출기에 할당된 벽은 그래도 스스로 이 높이로 결합되고, 전체 밀도의 상단 표면은 그 아래 솔리드 레이어를 흡수하며, 드문 채우기나 100% 밀도 채우기도 독립적으로 이 높이로 결합됩니다. 0은 개체 레이어 높이를 사용합니다."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "이 압출기가 출력해야 하는 레이어 높이: 이 압출기의 레이어 높이 한도 내에서 개체 레이어 높이의 정수배. 기본값은 개체 레이어 높이를 유지합니다."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "서포트 노즐 직경과 일치하는 노즐을 가진 압출기가 없습니다."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "로드된 필라멘트 중 서포트/라프트 베이스 재료(및 서포트 노즐 직경)와 일치하는 것이 없습니다."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "로드된 필라멘트 중 서포트/라프트 인터페이스 재료(및 서포트 노즐 직경)와 일치하는 것이 없습니다."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "노즐 %1%: 레이어 높이 한도가 \"%4%\"에서 %2%-%3% mm로 설정되었습니다."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "압출기마다 노즐 직경이 다른 프린터에서는 이 노즐 직경의 필라멘트만 서포트, 라프트, 서포트 인터페이스 출력에 사용됩니다. 선 너비와 레이어 높이 한도가 다른 다른 노즐 크기의 필라멘트를 서포트에서 배제합니다. 기본값이 아닌 값으로 설정된 서포트 필라멘트는 이 직경과 일치해야 합니다. 0이면 모든 필라멘트가 서포트를 출력할 수 있습니다."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "한쪽 높이가 다른 쪽의 정수배이면 외벽과 내벽은 자동으로 각자의 선호 레이어 높이로 출력됩니다. 높이가 나누어떨어지지 않으면 이 옵션이 두 벽 필라멘트 중 하나(아래에서 선택)의 벽 레이어 높이를 다른 쪽의 가장 가까운 배수나 약수로 조정하여 벽이 여전히 분리될 수 있게 합니다. 조정된 높이는 그 필라멘트의 벽에만 적용되며, 다른 피처는 선호 레이어 높이를 유지합니다. 조정은 필라멘트의 레이어 높이 한도를 절대 벗어나지 않습니다. 선택한 방향에 허용되는 높이가 없으면 벽은 평소처럼 더 낮은 높이로 함께 출력됩니다."
+
+msgid "Outer walls"
+msgstr "외벽"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "압출기별 레이어 높이는 나선형 꽃병 모드에서 지원되지 않습니다."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "압출기별 레이어 높이는 인터페이스 셸과 함께 지원되지 않습니다."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "압출기별 레이어 높이는 가변 레이어 높이와 함께 지원되지 않습니다."
+
+msgid "Preferred layer height"
+msgstr "선호 레이어 높이"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "서포트와 라프트 베이스를 이 재료 유형의 필라멘트로만 출력합니다. 다른 유형이 로드된 압출기는 사용되지 않습니다. 서포트 노즐 직경 제한과 함께 작동합니다. 비워 두면 제한이 없습니다. 명시적으로 선택한 서포트/라프트 베이스 필라멘트가 여전히 우선합니다."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "서포트와 라프트 인터페이스를 이 재료 유형의 필라멘트로만 출력합니다. 다른 유형이 로드된 압출기는 사용되지 않습니다. 서포트 노즐 직경 제한과 함께 작동합니다. 비워 두면 제한이 없습니다. 명시적으로 선택한 서포트/라프트 인터페이스 필라멘트가 여전히 우선합니다."
+
+msgid "Raft and support base"
+msgstr "라프트 및 서포트 베이스"
+
+msgid "Show legacy filament selection"
+msgstr "이전 필라멘트 선택 표시"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "일부 부품은 %1% mm 레이어를 선호하지만, 그 부품의 다른 피처를 출력하는 필라멘트 %2%의 노즐이 너무 작아 그 높이를 압출할 수 없습니다. 이 부품들은 대신 개체 레이어 높이로 출력됩니다."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "일부 부품은 %1% mm 레이어를 선호하지만, 벽 필라멘트 %2%의 노즐이 너무 작아 그 높이를 압출할 수 없습니다. 외벽과 내벽은 함께 출력되므로 이 벽들은 개체 레이어 높이를 유지합니다. 두 벽 피처 모두 충분히 큰 노즐의 필라멘트에 할당하세요."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "일부 부품이 최대 레이어 높이가 %3% mm인 필라멘트 %2%로 %1% mm 레이어를 출력합니다. 부품 피처를 더 굵은 노즐의 필라멘트에 할당하거나, 필라멘트의 최대 레이어 높이를 올리거나, 초과 출력을 감수하세요."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "일부 부품이 최소 레이어 높이가 %3% mm인 필라멘트 %2%로 %1% mm 레이어를 출력합니다. 개체 레이어 높이를 올리거나, 이 피처들에 더 가는 노즐의 필라멘트를 쓰거나, 압출기 최소값 아래 출력을 감수하세요."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "일부 부품이 사용하는 필라멘트들의 선호 레이어 높이를 모두 만족할 수 없습니다. 부품은 하나의 레이어 피치로 피처를 출력합니다(벽 필라멘트가 정하며, 벽 필라멘트에 선호가 없으면 나머지 피처의 합의로 정해집니다). 부품의 나머지가 따라갈 수 없을 때 벽, 상단 표면, 채우기는 각자 자기 높이로 결합할 수 있지만, 나머지 피처는 부품의 피치로 출력됩니다."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "혼합 노즐 크기의 서포트"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "서포트가 서로 다른 노즐 직경의 압출기로 출력될 수 있습니다. 서포트 노즐 직경(또는 명시적인 서포트 및 인터페이스 필라멘트)을 설정해 서포트를 하나의 노즐 크기로 유지하세요."
+
+msgid "Support nozzle diameter"
+msgstr "서포트 노즐 직경"
+
+msgid "Support nozzle size"
+msgstr "서포트 노즐 크기"
+
+msgid "Support/raft base material"
+msgstr "서포트/라프트 베이스 재료"
+
+msgid "Support/raft interface material"
+msgstr "서포트/라프트 인터페이스 재료"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "%1% mm의 채우기 선 너비는 %2% mm 높이로 결합된 채우기에 너무 작습니다. 선 너비를 늘리거나 채우기 필라멘트의 선호 레이어 높이를 낮추세요."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "%1% mm의 선 너비는 해당 압출기의 %2% mm 레이어 높이에 너무 작습니다. 선 너비를 늘리거나 압출기 레이어 높이를 낮추세요."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "압출기 %1%의 레이어 높이(%2% mm)는 노즐 직경을 초과할 수 없습니다."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "압출기 %1%의 레이어 높이(%2% mm)는 일부 부품에서 무시됩니다. 개체 레이어 높이(%3% mm)의 정수배이면서 그보다 작지 않아야 하고, 압출기의 노즐 직경을 초과해서는 안 됩니다."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "압출기 %1%의 레이어 높이(%2% mm)가 개체 레이어 높이(%3% mm)보다 작습니다. 개체 레이어 높이를 가장 가는 압출기 레이어 높이로 낮추세요."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "압출기 %1%의 레이어 높이(%2% mm)는 개체 레이어 높이(%3% mm)의 정수배여야 합니다."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "이 압출기로 출력할 수 있는 최저 레이어 높이. 적응형 레이어 높이 사용 시 최소 레이어 높이를 제한하는 데 쓰입니다. 더 두꺼운 선호 압출기 레이어 높이로 출력되는 부품도 이 높이 아래로는 절대 내려가지 않습니다(첫 레이어 제외)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "노즐 %1%의 선호 레이어 높이가 더 이상 노즐을 통과하지 못해 기본값으로 재설정되었습니다."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "서포트/라프트 베이스 필라멘트가 서포트/라프트 베이스 재료가 아닙니다."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "서포트/라프트 베이스 필라멘트가 서포트 노즐 직경과 일치하지 않는 노즐로 출력됩니다."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "서포트/라프트 인터페이스 필라멘트가 서포트/라프트 인터페이스 재료가 아닙니다."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "서포트/라프트 인터페이스 필라멘트가 서포트 노즐 직경과 일치하지 않는 노즐로 출력됩니다."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "일부 부품의 벽 필라멘트가 서로 다른 레이어 높이를 선호합니다. 외벽과 내벽은 함께 출력되므로 이 벽들은 개체 레이어 높이를 유지합니다. 더 두꺼운 벽을 출력하려면 두 벽 피처를 같은 높이를 선호하는 필라멘트에 할당하세요."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "일부 부품의 벽 필라멘트가 서로 다른 레이어 높이를 선호합니다. 외벽과 내벽은 함께 출력되므로 이 벽들은 더 낮은 높이(%1% mm)로 출력됩니다."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "필라멘트 %1%의 벽 레이어 높이가 외벽과 내벽이 호환되는 레이어 높이로 출력될 수 있도록 선호값 %2% mm에서 %3% mm로 조정되었습니다(\"벽 레이어 높이 조정\"). 이 필라멘트의 벽만 조정된 높이로 출력되며, 다른 피처는 선호값을 유지합니다."
+
+msgid "Thick layer regions"
+msgstr "두꺼운 레이어 영역"
+
+msgid "Thick layer tolerance"
+msgstr "두꺼운 레이어 허용 오차"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "이 프린터에는 %1% mm 노즐용 프로파일이 없습니다. 프린터 설정에서 노즐 %2%의 레이어 높이 한도를 확인하세요."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "이 프린터는 서로 다른 노즐 크기를 사용합니다. 서포트를 출력할 노즐 크기와 라프트 및 서포트 인터페이스에 사용할 필라멘트 유형을 선택하세요."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "조정되는 벽 필라멘트의 벽 레이어 높이를 낮출지 높일지를 정해 다른 벽 필라멘트와 호환되는 높이에 도달합니다. 조정되는 필라멘트의 레이어 높이 한도를 벗어나는 높이는 절대 사용되지 않습니다. 이 방향에 허용되는 높이가 없으면 벽은 평소처럼 더 낮은 높이로 함께 출력됩니다."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "선호 레이어 높이가 나누어떨어지지 않을 때 두 벽 필라멘트 중 어느 쪽의 벽 레이어 높이를 조정할지 정합니다."

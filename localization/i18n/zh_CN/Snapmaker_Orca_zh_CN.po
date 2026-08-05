@@ -3365,6 +3365,18 @@ msgstr "下载已取消"
 msgid "Download Failed"
 msgstr "下载失败"
 
+msgid "Insufficient disk space."
+msgstr "磁盘空间不足"
+
+msgid "File was removed. Download canceled."
+msgstr "文件已被移除，下载中断"
+
+msgid "Network timeout"
+msgstr "网络连接超时"
+
+msgid "Request timed out. Please check the device connection."
+msgstr "加载超时，请检查设备连接。"
+
 msgid "Flow Dynamic Calibration"
 msgstr "动态流量校准"
 

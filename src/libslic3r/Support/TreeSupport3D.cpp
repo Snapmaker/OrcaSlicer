@@ -840,7 +840,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     }
     // offset in steps
     for (int i = 0; i < steps; ++ i) {
-        ret = diff(offset(ret, step_size, ClipperLib::jtRound, scaled<float>(0.01)), collision_trimmed());
+        ret = diff(offset(ret, step_size, ClipperLib::jtSquare, 0.), collision_trimmed());
         // ensure that if many offsets are done the performance does not suffer extremely by the new vertices of jtRound.
         if (i % 10 == 7)
             ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
@@ -848,7 +848,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     // offset the remainder
     float last_offset = distance - steps * step_size;
     if (last_offset > SCALED_EPSILON)
-        ret = offset(ret, distance - steps * step_size, ClipperLib::jtRound, scaled<float>(0.01));
+        ret = offset(ret, distance - steps * step_size, ClipperLib::jtSquare, 0.);
     ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
 
     if (do_final_difference)

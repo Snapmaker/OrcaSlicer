@@ -1,6 +1,6 @@
 {
     "type": "process",
-    "name": "0.10 Color Mixing @Snapmaker U1 (0.4 Nozzle)",
+    "name": "0.10mm Color Mixing @Snapmaker U1 (0.4 Nozzle)",
     "inherits": "fdm_process_U1_0.12",
     "from": "system",
     "setting_id": "CLMX001",

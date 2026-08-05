@@ -2195,7 +2195,7 @@ static bool merge_influence_areas_two_elements(
         return false;
 
     // While 0.025 was guessed as enough, i did not have reason to change it.
-    if (area(offset(intersect, scaled<float>(-0.025), jtMiter, 1.2)) <= _tiny_area_threshold)
+    if (area(offset(intersect, scaled<float>(-0.025), jtSquare, 0.)) <= _tiny_area_threshold) // jtSquare for cross-CPU consistency
         return false;
 
 #ifdef TREES_MERGE_RATHER_LATER

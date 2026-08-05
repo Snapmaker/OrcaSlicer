@@ -2517,15 +2517,24 @@ void TabPrint::build()
         optgroup->append_single_option_line("support_filament", "support_settings_filament#base");
         optgroup->append_single_option_line("support_interface_filament", "support_settings_filament#interface");
         optgroup->append_single_option_line("support_interface_not_for_body", "support_settings_filament#avoid-interface-filament-for-base");
-        // ORCA: on mixed-nozzle printers the support filament dialog owns the base/interface
-        // choice; this toggle reveals the legacy selectors above for older projects.
+        // ORCA: the support material options own the base/interface choice; this toggle
+        // reveals the legacy selectors above for older projects.
         auto legacy_support_toggle = [this](wxWindow* parent) {
             auto *sizer = new wxBoxSizer(wxHORIZONTAL);
-            auto *check = new ::CheckBox(parent);
+            auto *check = m_legacy_support_check = new ::CheckBox(parent);
             check->SetValue(wxGetApp().app_config->get_bool("show_legacy_support_filament"));
+            // Page controls are destroyed when another page activates; drop the cached pointer.
+            check->Bind(wxEVT_DESTROY, [this, check](wxWindowDestroyEvent &evt) {
+                if (m_legacy_support_check == check)
+                    m_legacy_support_check = nullptr;
+                evt.Skip();
+            });
             check->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent &evt) {
                 wxGetApp().app_config->set_bool("show_legacy_support_filament", evt.IsChecked());
                 update();
+                if (m_active_page != nullptr)
+                    m_active_page->update_visibility(m_mode, true);
+                m_page_view->GetParent()->Layout();
                 evt.Skip();
             });
             sizer->Add(check, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
@@ -2761,6 +2770,9 @@ void TabPrint::toggle_options()
     }
 
     m_config_manipulation.toggle_print_fff_options(m_config, m_type < Preset::TYPE_COUNT);
+    // The visibility pass may have switched the legacy toggle on for a loaded selection.
+    if (m_legacy_support_check != nullptr)
+        m_legacy_support_check->SetValue(wxGetApp().app_config->get_bool("show_legacy_support_filament"));
 
     Field *field = m_active_page->get_field("support_style");
     auto   support_type = m_config->opt_enum<SupportType>("support_type");

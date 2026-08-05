@@ -761,14 +761,14 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_field("support_filament", have_support_material || have_skirt);
 
     // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing
-    // nozzle diameters. There the support filament dialog owns the base/interface choice and the
-    // legacy selectors hide behind the "Show legacy filament selection" toggle, staying editable
-    // for older projects.
-    const bool mixed_nozzle_sizes = printer_has_mixed_nozzle_sizes();
-    toggle_line("support_nozzle_diameter", have_support_material && mixed_nozzle_sizes);
-    toggle_line("support_base_material", have_support_material && mixed_nozzle_sizes);
-    toggle_line("support_interface_material", have_support_material && mixed_nozzle_sizes);
-    const bool legacy_support_selectors = ! mixed_nozzle_sizes || wxGetApp().app_config->get_bool("show_legacy_support_filament");
+    // nozzle diameters; the material options serve any multi-filament setup and stay visible
+    // like the other support rows. The legacy base/interface selectors show only while the
+    // "Show legacy filament selection" toggle is on; opening a 3mf project with an assigned
+    // selector switches the toggle on (see Plater's project loading).
+    toggle_line("support_nozzle_diameter", have_support_material && printer_has_mixed_nozzle_sizes());
+    toggle_field("support_base_material", have_support_material || have_skirt);
+    toggle_field("support_interface_material", have_support_material);
+    const bool legacy_support_selectors = wxGetApp().app_config->get_bool("show_legacy_support_filament");
     toggle_line("support_filament", legacy_support_selectors);
     toggle_line("support_interface_filament", legacy_support_selectors);
 

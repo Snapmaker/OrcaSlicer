@@ -781,7 +781,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
         if (result.empty()) {
             BOOST_LOG_TRIVIAL(debug) << "Caught an area destroying union, enlarging areas a bit.";
             // just take the few lines we have, and offset them a tiny bit. Needs to be offsetPolylines, as offset may aleady have problems with the area.
-            result = union_(offset(to_polylines(first), scaled<float>(0.002), jtSquare, 0.), offset(to_polylines(second), scaled<float>(0.002), jtSquare, 0.));
+            result = union_(offset(to_polylines(first), scaled<float>(0.002), jtMiter, 1.2), offset(to_polylines(second), scaled<float>(0.002), jtMiter, 1.2));
         }
     }
 
@@ -840,7 +840,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     }
     // offset in steps
     for (int i = 0; i < steps; ++ i) {
-        ret = diff(offset(ret, step_size, ClipperLib::jtSquare, 0.), collision_trimmed());
+        ret = diff(offset(ret, step_size, ClipperLib::jtRound, scaled<float>(0.01)), collision_trimmed());
         // ensure that if many offsets are done the performance does not suffer extremely by the new vertices of jtRound.
         if (i % 10 == 7)
             ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
@@ -848,7 +848,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     // offset the remainder
     float last_offset = distance - steps * step_size;
     if (last_offset > SCALED_EPSILON)
-        ret = offset(ret, distance - steps * step_size, ClipperLib::jtSquare, 0.);
+        ret = offset(ret, distance - steps * step_size, ClipperLib::jtRound, scaled<float>(0.01));
     ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
 
     if (do_final_difference)
@@ -1148,7 +1148,7 @@ void sample_overhang_area(
                     interface_placer.volumes.getAvoidance(interface_placer.config.getRadius(0), layer_idx - (dtt_roof + 1), TreeModelVolumes::AvoidanceType::Fast, false, min_xy_dist);
                 // prevent rounding errors down the line
                 //FIXME maybe use SafetyOffset::Yes at the following diff() instead?
-                forbidden_next = offset(union_ex(forbidden_next_raw), scaled<float>(0.005), jtSquare, 0.);
+                forbidden_next = offset(union_ex(forbidden_next_raw), scaled<float>(0.005), jtMiter, 1.2);
             }
             Polygons overhang_area_next = diff(overhang_area, forbidden_next);
             if (area(overhang_area_next) < mesh_group_settings.minimum_roof_area) {
@@ -1204,11 +1204,11 @@ void sample_overhang_area(
             // I assume that even small overhangs are over one line width wide, so lets try to place the support points in a way that the full support area generated from them
             // will support the overhang (if this is not done it may only be half). This WILL NOT be the case when supporting an angle of about < 60 degrees so there is a fallback,
             // as some support is better than none.
-            Polygons reduced_overhang_area = offset(union_ex(overhang_area), -interface_placer.config.support_line_width / 2.2, jtSquare, 0.);
+            Polygons reduced_overhang_area = offset(union_ex(overhang_area), -interface_placer.config.support_line_width / 2.2, jtMiter, 1.2);
             polylines = ensure_maximum_distance_polyline(
                 to_polylines(
                     ! reduced_overhang_area.empty() &&
-                        area(offset(diff_ex(overhang_area, reduced_overhang_area), std::max(interface_placer.config.support_line_width, connect_length), jtSquare, 0.)) < sqr(scaled<double>(0.001)) ?
+                        area(offset(diff_ex(overhang_area, reduced_overhang_area), std::max(interface_placer.config.support_line_width, connect_length), jtMiter, 1.2)) < sqr(scaled<double>(0.001)) ?
                     reduced_overhang_area :
                     overhang_area),
                 connect_length, min_support_points);
@@ -1339,7 +1339,7 @@ static void generate_initial_areas(
                     volumes.getCollision(config.getRadius(0), layer_idx, min_xy_dist) :
                     volumes.getAvoidance(config.getRadius(0), layer_idx, AvoidanceType::Fast, false, min_xy_dist);
                 // prevent rounding errors down the line, points placed directly on the line of the forbidden area may not be added otherwise.
-                relevant_forbidden = offset(union_ex(relevant_forbidden_raw), scaled<float>(0.005), jtSquare, 0.);
+                relevant_forbidden = offset(union_ex(relevant_forbidden_raw), scaled<float>(0.005), jtMiter, 1.2);
             }
 
             // every overhang has saved if a roof should be generated for it. This can NOT be done in the for loop as an area may NOT have a roof
@@ -1355,8 +1355,8 @@ static void generate_initial_areas(
                 Polygons remaining_overhang = intersection(
                     diff(mesh_group_settings.support_offset == 0 ?
                             overhang_raw :
-                            offset(union_ex(overhang_raw), mesh_group_settings.support_offset, jtSquare, 0.),
-                         offset(union_ex(overhang_regular), config.support_line_width * 0.5, jtSquare, 0.)),
+                            offset(union_ex(overhang_raw), mesh_group_settings.support_offset, jtMiter, 1.2),
+                         offset(union_ex(overhang_regular), config.support_line_width * 0.5, jtMiter, 1.2)),
                     relevant_forbidden);
 
                 // Offset the area to compensate for large tip radiis. Offset happens in multiple steps to ensure the tip is as close to the original overhang as possible.
@@ -1963,7 +1963,7 @@ static void increase_areas_one_layer(
                 if (!settings.no_error) {
                     // ERROR CASE
                     // if the area becomes for whatever reason something that clipper sees as a line, offset would stop working, so ensure that even if it would be a line wrongly, it still actually has an area that can be increased
-                    Polygons lines_offset = offset(to_polylines(parent.influence_area), scaled<float>(0.005), jtSquare, 0.);
+                    Polygons lines_offset = offset(to_polylines(parent.influence_area), scaled<float>(0.005), jtMiter, 1.2);
                     Polygons base_error_area = union_(parent.influence_area, lines_offset);
                     result = increase_single_area(volumes, config, settings, layer_idx, parent,
                         base_error_area, to_bp_data, to_model_data, inc_wo_collision, (config.maximum_move_distance + extra_speed) * 1.5, mergelayer);
@@ -2195,7 +2195,7 @@ static bool merge_influence_areas_two_elements(
         return false;
 
     // While 0.025 was guessed as enough, i did not have reason to change it.
-    if (area(offset(intersect, scaled<float>(-0.025), jtSquare, 0.)) <= _tiny_area_threshold) // jtSquare for cross-CPU consistency
+    if (area(offset(intersect, scaled<float>(-0.025), jtMiter, 1.2)) <= _tiny_area_threshold) // jtSquare for cross-CPU consistency
         return false;
 
 #ifdef TREES_MERGE_RATHER_LATER

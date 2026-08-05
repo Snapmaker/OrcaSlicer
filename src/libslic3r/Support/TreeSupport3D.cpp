@@ -2466,8 +2466,12 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
     size_t merge_every_x_layers = 1;
     // Calculate the influence areas for each layer below (Top down)
     // This is done by first increasing the influence area by the allowed movement distance, and merging them with other influence areas if possible
+    size_t total_removed_by_collision = 0;
+    size_t total_removed_by_tiny_area = 0;
+    int first_active_layer = -1;
     for (int layer_idx = int(move_bounds.size()) - 1; layer_idx > 0; -- layer_idx)
         if (SupportElements &prev_layer = move_bounds[layer_idx]; ! prev_layer.empty()) {
+            if (first_active_layer < 0) first_active_layer = layer_idx;
             // merging is expensive and only parallelized to a max speedup of 2. As such it may be useful in some cases to only merge every few layers to improve performance.
             bool had_new_element = new_element;
             const bool merge_this_layer = had_new_element || size_t(last_merge_layer_idx - layer_idx) >= merge_every_x_layers;
@@ -2485,15 +2489,19 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
                 parents.emplace_back(element_idx);
                 influence_areas.push_back({ el.state, parents });
             }
+            size_t before_count = influence_areas.size();
             increase_areas_one_layer(volumes, config, influence_areas, layer_idx, prev_layer, merge_this_layer, throw_on_cancel);
 
             // Place already fully constructed elements to the output, remove them from influence_areas.
             SupportElements &this_layer = move_bounds[layer_idx - 1];
+            size_t removed_by_collision = 0, removed_by_tiny = 0;
             influence_areas.erase(std::remove_if(influence_areas.begin(), influence_areas.end(),
-                [&this_layer, &_tiny_area_threshold, layer_idx](SupportElementMerging &elem) {
-                    if (elem.areas.influence_areas.empty())
+                [&this_layer, &_tiny_area_threshold, layer_idx, &removed_by_collision, &removed_by_tiny](SupportElementMerging &elem) {
+                    if (elem.areas.influence_areas.empty()) {
                         // This area was removed completely due to collisions.
+                        removed_by_collision++;
                         return true;
+                    }
                     if (elem.areas.to_bp_areas.empty() && elem.areas.to_model_areas.empty()) {
                         if (area(elem.areas.influence_areas) <= _tiny_area_threshold) {
                             BOOST_LOG_TRIVIAL(warning) << "Insert Error of Influence area bypass on layer " << layer_idx - 1;
@@ -2501,6 +2509,7 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
                         }
                         // Move the area to output.
                         this_layer.emplace_back(elem.state, std::move(elem.parents), std::move(elem.areas.influence_areas));
+                        removed_by_tiny++;
                         return true;
                     }
                     // Keep the area.
@@ -2539,6 +2548,16 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
             progress_total += data_size_inverse * TREE_PROGRESS_AREA_CALC;
             Progress::messageProgress(Progress::Stage::SUPPORT, progress_total * m_progress_multiplier + m_progress_offset, TREE_PROGRESS_TOTAL);
     #endif
+            // DEBUG_CROSS_MACHINE: log per-layer stats for first 30 active layers, then every 100
+            int depth = first_active_layer - layer_idx;
+            if (depth <= 30 || depth % 100 == 0) {
+                BOOST_LOG_TRIVIAL(warning) << "[DEBUG_CROSS_MACHINE] create_layer_pathing layer=" << layer_idx
+                    << " prev=" << before_count
+                    << " removed_col=" << removed_by_collision
+                    << " removed_tiny=" << removed_by_tiny
+                    << " kept=" << influence_areas.size()
+                    << " this_out=" << move_bounds[layer_idx - 1].size();
+            }
             throw_on_cancel();
         }
 

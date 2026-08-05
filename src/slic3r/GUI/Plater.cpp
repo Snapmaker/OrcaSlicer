@@ -2472,11 +2472,15 @@ Sidebar::Sidebar(Plater *parent)
                     old_mixed_snapshot, current_count, target_count);
             }
 
-            // Assign the Full Spectrum filament preset to slots 1-4 so the
-            // combobox displays the preset name instead of F1-F4 fallback.
+            // Write Full Spectrum to slots 1-4 only when the preset is
+            // selectable under the current printer (present + visible +
+            // compatible, matching the filament combobox filter).
             const std::string full_spectrum_preset = full_spectrum_preset_name();
-            for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
-                pb->set_filament_preset(i, full_spectrum_preset);
+            const Preset*     fs_preset = pb->filaments.find_preset(full_spectrum_preset);
+            if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible) {
+                for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
+                    pb->set_filament_preset(i, full_spectrum_preset);
+            }
 
             wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
         } else {

@@ -4843,10 +4843,27 @@ static std::mutex                                        g_active_ctx_mtx;
 TimelapseDownloadPopup* get_or_create_timelapse_popup() {
     if (!g_timelapse_popup || g_timelapse_popup->IsBeingDeleted()) {
         g_timelapse_popup = new TimelapseDownloadPopup(wxGetApp().mainframe);
+        // Null the shared pointer on destroy so it can't dangle; otherwise the
+        // next call here reads freed memory via IsBeingDeleted(). wxEVT_DESTROY
+        // is the one choke point every teardown path hits.
+        TimelapseDownloadPopup* self = g_timelapse_popup;
+        self->Bind(wxEVT_DESTROY, [self](wxWindowDestroyEvent& e) {
+            // wxWindowDestroyEvent is a wxCommandEvent, so child (row/divider)
+            // destroys propagate here too — act only on the popup's own.
+            if (e.GetEventObject() != self) { e.Skip(); return; }
+            {
+                std::lock_guard<std::mutex> lk(g_active_ctx_mtx);
+                for (auto& c : g_active_ctxs) {
+                    if (c->popup == self) { c->popup = nullptr; }
+                }
+            }
+            // A newer popup may already own the global (deferred delete).
+            if (g_timelapse_popup == self) { g_timelapse_popup = nullptr; }
+            e.Skip();
+        });
     }
     return g_timelapse_popup;
 }
-
 // Remove a date_index from the active set (called when a file reaches a
 // terminal state, so the same file can be downloaded again later).
 static void release_date_index(const std::string& date_index) {

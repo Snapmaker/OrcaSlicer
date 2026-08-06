@@ -2385,14 +2385,10 @@ static void merge_influence_areas(
     // Initial number of buckets for 1st round of merging.
     size_t num_buckets_initial;
     {
-        // How many buckets per first merge iteration?
-        const size_t num_threads     = tbb::this_task_arena::max_concurrency();
-        // 4 buckets per thread if possible,
-        const size_t num_buckets_min = (input_size + 2) / 4;
-        // 2 buckets per thread otherwise.
-        const size_t num_buckets_max = input_size / 2;
-        num_buckets_initial          = num_buckets_min >= num_threads ? num_buckets_min : num_buckets_max;
-        const size_t bucket_size     = num_buckets_min >= num_threads ? 4 : 2;
+        // Fixed bucket_size=2 for deterministic merge results across machines with different
+        // thread counts. The merge operation is not associative, so execution order matters.
+        constexpr size_t bucket_size = 2;
+        num_buckets_initial = input_size / bucket_size;
         // Fill in the buckets.
         SupportElementMerging *it = influence_areas.data();
         // Reserve one more bucket to keep a single influence area which will not be merged in the first iteration.
@@ -3803,8 +3799,8 @@ void organic_draw_branches(
                     bottom_contacts.clear();
                     //FIXME parallelize?
                     for (LayerIndex i = 0; i < LayerIndex(slices.size()); ++i) {
-                        slices[i] = diff_clipped(slices[i], volumes.getCollision(0, layer_begin + i, true)); // FIXME parent_uses_min || draw_area.element->state.use_min_xy_dist);
-                        slices[i] = intersection(slices[i], volumes.m_bed_area);
+                        slices[i] = diff_clipped(slices[i], volumes.getCollision(0, layer_begin + i, true), ApplySafetyOffset::Yes);
+                        slices[i] = intersection(slices[i], volumes.m_bed_area, ApplySafetyOffset::Yes);
                     }
                     size_t num_empty = 0;
                     if (slices.front().empty()) {
@@ -3838,7 +3834,7 @@ void organic_draw_branches(
                                  // Only propagate until the rest area is smaller than this threshold.
                                 //double                          support_area_min = 0.1 * support_area_min_radius;
                                 for (LayerIndex layer_idx = layer_begin - 1; layer_idx >= layer_bottommost; -- layer_idx) {
-                                    rest_support = diff_clipped(rest_support.empty() ? slices.front() : rest_support, volumes.getCollision(0, layer_idx, false));
+                                    rest_support = diff_clipped(rest_support.empty() ? slices.front() : rest_support, volumes.getCollision(0, layer_idx, false), ApplySafetyOffset::Yes);
                                     double rest_support_area = area(rest_support);
                                     if (rest_support_area < support_area_stop)
                                         // Don't propagate a fraction of the tree contact surface.
@@ -3984,13 +3980,12 @@ void organic_draw_branches(
             // Subtract top contact layer polygons from support base.
             SupportGeneratorLayer *top_contact_layer = top_contacts.empty() ? nullptr : top_contacts[layer_idx];
             if (top_contact_layer && ! top_contact_layer->polygons.empty() && ! base_layer_polygons.empty()) {
-                base_layer_polygons = diff(base_layer_polygons, top_contact_layer->polygons);
+                base_layer_polygons = diff(base_layer_polygons, top_contact_layer->polygons, ApplySafetyOffset::Yes);
                 if (! bottom_contact_polygons.empty())
-                    //FIXME it may be better to clip bottom contacts with top contacts first after they are propagated to produce interface layers.
-                    bottom_contact_polygons = diff(bottom_contact_polygons, top_contact_layer->polygons);
+                    bottom_contact_polygons = diff(bottom_contact_polygons, top_contact_layer->polygons, ApplySafetyOffset::Yes);
             }
             if (! bottom_contact_polygons.empty()) {
-                base_layer_polygons = diff(base_layer_polygons, bottom_contact_polygons);
+                base_layer_polygons = diff(base_layer_polygons, bottom_contact_polygons, ApplySafetyOffset::Yes);
                 SupportGeneratorLayer *bottom_contact_layer = bottom_contacts[layer_idx] = &layer_allocate(
                     layer_storage, SupporLayerType::BottomContact, print_object.slicing_parameters(), config, layer_idx);
                 bottom_contact_layer->polygons = std::move(bottom_contact_polygons);

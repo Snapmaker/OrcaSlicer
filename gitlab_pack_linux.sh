@@ -186,13 +186,13 @@ prepare_git_repo() {
         fi
     done
 
-    # Ensure gitlab_build_linux.sh exists in the cloned repo
+    # Ensure gitlab_build_linux.sh exists and is executable in the cloned repo
     # (the cloned branch may not have it yet; copy from the pack script's own directory)
     if [[ ! -f "$REPO_DIR/gitlab_build_linux.sh" ]]; then
         echo -e "${YELLOW}gitlab_build_linux.sh not found in cloned branch; copying from script directory...${NC}"
         cp "$SCRIPT_DIR/gitlab_build_linux.sh" "$REPO_DIR/gitlab_build_linux.sh"
-        chmod +x "$REPO_DIR/gitlab_build_linux.sh"
     fi
+    chmod +x "$REPO_DIR/gitlab_build_linux.sh"
 
     echo ""
 }

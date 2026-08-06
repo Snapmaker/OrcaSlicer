@@ -340,7 +340,7 @@ Wipe::RetractionValues Wipe::calculateWipeRetractionLengths(GCode& gcodegen, boo
     double wipe_path_length = std::min(wipe_path.length(), wipe_dist);
 
     // Calculate the maximum retraction amount during wipe
-    retractionDuringWipe = config.retraction_speed.get_at(extruder_id) * unscale_(wipe_path_length) / wipe_speed;
+    retractionDuringWipe = get_value_at(config, config.retraction_speed, ConfigFlowDomain::Filament, extruder_id) * unscale_(wipe_path_length) / wipe_speed;
     // If the maximum retraction amount during wipe is too small, return 0 and retract everything prior to the wipe.
     if (retractionDuringWipe <= EPSILON)
         return {retractionBeforeWipe, 0.f};
@@ -522,12 +522,12 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
         {
             GCodeWriter&     gcode_writer = gcodegen.m_writer;
             FullPrintConfig& full_config  = gcodegen.m_config;
-            float old_retract_length = gcode_writer.extruder() != nullptr ? full_config.retraction_length.get_at(previous_extruder_id) : 0;
-            float new_retract_length = full_config.retraction_length.get_at(new_extruder_id);
+            float old_retract_length = gcode_writer.extruder() != nullptr ? get_value_at(full_config, full_config.retraction_length, ConfigFlowDomain::Filament, previous_extruder_id) : 0;
+            float new_retract_length = get_value_at(full_config, full_config.retraction_length, ConfigFlowDomain::Filament, new_extruder_id);
             float old_retract_length_toolchange = gcode_writer.extruder() != nullptr ?
-                                                      full_config.retract_length_toolchange.get_at(previous_extruder_id) :
+                                                      get_value_at(full_config, full_config.retract_length_toolchange, ConfigFlowDomain::Filament, previous_extruder_id) :
                                                       0;
-            float new_retract_length_toolchange = full_config.retract_length_toolchange.get_at(new_extruder_id);
+            float new_retract_length_toolchange = get_value_at(full_config, full_config.retract_length_toolchange, ConfigFlowDomain::Filament, new_extruder_id);
             int   old_filament_temp             = gcode_writer.extruder() != nullptr ?
                                                       (gcodegen.on_first_layer() ?
                                                            get_value_at(full_config, full_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, previous_extruder_id) :
@@ -8624,8 +8624,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         gcode += m_ooze_prevention.pre_toolchange(*this);
 
     // BBS
-    float new_retract_length            = m_config.retraction_length.get_at(extruder_id);
-    float new_retract_length_toolchange = m_config.retract_length_toolchange.get_at(extruder_id);
+    float new_retract_length            = get_value_at(m_config, m_config.retraction_length, ConfigFlowDomain::Filament, extruder_id);
+    float new_retract_length_toolchange = get_value_at(m_config, m_config.retract_length_toolchange, ConfigFlowDomain::Filament, extruder_id);
     int   new_filament_temp             = this->on_first_layer() ? get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, extruder_id) :
                                                                    get_value_at(m_config, m_config.nozzle_temperature, ConfigFlowDomain::Filament, extruder_id);
     // BBS: if print_z == 0 use first layer temperature
@@ -8648,8 +8648,8 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             assert(m_start_gcode_filament < number_of_extruders);
 
         previous_extruder_id          = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : m_start_gcode_filament;
-        old_retract_length            = m_config.retraction_length.get_at(previous_extruder_id);
-        old_retract_length_toolchange = m_config.retract_length_toolchange.get_at(previous_extruder_id);
+        old_retract_length            = get_value_at(m_config, m_config.retraction_length, ConfigFlowDomain::Filament, previous_extruder_id);
+        old_retract_length_toolchange = get_value_at(m_config, m_config.retract_length_toolchange, ConfigFlowDomain::Filament, previous_extruder_id);
         old_filament_temp             = this->on_first_layer() ? get_value_at(m_config, m_config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, previous_extruder_id) :
                                                                  get_value_at(m_config, m_config.nozzle_temperature, ConfigFlowDomain::Filament, previous_extruder_id);
         // Orca: always calculate wipe volume and hence provide correct flush_length, so that MMU devices with cutter and purge bin (e.g.

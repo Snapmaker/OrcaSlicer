@@ -1456,8 +1456,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_used_filament_length.resize(
         std::max(m_used_filament_length.size(), idx + 1)); // makes sure that the vector is big enough so we don't have to check later
 
-    m_filpar[idx].retract_length = config.retraction_length.get_at(idx);
-    m_filpar[idx].retract_speed  = config.retraction_speed.get_at(idx);
+    m_filpar[idx].retract_length = get_value_at(config, config.retraction_length, ConfigFlowDomain::Filament, idx);
+    m_filpar[idx].retract_speed  = get_value_at(config, config.retraction_speed, ConfigFlowDomain::Filament, idx);
 }
 
 // Returns gcode to prime the nozzles at the front edge of the print bed.

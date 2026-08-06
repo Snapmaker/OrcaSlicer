@@ -3474,16 +3474,16 @@ void GCodeProcessor::process_G29(const GCodeReader::GCodeLine& line)
 void GCodeProcessor::process_G10(const GCodeReader::GCodeLine& line)
 {
     GCodeReader::GCodeLine g10;
-    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(m_extruder_id));
-    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(m_extruder_id) * 60);
+    g10.set(Axis::E, -get_value_at(this->m_parser.config(), this->m_parser.config().retraction_length, ConfigFlowDomain::Filament, m_extruder_id));
+    g10.set(Axis::F,  get_value_at(this->m_parser.config(), this->m_parser.config().retraction_speed, ConfigFlowDomain::Filament, m_extruder_id) * 60);
     process_G1(g10);
 }
 
 void GCodeProcessor::process_G11(const GCodeReader::GCodeLine& line)
 {
     GCodeReader::GCodeLine g11;
-    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
-    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(m_extruder_id) * 60);
+    g11.set(Axis::E, get_value_at(this->m_parser.config(), this->m_parser.config().retraction_length, ConfigFlowDomain::Filament, m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
+    g11.set(Axis::F, get_value_at(this->m_parser.config(), this->m_parser.config().deretraction_speed, ConfigFlowDomain::Filament, m_extruder_id) * 60);
     process_G1(g11);
 }
 

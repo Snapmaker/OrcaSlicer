@@ -2357,11 +2357,8 @@ void MixedFilamentBatchDialog::launch_background_match()
         // return-code model (result.success / error_code) and its whole call chain
         // has no throw sites, so no exception handling is needed here.
         //
-        // Per-component weight bounds are mode-dependent:
-        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)]
-        //   - MANUAL: [15, 100] — keep the 15% floor so a mix always has minimum
-        //     participation, allow >70% (surfaces as advisory via
-        //     check_manual_recipe_ratio after the match).
+        // Per-component weight bounds: min is shared (kMinComponentPercent); max is
+        // mode-dependent — MANUAL allows >70% (advisory via check_manual_recipe_ratio).
         //
         // check_compatible is false for BOTH modes. RECOMMENDED needs none: its
         // physical_colors come from a single Full Spectrum preset (one PLA spool,
@@ -2371,7 +2368,7 @@ void MixedFilamentBatchDialog::launch_background_match()
         // preset_bundle->filament_presets unsynchronized from here, racing the UI
         // thread (data-race UB). The slice gate (Plater::has_incompatible_mixed_
         // filament_in_use) still blocks genuinely incompatible mixes at slice time.
-        const int match_min = (matching_method == MANUAL) ? 15 : kMinComponentPercent;
+        const int match_min = kMinComponentPercent; // shared floor for both modes
         const int match_max = (matching_method == MANUAL) ? 100 : kMaxComponentPercent;
         if (!unmatched_colors.empty()) {
             auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, match_min, match_max, cancel_token,

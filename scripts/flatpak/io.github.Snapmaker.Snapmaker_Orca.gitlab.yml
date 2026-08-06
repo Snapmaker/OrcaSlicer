@@ -161,31 +161,31 @@ modules:
 
       # Blosc
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/Blosc/v1.17.0_tm.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/Blosc/v1.17.0_tm.zip
         dest: external-packages/Blosc
         sha256: dcb48bf43a672fa3de6a4b1de2c4c238709dad5893d1e097b8374ad84b1fc3b3
 
       # Cereal
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/Cereal/v1.3.0.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/Cereal/v1.3.0.zip
         dest: external-packages/Cereal
         sha256: 71642cb54658e98c8f07a0f0d08bf9766f1c3771496936f6014169d3726d9657
 
       # CGAL
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/CGAL/v5.4.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/CGAL/v5.4.zip
         dest: external-packages/CGAL
         sha256: d7605e0a5a5ca17da7547592f6f6e4a59430a0bc861948974254d0de43eab4c0
 
       # GMP
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/GMP/gmp-6.2.1.tar.bz2
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/GMP/gmp-6.2.1.tar.bz2
         dest: external-packages/GMP
         sha256: eae9326beb4158c386e39a356818031bd28f3124cf915f8c5b1dc4c7a36b4d7c
 
       # curl
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/CURL/curl-7_75_0.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/CURL/curl-7_75_0.zip
         dest: external-packages/CURL
         sha256: a63ae025bb0a14f119e73250f2c923f4bf89aa93b8d4fafa4a9f5353a96a765a
 
@@ -197,72 +197,72 @@ modules:
 
       # NLopt
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/NLopt/v2.5.0.tar.gz
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/NLopt/v2.5.0.tar.gz
         dest: external-packages/NLopt
         sha256: c6dd7a5701fff8ad5ebb45a3dc8e757e61d52658de3918e38bab233e7fd3b4ae
 
       # OCCT
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OCCT/V7_6_0.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OCCT/V7_6_0.zip
         dest: external-packages/OCCT
         sha256: 28334f0e98f1b1629799783e9b4d21e05349d89e695809d7e6dfa45ea43e1dbc
 
       # OpenCSG
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OpenCSG/opencsg-1-4-2-release.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenCSG/opencsg-1-4-2-release.zip
         dest: external-packages/OpenCSG
         sha256: 51afe0db79af8386e2027d56d685177135581e0ee82ade9d7f2caff8deab5ec5
 
       # OpenCV
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OpenCV/4.6.0.tar.gz
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenCV/4.6.0.tar.gz
         dest: external-packages/OpenCV
         sha256: 1ec1cba65f9f20fe5a41fda1586e01c70ea0c9a6d7b67c9e13edf0cfe2239277
 
       # OpenEXR
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OpenEXR/v2.5.5.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenEXR/v2.5.5.zip
         dest: external-packages/OpenEXR
         sha256: 0307a3d7e1fa1e77e9d84d7e9a8694583fbbbfd50bdc6884e2c96b8ef6b902de
 
       # OpenSSL
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OpenSSL/OpenSSL_1_1_1w.tar.gz
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenSSL/OpenSSL_1_1_1w.tar.gz
         dest: external-packages/OpenSSL
         sha256: 2130e8c2fb3b79d1086186f78e59e8bc8d1a6aedf17ab3907f4cb9ae20918c41
 
       # OpenVDB
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/OpenVDB/a68fd58d0e2b85f01adeb8b13d7555183ab10aa5.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/OpenVDB/a68fd58d0e2b85f01adeb8b13d7555183ab10aa5.zip
         dest: external-packages/OpenVDB
         sha256: f353e7b99bd0cbfc27ac9082de51acf32a8bc0b3e21ff9661ecca6f205ec1d81
 
       # Qhull
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/Qhull/v8.0.1.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/Qhull/v8.0.1.zip
         dest: external-packages/Qhull
         sha256: 5287f5edd6a0372588f5d6640799086a4033d89d19711023ef8229dd9301d69b
 
       # TBB
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/TBB/v2021.5.0.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/TBB/v2021.5.0.zip
         dest: external-packages/TBB
         sha256: 83ea786c964a384dd72534f9854b419716f412f9d43c0be88d41874763e7bb47
       
       # Boost
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/Boost/boost-1.84.0.tar.gz
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/Boost/boost-1.84.0.tar.gz
         dest: external-packages/Boost
         sha256: 4d27e9efed0f6f152dc28db6430b9d3dfb40c0345da7342eaa5a987dde57bd95
 
       # GLFW
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/GLFW/3.3.7.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/GLFW/3.3.7.zip
         dest: external-packages/GLFW
         sha256: e02d956935e5b9fb4abf90e2c2e07c9a0526d7eacae8ee5353484c69a2a76cd0
       # libnoise
       - type: file
-        path: gitlab_vendor/gitlab_deps/DL_CACHE/libnoise/1.0.zip
+        path: ../../gitlab_vendor/gitlab_deps/DL_CACHE/libnoise/1.0.zip
         dest: external-packages/libnoise
         sha256: 96ffd6cc47898dd8147aab53d7d1b1911b507d9dbaecd5613ca2649468afd8b6
 

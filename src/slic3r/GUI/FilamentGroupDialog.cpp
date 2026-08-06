@@ -18,6 +18,7 @@
 #include "libslic3r/PrintConfig.hpp"
 
 #include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
 #include <wx/dnd.h>
 #include <wx/scrolwin.h>
 #include <wx/settings.h>
@@ -80,7 +81,10 @@ private:
         const wxSize   next = dc.GetTextExtent(num);
         dc.DrawText(num, x + (block - next.x) / 2, (block - next.y) / 2);
 
-        dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#333333")));
+        // Material label. #242424 is the registered "primary text" dark-map key
+        // (-> #E4E4E7 in dark); the previous #333333 had no dark mapping and stayed
+        // near-invisible on the dark card. Figma dark node 29771:88711.
+        dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#242424")));
         dc.SetFont(Label::Body_10);
         wxSize lext = dc.GetTextExtent(m_label);
         if (lext.x > GetSize().x)
@@ -134,8 +138,41 @@ private:
         wxAutoBufferedPaintDC dc(this);
         dc.SetBackground(wxBrush(GetParent()->GetBackgroundColour()));
         dc.Clear();
+
+        // Figma node 29771:88805: the icon sits on a circular #36363d card (light
+        // mode: #F4F4F4). GDI has no anti-aliasing, so on MSW draw the circle onto an
+        // off-screen bitmap through a wxGCDC and blit it, matching StaticBox::render.
+        const wxSize   size      = GetSize();
+        const int      d         = std::min(size.x, size.y);
+        const wxColour circle_bg = StateColor::darkModeColorFor(wxColour("#F4F4F4"));
+        const wxPoint  origin((size.x - d) / 2, (size.y - d) / 2);
+#ifdef __WXMSW__
+        wxMemoryDC memdc(&dc);
+        if (memdc.IsOk()) {
+            wxBitmap layer(size.x, size.y);
+            memdc.SelectObject(layer);
+            memdc.SetBackground(wxBrush(GetParent()->GetBackgroundColour()));
+            memdc.Clear();
+            {
+                wxGCDC gcdc(memdc);
+                gcdc.SetPen(*wxTRANSPARENT_PEN);
+                gcdc.SetBrush(wxBrush(circle_bg));
+                gcdc.DrawEllipse(origin.x, origin.y, d, d);
+            }
+            memdc.SelectObject(wxNullBitmap);
+            dc.DrawBitmap(layer, 0, 0);
+        } else {
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.SetBrush(wxBrush(circle_bg));
+            dc.DrawEllipse(origin.x, origin.y, d, d);
+        }
+#else
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(circle_bg));
+        dc.DrawEllipse(origin.x, origin.y, d, d);
+#endif
         const wxBitmap &bmp = m_bitmap.bmp();
-        dc.DrawBitmap(bmp, (GetSize().x - bmp.GetWidth()) / 2, (GetSize().y - bmp.GetHeight()) / 2);
+        dc.DrawBitmap(bmp, (size.x - bmp.GetWidth()) / 2, (size.y - bmp.GetHeight()) / 2);
     }
 
     ScalableBitmap       m_bitmap;
@@ -182,8 +219,12 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     : DPIDialog(parent ? parent : static_cast<wxWindow *>(wxGetApp().mainframe), wxID_ANY,
                 _L("Custom Filament Grouping"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
-    SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+    const wxColour dlg_bg = StateColor::darkModeColorFor(*wxWHITE);
+    SetBackgroundColour(dlg_bg);
     SetFont(Label::Body_14);
+    // Figma dark spec (node 29771:88711) uses pure-white text and a bright teal
+    // Confirm button; the app's normal dark theme differs, so branch on the theme.
+    const bool is_dark = wxGetApp().dark_mode();
 
     load_filaments();
     m_mapping = wxGetApp().preset_bundle->get_filament_volume_types();
@@ -192,7 +233,10 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     auto *v_sizer = new wxBoxSizer(wxVERTICAL);
 
     auto *intro = new wxStaticText(this, wxID_ANY, _L("Slicing will follow the nozzle assignment below:"));
-    intro->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
+    // The hint is plain text on the dialog (no card). Match the dialog background so
+    // wxMSW does not fill the static-text rectangle with the system face colour.
+    intro->SetBackgroundColour(dlg_bg);
+    intro->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#4A4A4A"));
     v_sizer->Add(intro, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
     // Group panel per Figma 27673:62102: #F3F3F3 rounded-8 background box,
@@ -202,7 +246,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     // pinned by SetMinSize, so any row past the ~2 that fit was cut off). A
     // vertical-scrollbar gutter is reserved so the 8-column grid still fits once
     // the scrollbar appears.
-    auto make_group = [this](const wxString &title, wxFlexGridSizer *&grid,
+    auto make_group = [this, is_dark](const wxString &title, wxFlexGridSizer *&grid,
                              wxScrolledWindow *&scroll, bool high_flow) -> StaticBox * {
         const int grid_w = FromDIP(kChipCellW) * kChipCols;
         int       sb_w   = wxSystemSettings::GetMetric(wxSYS_VSCROLL_X, this);
@@ -215,7 +259,10 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
         StaticBox *box = new StaticBox(this, wxID_ANY, wxDefaultPosition, wxSize(box_w, -1));
         box->SetCornerRadius(FromDIP(8));
         box->SetBorderWidth(0);
-        const wxColour box_bg = StateColor::darkModeColorFor(wxColour("#F3F3F3"));
+        // Figma dark node 29771:88711: the nozzle cards are #36363d. #F4F4F4 is the
+        // registered dark-map key that resolves to #36363D; the bare #F3F3F3 had no
+        // dark mapping, so the cards previously stayed light grey in dark mode.
+        const wxColour box_bg = StateColor::darkModeColorFor(wxColour("#F4F4F4"));
         box->SetBackgroundColorNormal(box_bg);
         // Also set the plain wx background so children (title / chips) inherit it.
         box->SetBackgroundColour(box_bg);
@@ -224,6 +271,8 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
         auto *label     = new wxStaticText(box, wxID_ANY, title);
         label->SetFont(Label::Body_14);
         label->SetBackgroundColour(box_bg);
+        // Card title is white in the Figma dark design (node 29771:88711).
+        label->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#242424"));
         box_sizer->Add(label, 0, wxLEFT | wxTOP | wxRIGHT, FromDIP(16));
         box_sizer->AddSpacer(FromDIP(16));
 
@@ -260,7 +309,8 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     v_sizer->Add(groups_sizer, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
     auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: Drag and drop filaments to assign them to a different nozzle"));
-    tip->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#4A4A4A")));
+    tip->SetBackgroundColour(dlg_bg);
+    tip->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#4A4A4A"));
     v_sizer->Add(tip, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
     m_warning_sizer = new wxBoxSizer(wxVERTICAL);
@@ -268,6 +318,23 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
 
     auto *dlg_btns = new DialogButtons(this, {"Cancel", "Confirm"});
     m_confirm_button = dlg_btns->GetCONFIRM();
+    // Figma dark spec (node 29771:88711) keeps the Confirm button at the bright ORCA
+    // teal instead of the app's muted dark accent. StateColor dark-maps #009688 ->
+    // #00675b for every Button, so to brighten only this dialog we override the fill
+    // with teals the dark map does not contain (perceptually the Figma #009688). This
+    // modal is short-lived, so the default style is never re-applied over it.
+    if (is_dark) {
+        const wxColour teal(0, 150, 137);          // ~#009688, not a dark-map key
+        const wxColour teal_hover(0, 170, 155);    // hover, slightly lighter
+        const wxColour teal_pressed(0, 128, 116);  // pressed, slightly darker
+        m_confirm_button->SetBackgroundColor(StateColor(
+            std::make_pair(teal,                (int) StateColor::NotHovered),
+            std::make_pair(wxColour("#DFDFDF"), (int) StateColor::Disabled),
+            std::make_pair(teal_pressed,        (int) StateColor::Pressed),
+            std::make_pair(teal_hover,          (int) StateColor::Hovered),
+            std::make_pair(teal,                (int) StateColor::Normal),
+            std::make_pair(teal,                (int) StateColor::Enabled)));
+    }
     m_confirm_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
         FlowType::apply_custom_mapping(m_mapping);
         EndModal(wxID_OK);
@@ -392,8 +459,11 @@ void FilamentGroupDialog::update_warnings()
     }
 
     auto add_warning = [this](const wxString &message, bool is_error) {
-        const wxColour background = StateColor::darkModeColorFor(wxColour(is_error ? "#FDE8E8" : "#FFFAF2"));
-        const wxColour foreground = StateColor::darkModeColorFor(wxColour(is_error ? "#D32F2F" : "#FF8400"));
+        // Warning (non-error) colours use the registered dark-map keys #FFF3EB /
+        // #FF842D; the previous #FFFAF2 / #FF8400 had no dark mapping and leaked
+        // their light values into dark mode.
+        const wxColour background = StateColor::darkModeColorFor(wxColour(is_error ? "#FDE8E8" : "#FFF3EB"));
+        const wxColour foreground = StateColor::darkModeColorFor(wxColour(is_error ? "#D32F2F" : "#FF842D"));
         const char *icon_name = is_error ? "error_icon_red_exclamation" : "icon_warning_triangle";
 
         StaticBox *bar = new StaticBox(this, wxID_ANY);

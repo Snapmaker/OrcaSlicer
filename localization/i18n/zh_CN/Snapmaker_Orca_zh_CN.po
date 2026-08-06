@@ -15357,6 +15357,12 @@ msgstr "多色"
 msgid "High Flow"
 msgstr "高流量"
 
+msgid "[Standard flow]"
+msgstr "【标准流量】"
+
+msgid "[High flow]"
+msgstr "【高流量】"
+
 msgid "Standard Mode"
 msgstr "标准模式"
 

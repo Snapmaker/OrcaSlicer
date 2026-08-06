@@ -955,23 +955,22 @@ void Tab::refresh_flow_variant_view()
         }
 
         m_flow_variant_view->modes = modes;
-        // Chinese uses the CJK brackets 【】; every other language uses ASCII [ ].
-        const bool is_zh = wxGetApp().current_language_code_safe().BeforeFirst('_') == "zh";
-        const wxString lb = is_zh ? wxString(wxUniChar(0x3010)) : wxString("[");
-        const wxString rb = is_zh ? wxString(wxUniChar(0x3011)) : wxString("]");
+        // The brackets are part of the localized label (ASCII "[High flow]" by
+        // default, CJK "【高流量】" in Chinese), so the glyph choice lives in the
+        // translation catalog rather than being switched on the UI language here.
         std::vector<wxString> labels;
         labels.reserve(modes.size());
         for (const std::string& mode : modes)
         {
             if (mode == FLOW_MODE_STANDARD)
-                labels.emplace_back(lb + _L("Standard flow") + rb);
+                labels.emplace_back(_L("[Standard flow]"));
             else if (mode == FLOW_MODE_HIGH_FLOW)
-                labels.emplace_back(lb + _L("High flow") + rb);
+                labels.emplace_back(_L("[High flow]"));
             else
             {
                 std::string label = mode;
                 std::replace(label.begin(), label.end(), '_', ' ');
-                labels.emplace_back(lb + from_u8(label) + rb);
+                labels.emplace_back(wxString("[") + from_u8(label) + "]");
             }
         }
 

@@ -151,6 +151,60 @@ wxBitmap* GetFilamentColorPickerBitmap(const DynamicPrintConfig& config,
                                                     std::max(1, size.GetWidth()), std::max(1, size.GetHeight()));
 }
 
+// Resolve a machine filament name to a compatible local preset.
+// Tries exact name variants for U1/nozzle first, then falls back to
+// "Generic <filament_type>" so unmatched brands (e.g. Voolt3D PLA)
+// still appear under Machine Filament with the printer-reported color.
+std::deque<Preset>::const_iterator find_compatible_machine_filament_preset(
+    const std::deque<Preset>& filaments,
+    const std::string& filament_name,
+    const std::string& filament_type,
+    const std::string& machine_nozzles)
+{
+    auto match_by_name = [&filaments, &machine_nozzles](const std::string& name)
+        -> std::deque<Preset>::const_iterator {
+        if (name.empty())
+            return filaments.end();
+
+        const std::string candidates[] = {
+            name + " @U1 " + machine_nozzles + " nozzle",
+            name + " @U1 " + machine_nozzles,
+            name + " @U1",
+            name,
+        };
+
+        for (const std::string& candidate : candidates) {
+            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
+                [&candidate](const Preset& f) {
+                    return f.is_compatible && f.name == candidate;
+                });
+            if (item_iter != filaments.end())
+                return item_iter;
+        }
+        return filaments.end();
+    };
+
+    if (!filament_name.empty()) {
+        auto item_iter = match_by_name(filament_name);
+        if (item_iter != filaments.end())
+            return item_iter;
+    }
+
+    if (!filament_type.empty() && filament_type != "NONE") {
+        const std::string generic_name = "Generic " + filament_type;
+        auto item_iter = match_by_name(generic_name);
+        if (item_iter != filaments.end()) {
+            const std::string preset_type =
+                item_iter->config.opt_string("filament_type", static_cast<unsigned int>(0));
+            // Exact type check avoids Generic PLA matching Generic PLA-CF etc.
+            if (boost::algorithm::iequals(preset_type, filament_type))
+                return item_iter;
+        }
+    }
+
+    return filaments.end();
+}
+
 } // namespace
 
 // ---------------------------------
@@ -1411,32 +1465,15 @@ void PlaterPresetComboBox::update()
         
         for (int i = 0; i < machine_nozzles_list.size(); i++) {
             std::string filament_name   = machine_nozzles_list[i].filament_info;
+            std::string filament_type   = machine_nozzles_list[i].filament_type;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
             // Filter by nozzle for display only; machine_filaments / m_connect_machine_info_list stay from sync (SSWCP).
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
-            [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
-                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
-
-                if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
-
-                if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
-
-                return false;
-            });
+            auto item_iter = find_compatible_machine_filament_preset(
+                filaments, filament_name, filament_type, machine_nozzles);
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
@@ -1983,31 +2020,14 @@ void TabPresetComboBox::update()
 
         for (int i = 0; i < machine_nozzles_list.size(); i++) {
             std::string filament_name   = machine_nozzles_list[i].filament_info;
+            std::string filament_type   = machine_nozzles_list[i].filament_type;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
-
-                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
-
-                if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
-
-                return false;                
-                });
+            auto item_iter = find_compatible_machine_filament_preset(
+                filaments, filament_name, filament_type, machine_nozzles);
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;

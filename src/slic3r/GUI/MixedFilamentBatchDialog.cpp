@@ -1888,6 +1888,35 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
     // bail out at any time (idle / matching / match-completed-pending-confirm).
     m_btn_cancel_match->Enable(true);
     m_btn_confirm->Enable(!matching && m_match_completed && m_result.success);
+
+    // Lock upper-region controls while a match runs. start_batch_match() snapshots the match
+    // inputs on the UI thread and the worker receives them by value, so this is not a thread-
+    // safety measure — it keeps the combos consistent with the inputs the in-flight match used,
+    // and stops mid-match edits from mutating m_tray_index / m_manual_filament_count, which the
+    // post-match restore re-reads via update_nav_arrow_state() / update_add_remove_buttons().
+    // Cancel stays enabled (set above) so the user can still bail out.
+    //
+    // Enabling a hidden combo (e.g. m_filament_combo[] in RECOMMENDED mode) is a harmless no-op.
+    if (m_method_combo) m_method_combo->Enable(!matching);
+    if (m_tray_combo)   m_tray_combo->Enable(!matching);
+    if (m_view_combo)   m_view_combo->Enable(!matching);
+    for (int i = 0; i < 4; ++i)
+        if (m_filament_combo[i]) m_filament_combo[i]->Enable(!matching);
+    // Button-type controls have state-dependent enable conditions (tray arrows depend on
+    // m_tray_index; add/remove depend on m_manual_filament_count). Disable them directly while
+    // matching, and on restore delegate to the existing helpers so the boundary conditions are
+    // recomputed correctly — NOT a blanket Enable(!matching), which would leave e.g. the prev
+    // arrow enabled at plate 1.
+    if (matching) {
+        if (m_btn_tray_prev)       m_btn_tray_prev->Disable();
+        if (m_btn_tray_next)       m_btn_tray_next->Disable();
+        if (m_btn_remove_filament) m_btn_remove_filament->Disable();
+        if (m_btn_add_filament)    m_btn_add_filament->Disable();
+    } else {
+        update_nav_arrow_state();    // prev/next re-enabled per m_tray_index
+        update_add_remove_buttons(); // add/remove re-enabled per m_manual_filament_count
+    }
+
     if (matching) {
         m_progress_bar->Show();
         m_progress_bar->SetValue(0);
@@ -2573,6 +2602,15 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
 
 void MixedFilamentBatchDialog::update_mapping_legend()
 {
+    // Freeze the legend panel for the whole clear+rebuild so wxMSW doesn't repaint after
+    // every child create/destroy (up to 64 rows × 4 sub-windows = hundreds of partial
+    // paints → visible flicker). RAII guarantees Thaw on every exit path, including
+    // exceptions (harness cpp-wxwidgets §132). Held for the whole function: Refresh()
+    // calls issued while frozen are coalesced and flushed at Thaw (the destructor at
+    // scope exit), so the rebuilt card repaints in one pass. m_legend_panel is the direct
+    // parent of every new row window, so freezing it (which propagates to children) is
+    // the minimal effective scope — same idiom as ConfigWizard / PresetComboBoxes.
+    wxWindowUpdateLocker no_updates(m_legend_panel);
     // Clear(true) deletes row windows immediately (vs deferred Destroy), so their
     // pixel regions are released before repaint — same pattern as rebuild_legend.
     m_legend_sizer->Clear(true);
@@ -2695,7 +2733,9 @@ void MixedFilamentBatchDialog::update_mapping_legend()
     }
     // Card grows with content (no inner scroller); re-layout the legend panel + card so they
     // reflect the new row count, then re-layout the scrolled region so its virtual (scrollable)
-    // extent tracks the new card height and downstream positioning stays correct.
+    // extent tracks the new card height and downstream positioning stays correct. The Layout()
+    // and Refresh() calls run while still frozen — they coalesce, and the whole card repaints
+    // in one pass when no_updates Thaws at function exit.
     m_legend_panel->Layout();
     m_mapping_card->Layout();
     m_mapping_card->Refresh();

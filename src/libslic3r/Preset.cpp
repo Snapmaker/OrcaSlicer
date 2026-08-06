@@ -3133,6 +3133,12 @@ std::vector<std::string> PresetCollection::flow_variant_dirty_options(
             else
                 add_flow_variant_opts_to_diff<ConfigOptionFloats>(key, changed, edited->config, reference->config, *edited_support, reference_support);
             break;
+        case coFloatsOrPercents:
+            if (edited_option->nullable())
+                add_flow_variant_opts_to_diff<ConfigOptionFloatsOrPercentsNullable>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            else
+                add_flow_variant_opts_to_diff<ConfigOptionFloatsOrPercents>(key, changed, edited->config, reference->config, *edited_support, reference_support);
+            break;
         case coStrings:  add_flow_variant_opts_to_diff<ConfigOptionStrings>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
         case coPercents: add_flow_variant_opts_to_diff<ConfigOptionPercents>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;
         case coEnums:    add_flow_variant_opts_to_diff<ConfigOptionInts>(key, changed, edited->config, reference->config, *edited_support, reference_support); break;

@@ -307,6 +307,11 @@ void TimelapseTaskRow::refresh_dark_mode()
     SetBackgroundColour(bg_color());
     m_name_label->SetForegroundColour(file_name_color());
     m_status_label->SetForegroundColour(status_text_color());
+    // Progress track: its on_paint reads parent bg for the hidden state, so
+    // force a repaint to pick up the new theme.
+    if (m_progress_track) {
+        m_progress_track->Refresh();
+    }
     // Re-apply cancel button bitmap for current state
     if (m_cancel_enabled) {
         m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
@@ -314,6 +319,13 @@ void TimelapseTaskRow::refresh_dark_mode()
         m_cancel_btn->SetBitmap(create_scaled_bitmap(
             wxGetApp().dark_mode() ? "timelapse_cancel_disabled_dark" : "timelapse_cancel_disabled",
             this, CANCEL_SIZE));
+    }
+    // Refresh each child explicitly — wx Refresh() doesn't recurse into children.
+    m_name_label->Refresh();
+    m_status_label->Refresh();
+    m_cancel_btn->Refresh();
+    if (m_status_icon) {
+        m_status_icon->Refresh();
     }
     Refresh();
 }
@@ -798,10 +810,11 @@ void TimelapseDownloadPopup::refresh_dark_mode()
     m_collapse_btn->SetBitmap(create_scaled_bitmap(
         m_collapsed ? icon_up : icon_down, m_title_bar, 16));
 
-    // Row dividers (inside m_task_panel)
+    // Row dividers (inside m_task_panel) — refresh each so the new colour shows
     for (wxWindow* child : m_task_panel->GetChildren()) {
         if (dynamic_cast<TimelapseTaskRow*>(child) == nullptr) {
             child->SetBackgroundColour(divider_color());
+            child->Refresh();
         }
     }
 
@@ -812,6 +825,14 @@ void TimelapseDownloadPopup::refresh_dark_mode()
         }
     }
 
+    // Refresh every child explicitly — wx Refresh() only repaints the window
+    // itself, not its children, so SetBackgroundColour/SetForegroundColour on
+    // children won't show until each is refreshed.
+    m_title_bar->Refresh();
+    m_title_label->Refresh();
+    m_title_divider->Refresh();
+    m_collapse_btn->Refresh();
+    m_task_panel->Refresh();
     Refresh();
     Layout();
 }

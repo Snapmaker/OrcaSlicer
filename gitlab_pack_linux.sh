@@ -564,11 +564,29 @@ EOF
 pack_flatpak() {
     echo -e "${BLUE}===== Flatpak =====${NC}"
 
-    local MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml"
+    local MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.gitlab.yml"
     local MANIFEST="$REPO_DIR/$MANIFEST_REL"
+    if [[ ! -f "$MANIFEST" ]]; then
+        echo -e "${YELLOW}GitLab manifest not found; fallback to original${NC}"
+        MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml"
+        MANIFEST="$REPO_DIR/$MANIFEST_REL"
+    fi
     if [[ ! -f "$MANIFEST" ]]; then
         echo -e "${RED}Manifest not found: $MANIFEST_REL${NC}"
         exit 1
+    fi
+
+    # Clone gitlab vendor for DL_CACHE deps (used by gitlab manifest)
+    if grep -q "gitlab_vendor" "$MANIFEST" 2>/dev/null; then
+        if [[ ! -d "$REPO_DIR/gitlab_vendor" ]]; then
+            echo -e "${YELLOW}Cloning gitlab vendor for Flatpak deps...${NC}"
+            git clone --depth 1 http://gitlab.s.com/snapmaker_orca/snapmaker_orca_vendor.git "$REPO_DIR/gitlab_vendor" || {
+                echo -e "${RED}Failed to clone gitlab vendor${NC}"
+                exit 1
+            }
+        else
+            echo -e "${GREEN}gitlab vendor already exists${NC}"
+        fi
     fi
 
     if ! command -v flatpak &>/dev/null; then

@@ -6782,15 +6782,15 @@ void SSWCP::enable_debug_mode(bool enable, unsigned short port)
 
         if (m_debug_server->start()) {
             m_debug_mode_enabled = true;
-            BOOST_LOG_TRIVIAL(info) << " WebSocket debug mode enabled successfully";
-            BOOST_LOG_TRIVIAL(info) << " Flutter Web can connect to: ws://localhost:" << port;
+            BOOST_LOG_TRIVIAL(debug) << " WebSocket debug mode enabled successfully";
+            BOOST_LOG_TRIVIAL(debug) << " Flutter Web can connect to: ws://localhost:" << port;
         } else {
             BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
             m_debug_server.reset();
             m_debug_mode_enabled = false;
         }
     } else if (!enable && m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "Disabling WebSocket debug mode";
+        BOOST_LOG_TRIVIAL(debug) << "Disabling WebSocket debug mode";
         m_debug_server->stop();
         m_debug_server.reset();
         m_debug_mode_enabled = false;
@@ -6815,7 +6815,7 @@ void SSWCP::send_message_to_flutter(const std::string& message)
     if (m_debug_server && m_debug_mode_enabled) {
         m_debug_server->send_message(message);
     } else {
-        BOOST_LOG_TRIVIAL(warning) << "Cannot send message: WebSocket debug mode not enabled";
+        BOOST_LOG_TRIVIAL(debug) << "Cannot send message: WebSocket debug mode not enabled";
     }
 }
 

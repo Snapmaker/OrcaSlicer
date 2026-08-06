@@ -19,6 +19,13 @@ finish-args:
   - --talk-name=io.github.Snapmaker.Snapmaker_Orca.InstanceCheck.*
   - --system-talk-name=org.freedesktop.UDisks2
   - --env=SPNAV_SOCKET=/run/spnav.sock
+  # Note: no keyring permission on purpose. The Snapmaker login token is
+  # persisted via libsecret, which inside the sandbox automatically uses its
+  # file backend + the Secret portal (org.freedesktop.portal.Secret), storing
+  # the token in an encrypted per-app keyring -- so the app needs no
+  # org.freedesktop.secrets access and cannot read other apps' secrets. Do not
+  # pin SECRET_BACKEND=file: it is redundant while the portal is present and
+  # turns the graceful no-portal fallback into a hard failure.
 
 build-options:
   env:

@@ -38,6 +38,9 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <functional>
+#include <memory>
+#include <utility>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -70,6 +73,11 @@
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
 #include <wx/thread.h>
+#include <wx/secretstore.h>
+#if defined(__linux__)
+#include <libsecret/secret.h>
+#endif
+#include "slic3r/Utils/SnapmakerAccount.hpp"
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 
@@ -1187,6 +1195,11 @@ void GUI_App::post_init()
     CallAfter([this] {
             if (hms_query)
                 hms_query->check_hms_info();
+        });
+
+    // restore a previously persisted Snapmaker login (revalidates the stored token)
+    CallAfter([this] {
+            sm_restore_login_from_config();
         });
 
 
@@ -2466,8 +2479,27 @@ bool GUI_App::OnInit()
     }
 }
 
+#if defined(__linux__)
+// Defined with the other sm_login helpers below.
+static GCancellable* sm_login_cancellable();
+#endif
+
 int GUI_App::OnExit()
 {
+#if defined(__linux__)
+    // Abort any in-flight secret-store operation so its completion callback
+    // cannot fire against the application object during teardown.
+    g_cancellable_cancel(sm_login_cancellable());
+#endif
+    // Session revalidation: drop the liveness token, then cancel the
+    // request. Both are best-effort and deliberately so -- Http::cancel()
+    // only aborts a transfer still in progress, and a callback that already
+    // holds the token runs to completion. Together they make the window in
+    // which a callback can touch a tearing-down application very small,
+    // rather than eliminating it.
+    m_sm_login_alive.reset();
+    if (m_sm_login_http)
+        m_sm_login_http->cancel();
     stop_sync_user_preset();
 
     if (m_device_manager) {
@@ -4286,19 +4318,368 @@ void GUI_App::sm_request_user_logout()
         m_login_userinfo.set_user_login(false);
     }
     try {
-        wxString region = wxString::FromUTF8(app_config->get_country_code());
-        std::string url    = "";
-        if (region == "CN") {
-            url = "https://api.snapmaker.cn/api/oauth2/revoke";
-        } else {
-            url = "https://id.snapmaker.com/api/oauth2/revoke";
-        }
+        std::string url = sm_account_api_base(app_config->get_country_code()) + "/api/oauth2/revoke";
 
         Http http = Http::post(url);
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
     }
+    sm_clear_login_from_config();
+}
+
+// --- Snapmaker login persistence ---------------------------------------------
+// Goal: stop forcing a fresh OAuth login on every restart (issues #116/#226/#266).
+//
+// Only the bearer token is persisted, and only to an OS-protected secret store
+// -- never to plaintext config. On startup the token is revalidated against
+// accounts/current and the profile is re-fetched from the server, so no user
+// data is written to disk. Without a usable secret store the app falls back to
+// asking for a login each launch.
+
+
+// Defined per platform below; used by the marker helpers that follow.
+static void sm_secret_store_clear();
+
+// [sm_login]/has_session records that a token really reached the secret
+// store, so startup can skip the keyring - and any unlock prompt - for users
+// who never signed in. It is only ever a hint: it is written under the login
+// epoch that produced it, so a write describing a session the user has since
+// left is dropped, and a reader that finds it disagreeing with the store
+// corrects it. A marker that outlives its item only costs one keyring probe
+// per launch, which is what having no marker at all would cost.
+static void sm_set_session_marker(bool present, unsigned epoch)
+{
+    if (epoch != wxGetApp().sm_login_epoch())
+        return;
+    auto* config = wxGetApp().app_config;
+    if (present)
+        config->set("sm_login", "has_session", true);
+    else
+        config->erase("sm_login", "has_session");
+    if (config->dirty())
+        config->save();
+}
+
+// Failing to persist must degrade to "nothing is persisted", never to
+// "the previous session is persisted": drop both the marker and whatever
+// item is in the store, unless a newer session already owns them.
+static void sm_discard_persisted_session(unsigned epoch)
+{
+    if (epoch != wxGetApp().sm_login_epoch())
+        return;
+    sm_secret_store_clear();
+    sm_set_session_marker(false, epoch);
+}
+
+#if defined(__linux__)
+// Storage via libsecret's async password API: inside a Flatpak, libsecret
+// automatically uses its file backend + the Secret portal, keeping the token
+// in an encrypted per-app keyring with no org.freedesktop.secrets access
+// needed; unsandboxed it talks to the normal Secret Service. Async because
+// the *_sync variants can block a UI thread on a D-Bus round trip (the
+// wxSecretStore branch below stays synchronous: Keychain and Credential
+// Manager are local and fast). A fixed schema/attribute set makes each store
+// replace the previous item, so exactly one item ever exists.
+static const SecretSchema* sm_login_schema()
+{
+    static const SecretSchema schema = {
+        "io.github.Snapmaker.Snapmaker_Orca.Login",
+        SECRET_SCHEMA_NONE,
+        {
+            { "service", SECRET_SCHEMA_ATTRIBUTE_STRING },
+            { nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING },
+        }
+    };
+    return &schema;
+}
+static const char SM_LOGIN_SERVICE_ATTR[] = "Snapmaker_Orca/login";
+
+// Cancelled in OnExit so completion callbacks cannot outlive the app.
+static GCancellable* sm_login_cancellable()
+{
+    static GCancellable* cancellable = g_cancellable_new();
+    return cancellable;
+}
+
+static void sm_secret_store_save(const std::string& token, unsigned epoch)
+{
+    // libsecret copies the label/password/attribute strings during this call,
+    // so caller-owned temporaries are safe despite the async completion. The
+    // callback runs on the GLib main loop, which wxGTK iterates. The login
+    // epoch rides in user_data so a store that completes after a logout
+    // neither re-creates the session marker nor leaves the item behind.
+    secret_password_store(sm_login_schema(), SECRET_COLLECTION_DEFAULT,
+                          "Snapmaker_Orca login token", token.c_str(),
+                          sm_login_cancellable(),
+                          [](GObject*, GAsyncResult* res, gpointer user_data) {
+                              GError*        error = nullptr;
+                              const unsigned epoch = GPOINTER_TO_UINT(user_data);
+                              if (secret_password_store_finish(res, &error)) {
+                                  // If the session moved on while this was in
+                                  // flight, the newer login owns the stored
+                                  // item (same schema and attributes, so its
+                                  // write replaced this one) and its own
+                                  // callback owns the marker: nothing to do.
+                                  sm_set_session_marker(true, epoch);
+                              } else {
+                                  if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+                                      BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable, token not persisted: "
+                                                              << (error ? error->message : "unknown error");
+                                      sm_discard_persisted_session(epoch);
+                                  }
+                                  if (error)
+                                      g_error_free(error);
+                              }
+                          },
+                          GUINT_TO_POINTER(epoch),
+                          "service", SM_LOGIN_SERVICE_ATTR,
+                          nullptr);
+}
+
+// Reads the stored token. `done` is invoked with store_available=false when
+// the secret store itself could not be consulted (leave the session marker
+// alone and retry next launch), or true with a possibly-empty token. Every
+// platform below uses this same shape so callers need no #if.
+static void sm_secret_store_load(unsigned epoch, std::function<void(bool, std::string)> done)
+{
+    using Ctx = std::pair<unsigned, std::function<void(bool, std::string)>>;
+    auto* ctx = new Ctx(epoch, std::move(done));
+    secret_password_lookup(sm_login_schema(), sm_login_cancellable(),
+                           [](GObject*, GAsyncResult* res, gpointer user_data) {
+                               std::unique_ptr<Ctx> ctx(static_cast<Ctx*>(user_data));
+                               GError* error  = nullptr;
+                               gchar*  secret = secret_password_lookup_finish(res, &error);
+                               if (error) {
+                                   if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+                                       BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable: " << error->message;
+                                   g_error_free(error);
+                                   ctx->second(false, std::string());
+                                   return;
+                               }
+                               std::string token;
+                               if (secret) {
+                                   token = secret;
+                                   secret_password_free(secret);
+                               }
+                               ctx->second(true, std::move(token));
+                           },
+                           ctx,
+                           "service", SM_LOGIN_SERVICE_ATTR,
+                           nullptr);
+}
+
+static void sm_secret_store_clear()
+{
+    // Best-effort async delete: quitting immediately after logout can leave
+    // the item behind, which is acceptable -- logout revokes the token
+    // server-side first, so any residue is inert and replaced on next login.
+    secret_password_clear(sm_login_schema(), sm_login_cancellable(),
+                          [](GObject*, GAsyncResult* res, gpointer) {
+                              GError* error = nullptr;
+                              // Returns FALSE without error when nothing was stored.
+                              secret_password_clear_finish(res, &error);
+                              if (error) {
+                                  if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+                                      BOOST_LOG_TRIVIAL(warning) << "[sm_login] failed to clear stored token: " << error->message;
+                                  g_error_free(error);
+                              }
+                          },
+                          nullptr,
+                          "service", SM_LOGIN_SERVICE_ATTR,
+                          nullptr);
+}
+#elif wxUSE_SECRETSTORE
+static const wxString SM_LOGIN_SECRET_SERVICE = "Snapmaker_Orca/login";
+
+static void sm_secret_store_save(const std::string& token, unsigned epoch)
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString errmsg;
+    if (!store.IsOk(&errmsg)) {
+        BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable, token not persisted: " << errmsg.ToStdString();
+        sm_discard_persisted_session(epoch);
+        return;
+    }
+    // Store under one fixed user attribute (the account name is not always
+    // known at save time) and delete first, so exactly one item ever exists
+    // for this service regardless of which save path wrote it.
+    store.Delete(SM_LOGIN_SECRET_SERVICE);
+    if (store.Save(SM_LOGIN_SECRET_SERVICE, "snapmaker", wxSecretValue(wxString::FromUTF8(token.c_str()))))
+        sm_set_session_marker(true, epoch);
+    else
+        sm_discard_persisted_session(epoch);
+}
+
+// Credential Manager and Keychain are local and fast, so this reads
+// synchronously and invokes `done` inline; the signature matches the Linux
+// path so callers need no #if. See that overload for the contract.
+static void sm_secret_store_load(unsigned /*epoch*/, std::function<void(bool, std::string)> done)
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    wxString errmsg;
+    if (!store.IsOk(&errmsg)) {
+        BOOST_LOG_TRIVIAL(info) << "[sm_login] secret store unavailable: " << errmsg.ToStdString();
+        done(false, std::string());
+        return;
+    }
+    wxString       user;
+    wxSecretValue  value;
+    std::string    token;
+    if (store.Load(SM_LOGIN_SECRET_SERVICE, user, value))
+        token = std::string(value.GetAsString(wxConvUTF8).ToUTF8());
+    done(true, std::move(token));
+}
+
+static void sm_secret_store_clear()
+{
+    wxSecretStore store = wxSecretStore::GetDefault();
+    if (store.IsOk())
+        store.Delete(SM_LOGIN_SECRET_SERVICE);
+}
+#else  // !wxUSE_SECRETSTORE
+// No OS secret store on this toolchain (e.g. MinGW, which lacks wincred.h):
+// never persist the token rather than writing it somewhere insecure.
+static void sm_secret_store_save(const std::string&, unsigned) {}
+static void sm_secret_store_load(unsigned, std::function<void(bool, std::string)> done) { done(false, std::string()); }
+static void sm_secret_store_clear() {}
+#endif // __linux__ / wxUSE_SECRETSTORE
+
+void GUI_App::sm_save_login_to_config()
+{
+    ++m_sm_login_epoch;
+    const std::string token = m_login_userinfo.get_user_token();
+    if (token.empty()) {
+        sm_clear_login_from_config();
+        return;
+    }
+    if (!app_config->get_bool("remember_login")) {
+        // The user opted out of staying signed in.
+        sm_discard_persisted_session(m_sm_login_epoch);
+        return;
+    }
+    // The [sm_login]/has_session marker is written by the store helper only
+    // after the token was actually persisted, so startup never queries the
+    // keyring (which may prompt to unlock) unless there is something to find.
+    sm_secret_store_save(token, m_sm_login_epoch);
+}
+
+void GUI_App::sm_clear_login_from_config()
+{
+    ++m_sm_login_epoch;
+    sm_secret_store_clear();
+    app_config->erase("sm_login", "has_session");
+    if (app_config->dirty())
+        app_config->save();
+}
+
+// The Snapmaker account API reports failures as HTTP 200 with a non-200
+// "code" in the body, so the transport status alone proves nothing. Fills
+// `profile` and returns true only for a full success envelope with a usable
+// account id; sets `auth_rejected` only for the known invalid/expired-token
+// code, so callers can tell definitive rejection from transient errors.
+
+void GUI_App::sm_forget_persisted_login()
+{
+    sm_discard_persisted_session(m_sm_login_epoch);
+}
+
+void GUI_App::sm_restore_login_from_config()
+{
+    if (!app_config->get_bool("remember_login"))
+        return;
+    // Cheap plaintext marker first: never touch the OS keyring (which may
+    // prompt to unlock) unless a session was actually persisted. (Read via
+    // get_bool: AppConfig serializes bool-ish values as JSON booleans and
+    // loads them back as "true"/"false" strings.)
+    if (!app_config->get_bool("sm_login", "has_session"))
+        return;
+    // Snapshot the login epoch before anything asynchronous starts: if the
+    // user logs in or out while the lookup or the validation is in flight,
+    // the stale result must not clobber the newer state or its stored token.
+    const unsigned epoch = m_sm_login_epoch;
+    sm_secret_store_load(epoch, [epoch](bool store_available, std::string token) {
+        if (!store_available)
+            return; // keep the marker and retry on the next launch
+        if (token.empty()) {
+            // The store answered and holds nothing: correct the stale marker
+            // so later launches stop querying the keyring.
+            sm_set_session_marker(false, epoch);
+            return;
+        }
+        wxGetApp().sm_restore_login_with_token(token, epoch);
+    });
+}
+
+void GUI_App::sm_restore_login_with_token(const std::string& token, unsigned epoch)
+{
+    const std::string user_info_url = sm_account_api_base(app_config->get_country_code()) + "/api/common/accounts/current";
+
+    // Callbacks run on a detached worker thread; a weak liveness token lets
+    // them bail out once the application has started tearing down.
+    std::weak_ptr<void> alive = m_sm_login_alive;
+
+    auto http = Http::get(user_info_url);
+    http.header("Authorization", token);
+    // The profile response is a few hundred bytes; cap it so a hostile or
+    // misbehaving endpoint cannot make startup buffer an arbitrary body.
+    http.timeout_max(30)
+        .size_limit(64 * 1024)
+        .on_complete([this, token, epoch, alive](std::string body, unsigned /*status*/) {
+            auto keep_alive = alive.lock();
+            if (!keep_alive)
+                return;
+            // Parse on this worker thread; apply state on the main thread.
+            SMAccountProfile profile;
+            bool auth_rejected = false;
+            // A restored session must come from a success envelope and carry
+            // a usable account id; anything less is not a session.
+            if (!sm_parse_account_response(body, profile, auth_rejected) || profile.id.empty()) {
+                // Only a definitive rejection clears the stored session; any
+                // other unexpected envelope is transient and the token is kept
+                // for the next launch. Log either way: a silent no-op here is
+                // indistinguishable from the feature not working at all.
+                if (!auth_rejected)
+                    BOOST_LOG_TRIVIAL(warning) << "[sm_login] unrecognized account response, "
+                                                  "keeping stored token for the next launch";
+                if (auth_rejected)
+                    CallAfter([this, epoch]() {
+                        // Never clear a session this request did not validate:
+                        // bail if anything changed or a login is now active.
+                        if (epoch != m_sm_login_epoch || m_login_userinfo.is_user_login())
+                            return;
+                        BOOST_LOG_TRIVIAL(warning) << "[sm_login] stored token rejected by server, clearing";
+                        sm_clear_login_from_config();
+                    });
+                return;
+            }
+            CallAfter([this, token, epoch, profile]() {
+                    if (epoch != m_sm_login_epoch || m_login_userinfo.is_user_login())
+                        return;
+                    m_login_userinfo.set_user_id(profile.id);
+                    if (!profile.nickname.empty()) m_login_userinfo.set_user_name(profile.nickname);
+                    if (!profile.icon.empty())     m_login_userinfo.set_user_icon_url(profile.icon);
+                    if (!profile.account.empty())  m_login_userinfo.set_user_account(profile.account);
+                    m_login_userinfo.set_user_token(token);
+                    m_login_userinfo.set_user_login(true);
+                    // The stored token is already current; no re-save needed.
+                });
+        })
+        .on_error([this, epoch, alive](std::string, std::string, unsigned status) {
+            auto keep_alive = alive.lock();
+            if (!keep_alive)
+                return;
+            // Only definitive rejection clears; transient network failures
+            // keep the token and the next launch retries.
+            if (status == 401 || status == 403)
+                CallAfter([this, epoch, status]() {
+                    if (epoch != m_sm_login_epoch || m_login_userinfo.is_user_login())
+                        return;
+                    BOOST_LOG_TRIVIAL(warning) << "[sm_login] token rejected with HTTP " << status << ", clearing";
+                    sm_clear_login_from_config();
+                });
+        });
+    m_sm_login_http = http.perform();
 }
 
 //BBS
@@ -7496,21 +7877,26 @@ void GUI_App::start_download(std::string url)
 
 }
 
-void GUI_App::SMUserInfo::notify() {
+// Single source of truth for the login-state payload sent to the web UI
+// (used by notify(), sw_GetUserLoginState and the subscribe-time push).
+json GUI_App::sm_login_state_json()
+{
     json data;
-    if (m_login) {
+    if (m_login_userinfo.is_user_login()) {
         data["status"]   = "online";
-        data["nickname"] = m_login_user_name;
-        data["icon"]     = m_login_user_icon_url;
-        data["token"]    = m_login_user_token;
-        data["userid"]   = m_login_user_id;
-        data["account"]  = m_login_user_account;
+        data["nickname"] = m_login_userinfo.get_user_name();
+        data["icon"]     = m_login_userinfo.get_user_icon_url();
+        data["token"]    = m_login_userinfo.get_user_token();
+        data["userid"]   = m_login_userinfo.get_user_id();
+        data["account"]  = m_login_userinfo.get_user_account();
     } else {
         data["status"] = "offline";
     }
+    return data;
+}
 
-    wxGetApp().user_login_notify(data);
-
+void GUI_App::SMUserInfo::notify() {
+    wxGetApp().user_login_notify(wxGetApp().sm_login_state_json());
 }
 bool is_support_filament(int extruder_id)
 {

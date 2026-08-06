@@ -3264,7 +3264,10 @@ void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regrou
     wxGetApp().CallAfter([]() {
         wxWindow *parent = static_cast<wxWindow *>(wxGetApp().mainframe);
         GUI::FilamentGroupDialog dlg(parent);
-        dlg.ShowModal();
+        // Confirming the custom flow regrouping proceeds straight to slicing (the
+        // same action as the slice button); cancelling changes nothing.
+        if (dlg.ShowModal() == wxID_OK && wxGetApp().mainframe)
+            wxGetApp().mainframe->start_slice();
     });
 }
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()

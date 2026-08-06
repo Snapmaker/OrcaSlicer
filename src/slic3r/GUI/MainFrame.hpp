@@ -295,6 +295,9 @@ public:
     //bool        is_dlg_layout() const { return m_layout == ESettingsLayout::Dlg; }
 
     void        reslice_now();
+    // Run the slice-button action programmatically: refresh the scene, then slice
+    // the current plate or all plates according to the user's slice-mode selection.
+    void        start_slice();
     void        export_config();
     // Query user for the config file and open it.
     void        load_config_file();

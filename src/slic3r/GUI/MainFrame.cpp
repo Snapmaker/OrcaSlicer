@@ -1699,12 +1699,7 @@ wxBoxSizer* MainFrame::create_side_tools()
                 GUI::FlowType::sync_filament_volume_types_for_slice();
             }
             //this->m_plater->select_view_3D("Preview");
-            m_plater->exit_gizmo();
-            m_plater->update(true, true);
-            if (m_slice_select == eSliceAll)
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
-            else
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
+            start_slice();
 
         });
 
@@ -3287,6 +3282,18 @@ void MainFrame::reslice_now()
 {
     if (m_plater)
         m_plater->reslice();
+}
+
+void MainFrame::start_slice()
+{
+    if (!m_plater)
+        return;
+    m_plater->exit_gizmo();
+    m_plater->update(true, true);
+    if (m_slice_select == eSliceAll)
+        wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
+    else
+        wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
 }
 
 struct ConfigsOverwriteConfirmDialog : MessageDialog

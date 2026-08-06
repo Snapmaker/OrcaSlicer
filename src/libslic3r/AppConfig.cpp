@@ -43,8 +43,8 @@ static const std::string PROFILE_UPDATE_URL = "/upgrade/profile/";
 static const std::string FLUTTER_UPDATE_URL = "/upgrade/flutter/";
 static const std::string MODELS_STR = "models";
 
-#define APP_UPDATE_URL_BASE_CN "https://meta-cfg.snapmaker.cn"
-#define APP_UPDATE_URL_BASE_EN "https://meta-cfg.snapmaker.com"
+#define APP_UPDATE_URL_BASE_CN "http://meta-cfg.snapmaker.cn"
+#define APP_UPDATE_URL_BASE_EN "http://meta-cfg.snapmaker.com"
 
 #if defined(_WIN32)
 static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/win/");

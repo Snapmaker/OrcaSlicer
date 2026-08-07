@@ -127,7 +127,7 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
     , m_state(State::Pending)
     , m_percent(0)
     , m_cancel_enabled(true)
-    , m_status_text(_L("Waiting..."))
+    , m_status_text(_L("Waiting for device to upload"))
 {
     SetBackgroundColour(bg_color());
     SetMinSize(wxSize(FromDIP(ROW_WIDTH), FromDIP(ROW_HEIGHT)));
@@ -218,14 +218,14 @@ void TimelapseTaskRow::set_state(State s)
 
     switch (s) {
         case State::Pending:
-            m_status_text = _L("Waiting...");
+            m_status_text = _L("Waiting for device to upload");
             m_percent = 0;
             m_cancel_enabled = true;
             m_cancel_btn->SetBitmap(create_scaled_bitmap("timelapse_cancel_active", this, CANCEL_SIZE));
             m_cancel_btn->SetCursor(wxCURSOR_HAND);
             break;
         case State::Downloading:
-            if (m_status_text.empty() || m_status_text == _L("Waiting...")) {
+            if (m_status_text.empty() || m_status_text == _L("Waiting for device to upload")) {
                 m_status_text = wxString::Format(_L("%d%%"), m_percent);
             }
             m_cancel_enabled = true;
@@ -256,7 +256,7 @@ void TimelapseTaskRow::set_state(State s)
 
     m_status_label->SetLabel(m_status_text);
     Layout();
-    Refresh();
+    Refresh(false);
 }
 
 void TimelapseTaskRow::set_progress(int percent)
@@ -633,6 +633,10 @@ void TimelapseDownloadPopup::dismiss_row(int index)
 
 void TimelapseDownloadPopup::reorder_rows()
 {
+    // Freeze/Thaw: reorder detaches all rows and re-creates dividers, which
+    // without freezing repaints on every detach/add — visible as flicker.
+    m_task_panel->Freeze();
+
     // Priority: downloading(1) > pending(0) > finished(2,3,4)
     // Only include visible rows.
     std::vector<int> order;
@@ -672,6 +676,7 @@ void TimelapseDownloadPopup::reorder_rows()
     }
     m_task_panel->Layout();
     Layout();
+    m_task_panel->Thaw();
 }
 
 void TimelapseDownloadPopup::position_bottom_right()

@@ -2636,7 +2636,7 @@ Sidebar::Sidebar(Plater *parent)
         }
         // Apply matched recipes to model painting data
         set_progress(5);
-        apply_batch_match_to_model(model_result, wxGetApp().plater()->fff_print());
+        apply_batch_match_to_model(model_result);
 
         // Remove physical/mixed filaments left unreferenced by the match. This is
         // ~96% of apply time (per-deletion combo rebuild). Map the deletion loop's

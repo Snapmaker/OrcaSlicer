@@ -1431,12 +1431,7 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
         if (!model_obj) continue;
 
         for (const ModelVolume* vol : model_obj->volumes) {
-            if (!vol) continue;
-            // Include PARAMETER_MODIFIER so a modifier's user-chosen colour is
-            // collected too — mirrors load_model_colors and
-            // apply_batch_match_to_model, which also include modifiers.
-            const ModelVolumeType emc_vt = vol->type();
-            if (emc_vt != ModelVolumeType::MODEL_PART && emc_vt != ModelVolumeType::PARAMETER_MODIFIER) continue;
+            if (!vol || vol->type() != ModelVolumeType::MODEL_PART) continue;
 
             for (int eid : vol->get_extruders()) {
                 if (eid < 1 || eid > MAX_EXTRUDER_ID) continue;
@@ -1893,7 +1888,7 @@ std::vector<std::string> recommend_best_filament_combo(
     };
 }
 
-void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
+void apply_batch_match_to_model(const BatchMatchResult& result)
 {
     if (!result.success || result.mappings.empty()) return;
 
@@ -1946,46 +1941,46 @@ void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
     //      (it then fell back to the object's extruder, which itself may have
     //      been remapped — surfacing as "colour reset to extruder 1").
     for (ModelObject* mo : wxGetApp().model().objects) {
-        // Object-level extruder is remapped once below if it is the effective
-        // extruder for any volume; track whether we already wrote it so a
-        // later modifier inheriting the object does not double-write.
-        bool object_extruder_written = false;
+        // Pre-read the object's effective extruder ONCE, before iterating volumes.
+        // ModelVolume::extruder_id() falls back to the OBJECT config when a volume
+        // has no own "extruder", and this loop rewrites that object config — so
+        // calling extruder_id() again mid-loop would return the just-written value
+        // for later inheriting volumes, making two volumes that share the same
+        // source resolve different targets (order-dependent). Snapshotting the
+        // original object extruder eliminates that hazard: every inheriting volume
+        // (part or modifier) follows the same target, so their colours stay
+        // consistent — which is the whole point of including modifiers here.
+        const ConfigOption* obj_opt     = mo->config.option("extruder");
+        const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
+        auto                obj_it       = extruder_remap.find(orig_obj_eid);
+        const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
+        bool                object_extruder_written = false;
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
             const bool is_modifier  = (vt == ModelVolumeType::PARAMETER_MODIFIER);
 
-            // Level 1: triangle-level MMU data (MODEL_PART only).
-            if (is_part) {
-                if (!mv->mmu_segmentation_facets.empty())
-                    mv->remap_extruder_ids(total_filaments, state_map);
-            }
+            // Level 1: triangle-level MMU data (MODEL_PART only — modifiers
+            // carry no paint data).
+            if (is_part && !mv->mmu_segmentation_facets.empty())
+                mv->remap_extruder_ids(total_filaments, state_map);
 
             // Level 2: config-level extruder for parts and modifiers.
             if (!is_part && !is_modifier) continue;
 
-            const int old_eid = mv->extruder_id(); // effective: volume config, else object config
-            if (old_eid <= 0) continue;
-            auto it = extruder_remap.find(old_eid);
-            if (it == extruder_remap.end()) continue;
-
-            const unsigned int new_eid = it->second;
             const ConfigOption* vol_opt = mv->config.option("extruder");
-            const bool volume_has_own = (vol_opt && vol_opt->getInt() > 0);
-            if (volume_has_own) {
-                mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
-            } else if (!object_extruder_written) {
-                // Volume inherits the object's extruder — write once on the
-                // object so every inheriting volume follows. Subsequent
-                // inheriting volumes that also need a (different) remap would
-                // now conflict; force them onto their own config instead.
-                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
+            if (vol_opt && vol_opt->getInt() > 0) {
+                // Volume owns its extruder — remap it on the volume alone.
+                auto it = extruder_remap.find(vol_opt->getInt());
+                if (it != extruder_remap.end())
+                    mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
+            } else if (obj_remap && !object_extruder_written) {
+                // Volume inherits the object's extruder — write the object ONCE
+                // so every inheriting volume follows the same target. Later
+                // inheriting volumes need no action: they resolve through the
+                // (already rewritten) object config.
+                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
                 object_extruder_written = true;
-            } else {
-                // Object already remapped by an earlier inheriting volume but
-                // this volume needs a different target — give it its own
-                // config entry so it does not inherit the wrong value.
-                mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
             }
         }
 

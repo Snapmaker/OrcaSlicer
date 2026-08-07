@@ -1988,6 +1988,22 @@ void apply_batch_match_to_model(const BatchMatchResult& result, Print& print)
                 mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(new_eid)));
             }
         }
+
+        // Level 3: layer-object extruder (layer_config_ranges). A layer object
+        // holds the user-assigned filament for a height range; remap it with
+        // the same table used for volumes so it follows the match instead of
+        // being stranded on a physical slot that cleanup deletes
+        // (→ "layer filament >N reset to default").
+        for (auto& lr : mo->layer_config_ranges) {
+            ModelConfig&         lcfg = lr.second;
+            const ConfigOption*  lopt = lcfg.option("extruder");
+            if (!lopt) continue;
+            const int old_eid = lopt->getInt();
+            if (old_eid <= 0) continue;
+            auto lit = extruder_remap.find(old_eid);
+            if (lit == extruder_remap.end()) continue;
+            lcfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(lit->second)));
+        }
     }
 
     BOOST_LOG_TRIVIAL(info)

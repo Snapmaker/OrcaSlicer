@@ -757,6 +757,43 @@ void MixedFilamentBatchDialog::load_model_colors()
                 }
             }
         }
+
+        // Also collect layer-object extruders (layer_config_ranges) so a
+        // layer's filament — which may differ from any volume's — is a match
+        // source; otherwise apply_batch_match_to_model cannot remap it and it
+        // strands on a physical slot that cleanup deletes.
+        for (const auto& lr : mo->layer_config_ranges) {
+            const ModelConfig&  lcfg = lr.second;
+            const ConfigOption* lopt = lcfg.option("extruder");
+            if (!lopt) continue;
+            const int eid = lopt->getInt();
+            if (eid < 1 || eid > int(MAXIMUM_EXTRUDER_NUMBER)) continue;
+
+            std::string color_hex;
+            if (size_t(eid - 1) < co->values.size()) {
+                color_hex = co->values[size_t(eid - 1)];
+            } else {
+                const MixedFilament* mf = pb->mixed_filaments.mixed_filament_from_id(
+                    static_cast<unsigned int>(eid), num_physical);
+                if (mf && !mf->display_color.empty())
+                    color_hex = mf->display_color;
+            }
+            if (color_hex.empty()) continue;
+
+            wxColour c;
+            if (!try_parse_color_match_hex(color_hex, c)) continue;
+            const wxString hex_norm = normalize_color_match_hex(color_hex);
+
+            auto it = std::find_if(hex_to_eids.begin(), hex_to_eids.end(),
+                [&](const auto& p) { return p.first == hex_norm; });
+            if (it != hex_to_eids.end()) {
+                if (std::find(it->second.begin(), it->second.end(),
+                              static_cast<unsigned int>(eid)) == it->second.end())
+                    it->second.push_back(static_cast<unsigned int>(eid));
+            } else {
+                hex_to_eids.push_back({hex_norm.ToStdString(), {static_cast<unsigned int>(eid)}});
+            }
+        }
     }
 
     // If no model volumes provided extruders, fall back to the palette-index

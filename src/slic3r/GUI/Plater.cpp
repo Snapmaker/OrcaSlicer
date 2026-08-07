@@ -9647,9 +9647,17 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
 #endif // WIN32
 
     m_mainframe.Raise();
-    m_mainframe.select_tab(size_t(MainFrame::tp3DEditor));
-    if (wxGetApp().is_editor())
-        m_plater.select_view_3D("3D");
+    // Do not force the 3D editor before we even know what was dropped. When a
+    // G-code is already loaded (only-gcode mode) and the same file is dropped
+    // again, load_gcode() early-returns on its same-file guard and never
+    // switches back to Preview, so forcing the 3D editor here would strand the
+    // UI there and make the already-loaded G-code preview look like it
+    // "disappeared". Let the user stay on the Preview tab in that case.
+    if (!m_plater.only_gcode_mode()) {
+        m_mainframe.select_tab(size_t(MainFrame::tp3DEditor));
+        if (wxGetApp().is_editor())
+            m_plater.select_view_3D("3D");
+    }
 
     // When only one .svg file is dropped on scene
     if (filenames.size() == 1) {
@@ -9667,6 +9675,13 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
     }
     bool res = m_plater.load_files(filenames);
     m_mainframe.update_title();
+    // After dropping a G-code file, make sure we land on the Preview tab. On a
+    // fresh load load_gcode() switches to Preview itself, but when the *same*
+    // G-code is dropped again load_gcode() early-returns via its same-file
+    // guard, so without this the UI stays on the (empty) 3D editor and the
+    // already-loaded G-code preview looks like it "disappeared".
+    if (m_plater.only_gcode_mode())
+        m_plater.select_view_3D("Preview");
     return res;
 }
 

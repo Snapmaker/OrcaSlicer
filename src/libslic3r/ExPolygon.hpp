@@ -80,6 +80,10 @@ public:
     size_t   		num_contours() const { return this->holes.size() + 1; }
     Polygon& 		contour_or_hole(size_t idx) 		{ return (idx == 0) ? this->contour : this->holes[idx - 1]; }
     const Polygon& 	contour_or_hole(size_t idx) const 	{ return (idx == 0) ? this->contour : this->holes[idx - 1]; }
+
+    // Split an expolygon with holes into up to 4 sub-expolygons,
+    // cutting along the centroid of the largest hole. Ported from Bambu 976b5062c.
+    ExPolygons split_expoly_with_holes(coord_t gap_width, const ExPolygons& collision) const;
 };
 
 inline bool operator==(const ExPolygon &lhs, const ExPolygon &rhs) { return lhs.contour == rhs.contour && lhs.holes == rhs.holes; }

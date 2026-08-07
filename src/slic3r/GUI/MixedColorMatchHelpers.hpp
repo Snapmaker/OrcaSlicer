@@ -264,8 +264,7 @@ void populate_mixed_filaments_from_mappings(
 /// Apply matched recipes back to model painting data.
 /// Walks every volume's mmu_segmentation_facets and remaps original
 /// extruder_id→target_filament_id from the match result.
-void apply_batch_match_to_model(const BatchMatchResult& result,
-                                 Slic3r::Print&          print);
+void apply_batch_match_to_model(const BatchMatchResult& result);
 
 /// Recommend best 4-color filament combo from available presets.
 /// Pre-filters to Top-15 by single-color ΔE, then scores C(15,4)=1365 combos.

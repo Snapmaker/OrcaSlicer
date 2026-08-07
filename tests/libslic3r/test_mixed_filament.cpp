@@ -4552,6 +4552,158 @@ TEST_CASE("manual-mode painting on a selected physical survives with kept-aware 
     CHECK(!volume->mmu_segmentation_facets.has_facets(*volume, EnforcerBlockerType(6)));  // gone from old slot 6
 }
 
+// ===========================================================================
+// Modifier & layer-config remap (apply_batch_match_to_model Level-2 + Level-3)
+//
+// apply_batch_match_to_model lives in the GUI layer (depends on wxGetApp()) so
+// the test binary cannot link it. These tests mirror its Level-2 (volume/object
+// config extruder) and Level-3 (layer_config_ranges) passes over the REAL
+// libslic3r Model API — the same approach the manual-mode tests above use for
+// the triangle-painting pass. Keep the mirror byte-faithful to the production
+// loop (MixedColorMatchHelpers.cpp); a change there must surface here.
+//
+// Level-2 reads the object's extruder ONCE before iterating volumes (a
+// snapshot). ModelVolume::extruder_id() otherwise falls back to the OBJECT
+// config, which this loop rewrites mid-iteration — so re-reading it for a later
+// inheriting volume would resolve a different id than the first, making two
+// volumes that share one source diverge. The first test below pins that real
+// libslic3r contract; the rest pin the apply end-state.
+// ===========================================================================
+
+// Mirror of apply_batch_match_to_model's Level-2 (config) + Level-3 (layer)
+// passes (MixedColorMatchHelpers.cpp). Covers ONLY those two passes — the
+// Level-1 triangle-painting pass is exercised by the manual-mode tests above.
+static void apply_config_layer_remap_mirror(
+    Model&                                        model,
+    const std::unordered_map<int, unsigned int>&  extruder_remap)
+{
+    for (ModelObject* mo : model.objects) {
+        const ConfigOption* obj_opt      = mo->config.option("extruder");
+        const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
+        auto                obj_it       = extruder_remap.find(orig_obj_eid);
+        const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
+        bool                object_extruder_written = false;
+        for (ModelVolume* mv : mo->volumes) {
+            const ModelVolumeType vt = mv->type();
+            const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
+            const bool is_modifier  = (vt == ModelVolumeType::PARAMETER_MODIFIER);
+            if (!is_part && !is_modifier) continue;
+
+            const ConfigOption* vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0) {
+                auto it = extruder_remap.find(vol_opt->getInt());
+                if (it != extruder_remap.end())
+                    mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
+            } else if (obj_remap && !object_extruder_written) {
+                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+                object_extruder_written = true;
+            }
+        }
+
+        for (auto& lr : mo->layer_config_ranges) {
+            ModelConfig&         lcfg = lr.second;
+            const ConfigOption*  lopt = lcfg.option("extruder");
+            if (!lopt) continue;
+            const int old_eid = lopt->getInt();
+            if (old_eid <= 0) continue;
+            auto lit = extruder_remap.find(old_eid);
+            if (lit == extruder_remap.end()) continue;
+            lcfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(lit->second)));
+        }
+    }
+}
+
+TEST_CASE("ModelVolume::extruder_id falls back to live object config (snapshot rationale)", "[MixedFilament][batch_apply]")
+{
+    // Pins the libslic3r contract that makes apply_batch_match_to_model pre-read
+    // the object extruder: a volume with no own "extruder" resolves
+    // extruder_id() through the OBJECT config, and that resolution is LIVE —
+    // rewriting the object config changes what a later inheriting volume
+    // resolves. Without a pre-loop snapshot, two inheriting volumes that share
+    // one source would resolve different targets once the loop writes the object
+    // config mid-iteration. Pure libslic3r — no mirror.
+    Model model;
+    ModelObject *obj  = model.add_object();
+    ModelVolume  *part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume  *mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->config.set_key_value("extruder", new ConfigOptionInt(5));
+
+    // Neither volume owns an extruder → both inherit the object's 5.
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE(mod->extruder_id()  == 5);
+
+    // Simulate the apply loop writing the object extruder for the FIRST
+    // inheriting volume (5 -> 7). The second inheriting volume now resolves 7
+    // — proving extruder_id() reads the CURRENT object config, not a snapshot.
+    obj->config.set_key_value("extruder", new ConfigOptionInt(7));
+    REQUIRE(part->extruder_id() == 7);
+    REQUIRE(mod->extruder_id()  == 7);
+}
+
+TEST_CASE("apply config remap: inheriting modifier follows object consistently", "[MixedFilament][batch_apply]")
+{
+    // The modifier-inclusion fix's core contract: a modifier that inherits the
+    // object's extruder must follow the SAME target as the part that inherits
+    // it, so their colours stay the same hue. remap {5 -> 7}; both volumes
+    // inherit object=5, so both must end on 7 — no divergence, regardless of
+    // mo->volumes ordering.
+    Model model;
+    ModelObject *obj  = model.add_object();
+    ModelVolume  *part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume  *mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->config.set_key_value("extruder", new ConfigOptionInt(5));
+
+    std::unordered_map<int, unsigned int> remap{{5, 7u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    // Object written once to 7; both inheriting volumes resolve 7.
+    REQUIRE(obj->config.opt_int("extruder") == 7);
+    REQUIRE(part->extruder_id() == 7);
+    REQUIRE(mod->extruder_id()  == 7);
+    // Neither volume gained its own config entry — they still inherit.
+    REQUIRE_FALSE(part->config.has("extruder"));
+    REQUIRE_FALSE(mod->config.has("extruder"));
+}
+
+TEST_CASE("apply config remap: modifier with own extruder is remapped alone", "[MixedFilament][batch_apply]")
+{
+    // A modifier that carries its own extruder (user picked a colour in the
+    // object list) is remapped on its OWN config only; the object and any other
+    // volume are untouched.
+    Model model;
+    ModelObject *obj  = model.add_object();
+    ModelVolume  *part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume  *mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->config.set_key_value("extruder",  new ConfigOptionInt(1)); // object default (not remapped)
+    part->config.set_key_value("extruder", new ConfigOptionInt(3));
+    mod->config.set_key_value("extruder",  new ConfigOptionInt(4));
+
+    std::unordered_map<int, unsigned int> remap{{3, 7u}, {4, 8u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(part->extruder_id() == 7);
+    REQUIRE(mod->extruder_id()  == 8);
+    REQUIRE(obj->config.opt_int("extruder") == 1); // object untouched
+}
+
+TEST_CASE("apply layer remap: hit is remapped, miss is left untouched", "[MixedFilament][batch_apply]")
+{
+    // Level-3 (layer_config_ranges): a height range whose extruder is in the
+    // remap follows the match; one whose extruder is NOT in the remap stays put
+    // (so a layer on an unchanged slot is not reset to default by cleanup).
+    Model model;
+    ModelObject *obj = model.add_object();
+    obj->add_volume(make_cube(20., 20., 20.));
+    obj->layer_config_ranges[t_layer_height_range{0.0, 1.0}].set_key_value("extruder", new ConfigOptionInt(5));
+    obj->layer_config_ranges[t_layer_height_range{1.0, 2.0}].set_key_value("extruder", new ConfigOptionInt(9));
+
+    std::unordered_map<int, unsigned int> remap{{5, 7u}}; // 9 absent → miss
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->layer_config_ranges.at(t_layer_height_range{0.0, 1.0}).opt_int("extruder") == 7);
+    REQUIRE(obj->layer_config_ranges.at(t_layer_height_range{1.0, 2.0}).opt_int("extruder") == 9);
+}
+
 TEST_CASE("manual-mode apply migrates unselected-physical painting off its slot", "[MixedFilament][batch_apply]")
 {
     // Validates the precondition for the kept-aware cleanup fix (fix-verification

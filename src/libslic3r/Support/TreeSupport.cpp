@@ -894,6 +894,16 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     typedef std::chrono::high_resolution_clock clock_;
     typedef std::chrono::duration<double, std::ratio<1> > second_;
     std::chrono::time_point<clock_> t0{ clock_::now() };
+    // Slice enforcers/blockers BEFORE the parallel loop so that enforcer overhangs can be
+    // merged into overhangs_all_layers inside the loop and go through OverhangCluster
+    // cross-layer merge. Port of Bambu c03e13340 (STUDIO-11484). Previously they were sliced
+    // and appended AFTER clustering, so each layer's enforcer sliver stayed isolated and
+    // never merged -> slender / unmerged supports.
+    auto enforcers = m_object->slice_support_enforcers();
+    auto blockers  = m_object->slice_support_blockers();
+    m_vertical_enforcer_points.clear();
+    m_object->project_and_append_custom_facets(false, EnforcerBlockerType::ENFORCER, enforcers, &m_vertical_enforcer_points);
+    m_object->project_and_append_custom_facets(false, EnforcerBlockerType::BLOCKER, blockers);
     // main part of overhang detection can be parallel
     tbb::concurrent_vector<ExPolygons> overhangs_all_layers(m_object->layer_count());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
@@ -902,7 +912,11 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 if (m_object->print()->canceled())
                     break;
 
-                if (!is_auto(stype) && layer_nr > enforce_support_layers)
+                // Process this layer if it is auto mode, within the enforce-support window, or
+                // has painted enforcers. The enforcer clause is the key change so that manual-
+                // mode enforcer layers also fill overhangs_all_layers and go through OverhangCluster
+                // merge. Port of Bambu c03e13340 (STUDIO-11484).
+                if (!(is_auto(stype) || layer_nr <= enforce_support_layers || (layer_nr < enforcers.size() && !enforcers[layer_nr].empty())))
                     continue;
 
                 Layer* layer = m_object->get_layer(layer_nr);
@@ -928,7 +942,19 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
 
                 // normal overhang
                 ExPolygons lower_layer_offseted = offset_ex(lower_polys, support_offset_scaled, SUPPORT_SURFACES_OFFSET_PARAMETERS);
+                // Merge painted-enforcer overhangs into the SAME stream as normal overhangs so
+                // they enter OverhangCluster cross-layer merge below (port of Bambu c03e13340,
+                // STUDIO-11484). Previously enforcers were appended after clustering, so each
+                // layer's enforcer sliver stayed isolated and never merged -> slender supports.
+                ExPolygons enforced_overhangs;
+                if (layer_nr < enforcers.size() && !enforcers[layer_nr].empty())
+                    enforced_overhangs = intersection_ex(diff_ex(layer->lslices_extrudable, lower_layer->lslices_extrudable), enforcers[layer_nr]);
                 overhangs_all_layers[layer_nr] = std::move(diff_ex(curr_polys, lower_layer_offseted));
+                if (!enforced_overhangs.empty()) {
+                    // STUDIO-7538: expand enforcers a bit so they work on steep overhangs.
+                    enforced_overhangs = diff_ex(offset_ex(enforced_overhangs, enforcer_overhang_offset), lower_layer->lslices_extrudable);
+                    overhangs_all_layers[layer_nr] = union_ex(overhangs_all_layers[layer_nr], enforced_overhangs);
+                }
 
                 double duration{ std::chrono::duration_cast<second_>(clock_::now() - t0).count() };
                 if (duration > 30 || overhangs_all_layers[layer_nr].size() > 100) {
@@ -1080,12 +1106,6 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
         }
     }
 
-    auto enforcers = m_object->slice_support_enforcers();
-    auto blockers  = m_object->slice_support_blockers();
-    m_vertical_enforcer_points.clear();
-    m_object->project_and_append_custom_facets(false, EnforcerBlockerType::ENFORCER, enforcers, &m_vertical_enforcer_points);
-    m_object->project_and_append_custom_facets(false, EnforcerBlockerType::BLOCKER, blockers);
-
     for (auto& cluster : overhangClusters) {
         bool enforce_add = false;
         // remove small overhangs
@@ -1235,21 +1255,10 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             add_overhang(layer, area, OverhangType::SharpTail);
         }
 
-        // enforcers now follow same logic as normal support. See STUDIO-3692
-        int nEnforced = 0;
-        if (layer_nr < enforcers.size() && lower_layer) {
-            ExPolygons enforced_overhangs = intersection_ex(
-                diff_ex(layer->lslices_extrudable, lower_layer->lslices_extrudable),
-                enforcers[layer_nr]);
-            if (!enforced_overhangs.empty()) {
-                // FIXME this is a hack to make enforcers work on steep overhangs. See STUDIO-7538.
-                enforced_overhangs = diff_ex(offset_ex(enforced_overhangs, enforcer_overhang_offset), lower_layer->lslices_extrudable);
-                for (const auto& expoly : enforced_overhangs) {
-                    add_overhang(layer, expoly, OverhangType::Normal);
-                }
-                nEnforced = enforced_overhangs.size();
-            }
-        }
+        // Note: enforcer overhangs are now merged into overhangs_all_layers inside the
+        // parallel loop above, so they go through OverhangCluster like normal overhangs and
+        // already reach loverhangs_with_type via add_overhang(..., cluster.type). The old
+        // post-cluster enforcer append (STUDIO-3692) is removed. Port of c03e13340.
 
         // rebuild loverhangs from loverhangs_with_type (for bridge removal + debug SVG + export)
         layer->loverhangs.clear();
@@ -1269,7 +1278,8 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             layers_with_overhangs++;
             m_highest_overhang_layer = std::max(m_highest_overhang_layer, size_t(layer_nr));
         }
-        if (nEnforced > 0) layers_with_enforcers++;
+        // layers_with_enforcers is now a presence diagnostic (enforcers are merged upstream).
+        if (layer_nr < enforcers.size() && !enforcers[layer_nr].empty() && lower_layer) layers_with_enforcers++;
         if (!layer->cantilevers.empty()) has_cantilever = true;
     }
 
@@ -2934,7 +2944,7 @@ void TreeSupport::drop_nodes()
                 const SupportNode& node = *p_node;
                 if (!p_node->valid)
                 {
-                    return;
+                    return; 
                 }
                 if (node.type == ePolygon) {
                     // polygon node do not merge or move

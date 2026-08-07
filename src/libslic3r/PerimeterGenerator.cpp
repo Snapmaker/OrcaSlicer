@@ -1884,17 +1884,13 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
 
                     if (!unsupported_filtered.empty()) {
 
-                        //add this directly to the infill list.
-                        // this will avoid to throw wrong offsets into a good polygons
-                        this->fill_surfaces->append(
-                            unsupported_filtered,
-                            stInternal);
-
-                        // When support is disabled, remove the bridge area from the model surface
-                        // to prevent unsupported perimeters. When support is enabled, keep the model
-                        // surface intact so that perimeters and overhang walls are generated normally.
                         if (!this->object_config->enable_support.value) {
-                            // store the results
+                            // Support is disabled: remove the bridge area from the model surface
+                            // to prevent unsupported perimeters, and add the full area to fill_surfaces
+                            // to ensure the gap is still filled.
+                            this->fill_surfaces->append(
+                                unsupported_filtered,
+                                stInternal);
                             last = diff_ex(last, unsupported_filtered, ApplySafetyOffset::Yes);
                             //remove "thin air" polygons (note: it assumes that all polygons below will be extruded)
                             for (int i = 0; i < last.size(); i++) {
@@ -1905,6 +1901,19 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                                     last.erase(last.begin() + i);
                                     i--;
                                 }
+                            }
+                        } else {
+                            // Support is enabled: keep the model surface intact so that perimeters
+                            // and overhang walls are generated normally. Shrink the bridge fill area
+                            // inward by the perimeter zone width before appending, to avoid overlap
+                            // with the perimeter walls.
+                            int wall_loops = std::max(1, this->config->wall_loops.value);
+                            coord_t perimeter_zone = ext_perimeter_width / 2
+                                + perimeter_spacing * (wall_loops - 1)
+                                + perimeter_spacing / 2;
+                            ExPolygons fill_safe = offset_ex(unsupported_filtered, -perimeter_zone);
+                            if (!fill_safe.empty()) {
+                                this->fill_surfaces->append(fill_safe, stInternal);
                             }
                         }
                     }

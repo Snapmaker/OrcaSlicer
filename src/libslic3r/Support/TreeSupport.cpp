@@ -983,8 +983,8 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                     bool   is_cantilever = false;
                     double dist_max = 0;
                     for (size_t i = 0; i < poly.num_contours(); i++) {
-                        Polygon contour      = poly.contour_or_hole(i);
-                        bool    is_floating  = true;
+                        Polygon contour = poly.contour_or_hole(i);
+                        bool is_floating  = true;
                         double  tmp_dist_max = 0;
                         for (const auto& pt : contour.points) {
                             if (is_inside_ex(lower_layer_support_thresh, pt)) {

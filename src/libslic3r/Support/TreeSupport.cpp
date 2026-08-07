@@ -977,11 +977,11 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 // check cantilever
                 auto lower_layer_support_thresh = offset_ex(lower_polys, extrusion_width_scaled, SUPPORT_SURFACES_OFFSET_PARAMETERS);
                 // lower_layer_offset may be very small, so we need to do max and then add 0.1
-                lower_layer_offseted            = offset_ex(lower_layer_offseted, scale_(std::max(extrusion_width - lower_layer_offset, 0.) + 0.1));
+                lower_layer_offseted = offset_ex(lower_layer_offseted, scale_(std::max(extrusion_width - lower_layer_offset, 0.) + 0.1));
                 for (ExPolygon& poly : overhangs_all_layers[layer_nr]) {
                     // check if there is some contour that is totally floating
                     bool   is_cantilever = false;
-                    double dist_max      = 0;
+                    double dist_max = 0;
                     for (size_t i = 0; i < poly.num_contours(); i++) {
                         Polygon contour      = poly.contour_or_hole(i);
                         bool    is_floating  = true;
@@ -996,14 +996,14 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                         }
                         if (is_floating) {
                             is_cantilever = true;
-                            dist_max      = tmp_dist_max;
+                            dist_max = tmp_dist_max;
                             break;
                         }
                     }
                     if (!is_cantilever) {
                         dist_max = 0;
-                        auto     cluster_boundary_ex = intersection_ex(poly, lower_layer_offseted);
-                        Polygons cluster_boundary    = to_polygons(cluster_boundary_ex);
+                        auto cluster_boundary_ex = intersection_ex(poly, lower_layer_offseted);
+                        Polygons cluster_boundary = to_polygons(cluster_boundary_ex);
                         if (cluster_boundary.empty()) continue;
 
                         for (auto& pt : poly.contour.points) {

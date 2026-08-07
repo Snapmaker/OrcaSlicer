@@ -711,7 +711,16 @@ void MixedFilamentBatchDialog::load_model_colors()
 
     for (const ModelObject* mo : wxGetApp().model().objects) {
         for (const ModelVolume* mv : mo->volumes) {
-            if (!mv || mv->type() != ModelVolumeType::MODEL_PART) continue;
+            if (!mv) continue;
+            // Include MODEL_PART and PARAMETER_MODIFIER (modifier) volumes.
+            // A modifier carries a user-chosen colour in the object list; that
+            // colour must also be matched and remapped, otherwise the modifier
+            // is stranded on its old physical-slot extruder after the palette
+            // is rewritten (the "modifier colour reset to extruder 1" bug).
+            // Other volume types (negative/support) have no meaningful colour.
+            const ModelVolumeType vt = mv->type();
+            if (vt != ModelVolumeType::MODEL_PART
+                && vt != ModelVolumeType::PARAMETER_MODIFIER) continue;
 
             for (int eid : mv->get_extruders()) {
                 if (eid < 1 || eid > int(MAXIMUM_EXTRUDER_NUMBER)) continue;
@@ -738,7 +747,11 @@ void MixedFilamentBatchDialog::load_model_colors()
                 auto it = std::find_if(hex_to_eids.begin(), hex_to_eids.end(),
                     [&](const auto& p) { return p.first == hex_norm; });
                 if (it != hex_to_eids.end()) {
-                    it->second.push_back(static_cast<unsigned int>(eid));
+                    // Avoid duplicate extruder ids for the same colour when a
+                    // modifier inherits the same extruder as a part.
+                    if (std::find(it->second.begin(), it->second.end(),
+                                  static_cast<unsigned int>(eid)) == it->second.end())
+                        it->second.push_back(static_cast<unsigned int>(eid));
                 } else {
                     hex_to_eids.push_back({hex_norm.ToStdString(), {static_cast<unsigned int>(eid)}});
                 }

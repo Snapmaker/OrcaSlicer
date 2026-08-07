@@ -2852,12 +2852,15 @@ void TreeSupport::drop_nodes()
                 {
                     return; //Delete this node (don't create a new node for it on the next layer).
                 }
+                if (p_node->fading)
+                    return; // a fading node is shrinking to nothing; don't merge others into it
                 const std::vector<Point>& neighbours = mst.adjacent_nodes(node.position);
                 if (node.type == ePolygon) {
                     // Remove all circle neighbours that are completely inside the polygon and merge them into this node.
                     for (const Point &neighbour : neighbours) {
                         SupportNode *    neighbour_node          = nodes_this_part[neighbour];
                         if (neighbour_node->valid == false) continue;
+                        if (neighbour_node->fading) continue; // don't touch a node already fading out
                         if (neighbour_node->type == ePolygon) continue;
                         coord_t    neighbour_radius = scale_(neighbour_node->radius);
                         Point     pt_north = neighbour + Point(0, neighbour_radius), pt_south = neighbour - Point(0, neighbour_radius),
@@ -2872,8 +2875,9 @@ void TreeSupport::drop_nodes()
                             neighbour_node->valid = false;
                         }
                         else if (is_inside_ex(node.overhang, neighbour)) {
-                            // Partial overlap: circle center inside polygon but not fully contained.
-                            // Adopt the circle branch radius as expansion target (ported from Bambu).
+                            // Partial overlap: center inside, edge spills out.
+                            // Mark fade-out (976b5062c), then adopt radius as expansion target.
+                            neighbour_node->fading = true;   // <-- the line phase2's port (0909d7ed63) dropped
                             if (node.overhang.contour.bounding_box().radius() < neighbour_radius)
                                 node.target_radius = std::max(node.target_radius, neighbour_node->radius);
                         }
@@ -2945,6 +2949,22 @@ void TreeSupport::drop_nodes()
                 if (!p_node->valid)
                 {
                     return; 
+                }
+                if (node.fading) {
+                    // Shrink radius by max_move_distance each lower layer until it vanishes,
+                    // instead of growing a full redundant trunk next to an ePolygon column.
+                    coordf_t next_radius = node.radius - max_move_distance;
+                    if (next_radius < EPSILON)
+                        return; // shrunk to nothing -> no child, branch ends here
+                    SupportNode *next_node = m_ts_data->create_node(node.position, p_node->distance_to_top + 1,
+                        obj_layer_nr_next, p_node->support_roof_layers_below - 1, node.to_buildplate, p_node, print_z_next, height_next);
+                    next_node->max_move_dist = 0;
+                    next_node->radius        = next_radius;
+                    next_node->fading        = true; // propagate fading downward
+                    m_ts_data->m_mutex.lock();
+                    contact_nodes[layer_nr_next].emplace_back(next_node);
+                    m_ts_data->m_mutex.unlock();
+                    return;
                 }
                 if (node.type == ePolygon) {
                     // polygon node do not merge or move

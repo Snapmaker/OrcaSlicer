@@ -124,6 +124,7 @@ struct SupportNode
     bool           need_extra_wall = false;
     bool           is_sharp_tail   = false;
     bool           valid = true;
+    bool           fading = false;   // port of Bambu 976b5062c: edge-eCircle marked to shrink to nothing
     ExPolygon      overhang; // when type==ePolygon, set this value to get original overhang area
     coordf_t       origin_area   = 0.0;
     coordf_t       target_radius = -1.;

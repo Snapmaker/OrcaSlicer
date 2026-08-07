@@ -3365,8 +3365,17 @@ msgstr "下载已取消"
 msgid "Download Failed"
 msgstr "下载失败"
 
-msgid "Insufficient disk space."
-msgstr "磁盘空间不足"
+msgid "Failed to download the file. Please check your network and try again."
+msgstr "文件下载失败，请检查网络后重试。"
+
+msgid "Device disconnected."
+msgstr "设备已断开连接"
+
+msgid "Waiting for device to upload"
+msgstr "等待设备上传"
+
+msgid "Insufficient storage space. Please free up space."
+msgstr "磁盘空间不足，请清理存储空间。"
 
 msgid "File was removed. Download canceled."
 msgstr "文件已被移除，下载中断"

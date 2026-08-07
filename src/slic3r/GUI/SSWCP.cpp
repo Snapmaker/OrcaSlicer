@@ -4953,7 +4953,7 @@ void cancel_all_active_timelapse()
             release_date_index(ctx->files[i].date_index);
             if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
                 ctx->popup->mark_task_error(ctx->row_offset + i,
-                    std::string(_L("File was removed. Download canceled.").ToUTF8().data()));
+                    std::string(_L("Device disconnected.").ToUTF8().data()));
             }
         }
     }
@@ -5337,7 +5337,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             result["available"]  = si.available;
             m_res_data = result;
             m_status   = -1;
-            m_msg      = "insufficient_disk_space";
+            m_msg      = "Insufficient storage space. Please free up space.";
             send_to_js();
             finish_job();
             return;
@@ -5599,14 +5599,10 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
                 if (ctx->popup && !ctx->popup->IsBeingDeleted())
                 {
-                    // Map Http timeout to a friendly reason.
-                    bool is_timeout = error.find("timeout") != std::string::npos
-                                   || error.find("Timeout") != std::string::npos
-                                   || error.find("timed out") != std::string::npos;
-                    std::string reason = is_timeout
-                        ? std::string(_L("Network timeout").ToUTF8().data())
-                        : error;
-                    ctx->popup->mark_task_error(global_row, reason);
+                    // Always show a single friendly message — never expose the
+                    // raw Http error string to the UI.
+                    ctx->popup->mark_task_error(global_row,
+                        std::string(_L("Failed to download the file. Please check your network and try again.").ToUTF8().data()));
                 }
 
                 push_file_state(ctx, idx, "failed");
@@ -5697,7 +5693,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     return;
                 }
                 wxString status = ctx->is_wan
-                    ? _L("Waiting for device upload...")
+                    ? _L("Waiting for device to upload")
                     : _L("Downloading");
                 ctx->popup->set_task_status(ctx->row_offset + cur_idx,
                     wxString::FromUTF8(status.ToUTF8().data()));

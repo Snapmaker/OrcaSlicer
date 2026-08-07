@@ -2505,7 +2505,18 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // Orca: set the key for compatibilty
     this->placeholder_parser().set("retraction_distance_when_cut", m_config.retraction_distances_when_cut.get_at(initial_extruder_id));
     this->placeholder_parser().set("long_retraction_when_cut", m_config.long_retractions_when_cut.get_at(initial_extruder_id));
-    this->placeholder_parser().set("temperature", new ConfigOptionInts(print.config().nozzle_temperature));
+    ConfigOptionInts temperature;
+    ConfigOptionInts first_layer_temperature;
+    const size_t filament_count = print.config().filament_type.values.size();
+    temperature.values.reserve(filament_count);
+    first_layer_temperature.values.reserve(filament_count);
+    for (size_t filament_id = 0; filament_id < filament_count; ++filament_id)
+    {
+        temperature.values.push_back(get_value_at(print.config(), print.config().nozzle_temperature, ConfigFlowDomain::Filament, filament_id));
+        first_layer_temperature.values.push_back(get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, filament_id));
+    }
+    this->placeholder_parser().set("temperature", new ConfigOptionInts(temperature));
+    this->placeholder_parser().set("nozzle_temperature", new ConfigOptionInts(std::move(temperature)));
 
     this->placeholder_parser().set("retraction_distances_when_cut", new ConfigOptionFloats(m_config.retraction_distances_when_cut));
     this->placeholder_parser().set("long_retractions_when_cut", new ConfigOptionBools(m_config.long_retractions_when_cut));
@@ -2660,7 +2671,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
         // SoftFever: support variables `first_layer_temperature` and `first_layer_bed_temperature`
         this->placeholder_parser().set("first_layer_bed_temperature", new ConfigOptionInts(*first_bed_temp_opt));
-        this->placeholder_parser().set("first_layer_temperature", new ConfigOptionInts(m_config.nozzle_temperature_initial_layer));
+        this->placeholder_parser().set("first_layer_temperature", new ConfigOptionInts(first_layer_temperature));
+        this->placeholder_parser().set("nozzle_temperature_initial_layer", new ConfigOptionInts(std::move(first_layer_temperature)));
         this->placeholder_parser().set("max_print_height", new ConfigOptionInt(m_config.printable_height));
         this->placeholder_parser().set("z_offset", new ConfigOptionFloat(m_config.z_offset));
         this->placeholder_parser().set("model_name", new ConfigOptionString(print.get_model_name()));

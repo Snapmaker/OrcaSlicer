@@ -276,6 +276,7 @@ protected:
     m_highlighter;
 
 	DynamicPrintConfig 	m_cache_config;
+    t_config_option_keys m_cache_config_keys;
 
     struct FlowVariantView
     {

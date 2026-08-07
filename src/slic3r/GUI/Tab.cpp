@@ -2263,7 +2263,16 @@ void Tab::apply_searcher()
 
 void Tab::cache_config_diff(const std::vector<std::string>& selected_options, const DynamicPrintConfig* config/* = nullptr*/)
 {
-    m_cache_config.apply_only(config ? *config : m_presets->get_edited_preset().config, selected_options);
+    const DynamicPrintConfig &source = config ? *config : m_presets->get_edited_preset().config;
+    std::vector<std::string> cache_options;
+    cache_options.reserve(selected_options.size());
+    for (const std::string &opt_key : selected_options) {
+        const size_t hash = opt_key.rfind('#');
+        cache_options.emplace_back(hash != std::string::npos ? opt_key.substr(0, hash) : opt_key);
+        if (std::find(m_cache_config_keys.begin(), m_cache_config_keys.end(), opt_key) == m_cache_config_keys.end())
+            m_cache_config_keys.emplace_back(opt_key);
+    }
+    m_cache_config.apply_only(source, cache_options);
 }
 
 void Tab::apply_config_from_cache()
@@ -2275,9 +2284,10 @@ void Tab::apply_config_from_cache()
         was_applied = static_cast<TabPrinter*>(this)->apply_extruder_cnt_from_cache();
 
     if (!m_cache_config.empty()) {
-        // Apply to edited preset (官方版本的简单实现)
-        m_presets->get_edited_preset().config.apply(m_cache_config);
+        // Preserve unselected elements of indexed vector options in the target preset.
+        m_presets->get_edited_preset().config.apply_only(m_cache_config, m_cache_config_keys);
         m_cache_config.clear();
+        m_cache_config_keys.clear();
         was_applied = true;
     }
 

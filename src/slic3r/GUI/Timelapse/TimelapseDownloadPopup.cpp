@@ -186,6 +186,8 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
     SetSizer(outer);
     Layout();
 
+    SetDoubleBuffered(true);
+
     set_state(State::Pending);
 }
 
@@ -256,7 +258,7 @@ void TimelapseTaskRow::set_state(State s)
 
     m_status_label->SetLabel(m_status_text);
     Layout();
-    Refresh(false);
+    Refresh();
 }
 
 void TimelapseTaskRow::set_progress(int percent)
@@ -280,7 +282,8 @@ void TimelapseTaskRow::set_status_text(const wxString& text)
 {
     m_status_text = text;
     m_status_label->SetLabel(text);
-    m_status_label->Refresh();
+    Layout();
+    Refresh();
 }
 
 void TimelapseTaskRow::set_cancel_callback(std::function<void()> cb)
@@ -374,6 +377,9 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
 {
     SetBackgroundColour(bg_color());
 
+    // Flicker-free for the whole popup subtree (title bar, scrolled list, rows).
+    SetDoubleBuffered(true);
+
     // ---- Title bar (375×40) ----
     m_title_bar = new wxPanel(this, wxID_ANY);
     m_title_bar->SetBackgroundColour(bg_color());
@@ -405,6 +411,7 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     // ---- Task panel (scrolled window) ----
     m_task_panel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
     m_task_panel->SetBackgroundColour(bg_color());
+    m_task_panel->SetDoubleBuffered(true);
     m_task_panel->SetScrollRate(0, FromDIP(SCROLL_RATE));
     m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
     m_task_sizer = new wxBoxSizer(wxVERTICAL);
@@ -448,6 +455,11 @@ TimelapseDownloadPopup::~TimelapseDownloadPopup() = default;
 
 int TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
 {
+    // Freeze the entire popup while batch-creating rows + reordering + resizing.
+    // Without this, creating 30+ rows triggers a repaint per row → heavy flicker.
+    // RAII: Freeze on construct, Thaw on destruct (function return).
+    wxWindowUpdateLocker lock(this);
+
     int row_offset = static_cast<int>(m_rows.size());
     m_task_count += static_cast<int>(tasks.size());
 

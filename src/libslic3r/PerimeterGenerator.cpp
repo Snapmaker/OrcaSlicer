@@ -1840,7 +1840,10 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                                     ExPolygons bridges_temp = offset2_ex(intersection_ex(last, diff_ex(unsupported_filtered, unbridgeable), ApplySafetyOffset::Yes), -ext_perimeter_width / 4, ext_perimeter_width / 4);
                                     //remove the overhangs section from the surface polygons
                                     ExPolygons reference = last;
-                                    last = diff_ex(last, unsupported_filtered);
+                                    // When support is enabled, do not remove the bridge area from the model surface,
+                                    // so that perimeters and overhang walls can still be generated for the supported overhang.
+                                    if (!this->object_config->enable_support.value)
+                                        last = diff_ex(last, unsupported_filtered);
                                     //ExPolygons no_bridge = diff_ex(offset_ex(unbridgeable, ext_perimeter_width * 3 / 2), last);
                                     //bridges_temp = diff_ex(bridges_temp, no_bridge);
                                     coordf_t offset_to_do = bridged_infill_margin;
@@ -1887,16 +1890,21 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                             unsupported_filtered,
                             stInternal);
 
-                        // store the results
-                        last = diff_ex(last, unsupported_filtered, ApplySafetyOffset::Yes);
-                        //remove "thin air" polygons (note: it assumes that all polygons below will be extruded)
-                        for (int i = 0; i < last.size(); i++) {
-                            if (intersection_ex(support, ExPolygons() = { last[i] }).empty()) {
-                                this->fill_surfaces->append(
-                                    ExPolygons() = { last[i] },
-                                    stInternal);
-                                last.erase(last.begin() + i);
-                                i--;
+                        // When support is disabled, remove the bridge area from the model surface
+                        // to prevent unsupported perimeters. When support is enabled, keep the model
+                        // surface intact so that perimeters and overhang walls are generated normally.
+                        if (!this->object_config->enable_support.value) {
+                            // store the results
+                            last = diff_ex(last, unsupported_filtered, ApplySafetyOffset::Yes);
+                            //remove "thin air" polygons (note: it assumes that all polygons below will be extruded)
+                            for (int i = 0; i < last.size(); i++) {
+                                if (intersection_ex(support, ExPolygons() = { last[i] }).empty()) {
+                                    this->fill_surfaces->append(
+                                        ExPolygons() = { last[i] },
+                                        stInternal);
+                                    last.erase(last.begin() + i);
+                                    i--;
+                                }
                             }
                         }
                     }

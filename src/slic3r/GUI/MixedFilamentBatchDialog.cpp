@@ -116,14 +116,14 @@ static constexpr int MATCH_PREVIEW_DIP = 227;
 // RoundedPreviewPanel — a fixed-size square panel that draws a rounded-corner
 // thumbnail with an overlay badge ("Original Model" / "After Match").
 //
-// Rounded corners: the panel is first filled entirely with white (parent card bg),
-// then a rounded-rect wxRegion clip is applied via SetDeviceClippingRegion before
-// drawing the rounded background (#E7E7E7) + thumbnail + badge.  The four corners
-// keep their white fill and sit transparently over the parent card.
+// Rounded corners: paint the real background (card white via SetBackgroundColour +
+// dc.Clear()), then clip to a rounded rect and draw the rounded background (#E7E7E7)
+// + thumbnail + badge inside it. The background is a real opaque window background,
+// not a colour-matching fake — dc.Clear() is bounded to this window's backing store,
+// so the four corners can't bleed onto sibling UI on macOS.
 //
-// Uses plain wxDC (not wxGraphicsContext) to stay in the same coordinate space as
+// Plain wxDC (not wxGraphicsContext) stays in the same coordinate space as
 // wxAutoBufferedPaintDC — no antialias transform, no off-by-one clipping artifacts.
-// Child-window safe on all platforms: no SetWindowRgn, no SetShape.
 // ---------------------------------------------------------------------------
 
 class RoundedPreviewPanel : public wxPanel
@@ -136,6 +136,13 @@ public:
         , m_badge_label(badge_label)
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT);
+        // Opaque window bg = parent card white. Marks the panel opaque so the macOS
+        // compositor stops blending it over siblings, and fixes the colour dc.Clear()
+        // paints. Wrapped in darkModeColorFor so dark mode maps it to the dialog's
+        // dark window-bg slot (#2D2D31) — the light-mode value is plain white, so any
+        // equivalent white (wxColour("#FFFFFF") / *wxWHITE / wxColour(255,255,255))
+        // resolves to the same map entry (gDarkColors keys by RGBA value, not string).
+        SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         SetMinSize(wxSize(FromDIP(side_dip), FromDIP(side_dip)));
         Bind(wxEVT_PAINT, &RoundedPreviewPanel::on_paint, this);
         // DPI change: the placeholder SVG (ScalableBitmap) caches its raster at the
@@ -175,11 +182,11 @@ private:
         const wxColour card_white = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
         const wxColour panel_bg   = StateColor::darkModeColorFor(wxColour(231, 231, 231));
 
-        // Step 1 — fill ENTIRE panel with white (parent card background).
-        // The four corners keep this color and read as transparent over the card.
-        dc.SetBrush(wxBrush(card_white));
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawRectangle(wxRect(sz));
+        // Step 1 — real background, not a faked-transparent white square. dc.Clear()
+        // writes only into this window's own backing store, which the compositor bounds
+        // to the window geometry — so the corners read as the card but can't bleed.
+        dc.SetBackground(wxBrush(card_white));
+        dc.Clear();
 
         // Step 2 — build a rounded-rect clip region:
         //   black rounded-rect on white → region = black interior
@@ -217,9 +224,8 @@ private:
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
         }
 
-        // Step 5 — badge (white text on gray bg, top-left)
-        dc.DestroyClippingRegion();
-
+        // Step 5 — badge (white text on gray bg, top-left), drawn inside the rounded
+        // clip so it's hard-bounded to the thumbnail area.
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);
@@ -232,6 +238,8 @@ private:
         dc.DrawRectangle(badge);
         dc.SetTextForeground(*wxWHITE);
         dc.DrawText(m_badge_label, badge.x + pad_x, badge.y + pad_y);
+
+        dc.DestroyClippingRegion();
     }
 };
 

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <boost/container/small_vector.hpp>
+#include <boost/multiprecision/cpp_int.hpp>
 
 namespace Slic3r {
 
@@ -177,6 +178,7 @@ public:
 
     void clear() {
         m_layer_tools.clear();
+        m_tool_order_cache.clear();
     }
 
     // Only valid for non-sequential print:
@@ -239,6 +241,8 @@ private:
     unsigned int               m_last_printing_extruder  = (unsigned int)-1;
     // All extruders, which extrude some material over m_layer_tools.
     std::vector<unsigned int>  m_all_printing_extruders;
+    using uint128_t = boost::multiprecision::uint128_t;
+    std::unordered_map<uint128_t, std::vector<uint8_t>> m_tool_order_cache;
     const DynamicPrintConfig*  m_print_full_config = nullptr;
     const PrintConfig*         m_print_config_ptr = nullptr;
     const PrintObject*         m_print_object_ptr = nullptr;

@@ -10760,58 +10760,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         Preset::normalize(config);
                         PresetBundle *preset_bundle = wxGetApp().preset_bundle;
 
-                        /*Semver old_version3(2, 3, 6);
-                        if (file_version < old_version3) {
-                            double old_filament_prime_volume = 0.;
-                            int filament_count = 0;
-
-                            ConfigOptionFloats* filament_prime_volume_option = config.option<ConfigOptionFloats>("filament_prime_volume", true);
-                            ConfigOptionStrings* filament_colors_option = config.option<ConfigOptionStrings>("filament_colour", true);
-                            filament_count = filament_colors_option->values.size();
-                            if (filament_prime_volume_option) {
-                                std::vector<double>& filament_prime_volume_values = filament_prime_volume_option->values;
-                                if (!filament_prime_volume_values.empty()) {
-                                    old_filament_prime_volume = filament_prime_volume_values[0];
-                                    if (filament_count > 1) 
-                                        filament_prime_volume_values.resize(filament_count, old_filament_prime_volume);
-                                }
-                            }
-
-                            ConfigOptionInts* filament_adhesiveness_category_option = config.option<ConfigOptionInts>("filament_adhesiveness_category", true);
-                            std::vector<int>& filament_adhesiveness_category_values = filament_adhesiveness_category_option->values;
-                            filament_adhesiveness_category_values.resize(filament_count);
-                            for (int index = 0; index < filament_count; index++)
-                                filament_adhesiveness_category_values[index] = 100;
-
-                            std::vector<double>& filament_prime_volume_values = filament_prime_volume_option->values;
-                            filament_prime_volume_values.resize(filament_count);
-                            for (int index = 0; index < filament_count; index++) {
-                                if (old_filament_prime_volume != 0.)
-                                    filament_prime_volume_values[index] = old_filament_prime_volume;
-                                else
-                                    filament_prime_volume_values[index] = filament_prime_volume_values[0];
-                            }
-
-                            std::vector<std::string>& diff_settings = config.option<ConfigOptionStrings>("different_settings_to_system", true)->values;
-                            diff_settings.resize(filament_count + 2);
-
-                            std::vector<std::string> diff_process_keys;
-                            std::string diff_process_settings = diff_settings[0];
-                            Slic3r::unescape_strings_cstyle(diff_process_settings, diff_process_keys);
-                            diff_process_settings = Slic3r::escape_strings_cstyle(diff_process_keys);
-                            diff_settings[0] = diff_process_settings;
-
-                            for (int index = 0; index < filament_count; index++) {
-                                std::vector<std::string> diff_filament_keys;
-                                std::string diff_filament_settings = diff_settings[index + 1];
-                                Slic3r::unescape_strings_cstyle(diff_filament_settings, diff_filament_keys);
-                                diff_filament_keys.emplace_back("filament_prime_volume");
-                                diff_filament_keys.emplace_back("filament_adhesiveness_category");
-                                diff_filament_settings = Slic3r::escape_strings_cstyle(diff_filament_keys);
-                                diff_settings[index + 1] = diff_filament_settings;
-                            }
-                        }*/
-
                         auto choise = wxGetApp().app_config->get("no_warn_when_modified_gcodes");
                         if (choise.empty() || choise != "true") {
                             // BBS: first validate the printer
@@ -15963,7 +15911,6 @@ void Plater::priv::undo_redo_to(std::vector<UndoRedo::Snapshot>::const_iterator 
                     tower_x_opt->set_at(&tower_x_new, plate_idx, 0);
                     tower_y_opt->set_at(&tower_y_new, plate_idx, 0);
                     need_update = true;
-                    break;
                 }
             }
 

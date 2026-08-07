@@ -1124,7 +1124,7 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
     } else {
         // populate wipe_volumes with prime_volume
         for (unsigned int i = 0; i < number_of_extruders; ++i)
-            wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->filament_prime_volume.get_at(i)));
+            wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->prime_volume));
     }
 
     using uint128_t = boost::multiprecision::uint128_t;
@@ -1160,7 +1160,6 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         return false;
     };
 
-    std::unordered_map<uint128_t, std::vector<unsigned int>> caches;
     std::optional<unsigned int> current_extruder_id;
     for (int i = 0; i < m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
@@ -1190,13 +1189,21 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
         // The algorithm complexity is O(n2*2^n)
         if (i != 0) {
             auto hash_key = extruders_to_hash_key(lt.extruders, current_extruder_id);
-            auto iter = caches.find(hash_key);
-            if (iter == caches.end()) {
+            auto iter = m_tool_order_cache.find(hash_key);
+            if (iter == m_tool_order_cache.end()) {
                 lt.extruders = get_extruders_order(wipe_volumes, lt.extruders, current_extruder_id);
-                caches[hash_key] = lt.extruders;
+                std::vector<uint8_t> hash_val;
+                hash_val.reserve(lt.extruders.size());
+                for (auto item : lt.extruders)
+                    hash_val.emplace_back(static_cast<uint8_t>(item));
+                m_tool_order_cache[hash_key] = hash_val;
             }
             else {
-                lt.extruders = iter->second;
+                std::vector<unsigned int>extruder_order;
+                extruder_order.reserve(iter->second.size());
+                for (auto item : iter->second)
+                    extruder_order.emplace_back(static_cast<unsigned int>(item));
+                lt.extruders = std::move(extruder_order);
             }
         }
         current_extruder_id = lt.extruders.back();

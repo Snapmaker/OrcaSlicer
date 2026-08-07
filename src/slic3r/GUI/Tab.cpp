@@ -2552,10 +2552,10 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");
         optgroup->append_single_option_line("enable_prime_tower", "multimaterial_settings_prime_tower");
         optgroup->append_single_option_line("prime_tower_width", "multimaterial_settings_prime_tower#width");
-        //optgroup->append_single_option_line("prime_volume", "multimaterial_settings_prime_tower");
+        optgroup->append_single_option_line("prime_volume", "multimaterial_settings_prime_tower");
         optgroup->append_single_option_line("prime_tower_brim_width", "multimaterial_settings_prime_tower#brim-width");
-        optgroup->append_single_option_line("prime_tower_brim_chamfer", "multimaterial_settings_prime_tower#brim-chamfer");
-        optgroup->append_single_option_line("prime_tower_brim_chamfer_max_width", "multimaterial_settings_prime_tower#brim-chamfer-max-width");
+        //optgroup->append_single_option_line("prime_tower_brim_chamfer", "multimaterial_settings_prime_tower#brim-chamfer");
+        //optgroup->append_single_option_line("prime_tower_brim_chamfer_max_width", "multimaterial_settings_prime_tower#brim-chamfer-max-width");
 
         optgroup->append_single_option_line("wipe_tower_bridging", "multimaterial_settings_prime_tower#maximal-bridging-distance");
         optgroup->append_single_option_line("wipe_tower_extra_spacing", "multimaterial_settings_prime_tower#wipe-tower-purge-lines-spacing");
@@ -3707,7 +3707,6 @@ void TabFilament::build()
         optgroup->append_single_option_line("filament_tower_interface_print_temp");
         optgroup->append_single_option_line("filament_tower_ironing_area");
         optgroup->append_single_option_line("filament_adhesiveness_category");
-        optgroup->append_single_option_line("filament_prime_volume");
         Line line = { L("Recommended nozzle temperature"), L("Recommended nozzle temperature range of this filament. 0 means no set") };
         line.append_option(optgroup->get_option("nozzle_temperature_range_low"));
         line.append_option(optgroup->get_option("nozzle_temperature_range_high"));

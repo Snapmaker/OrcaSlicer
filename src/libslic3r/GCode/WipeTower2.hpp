@@ -187,7 +187,6 @@ public:
         float filament_tower_interface_pre_extrusion_length = 0.f;
         int filament_tower_interface_print_temp = -1;
         int category = 0;
-        float prime_volume = 0.f;
         float wipe_dist = 0.f;
     };
 

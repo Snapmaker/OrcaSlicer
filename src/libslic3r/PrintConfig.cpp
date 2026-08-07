@@ -6226,14 +6226,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{ 100 });
 
-    def = this->add("filament_prime_volume", coFloats);
-    def->label = L("Prime Volume");
-    def->tooltip = L("The volume of material to prime extruder on tower.");
-    def->sidetext = L("mm³");
-    def->min = 0;
-    def->mode = comDevelop;
-    def->set_default_value(new ConfigOptionFloats{ 45.f });
-
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");
     def->category = L("Quality");
@@ -7195,10 +7187,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
     } else if (opt_key == "wipe_tower_width") {
         opt_key = "prime_tower_width";
     } else if (opt_key == "wiping_volume") {
-        opt_key = "filament_prime_volume";
-    }
-    else if (opt_key == "prime_volume") {
-        opt_key = "filament_prime_volume";
+        opt_key = "prime_volume";
     }
     else if (opt_key == "wipe_tower_brim_width") {
         opt_key = "prime_tower_brim_width";

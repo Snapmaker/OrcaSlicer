@@ -864,10 +864,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
             gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
             gcode += gcodegen.travel_to(
                 wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d),
-                erMixed, "Travel from ramming to wipe area");
-            // Always unlift the spiral hop, else the wipe lands at printZ+z_hop and
-            // the preview splits it into a spurious layer. Skip only the E deretract
-            // when detouring (set_extruder's toolchange retract handles E).
+                erMixed, "Travel from ramming to wipe area", z);
             if (will_detour)
                 gcode += gcodegen.writer().unlift();
             else
@@ -884,12 +881,12 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     BoundingBox tower_bbx;
     if (will_detour) {
         BoundingBox bbox = scaled(m_wipe_tower_bbx);
-        Polygon     pp   = bbox.polygon();
+        Polygon pp = bbox.polygon();
         for (auto &p : pp.points) {
             Vec2f pt = transform_wt_pt(unscale(p).cast<float>());
             p = wipe_tower_point_to_object_point(gcodegen, pt + plate_origin_2d);
         }
-        tower_bbx       = BoundingBox(pp.points);
+        tower_bbx = BoundingBox(pp.points);
         has_detour_bbox = true;
 
         // safe_x = tower-edge park (right-pref, 3mm, bed-clamped); gcode coord — don't re-add plate_origin to X below.
@@ -916,35 +913,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcodegen.set_last_pos(safe_obj);
     }
 
-    if (tcr.priming || (new_extruder_id >= 0 && needs_toolchange)) {
-        if (is_ramming)
-            gcodegen.m_wipe.reset_path();
-        toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z, false);
-        if (gcodegen.config().enable_prime_tower) {
-            deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
-            Vec3d position{gcodegen.writer().get_position()};
-            position.z() = z;
-            gcodegen.writer().set_position(position);
-
-            if (new_extruder_id >= 0 && !gcodegen.config().single_extruder_multi_material.value) {
-                double tlc = gcodegen.config().retract_length_toolchange.get_at(new_extruder_id);
-                if (tlc > 0.) {
-                    double cur = gcodegen.writer().extruder()->retracted();
-                    if (cur < tlc - EPSILON)
-                        gcodegen.writer().extruder()->set_retracted(tlc,
-                            gcodegen.config().retract_restart_extra_toolchange.get_at(new_extruder_id));
-                }
-            }
-
-            if (tcr.is_contact && gcodegen.m_config.enable_tower_interface_features) {
-                float load_length = gcodegen.m_config.filament_tower_interface_pre_extrusion_length.get_at(tcr.new_tool);
-                if (load_length > 0.f)
-                    gcodegen.writer().extruder()->set_retracted(load_length, 0.0);
-            }
-
-        }
-    }
-
     // Return detour: route back from the safe position to the wipe tower,
     // avoiding the tower body.  Mirrors Bambu Studio GCode.cpp:1133.
     if (has_detour_bbox) {
@@ -963,8 +931,26 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         }
         gcodegen.set_last_pos(target_obj);
     }
-    if (gcodegen.config().enable_prime_tower)
-        deretraction_str += gcodegen.unretract();
+
+    if (tcr.priming || (new_extruder_id >= 0 && needs_toolchange)) {
+        if (is_ramming)
+            gcodegen.m_wipe.reset_path();
+        toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z, false);
+        if (gcodegen.config().enable_prime_tower) {
+            deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
+            Vec3d position{ gcodegen.writer().get_position() };
+            position.z() = z;
+            gcodegen.writer().set_position(position);
+        }
+    }
+
+    if (gcodegen.config().enable_prime_tower) {
+        float extra_unretract = 0.f;
+        if (tcr.is_contact && gcodegen.m_config.enable_tower_interface_features) {
+            extra_unretract = gcodegen.m_config.filament_tower_interface_pre_extrusion_length.get_at(tcr.new_tool);
+        }
+        deretraction_str += gcodegen.unretract(extra_unretract);
+    }
     toolchange_gcode_str += deretraction_str;
 
 
@@ -1001,6 +987,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcodegen.m_wipe.reset_path();
         for (const Vec2f& wipe_pt : tcr.wipe_path)
             gcodegen.m_wipe.path.points.emplace_back(wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt)));
+        gcode += gcodegen.retract(false, false);
     }
 
     // Let the planner know we are traveling between objects.
@@ -1353,7 +1340,7 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
             local_z_wipe_tower.set_layer(float(toolchange_print_z), layer_height, 0, m_layer_idx == 0, false);
 
             WipeTower::ToolChangeResult local_z_tcr =
-                local_z_wipe_tower.local_z_tool_change(size_t(extruder_id), slot, print_config.filament_prime_volume.get_at(extruder_id));
+                local_z_wipe_tower.local_z_tool_change(size_t(extruder_id), slot, float(print_config.prime_volume));
             BOOST_LOG_TRIVIAL(debug) << "Local-Z toolchange emitted via wipe tower mini-toolchange"
                                      << " layer_idx=" << m_layer_idx
                                      << " extruder_id=" << extruder_id
@@ -8667,11 +8654,6 @@ std::string GCode::retract(bool toolchange, bool is_last_retraction, LiftType li
         methods even if we performed wipe, since this will ensure the entire retraction
         length is honored in case wipe path was too short.  */
 
-    // // Snapmaker U1
-    // std::string printer_model = this->m_curr_print->m_config.printer_model.value;
-    // if (printer_model == "Snapmaker U1" && toolchange) {
-    //     gcode += "M400\n";
-    // }
     if ((!this->on_first_layer() || this->config().bottom_surface_pattern != InfillPattern::ipHilbertCurve) &&
         (role != erTopSolidInfill || this->config().top_surface_pattern != InfillPattern::ipHilbertCurve)) {
         gcode += toolchange ? m_writer.retract_for_toolchange() : m_writer.retract();

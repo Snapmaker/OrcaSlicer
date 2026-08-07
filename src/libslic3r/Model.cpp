@@ -2470,8 +2470,10 @@ std::vector<int> ModelVolume::get_extruders() const
 
     std::vector<int> volume_extruders = mmuseg_extruders;
     int volume_extruder_id = this->extruder_id();
-    if (m_mmuseg_extruders_has_0_extruder && volume_extruder_id > 0) {
-        volume_extruders.push_back(volume_extruder_id);
+    if (m_mmuseg_extruders_has_0_extruder) {
+        // extruder_id == 0 means "default", which is equivalent to extruder 1 for statistics.
+        int effective_id = (volume_extruder_id > 0) ? volume_extruder_id : 1;
+        volume_extruders.push_back(effective_id);
     }
 
     return volume_extruders;

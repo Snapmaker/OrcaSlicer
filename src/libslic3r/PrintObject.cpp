@@ -1239,6 +1239,17 @@ bool PrintObject::invalidate_state_by_config_options(
     sort_remove_duplicates(steps);
     for (PrintObjectStep step : steps)
         invalidated |= this->invalidate_step(step);
+
+    // Changing extruder-related filament options invalidates the local-z plan,
+    // because the plan depends on which extruders are used for each sublayer.
+    // Without this, stale local-z data referencing removed extruders can cause crashes.
+    for (const std::string &opt_key : opt_keys) {
+        if (opt_key == "extruder" || opt_key == "wall_filament" ||
+            opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
+            this->clear_local_z_plan();
+            break;
+        }
+    }
     return invalidated;
 }
 

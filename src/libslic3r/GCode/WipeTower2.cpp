@@ -1555,15 +1555,12 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar.push_back(FilamentParameters());
 
     m_filpar[idx].material = config.filament_type.get_at(idx);
-    /*m_filpar[idx].is_soluble = config.wipe_tower_filament == 0 ? config.filament_soluble.get_at(idx) :
-                               (idx != size_t(config.wipe_tower_filament - 1));*/
     m_filpar[idx].is_soluble = config.filament_soluble.get_at(idx);
     m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
     m_filpar[idx].first_layer_temperature              = config.nozzle_temperature_initial_layer.get_at(idx);
     m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
     m_filpar[idx].flat_iron_area = config.filament_tower_ironing_area.get_at(idx);
     m_filpar[idx].category = config.filament_adhesiveness_category.get_at(idx);
-    m_filpar[idx].prime_volume = config.filament_prime_volume.get_at(idx);
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
     // Otherwise, the defaults will be used to turn off the SE stuff.
@@ -1842,6 +1839,9 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
 WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::ToolChange& tc, 
     bool solid_toolchange, bool solid_nozzlechange)
 {
+    if (m_current_tool != tc.old_tool) {
+        m_current_tool = tc.old_tool;
+    }
     m_nozzle_change_result.gcode.clear();
     m_nozzle_change_result = ramming(tc, solid_nozzlechange);
 
@@ -1910,6 +1910,8 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
     block->cur_depth += (wipe_depth - nozzle_change_depth);
     block->last_filament_change_id = new_tool;
 
+    if (m_set_extruder_trimpot)
+        writer.set_extruder_trimpot(550); // Reset the extruder current to a normal value.
     writer.speed_override_restore();
     writer.feedrate(m_travel_speed * 60.f)
         .flush_planner_queue()
@@ -2333,11 +2335,10 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     // This is where we want to place the custom gcodes. We will use placeholders for this.
     // These will be substituted by the actual gcodes when the gcode is generated.
     // writer.append("[end_filament_gcode]\n");
-    //writer.append("[filament_end_gcode]\n");
     writer.append("[change_filament_gcode]\n");
 
-    //if (m_is_mk4mmu3)
-    //    writer.switch_filament_monitoring(true);
+    if (m_is_mk4mmu3)
+        writer.switch_filament_monitoring(true);
 
     Vec2f current_pos = writer.pos_rotated();
     writer
@@ -2882,9 +2883,9 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
             fill_box_depth = m_layer_info->depth - 2 * m_perimeter_width;
         /*fill_boxes.emplace_back(Vec2f(m_perimeter_width, m_cur_block->cur_depth), 
             m_wipe_tower_width - 2 * m_perimeter_width, m_cur_block->layer_depths[m_current_tool] - m_cur_block->cur_depth);*/
-        fill_boxes.emplace_back(Vec2f(m_perimeter_width, m_perimeter_width), m_wipe_tower_width - 2 * m_perimeter_width, fill_box_depth);
-        /*WipeTowerBlock* block = get_block_by_category(m_filpar[m_current_tool].category, false);
-        fill_boxes.emplace_back(Vec2f(m_perimeter_width, block->cur_depth), m_wipe_tower_width - 2 * m_perimeter_width, fill_depth);*/
+        //fill_boxes.emplace_back(Vec2f(m_perimeter_width, m_perimeter_width), m_wipe_tower_width - 2 * m_perimeter_width, fill_box_depth);
+        WipeTowerBlock* block = get_block_by_category(m_filpar[m_current_tool].category, false);
+        fill_boxes.emplace_back(Vec2f(m_perimeter_width, block->cur_depth), m_wipe_tower_width - 2 * m_perimeter_width, fill_depth);
     }
 
     writer.set_initial_position((m_left_to_right ? fill_boxes.front().ru : fill_boxes.front().lu), m_wipe_tower_width, m_wipe_tower_depth, m_internal_rotation);
@@ -3708,6 +3709,19 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
         WipeTower::ToolChangeResult finish_layer_tcr;
         int wall_idx = get_wall_filament_for_layer(layer);
 
+        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes) {
+            bool solid_nozzlechange = false;
+            bool solid_toolchange = false;
+            const auto* block = get_block_by_category(m_filpar[toolchange.new_tool].category, false);
+            if (block)
+                solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+
+            const auto* block2 = get_block_by_category(m_filpar[toolchange.old_tool].category, false);
+            if (block2)
+                solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
+            local_z_layer_result.emplace_back(tool_change_new(toolchange, solid_toolchange, solid_nozzlechange));
+        }
+
         if (wall_idx == -1) {
             bool need_insert_solid_infill = false;
             for (const WipeTowerBlock& block : m_wipe_tower_blocks) {
@@ -3726,19 +3740,6 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                     block.finish_depth[this->m_cur_layer_id] = block.start_depth;
                 });
             }
-        }
-
-        for (const WipeTowerInfo::ToolChange& toolchange : layer.local_z_tool_changes) {
-            bool solid_nozzlechange = false;
-            bool solid_toolchange = false;
-            const auto* block = get_block_by_category(m_filpar[toolchange.new_tool].category, false);
-            if (block)
-                solid_toolchange = block->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
-
-            const auto* block2 = get_block_by_category(m_filpar[toolchange.old_tool].category, false);
-            if (block2)
-                solid_nozzlechange = block2->layers_type[m_cur_layer_id] == WipeTowerLayerType::Contact;
-            local_z_layer_result.emplace_back(tool_change_new(toolchange, solid_toolchange, solid_nozzlechange));
         }
 
         int insert_finish_layer_idx = -1;
@@ -3766,7 +3767,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
             }
         }
 
-        if (wall_idx != -1){
+        auto emit_finish_blocks_for_wall = [&](int effective_wall_idx) {
             if (layer.tool_changes.empty()) {
                 finish_layer_tcr = finish_layer_new(true, false, false);
             }
@@ -3795,7 +3796,7 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                 }
 
                 if (finish_layer_filament == -1) {
-                    finish_layer_filament = wall_idx;
+                    finish_layer_filament = effective_wall_idx;
                 }
 
                 WipeTower::ToolChangeResult finish_block_tcr;
@@ -3828,12 +3829,26 @@ void WipeTower2::generate_new(std::vector<std::vector<WipeTower::ToolChangeResul
                 }
 
                 if (!has_inserted) {
-                    if (finish_block_tcr.gcode.empty())
+                    if (finish_block_tcr.gcode.empty()) {
                         finish_block_tcr = finish_block_tcr;
-                    else
+                    }
+                    else if (finish_layer_tcr.new_tool != finish_block_tcr.initial_tool && !local_z_layer_result.empty()) {
+                        auto nc_iter = std::find_if(local_z_layer_result.begin(), local_z_layer_result.end(),
+                            [&finish_block_tcr](const WipeTower::ToolChangeResult& item) { return item.new_tool == finish_block_tcr.initial_tool; });
+                        if (nc_iter != local_z_layer_result.end()) {
+                            *nc_iter = merge_tcr(*nc_iter, finish_block_tcr);
+                            has_inserted = true;
+                        }
+                    }
+                    else {
                         finish_layer_tcr = merge_tcr(finish_layer_tcr, finish_block_tcr);
+                    }
                 }
             }
+        };
+
+        if (wall_idx != -1){
+            emit_finish_blocks_for_wall(wall_idx);
         }
 
         if (layer_result.empty()) {

@@ -1,0 +1,38 @@
+{
+    "type": "filament",
+    "instantiation": "true",
+    "setting_id": "POLY_HF_PETG_U1_001",
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle)"
+    ],
+    "filament_density": [
+        "1.34"
+    ],
+    "filament_settings_id": [
+        "Polymaker PETG-HF @U1"
+    ],
+    "filament_vendor": [
+        "Polymaker"
+    ],
+    "from": "system",
+    "inherits": "Polymaker PETG-HF @U1 base",
+    "name": "Polymaker PETG-HF @U1",
+    "nozzle_temperature": [
+        "260"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "260"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "240"
+    ],
+    "textured_plate_temp": [
+        "80"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "80"
+    ]
+}

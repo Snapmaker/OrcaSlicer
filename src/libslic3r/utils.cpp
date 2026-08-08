@@ -1597,16 +1597,27 @@ bool copy_directory_recursively(const boost::filesystem::path &source, const boo
 
     std::string error_message;
     for (auto &dir_entry : boost::filesystem::directory_iterator(source)) {
-        const std::string name = dir_entry.path().filename().string();
+        const boost::filesystem::path child_name = dir_entry.path().filename();
+        const boost::filesystem::path dest_child = target / child_name;
 
         if (boost::filesystem::is_directory(dir_entry)) {
-            if (!copy_directory_recursively(dir_entry, target / name, filter))
+            if (!copy_directory_recursively(dir_entry.path(), dest_child, filter))
                 return false;
         } else {
+#ifdef WIN32
+            const std::string name = boost::nowide::narrow(child_name.wstring());
+#else
+            const std::string name = child_name.string();
+#endif
             if (filter && filter(name))
                 continue;
+#ifdef WIN32
+            const std::string source_file = boost::nowide::narrow(dir_entry.path().wstring());
+            const std::string target_file = boost::nowide::narrow(dest_child.wstring());
+#else
             const std::string source_file = dir_entry.path().string();
-            const std::string target_file = (target / name).string();
+            const std::string target_file = dest_child.string();
+#endif
             const CopyFileResult cfr      = copy_file(source_file, target_file, error_message, false);
             if (cfr != CopyFileResult::SUCCESS) {
                 BOOST_LOG_TRIVIAL(error) << "Copying failed(" << static_cast<int>(cfr) << "): " << error_message

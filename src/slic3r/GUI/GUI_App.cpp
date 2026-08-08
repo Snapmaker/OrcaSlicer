@@ -2264,7 +2264,11 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
 void GUI_App::copy_web_resources() {
     StartupProfiler profiler("GUI_App::copy_web_resources");
 
+#ifdef WIN32
+    auto data_web_path = boost::filesystem::path(boost::nowide::widen(data_dir())) / "web";
+#else
     auto data_web_path = boost::filesystem::path(data_dir()) / "web";
+#endif
     if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
         copy_bundled_flutter_web(false);
         profiler.mark("copy flutter_web (missing target)");
@@ -2276,10 +2280,13 @@ void GUI_App::copy_web_resources() {
             boost::property_tree::ptree source_config, target_config;
             boost::property_tree::read_json(source_version_file.string(), source_config);
             boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
+            std::string source_version_str = source_config.get<std::string>("version", "0");
+            std::string target_version_str = target_config.get<std::string>("version", "0");
 
-            if (source_build_number_str > target_build_number_str) {
+            Semver source_version(source_version_str);
+            Semver target_version(target_version_str);
+
+            if (target_version < source_version) {
                 copy_bundled_flutter_web(true);
                 profiler.mark("copy flutter_web (version upgrade)");
             } else {
@@ -2295,7 +2302,11 @@ void GUI_App::copy_web_resources() {
 bool GUI_App::copy_bundled_flutter_web(bool upgrade)
 {
     auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
+#ifdef WIN32
+    auto target_path = boost::filesystem::path(boost::nowide::widen(data_dir())) / "web" / "flutter_web";
+#else
     auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
+#endif
     if (copy_directory_recursively(source_path, target_path))
         return true;
 

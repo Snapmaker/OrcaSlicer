@@ -4954,8 +4954,14 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // BBS
-        int bed_temp = get_bed_temperature(first_extruder_id, false, print.config().curr_bed_type);
+        // BBS:
+        // snorca: use the maximum bed temperature across all extruders so that a mixed-material print
+        // does not change temperatures after the first layer. This was observed in mixed PLA and TPU prints
+        // where the bed temperature would fall to 35, causing PLA adhesion failures.
+        int bed_temp = 0;
+        for (const Extruder& extruder : m_writer.extruders()) {
+            bed_temp = std::max(bed_temp, get_bed_temperature(extruder.id(), false, print.config().curr_bed_type));
+        }
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;

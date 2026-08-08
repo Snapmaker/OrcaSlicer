@@ -132,7 +132,14 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
-	<key>NSAppTransportSecurity</key>  
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Snapmaker Orca needs access to your local network to discover and connect to your 3D printer(s), and to serve the app's device interface on localhost.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_printer._tcp</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- Disable App Transport Security. Resolves https://github.com/SoftFever/OrcaSlicer/issues/791 -->
 		<key>NSAllowsArbitraryLoads</key>

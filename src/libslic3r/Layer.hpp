@@ -16,7 +16,14 @@ using LayerPtrs = std::vector<Layer*>;
 class LayerRegion;
 using LayerRegionPtrs = std::vector<LayerRegion*>;
 class PrintRegion;
+class PrintRegionConfig;
 class PrintObject;
+
+// Snapmaker mixed filament: resolve a configured 1-based filament id to the physical filament
+// actually printing on this layer (0 "Default" passes through unchanged). The infill variant
+// additionally resolves grouped manual patterns like the innermost perimeter.
+unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id);
+unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionConfig &config, unsigned int filament_id);
 
 namespace FillAdaptive {
     struct Octree;
@@ -74,8 +81,11 @@ public:
     unsigned int extruder(FlowRole role) const;
     Flow    flow(FlowRole role) const;
     Flow    flow(FlowRole role, double layer_height) const;
-    Flow    flow(FlowRole role, double layer_height, bool use_initial_layer_width) const;
-    Flow    bridging_flow(FlowRole role, bool thick_bridge = false) const;
+    // filament_id: 1-based filament actually printing this flow when it differs from the role's default mapping (e.g. top/bottom surface fills, external bridges), 0 to resolve from the role.
+    Flow    flow(FlowRole role, double layer_height, unsigned int filament_id) const;
+    Flow    flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id = 0) const;
+    // layer_height overrides m_layer->height for the non-thick flow (combined layer groups print thicker), 0 to use m_layer->height.
+    Flow    bridging_flow(FlowRole role, bool thick_bridge = false, unsigned int filament_id = 0, double layer_height = 0.) const;
 
     void    slices_to_fill_surfaces_clipped();
     void    prepare_fill_surfaces();
@@ -100,6 +110,43 @@ public:
     //BBS
     void    simplify_infill_extrusion_entity() { simplify_entity_collection(&fills); }
     void    simplify_wall_extrusion_entity() { simplify_entity_collection(&perimeters); }
+
+    // ORCA: per-extruder layer height. Number of object layers this region's extrusions cover here:
+    // > 1 on the top layer of a group combined by PrintObject::apply_extruder_layer_heights(), 0 on
+    // the combined-away layers below such a top (their slices are empty and print nothing; the 0
+    // tells them apart from layers where the region's geometry is genuinely absent), 1 otherwise.
+    unsigned short combined_layer_count() const { return m_combined_layer_count; }
+    // Extrusion height at this layer (sum of the covered layer heights when combined, else layer height).
+    double  combined_height() const;
+    // Layer right below the covered group; replaces Layer::lower_layer for overhang / bridge
+    // detection of combined regions. May be nullptr.
+    const Layer* combined_lower_layer() const;
+    // Shape of this layer that its combined group does not print; classifies exposed step faces.
+    const ExPolygons& combined_away_exposed() const { return m_combined_away_exposed; }
+
+    // ORCA: walls-only pitch (PrintObject::wall_layer_height_multiplier()). Number of object
+    // layers whose walls this region's perimeters cover here: > 1 on the top layer of a wall run
+    // marked by PrintObject::apply_extruder_layer_heights(), 0 on the run layers below (they
+    // generate perimeters only to bound their fills and drop the wall extrusions), 1 otherwise.
+    unsigned short wall_combined_count() const { return m_wall_combined_count; }
+    // Height the walls are generated with at this layer: the wall run height on all its layers
+    // (the whole run's fill boundaries must line up with the walls printed at its top), else the
+    // region's combined height / layer height.
+    double  wall_combined_height() const;
+    // Layer right below the wall run for overhang / bridge detection of the run's walls.
+    const Layer* wall_combined_lower_layer() const;
+
+    // ORCA: split wall layer heights. Cadence of the COARSER wall class when the outer and
+    // inner walls print with their own heights: > 1 (in object layers) on the top layer of a
+    // coarse run, 0 on the other layers of a committed coarse run (the coarse class prints
+    // nothing there), 1 when no coarse run covers this layer (the coarse class follows the fine
+    // cadence). Which class is coarse follows from the two wall filaments' effective heights
+    // (see PrintObject::wall_split_pitches()).
+    unsigned short wall_split_count() const { return m_wall_split_count; }
+    // Extrusion height of the coarse class at a coarse-run top.
+    double  wall_split_height() const { return m_wall_split_height; }
+    // Layer right below the coarse run for overhang / bridge detection of the coarse walls.
+    const Layer* wall_split_lower_layer() const;
 private:
     void    simplify_entity_collection(ExtrusionEntityCollection* entity_collection);
     void    simplify_path(ExtrusionPath* path);
@@ -116,6 +163,16 @@ protected:
 private:
     Layer             *m_layer;
     const PrintRegion *m_region;
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see combined_layer_count() / combined_height().
+    unsigned short     m_combined_layer_count { 1 };
+    double             m_combined_height { 0. };
+    ExPolygons         m_combined_away_exposed;
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_combined_count() / wall_combined_height().
+    unsigned short     m_wall_combined_count { 1 };
+    double             m_wall_combined_height { 0. };
+    // ORCA: set by PrintObject::apply_extruder_layer_heights(), see wall_split_count() / wall_split_height().
+    unsigned short     m_wall_split_count { 1 };
+    double             m_wall_split_height { 0. };
 };
 
 class Layer

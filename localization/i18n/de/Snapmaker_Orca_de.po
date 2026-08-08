@@ -21706,3 +21706,219 @@ msgstr ""
 #~ "Zusammenführung der Äste und spart viel Material (Standard), während der "
 #~ "Hybridmodus bei großen überhängenden Flächen eine ähnliche Struktur wie "
 #~ "bei normalen Stützstrukturen erzeugt."
+msgid "Adjust wall layer height"
+msgstr "Wand-Schichthöhe anpassen"
+
+msgid "Adjusted walls"
+msgstr "Angepasste Wände"
+
+msgid "Adjustment direction"
+msgstr "Anpassungsrichtung"
+
+msgid "Consistent"
+msgstr "Konsistent"
+
+msgid "Decrease"
+msgstr "Verringern"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der unteren Oberfläche.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der inneren Wände.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der internen massiven Füllung.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der internen spärlichen Füllung.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der äußeren Wände.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Filament zum Drucken der Stützstruktur-Basis und des Rafts.\n\"Standard\" bedeutet kein spezifisches Filament für die Stützstruktur und das aktuelle Filament wird verwendet."
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Filament zum Drucken der Stützstruktur-Schnittstelle.\n\"Standard\" bedeutet kein spezifisches Filament für die Stützstruktur-Schnittstelle und das aktuelle Filament wird verwendet."
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament zum Drucken der oberen Oberfläche.\n\"Standard\" verwendet das Filament des aktiven Objekts/Teils."
+
+msgid "Fixed"
+msgstr "Fest"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Wie aggressiv Objektteile, die einem Extruder mit dickerer bevorzugter Schichthöhe zugewiesen sind, zu dicken Schichten zusammengefasst werden.\nKonsistent: Teile drucken mit höchstens zwei Schichthöhen - der Extruder-Schichthöhe, wo ganze Schichtfolgen hineinpassen, und der Objekt-Schichthöhe überall sonst. Das ergibt die gleichmäßigsten Wände.\nAdaptiv: Schichtfolgen dürfen auch bei Zwischenvielfachen der Objekt-Schichthöhe zusammengefasst werden, sodass mehr des Teils mit dickeren Schichten druckt - um den Preis von Bändern wechselnder Schichthöhen an gekrümmten Teilgrenzen.\nFest: Teile drucken immer mit der Extruder-Schichthöhe, auch wo sich die Form über die zusammengefassten Schichten ändert oder überhängt; gekrümmte Grenzen werden zu Stufen, und Details feiner als die dicken Schichten gehen verloren. Nur Geometrie, die für eine ganze dicke Schicht zu kurz ist (Teiloberseiten und die erste Schicht), druckt dünner."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Wie weit die Kontur eines Objektteils, das einem Extruder mit dickerer bevorzugter Schichthöhe zugewiesen ist, über die Schichten einer dicken Folge seitlich wandern darf und trotzdem zusammengefasst wird, als Prozentsatz des Düsendurchmessers dieses Extruders. Höhere Werte fassen mehr der gekrümmten Teilgrenzen zu dicken Schichten zusammen - um den Preis raueren Grenzwänden: Abweichungen bis zu diesem Bruchteil des Düsendurchmessers werden von den dicken Extrusionen geschluckt."
+
+msgid "Increase"
+msgstr "Erhöhen"
+
+msgid "Inner walls"
+msgstr "Innere Wände"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Schichthöhe, mit der dieser Extruder drucken soll; für Drucker, deren Extruder unterschiedliche Düsengrößen haben. Sie muss ein ganzzahliges Vielfaches der Objekt-Schichthöhe sein. Ein Teil, dessen Merkmale alle diesem Extruder folgen, druckt nur auf jeder N-ten Schicht mit entsprechend dickeren Extrusionen, wo seine Geometrie es erlaubt; sonst fällt es auf die Objekt-Schichthöhe zurück. Kann der Rest des Teils nicht folgen, kombinieren sich diesem Extruder zugewiesene Wände trotzdem eigenständig auf diese Höhe, volldichte Deckflächen absorbieren die massiven Schichten darunter, und Füllung (auch 100% dichte) kombiniert sich unabhängig auf diese Höhe. 0 bedeutet, die Objekt-Schichthöhe zu verwenden."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Schichthöhe, mit der dieser Extruder drucken soll: ein ganzzahliges Vielfaches der Objekt-Schichthöhe innerhalb der Schichthöhenbegrenzungen dieses Extruders. Standard behält die Objekt-Schichthöhe bei."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Kein Extruder hat eine Düse, die dem Stützen-Düsendurchmesser entspricht."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Kein geladenes Filament entspricht dem Material für Stütz-/Raft-Basis (und dem Stützen-Düsendurchmesser)."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Kein geladenes Filament entspricht dem Material für Stütz-/Raft-Schnittstellen (und dem Stützen-Düsendurchmesser)."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Düse %1%: Schichthöhenbegrenzungen auf %2%-%3% mm gesetzt, aus \"%4%\"."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "Auf Druckern, deren Extruder unterschiedliche Düsendurchmesser haben, werden nur Filamente dieses Düsendurchmessers zum Drucken von Stützen, Raft und Stütz-Schnittstellen verwendet. Das hält Filamente anderer Düsengrößen - mit ihren anderen Linienbreiten und Schichthöhenbegrenzungen - aus den Stützen heraus. Auf einen nicht standardmäßigen Wert gesetzte Stützfilamente müssen diesem Durchmesser entsprechen. Der Wert 0 erlaubt jedem Filament, Stützen zu drucken."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Außen- und Innenwände drucken automatisch mit ihren eigenen bevorzugten Schichthöhen, wenn eine Höhe ein ganzzahliges Vielfaches der anderen ist. Wenn die Höhen nicht glatt teilbar sind, passt diese Option die Wand-Schichthöhe eines der beiden Wandfilamente (unten gewählt) auf das nächste Vielfache oder den nächsten Teiler der anderen an, damit sich die Wände weiterhin aufteilen können. Die angepasste Höhe gilt nur für die Wände dieses Filaments; andere Merkmale behalten die bevorzugte Schichthöhe. Anpassungen verlassen nie die Schichthöhenbegrenzungen des Filaments: Existiert in der gewählten Richtung keine erlaubte Höhe, drucken die Wände wie üblich gemeinsam mit der niedrigeren Höhe."
+
+msgid "Outer walls"
+msgstr "Äußere Wände"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Schichthöhen je Extruder werden im Vasenmodus nicht unterstützt."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Schichthöhen je Extruder werden zusammen mit Schnittstellenhüllen nicht unterstützt."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Schichthöhen je Extruder werden zusammen mit variabler Schichthöhe nicht unterstützt."
+
+msgid "Preferred layer height"
+msgstr "Bevorzugte Schichthöhe"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Stützen und Raft-Basis nur mit Filamenten dieses Materialtyps drucken; Extruder mit anderen Typen werden dafür nicht verwendet. Wirkt zusammen mit der Stützen-Düsendurchmesser-Beschränkung. Leer lassen für keine Beschränkung; ein ausdrücklich gewähltes Stütz-/Raft-Basisfilament hat weiterhin Vorrang."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Stütz- und Raft-Schnittstellen nur mit Filamenten dieses Materialtyps drucken; Extruder mit anderen Typen werden dafür nicht verwendet. Wirkt zusammen mit der Stützen-Düsendurchmesser-Beschränkung. Leer lassen für keine Beschränkung; ein ausdrücklich gewähltes Stütz-/Raft-Schnittstellenfilament hat weiterhin Vorrang."
+
+msgid "Raft and support base"
+msgstr "Raft und Stützbasis"
+
+msgid "Show legacy filament selection"
+msgstr "Alte Filamentauswahl anzeigen"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Einige Objektteile bevorzugen %1% mm Schichten, aber die Düse von Filament %2%, das andere Merkmale des Teils druckt, ist zu klein, um diese Höhe zu extrudieren. Diese Teile drucken stattdessen mit der Objekt-Schichthöhe."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Einige Objektteile bevorzugen %1% mm Schichten, aber die Düse von Wandfilament %2% ist zu klein, um diese Höhe zu extrudieren. Außen- und Innenwände drucken zusammen, daher behalten diese Wände die Objekt-Schichthöhe. Weisen Sie beide Wandmerkmale Filamenten mit ausreichend großen Düsen zu."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Einige Objektteile drucken %1% mm Schichten mit Filament %2%, dessen maximale Schichthöhe %3% mm beträgt. Weisen Sie die Merkmale des Teils Filamenten der gröberen Düse zu, erhöhen Sie die maximale Schichthöhe des Filaments, oder akzeptieren Sie das Drucken darüber."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Einige Objektteile drucken %1% mm Schichten mit Filament %2%, dessen minimale Schichthöhe %3% mm beträgt. Erhöhen Sie die Objekt-Schichthöhe, verwenden Sie für diese Merkmale ein Filament mit feinerer Düse, oder akzeptieren Sie das Drucken unter dem Minimum des Extruders."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Einige Objektteile verwenden Filamente, deren bevorzugte Schichthöhen nicht alle eingehalten werden können: Ein Teil druckt seine Merkmale mit einem Schichtraster (bestimmt durch seine Wandfilamente oder, wenn kein Wandfilament eine Präferenz hat, durch die Einigung der übrigen Merkmale); die Wände, die Deckflächen und die Füllung können sich jeweils eigenständig auf ihre eigene Höhe kombinieren, wenn der Rest des Teils ihnen nicht folgen kann, aber die übrigen Merkmale drucken mit dem Raster des Teils."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Stützen bei gemischten Düsengrößen"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "Stützen könnten mit Extrudern unterschiedlicher Düsendurchmesser drucken. Setzen Sie den Stützen-Düsendurchmesser (oder explizite Stütz- und Schnittstellenfilamente), um die Stützen auf einer Düsengröße zu halten."
+
+msgid "Support nozzle diameter"
+msgstr "Stützen-Düsendurchmesser"
+
+msgid "Support nozzle size"
+msgstr "Stützen-Düsengröße"
+
+msgid "Support/raft base material"
+msgstr "Material für Stütz-/Raft-Basis"
+
+msgid "Support/raft interface material"
+msgstr "Material für Stütz-/Raft-Schnittstellen"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "Die Füllungs-Linienbreite von %1% mm ist zu klein für auf %2% mm Höhe kombinierte Füllung. Erhöhen Sie die Linienbreite oder senken Sie die bevorzugte Schichthöhe des Füllfilaments."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "Die Linienbreite von %1% mm ist zu klein für die %2% mm Schichthöhe ihres Extruders. Erhöhen Sie die Linienbreite oder senken Sie die Extruder-Schichthöhe."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "Die Schichthöhe von Extruder %1% (%2% mm) darf seinen Düsendurchmesser nicht überschreiten."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "Die Schichthöhe von Extruder %1% (%2% mm) wird für einige Objektteile ignoriert: Sie muss ein ganzzahliges Vielfaches der Objekt-Schichthöhe (%3% mm) sein, nicht darunter liegen und darf den Düsendurchmesser des Extruders nicht überschreiten."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "Die Schichthöhe von Extruder %1% (%2% mm) ist kleiner als die Objekt-Schichthöhe (%3% mm). Senken Sie die Objekt-Schichthöhe auf die feinste Extruder-Schichthöhe."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "Die Schichthöhe von Extruder %1% (%2% mm) muss ein ganzzahliges Vielfaches der Objekt-Schichthöhe (%3% mm) sein."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "Die niedrigste druckbare Schichthöhe des Extruders. Begrenzt die minimale Schichthöhe bei aktivierter adaptiver Schichthöhe. Teile, die mit einer dickeren bevorzugten Extruder-Schichthöhe drucken, fallen ebenfalls nie unter diese Höhe zurück (außer der ersten Schicht)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "Die bevorzugte Schichthöhe von Düse %1% passt nicht mehr durch sie hindurch und wurde auf Standard zurückgesetzt."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Das Stütz-/Raft-Basisfilament ist nicht vom Material der Stütz-/Raft-Basis."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Das Stütz-/Raft-Basisfilament druckt mit einer Düse, die dem Stützen-Düsendurchmesser nicht entspricht."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Das Stütz-/Raft-Schnittstellenfilament ist nicht vom Material der Stütz-/Raft-Schnittstellen."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Das Stütz-/Raft-Schnittstellenfilament druckt mit einer Düse, die dem Stützen-Düsendurchmesser nicht entspricht."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "Die Wandfilamente einiger Objektteile bevorzugen unterschiedliche Schichthöhen. Außen- und Innenwände drucken zusammen, daher behalten diese Wände die Objekt-Schichthöhe. Weisen Sie beide Wandmerkmale Filamenten zu, die dieselbe Höhe bevorzugen, um dickere Wände zu drucken."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "Die Wandfilamente einiger Objektteile bevorzugen unterschiedliche Schichthöhen. Außen- und Innenwände drucken zusammen, daher drucken diese Wände mit der niedrigeren Höhe (%1% mm)."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "Die Wand-Schichthöhe von Filament %1% wurde von den bevorzugten %2% mm auf %3% mm angepasst, damit Außen- und Innenwände mit kompatiblen Schichthöhen drucken können (\"Wand-Schichthöhe anpassen\"). Nur die Wände dieses Filaments drucken die angepasste Höhe; seine anderen Merkmale behalten die bevorzugte."
+
+msgid "Thick layer regions"
+msgstr "Bereiche dicker Schichten"
+
+msgid "Thick layer tolerance"
+msgstr "Toleranz dicker Schichten"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "Dieser Drucker hat kein Profil für eine %1% mm Düse. Bitte prüfen Sie die Schichthöhenbegrenzungen von Düse %2% in den Druckereinstellungen."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Dieser Drucker verwendet unterschiedliche Düsengrößen. Wählen Sie die Düsengröße, die die Stützen druckt, und die Filamenttypen für das Raft und die Stütz-Schnittstellen."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Ob die Wand-Schichthöhe des angepassten Wandfilaments verringert oder erhöht wird, um eine mit dem anderen Wandfilament kompatible Höhe zu erreichen. Höhen außerhalb der Schichthöhenbegrenzungen des angepassten Filaments werden nie verwendet: Existiert in dieser Richtung keine erlaubte Höhe, drucken die Wände wie üblich gemeinsam mit der niedrigeren Höhe."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Welches der beiden Wandfilamente seine Wand-Schichthöhe angepasst bekommt, wenn die bevorzugten Schichthöhen nicht glatt teilbar sind."

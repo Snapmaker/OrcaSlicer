@@ -21110,3 +21110,219 @@ msgstr ""
 #~ "Lütfen geçerli değerleri girin:\n"
 #~ "başlangıç > 10 adım >= 0\n"
 #~ "bitiş > başlangıç + adım)"
+msgid "Adjust wall layer height"
+msgstr "Duvar katman yüksekliğini ayarla"
+
+msgid "Adjusted walls"
+msgstr "Ayarlanan duvarlar"
+
+msgid "Adjustment direction"
+msgstr "Ayarlama yönü"
+
+msgid "Consistent"
+msgstr "Tutarlı"
+
+msgid "Decrease"
+msgstr "Azalt"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Alt yüzeyi basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "İç duvarları basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "İç dolu dolguyu basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "İç seyrek dolguyu basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Dış duvarları basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Destek tabanını ve salı yazdırmak için filament. \"Varsayılan\", destek için belirli bir filamentin olmadığı ve mevcut filamentin kullanıldığı anlamına gelir."
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Filament baskı desteği arayüzü. \"Varsayılan\", destek arayüzü için özel bir filamentin olmadığı ve mevcut filamentin kullanıldığı anlamına gelir."
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Üst yüzeyi basmak için filament.\n\"Varsayılan\", nesnenin/parçanın etkin filamentini kullanır."
+
+msgid "Fixed"
+msgstr "Sabit"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Daha kalın tercih edilen katman yüksekliğine sahip ekstrudere atanmış parçaların kalın katmanlara ne kadar agresif birleştirileceğini belirler.\nTutarlı: parçalar en fazla iki katman yüksekliğiyle basılır - tam katman dizilerinin sığdığı yerlerde ekstruder katman yüksekliği, diğer her yerde nesne katman yüksekliği. En düzgün duvarları verir.\nUyarlanabilir: diziler nesne katman yüksekliğinin ara katlarında da birleştirilebilir; parçanın daha büyük kısmı kalın katmanlarla basılır ancak kavisli parça sınırlarında değişen katman yüksekliği bantları oluşur.\nSabit: parçalar, şekil birleştirilen katmanlar boyunca değişse ya da sarksa bile her zaman ekstruder katman yüksekliğiyle basılır; kavisli sınırlar basamaklara dönüşür ve kalın katmanlardan ince ayrıntılar kaybolur. Yalnızca tam bir kalın katmana yetmeyen geometri (parça tepeleri ve ilk katman) daha ince basılır."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Daha kalın tercih edilen katman yüksekliğine sahip ekstrudere atanmış bir parçanın dış hattının, bir kalın dizinin katmanları boyunca yana ne kadar kayıp yine de birleştirilebileceğini, o ekstruderin nozul çapının yüzdesi olarak belirler. Daha yüksek değerler kavisli parça sınırlarının daha fazlasını kalın katmanlara birleştirir; bedeli daha pürüzlü sınır duvarlarıdır: nozul çapının bu oranına kadar sapmalar kalın ekstrüzyonlar tarafından yutulur."
+
+msgid "Increase"
+msgstr "Artır"
+
+msgid "Inner walls"
+msgstr "İç duvarlar"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Bu ekstruderin basması gereken katman yüksekliği; ekstruderlerinin nozul boyutları farklı olan yazıcılar içindir. Nesne katman yüksekliğinin tam katı olmalıdır. Tüm özellikleri bu ekstruderi izleyen bir parça, geometrisi izin verdiği yerlerde yalnızca her N. katmanda buna uygun daha kalın ekstrüzyonlarla basılır; diğer yerlerde nesne katman yüksekliğine döner. Parçanın kalanı izleyemediğinde, bu ekstrudere atanmış duvarlar yine de kendi başlarına bu yüksekliğe birleşir, tam yoğunluklu üst yüzeyler altlarındaki dolu katmanları emer ve seyrek ya da %100 yoğun dolgu bağımsız olarak bu yüksekliğe birleşir. 0, nesne katman yüksekliğini kullanmak demektir."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Bu ekstruderin basması gereken katman yüksekliği: bu ekstruderin katman yüksekliği sınırları içinde, nesne katman yüksekliğinin tam katı. Varsayılan, nesne katman yüksekliğini korur."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Destek nozul çapıyla eşleşen nozula sahip ekstruder yok."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Yüklü filamentlerden hiçbiri destek/raft taban malzemesiyle (ve destek nozul çapıyla) eşleşmiyor."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Yüklü filamentlerden hiçbiri destek/raft arayüz malzemesiyle (ve destek nozul çapıyla) eşleşmiyor."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Nozul %1%: katman yüksekliği sınırları \"%4%\" üzerinden %2%-%3% mm olarak ayarlandı."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "Ekstruderlerinin nozul çapları farklı olan yazıcılarda destek, raft ve destek arayüzünü basmak için yalnızca bu nozul çapındaki filamentler kullanılır. Bu, farklı hat genişlikleri ve katman yüksekliği sınırlarına sahip diğer nozul boyutlarındaki filamentleri desteğin dışında tutar. Varsayılan olmayan bir değere ayarlanmış destek filamentleri bu çapla eşleşmelidir. 0 değeri her filamentin destek basmasına izin verir."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Bir yükseklik diğerinin tam katı olduğunda dış ve iç duvarlar otomatik olarak kendi tercih edilen katman yükseklikleriyle basılır. Yükseklikler tam bölünmediğinde bu seçenek, iki duvar filamentinden birinin (aşağıda seçilen) duvar katman yüksekliğini diğerinin en yakın katına veya bölenine ayarlar; böylece duvarlar yine ayrılabilir. Ayarlanan yükseklik yalnızca o filamentin duvarlarına uygulanır; diğer özellikler tercih edilen katman yüksekliğini korur. Ayarlamalar filamentin katman yüksekliği sınırlarının dışına asla çıkmaz: seçilen yönde izin verilen bir yükseklik yoksa duvarlar her zamanki gibi daha düşük yükseklikte birlikte basılır."
+
+msgid "Outer walls"
+msgstr "Dış duvarlar"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Ekstruder başına katman yükseklikleri spiral vazo modunda desteklenmez."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Ekstruder başına katman yükseklikleri arayüz kabuklarıyla birlikte desteklenmez."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Ekstruder başına katman yükseklikleri değişken katman yüksekliğiyle birlikte desteklenmez."
+
+msgid "Preferred layer height"
+msgstr "Tercih edilen katman yüksekliği"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Destek ve raft tabanını yalnızca bu malzeme türündeki filamentlerle basar; başka türler yüklü ekstruderler bunun için kullanılmaz. Destek nozul çapı kısıtlamasıyla birlikte çalışır. Kısıtlama olmaması için boş bırakın; açıkça seçilmiş bir destek/raft taban filamenti yine önceliklidir."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Destek ve raft arayüzünü yalnızca bu malzeme türündeki filamentlerle basar; başka türler yüklü ekstruderler bunun için kullanılmaz. Destek nozul çapı kısıtlamasıyla birlikte çalışır. Kısıtlama olmaması için boş bırakın; açıkça seçilmiş bir destek/raft arayüz filamenti yine önceliklidir."
+
+msgid "Raft and support base"
+msgstr "Raft ve destek tabanı"
+
+msgid "Show legacy filament selection"
+msgstr "Eski filament seçimini göster"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Bazı parçalar %1% mm katmanları tercih ediyor, ancak parçanın diğer özelliklerini basan %2% filamentinin nozulu bu yüksekliği basamayacak kadar küçük. Bu parçalar bunun yerine nesne katman yüksekliğiyle basılır."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Bazı parçalar %1% mm katmanları tercih ediyor, ancak duvar filamenti %2%'nin nozulu bu yüksekliği basamayacak kadar küçük. Dış ve iç duvarlar birlikte basıldığından bu duvarlar nesne katman yüksekliğini korur. Her iki duvar özelliğini de yeterince büyük nozullu filamentlere atayın."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Bazı parçalar, maksimum katman yüksekliği %3% mm olan %2% filamentiyle %1% mm katmanlar basıyor. Parça özelliklerini daha kalın nozulun filamentlerine atayın, filamentin maksimum katman yüksekliğini artırın ya da üzerinde basmayı kabul edin."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Bazı parçalar, minimum katman yüksekliği %3% mm olan %2% filamentiyle %1% mm katmanlar basıyor. Nesne katman yüksekliğini artırın, bu özellikler için daha ince nozullu bir filament kullanın ya da ekstruder minimumunun altında basmayı kabul edin."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Bazı parçalar, tercih edilen katman yükseklikleri tümüyle karşılanamayan filamentler kullanıyor: bir parça özelliklerini tek bir katman adımıyla basar (duvar filamentleri belirler; hiçbir duvar filamentinin tercihi yoksa diğer özelliklerin uzlaşması belirler); parçanın kalanı izleyemediğinde duvarlar, üst yüzeyler ve dolgu her biri kendi yüksekliğine birleşebilir, ancak kalan özellikler parçanın adımıyla basılır."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Karışık nozul boyutları için destek"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "Destek, farklı nozul çaplarına sahip ekstruderlerle basılabilir. Desteği tek nozul boyutunda tutmak için destek nozul çapını (ya da açık destek ve arayüz filamentlerini) ayarlayın."
+
+msgid "Support nozzle diameter"
+msgstr "Destek nozul çapı"
+
+msgid "Support nozzle size"
+msgstr "Destek nozul boyutu"
+
+msgid "Support/raft base material"
+msgstr "Destek/raft taban malzemesi"
+
+msgid "Support/raft interface material"
+msgstr "Destek/raft arayüz malzemesi"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "%1% mm dolgu hat genişliği, %2% mm yüksekliğe birleştirilmiş dolgu için çok küçük. Hat genişliğini artırın ya da dolgu filamentinin tercih edilen katman yüksekliğini düşürün."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "%1% mm hat genişliği, ekstruderinin %2% mm katman yüksekliği için çok küçük. Hat genişliğini artırın ya da ekstruder katman yüksekliğini düşürün."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "Ekstruder %1%'in katman yüksekliği (%2% mm) nozul çapını aşamaz."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "Ekstruder %1%'in katman yüksekliği (%2% mm) bazı parçalar için yok sayılıyor: nesne katman yüksekliğinin (%3% mm) tam katı olmalı, onun altında olmamalı ve ekstruderin nozul çapını aşmamalıdır."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "Ekstruder %1%'in katman yüksekliği (%2% mm) nesne katman yüksekliğinden (%3% mm) küçük. Nesne katman yüksekliğini en ince ekstruder katman yüksekliğine düşürün."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "Ekstruder %1%'in katman yüksekliği (%2% mm) nesne katman yüksekliğinin (%3% mm) tam katı olmalıdır."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "Ekstruderin basabileceği en düşük katman yüksekliği. Uyarlanabilir katman yüksekliği etkinken minimum katman yüksekliğini sınırlamak için kullanılır. Daha kalın tercih edilen ekstruder katman yüksekliğiyle basılan parçalar da asla bu yüksekliğin altına düşmez (ilk katman hariç)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "Nozul %1%'in tercih edilen katman yüksekliği artık içinden geçemiyor ve Varsayılan'a sıfırlandı."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Destek/raft taban filamenti, destek/raft taban malzemesinden değil."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Destek/raft taban filamenti, destek nozul çapıyla eşleşmeyen bir nozulla basılıyor."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Destek/raft arayüz filamenti, destek/raft arayüz malzemesinden değil."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Destek/raft arayüz filamenti, destek nozul çapıyla eşleşmeyen bir nozulla basılıyor."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "Bazı parçaların duvar filamentleri farklı katman yükseklikleri tercih ediyor. Dış ve iç duvarlar birlikte basıldığından bu duvarlar nesne katman yüksekliğini korur. Daha kalın duvarlar basmak için her iki duvar özelliğini de aynı yüksekliği tercih eden filamentlere atayın."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "Bazı parçaların duvar filamentleri farklı katman yükseklikleri tercih ediyor. Dış ve iç duvarlar birlikte basıldığından bu duvarlar daha düşük yükseklikle (%1% mm) basılır."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "Filament %1%'in duvar katman yüksekliği, dış ve iç duvarların uyumlu katman yüksekliklerinde basılabilmesi için tercih edilen %2% mm'den %3% mm'ye ayarlandı (\"Duvar katman yüksekliğini ayarla\"). Ayarlanan yükseklikle yalnızca bu filamentin duvarları basılır; diğer özellikleri tercih edileni korur."
+
+msgid "Thick layer regions"
+msgstr "Kalın katman bölgeleri"
+
+msgid "Thick layer tolerance"
+msgstr "Kalın katman toleransı"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "Bu yazıcının %1% mm nozul için profili yok. Lütfen yazıcı ayarlarında nozul %2%'nin katman yüksekliği sınırlarını gözden geçirin."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Bu yazıcı farklı nozul boyutları kullanıyor. Desteği basacak nozul boyutunu ve raft ile destek arayüzü için kullanılacak filament türlerini seçin."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Ayarlanan duvar filamentinin duvar katman yüksekliğinin, diğer duvar filamentiyle uyumlu bir yüksekliğe ulaşmak için azaltılacağını mı yoksa artırılacağını mı belirler. Ayarlanan filamentin katman yüksekliği sınırlarının dışındaki yükseklikler asla kullanılmaz: bu yönde izin verilen bir yükseklik yoksa duvarlar her zamanki gibi daha düşük yükseklikte birlikte basılır."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Tercih edilen katman yükseklikleri tam bölünmediğinde iki duvar filamentinden hangisinin duvar katman yüksekliğinin ayarlanacağını belirler."

@@ -18260,3 +18260,219 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Orientera modellen"
+msgid "Adjust wall layer height"
+msgstr "Justera väggarnas lagerhöjd"
+
+msgid "Adjusted walls"
+msgstr "Justerade väggar"
+
+msgid "Adjustment direction"
+msgstr "Justeringsriktning"
+
+msgid "Consistent"
+msgstr "Konsekvent"
+
+msgid "Decrease"
+msgstr "Minska"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut bottenytan.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut inre väggar.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut inre solid ifyllnad.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut inre sparsam ifyllnad.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut yttre väggar.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Filament för att skriva ut support och rafts. ”Standard” betyder ingen specifik filament för support, och nuvarande filament används"
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Filament för att skriva ut supportens anläggningsyta. ” Standard” betyder ingen specifik filament för supportens anläggningsyta, och nuvarande filament används"
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament för att skriva ut toppytan.\n\"Standard\" använder objektets/delens aktiva filament."
+
+msgid "Fixed"
+msgstr "Fast"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Hur aggressivt delar som tilldelats en extruder med tjockare föredragen lagerhöjd slås ihop till tjocka lager.\nKonsekvent: delar skrivs ut med högst två lagerhöjder - extruderns lagerhöjd där hela lagerserier får plats och objektets lagerhöjd överallt annars. Det ger de jämnaste väggarna.\nAdaptiv: serier kan också slås ihop vid mellanliggande multiplar av objektets lagerhöjd, så mer av delen skrivs ut med tjockare lager, till priset av band med varierande lagerhöjd på böjda kanter.\nFast: delar skrivs alltid ut med extruderns lagerhöjd, även där formen ändras tvärs de ihopslagna lagren eller hänger över; böjda kanter blir trappsteg och detaljer finare än de tjocka lagren går förlorade. Bara geometri som är för kort för ett helt tjockt lager (delarnas toppar och första lagret) skrivs ut tunnare."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Hur långt konturen av en del som tilldelats en extruder med tjockare föredragen lagerhöjd får driva i sidled över lagren i en tjock serie och ändå slås ihop, som procent av den extruderns nozzeldiameter. Högre värden slår ihop mer av böjda kanter till tjocka lager, till priset av grövre kantväggar: avvikelser upp till denna andel av nozzeldiametern sväljs av de tjocka strängarna."
+
+msgid "Increase"
+msgstr "Öka"
+
+msgid "Inner walls"
+msgstr "Inre väggar"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Lagerhöjd som denna extruder ska skriva ut med, för skrivare vars extrudrar har olika nozzelstorlekar. Den måste vara en heltalsmultipel av objektets lagerhöjd. En del vars alla delar följer denna extruder skrivs bara ut på vart N:e lager med motsvarande tjockare strängar, där geometrin tillåter det; annars faller den tillbaka till objektets lagerhöjd. När resten av delen inte kan följa med slås väggar tilldelade denna extruder ändå ihop på egen hand till denna höjd, helt täta toppytor absorberar de solida lagren under sig, och sparsam eller 100% tät ifyllnad slås ihop oberoende till denna höjd. 0 betyder att objektets lagerhöjd används."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Lagerhöjd som denna extruder ska skriva ut med: en heltalsmultipel av objektets lagerhöjd inom extruderns lagerhöjdsbegränsningar. Standard behåller objektets lagerhöjd."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Ingen extruder har en nozzel som matchar stödens nozzeldiameter."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Inget laddat filament matchar materialet för stöd-/raftbasen (och stödens nozzeldiameter)."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Inget laddat filament matchar materialet för stöd-/raftgränssnittet (och stödens nozzeldiameter)."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Nozzel %1%: lagerhöjdsbegränsningar satta till %2%-%3% mm, från \"%4%\"."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "På skrivare vars extrudrar har olika nozzeldiametrar används bara filament med denna nozzeldiameter för att skriva ut stöd, raft och stödgränssnitt. Det håller filament med andra nozzelstorlekar - med sina andra linjebredder och lagerhöjdsbegränsningar - borta från stöden. Stödfilament som satts till ett icke-standardvärde måste matcha denna diameter. Värdet 0 låter vilket filament som helst skriva ut stöd."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Yttre och inre väggar skrivs automatiskt ut med sina egna föredragna lagerhöjder när den ena höjden är en heltalsmultipel av den andra. När höjderna inte delas jämnt justerar detta alternativ vägglagerhöjden för ett av de två väggfilamenten (valt nedan) till närmaste multipel eller delare av den andra, så att väggarna ändå kan delas upp. Den justerade höjden gäller bara det filamentets väggar; övriga delar behåller den föredragna lagerhöjden. Justeringar lämnar aldrig filamentets lagerhöjdsbegränsningar: finns ingen tillåten höjd i den valda riktningen skrivs väggarna ut tillsammans med den lägre höjden som vanligt."
+
+msgid "Outer walls"
+msgstr "Yttre väggar"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Lagerhöjder per extruder stöds inte i spiralvasläge."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Lagerhöjder per extruder stöds inte tillsammans med gränssnittsskal."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Lagerhöjder per extruder stöds inte tillsammans med variabel lagerhöjd."
+
+msgid "Preferred layer height"
+msgstr "Föredragen lagerhöjd"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Skriv bara ut stöd och raftbas med filament av denna materialtyp; extrudrar laddade med andra typer används inte till det. Verkar tillsammans med begränsningen av stödens nozzeldiameter. Lämna tomt för ingen begränsning; ett uttryckligen valt stöd-/raftbasfilament har fortfarande företräde."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Skriv bara ut stöd- och raftgränssnittet med filament av denna materialtyp; extrudrar laddade med andra typer används inte till det. Verkar tillsammans med begränsningen av stödens nozzeldiameter. Lämna tomt för ingen begränsning; ett uttryckligen valt stöd-/raftgränssnittsfilament har fortfarande företräde."
+
+msgid "Raft and support base"
+msgstr "Raft och stödbas"
+
+msgid "Show legacy filament selection"
+msgstr "Visa gammalt filamentval"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Vissa delar föredrar %1% mm lager, men nozzeln på filament %2% som skriver ut andra delar av delen är för liten för att extrudera den höjden. Dessa delar skrivs istället ut med objektets lagerhöjd."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Vissa delar föredrar %1% mm lager, men nozzeln på väggfilament %2% är för liten för att extrudera den höjden. Yttre och inre väggar skrivs ut tillsammans, så dessa väggar behåller objektets lagerhöjd. Tilldela båda väggtyperna filament med tillräckligt stora nozzlar."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Vissa delar skriver ut %1% mm lager med filament %2%, vars maximala lagerhöjd är %3% mm. Tilldela delens delar filament med den grövre nozzeln, höj filamentets maximala lagerhöjd eller acceptera att skriva ut över den."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Vissa delar skriver ut %1% mm lager med filament %2%, vars minsta lagerhöjd är %3% mm. Höj objektets lagerhöjd, använd ett filament med finare nozzel för dessa delar eller acceptera att skriva ut under extruderns minimum."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Vissa delar använder filament vars föredragna lagerhöjder inte alla kan uppfyllas: en del skriver ut sina delar med ett enda lagersteg (satt av dess väggfilament, eller av de andra delarnas överenskommelse när inget väggfilament har någon preferens); väggarna, toppytorna och ifyllnaden kan var för sig slås ihop till sin egen höjd när resten av delen inte kan följa dem, men de återstående delarna skrivs ut med delens steg."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Stöd för blandade nozzelstorlekar"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "Stöd kan skrivas ut med extrudrar med olika nozzeldiametrar. Ställ in stödens nozzeldiameter (eller uttryckliga stöd- och gränssnittsfilament) för att hålla stöden på en nozzelstorlek."
+
+msgid "Support nozzle diameter"
+msgstr "Stödens nozzeldiameter"
+
+msgid "Support nozzle size"
+msgstr "Stödens nozzelstorlek"
+
+msgid "Support/raft base material"
+msgstr "Material för stöd-/raftbas"
+
+msgid "Support/raft interface material"
+msgstr "Material för stöd-/raftgränssnitt"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "Ifyllnadens linjebredd på %1% mm är för liten för ifyllnad ihopslagen till %2% mm höga lager. Öka linjebredden eller sänk ifyllnadsfilamentets föredragna lagerhöjd."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "Linjebredden på %1% mm är för liten för extruderns lagerhöjd på %2% mm. Öka linjebredden eller sänk extruderns lagerhöjd."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "Lagerhöjden för extruder %1% (%2% mm) kan inte överstiga dess nozzeldiameter."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "Lagerhöjden för extruder %1% (%2% mm) ignoreras för vissa delar: den måste vara en heltalsmultipel av objektets lagerhöjd (%3% mm), inte under den, och får inte överstiga extruderns nozzeldiameter."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "Lagerhöjden för extruder %1% (%2% mm) är mindre än objektets lagerhöjd (%3% mm). Sänk objektets lagerhöjd till den finaste extruderlagerhöjden."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "Lagerhöjden för extruder %1% (%2% mm) måste vara en heltalsmultipel av objektets lagerhöjd (%3% mm)."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "Extruderns lägsta utskrivbara lagerhöjd. Begränsar minsta lagerhöjd när adaptiv lagerhöjd är aktiverad. Delar som skrivs ut med en tjockare föredragen extruderlagerhöjd faller heller aldrig under denna höjd (utom första lagret)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "Den föredragna lagerhöjden för nozzel %1% går inte längre igenom den och har återställts till Standard."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Stöd-/raftbasfilamentet är inte av stöd-/raftbasmaterialet."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Stöd-/raftbasfilamentet skrivs ut med en nozzel som inte matchar stödens nozzeldiameter."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Stöd-/raftgränssnittsfilamentet är inte av stöd-/raftgränssnittsmaterialet."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Stöd-/raftgränssnittsfilamentet skrivs ut med en nozzel som inte matchar stödens nozzeldiameter."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "Väggfilamenten för vissa delar föredrar olika lagerhöjder. Yttre och inre väggar skrivs ut tillsammans, så dessa väggar behåller objektets lagerhöjd. Tilldela båda väggtyperna filament som föredrar samma höjd för att skriva ut tjockare väggar."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "Väggfilamenten för vissa delar föredrar olika lagerhöjder. Yttre och inre väggar skrivs ut tillsammans, så dessa väggar skrivs ut med den lägre höjden (%1% mm)."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "Vägglagerhöjden för filament %1% justerades från föredragna %2% mm till %3% mm så att yttre och inre väggar kan skrivas ut med kompatibla lagerhöjder (\"Justera väggarnas lagerhöjd\"). Bara detta filaments väggar skrivs ut med den justerade höjden; dess övriga delar behåller den föredragna."
+
+msgid "Thick layer regions"
+msgstr "Områden med tjocka lager"
+
+msgid "Thick layer tolerance"
+msgstr "Tolerans för tjocka lager"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "Den här skrivaren har ingen profil för en %1% mm nozzel. Kontrollera lagerhöjdsbegränsningarna för nozzel %2% i skrivarinställningarna."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Den här skrivaren använder olika nozzelstorlekar. Välj nozzelstorleken som skriver ut stöden och filamenttyperna som används för raften och stödgränssnittet."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Om det justerade väggfilamentets vägglagerhöjd minskas eller ökas för att nå en höjd som är kompatibel med det andra väggfilamentet. Höjder utanför det justerade filamentets lagerhöjdsbegränsningar används aldrig: finns ingen tillåten höjd i denna riktning skrivs väggarna ut tillsammans med den lägre höjden som vanligt."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Vilket av de två väggfilamenten som får sin vägglagerhöjd justerad när de föredragna lagerhöjderna inte delas jämnt."

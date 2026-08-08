@@ -87,21 +87,58 @@ void append_unique_preserve_order(std::vector<unsigned int> &dst, unsigned int v
         dst.emplace_back(value);
 }
 
-bool internal_solid_infill_uses_sparse_filament(const PrintRegion &region, ExtrusionRole role)
-{
-    return role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON;
-}
-
 unsigned int sparse_infill_filament_id_1based(const PrintRegion &region)
 {
-    return region.config().sparse_infill_filament.value;
+    return region.config().sparse_infill_filament_id.value;
 }
 
+} // anonymous namespace
+
+bool perimeter_entity_uses_outer_wall_filament(const ExtrusionEntity &entity)
+{
+    // Chaining may put an overhang path first and fully overhanging loops have no plain
+    // perimeter path: classify by scanning every path (must match the mixed-perimeter split
+    // in GCode::process_layer()).
+    bool has_external = false, has_internal = false;
+    auto classify = [&](const ExtrusionPaths &paths) {
+        for (const ExtrusionPath &path : paths) {
+            if (path.role() == erExternalPerimeter)
+                has_external = true;
+            else if (path.role() == erPerimeter)
+                has_internal = true;
+        }
+    };
+    if (const auto *loop = dynamic_cast<const ExtrusionLoop *>(&entity))
+        classify(loop->paths);
+    else if (const auto *multi_path = dynamic_cast<const ExtrusionMultiPath *>(&entity))
+        classify(multi_path->paths);
+    else {
+        const ExtrusionRole role = entity.role();
+        has_external = role == erExternalPerimeter;
+        has_internal = role == erPerimeter;
+    }
+    return has_external || ! has_internal;
+}
+
+void classify_wall_filaments(const ExtrusionEntityCollection &collection, bool &any_outer, bool &any_inner)
+{
+    any_outer = any_inner = false;
+    for (const ExtrusionEntity *entity : collection.entities)
+        (perimeter_entity_uses_outer_wall_filament(*entity) ? any_outer : any_inner) = true;
+}
+
+namespace {
+
+// The internal solid filament owns internal solid infill at every density - including the solid
+// interior at 100% sparse density (matches mainline Orca and PrintRegion::extruder(); this fork
+// used to hand the 100% interior to the sparse filament, hiding the internal solid selector).
 unsigned int infill_filament_id_1based(const LayerTools &layer_tools, const PrintRegion &region, ExtrusionRole role)
 {
-    if (internal_solid_infill_uses_sparse_filament(region, role))
-        return sparse_infill_filament_id_1based(region);
-    return is_solid_infill(role) ? region.config().solid_infill_filament.value : sparse_infill_filament_id_1based(region);
+    if (role == erTopSolidInfill || role == erIroning)
+        return region.config().top_surface_filament_id.value;
+    if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+        return region.config().bottom_surface_filament_id.value;
+    return is_solid_infill(role) ? region.config().internal_solid_filament_id.value : sparse_infill_filament_id_1based(region);
 }
 
 unsigned int grouped_manual_pattern_mixed_filament_id_for_layer(const LayerTools& layer_tools,
@@ -284,25 +321,48 @@ unsigned int LayerTools::resolve_mixed_1based(unsigned int filament_id) const
 }
 
 // Return a zero based extruder from the region, or extruder_override if overriden.
-unsigned int LayerTools::wall_filament(const PrintRegion &region) const
+unsigned int LayerTools::wall_extruder_id(const PrintRegion &region) const
 {
-	assert(region.config().wall_filament.value > 0);
-	unsigned int id = (this->extruder_override == 0) ? region.config().wall_filament.value : this->extruder_override;
+	assert(region.config().outer_wall_filament_id.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? region.config().outer_wall_filament_id.value : this->extruder_override;
 	return resolve_mixed_1based(id) - 1;
 }
 
-unsigned int LayerTools::sparse_infill_filament(const PrintRegion &region) const
+unsigned int LayerTools::inner_wall_extruder_id(const PrintRegion &region) const
 {
-	assert(region.config().wall_filament.value > 0);
+	assert(region.config().inner_wall_filament_id.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? region.config().inner_wall_filament_id.value : this->extruder_override;
+	return resolve_mixed_1based(id) - 1;
+}
+
+unsigned int LayerTools::sparse_infill_filament_id(const PrintRegion &region) const
+{
+	assert(region.config().sparse_infill_filament_id.value > 0);
 	unsigned int id = (this->extruder_override == 0) ? sparse_infill_filament_id_1based(region) : this->extruder_override;
     const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
 	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
 }
 
-unsigned int LayerTools::solid_infill_filament(const PrintRegion &region) const
+unsigned int LayerTools::internal_solid_filament_id(const PrintRegion &region) const
 {
-	assert(region.config().solid_infill_filament.value > 0);
-	unsigned int id = (this->extruder_override == 0) ? region.config().solid_infill_filament.value : this->extruder_override;
+	assert(region.config().internal_solid_filament_id.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? region.config().internal_solid_filament_id.value : this->extruder_override;
+    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
+	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
+}
+
+unsigned int LayerTools::top_surface_filament_id(const PrintRegion &region) const
+{
+	assert(region.config().top_surface_filament_id.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? region.config().top_surface_filament_id.value : this->extruder_override;
+    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
+	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
+}
+
+unsigned int LayerTools::bottom_surface_filament_id(const PrintRegion &region) const
+{
+	assert(region.config().bottom_surface_filament_id.value > 0);
+	unsigned int id = (this->extruder_override == 0) ? region.config().bottom_surface_filament_id.value : this->extruder_override;
     const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
 	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
 }
@@ -310,16 +370,45 @@ unsigned int LayerTools::solid_infill_filament(const PrintRegion &region) const
 // Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const
 {
-	assert(region.config().wall_filament.value > 0);
-	assert(region.config().sparse_infill_filament.value > 0);
-	assert(region.config().solid_infill_filament.value > 0);
+	assert(region.config().outer_wall_filament_id.value > 0);
+	assert(region.config().inner_wall_filament_id.value > 0);
+	assert(region.config().sparse_infill_filament_id.value > 0);
+	assert(region.config().internal_solid_filament_id.value > 0);
+	assert(region.config().top_surface_filament_id.value > 0);
+	assert(region.config().bottom_surface_filament_id.value > 0);
     if (extrusions.has_infill()) {
-        const ExtrusionRole role = extrusions.entities.empty() ? erNone : extrusions.entities.front()->role();
-        if (internal_solid_infill_uses_sparse_filament(region, role))
-            return sparse_infill_filament(region);
-        return is_solid_infill(role) ? solid_infill_filament(region) : sparse_infill_filament(region);
+        ExtrusionRole role = extrusions.entities.empty() ? erNone : extrusions.entities.front()->role();
+        // Gap fill inherits the filament of the surface it fills; derive the role from
+        // the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+        if (role == erGapFill)
+            for (const ExtrusionEntity *ee : extrusions.entities)
+                if (ee->role() != erGapFill) {
+                    role = ee->role();
+                    break;
+                }
+        if (extrusions.has_solid_infill()) {
+            ExtrusionRole solid_role = extrusions.role();
+            // Gap fill inherits the filament of the surface it fills; derive the role from
+            // the first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            if (solid_role == erMixed)
+                for (const ExtrusionEntity *ee : extrusions.entities)
+                    if (ee->role() != erGapFill) {
+                        solid_role = ee->role();
+                        break;
+                    }
+            if (solid_role == erTopSolidInfill || solid_role == erIroning)
+                return top_surface_filament_id(region);
+            if (solid_role == erBottomSurface || solid_role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+                return bottom_surface_filament_id(region);
+            return internal_solid_filament_id(region);
+        }
+        return sparse_infill_filament_id(region);
     }
-    return wall_filament(region);
+    // Classify like the mixed-perimeter split: role() only reflects the first path of the first
+    // loop, which may be an overhang path of an inner loop.
+    bool any_outer = false, any_inner = false;
+    classify_wall_filaments(extrusions, any_outer, any_inner);
+    return any_inner && ! any_outer ? inner_wall_extruder_id(region) : wall_extruder_id(region);
 }
 
 static double calc_max_layer_height(const PrintConfig &config, double max_object_layer_height)
@@ -396,10 +485,14 @@ bool ToolOrdering::insert_wipe_tower_extruder()
         for (LayerTools& lt : m_layer_tools) {
             if (lt.wipe_tower_partitions > 0) {
                 lt.extruders.emplace_back(m_print_config_ptr->wipe_tower_filament - 1);
-                sort_remove_duplicates(lt.extruders);
+                if (lt.preserve_extruder_order)
+                    // Mixed filament layers depend on their collected extruder order, sorting would destroy it.
+                    remove_duplicates_preserve_order(lt.extruders);
+                else
+                    sort_remove_duplicates(lt.extruders);
                 changed = true;
             }
-        }  
+        }
     }
     return changed;
 }
@@ -564,8 +657,8 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
     for (auto object : print.objects()) {
         auto first_layer = object->get_layer(0);
         for (auto layerm : first_layer->regions()) {
-            int extruder_id = layerm->region().config().option("wall_filament")->getInt();
-            
+            int extruder_id = layerm->region().config().option("outer_wall_filament_id")->getInt();
+
             for (auto expoly : layerm->raw_slices) {
                 const double nozzle_diameter = print.config().nozzle_diameter.get_at(0);
                 const coordf_t initial_layer_line_width = print.config().get_abs_value("initial_layer_line_width", nozzle_diameter);
@@ -610,7 +703,7 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
     std::map<int, double> min_areas_per_extruder;
     auto first_layer = object.get_layer(0);
     for (auto layerm : first_layer->regions()) {
-        int extruder_id = layerm->region().config().option("wall_filament")->getInt();
+        int extruder_id = layerm->region().config().option("outer_wall_filament_id")->getInt();
         for (auto expoly : layerm->raw_slices) {
             const double nozzle_diameter = object.print()->config().nozzle_diameter.get_at(0);
             const coordf_t line_width = object.config().get_abs_value("line_width", nozzle_diameter);
@@ -693,6 +786,26 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                                                         float(support_layer->print_z),
                                                         float(support_layer->height),
                                                         &object);
+        // support nozzle diameter / material restrictions, resolve a "default" (0) support filament to a passing one here, preferring a filament this layer already prints with to save toolchanges.
+        // Note: this fork collects support before the object's own layers, so the preference scan
+        // only sees filaments of previously collected objects and otherwise settles on the
+        // deterministic resolved_default_support_filament(); GCode::process_layer() re-prefers
+        // layer-scheduled extruders for "don't care" support when the G-code is emitted.
+        if (object.has_support_filament_restriction()) {
+            auto restrict_default_filament = [&object, &layer_tools](unsigned int configured, bool interface_role) -> unsigned int {
+                if (configured != 0)
+                    return configured;
+                const PrintConfig &print_config = object.print()->config();
+                for (unsigned int filament : layer_tools.extruders) // 1 based at this point
+                    if (filament > 0 && object.support_filament_allowed(filament, interface_role) &&
+                        ! print_config.filament_soluble.get_at(filament - 1))
+                        return filament;
+                unsigned int resolved = object.resolved_default_support_filament(interface_role);
+                return resolved > 0 ? resolved : configured;
+            };
+            extruder_support   = restrict_default_filament(extruder_support, false);
+            extruder_interface = restrict_default_filament(extruder_interface, true);
+        }
         if (has_support)
             layer_tools.extruders.push_back(extruder_support);
         if (has_interface)
@@ -743,52 +856,81 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 }
 
                 if (something_nonoverriddable){
-                    const unsigned int configured_wall = (extruder_override == 0) ? region.config().wall_filament.value : extruder_override;
-                    unsigned int       wall_ext        = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height), &object);
-                    const unsigned int grouped_id =
-                        grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
-                    if (grouped_id != 0) {
-                        const std::vector<unsigned int> ordered =
-                            m_mixed_mgr->ordered_perimeter_extruders(grouped_id,
-                                                                     m_num_physical,
-                                                                     layerCount,
-                                                                     float(layer->print_z),
-                                                                     float(layer->height));
-                        if (!ordered.empty()) {
-                            if (ordered.size() >= 2)
-                                layer_tools.preserve_extruder_order = true;
-                            for (unsigned int extruder_id : ordered) {
-                                layer_tools.extruders.emplace_back(extruder_id);
-                                if (layerCount == 0 &&
-                                    std::find(firstLayerExtruders.begin(), firstLayerExtruders.end(), int(extruder_id)) == firstLayerExtruders.end())
-                                    firstLayerExtruders.emplace_back(int(extruder_id));
+                    // Emplace a wall filament, expanding a grouped manual-pattern mixed filament
+                    // into its per-layer ordered physical extruders (both walls need this so the
+                    // wipe tower planner sees every extruder the grouped split will emit).
+                    auto emplace_wall_filament = [&](unsigned int configured_wall, bool first_layer_candidate) {
+                        unsigned int wall_ext = resolve_mixed(configured_wall, layerCount, float(layer->print_z), float(layer->height), &object);
+                        const unsigned int grouped_id =
+                            grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_wall);
+                        if (grouped_id != 0) {
+                            const std::vector<unsigned int> ordered =
+                                m_mixed_mgr->ordered_perimeter_extruders(grouped_id,
+                                                                         m_num_physical,
+                                                                         layerCount,
+                                                                         float(layer->print_z),
+                                                                         float(layer->height));
+                            if (!ordered.empty()) {
+                                if (ordered.size() >= 2)
+                                    layer_tools.preserve_extruder_order = true;
+                                for (unsigned int extruder_id : ordered) {
+                                    layer_tools.extruders.emplace_back(extruder_id);
+                                    if (first_layer_candidate && layerCount == 0 &&
+                                        std::find(firstLayerExtruders.begin(), firstLayerExtruders.end(), int(extruder_id)) == firstLayerExtruders.end())
+                                        firstLayerExtruders.emplace_back(int(extruder_id));
+                                }
+                                return;
                             }
-                        } else {
-                            layer_tools.extruders.emplace_back(wall_ext);
-                            if (layerCount == 0)
-                                firstLayerExtruders.emplace_back(wall_ext);
                         }
-                    } else {
                         layer_tools.extruders.emplace_back(wall_ext);
-                        if (layerCount == 0)
+                        if (first_layer_candidate && layerCount == 0)
                             firstLayerExtruders.emplace_back(wall_ext);
-                    }
+                    };
+                    emplace_wall_filament((extruder_override == 0) ? region.config().outer_wall_filament_id.value : extruder_override, true);
+                    // alternate_extra_wall should add an inner loop on odd layers (mirrors
+                    // PerimeterGenerator's loop_number and the spiral gate of
+                    // LayerRegion::make_perimeters()); layers dropping the loop again
+                    // (only_one_wall_top / only_one_wall_first_layer) may reserve the filament
+                    // unused, which merely costs a toolchange.
+                    const bool spiral_vase_layer = object.print()->config().spiral_mode.value &&
+                        layer->id() >= size_t(region.config().bottom_shell_layers.value) &&
+                        layer->print_z >= region.config().bottom_shell_thickness - EPSILON;
+                    if (extruder_override == 0 &&
+                        (region.config().wall_loops.value > 1 ||
+                         (region.config().alternate_extra_wall.value && layer->id() % 2 == 1 &&
+                          region.config().sparse_infill_density.value > 0 && !spiral_vase_layer)))
+                        emplace_wall_filament(region.config().inner_wall_filament_id.value, false);
                 }
 
                 layer_tools.has_object = true;
             }
 
-            bool has_sparse_infill = false;
-            bool has_solid_infill  = false;
+            bool has_sparse_infill     = false;
+            bool has_internal_solid    = false;
+            bool has_top_solid_surface = false;
+            bool has_bottom_surface    = false;
+            bool has_pure_gap_fill     = false;
             bool something_nonoverriddable = false;
             for (const ExtrusionEntity *ee : layerm->fills.entities) {
                 // fill represents infill extrusions of a single island.
                 const auto *fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                 ExtrusionRole role = fill->entities.empty() ? erNone : fill->entities.front()->role();
-                if (internal_solid_infill_uses_sparse_filament(region, role))
-                    has_sparse_infill = true;
+                // gap fill inherits its surface's filament; classify by the first non-gap-fill entity (must match LayerTools::extruder()).
+                if (role == erGapFill)
+                    for (const ExtrusionEntity *fill_entity : fill->entities)
+                        if (fill_entity->role() != erGapFill) {
+                            role = fill_entity->role();
+                            break;
+                        }
+                if (role == erTopSolidInfill || role == erIroning)
+                    has_top_solid_surface = true;
+                else if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces
+                    has_bottom_surface = true;
                 else if (is_solid_infill(role))
-                    has_solid_infill = true;
+                    has_internal_solid = true;
+                else if (role == erGapFill)
+                    // perimeter-generated gap fill with no sibling surface dispatches to the outer wall filament.
+                    has_pure_gap_fill = true;
                 else if (role != erNone)
                     has_sparse_infill = true;
 
@@ -800,13 +942,23 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
             if (something_nonoverriddable || !m_print_config_ptr) {
             	if (extruder_override == 0) {
-	                if (has_solid_infill) {
-		                    layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
+	                if (has_internal_solid) {
+		                    layer_tools.extruders.emplace_back(layer_tools.internal_solid_filament_id(region) + 1);
+	                }
+	                if (has_top_solid_surface) {
+		                    layer_tools.extruders.emplace_back(layer_tools.top_surface_filament_id(region) + 1);
+	                }
+	                if (has_bottom_surface) {
+		                    layer_tools.extruders.emplace_back(layer_tools.bottom_surface_filament_id(region) + 1);
 	                }
 	                if (has_sparse_infill) {
-		                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
+		                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament_id(region) + 1);
 	                }
-            	} else if (has_solid_infill || has_sparse_infill) {
+	                if (has_pure_gap_fill) {
+		                    // perimeter-generated gap fill with no sibling surface uses the outer wall filament.
+		                    layer_tools.extruders.emplace_back(layer_tools.wall_extruder_id(region) + 1);
+	                }
+            	} else if (has_internal_solid || has_top_solid_surface || has_bottom_surface || has_sparse_infill || has_pure_gap_fill) {
             		layer_tools.extruders.emplace_back(resolve_mixed(extruder_override,
                                                                       layerCount,
                                                                       float(layer->print_z),
@@ -814,7 +966,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                                                                       &object));
             	}
             }
-            if (has_solid_infill || has_sparse_infill)
+            if (has_internal_solid || has_top_solid_surface || has_bottom_surface || has_sparse_infill || has_pure_gap_fill)
                 layer_tools.has_object = true;
         }
         layerCount++;
@@ -1060,12 +1212,23 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     // and maybe other problems. We will therefore go through layer_tools and detect and fix this.
     // So, if there is a non-object layer starting with different extruder than the last one ended with (or containing more than one extruder),
     // we'll mark it with has_wipe tower.
+    // Per-extruder layer height combines layers away, leaving many LayerTools empty; skip them and
+    // compare against the last printing layer. Without the feature keep the historic behavior of
+    // stopping at the first empty layer.
+    const bool skip_empty_layer_tools = has_extruder_layer_heights(config);
+    const LayerTools *lt_last_printing = nullptr;
     for (unsigned int i=0; i+1<m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
+        if (! lt.extruders.empty())
+            lt_last_printing = &lt;
         LayerTools& lt_next = m_layer_tools[i+1];
-        if (lt.extruders.empty() || lt_next.extruders.empty())
-            break;
-        if (!lt_next.has_wipe_tower && (lt_next.extruders.front() != lt.extruders.back() || lt_next.extruders.size() > 1))
+        if (lt.extruders.empty() || lt_next.extruders.empty()) {
+            if (! skip_empty_layer_tools)
+                break;
+            if (lt_last_printing == nullptr || lt_next.extruders.empty())
+                continue;
+        }
+        if (!lt_next.has_wipe_tower && (lt_next.extruders.front() != lt_last_printing->extruders.back() || lt_next.extruders.size() > 1))
             lt_next.has_wipe_tower = true;
         // We should also check that the next wipe tower layer is no further than max_layer_height:
         unsigned int j = i+1;
@@ -1405,11 +1568,35 @@ int WipingExtrusions::last_nonsoluble_extruder_on_layer(const PrintConfig& print
     return (-1);
 }
 
+// diameter of the nozzle a 0-based filament prints through.
+static double filament_nozzle_diameter(const Print &print, unsigned int filament_id)
+{
+    return print.config().nozzle_diameter.get_at(print.extruder_index_of(filament_id));
+}
+
 // Decides whether this entity could be overridden
 bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, const PrintConfig& print_config, const PrintObject& object, const PrintRegion& region) const
 {
-    if (print_config.filament_soluble.get_at(m_layer_tools->extruder(eec, region)))
+    const unsigned int intended_filament = m_layer_tools->extruder(eec, region);
+    if (print_config.filament_soluble.get_at(intended_filament))
         return false;
+
+    // Entity widths/heights were computed for its filament's nozzle, so only a filament with the same nozzle diameter may take it over; with no candidate it must keep its own filament.
+    if (print_config.nozzle_diameter.values.size() > 1) {
+        const Print &print = *object.print();
+        const double intended_nozzle = filament_nozzle_diameter(print, intended_filament);
+        bool has_candidate = false;
+        for (size_t filament = 0; filament < print_config.filament_soluble.values.size(); ++ filament)
+            if (filament != intended_filament &&
+                !print_config.filament_soluble.get_at(filament) &&
+                !print_config.filament_is_support.get_at(filament) &&
+                std::abs(filament_nozzle_diameter(print, (unsigned int)filament) - intended_nozzle) < EPSILON) {
+                has_candidate = true;
+                break;
+            }
+        if (!has_candidate)
+            return false;
+    }
 
     if (object.config().flush_into_objects)
         return true;
@@ -1504,10 +1691,15 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                         if (!is_overriddable(*fill, print.config(), *object, region))
                             continue;
 
+                        // Only wipe into entities computed for this extruder's nozzle diameter.
+                        if (std::abs(filament_nozzle_diameter(print, lt.extruder(*fill, region)) -
+                                     filament_nozzle_diameter(print, new_extruder)) > EPSILON)
+                            continue;
+
                         if (wipe_into_infill_only && ! is_infill_first)
                             // In this case we must check that the original extruder is used on this layer before the one we are overridding
                             // (and the perimeters will be finished before the infill is printed):
-                            if (!lt.is_extruder_order(lt.wall_filament(region), new_extruder))
+                            if (!lt.is_extruder_order(lt.wall_extruder_id(region), new_extruder))
                                 continue;
 
                         if ((!is_entity_overridden(fill, object, copy) && fill->total_volume() > min_infill_volume))
@@ -1525,7 +1717,10 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                 {
                     for (const ExtrusionEntity* ee : layerm->perimeters.entities) {
                         auto* fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
-                        if (is_overriddable(*fill, print.config(), *object, region) && !is_entity_overridden(fill, object, copy) && fill->total_volume() > min_infill_volume) {
+                        if (is_overriddable(*fill, print.config(), *object, region) && !is_entity_overridden(fill, object, copy) && fill->total_volume() > min_infill_volume &&
+                            // nozzle diameter must match
+                            std::abs(filament_nozzle_diameter(print, lt.extruder(*fill, region)) -
+                                     filament_nozzle_diameter(print, new_extruder)) < EPSILON) {
                             set_extruder_override(fill, object, copy, new_extruder, num_of_copies);
                             if ((volume_to_wipe -= float(fill->total_volume())) <= 0.f)
                             	// More material was purged already than asked for.
@@ -1544,8 +1739,9 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                     if (this_support_layer == nullptr)
                         break;
 
-                    bool support_overriddable = object_config.support_filament == 0;
-                    bool support_intf_overriddable = object_config.support_interface_filament == 0;
+                    // Only a filament passing the object's support restrictions (nozzle diameter, material) may flush into its support.
+                    bool support_overriddable = object_config.support_filament == 0 && object->support_filament_allowed(new_extruder + 1, false);
+                    bool support_intf_overriddable = object_config.support_interface_filament == 0 && object->support_filament_allowed(new_extruder + 1, true);
                     if (!support_overriddable && !support_intf_overriddable)
                         break;
 
@@ -1595,6 +1791,25 @@ void WipingExtrusions::ensure_perimeters_infills_order(const Print& print)
     unsigned int first_nonsoluble_extruder = first_nonsoluble_extruder_on_layer(print.config());
     unsigned int last_nonsoluble_extruder = last_nonsoluble_extruder_on_layer(print.config());
 
+    // Prefer filaments printing through the nozzle diameter the entity's widths were computed for; returns -1 when the layer offers none.
+    auto nonsoluble_matching_extruder = [this, &print](bool first, unsigned int intended_filament) -> int {
+        const PrintConfig &config = print.config();
+        const double intended_nozzle = filament_nozzle_diameter(print, intended_filament);
+        auto matches = [&](unsigned int filament) {
+            return !config.filament_soluble.get_at(filament) && !config.filament_is_support.get_at(filament) &&
+                   std::abs(filament_nozzle_diameter(print, filament) - intended_nozzle) < EPSILON;
+        };
+        const std::vector<unsigned int> &extruders = m_layer_tools->extruders;
+        if (first) {
+            for (auto it = extruders.begin(); it != extruders.end(); ++ it)
+                if (matches(*it)) return int(*it);
+        } else {
+            for (auto it = extruders.rbegin(); it != extruders.rend(); ++ it)
+                if (matches(*it)) return int(*it);
+        }
+        return -1;
+    };
+
     for (const PrintObject* object : print.objects()) {
         // Finds this layer:
         const Layer* this_layer = object->get_layer_at_printz(lt.print_z, EPSILON);
@@ -1625,9 +1840,14 @@ void WipingExtrusions::ensure_perimeters_infills_order(const Print& print)
                     if (is_infill_first
                     //BBS
                     //|| object->config().flush_into_objects  // in this case the perimeter is overridden, so we can override by the last one safely
-                    || lt.is_extruder_order(lt.wall_filament(region), last_nonsoluble_extruder    // !infill_first, but perimeter is already printed when last extruder prints
-                    || ! lt.has_extruder(lt.sparse_infill_filament(region)))) // we have to force override - this could violate infill_first (FIXME)
-                        set_extruder_override(fill, object, copy, (is_infill_first ? first_nonsoluble_extruder : last_nonsoluble_extruder), num_of_copies);
+                    || lt.is_extruder_order(lt.wall_extruder_id(region), last_nonsoluble_extruder    // !infill_first, but perimeter is already printed when last extruder prints
+                    || ! lt.has_extruder(lt.sparse_infill_filament_id(region)))) { // we have to force override - this could violate infill_first (FIXME)
+                        // Prefer a nozzle-matching filament; fall back so the entity still prints.
+                        int flush_extruder = nonsoluble_matching_extruder(is_infill_first, lt.extruder(*fill, region));
+                        if (flush_extruder < 0)
+                            flush_extruder = is_infill_first ? first_nonsoluble_extruder : last_nonsoluble_extruder;
+                        set_extruder_override(fill, object, copy, flush_extruder, num_of_copies);
+                    }
                     else {
                         // In this case we can (and should) leave it to be printed normally.
                         // Force overriding would mean it gets printed before its perimeter.
@@ -1637,8 +1857,13 @@ void WipingExtrusions::ensure_perimeters_infills_order(const Print& print)
                 // Now the same for perimeters - see comments above for explanation:
                 for (const ExtrusionEntity* ee : layerm->perimeters.entities) {                      // iterate through all perimeter Collections
                     auto* fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
-                    if (is_overriddable(*fill, print.config(), *object, region) && ! is_entity_overridden(fill, object, copy))
-                        set_extruder_override(fill, object, copy, (is_infill_first ? last_nonsoluble_extruder : first_nonsoluble_extruder), num_of_copies);
+                    if (is_overriddable(*fill, print.config(), *object, region) && ! is_entity_overridden(fill, object, copy)) {
+                        // Same nozzle-matching preference as above.
+                        int flush_extruder = nonsoluble_matching_extruder(!is_infill_first, lt.extruder(*fill, region));
+                        if (flush_extruder < 0)
+                            flush_extruder = is_infill_first ? last_nonsoluble_extruder : first_nonsoluble_extruder;
+                        set_extruder_override(fill, object, copy, flush_extruder, num_of_copies);
+                    }
                 }
             }
         }

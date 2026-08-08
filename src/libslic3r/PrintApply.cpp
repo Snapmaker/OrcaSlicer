@@ -828,9 +828,12 @@ bool verify_update_print_object_regions(
                 return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
             PrintRegionConfig                       cfg             = parent_region.region->config();
-            cfg.wall_filament.value    = region.extruder_id;
-            cfg.solid_infill_filament.value = region.extruder_id;
-            cfg.sparse_infill_filament.value       = region.extruder_id;
+            cfg.outer_wall_filament_id.value = region.extruder_id;
+            cfg.inner_wall_filament_id.value = region.extruder_id;
+            cfg.internal_solid_filament_id.value = region.extruder_id;
+            cfg.top_surface_filament_id.value = region.extruder_id;
+            cfg.bottom_surface_filament_id.value = region.extruder_id;
+            cfg.sparse_infill_filament_id.value       = region.extruder_id;
             if (cfg != region.region->config()) {
                 // Region configuration changed.
                 if (print_region_ref_cnt(*region.region) == 0) {
@@ -1073,20 +1076,29 @@ static PrintObjectRegions* generate_print_object_regions(
                     (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
                     mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
                     PrintRegionConfig cfg = parent_region.region->config();
-                    cfg.wall_filament.value    = painted_extruder_id;
-                    cfg.solid_infill_filament.value = painted_extruder_id;
-                    cfg.sparse_infill_filament.value       = painted_extruder_id;
+                    cfg.outer_wall_filament_id.value = painted_extruder_id;
+                    cfg.inner_wall_filament_id.value = painted_extruder_id;
+                    cfg.internal_solid_filament_id.value = painted_extruder_id;
+                    cfg.top_surface_filament_id.value = painted_extruder_id;
+                    cfg.bottom_surface_filament_id.value = painted_extruder_id;
+                    cfg.sparse_infill_filament_id.value       = painted_extruder_id;
                     // Keep PrintRegion config-interned. If a painted target resolves to the same
                     // config as its parent, alias it instead of creating a duplicate PrintRegion.
                     PrintRegion *painted_region = get_create_region(std::move(cfg));
-                    if (painted_region->config().wall_filament.value != painted_extruder_id ||
-                        painted_region->config().solid_infill_filament.value != painted_extruder_id ||
-                        painted_region->config().sparse_infill_filament.value != painted_extruder_id) {
+                    if (painted_region->config().outer_wall_filament_id.value != painted_extruder_id ||
+                        painted_region->config().inner_wall_filament_id.value != painted_extruder_id ||
+                        painted_region->config().internal_solid_filament_id.value != painted_extruder_id ||
+                        painted_region->config().top_surface_filament_id.value != painted_extruder_id ||
+                        painted_region->config().bottom_surface_filament_id.value != painted_extruder_id ||
+                        painted_region->config().sparse_infill_filament_id.value != painted_extruder_id) {
                         BOOST_LOG_TRIVIAL(warning) << "Painted region filament mismatch"
                                                    << " requested_extruder_id=" << painted_extruder_id
-                                                   << " wall_filament=" << painted_region->config().wall_filament.value
-                                                   << " solid_infill_filament=" << painted_region->config().solid_infill_filament.value
-                                                   << " sparse_infill_filament=" << painted_region->config().sparse_infill_filament.value
+                                                   << " outer_wall_filament_id=" << painted_region->config().outer_wall_filament_id.value
+                                                   << " inner_wall_filament_id=" << painted_region->config().inner_wall_filament_id.value
+                                                   << " internal_solid_filament_id=" << painted_region->config().internal_solid_filament_id.value
+                                                   << " top_surface_filament_id=" << painted_region->config().top_surface_filament_id.value
+                                                   << " bottom_surface_filament_id=" << painted_region->config().bottom_surface_filament_id.value
+                                                   << " sparse_infill_filament_id=" << painted_region->config().sparse_infill_filament_id.value
                                                    << " parent_region_id=" << parent_region_id
                                                    << " parent_print_region_id=" << parent_region.region->print_object_region_id()
                                                    << " painted_print_region_id=" << painted_region->print_object_region_id();

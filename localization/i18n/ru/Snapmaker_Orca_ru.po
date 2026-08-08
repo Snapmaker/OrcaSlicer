@@ -20100,3 +20100,219 @@ msgstr ""
 
 #~ msgid "Right click to reset value to system default."
 #~ msgstr "Правая кнопка мыши - сброс значения до системного по умолчанию."
+msgid "Adjust wall layer height"
+msgstr "Подгонять высоту слоя стенок"
+
+msgid "Adjusted walls"
+msgstr "Подгоняемые стенки"
+
+msgid "Adjustment direction"
+msgstr "Направление подгонки"
+
+msgid "Consistent"
+msgstr "Единообразно"
+
+msgid "Decrease"
+msgstr "Уменьшать"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати нижней поверхности.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати внутренних периметров.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати внутреннего сплошного заполнения.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати внутреннего заполнения.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати внешних периметров.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Материал для печати основной части поддержки и подложки. «По умолчанию» – использовать материал модели."
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Материал для печати связующего слоя поддержки. «По умолчанию» – использовать материал модели."
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Материал для печати верхней поверхности.\n\"По умолчанию\" использует активный материал объекта/детали."
+
+msgid "Fixed"
+msgstr "Фиксированно"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Насколько агрессивно детали, назначенные экструдеру с более толстой предпочитаемой высотой слоя, объединяются в толстые слои.\nЕдинообразно: детали печатаются максимум двумя высотами слоя — высотой слоя экструдера там, где помещаются целые серии слоёв, и высотой слоя объекта в остальных местах. Это даёт самые ровные стенки.\nАдаптивно: серии могут объединяться и на промежуточных кратных высоты слоя объекта, поэтому большая часть детали печатается толстыми слоями — ценой полос переменной высоты слоя на криволинейных границах.\nФиксированно: детали всегда печатаются высотой слоя экструдера, даже там, где форма меняется поперёк объединённых слоёв или нависает; криволинейные границы превращаются в ступени, а детали мельче толстых слоёв теряются. Только геометрия, слишком короткая для целого толстого слоя (верхушки деталей и первый слой), печатается тоньше."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Насколько контур детали, назначенной экструдеру с более толстой предпочитаемой высотой слоя, может смещаться вбок между слоями одной толстой серии и всё же объединяться — в процентах от диаметра сопла этого экструдера. Большие значения объединяют больше криволинейных границ в толстые слои ценой более грубых стенок на границах: отклонения до этой доли диаметра сопла поглощаются толстыми линиями."
+
+msgid "Increase"
+msgstr "Увеличивать"
+
+msgid "Inner walls"
+msgstr "Внутренние периметры"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Высота слоя, которой должен печатать этот экструдер; для принтеров, у которых экструдеры имеют разные размеры сопла. Должна быть целым кратным высоты слоя объекта. Деталь, все элементы которой следуют за этим экструдером, печатается только на каждом N-м слое соответственно более толстыми линиями там, где позволяет её геометрия; в остальных местах используется высота слоя объекта. Когда остальная часть детали не может следовать, стенки, назначенные этому экструдеру, всё равно объединяются до этой высоты самостоятельно, полностью плотные верхние поверхности поглощают сплошные слои под собой, а заполнение (разреженное или 100% плотности) объединяется до этой высоты независимо. 0 — использовать высоту слоя объекта."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Высота слоя, которой должен печатать этот экструдер: целое кратное высоты слоя объекта в пределах ограничений высоты слоя этого экструдера. По умолчанию сохраняется высота слоя объекта."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Ни у одного экструдера нет сопла, соответствующего диаметру сопла поддержек."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Ни один загруженный материал не соответствует материалу основания поддержек/подложки (и диаметру сопла поддержек)."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Ни один загруженный материал не соответствует материалу связующего слоя поддержек/подложки (и диаметру сопла поддержек)."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Сопло %1%: ограничения высоты слоя установлены на %2%-%3% мм из \"%4%\"."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "На принтерах, у которых экструдеры имеют разные диаметры сопла, для печати поддержек, подложки и связующего слоя используются только материалы этого диаметра сопла. Это не пускает в поддержки материалы других размеров сопла — с их другой шириной линии и ограничениями высоты слоя. Материалы поддержек, заданные не по умолчанию, должны соответствовать этому диаметру. Значение 0 позволяет печатать поддержки любым материалом."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Внешние и внутренние периметры автоматически печатаются со своими предпочитаемыми высотами слоя, когда одна высота — целое кратное другой. Когда высоты не делятся нацело, эта опция подгоняет высоту слоя стенок одного из двух материалов стенок (выбранного ниже) к ближайшему кратному или делителю другой, чтобы стенки всё же могли разделиться. Подогнанная высота применяется только к стенкам этого материала; остальные элементы сохраняют предпочитаемую высоту слоя. Подгонка никогда не выходит за ограничения высоты слоя материала: если в выбранном направлении нет допустимой высоты, стенки печатаются вместе на меньшей высоте, как обычно."
+
+msgid "Outer walls"
+msgstr "Внешние периметры"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Высоты слоя для отдельных экструдеров не поддерживаются в режиме вазы."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Высоты слоя для отдельных экструдеров не поддерживаются вместе со связующими оболочками."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Высоты слоя для отдельных экструдеров не поддерживаются вместе с переменной высотой слоя."
+
+msgid "Preferred layer height"
+msgstr "Предпочитаемая высота слоя"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Печатать поддержки и основание подложки только материалами этого типа; экструдеры с другими типами для этого не используются. Действует вместе с ограничением диаметра сопла поддержек. Оставьте пустым, чтобы не ограничивать; явно выбранный материал основания поддержек/подложки по-прежнему в приоритете."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Печатать связующий слой поддержек и подложки только материалами этого типа; экструдеры с другими типами для этого не используются. Действует вместе с ограничением диаметра сопла поддержек. Оставьте пустым, чтобы не ограничивать; явно выбранный материал связующего слоя по-прежнему в приоритете."
+
+msgid "Raft and support base"
+msgstr "Подложка и основание поддержек"
+
+msgid "Show legacy filament selection"
+msgstr "Показать старый выбор материала"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Некоторые детали предпочитают слои %1% мм, но сопло материала %2%, печатающего другие элементы детали, слишком мало для такой высоты. Эти детали печатаются высотой слоя объекта."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Некоторые детали предпочитают слои %1% мм, но сопло материала стенок %2% слишком мало для такой высоты. Внешние и внутренние периметры печатаются вместе, поэтому эти стенки сохраняют высоту слоя объекта. Назначьте оба типа стенок материалам с достаточно большими соплами."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Некоторые детали печатают слои %1% мм материалом %2%, у которого максимальная высота слоя %3% мм. Назначьте элементы детали материалам более крупного сопла, увеличьте максимальную высоту слоя материала или согласитесь печатать выше неё."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Некоторые детали печатают слои %1% мм материалом %2%, у которого минимальная высота слоя %3% мм. Увеличьте высоту слоя объекта, используйте для этих элементов материал с более тонким соплом или согласитесь печатать ниже минимума экструдера."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Некоторые детали используют материалы, чьи предпочитаемые высоты слоя нельзя соблюсти все сразу: деталь печатает свои элементы одним шагом слоя (задаваемым её материалами стенок, а если ни один материал стенок не имеет предпочтения — согласием остальных элементов); стенки, верхние поверхности и заполнение могут объединяться каждый до своей высоты, когда остальная часть детали не может за ними следовать, но остальные элементы печатаются шагом детали."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Поддержки при разных размерах сопла"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "Поддержки могут печататься экструдерами с разными диаметрами сопла. Задайте диаметр сопла поддержек (или явные материалы поддержек и связующего слоя), чтобы держать поддержки на одном размере сопла."
+
+msgid "Support nozzle diameter"
+msgstr "Диаметр сопла поддержек"
+
+msgid "Support nozzle size"
+msgstr "Размер сопла поддержек"
+
+msgid "Support/raft base material"
+msgstr "Материал основания поддержек/подложки"
+
+msgid "Support/raft interface material"
+msgstr "Материал связующего слоя поддержек/подложки"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "Ширина линии заполнения %1% мм слишком мала для заполнения, объединённого в слои высотой %2% мм. Увеличьте ширину линии или уменьшите предпочитаемую высоту слоя материала заполнения."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "Ширина линии %1% мм слишком мала для высоты слоя %2% мм её экструдера. Увеличьте ширину линии или уменьшите высоту слоя экструдера."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "Высота слоя экструдера %1% (%2% мм) не может превышать диаметр его сопла."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "Высота слоя экструдера %1% (%2% мм) игнорируется для некоторых деталей: она должна быть целым кратным высоты слоя объекта (%3% мм), не меньше её и не должна превышать диаметр сопла экструдера."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "Высота слоя экструдера %1% (%2% мм) меньше высоты слоя объекта (%3% мм). Уменьшите высоту слоя объекта до самой тонкой высоты слоя экструдера."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "Высота слоя экструдера %1% (%2% мм) должна быть целым кратным высоты слоя объекта (%3% мм)."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "Наименьшая печатаемая высота слоя экструдера. Ограничивает минимальную высоту слоя при адаптивной высоте слоя. Детали, печатаемые с более толстой предпочитаемой высотой слоя экструдера, тоже никогда не опускаются ниже этой высоты (кроме первого слоя)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "Предпочитаемая высота слоя сопла %1% больше не проходит через него и была сброшена на \"По умолчанию\"."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Материал основания поддержек/подложки не относится к материалу основания поддержек/подложки."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Материал основания поддержек/подложки печатается соплом, не соответствующим диаметру сопла поддержек."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Материал связующего слоя поддержек/подложки не относится к материалу связующего слоя поддержек/подложки."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Материал связующего слоя поддержек/подложки печатается соплом, не соответствующим диаметру сопла поддержек."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "Материалы стенок некоторых деталей предпочитают разные высоты слоя. Внешние и внутренние периметры печатаются вместе, поэтому эти стенки сохраняют высоту слоя объекта. Чтобы печатать более толстые стенки, назначьте оба типа стенок материалам с одинаковой предпочитаемой высотой."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "Материалы стенок некоторых деталей предпочитают разные высоты слоя. Внешние и внутренние периметры печатаются вместе, поэтому эти стенки печатаются меньшей высотой (%1% мм)."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "Высота слоя стенок материала %1% подогнана с предпочитаемых %2% мм до %3% мм, чтобы внешние и внутренние периметры могли печататься совместимыми высотами слоя (\"Подгонять высоту слоя стенок\"). Подогнанной высотой печатаются только стенки этого материала; остальные его элементы сохраняют предпочитаемую."
+
+msgid "Thick layer regions"
+msgstr "Области толстых слоёв"
+
+msgid "Thick layer tolerance"
+msgstr "Допуск толстых слоёв"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "У этого принтера нет профиля для сопла %1% мм. Проверьте ограничения высоты слоя сопла %2% в настройках принтера."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Этот принтер использует разные размеры сопла. Выберите размер сопла для печати поддержек и типы материалов для подложки и связующего слоя поддержек."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Уменьшать или увеличивать высоту слоя стенок подгоняемого материала, чтобы достичь высоты, совместимой с другим материалом стенок. Высоты вне ограничений высоты слоя подгоняемого материала никогда не используются: если в этом направлении нет допустимой высоты, стенки печатаются вместе на меньшей высоте, как обычно."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Какому из двух материалов стенок подгоняется высота слоя стенок, когда предпочитаемые высоты слоя не делятся нацело."

@@ -15,6 +15,15 @@ namespace Slic3r {
 class Print;
 class PrintObject;
 class LayerTools;
+
+// ORCA: per-feature wall filaments. Classify a perimeter entity the way GCode::process_layer()'s
+// mixed-perimeter split does: a loop carrying an external perimeter path - or a fully overhanging
+// loop without any plain perimeter path - prints with the outer wall filament, everything else
+// with the inner wall filament. The split and every wall filament dispatch must agree on this.
+bool perimeter_entity_uses_outer_wall_filament(const ExtrusionEntity &entity);
+// Do any of the collection's perimeter entities print with the outer / the inner wall filament?
+void classify_wall_filaments(const ExtrusionEntityCollection &collection, bool &any_outer, bool &any_inner);
+
 namespace CustomGCode { struct Item; }
 class PrintRegion;
 
@@ -106,9 +115,12 @@ public:
     bool has_extruder(unsigned int extruder) const { return std::find(this->extruders.begin(), this->extruders.end(), extruder) != this->extruders.end(); }
 
     // Return a zero based extruder from the region, or extruder_override if overriden.
-    unsigned int wall_filament(const PrintRegion &region) const;
-    unsigned int sparse_infill_filament(const PrintRegion &region) const;
-    unsigned int solid_infill_filament(const PrintRegion &region) const;
+    unsigned int wall_extruder_id(const PrintRegion &region) const;
+    unsigned int inner_wall_extruder_id(const PrintRegion &region) const;
+    unsigned int sparse_infill_filament_id(const PrintRegion &region) const;
+    unsigned int internal_solid_filament_id(const PrintRegion &region) const;
+    unsigned int top_surface_filament_id(const PrintRegion &region) const;
+    unsigned int bottom_surface_filament_id(const PrintRegion &region) const;
 	// Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 	unsigned int extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const;
 

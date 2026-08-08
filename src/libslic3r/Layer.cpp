@@ -74,6 +74,45 @@ LayerRegion* Layer::add_region(const PrintRegion *print_region)
     return m_regions.back();
 }
 
+// ORCA: per-extruder layer height, see PrintObject::apply_extruder_layer_heights().
+double LayerRegion::combined_height() const
+{
+    return m_combined_height > 0. ? m_combined_height : m_layer->height;
+}
+
+static const Layer* nth_lower_layer(const Layer *layer, unsigned short count)
+{
+    for (unsigned short i = 0; layer != nullptr && i < count; ++ i)
+        layer = layer->lower_layer;
+    return layer;
+}
+
+const Layer* LayerRegion::combined_lower_layer() const
+{
+    // count == 0 (layer combined away into a group top) is treated as 1; it produces no extrusions anyway.
+    return nth_lower_layer(m_layer, std::max<unsigned short>(m_combined_layer_count, 1));
+}
+
+// ORCA: walls-only pitch, see PrintObject::wall_layer_height_multiplier().
+double LayerRegion::wall_combined_height() const
+{
+    return m_wall_combined_height > 0. ? m_wall_combined_height : this->combined_height();
+}
+
+const Layer* LayerRegion::wall_combined_lower_layer() const
+{
+    // count == 0 (walls extrude at the run top above) produces no wall extrusions anyway.
+    return m_wall_combined_count <= 1 ? this->combined_lower_layer() :
+                                        nth_lower_layer(m_layer, m_wall_combined_count);
+}
+
+// ORCA: split wall layer heights, see PrintObject::wall_split_pitches().
+const Layer* LayerRegion::wall_split_lower_layer() const
+{
+    return m_wall_split_count <= 1 ? this->wall_combined_lower_layer() :
+                                     nth_lower_layer(m_layer, m_wall_split_count);
+}
+
 // merge all regions' slices to get islands
 void Layer::make_slices()
 {
@@ -181,7 +220,8 @@ bool Layer::is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b)
     const PrintRegionConfig& config       = a.config();
     const PrintRegionConfig& other_config = b.config();
 
-    return config.wall_filament             == other_config.wall_filament
+    return config.outer_wall_filament_id      == other_config.outer_wall_filament_id
+		&& config.inner_wall_filament_id      == other_config.inner_wall_filament_id
 		&& config.wall_loops                  == other_config.wall_loops
 		&& config.wall_sequence               == other_config.wall_sequence
 		&& config.is_infill_first             == other_config.is_infill_first
@@ -242,7 +282,14 @@ void Layer::make_perimeters()
 	            if (! (*it)->slices.empty()) {
 		            LayerRegion* other_layerm = *it;
 		            const PrintRegion &other_region = other_layerm->region();
-                    if (is_perimeter_compatible(this_region, other_region))
+                    // Regions combined to different extruder layer heights (whole-region groups or
+                    // walls-only runs) extrude with different heights and must not share a make_perimeters() call.
+                    if ((*layerm)->combined_layer_count() == other_layerm->combined_layer_count() &&
+                        (*layerm)->wall_combined_count() == other_layerm->wall_combined_count() &&
+                        std::abs((*layerm)->wall_combined_height() - other_layerm->wall_combined_height()) < EPSILON &&
+                        (*layerm)->wall_split_count() == other_layerm->wall_split_count() &&
+                        std::abs((*layerm)->wall_split_height() - other_layerm->wall_split_height()) < EPSILON &&
+                        is_perimeter_compatible(this_region, other_region))
 		            {
 			 			other_layerm->perimeters.clear();
 			 			other_layerm->fills.clear();

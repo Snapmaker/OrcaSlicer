@@ -1224,7 +1224,7 @@ namespace SupportMaterialInternal {
             // Surface supporting this layer, expanded by 0.5 * nozzle_diameter, as we consider this kind of overhang to be sufficiently supported.
             Polygons lower_grown_slices = expand(lower_layer_polygons,
                 //FIXME to mimic the decision in the perimeter generator, we should use half the external perimeter width.
-                0.5f * float(scale_(print_config.nozzle_diameter.get_at(layerm.region().config().wall_filament-1))),
+                0.5f * float(scale_(print_config.nozzle_diameter.get_at(layerm.region().config().outer_wall_filament_id-1))),
                 SUPPORT_SURFACES_OFFSET_PARAMETERS);
             // Collect perimeters of this layer.
             //FIXME split_at_first_point() could split a bridge mid-way
@@ -2149,7 +2149,7 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
 
     // check if the sharp tails should be extended higher
     bool detect_first_sharp_tail_only = false;
-    const coordf_t extrusion_width = m_object_config->line_width.get_abs_value(object.print()->config().nozzle_diameter.get_at(object.config().support_interface_filament-1));
+    const coordf_t extrusion_width = m_object_config->line_width.get_abs_value(support_material_nozzle_diameter(&object, object.config().support_interface_filament));
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     if (is_auto(m_object_config->support_type.value) && g_config_support_sharp_tails && !detect_first_sharp_tail_only) {
         for (size_t layer_nr = layer_id_start; layer_nr < num_layers; layer_nr++) {

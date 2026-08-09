@@ -1583,18 +1583,23 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     // in darkModeColorFor. If it ever renders incorrectly on Windows, remove it
     // and rely on the spacing already in the sizer (AddSpacer pattern), as the
     // other two cards do.
+    //
+    // 8 DIP gap above/below via AddSpacer: divider needs wxLEFT|wxRIGHT=16, and
+    // wxBoxSizer's single border value can't express 8-v / 16-h in one flag.
+    s->AddSpacer(FromDIP(8));
     {
         auto* divider = new wxPanel(m_preview_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
         divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
-        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
     }
+    s->AddSpacer(FromDIP(8));
 
     // Centered controls: Plate (prev arrow + label + combo + next arrow) | View (label + combo)
     {
         auto* crow = new wxBoxSizer(wxHORIZONTAL);
         m_btn_tray_prev = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_left_arrow");
         m_btn_tray_prev->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(-1); });
-        crow->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        crow->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
         auto* plate_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("Plate"));
         plate_lbl->SetFont(Label::Body_12);
@@ -1619,11 +1624,11 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
             update_nav_arrow_state();
             refresh_previews();
         });
-        crow->Add(m_tray_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        crow->Add(m_tray_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
         m_btn_tray_next = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_right_arrow");
         m_btn_tray_next->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(1); });
-        crow->Add(m_btn_tray_next, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(24));
+        crow->Add(m_btn_tray_next, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(48));
 
         auto* view_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("View"));
         view_lbl->SetFont(Label::Body_12);
@@ -1648,7 +1653,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         m_view_combo->Bind(wxEVT_COMBOBOX, &MixedFilamentBatchDialog::on_view_changed, this);
         crow->Add(m_view_combo, 0, wxALIGN_CENTER_VERTICAL);
 
-        s->Add(crow, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, FromDIP(16));
+        // wxTOP dropped: 8 DIP gap to divider is provided by the AddSpacer above.
+        s->Add(crow, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     m_preview_card->SetSizer(s);
@@ -1707,36 +1713,40 @@ void MixedFilamentBatchDialog::build_footer()
     auto* top_line = new wxPanel(btn_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
     top_line->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     panel_sizer->Add(top_line, 0, wxEXPAND);
-    panel_sizer->AddSpacer(FromDIP(12));
 
-    // Progress row (added before the button row so it renders ABOVE the buttons). Hidden by
-    // default; set_match_buttons_state(true) reveals it. Parented to btn_panel and inside
-    // the footer's VERTICAL sizer so the white footer bg extends under it and the whole
-    // footer grows/shrinks as a unit when the progress row is shown/hidden.
-    auto* progress_row = new wxBoxSizer(wxHORIZONTAL);
-    // Progress bar — native wxGauge, 6px tall per Figma (node 27624:65433). Width grows to
-    // fill the row (proportion=1); the "Stop Matching" button beside it takes its natural width.
-    m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(6)),
-                                  wxGA_HORIZONTAL | wxGA_SMOOTH);
-    m_progress_bar->SetValue(0);
-    m_progress_bar->Hide();
-    progress_row->Add(m_progress_bar, 1, wxALIGN_CENTER_VERTICAL);
-    // "Stop Matching" — inline button to the right of the progress bar. Terminates the
-    // in-flight match without closing the dialog (cancel_batch_match only sets the flag;
-    // the worker drains and handle_batch_match_result restores idle state). Figma spec:
-    // bg #F8F7F7, text #242424, 4px corner radius, thin border.
-    m_btn_stop_match = new Button(btn_panel, _L("Stop Matching"));
-    m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
-    m_btn_stop_match->SetCornerRadius(FromDIP(4));
-    m_btn_stop_match->SetBorderWidth(FromDIP(1));
-    m_btn_stop_match->SetFont(Label::Body_14);
-    m_btn_stop_match->SetBorderColorNormal(wxColour("#DBDBDB"));
-    m_btn_stop_match->SetBackgroundColorNormal(wxColour("#F8F7F7"));
-    m_btn_stop_match->SetTextColorNormal(wxColour("#242424"));
-    m_btn_stop_match->Hide();
-    m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
-    progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
-    panel_sizer->Add(progress_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+    // Progress block (gauge + Stop Matching, hidden when idle). The 44-DIP spacer pins the row
+    // height so the button centers with 8 DIP padding top and bottom. The gap to Cancel/Confirm is
+    // outside the block so it survives the idle collapse.
+    {
+        auto* block = new wxBoxSizer(wxVERTICAL);
+        auto* progress_row = new wxBoxSizer(wxHORIZONTAL);
+        progress_row->Add(0, FromDIP(44), 0);
+        m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(6)),
+                                      wxGA_HORIZONTAL | wxGA_SMOOTH);
+        m_progress_bar->SetMinSize(wxSize(FromDIP(200), FromDIP(6)));
+        m_progress_bar->SetValue(0);
+        m_progress_bar->Hide();
+        progress_row->Add(m_progress_bar, 1, wxALIGN_CENTER_VERTICAL);
+        m_btn_stop_match = new Button(btn_panel, _L("Stop Matching"));
+        m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
+        m_btn_stop_match->SetCornerRadius(FromDIP(4));
+        m_btn_stop_match->SetBorderWidth(FromDIP(1));
+        m_btn_stop_match->SetFont(Label::Body_14);
+        m_btn_stop_match->SetBorderColorNormal(wxColour("#DBDBDB"));
+        m_btn_stop_match->SetBackgroundColorNormal(wxColour("#F8F7F7"));
+        m_btn_stop_match->SetTextColorNormal(wxColour("#242424"));
+        m_btn_stop_match->Hide();
+        m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
+        progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(18));
+        block->Add(progress_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+        m_progress_divider = new wxPanel(btn_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
+        m_progress_divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
+        m_progress_divider->Hide();
+        block->Add(m_progress_divider, 0, wxEXPAND);
+        panel_sizer->Add(block, 0, wxEXPAND);
+        block->ShowItems(false);
+        m_progress_block = block;
+    }
     panel_sizer->AddSpacer(FromDIP(12));
 
     auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1928,10 +1938,17 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
     if (matching) {
         m_progress_bar->Show();
         m_progress_bar->SetValue(0);
-        if (m_btn_stop_match) m_btn_stop_match->Show();
+        if (m_btn_stop_match)   m_btn_stop_match->Show();
+        if (m_progress_divider) m_progress_divider->Show();
+        // Re-show the block's spacers/sub-sizers (collapsed by the ShowItems(false) below).
+        if (m_progress_block)   m_progress_block->ShowItems(true);
     } else {
         m_progress_bar->Hide();
-        if (m_btn_stop_match) m_btn_stop_match->Hide();
+        if (m_btn_stop_match)   m_btn_stop_match->Hide();
+        if (m_progress_divider) m_progress_divider->Hide();
+        // Collapse the whole block — widgets + the 12 DIP gap — to 0 so the idle
+        // footer stays 61 DIP (button 36 + 12/12 padding + 1px hairline).
+        if (m_progress_block)   m_progress_block->ShowItems(false);
     }
     // Footer height changes with the progress row visibility — re-layout so Cancel/Confirm
     // stay pinned to the bottom edge and there's no stale gap or clipping.

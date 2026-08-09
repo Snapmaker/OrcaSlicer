@@ -261,6 +261,12 @@ private:
 
     // Progress
     wxGauge* m_progress_bar = nullptr;
+    // Container sizer holding the progress row (bar + Stop Matching) AND its lower hairline
+    // divider. Show/Hide as a unit so the whole block — including the 12 DIP gaps around it —
+    // collapses to 0 in the idle state, keeping the footer at 61 DIP. Individual Show() calls
+    // on m_progress_bar / m_btn_stop_match would leave the sizer spacers occupying space.
+    wxSizer* m_progress_block = nullptr;
+    wxPanel* m_progress_divider = nullptr;
 
     wxScrolledWindow* m_scrolled_content = nullptr;
 };

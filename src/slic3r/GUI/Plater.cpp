@@ -13557,6 +13557,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
             if (current_plate->is_slice_result_valid() && this->model.objects.empty() && !current_has_print_instances)
                 only_has_gcode_need_preview = true;
             bool slice_cancelled = false;
+            // Always reset slice-all flag when entering preview, so only the current plate is sliced.
+            this->m_slice_all = false;
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": from set_current_panel, no_slice %1%, export_in_progress %2%, model_fits %3%, m_is_slicing %4%")%no_slice%export_in_progress%model_fits%m_is_slicing;
 
@@ -13567,7 +13569,6 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                   this->m_slice_all = false;
                     slice_cancelled = !(this->q->reslice());
                }
                 else {
@@ -13578,7 +13579,6 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
             }
             else if (only_has_gcode_need_preview)
             {
-                this->m_slice_all = false;
                 slice_cancelled = !this->q->reslice();
             }
             //BBS: process empty plate, reset previous toolpath

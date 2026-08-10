@@ -6744,11 +6744,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
             if (canvas == nullptr || !canvas->is_initialized())
                 return;
             canvas->update_volumes_colors_by_extruder();
-            // Push new colors into the active painting gizmo (legend + painted facets).
-            // Direct update_data(), not update_gizmos_on_off_state(): the latter runs
-            // refresh_on_off_state(), which deactivates the painting gizmo when the
-            // selection is not a single full instance.
-            canvas->get_gizmos_manager().update_data();
             canvas->render();
         };
 
@@ -15306,8 +15301,7 @@ void Plater::priv::on_filament_color_changed(wxCommandEvent &event)
 
     // Regenerate mixed filaments and refresh the mixed panel only. Color
     // changes do not alter filament IDs, so the full on_filaments_change()
-    // path is unnecessary and can re-enter UI rebuilds mid-update. The painting
-    // gizmo is refreshed via update_data() in refresh_model_canvas_colors below.
+    // path is unnecessary and can re-enter UI rebuilds mid-update.
     wxGetApp().preset_bundle->update_multi_material_filament_presets();
     sidebar->update_mixed_filament_panel();
     sidebar->update_color_mix_panel();

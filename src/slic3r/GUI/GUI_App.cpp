@@ -3079,7 +3079,7 @@ bool GUI_App::on_init_inner()
     // When off, explicitly stop the debug server so port 8766 is not left listening.
     const bool websocket_debug_pref = app_config->get_bool("websocket_debug");
     if (websocket_debug_pref) {
-        BOOST_LOG_TRIVIAL(info) << "Web Debug Mode enabled in preferences, starting WebSocket debug server (port 8766)";
+        BOOST_LOG_TRIVIAL(debug) << "Web Debug Mode enabled in preferences, starting WebSocket debug server (port 8766)";
         Slic3r::GUI::SSWCP::enable_debug_mode(true);
     } else {
         Slic3r::GUI::SSWCP::enable_debug_mode(false);

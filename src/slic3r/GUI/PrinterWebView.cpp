@@ -72,8 +72,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
-    m_apikey_sent = false;
-    
+
     if (url.find("path=2") != std::string::npos) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
@@ -125,11 +124,14 @@ void PrinterWebView::OnClose(wxCloseEvent& evt)
 
 void PrinterWebView::SendAPIKey()
 {
-    if (m_apikey_sent || m_apikey.IsEmpty())
+    if (m_apikey.IsEmpty())
         return;
-    m_apikey_sent   = true;
+    // Re-inject on every document load (e.g. context-menu Reload). Idempotent
+    // marker avoids stacking fetch/XHR wrappers if LOADED fires more than once.
     wxString script = wxString::Format(R"(
     (function() {
+        if (window.__sm_apikey_hooked) return;
+        window.__sm_apikey_hooked = true;
         var apiKey = '%s';
         // Override fetch to inject X-API-Key header
         if (window.fetch) {

@@ -2342,7 +2342,7 @@ Sidebar::Sidebar(Plater *parent)
         const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
         if (colors.size() < 2) {
             RichMessageDialog dlg(this,
-                _L("Please add at least 2 filaments to use batch color matching."),
+                _L("Color Mixing Match is unavailable when only one filament is added to Filament Management."),
                 _L("Color Mixing Match"), wxOK);
             dlg.SetOKLabel(_L("Got it"));
             dlg.CentreOnScreen();
@@ -2472,11 +2472,15 @@ Sidebar::Sidebar(Plater *parent)
                     old_mixed_snapshot, current_count, target_count);
             }
 
-            // Assign the Full Spectrum filament preset to slots 1-4 so the
-            // combobox displays the preset name instead of F1-F4 fallback.
+            // Write Full Spectrum to slots 1-4 only when the preset is
+            // selectable under the current printer (present + visible +
+            // compatible, matching the filament combobox filter).
             const std::string full_spectrum_preset = full_spectrum_preset_name();
-            for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
-                pb->set_filament_preset(i, full_spectrum_preset);
+            const Preset*     fs_preset = pb->filaments.find_preset(full_spectrum_preset);
+            if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible) {
+                for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
+                    pb->set_filament_preset(i, full_spectrum_preset);
+            }
 
             wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
         } else {
@@ -8497,6 +8501,30 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
         }
     }
 
+    // Deleting mixed rows renumbers every higher survivor down by one (virtual
+    // ids enumerate over *enabled* rows). Painted facets still hold the old ids,
+    // so without this remap they resolve to the wrong row — the merged-slot
+    // regression. Computed in the T2 epoch (rows still enabled), applied after
+    // the mark loop in T3.
+    std::vector<unsigned int> mixed_deletion_remap;
+    if (!redundant_mixed_stable_ids.empty()) {
+        const size_t cur_num_physical = pb->filament_presets.size();
+        const std::unordered_set<uint64_t> to_delete(redundant_mixed_stable_ids.begin(),
+                                                      redundant_mixed_stable_ids.end());
+        // Enumerate enabled rows in order to find each redundant row's T2 vid.
+        std::vector<unsigned int> deleted_t2_vids;
+        unsigned int vid = static_cast<unsigned int>(cur_num_physical) + 1;
+        for (const MixedFilament& mf : mfs) {
+            if (!mf.enabled || mf.deleted) continue;
+            if (mf.stable_id != 0 && to_delete.count(mf.stable_id) > 0)
+                deleted_t2_vids.push_back(vid);
+            ++vid;
+        }
+        const size_t t2_total = cur_num_physical + pb->mixed_filaments.enabled_count();
+        mixed_deletion_remap = MixedFilamentManager::build_mixed_deletion_painting_remap(
+            cur_num_physical, t2_total, deleted_t2_vids);
+    }
+
     // Mark the redundant mixed rows that survived the physical deletions
     // (the non-cascade ones).  Match by stable_id against the CURRENT m_mixed
     // — `mfs` still refers to the same (now-rebuilt) vector object.
@@ -8525,6 +8553,26 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             mf.deleted = true;
             mf.enabled = false;
         }
+    }
+
+    // Apply the mixed-deletion remap now that the rows are marked (T3 epoch).
+    // Mirrors the physical-deletion composite remap above.
+    if (!mixed_deletion_remap.empty()) {
+        EnforcerBlockerStateMap state_map;
+        for (size_t i = 0; i < state_map.size(); ++i)
+            state_map[i] = EnforcerBlockerType(i);
+        const size_t t3_total = pb->filament_presets.size() + pb->mixed_filaments.enabled_count();
+        for (size_t i = 1; i < mixed_deletion_remap.size() && i < state_map.size(); ++i) {
+            const unsigned int mapped = mixed_deletion_remap[i];
+            if (mapped == 0 || mapped >= state_map.size() || mapped > t3_total)
+                state_map[i] = EnforcerBlockerType::NONE;
+            else
+                state_map[i] = EnforcerBlockerType(mapped);
+        }
+        for (ModelObject* mo : wxGetApp().model().objects)
+            for (ModelVolume* mv : mo->volumes)
+                if (mv->type() == ModelVolumeType::MODEL_PART)
+                    mv->remap_extruder_ids(t3_total, state_map);
     }
 
     // Final authoritative serialization of the post-cleanup state (it must

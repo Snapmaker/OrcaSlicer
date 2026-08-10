@@ -387,6 +387,30 @@ public:
     static std::string format_surface_offset_token(float value);
     static double      mixed_filament_reference_nozzle_mm(unsigned int component_a, unsigned int component_b, const std::vector<double> &nozzle_diameters);
 
+    // Build the T2(pre-delete) -> T3(post-delete) painting remap for the batch-
+    // match cleanup path that marks redundant mixed rows deleted. Virtual IDs
+    // are enumerated over *enabled* rows, so deleting a row renumbers every
+    // higher survivor down by one; the model's painted facets still hold the
+    // pre-deletion IDs and must be remapped or they resolve to the wrong row.
+    //
+    // Rule (per old_vid in T2 space):
+    //   old_vid in deleted_t2_vids        -> 0          (NONE; the deleted row)
+    //   old_vid <= num_physical           -> old_vid    (physical slots: identity)
+    //   else                              -> old_vid - count(deleted vids < old_vid)
+    //
+    // num_physical:        physical filament count (unchanged by mixed-only deletion).
+    // t2_total_filaments:  total filament count BEFORE deletion (physical + enabled mixed).
+    // deleted_t2_vids:     1-based virtual IDs of the rows being deleted (any order).
+    // Returns:             vector of size t2_total_filaments + 1; remap[0] is unused (0).
+    //
+    // Pure function: no stable_id lookup, no (a,b) pair fallback, no dependence on the
+    // MixedFilament payload. The offset math is the whole computation, which is why it
+    // is unit-testable without the GUI cleanup harness.
+    static std::vector<unsigned int> build_mixed_deletion_painting_remap(
+        size_t                            num_physical,
+        size_t                            t2_total_filaments,
+        const std::vector<unsigned int>&  deleted_t2_vids);
+
     // ---- Accessors ------------------------------------------------------
 
     const std::vector<MixedFilament> &mixed_filaments() const { return m_mixed; }

@@ -2033,6 +2033,64 @@ void MixedFilamentManager::add_batch_custom_filaments(
 }
 
 // --------------------------------------------------------------------------
+// build_mixed_deletion_painting_remap  (pure, testable)
+// --------------------------------------------------------------------------
+std::vector<unsigned int> MixedFilamentManager::build_mixed_deletion_painting_remap(
+    size_t                           num_physical,
+    size_t                           t2_total_filaments,
+    const std::vector<unsigned int>& deleted_t2_vids)
+{
+    // Empty input -> identity (caller should also short-circuit, but stay safe).
+    // Size for the identity return so callers can iterate without a separate check.
+    std::vector<unsigned int> remap(t2_total_filaments + 1, 0u);
+    if (deleted_t2_vids.empty()) {
+        for (size_t i = 1; i <= t2_total_filaments; ++i)
+            remap[i] = static_cast<unsigned int>(i);
+        return remap;
+    }
+
+    // Sort + dedup a local copy so the offset count is correct regardless of
+    // caller order, and so duplicate ids do not inflate the shift.
+    std::vector<unsigned int> sorted_deleted = deleted_t2_vids;
+    std::sort(sorted_deleted.begin(), sorted_deleted.end());
+    sorted_deleted.erase(std::unique(sorted_deleted.begin(), sorted_deleted.end()),
+                         sorted_deleted.end());
+
+    for (size_t old_vid = 1; old_vid <= t2_total_filaments; ++old_vid) {
+        if (old_vid <= num_physical) {
+            // Physical slots are never renumbered by a mixed-only deletion.
+            remap[old_vid] = static_cast<unsigned int>(old_vid);
+            continue;
+        }
+        // deleted_below = count of deleted vids strictly less than old_vid;
+        // since sorted_deleted is ascending, std::lower_bound gives that count.
+        const auto it = std::lower_bound(sorted_deleted.begin(), sorted_deleted.end(),
+                                         static_cast<unsigned int>(old_vid));
+        const size_t deleted_below = static_cast<size_t>(it - sorted_deleted.begin());
+
+        const bool is_deleted = (it != sorted_deleted.end() && *it == static_cast<unsigned int>(old_vid));
+        if (is_deleted) {
+            remap[old_vid] = 0u; // NONE — the deleted row itself.
+        } else {
+            // New T3 id = old T2 id minus the number of deleted rows below it.
+            // deleted_below < old_vid always holds (all deleted vids are >= num_physical+1
+            // and we are past num_physical), so the subtraction cannot underflow here,
+            // but guard defensively against a caller that passes a physical id in the
+            // delete set.
+            if (deleted_below >= old_vid) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "build_mixed_deletion_painting_remap: deleted_below=" << deleted_below
+                    << " >= old_vid=" << old_vid << " (unexpected); mapping to NONE";
+                remap[old_vid] = 0u;
+            } else {
+                remap[old_vid] = static_cast<unsigned int>(old_vid - deleted_below);
+            }
+        }
+    }
+    return remap;
+}
+
+// --------------------------------------------------------------------------
 // compute_redundant_filaments  (pure, testable)
 // --------------------------------------------------------------------------
 

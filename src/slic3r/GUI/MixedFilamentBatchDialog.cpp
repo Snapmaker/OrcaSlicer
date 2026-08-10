@@ -116,14 +116,14 @@ static constexpr int MATCH_PREVIEW_DIP = 227;
 // RoundedPreviewPanel — a fixed-size square panel that draws a rounded-corner
 // thumbnail with an overlay badge ("Original Model" / "After Match").
 //
-// Rounded corners: the panel is first filled entirely with white (parent card bg),
-// then a rounded-rect wxRegion clip is applied via SetDeviceClippingRegion before
-// drawing the rounded background (#E7E7E7) + thumbnail + badge.  The four corners
-// keep their white fill and sit transparently over the parent card.
+// Rounded corners: paint the real background (card white via SetBackgroundColour +
+// dc.Clear()), then clip to a rounded rect and draw the rounded background (#E7E7E7)
+// + thumbnail + badge inside it. The background is a real opaque window background,
+// not a colour-matching fake — dc.Clear() is bounded to this window's backing store,
+// so the four corners can't bleed onto sibling UI on macOS.
 //
-// Uses plain wxDC (not wxGraphicsContext) to stay in the same coordinate space as
+// Plain wxDC (not wxGraphicsContext) stays in the same coordinate space as
 // wxAutoBufferedPaintDC — no antialias transform, no off-by-one clipping artifacts.
-// Child-window safe on all platforms: no SetWindowRgn, no SetShape.
 // ---------------------------------------------------------------------------
 
 class RoundedPreviewPanel : public wxPanel
@@ -136,6 +136,13 @@ public:
         , m_badge_label(badge_label)
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT);
+        // Opaque window bg = parent card white. Marks the panel opaque so the macOS
+        // compositor stops blending it over siblings, and fixes the colour dc.Clear()
+        // paints. Wrapped in darkModeColorFor so dark mode maps it to the dialog's
+        // dark window-bg slot (#2D2D31) — the light-mode value is plain white, so any
+        // equivalent white (wxColour("#FFFFFF") / *wxWHITE / wxColour(255,255,255))
+        // resolves to the same map entry (gDarkColors keys by RGBA value, not string).
+        SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         SetMinSize(wxSize(FromDIP(side_dip), FromDIP(side_dip)));
         Bind(wxEVT_PAINT, &RoundedPreviewPanel::on_paint, this);
         // DPI change: the placeholder SVG (ScalableBitmap) caches its raster at the
@@ -175,11 +182,11 @@ private:
         const wxColour card_white = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
         const wxColour panel_bg   = StateColor::darkModeColorFor(wxColour(231, 231, 231));
 
-        // Step 1 — fill ENTIRE panel with white (parent card background).
-        // The four corners keep this color and read as transparent over the card.
-        dc.SetBrush(wxBrush(card_white));
-        dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.DrawRectangle(wxRect(sz));
+        // Step 1 — real background, not a faked-transparent white square. dc.Clear()
+        // writes only into this window's own backing store, which the compositor bounds
+        // to the window geometry — so the corners read as the card but can't bleed.
+        dc.SetBackground(wxBrush(card_white));
+        dc.Clear();
 
         // Step 2 — build a rounded-rect clip region:
         //   black rounded-rect on white → region = black interior
@@ -217,9 +224,8 @@ private:
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
         }
 
-        // Step 5 — badge (white text on gray bg, top-left)
-        dc.DestroyClippingRegion();
-
+        // Step 5 — badge (white text on gray bg, top-left), drawn inside the rounded
+        // clip so it's hard-bounded to the thumbnail area.
         dc.SetFont(Label::Body_12);
         const wxSize text_sz = dc.GetTextExtent(m_badge_label);
         const int pad_x = FromDIP(8);
@@ -232,6 +238,8 @@ private:
         dc.DrawRectangle(badge);
         dc.SetTextForeground(*wxWHITE);
         dc.DrawText(m_badge_label, badge.x + pad_x, badge.y + pad_y);
+
+        dc.DestroyClippingRegion();
     }
 };
 
@@ -1575,18 +1583,23 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     // in darkModeColorFor. If it ever renders incorrectly on Windows, remove it
     // and rely on the spacing already in the sizer (AddSpacer pattern), as the
     // other two cards do.
+    //
+    // 8 DIP gap above/below via AddSpacer: divider needs wxLEFT|wxRIGHT=16, and
+    // wxBoxSizer's single border value can't express 8-v / 16-h in one flag.
+    s->AddSpacer(FromDIP(8));
     {
         auto* divider = new wxPanel(m_preview_card, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
         divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F3F4F6")));
-        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
+        s->Add(divider, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(16));
     }
+    s->AddSpacer(FromDIP(8));
 
     // Centered controls: Plate (prev arrow + label + combo + next arrow) | View (label + combo)
     {
         auto* crow = new wxBoxSizer(wxHORIZONTAL);
         m_btn_tray_prev = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_left_arrow");
         m_btn_tray_prev->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(-1); });
-        crow->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        crow->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
         auto* plate_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("Plate"));
         plate_lbl->SetFont(Label::Body_12);
@@ -1611,11 +1624,11 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
             update_nav_arrow_state();
             refresh_previews();
         });
-        crow->Add(m_tray_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        crow->Add(m_tray_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
         m_btn_tray_next = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_right_arrow");
         m_btn_tray_next->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(1); });
-        crow->Add(m_btn_tray_next, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(24));
+        crow->Add(m_btn_tray_next, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(48));
 
         auto* view_lbl = new wxStaticText(m_preview_card, wxID_ANY, _L("View"));
         view_lbl->SetFont(Label::Body_12);
@@ -1640,7 +1653,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         m_view_combo->Bind(wxEVT_COMBOBOX, &MixedFilamentBatchDialog::on_view_changed, this);
         crow->Add(m_view_combo, 0, wxALIGN_CENTER_VERTICAL);
 
-        s->Add(crow, 0, wxALIGN_CENTER_HORIZONTAL | wxALL, FromDIP(16));
+        // wxTOP dropped: 8 DIP gap to divider is provided by the AddSpacer above.
+        s->Add(crow, 0, wxALIGN_CENTER_HORIZONTAL | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
     }
 
     m_preview_card->SetSizer(s);
@@ -1699,36 +1713,40 @@ void MixedFilamentBatchDialog::build_footer()
     auto* top_line = new wxPanel(btn_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
     top_line->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
     panel_sizer->Add(top_line, 0, wxEXPAND);
-    panel_sizer->AddSpacer(FromDIP(12));
 
-    // Progress row (added before the button row so it renders ABOVE the buttons). Hidden by
-    // default; set_match_buttons_state(true) reveals it. Parented to btn_panel and inside
-    // the footer's VERTICAL sizer so the white footer bg extends under it and the whole
-    // footer grows/shrinks as a unit when the progress row is shown/hidden.
-    auto* progress_row = new wxBoxSizer(wxHORIZONTAL);
-    // Progress bar — native wxGauge, 6px tall per Figma (node 27624:65433). Width grows to
-    // fill the row (proportion=1); the "Stop Matching" button beside it takes its natural width.
-    m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(6)),
-                                  wxGA_HORIZONTAL | wxGA_SMOOTH);
-    m_progress_bar->SetValue(0);
-    m_progress_bar->Hide();
-    progress_row->Add(m_progress_bar, 1, wxALIGN_CENTER_VERTICAL);
-    // "Stop Matching" — inline button to the right of the progress bar. Terminates the
-    // in-flight match without closing the dialog (cancel_batch_match only sets the flag;
-    // the worker drains and handle_batch_match_result restores idle state). Figma spec:
-    // bg #F8F7F7, text #242424, 4px corner radius, thin border.
-    m_btn_stop_match = new Button(btn_panel, _L("Stop Matching"));
-    m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
-    m_btn_stop_match->SetCornerRadius(FromDIP(4));
-    m_btn_stop_match->SetBorderWidth(FromDIP(1));
-    m_btn_stop_match->SetFont(Label::Body_14);
-    m_btn_stop_match->SetBorderColorNormal(wxColour("#DBDBDB"));
-    m_btn_stop_match->SetBackgroundColorNormal(wxColour("#F8F7F7"));
-    m_btn_stop_match->SetTextColorNormal(wxColour("#242424"));
-    m_btn_stop_match->Hide();
-    m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
-    progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(12));
-    panel_sizer->Add(progress_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+    // Progress block (gauge + Stop Matching, hidden when idle). The 44-DIP spacer pins the row
+    // height so the button centers with 8 DIP padding top and bottom. The gap to Cancel/Confirm is
+    // outside the block so it survives the idle collapse.
+    {
+        auto* block = new wxBoxSizer(wxVERTICAL);
+        auto* progress_row = new wxBoxSizer(wxHORIZONTAL);
+        progress_row->Add(0, FromDIP(44), 0);
+        m_progress_bar = new wxGauge(btn_panel, wxID_ANY, 100, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(6)),
+                                      wxGA_HORIZONTAL | wxGA_SMOOTH);
+        m_progress_bar->SetMinSize(wxSize(FromDIP(200), FromDIP(6)));
+        m_progress_bar->SetValue(0);
+        m_progress_bar->Hide();
+        progress_row->Add(m_progress_bar, 1, wxALIGN_CENTER_VERTICAL);
+        m_btn_stop_match = new Button(btn_panel, _L("Stop Matching"));
+        m_btn_stop_match->SetMinSize(wxSize(FromDIP(96), FromDIP(28)));
+        m_btn_stop_match->SetCornerRadius(FromDIP(4));
+        m_btn_stop_match->SetBorderWidth(FromDIP(1));
+        m_btn_stop_match->SetFont(Label::Body_14);
+        m_btn_stop_match->SetBorderColorNormal(wxColour("#DBDBDB"));
+        m_btn_stop_match->SetBackgroundColorNormal(wxColour("#F8F7F7"));
+        m_btn_stop_match->SetTextColorNormal(wxColour("#242424"));
+        m_btn_stop_match->Hide();
+        m_btn_stop_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { cancel_batch_match(); });
+        progress_row->Add(m_btn_stop_match, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(18));
+        block->Add(progress_row, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+        m_progress_divider = new wxPanel(btn_panel, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
+        m_progress_divider->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F0F0F0")));
+        m_progress_divider->Hide();
+        block->Add(m_progress_divider, 0, wxEXPAND);
+        panel_sizer->Add(block, 0, wxEXPAND);
+        block->ShowItems(false);
+        m_progress_block = block;
+    }
     panel_sizer->AddSpacer(FromDIP(12));
 
     auto* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -1888,13 +1906,49 @@ void MixedFilamentBatchDialog::set_match_buttons_state(bool matching)
     // bail out at any time (idle / matching / match-completed-pending-confirm).
     m_btn_cancel_match->Enable(true);
     m_btn_confirm->Enable(!matching && m_match_completed && m_result.success);
+
+    // Lock upper-region controls while a match runs. start_batch_match() snapshots the match
+    // inputs on the UI thread and the worker receives them by value, so this is not a thread-
+    // safety measure — it keeps the combos consistent with the inputs the in-flight match used,
+    // and stops mid-match edits from mutating m_tray_index / m_manual_filament_count, which the
+    // post-match restore re-reads via update_nav_arrow_state() / update_add_remove_buttons().
+    // Cancel stays enabled (set above) so the user can still bail out.
+    //
+    // Enabling a hidden combo (e.g. m_filament_combo[] in RECOMMENDED mode) is a harmless no-op.
+    if (m_method_combo) m_method_combo->Enable(!matching);
+    if (m_tray_combo)   m_tray_combo->Enable(!matching);
+    if (m_view_combo)   m_view_combo->Enable(!matching);
+    for (int i = 0; i < 4; ++i)
+        if (m_filament_combo[i]) m_filament_combo[i]->Enable(!matching);
+    // Button-type controls have state-dependent enable conditions (tray arrows depend on
+    // m_tray_index; add/remove depend on m_manual_filament_count). Disable them directly while
+    // matching, and on restore delegate to the existing helpers so the boundary conditions are
+    // recomputed correctly — NOT a blanket Enable(!matching), which would leave e.g. the prev
+    // arrow enabled at plate 1.
+    if (matching) {
+        if (m_btn_tray_prev)       m_btn_tray_prev->Disable();
+        if (m_btn_tray_next)       m_btn_tray_next->Disable();
+        if (m_btn_remove_filament) m_btn_remove_filament->Disable();
+        if (m_btn_add_filament)    m_btn_add_filament->Disable();
+    } else {
+        update_nav_arrow_state();    // prev/next re-enabled per m_tray_index
+        update_add_remove_buttons(); // add/remove re-enabled per m_manual_filament_count
+    }
+
     if (matching) {
         m_progress_bar->Show();
         m_progress_bar->SetValue(0);
-        if (m_btn_stop_match) m_btn_stop_match->Show();
+        if (m_btn_stop_match)   m_btn_stop_match->Show();
+        if (m_progress_divider) m_progress_divider->Show();
+        // Re-show the block's spacers/sub-sizers (collapsed by the ShowItems(false) below).
+        if (m_progress_block)   m_progress_block->ShowItems(true);
     } else {
         m_progress_bar->Hide();
-        if (m_btn_stop_match) m_btn_stop_match->Hide();
+        if (m_btn_stop_match)   m_btn_stop_match->Hide();
+        if (m_progress_divider) m_progress_divider->Hide();
+        // Collapse the whole block — widgets + the 12 DIP gap — to 0 so the idle
+        // footer stays 61 DIP (button 36 + 12/12 padding + 1px hairline).
+        if (m_progress_block)   m_progress_block->ShowItems(false);
     }
     // Footer height changes with the progress row visibility — re-layout so Cancel/Confirm
     // stay pinned to the bottom edge and there's no stale gap or clipping.
@@ -2357,11 +2411,8 @@ void MixedFilamentBatchDialog::launch_background_match()
         // return-code model (result.success / error_code) and its whole call chain
         // has no throw sites, so no exception handling is needed here.
         //
-        // Per-component weight bounds are mode-dependent:
-        //   - RECOMMENDED: [kMinComponentPercent(0), kMaxComponentPercent(70)]
-        //   - MANUAL: [15, 100] — keep the 15% floor so a mix always has minimum
-        //     participation, allow >70% (surfaces as advisory via
-        //     check_manual_recipe_ratio after the match).
+        // Per-component weight bounds: min is shared (kMinComponentPercent); max is
+        // mode-dependent — MANUAL allows >70% (advisory via check_manual_recipe_ratio).
         //
         // check_compatible is false for BOTH modes. RECOMMENDED needs none: its
         // physical_colors come from a single Full Spectrum preset (one PLA spool,
@@ -2371,7 +2422,7 @@ void MixedFilamentBatchDialog::launch_background_match()
         // preset_bundle->filament_presets unsynchronized from here, racing the UI
         // thread (data-race UB). The slice gate (Plater::has_incompatible_mixed_
         // filament_in_use) still blocks genuinely incompatible mixes at slice time.
-        const int match_min = (matching_method == MANUAL) ? 15 : kMinComponentPercent;
+        const int match_min = kMinComponentPercent; // shared floor for both modes
         const int match_max = (matching_method == MANUAL) ? 100 : kMaxComponentPercent;
         if (!unmatched_colors.empty()) {
             auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, match_min, match_max, cancel_token,
@@ -2576,6 +2627,15 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
 
 void MixedFilamentBatchDialog::update_mapping_legend()
 {
+    // Freeze the legend panel for the whole clear+rebuild so wxMSW doesn't repaint after
+    // every child create/destroy (up to 64 rows × 4 sub-windows = hundreds of partial
+    // paints → visible flicker). RAII guarantees Thaw on every exit path, including
+    // exceptions (harness cpp-wxwidgets §132). Held for the whole function: Refresh()
+    // calls issued while frozen are coalesced and flushed at Thaw (the destructor at
+    // scope exit), so the rebuilt card repaints in one pass. m_legend_panel is the direct
+    // parent of every new row window, so freezing it (which propagates to children) is
+    // the minimal effective scope — same idiom as ConfigWizard / PresetComboBoxes.
+    wxWindowUpdateLocker no_updates(m_legend_panel);
     // Clear(true) deletes row windows immediately (vs deferred Destroy), so their
     // pixel regions are released before repaint — same pattern as rebuild_legend.
     m_legend_sizer->Clear(true);
@@ -2698,7 +2758,9 @@ void MixedFilamentBatchDialog::update_mapping_legend()
     }
     // Card grows with content (no inner scroller); re-layout the legend panel + card so they
     // reflect the new row count, then re-layout the scrolled region so its virtual (scrollable)
-    // extent tracks the new card height and downstream positioning stays correct.
+    // extent tracks the new card height and downstream positioning stays correct. The Layout()
+    // and Refresh() calls run while still frozen — they coalesce, and the whole card repaints
+    // in one pass when no_updates Thaws at function exit.
     m_legend_panel->Layout();
     m_mapping_card->Layout();
     m_mapping_card->Refresh();

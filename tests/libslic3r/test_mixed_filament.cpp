@@ -4913,3 +4913,168 @@ TEST_CASE("preview colors: virtual slot beyond base vector is padded gray", "[Mi
     CHECK(out[1] == 0x80808080u);
     CHECK(out[2] == 0x80808080u);
 }
+
+// ============================================================================
+// [MixedFilament][deletion_remap] — build_mixed_deletion_painting_remap
+//
+// Regression coverage for the batch-match cleanup bug where deleting redundant
+// mixed rows (after duplicate-recipe merge) re-enumerates the virtual IDs of
+// the remaining rows, but the model's painted facets kept the old (pre-deletion)
+// IDs, so they resolved to the wrong mixed filament — the last merged slot
+// appeared to fall back to color #1.
+//
+// The fix extracts the T2(pre-delete)→T3(post-delete) painting remap into a
+// pure, library-testable function. These are SPEC tests (the math is defined
+// independently of any runtime), not characterization tests, so a hand-written
+// expected value is a valid oracle here (differential-oracle harness §5).
+//
+// Mapping rule under test, for each old_vid in T2 space:
+//   old_vid ∈ deleted_vids               -> 0   (NONE; the row itself)
+//   old_vid <= num_physical              -> old_vid (physical slots are identity)
+//   else                                 -> old_vid - count(deleted_vids < old_vid)
+// Return vector is sized t2_total_filaments + 1 (1-based; index 0 is unused/0).
+// ===========================================================================
+
+TEST_CASE("build_mixed_deletion_painting_remap: single middle delete shifts tail down by one", "[MixedFilament][deletion_remap]")
+{
+    // The reported scenario: 4 physicals, mixed rows v5..v14. After duplicate-
+    // recipe merge, v9 is redundant and gets deleted. Every vid > 9 must shift
+    // down by one; v9 itself maps to NONE.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 14; // 4 physical + 10 mixed (v5..v14)
+    const std::vector<unsigned int> deleted = {9};
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[0] == 0u); // unused index
+    // Physical slots: identity.
+    CHECK(remap[1] == 1u);
+    CHECK(remap[2] == 2u);
+    CHECK(remap[3] == 3u);
+    CHECK(remap[4] == 4u);
+    // Mixed slots before the deleted one: identity.
+    CHECK(remap[5] == 5u);
+    CHECK(remap[6] == 6u);
+    CHECK(remap[7] == 7u);
+    CHECK(remap[8] == 8u);
+    // Deleted slot itself -> NONE.
+    CHECK(remap[9] == 0u);
+    // Mixed slots after the deleted one: shift down by one.
+    CHECK(remap[10] == 9u);
+    CHECK(remap[11] == 10u);
+    CHECK(remap[12] == 11u);
+    CHECK(remap[13] == 12u);
+    CHECK(remap[14] == 13u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: multiple deletes accumulate offset", "[MixedFilament][deletion_remap]")
+{
+    // Delete v7 and v9 out of v5..v14. Each survivor's new id subtracts the
+    // number of deleted vids strictly less than it.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 14;
+    const std::vector<unsigned int> deleted = {7, 9};
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[0] == 0u);
+    // Physical + pre-first-delete mixed: identity.
+    CHECK(remap[5] == 5u);
+    CHECK(remap[6] == 6u);
+    // Deleted.
+    CHECK(remap[7] == 0u);
+    // v8: one deleted vid (7) below it -> 8-1 = 7.
+    CHECK(remap[8] == 7u);
+    // Deleted.
+    CHECK(remap[9] == 0u);
+    // v10..v14: two deleted vids (7,9) below each -> subtract 2.
+    CHECK(remap[10] == 8u);
+    CHECK(remap[11] == 9u);
+    CHECK(remap[12] == 10u);
+    CHECK(remap[13] == 11u);
+    CHECK(remap[14] == 12u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: physical slots never move", "[MixedFilament][deletion_remap]")
+{
+    // Even with mixed deletes, the physical range [1..num_physical] is identity.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 8;
+    const std::vector<unsigned int> deleted = {5, 6};
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[1] == 1u);
+    CHECK(remap[2] == 2u);
+    CHECK(remap[3] == 3u);
+    CHECK(remap[4] == 4u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: deleted vids map to NONE", "[MixedFilament][deletion_remap]")
+{
+    const size_t num_physical = 4;
+    const size_t t2_total     = 10;
+    const std::vector<unsigned int> deleted = {6, 8};
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    CHECK(remap[6] == 0u);
+    CHECK(remap[8] == 0u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: delete all mixed leaves only physicals", "[MixedFilament][deletion_remap]")
+{
+    // Deleting every mixed row: the survivors are the physicals alone, all
+    // unchanged; every mixed vid maps to NONE.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 7; // 4 physical + 3 mixed (v5,v6,v7)
+    const std::vector<unsigned int> deleted = {5, 6, 7};
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[1] == 1u);
+    CHECK(remap[2] == 2u);
+    CHECK(remap[3] == 3u);
+    CHECK(remap[4] == 4u);
+    CHECK(remap[5] == 0u);
+    CHECK(remap[6] == 0u);
+    CHECK(remap[7] == 0u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: empty delete list is identity (short-circuit)", "[MixedFilament][deletion_remap]")
+{
+    // No deletes -> every vid maps to itself. This is the no-op path cleanup
+    // must take without running a remap pass over the whole model.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 10;
+    const std::vector<unsigned int> deleted;
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    for (size_t i = 1; i <= t2_total; ++i)
+        CHECK(remap[i] == static_cast<unsigned int>(i));
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: unsorted delete input is tolerated", "[MixedFilament][deletion_remap]")
+{
+    // Robustness: caller may supply vids in any order; the function must sort
+    // internally so the offset count is correct. Same expectation as the
+    // ordered {7,9} case.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 14;
+    const std::vector<unsigned int> deleted = {9, 7}; // descending input
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[7] == 0u);
+    CHECK(remap[8] == 7u); // one delete below
+    CHECK(remap[9] == 0u);
+    CHECK(remap[10] == 8u); // two deletes below
+    CHECK(remap[14] == 12u);
+}

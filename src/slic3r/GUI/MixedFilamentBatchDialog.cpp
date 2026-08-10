@@ -1398,8 +1398,12 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         // numbered color swatch (ComboBox hides the arrow when an item image is set).
         set_manual_combo_icon(i, cb->GetSelection());
         cb->Bind(wxEVT_COMBOBOX, [this, i](wxCommandEvent&) {
-            if (m_filament_combo[i])
+            if (m_filament_combo[i]) {
+                // Record the user's selection so the failed/cancelled re-match restore
+                // gate (input_intact) can detect that the manual input changed.
+                m_filament_selections[i] = m_filament_combo[i]->GetSelection();
                 set_manual_combo_icon(i, m_filament_combo[i]->GetSelection());
+            }
             on_manual_selection_changed();
         });
         r->Add(cb, 1, wxALIGN_CENTER_VERTICAL);

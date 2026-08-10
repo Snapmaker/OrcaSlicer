@@ -15270,7 +15270,7 @@ msgid ""
 "The mix ratios for %s in the Color Mapping list are outside the recommended %d"
 "%%–%d%% range. Adjust the mix ratios manually for better results."
 msgstr ""
-"Color Mapping 列表中 {%s} 的混色比例超出推荐范围 %d%%–%d%%。请手动调整混色比例以获得更好效果。"
+"Color Mapping 列表中 %s 的混色比例超出推荐范围 %d%%–%d%%。请手动调整混色比例以获得更好效果。"
 
 msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
 msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"

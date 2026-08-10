@@ -66,9 +66,13 @@ bool try_parse_color_match_hex(const wxString& value, wxColour& color_out)
 
 std::vector<int> normalize_color_match_weights(const std::vector<int>& weights, size_t count)
 {
+    // Guard against count == 0: the remainder-fill loop below would otherwise
+    // run with an empty `out`/`remainders` and write out[0] out of bounds.
+    if (count == 0)
+        return {};
     std::vector<int> out = weights;
     if (out.size() != count)
-        out.assign(count, count > 0 ? int(100 / count) : 0);
+        out.assign(count, int(100 / count));
 
     int sum = 0;
     for (int& value : out) {
@@ -989,7 +993,7 @@ static constexpr const char* k_category_names[] = {
 };
 static constexpr size_t k_category_count = sizeof(k_category_names) / sizeof(k_category_names[0]);
 // Matrix dimension covers all valid categories + UNKNOWN sentinel
-static constexpr size_t k_compat_dim = (size_t)FilamentCategory::UNKNOWN + 1;
+static constexpr size_t k_compat_dim = static_cast<size_t>(FilamentCategory::UNKNOWN) + 1;
 
 static FilamentCategory filament_category_from_name(const std::string& name)
 {
@@ -1063,8 +1067,8 @@ static void load_filament_compatibility()
                     BOOST_LOG_TRIVIAL(warning) << "Unknown category '" << cat_b_str << "' in compatibility config";
                     continue;
                 }
-                s_compat[(size_t)cat_a][(size_t)cat_b] = true;
-                s_compat[(size_t)cat_b][(size_t)cat_a] = true;
+                s_compat[static_cast<size_t>(cat_a)][static_cast<size_t>(cat_b)] = true;
+                s_compat[static_cast<size_t>(cat_b)][static_cast<size_t>(cat_a)] = true;
             }
         }
         s_compat_loaded.store(true, std::memory_order_release);
@@ -1076,7 +1080,7 @@ static void load_filament_compatibility()
 
 static bool is_category_compatible(FilamentCategory a, FilamentCategory b)
 {
-    return s_compat[(size_t)a][(size_t)b];
+    return s_compat[static_cast<size_t>(a)][static_cast<size_t>(b)];
 }
 
 struct ResolvedFilamentCategory {
@@ -1194,9 +1198,9 @@ bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
         for (size_t j = i + 1; j < resolved.size(); ++j) {
             if (!is_category_compatible(resolved[i].category, resolved[j].category)) {
                 BOOST_LOG_TRIVIAL(info) << "Incompatible filament categories: '"
-                                        << k_category_names[(size_t)resolved[i].category]
+                                        << k_category_names[static_cast<size_t>(resolved[i].category)]
                                         << "' vs '"
-                                        << k_category_names[(size_t)resolved[j].category] << "'";
+                                        << k_category_names[static_cast<size_t>(resolved[j].category)] << "'";
                 return false;
             }
         }
@@ -1352,7 +1356,7 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
         const auto tokens = MixedFilamentManager::split_pattern_group_to_tokens(group, num_physical);
         for (const auto& token : tokens) {
             unsigned int eid = MixedFilamentManager::physical_filament_from_token(token, entry, num_physical);
-            if (eid >= 1 && eid <= (unsigned)num_physical) {
+            if (eid >= 1 && eid <= static_cast<unsigned>(num_physical)) {
                 counts[eid]++;
                 total++;
             }

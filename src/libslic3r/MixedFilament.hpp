@@ -1,3 +1,4 @@
+#pragma once
 #ifndef slic3r_MixedFilament_hpp_
 #define slic3r_MixedFilament_hpp_
 

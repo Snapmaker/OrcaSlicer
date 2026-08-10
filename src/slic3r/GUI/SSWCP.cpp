@@ -5789,10 +5789,11 @@ void SSWCP_UserLogin_Instance::push_timelapse_state(const std::string& sn,
         std::string json_str = response.dump(4, ' ', true);
         std::string script = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
 
-        wxWebView* webview = sub->webview;
-        wxGetApp().CallAfter([webview, script, json_str]() {
-            if (webview && webview->GetRefData()) {
-                WebView::RunScript(webview, script);
+        std::string event_id = sub->event_id;
+        wxGetApp().CallAfter([event_id, script, json_str]() {
+            auto it = m_subscribe_map.find(event_id);
+            if (it != m_subscribe_map.end() && it->second && it->second->webview) {
+                WebView::RunScript(it->second->webview, script);
             }
             SSWCP::send_message_to_flutter(json_str);
         });
@@ -5832,6 +5833,24 @@ void SSWCP_UserLogin_Instance::sw_SubscribeDownloadState()
     sub->webview  = m_webview;
 
     m_subscribe_map[m_event_id] = sub;
+
+    // When the webview is destroyed (e.g. user switches machines during download),
+    // clean up all subscriptions that reference it so push_timelapse_state won't
+    // post CallAfter lambdas with dangling webview pointers.
+    if (m_webview) {
+        m_webview->Bind(wxEVT_DESTROY, [webview = m_webview](wxWindowDestroyEvent& e) {
+            if (e.GetEventObject() != webview) { e.Skip(); return; }
+            for (auto it = m_subscribe_map.begin(); it != m_subscribe_map.end();) {
+                auto& sub = it->second;
+                if (sub && sub->webview == webview) {
+                    it = m_subscribe_map.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            e.Skip();
+        });
+    }
 
     m_res_data = json::object();
     m_status   = 200;
@@ -7813,6 +7832,19 @@ void SSWCP::on_webview_delete(wxWebView* view)
             iter = page_state_map.erase(iter);
         } else {
             iter++;
+        }
+    }
+
+    // Clean up timelapse download subscriptions referencing this webview.
+    // Without this, push_timelapse_state posts CallAfter lambdas with dangling
+    // pointers after the user switches machines during a download.
+    auto& timelapse_sub_map = SSWCP_UserLogin_Instance::m_subscribe_map;
+    for (auto iter = timelapse_sub_map.begin(); iter != timelapse_sub_map.end();) {
+        auto& sub = iter->second;
+        if (sub && sub->webview == view) {
+            iter = timelapse_sub_map.erase(iter);
+        } else {
+            ++iter;
         }
     }
 }

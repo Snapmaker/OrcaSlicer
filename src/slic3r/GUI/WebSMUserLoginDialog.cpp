@@ -5,6 +5,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/Utils/SnapmakerAccount.hpp"
 #include "common_func/common_func.hpp"
 
 #include <wx/sizer.h>
@@ -199,28 +200,34 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             http.header("Authorization",token);
             http.on_complete([&](std::string body, unsigned status) {
                     if (status == 200) {
-                        std::string user_id = "";
-                        json response = json::parse(body);
-                        if (response.count("data")) {
-                            json data = response["data"];
-                            if (data.count("id")) {
-                                wxGetApp().sm_get_userinfo()->set_user_id(std::to_string(data["id"].get<int>()));
-                                user_id = std::to_string(data["id"].get<int>());
-                            }
-                            if (data.count("nickname")) {
-                                wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
-                            }
-                            if (data.count("icon")) {
-                                wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
-                            }
-                            if (data.count("account")) {
-                                wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());
-                            }
+                        // Same parser as the startup restore path. The OAuth
+                        // token in hand is fresh, so a login proceeds with
+                        // whatever profile fields parse (as before); only an
+                        // outright rejection of that token stops it.
+                        SMAccountProfile profile;
+                        bool auth_rejected = false;
+                        sm_parse_account_response(body, profile, auth_rejected);
+                        if (auth_rejected) {
+                            // Completing the login would leave the app
+                            // "signed in" with a credential the server has
+                            // already refused. Leave the user signed out.
+                            BOOST_LOG_TRIVIAL(warning) << "[sm_login] account API rejected a freshly issued token";
+                            return;
                         }
-                        string userInfo = BP_LOGIN_USER_ID + std::string(":") + user_id;
+                        if (!profile.id.empty())
+                            wxGetApp().sm_get_userinfo()->set_user_id(profile.id);
+                        if (!profile.nickname.empty())
+                            wxGetApp().sm_get_userinfo()->set_user_name(profile.nickname);
+                        if (!profile.icon.empty())
+                            wxGetApp().sm_get_userinfo()->set_user_icon_url(profile.icon);
+                        if (!profile.account.empty())
+                            wxGetApp().sm_get_userinfo()->set_user_account(profile.account);
+                        string userInfo = BP_LOGIN_USER_ID + std::string(":") + profile.id;
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+                        // Persist the session so the user stays logged in across restarts.
+                        wxGetApp().sm_save_login_to_config();
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {

@@ -59,6 +59,7 @@ class Notebook;
 struct wxLanguageInfo;
 
 namespace Slic3r {
+class Http;
 namespace GUI {
     class UpdateVersionDialog;
 };
@@ -595,7 +596,20 @@ private:
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
-  
+    // Snapmaker login persistence across restarts. Only the bearer token is
+    // persisted, to the OS secret store (never to plaintext config); profile
+    // fields are re-fetched from the server on restore. AppConfig's [sm_login]
+    // section holds only a non-secret marker used to skip the keyring lookup
+    // for users who never signed in. See GUI_App.cpp for details.
+    unsigned        sm_login_epoch() const { return m_sm_login_epoch; }
+    void            sm_save_login_to_config();
+    void            sm_clear_login_from_config();
+    void            sm_restore_login_from_config();
+    // Drops any persisted session (used when the user turns off "Stay signed in").
+    void            sm_forget_persisted_login();
+    void            sm_restore_login_with_token(const std::string& token, unsigned epoch);
+    json            sm_login_state_json();
+
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
     std::string     handle_web_request(std::string cmd);
@@ -866,6 +880,15 @@ private:
     bool                    m_flutter_web_copy_notified{ false };
     std::string             m_open_method;
     SMUserInfo m_login_userinfo;
+    // Bumped whenever the login session changes (manual login, logout, clear)
+    // so an in-flight async restore can detect it is stale and become a no-op.
+    unsigned   m_sm_login_epoch = 0;
+    // The in-flight session-revalidation request; cancelled in OnExit.
+    std::shared_ptr<Http> m_sm_login_http;
+    // Liveness token for that request's callbacks, which run on a detached
+    // worker thread. Released in OnExit: a callback that has already started
+    // sees the weak reference expire and skips touching the application.
+    std::shared_ptr<void> m_sm_login_alive = std::make_shared<char>();
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;

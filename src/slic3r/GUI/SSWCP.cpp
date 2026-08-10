@@ -4641,27 +4641,9 @@ void SSWCP_UserLogin_Instance::sw_UserLogout()
 void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
 {
     try {
-        json data;
-        auto pInfo = wxGetApp().sm_get_userinfo();
-        if (pInfo) {
-            bool islogin = pInfo->is_user_login();
-            if (islogin) {
-                data["status"] = "online";
-                data["nickname"] = pInfo->get_user_name();
-                data["icon"]     = pInfo->get_user_icon_url();
-                data["token"]    = pInfo->get_user_token();
-                data["userid"]   = pInfo->get_user_id();
-                data["account"]  = pInfo->get_user_account();
-            } else {
-                data["status"] = "offline";
-            }
-
-            m_res_data = data;
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
+        m_res_data = wxGetApp().sm_login_state_json();
+        send_to_js();
+        finish_job();
     }
     catch (std::exception& e) {
         handle_general_fail();
@@ -4877,6 +4859,15 @@ void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
     try {
         std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
         wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
+
+        // A persisted session is restored asynchronously at startup and can
+        // complete before this subscribe, in which case the one-shot notify()
+        // push was lost -- so push the current state now if already logged in
+        // (event framing only; a plain call keeps its request/response shape).
+        if (m_event_id != "" && wxGetApp().sm_get_userinfo()->is_user_login()) {
+            m_res_data = wxGetApp().sm_login_state_json();
+            send_to_js();
+        }
     }
     catch (std::exception& e) {
         handle_general_fail();

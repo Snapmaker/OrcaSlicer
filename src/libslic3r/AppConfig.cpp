@@ -161,6 +161,9 @@ void AppConfig::set_defaults()
         if (get("remember_output_path_removable").empty())
             set_bool("remember_output_path_removable", true);
 #endif
+        if (get("remember_login").empty())
+            set_bool("remember_login", true);
+
         if (get("toolkit_size").empty())
             set("toolkit_size", "100");
 

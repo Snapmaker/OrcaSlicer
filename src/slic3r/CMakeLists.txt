@@ -594,6 +594,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/HexFile.hpp
     Utils/Http.cpp
     Utils/Http.hpp
+    Utils/SnapmakerAccount.cpp
+    Utils/SnapmakerAccount.hpp
     Utils/InstanceID.cpp
     Utils/InstanceID.hpp
     Utils/json_diff.cpp

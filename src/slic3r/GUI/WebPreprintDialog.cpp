@@ -115,9 +115,8 @@ void WebPreprintDialog::reload()
 void WebPreprintDialog::load_url(wxString &url)
 {
     wxGetApp().fltviews().add_view(m_browser, url);
-    m_browser->Show();
     m_browser->LoadURL(url);
-   
+
     Layout();
 }
 
@@ -162,7 +161,6 @@ void WebPreprintDialog::OnNavigationRequest(wxWebViewEvent &evt)
 
 void WebPreprintDialog::OnNavigationComplete(wxWebViewEvent &evt)
 {
-    m_browser->Show();
     Layout();
 }
 

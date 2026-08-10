@@ -539,6 +539,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SMPhysicalPrinterDialog.cpp
     GUI/SSWCP.cpp
     GUI/SSWCP.hpp
+    GUI/WebSocketDebugServer.cpp
+    GUI/WebSocketDebugServer.hpp
     GUI/DownloadManager.cpp
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp
@@ -586,6 +588,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Flashforge.hpp
     Utils/FontConfigHelp.cpp
     Utils/FontConfigHelp.hpp
+    Utils/Frustum.cpp
+    Utils/Frustum.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
     Utils/Http.cpp

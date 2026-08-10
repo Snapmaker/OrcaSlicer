@@ -144,8 +144,14 @@ function sync_gitlab_repos() {
     fi
 
     # --- sentry-native submodule (crashpad) ---
-    echo "  sentry: initializing submodule (crashpad)..."
+    echo "  sentry: fixing submodule URLs (HTTP -> SSH) and initializing..."
     pushd "${SENTRY_DIR}" > /dev/null
+    # Replace HTTP URLs with SSH to avoid slow HTTP git clones
+    if [ -f .gitmodules ]; then
+        sed -i '' 's|http://gitlab.s.com/|git@gitlab.s.com:|g' .gitmodules
+        git submodule sync
+        echo "  submodule URLs converted to SSH"
+    fi
     git submodule update --init --recursive --depth 1
     popd > /dev/null
 

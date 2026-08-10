@@ -1338,6 +1338,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionEnumsGeneric,        filament_volume_type))
     ((ConfigOptionEnumsGeneric,        nozzle_volume_type))
     ((ConfigOptionString,              filament_grouping_mode))
+    ((ConfigOptionInt,                 project_schema_version))
     ((ConfigOptionStrings,             filament_flow_support))
     ((ConfigOptionStrings,             process_flow_support))
     ((ConfigOptionStrings,             printer_flow_support))

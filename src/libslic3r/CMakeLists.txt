@@ -358,6 +358,8 @@ set(lisbslic3r_sources
     PrintObject.cpp
     PrintObjectSlice.cpp
     PrintRegion.cpp
+    ProjectSchemaVersion.cpp
+    ProjectSchemaVersion.hpp
     ProjectTask.cpp
     ProjectTask.hpp
     QuadricEdgeCollapse.cpp

@@ -89,6 +89,7 @@
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/ProjectSchemaVersion.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -210,13 +211,20 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 namespace Slic3r {
 namespace GUI {
 
-static bool is_filament_extruder_map_version(const ConfigSubstitutionContext& config_substitutions,
-                                             const Semver& file_version,
-                                             const Semver& app_version)
+static void handle_newer_3mf_schema(wxWindow* parent,
+                                    const DynamicPrintConfig& config)
 {
-    return file_version.valid() && file_version > app_version &&
-           std::find(config_substitutions.unrecogized_keys.begin(), config_substitutions.unrecogized_keys.end(),
-                     "filament_extruder_map") != config_substitutions.unrecogized_keys.end();
+    const ProjectSchemaDefinition& definition = ProjectSchemaRegistry::definition();
+    const int file_schema = ProjectSchemaRegistry::version_from(config);
+    if (!ProjectSchemaRegistry::is_newer(config))
+        return;
+
+    BOOST_LOG_TRIVIAL(info) << "3MF project schema is newer than supported"
+                            << ": file_version=" << file_schema
+                            << ", supported_version=" << definition.current_version;
+    show_info(parent,
+              _L("Since the current version of SnapmakerOrca is relatively low, this 3mf file cannot be fully loaded, and the nozzle flow rate type may not match the file."),
+              _L("Newer 3mf version"));
 }
 
 static std::string filament_temp_mixing_warning_text()
@@ -10487,6 +10495,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                             << boost::format(", plate_data.size %1%, project_preset.size %2%, is_bbs_3mf %3%, file_version %4% \n") % plate_data.size() %
                                                    project_presets.size() % (en_3mf_file_type == En3mfType::From_BBS) % file_version.to_string();
 
+                    handle_newer_3mf_schema(q, config_loaded);
+
                     auto imported_string_count = [&config_loaded](const char *key) -> size_t {
                         if (const auto *opt = config_loaded.option<ConfigOptionStrings>(key))
                             return opt->values.size();
@@ -10603,13 +10613,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     else
                         load_type  = static_cast<LoadType>(std::stoi(import_project_action));
 
-                    // BBS: version check
                     Semver app_version = *(Semver::parse(Snapmaker_VERSION));
-                    if (is_filament_extruder_map_version(config_substitutions, file_version, app_version)) {
-                        show_info(q,
-                                  _L("Since the current version of SnapmakerOrca is relatively low, this 3mf file cannot be fully loaded, and the nozzle flow rate type may not match the file."),
-                                  _L("Newer 3mf version"));
-                    }
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
                         load_config = false;

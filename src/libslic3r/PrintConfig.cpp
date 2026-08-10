@@ -1,4 +1,5 @@
 #include "PrintConfig.hpp"
+#include "ProjectSchemaVersion.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 #include "I18N.hpp"
@@ -4070,6 +4071,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->cli = ConfigOptionDef::nocli;
     def->set_default_value(new ConfigOptionEnumsGeneric { fvtStandard });
+
+    const ProjectSchemaDefinition& project_schema = ProjectSchemaRegistry::definition();
+    def = this->add(project_schema.config_key, coInt);
+    def->label = L("Project schema version");
+    def->tooltip = L("Version of the project configuration schema stored in the 3MF project.");
+    def->min = 1;
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionInt(project_schema.current_version));
 
     def = this->add("filament_flow_support", coStrings);
     def->label = L("Filament flow support");

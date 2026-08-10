@@ -334,7 +334,11 @@ void PresetBundle::reset(bool delete_files)
 
 void PresetBundle::setup_directories()
 {
+#ifdef WIN32
+    boost::filesystem::path data_dir = boost::filesystem::path(boost::nowide::widen(Slic3r::data_dir()));
+#else
     boost::filesystem::path data_dir = boost::filesystem::path(Slic3r::data_dir());
+#endif
     //BBS: change directoties by design
     std::initializer_list<boost::filesystem::path> paths = {
         data_dir,
@@ -370,21 +374,31 @@ static void copy_dir(const boost::filesystem::path& from_dir, const boost::files
     if (!boost::filesystem::is_directory(to_dir))
         boost::filesystem::create_directory(to_dir);
     for (auto& dir_entry : boost::filesystem::directory_iterator(from_dir)) {
+        const boost::filesystem::path dest_child = to_dir / dir_entry.path().filename();
         if (!boost::filesystem::is_directory(dir_entry.path())) {
             std::string em;
-            CopyFileResult cfr = copy_file(dir_entry.path().string(), (to_dir / dir_entry.path().filename()).string(), em, false);
+#ifdef WIN32
+            CopyFileResult cfr = copy_file(boost::nowide::narrow(dir_entry.path().wstring()),
+                                           boost::nowide::narrow(dest_child.wstring()), em, false);
+#else
+            CopyFileResult cfr = copy_file(dir_entry.path().string(), dest_child.string(), em, false);
+#endif
             if (cfr != SUCCESS) {
                 BOOST_LOG_TRIVIAL(error) << "Error when copying files from " << from_dir << " to " << to_dir << ": " << em;
             }
         } else {
-            copy_dir(dir_entry.path(), to_dir / dir_entry.path().filename());
+            copy_dir(dir_entry.path(), dest_child);
         }
     }
 }
 
 void PresetBundle::copy_files(const std::string& from)
 {
+#ifdef WIN32
+    boost::filesystem::path data_dir = boost::filesystem::path(boost::nowide::widen(Slic3r::data_dir()));
+#else
     boost::filesystem::path data_dir = boost::filesystem::path(Slic3r::data_dir());
+#endif
     // list of searched paths based on current directory system in setup_directories()
     // do not copy cache and snapshots
     boost::filesystem::path from_data_dir = boost::filesystem::path(from);
@@ -1403,9 +1417,15 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
 
     // Here the vendor specific read only Config Bundles are stored.
     //BBS: change directory by design
+#ifdef WIN32
+    boost::filesystem::path     dir = (boost::filesystem::path(boost::nowide::widen(data_dir())) / PRESET_SYSTEM_DIR).make_preferred();
+    if (validation_mode)
+        dir = boost::filesystem::path(boost::nowide::widen(data_dir())).make_preferred();
+#else
     boost::filesystem::path     dir = (boost::filesystem::path(data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
     if (validation_mode)
         dir = (boost::filesystem::path(data_dir())).make_preferred();
+#endif
 
     PresetsConfigSubstitutions  substitutions;
     std::string                 errors_cummulative;

@@ -146,13 +146,13 @@ function sync_gitlab_repos() {
     # --- sentry-native submodule (crashpad) ---
     echo "  sentry: fixing submodule URLs (HTTP -> SSH) and initializing..."
     pushd "${SENTRY_DIR}" > /dev/null
-    # Replace HTTP URLs with SSH to avoid slow HTTP git clones
-    if [ -f .gitmodules ]; then
-        sed -i '' 's|http://gitlab.s.com/|git@gitlab.s.com:|g' .gitmodules
-        git submodule sync
-        echo "  submodule URLs converted to SSH"
-    fi
+    # Use git global url.insteadOf to redirect ALL HTTP URLs to SSH.
+    # This handles nested submodules (crashpad has 3 sub-submodules)
+    # that also use HTTP in their own .gitmodules files.
+    git config --global url."git@${GITLAB_BASE_URL}:".insteadOf "http://${GITLAB_BASE_URL}/"
     git submodule update --init --recursive --depth 1
+    # Remove the global redirect so it doesn't affect other git operations
+    git config --global --unset url."git@${GITLAB_BASE_URL}:".insteadOf
     popd > /dev/null
 
     echo "  All repos synced successfully."

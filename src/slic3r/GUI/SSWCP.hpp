@@ -432,6 +432,7 @@ private:
     void sw_GetCameraTimelapseInstance();
 
     void sw_DefectDetactionConfig();    
+    void sw_PrinterDefectDetection();
 
     void sw_GetDeviceDataStorageSpace();
 

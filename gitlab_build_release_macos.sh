@@ -113,7 +113,7 @@ function sync_gitlab_repos() {
     else
         rm -rf "${VENDOR_DIR}"
         echo "  vendor: cloning ${GITLAB_VENDOR} ..."
-        git clone "${GITLAB_VENDOR}" "${VENDOR_DIR}"
+        git clone --depth 1 "${GITLAB_VENDOR}" "${VENDOR_DIR}"
     fi
 
     # --- Orca-deps-wxWidgets ---
@@ -125,7 +125,7 @@ function sync_gitlab_repos() {
     else
         rm -rf "${WXWIDGETS_DIR}"
         echo "  wxWidgets: cloning ${GITLAB_WXWIDGETS} ..."
-        git clone "${GITLAB_WXWIDGETS}" "${WXWIDGETS_DIR}"
+        git clone --depth 1 "${GITLAB_WXWIDGETS}" "${WXWIDGETS_DIR}"
     fi
 
     # --- sentry-native ---
@@ -137,13 +137,13 @@ function sync_gitlab_repos() {
     else
         rm -rf "${SENTRY_DIR}"
         echo "  sentry: cloning ${GITLAB_SENTRY} ..."
-        git clone "${GITLAB_SENTRY}" "${SENTRY_DIR}"
+        git clone --depth 1 "${GITLAB_SENTRY}" "${SENTRY_DIR}"
     fi
 
     # --- sentry-native submodule (crashpad) ---
     echo "  sentry: initializing submodule (crashpad)..."
     pushd "${SENTRY_DIR}" > /dev/null
-    git submodule update --init --recursive
+    git submodule update --init --recursive --depth 1
     popd > /dev/null
 
     echo "  All repos synced successfully."

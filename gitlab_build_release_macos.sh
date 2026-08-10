@@ -63,10 +63,13 @@ fi
 if [ -z "$GITLAB_GROUP" ]; then
     export GITLAB_GROUP="snapmaker_orca"
 fi
+if [ -z "$LOCAL_REF_BASE" ]; then
+    export LOCAL_REF_BASE="/Users/snapmaker/Documents/gitlab_pro/OrcaSlicer"
+fi
 
-GITLAB_VENDOR="http://${GITLAB_BASE_URL}/${GITLAB_GROUP}/snapmaker_orca_vendor.git"
+GITLAB_VENDOR="git@${GITLAB_BASE_URL}:${GITLAB_GROUP}/snapmaker_orca_vendor.git"
 GITLAB_WXWIDGETS="git@${GITLAB_BASE_URL}:${GITLAB_GROUP}/Orca-deps-wxWidgets.git"
-GITLAB_SENTRY="http://${GITLAB_BASE_URL}/${GITLAB_GROUP}/sentry-native.git"
+GITLAB_SENTRY="git@${GITLAB_BASE_URL}:${GITLAB_GROUP}/sentry-native.git"
 
 ORCA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="${ORCA_ROOT}"
@@ -113,7 +116,7 @@ function sync_gitlab_repos() {
     else
         rm -rf "${VENDOR_DIR}"
         echo "  vendor: cloning ${GITLAB_VENDOR} ..."
-        git clone --depth 1 "${GITLAB_VENDOR}" "${VENDOR_DIR}"
+        git clone --depth 50 --reference-if-able "${LOCAL_REF_BASE}/gitlab_vendor" "${GITLAB_VENDOR}" "${VENDOR_DIR}"
     fi
 
     # --- Orca-deps-wxWidgets ---
@@ -125,7 +128,7 @@ function sync_gitlab_repos() {
     else
         rm -rf "${WXWIDGETS_DIR}"
         echo "  wxWidgets: cloning ${GITLAB_WXWIDGETS} ..."
-        git clone --depth 1 "${GITLAB_WXWIDGETS}" "${WXWIDGETS_DIR}"
+        git clone --depth 50 --reference-if-able "${LOCAL_REF_BASE}/Orca-deps-wxWidgets" "${GITLAB_WXWIDGETS}" "${WXWIDGETS_DIR}"
     fi
 
     # --- sentry-native ---
@@ -137,7 +140,7 @@ function sync_gitlab_repos() {
     else
         rm -rf "${SENTRY_DIR}"
         echo "  sentry: cloning ${GITLAB_SENTRY} ..."
-        git clone --depth 1 "${GITLAB_SENTRY}" "${SENTRY_DIR}"
+        git clone --depth 50 --reference-if-able "${LOCAL_REF_BASE}/sentry-native" "${GITLAB_SENTRY}" "${SENTRY_DIR}"
     fi
 
     # --- sentry-native submodule (crashpad) ---

@@ -2249,6 +2249,8 @@ void SSWCP_MachineOption_Instance::process()
         sw_ServerClientManagerSetUserinfo();
     } else if (m_cmd == "sw_DefectDetactionConfig"){
         sw_DefectDetactionConfig();
+    } else if (m_cmd == "sw_PrinterDefectDetection") {
+        sw_PrinterDefectDetection();
     }
     else if (m_cmd == GET_DEVICEDATA_STORAGESPACE) {
         sw_GetDeviceDataStorageSpace();
@@ -4096,6 +4098,26 @@ void SSWCP_MachineOption_Instance::sw_DefectDetactionConfig()
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineOption_Instance::sw_PrinterDefectDetection()
+{
+    std::shared_ptr<PrintHost> host = nullptr;
+    wxGetApp().get_connect_host(host);
+
+    if (!host) {
+        BOOST_LOG_TRIVIAL(error) << "[WCP] sw_PrinterDefectDetection: no active machine connected";
+        handle_general_fail(-1, "Connection lost!");
+        return;
+    }
+
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    host->async_defect_detaction_config(m_param_data, [weak_self](const json& response) {
+        auto self = weak_self.lock();
+        if (self) {
+            SSWCP_Instance::on_mqtt_msg_arrived(self, response);
+        }
+    });
 }
 
 void SSWCP_MachineOption_Instance::sw_GetFileListPage()
@@ -7552,6 +7574,7 @@ std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
     "sw_GetCameraTimelapseInstance",
     "sw_ServerClientManagerSetUserinfo",
     "sw_DefectDetactionConfig",
+    "sw_PrinterDefectDetection",
     GET_DEVICEDATA_STORAGESPACE
 };
 
@@ -8015,15 +8038,15 @@ void SSWCP::enable_debug_mode(bool enable, unsigned short port)
 
         if (m_debug_server->start()) {
             m_debug_mode_enabled = true;
-            BOOST_LOG_TRIVIAL(info) << " WebSocket debug mode enabled successfully";
-            BOOST_LOG_TRIVIAL(info) << " Flutter Web can connect to: ws://localhost:" << port;
+            BOOST_LOG_TRIVIAL(debug) << " WebSocket debug mode enabled successfully";
+            BOOST_LOG_TRIVIAL(debug) << " Flutter Web can connect to: ws://localhost:" << port;
         } else {
             BOOST_LOG_TRIVIAL(error) << "Failed to start WebSocket debug server";
             m_debug_server.reset();
             m_debug_mode_enabled = false;
         }
     } else if (!enable && m_debug_server) {
-        BOOST_LOG_TRIVIAL(info) << "Disabling WebSocket debug mode";
+        BOOST_LOG_TRIVIAL(debug) << "Disabling WebSocket debug mode";
         m_debug_server->stop();
         m_debug_server.reset();
         m_debug_mode_enabled = false;
@@ -8048,7 +8071,7 @@ void SSWCP::send_message_to_flutter(const std::string& message)
     if (m_debug_server && m_debug_mode_enabled) {
         m_debug_server->send_message(message);
     } else {
-        BOOST_LOG_TRIVIAL(warning) << "Cannot send message: WebSocket debug mode not enabled";
+        BOOST_LOG_TRIVIAL(debug) << "Cannot send message: WebSocket debug mode not enabled";
     }
 }
 

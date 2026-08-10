@@ -334,7 +334,7 @@ Wipe::RetractionValues Wipe::calculateWipeRetractionLengths(GCode& gcodegen, boo
     wipe_speed        = std::max(wipe_speed, 10.0);
 
     // Process wipe path & calculate wipe path length
-    double   wipe_dist = scale_(config.wipe_distance.get_at(extruder_id));
+    double   wipe_dist = scale_(get_value_at(config, config.wipe_distance, ConfigFlowDomain::Filament, extruder_id));
     Polyline wipe_path = {last_pos};
     wipe_path.append(this->path.points.begin() + 1, this->path.points.end());
     double wipe_path_length = std::min(wipe_path.length(), wipe_dist);
@@ -374,7 +374,7 @@ std::string Wipe::wipe(GCode& gcodegen, double length, bool toolchange, bool is_
             amount of retraction. In other words, how far do we move in XY at wipe_speed
             for the time needed to consume retraction_length at retraction_speed?  */
         // BBS
-        double wipe_dist = scale_(gcodegen.config().wipe_distance.get_at(gcodegen.writer().extruder()->id()));
+        double wipe_dist = scale_(get_value_at(gcodegen.config(), gcodegen.config().wipe_distance, ConfigFlowDomain::Filament, gcodegen.writer().extruder()->id()));
 
         /*  Take the stored wipe path and replace first point with the current actual position
             (they might be different, for example, in case of loop clipping).  */
@@ -748,7 +748,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     if (should_travel_to_tower || gcodegen.m_need_change_layer_lift_z) {
         // FIXME: It would be better if the wipe tower set the force_travel flag for all toolchanges,
         // then we could simplify the condition and make it more readable.
-        auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+        auto type = ZHopType(get_value_at(gcodegen.m_config, gcodegen.m_config.z_hop_types, ConfigFlowDomain::Filament, gcodegen.m_writer.extruder()->id()));
         if (type == ZHopType::zhtAuto) {
             type = ZHopType::zhtSpiral;
         }
@@ -1122,7 +1122,7 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         gcode += gcodegen.writer().unlift();
 
         if (gcodegen.writer().extruder() != nullptr) {
-            auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+            auto type = ZHopType(get_value_at(gcodegen.m_config, gcodegen.m_config.z_hop_types, ConfigFlowDomain::Filament, gcodegen.m_writer.extruder()->id()));
             if (type == ZHopType::zhtAuto)
                 type = ZHopType::zhtSpiral;
             if (gcodegen.m_config.z_hop_when_prime.get_at(gcodegen.m_writer.extruder()->id()))
@@ -6802,9 +6802,9 @@ std::string GCode::change_layer(coordf_t print_z)
     // BBS
     coordf_t z = print_z + m_config.z_offset.value; // in unscaled coordinates
     if (EXTRUDER_CONFIG(retract_when_changing_layer) && m_writer.will_move_z(z)) {
-        LiftType lift_type = this->to_lift_type(ZHopType(EXTRUDER_CONFIG(z_hop_types)));
+        LiftType lift_type = this->to_lift_type(ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())));
         // BBS: force to use SpiralLift when change layer if lift type is auto
-        gcode += this->retract(false, false, ZHopType(EXTRUDER_CONFIG(z_hop_types)) == ZHopType::zhtAuto ? LiftType::SpiralLift : lift_type);
+        gcode += this->retract(false, false, ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())) == ZHopType::zhtAuto ? LiftType::SpiralLift : lift_type);
     }
 
     m_writer.add_object_change_labels(gcode);
@@ -8463,10 +8463,10 @@ bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftTyp
     // BBS: force to retract when leave from external perimeter for a long travel
     // Better way is judging whether the travel move direction is same with last extrusion move.
     if (is_perimeter(m_last_processor_extrusion_role) && m_last_processor_extrusion_role != erPerimeter) {
-        if (ZHopType(EXTRUDER_CONFIG(z_hop_types)) == ZHopType::zhtAuto) {
+        if (ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())) == ZHopType::zhtAuto) {
             lift_type = is_through_overhang(clipped_travel) ? LiftType::SpiralLift : LiftType::LazyLift;
         } else {
-            lift_type = to_lift_type(ZHopType(EXTRUDER_CONFIG(z_hop_types)));
+            lift_type = to_lift_type(ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())));
         }
         return true;
     }
@@ -8496,10 +8496,10 @@ bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftTyp
         return false;
 
     // retract if reduce_infill_retraction is disabled or doesn't apply when role is perimeter
-    if (ZHopType(EXTRUDER_CONFIG(z_hop_types)) == ZHopType::zhtAuto) {
+    if (ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())) == ZHopType::zhtAuto) {
         lift_type = is_through_overhang(clipped_travel) ? LiftType::SpiralLift : LiftType::LazyLift;
     } else {
-        lift_type = to_lift_type(ZHopType(EXTRUDER_CONFIG(z_hop_types)));
+        lift_type = to_lift_type(ZHopType(get_value_at(m_config, m_config.z_hop_types, ConfigFlowDomain::Filament, m_writer.extruder()->id())));
     }
     return true;
 }

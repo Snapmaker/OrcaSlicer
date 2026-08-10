@@ -72,8 +72,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     if (m_browser == nullptr)
         return;
     m_apikey = apikey;
-    m_apikey_sent = false;
-    
+
     if (url.find("path=2") != std::string::npos) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
@@ -125,25 +124,44 @@ void PrinterWebView::OnClose(wxCloseEvent& evt)
 
 void PrinterWebView::SendAPIKey()
 {
-    if (m_apikey_sent || m_apikey.IsEmpty())
+    if (m_apikey.IsEmpty())
         return;
-    m_apikey_sent   = true;
+    // Re-inject on every document load (e.g. context-menu Reload). Idempotent
+    // marker avoids stacking fetch/XHR wrappers if LOADED fires more than once.
     wxString script = wxString::Format(R"(
-    // Check if window.fetch exists before overriding
-    if (window.fetch) {
-        const originalFetch = window.fetch;
-        window.fetch = function(input, init = {}) {
-            init.headers = init.headers || {};
-            init.headers['X-API-Key'] = '%s';
-            return originalFetch(input, init);
+    (function() {
+        if (window.__sm_apikey_hooked) return;
+        window.__sm_apikey_hooked = true;
+        var apiKey = '%s';
+        // Override fetch to inject X-API-Key header
+        if (window.fetch) {
+            var originalFetch = window.fetch;
+            window.fetch = function(input, init) {
+                init = init || {};
+                init.headers = init.headers || {};
+                if (!init.headers['X-API-Key']) {
+                    init.headers['X-API-Key'] = apiKey;
+                }
+                return originalFetch(input, init);
+            };
+        }
+        // Override XMLHttpRequest to inject X-API-Key header
+        var OrigXHR = window.XMLHttpRequest;
+        var newXHR = function() {
+            var xhr = new OrigXHR();
+            var origOpen = xhr.open;
+            xhr.open = function(method, url) {
+                origOpen.apply(xhr, arguments);
+                xhr.setRequestHeader('X-API-Key', apiKey);
+            };
+            return xhr;
         };
-    }
+        window.XMLHttpRequest = newXHR;
+    })();
 )",
                                        m_apikey);
-    m_browser->RemoveAllUserScripts();
 
-    m_browser->AddUserScript(script);
-    m_browser->Reload();
+    WebView::RunScript(m_browser, script);
 }
 
 void PrinterWebView::OnError(wxWebViewEvent &evt)

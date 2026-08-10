@@ -147,6 +147,10 @@
       "sub_path": "process/0.08 High Quality @Snapmaker U1 (0.4 nozzle).json"
     },
     {
+      "name": "0.10 Color Mixing @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.10 Color Mixing @Snapmaker U1 (0.4 nozzle).json"
+    },
+    {
       "name": "0.12 Fine @Snapmaker U1 (0.4 nozzle)",
       "sub_path": "process/0.12 Fine @Snapmaker U1 (0.4 nozzle).json"
     },

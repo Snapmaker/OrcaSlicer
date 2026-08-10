@@ -108,7 +108,7 @@ private:
 
     void on_left_down(wxMouseEvent& e) {
         m_dragging = true;
-        CaptureMouse();
+        if (!HasCapture()) CaptureMouse();
         int v = value_from_x(e.GetX());
         v = std::clamp(v, m_min, m_max);
         if (v != m_value) { m_value = v; Refresh(); fire_event(); }
@@ -1883,7 +1883,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         TriPt p = {(double)e.GetX(), (double)e.GetY()};
         if (is_down) {
             m_tri_dragging = true;
-            m_tri_picker->CaptureMouse();
+            if (!m_tri_picker->HasCapture()) m_tri_picker->CaptureMouse();
         }
         if (!m_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
@@ -2004,7 +2004,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
     auto handle_mouse = [this, get_verts](wxMouseEvent& e, bool is_down) {
         auto [v0, v1, v2] = get_verts();
         TriPt p = {(double)e.GetX(), (double)e.GetY()};
-        if (is_down) { m_match_tri_dragging = true; m_match_tri_picker->CaptureMouse(); }
+        if (is_down) { m_match_tri_dragging = true; if (!m_match_tri_picker->HasCapture()) m_match_tri_picker->CaptureMouse(); }
         if (!m_match_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
         tri_bary(clamped, v0, v1, v2, m_match_tri_wx, m_match_tri_wy, m_match_tri_wz);

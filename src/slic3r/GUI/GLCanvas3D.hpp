@@ -508,6 +508,25 @@ public:
     int GetHoverId();
 
 private:
+    /** @brief Rendering paths available for the selected-object highlight. */
+    enum class ESelectionHighlightMode : unsigned char
+    {
+        Disabled,
+        UnifiedFramebuffer,
+        StencilFallback
+    };
+
+    /** @brief GPU resources shared by the selection Mask and Composite passes. */
+    struct SelectionHighlightResources
+    {
+        unsigned int msaaFramebuffer{ 0 };
+        unsigned int msaaColorRenderbuffer{ 0 };
+        unsigned int resolveFramebuffer{ 0 };
+        unsigned int resolveTexture{ 0 };
+        unsigned int width{ 0 };
+        unsigned int height{ 0 };
+    };
+
     bool m_is_dark = false;
     wxGLCanvas* m_canvas;
     wxGLContext* m_context;
@@ -570,6 +589,8 @@ private:
     bool m_moving_enabled;
     bool m_dynamic_background_enabled;
     bool m_multisample_allowed;
+    bool m_selectionFramebufferAvailable{ false };
+    bool m_stencilFallbackAvailable{ false };
     bool m_moving;
     bool m_tab_down;
     bool m_camera_movement;
@@ -605,6 +626,8 @@ private:
     Tooltip m_tooltip;
     bool m_tooltip_enabled{ true };
     Slope m_slope;
+
+    SelectionHighlightResources m_selectionHighlightResources;
 
     OrientSettings m_orient_settings_fff, m_orient_settings_sla;
 
@@ -1141,6 +1164,28 @@ public:
 
 private:
     bool _is_shown_on_screen() const;
+
+    /** @brief Selects and prepares the selection highlight path for the current frame. */
+    ESelectionHighlightMode ResolveSelectionHighlightMode();
+
+    /**
+     * @brief Creates or resizes the selection highlight framebuffer resources.
+     * @param canvasSize Physical framebuffer dimensions in pixels.
+     * @return true when the fixed 4x MSAA and resolve framebuffers are ready.
+     */
+    bool EnsureSelectionHighlightResources(const Size& canvasSize);
+
+    /** @brief Renders selected volumes into the multisampled selection mask and resolves it. */
+    bool RenderSelectionHighlightMask();
+
+    /** @brief Composites the resolved selection Fill and Outline over the main scene. */
+    void CompositeSelectionHighlight();
+
+    /** @brief Renders an occlusion-independent selection Outline through the default framebuffer stencil. */
+    void RenderSelectionStencilFallback();
+
+    /** @brief Releases all selection highlight framebuffer resources. */
+    void ReleaseSelectionHighlightResources();
 
     void _switch_toolbars_icon_filename();
     bool _init_toolbars();

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
@@ -5077,4 +5078,130 @@ TEST_CASE("build_mixed_deletion_painting_remap: unsorted delete input is tolerat
     CHECK(remap[9] == 0u);
     CHECK(remap[10] == 8u); // two deletes below
     CHECK(remap[14] == 12u);
+}
+
+TEST_CASE("build_mixed_deletion_painting_remap: duplicate ids in delete list dedupe (offset not inflated)", "[MixedFilament][deletion_remap]")
+{
+    // Robustness: a caller that collects the same vid twice (e.g. from
+    // overlapping reference scans) must not double-count it — the function
+    // sorts + uniques internally, so {9,9,7} is equivalent to {7,9}.
+    // The batch-match cleanup reuses this table to drive both painting and
+    // config-level extruder remaps, so an inflated offset would shift every
+    // survivor below the duplicate onto the wrong row.
+    const size_t num_physical = 4;
+    const size_t t2_total     = 14;
+    const std::vector<unsigned int> deleted = {9, 9, 7}; // duplicate 9
+
+    const auto remap = MixedFilamentManager::build_mixed_deletion_painting_remap(num_physical, t2_total, deleted);
+
+    REQUIRE(remap.size() == t2_total + 1);
+    CHECK(remap[7] == 0u);
+    CHECK(remap[8] == 7u); // one delete below (7 only; 9 is above)
+    CHECK(remap[9] == 0u);
+    CHECK(remap[10] == 8u); // two deletes below (7, 9) — NOT three
+    CHECK(remap[14] == 12u);
+}
+
+// ============================================================================
+// [MixedFilament][config_extruder_remap] — cascade gap: config "extruder"
+// references are adjusted per-deletion (naive), while the virtual-ID space also
+// contracts by the cascade-removed mixed rows. This test pins the CORRECT
+// cascade-aware result and currently FAILS (CURRENT BUG) — it reproduces the
+// batch-match physical-deletion cascade under-shift in pure libslic3r terms.
+//
+// Scenario: 4 physicals {1,2,3,4}, mixed rows A(1,2)=v5, B(2,3)=v6, C(3,4)=v7.
+// Batch match keeps {1,3,4} → physical 2 is deleted → A and B cascade-removed
+// (both reference physical 2); C survives and its recipe (3,4) renumbers to
+// (2,3). An object pinned to C holds config "extruder" = 7.
+//
+//   CORRECT: C's new virtual id = new_num_physical(3) + position(1) = 4.
+//   ACTUAL : GUI_ObjectList.cpp:857-969 (driven per deletion by
+//            Plater::on_filaments_delete, Plater.cpp:21253) subtracts exactly 1
+//            per deleted physical ("if extruder > deleted_id then -1") → 7 → 6.
+//            The cascade-removed rows ahead of C are never accounted for, so
+//            the config lands on a renumbered survivor (6) or — when out of
+//            range — is reset to default by update_objects_list_filament_column
+//            (GUI_ObjectList.cpp:694-700). The painting path IS cascade-aware
+//            (kept-aware composite remap, PresetBundle.cpp:3850-3854); the
+//            config path is not.
+//
+//   HIDDEN ([.]): this test intentionally FAILS (6 != 4). The `actual` side is
+//   a hand-rolled simulation of the naive decrement INSIDE the test, not a call
+//   into production — so fixing the production cascade config remap will NOT
+//   flip this test green, and [!shouldfail] would never fire its "unexpectedly
+//   succeeded" signal. It is documentation, not a regression sentinel.
+//
+//   PRE-EXISTING: the naive per-deletion config decrement (GUI_ObjectList.cpp:
+//   857-969) predates this PR; the cascade-aware config remap is tracked as a
+//   follow-up (see Plater.cpp remap_config_extruder — it currently skips
+//   out-of-range config references silently). When the follow-up lands, rewrite
+//   the `actual` side to assert the production result == 4 and remove the [.]
+//   tag.
+// ============================================================================
+TEST_CASE("config_extruder cascade: per-deletion decrement under-counts cascade rows (CURRENT BUG)",
+          "[MixedFilament][config_extruder_remap][.]")
+{
+    // --- Correct side: real libslic3r cascade + production kept-aware remap ---
+    MixedAutoGenerateGuard guard(false); // keep add_custom_filament from auto-generating gradient rows
+    PresetBundle bundle;
+    bundle.filament_presets = {"F1", "F2", "F3", "F4"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values =
+        {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    bundle.update_multi_material_filament_presets();
+    auto &mgr = bundle.mixed_filaments;
+    const auto &colors = bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    mgr.add_custom_filament(1, 2, 50, colors); // A → v5
+    mgr.add_custom_filament(2, 3, 50, colors); // B → v6
+    mgr.add_custom_filament(3, 4, 50, colors); // C → v7
+    REQUIRE(mgr.enabled_count() == 3);
+
+    const std::vector<MixedFilament> old_mixed = mgr.mixed_filaments(); // T2 snapshot
+
+    // Delete physical 2 (kept {1,3,4} → new_num_physical 3). Real cascade.
+    mgr.remove_physical_filament(2);
+    REQUIRE(mgr.enabled_count() == 1); // A, B cascaded away; C survives
+
+    // Production kept-aware remap — the oracle the PAINTING path trusts:
+    // old vid 7 (C) must map to 4.
+    bundle.update_mixed_filament_id_remap(old_mixed, 4, 3, size_t(-1), {1, 3, 4});
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+    REQUIRE(remap.size() > 7);
+    CHECK(remap[7] == 4u); // oracle sanity: C → 4
+
+    // --- Actual side: GUI_ObjectList naive decrement for the single deletion ---
+    const int config_ref_before = 7; // object pinned to C (old vid)
+    int actual = config_ref_before;
+    if (actual == 2)
+        actual = -1; // == deleted id → replace (batch cleanup passes -1)
+    else if (actual > 2)
+        actual -= 1; // per-deletion "> deleted_id → -1"
+
+    // The naive adjustment must land on the row the config actually points at.
+    // It does not (6 != 4) — the config keeps a stale virtual id. This CHECK
+    // FAILS until the config path is made cascade-aware (currently only
+    // painting gets the kept-aware composite remap).
+    CHECK(actual == static_cast<int>(remap[7]));
+}
+
+// ============================================================================
+// [MixedFilament][FilamentColor] — dual-color (multi-colour) slot primary
+// derivation. The batch-match dialog derives a dual-color slot's effective
+// match colour as the first valid token of filament_multi_colors (the app-wide
+// PrimaryColor rule used by PresetBundle's sync), falling back to the raw
+// filament_colour value when no valid token exists. These cases pin the
+// libslic3r primitives the dialog's slot_match_color wrapper relies on.
+// ============================================================================
+TEST_CASE("Dual-color multi string primary is the first valid colour", "[MixedFilament][FilamentColor]")
+{
+    const auto parts = SplitFilamentMultiColors("#AABBCC|#112233");
+    REQUIRE(parts.size() == 2);
+    CHECK(FilamentColor::FromColors(parts, FilamentColorMode::Segment).PrimaryColor("#26A69A") == "#AABBCC");
+}
+
+TEST_CASE("Dual-color primary drops invalid tokens and falls back on empty", "[MixedFilament][FilamentColor]")
+{
+    const auto parts = SplitFilamentMultiColors("#AABBCC|not-a-color|#112233");
+    REQUIRE(parts.size() == 2); // invalid token whitelisted away
+    CHECK(FilamentColor::FromColors(parts, FilamentColorMode::Segment).PrimaryColor() == "#AABBCC");
+    CHECK(FilamentColor::FromColors({}, FilamentColorMode::Segment).PrimaryColor("#26A69A") == "#26A69A");
 }

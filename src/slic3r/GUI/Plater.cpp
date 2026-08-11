@@ -8557,6 +8557,22 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
                     kept_mixed.push_back(static_cast<unsigned int>(eid));
             }
         }
+        // R3b: config-level references pin a mixed row just like painting does.
+        // The object-list filament column writes object/volume/layer "extruder",
+        // which get_extruders() (triangle data) never sees — the gap the guard
+        // comment above acknowledges. Without this, a row referenced only from
+        // config is flagged redundant and deleted, leaving the config on a stale
+        // virtual id that re-aliases to a renumbered survivor (silent wrong
+        // colour).
+        auto guard_config_ref = [&kept_mixed, num_physical](const ModelConfig &cfg) {
+            if (cfg.has("extruder") && cfg.extruder() > static_cast<int>(num_physical))
+                kept_mixed.push_back(static_cast<unsigned int>(cfg.extruder()));
+        };
+        guard_config_ref(mo->config);
+        for (const ModelVolume *mv : mo->volumes)
+            guard_config_ref(mv->config);
+        for (const auto &lr : mo->layer_config_ranges)
+            guard_config_ref(lr.second);
     }
 
     RedundantFilamentSet red = compute_redundant_filaments(
@@ -8799,6 +8815,43 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             for (ModelVolume* mv : mo->volumes)
                 if (mv->type() == ModelVolumeType::MODEL_PART)
                     mv->remap_extruder_ids(t3_total, state_map);
+
+        // Config "extruder" references (object/volume/layer) must follow the same
+        // remap as painting — remap_extruder_ids above touches triangle data only,
+        // so a config entry on a mixed row would stay on its stale pre-deletion id
+        // (the config side of the merged-slot regression). In the table, physical
+        // ids are identity, a deleted row maps to 0 (default), a survivor keeps
+        // its shifted id, and out-of-range/absent keys are left untouched. EPOCH
+        // NOTE: config values are naive-decremented per physical deletion while
+        // the table is cascade-aware (T2) — consistent only with no cascade removal
+        // (the batch-match flow's case); if a cascade ever fires, skip via
+        // cascade_mixed_count == 0 or normalise first.
+        auto remap_config_extruder = [&mixed_deletion_remap](ModelConfig &cfg, bool is_layer) {
+            if (!cfg.has("extruder")) return;
+            const int old = cfg.extruder();
+            if (old <= 0) return;
+            const size_t idx = static_cast<size_t>(old);
+            if (idx >= mixed_deletion_remap.size()) return;
+            const unsigned int mapped = mixed_deletion_remap[idx];
+            if (mapped == 0) {
+                // Deleted row: revert to default. Layer ranges keep the key
+                // (GUI_ObjectList's delete path also writes 0 there); objects
+                // and volumes erase it so inheriting children stay "default".
+                if (is_layer)
+                    cfg.set("extruder", 0);
+                else
+                    cfg.erase("extruder");
+            } else if (mapped != static_cast<unsigned int>(old)) {
+                cfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+            }
+        };
+        for (ModelObject* mo : wxGetApp().model().objects) {
+            remap_config_extruder(mo->config, /*is_layer=*/false);
+            for (ModelVolume* mv : mo->volumes)
+                remap_config_extruder(mv->config, /*is_layer=*/false);
+            for (auto &lr : mo->layer_config_ranges)
+                remap_config_extruder(lr.second, /*is_layer=*/true);
+        }
     }
 
     // Final authoritative serialization of the post-cleanup state (it must

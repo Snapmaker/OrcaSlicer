@@ -97,6 +97,21 @@ static const std::vector<TdEntry> FULL_SPECTRUM_TD = {
     {"grey",    6.5}, // spelling variant, defensive
 };
 
+// Effective primary colour of a physical slot for the match. Dual-color slots carry
+// their real colours in filament_multi_colors while filament_colour may stay empty or
+// hold a placeholder; derive the primary (first valid colour — the app-wide rule used
+// by PresetBundle's sync) so such slots enter the match with their actual colour instead
+// of being skipped or misidentified. Slots with no valid multi-colour token (single-colour
+// / empty / malformed) fall back verbatim to the raw filament_colour value.
+static std::string slot_match_color(const std::string& multi_colors, int color_mode, const std::string& fallback)
+{
+    const auto parts = FilamentColorUtils::SplitMultiColors(multi_colors);
+    if (parts.empty())
+        return fallback;
+    return FilamentColor::FromColors(parts, FilamentColorModeFromConfig(color_mode),
+                                     fallback).PrimaryColor(fallback);
+}
+
 // Card geometry (DIP). CARD_WIDTH_DIP leaves room for a vertical scrollbar inside the
 // 500-wide dialog: 500 − 2×12(margin) − 17(scrollbar) = 459. FILAMENT_COL_WIDTH_DIP pins
 // each 2×2 grid cell so slots 1/2 and 3/4 stay equal regardless of filament-name length
@@ -507,7 +522,13 @@ void MixedFilamentBatchDialog::rebuild_match_thumb_cache()
         if (pb) {
             auto* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
             if (co) {
-                for (const std::string& hex : co->values) {
+                for (size_t i = 0; i < co->values.size(); ++i) {
+                    // Same dual-color derivation as load_palette_colors; prevents an
+                    // empty filament_colour on a dual-color slot rendering black.
+                    const std::string hex = slot_match_color(
+                        i < m_physical_multi_colors.size() ? m_physical_multi_colors[i] : std::string(),
+                        i < m_physical_color_modes.size()  ? m_physical_color_modes[i]  : 0,
+                        co->values[i]);
                     unsigned char rgba[4] = {};
                     BitmapCache::parse_color4(hex, rgba);
                     m_match_colors.push_back({
@@ -646,7 +667,13 @@ void MixedFilamentBatchDialog::render_original_thumb_for_plate(int plate_idx)
     if (pb) {
         auto* co = pb->project_config.option<ConfigOptionStrings>("filament_colour");
         if (co) {
-            for (const std::string& hex : co->values) {
+            for (size_t i = 0; i < co->values.size(); ++i) {
+                // Same dual-color derivation as load_palette_colors; prevents an
+                // empty filament_colour on a dual-color slot rendering black.
+                const std::string hex = slot_match_color(
+                    i < m_physical_multi_colors.size() ? m_physical_multi_colors[i] : std::string(),
+                    i < m_physical_color_modes.size()  ? m_physical_color_modes[i]  : 0,
+                    co->values[i]);
                 unsigned char rgba[4] = {};
                 BitmapCache::parse_color4(hex, rgba);
                 orig_colors.push_back({
@@ -819,7 +846,16 @@ void MixedFilamentBatchDialog::load_palette_colors()
 
     const auto all_colors = plater->get_extruder_colors_from_plater_config(nullptr, true);
     for (size_t i = 0; i < all_colors.size(); ++i) {
-        const std::string& hex = all_colors[i];
+        // Dual-color slots: filament_colour may be empty or hold a placeholder while
+        // the real colours live in filament_multi_colors. Derive the effective primary
+        // so such slots enter the match with their actual colour. Only the physical
+        // section carries multi-colour data; mixed display colours appended by
+        // get_extruder_colors_from_plater_config are used verbatim (index past physical).
+        std::string hex = all_colors[i];
+        if (i < m_physical_multi_colors.size() && !m_physical_multi_colors[i].empty())
+            hex = slot_match_color(m_physical_multi_colors[i],
+                                   i < m_physical_color_modes.size() ? m_physical_color_modes[i] : 0,
+                                   hex);
         if (hex.empty()) continue;
         wxColour c;
         if (!try_parse_color_match_hex(hex, c)) continue;
@@ -2258,12 +2294,25 @@ void MixedFilamentBatchDialog::launch_background_match()
         for (int i = 0; i < m_manual_filament_count; ++i) {
             int sel = m_filament_combo[i] ? m_filament_combo[i]->GetSelection() : i;
             if (sel >= 0 && sel < static_cast<int>(m_physical_colors.size())) {
-                active_colors.push_back(m_physical_colors[sel]);
+                // Same dual-color derivation as load_palette_colors: the combo badge
+                // shows the multi-colour pair, so the selected slot contributes its
+                // effective primary (filament_colour may be empty for dual-color slots).
+                active_colors.push_back(slot_match_color(
+                    sel < static_cast<int>(m_physical_multi_colors.size()) ? m_physical_multi_colors[sel] : std::string(),
+                    sel < static_cast<int>(m_physical_color_modes.size())  ? m_physical_color_modes[sel]  : 0,
+                    m_physical_colors[sel]));
                 manual_full_ids.push_back(static_cast<unsigned int>(sel + 1)); // 1-based
             }
         }
         if (active_colors.size() < 2) {
             active_colors = m_physical_colors;
+            // Fallback to the full physical palette: derive each slot the same way so a
+            // dual-color slot with an empty filament_colour is not misrepresented.
+            for (size_t i = 0; i < m_physical_colors.size(); ++i)
+                active_colors[i] = slot_match_color(
+                    i < m_physical_multi_colors.size() ? m_physical_multi_colors[i] : std::string(),
+                    i < m_physical_color_modes.size()  ? m_physical_color_modes[i]  : 0,
+                    m_physical_colors[i]);
             manual_full_ids.clear();
             for (size_t i = 0; i < m_physical_colors.size(); ++i)
                 manual_full_ids.push_back(static_cast<unsigned int>(i + 1));
@@ -2646,118 +2695,156 @@ void MixedFilamentBatchDialog::update_mapping_legend()
 
     if (!m_result.mappings.empty()) {
         for (const auto& mapping : m_result.mappings) {
-            // Bordered item box (white bg, #dbdbdb border) holding
-            // [source swatch 20] -> [arrow icon] -> [target swatch 28 with filament number].
-            // Per-item ΔE is hover-only (native tooltip) to keep the row clean.
-            // Figma (node 27590:61488 light / 27646:130023 dark): square corners (no radius),
-            // 4px internal padding, justify-between layout (source left, target right, arrow
-            // centered in the remaining space), plain ams_arrow (no circle frame).
-            auto* item = new StaticBox(m_legend_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-            item->SetCornerRadius(FromDIP(0));
-            item->SetBorderWidth(FromDIP(1));
-            item->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
-            item->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
-            auto* s = new wxBoxSizer(wxHORIZONTAL);
-
-            // Source swatch (20x20, square corners)
-            // For pure-recipe mappings that target a single physical filament,
-            // render the source as a dual-color segment swatch when the physical
-            // filament has multi-color data — so a bicolor filament row shows
-            // its two colors side-by-side instead of a single averaged swatch.
-            wxBitmap* src_bmp = nullptr;
-            {
-                const unsigned int phy_id = mapping.recipe.component_a;
-                const bool is_pure = mapping.is_pure_recipe
-                    && phy_id >= 1
-                    && phy_id <= m_physical_multi_colors.size();
-                const std::string& multi = is_pure ? m_physical_multi_colors[phy_id - 1] : std::string();
-                const auto parts = FilamentColorUtils::SplitMultiColors(multi);
-                if (parts.size() > 1) {
-                    std::vector<wxColour> dual_colors;
-                    dual_colors.reserve(parts.size());
-                    for (const auto& h : parts) {
-                        wxColour c; try_parse_color_match_hex(h, c);
-                        if (c.IsOk()) dual_colors.push_back(c);
-                    }
-                    if (dual_colors.size() > 1) {
-                        const int mode_val = (phy_id >= 1 && phy_id <= m_physical_color_modes.size())
-                            ? m_physical_color_modes[phy_id - 1] : 0;
-                        bool is_gradient = (FilamentColorModeFromConfig(mode_val) == FilamentColorMode::Gradient);
-                        src_bmp = get_color_block_bitmap_cached(dual_colors, is_gradient,
-                            FromDIP(20), FromDIP(20), wxEmptyString, wxNullColour);
-                    }
+            // Source colours for this mapping's legend rows. A pure recipe maps one model
+            // colour 1:1 onto a physical filament — always a single row. A mixed recipe
+            // may be shared by several model colours (byte-identical recipes are folded
+            // into one mapping by merge_duplicate_recipe_mappings); each merged colour
+            // gets its own legend row so nothing is hidden (e.g. the light-blue of a
+            // {1,3,5,4} run used to disappear under the first source colour). Recover the
+            // merged colours via merged_model_indices -> m_model_colors; indices are
+            // sorted+unique after a merge and m_model_colors is hex-deduped, so colours
+            // here are already distinct — the find-dedup below is belt-and-suspenders.
+            std::vector<wxColour> src_colors;
+            if (mapping.is_pure_recipe) {
+                src_colors.push_back(mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128));
+            } else {
+                for (unsigned int ci : mapping.merged_model_indices) {
+                    if (ci < 1 || ci > static_cast<unsigned int>(m_model_colors.size()))
+                        continue;
+                    const wxColour& c = m_model_colors[ci - 1].color;
+                    if (!c.IsOk() || std::find(src_colors.begin(), src_colors.end(), c) != src_colors.end())
+                        continue;
+                    src_colors.push_back(c);
                 }
-                if (!src_bmp) {
-                    ColorBlockParams src_params;
-                    src_params.mode = ColorBlockParams::Solid;
-                    src_params.solid_color = mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128);
-                    src_params.width  = FromDIP(20);
-                    src_params.height = FromDIP(20);
-                    src_bmp = get_color_block_bitmap_cached(src_params);
-                }
+                if (src_colors.empty())
+                    src_colors.push_back(mapping.source_color.IsOk() ? mapping.source_color : wxColour(128, 128, 128));
             }
-            auto* src_bmp_ctrl = new wxStaticBitmap(item, wxID_ANY, *src_bmp);
-            s->Add(src_bmp_ctrl, 0, wxALIGN_CENTER_VERTICAL);
+            for (const wxColour& row_color : src_colors) {
+                // Bordered item box (white bg, #dbdbdb border) holding
+                // [source swatch 20] -> [arrow icon] -> [target swatch 28 with filament number].
+                // One row per source colour: merged mappings render each merged colour as its
+                // own row (all pointing at the same shared target slot), which keeps every
+                // matched colour visible in the legend. Per-row ΔE is hover-only (native
+                // tooltip) to keep the row clean.
+                // Figma (node 27590:61488 light / 27646:130023 dark): square corners (no radius),
+                // 4px internal padding, justify-between layout (source left, target right, arrow
+                // centered in the remaining space), plain ams_arrow (no circle frame).
+                auto* item = new StaticBox(m_legend_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+                item->SetCornerRadius(FromDIP(0));
+                item->SetBorderWidth(FromDIP(1));
+                item->SetBorderColorNormal(StateColor::darkModeColorFor(wxColour("#DBDBDB")));
+                item->SetBackgroundColor(StateColor(std::pair(wxColour("#FFFFFF"), static_cast<int>(StateColor::Normal))));
+                auto* s = new wxBoxSizer(wxHORIZONTAL);
 
-            // Stretch: source pinned left, target pinned right, arrow centered between them
-            // (Figma's justify-between with the arrow as the middle flex item).
-            s->AddStretchSpacer(1);
+                // Source swatch (20x20, square corners)
+                // For pure-recipe mappings that target a single physical filament,
+                // render the source as a dual-color segment swatch when the physical
+                // filament has multi-color data — so a bicolor filament row shows
+                // its two colors side-by-side instead of a single averaged swatch.
+                wxBitmap* src_bmp = nullptr;
+                {
+                    const unsigned int phy_id  = mapping.recipe.component_a;
+                    const bool         is_pure = mapping.is_pure_recipe && phy_id >= 1 && phy_id <= m_physical_multi_colors.size();
+                    const std::string& multi   = is_pure ? m_physical_multi_colors[phy_id - 1] : std::string();
+                    const auto         parts   = FilamentColorUtils::SplitMultiColors(multi);
+                    if (parts.size() > 1) {
+                        std::vector<wxColour> dual_colors;
+                        dual_colors.reserve(parts.size());
+                        for (const auto& h : parts) {
+                            wxColour c;
+                            try_parse_color_match_hex(h, c);
+                            if (c.IsOk())
+                                dual_colors.push_back(c);
+                        }
+                        if (dual_colors.size() > 1) {
+                            const int mode_val    = (phy_id >= 1 && phy_id <= m_physical_color_modes.size()) ?
+                                                        m_physical_color_modes[phy_id - 1] :
+                                                        0;
+                            bool      is_gradient = (FilamentColorModeFromConfig(mode_val) == FilamentColorMode::Gradient);
+                            src_bmp = get_color_block_bitmap_cached(dual_colors, is_gradient, FromDIP(20), FromDIP(20), wxEmptyString,
+                                                                    wxNullColour);
+                        }
+                    }
+                    if (!src_bmp) {
+                        // Non-dual (or non-pure) rows: render the row's own source colour.
+                        // Pure single-colour rows use mapping.source_color == row_color;
+                        // merged rows use the merged colour of the current split row.
+                        ColorBlockParams src_params;
+                        src_params.mode        = ColorBlockParams::Solid;
+                        src_params.solid_color = row_color.IsOk() ? row_color : wxColour(128, 128, 128);
+                        src_params.width       = FromDIP(20);
+                        src_params.height      = FromDIP(20);
+                        src_bmp                = get_color_block_bitmap_cached(src_params);
+                    }
+                }
+                auto* src_bmp_ctrl = new wxStaticBitmap(item, wxID_ANY, *src_bmp);
+                s->Add(src_bmp_ctrl, 0, wxALIGN_CENTER_VERTICAL);
 
-            // Arrow icon — plain right arrow (line + chevron, no circle frame), matching
-            // Figma's stroke-only arrow between the swatches. Two theme variants:
-            //   mixed_filament_mapping_right_arrow.svg       (#333333, light mode)
-            //   mixed_filament_mapping_right_arrow_dark.svg  (#939495, dark mode)
-            // Selected at build time via wxGetApp().dark_mode() — same pattern as
-            // AmsMappingPopup's mode_string switch. NOTE: legend rows are rebuilt on every
-            // match, so a theme switch while the dialog is open won't recolor existing rows
-            // until the next refresh_previews/match cycle.
-            const bool is_dark = wxGetApp().dark_mode();
-            const std::string arrow_name = is_dark
-                ? "mixed_filament_mapping_right_arrow_dark"
-                : "mixed_filament_mapping_right_arrow";
-            ScalableBitmap arrow_bmp(item, arrow_name, 16);
-            auto* arrow = new wxStaticBitmap(item, wxID_ANY, arrow_bmp.bmp());
-            // §17: stroke-only arrow SVG has transparent pixels; without matching the item's
-            // white bg they would render with the system color on wxMSW.
-            arrow->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
-            s->Add(arrow, 0, wxALIGN_CENTER_VERTICAL);
+                // Stretch: source pinned left, target pinned right, arrow centered between them
+                // (Figma's justify-between with the arrow as the middle flex item).
+                s->AddStretchSpacer(1);
 
-            s->AddStretchSpacer(1);
+                // Arrow icon — plain right arrow (line + chevron, no circle frame), matching
+                // Figma's stroke-only arrow between the swatches. Two theme variants:
+                //   mixed_filament_mapping_right_arrow.svg       (#333333, light mode)
+                //   mixed_filament_mapping_right_arrow_dark.svg  (#939495, dark mode)
+                // Selected at build time via wxGetApp().dark_mode() — same pattern as
+                // AmsMappingPopup's mode_string switch. NOTE: legend rows are rebuilt on every
+                // match, so a theme switch while the dialog is open won't recolor existing rows
+                // until the next refresh_previews/match cycle.
+                const bool        is_dark    = wxGetApp().dark_mode();
+                const std::string arrow_name = is_dark ? "mixed_filament_mapping_right_arrow_dark" : "mixed_filament_mapping_right_arrow";
+                ScalableBitmap    arrow_bmp(item, arrow_name, 16);
+                auto*             arrow = new wxStaticBitmap(item, wxID_ANY, arrow_bmp.bmp());
+                // §17: stroke-only arrow SVG has transparent pixels; without matching the item's
+                // white bg they would render with the system color on wxMSW.
+                arrow->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+                s->Add(arrow, 0, wxALIGN_CENTER_VERTICAL);
 
-            // Target swatch with filament number (28x28, square corners)
-            ColorBlockParams badge;
-            badge.mode = ColorBlockParams::Solid;
-            badge.solid_color = mapping.matched_color.IsOk() ? mapping.matched_color : wxColour(128, 128, 128);
-            badge.width  = FromDIP(28);
-            badge.height = FromDIP(28);
-            badge.label  = wxString::Format("%u", mapping.target_filament_id);
-            auto* tgt_bmp = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(badge));
-            s->Add(tgt_bmp, 0, wxALIGN_CENTER_VERTICAL);
+                s->AddStretchSpacer(1);
 
-            // 4px internal padding (Figma p-[4px]): wrap the content sizer in an outer sizer
-            // that adds the padding, since wxWindow::SetSizer has no border param.
-            auto* outer = new wxBoxSizer(wxHORIZONTAL);
-            outer->Add(s, 1, wxEXPAND | wxALL, FromDIP(4));
-            item->SetSizer(outer);
-            // ΔE revealed on hover. wx tooltips are per-window (they do NOT inherit from the
-            // parent), and the swatches/arrow are independent child windows — so we must set
-            // the same tip on every child too, otherwise hovering a swatch shows nothing and
-            // only the gaps between children trigger the row's tip.
-            // Grade bands per PRD 6.2.5 — open intervals: <kDeltaEGoodMax Good,
-            // kDeltaEGoodMax≤ΔE<kDeltaEFairMax Fair, ≥kDeltaEFairMax Poor. Strict < so a value
-            // exactly on the boundary lands in the worse band (4.0→Fair, 8.0→Poor).
-            const wxString grade = (mapping.delta_e < kDeltaEGoodMax) ? _L("Good")
-                                  : (mapping.delta_e < kDeltaEFairMax) ? _L("Fair")
-                                  : _L("Poor");
-            // Per copy spec, tooltip format: "Color Difference: {Level} (ΔE={X})".
-            // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all
-            // supported platforms (Win10+, macOS, mainstream Linux) has it.
-            const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, mapping.delta_e);
-            item->SetToolTip(tip);
-            src_bmp_ctrl->SetToolTip(tip);
-            arrow->SetToolTip(tip);
-            tgt_bmp->SetToolTip(tip);
-            m_legend_sizer->Add(item, 0, wxEXPAND | wxALL, FromDIP(3));
+                // Target swatch with filament number (28x28, square corners)
+                ColorBlockParams badge;
+                badge.mode        = ColorBlockParams::Solid;
+                badge.solid_color = mapping.matched_color.IsOk() ? mapping.matched_color : wxColour(128, 128, 128);
+                badge.width       = FromDIP(28);
+                badge.height      = FromDIP(28);
+                badge.label       = wxString::Format("%u", mapping.target_filament_id);
+                auto* tgt_bmp     = new wxStaticBitmap(item, wxID_ANY, *get_color_block_bitmap_cached(badge));
+                s->Add(tgt_bmp, 0, wxALIGN_CENTER_VERTICAL);
+
+                // 4px internal padding (Figma p-[4px]): wrap the content sizer in an outer sizer
+                // that adds the padding, since wxWindow::SetSizer has no border param.
+                auto* outer = new wxBoxSizer(wxHORIZONTAL);
+                outer->Add(s, 1, wxEXPAND | wxALL, FromDIP(4));
+                item->SetSizer(outer);
+                // ΔE revealed on hover. wx tooltips are per-window (they do NOT inherit from the
+                // parent), and the swatches/arrow are independent child windows — so we must set
+                // the same tip on every child too, otherwise hovering a swatch shows nothing and
+                // only the gaps between children trigger the row's tip.
+                // Grade bands per PRD 6.2.5 — open intervals: <kDeltaEGoodMax Good,
+                // kDeltaEGoodMax≤ΔE<kDeltaEFairMax Fair, ≥kDeltaEFairMax Poor. Strict < so a value
+                // exactly on the boundary lands in the worse band (4.0→Fair, 8.0→Poor).
+                // Per-row ΔE: a merged mapping only keeps the survivor's delta_e, so each split
+                // row recomputes its own ΔE = color_delta_e00(row_color, matched_color) — the
+                // same definition the matcher used (matched_color == recipe preview colour).
+                // Pure and non-merged rows keep mapping.delta_e (identical value, no change).
+                const double   row_delta_e = (!mapping.is_pure_recipe && mapping.matched_color.IsOk()) ?
+                                                 color_delta_e00(row_color, mapping.matched_color) :
+                                                 mapping.delta_e;
+                const wxString grade       = (row_delta_e < kDeltaEGoodMax) ? _L("Good") :
+                                             (row_delta_e < kDeltaEFairMax) ? _L("Fair") :
+                                                                              _L("Poor");
+                // Per copy spec, tooltip format: "Color Difference: {Level} (ΔE={X})".
+                // The ΔE glyph needs a font with Greek coverage; wx's default UI font on all
+                // supported platforms (Win10+, macOS, mainstream Linux) has it.
+                const wxString tip = wxString::Format(_L("Color Difference: %s (\u0394E=%.1f)"), grade, row_delta_e);
+                item->SetToolTip(tip);
+                src_bmp_ctrl->SetToolTip(tip);
+                arrow->SetToolTip(tip);
+                tgt_bmp->SetToolTip(tip);
+                m_legend_sizer->Add(item, 0, wxEXPAND | wxALL, FromDIP(3));
+            } // one legend row per source colour (merged mappings render N rows)
         }
     }
     // Card grows with content (no inner scroller); re-layout the legend panel + card so they

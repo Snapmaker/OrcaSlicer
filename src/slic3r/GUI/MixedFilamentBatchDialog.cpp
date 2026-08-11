@@ -2258,7 +2258,7 @@ void MixedFilamentBatchDialog::start_batch_match()
     // unaffected (user picks filaments from the current list, palette-agnostic).
     if (m_matching_method == RECOMMENDED && !full_spectrum_preset_exists_for_current_nozzle()) {
         RichMessageDialog dlg(this,
-            _L("Automatic color mixing match is not supported with the current nozzle diameter. Use Manual mode or switch to a 0.4 mm nozzle."),
+            _L("Automatic color mixing matching is not supported for the current nozzle diameter. Please use manual matching or replace with a smaller-size nozzle."),
             _L("Color Mixing Match"), wxOK);
         dlg.SetOKLabel(_L("Got it"));
         dlg.CentreOnScreen();

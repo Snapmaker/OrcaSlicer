@@ -1958,7 +1958,16 @@ void apply_batch_match_to_model(const BatchMatchResult& result)
         const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
         auto                obj_it       = extruder_remap.find(orig_obj_eid);
         const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
-        bool                object_extruder_written = false;
+        // Remap the object-level filament independently of the volume loop.
+        // Multi-part objects where EVERY volume owns its own extruder (e.g.
+        // Creality 3mf exports) used to keep the parent row on its stale
+        // filament: the object was only rewritten inside the "volume
+        // inherits" branch below, which never runs when no volume inherits.
+        // Write the object whenever its extruder is in the remap table so
+        // the parent follows the match; inheriting volumes resolve through
+        // the (already rewritten) object config.
+        if (obj_remap)
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
@@ -1978,14 +1987,9 @@ void apply_batch_match_to_model(const BatchMatchResult& result)
                 auto it = extruder_remap.find(vol_opt->getInt());
                 if (it != extruder_remap.end())
                     mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            } else if (obj_remap && !object_extruder_written) {
-                // Volume inherits the object's extruder — write the object ONCE
-                // so every inheriting volume follows the same target. Later
-                // inheriting volumes need no action: they resolve through the
-                // (already rewritten) object config.
-                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
-                object_extruder_written = true;
             }
+            // Volumes without their own extruder inherit the object's extruder,
+            // which was already remapped above — no per-volume action needed.
         }
 
         // Level 3: layer-object extruder (layer_config_ranges). A layer object

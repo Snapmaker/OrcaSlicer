@@ -8540,15 +8540,14 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     std::vector<unsigned int> kept_physical, kept_mixed;
     extract_batch_kept_sets(match_result, num_physical, kept_physical, kept_mixed);
 
-    // R3 guard: a mixed row whose virtual id is still referenced by the model's
-    // painted triangles must NEVER be flagged redundant. load_model_colors gives
-    // mixed slots an empty source_extruder_ids, so apply_batch_match_to_model
-    // leaves their references untouched, and kept_mixed (above) only carries the
-    // newly-created batch targets. Without this scan, a pre-existing painted
-    // mixed row would be deleted and its former virtual id re-aliased to the
-    // next survivor → silent wrong color. ModelVolume::get_extruders() reads
-    // mmu_segmentation facets, so it sees the virtual ids actually painted on
-    // the geometry (not just the config-level extruder_id).
+    // R3 guard: force-keep mixed rows still painted on the model so
+    // compute_redundant_filaments does not flag them via !in_kept_set; otherwise
+    // the row is deleted and its former virtual id re-aliases to the next
+    // survivor → silent wrong color.
+    // LIMITATION: does NOT save a painted row whose components reference a
+    // deleted physical — cascade still flags it and remove_physical_filament
+    // erases it unconditionally; its stranded painting then resolves via
+    // build_filament_id_remap's pair-fallback (possibly a wrong survivor).
     for (const ModelObject *mo : wxGetApp().model().objects) {
         for (const ModelVolume *mv : mo->volumes) {
             if (mv->type() != ModelVolumeType::MODEL_PART) continue;
@@ -8780,14 +8779,16 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     //   (2) physical-color sources get a NEW mixed row + an apply() remap that
     //       moves their painting onto it BEFORE cleanup runs, so by the time
     //       the source physical is deleted it has no painting left to strand.
-    // The R3 guard above (get_extruders scan) is the safety net for the only
-    // gap: a painted row that no mapping's source matched.  It force-keeps such
-    // rows so they never become redundant.
+    // The R3 guard above (get_extruders scan) force-keeps a painted row that no
+    // mapping's source matched.  That keep is not absolute: a cascade row
+    // (components reference a deleted physical) is still erased by
+    // remove_physical_filament — see the LIMITATION note on the R3 guard above.
     //
     // Removing the R3 guard, or enabling auto mixed rows (auto_generate) and
-    // painting them, would break this invariant → a deleted row's virtual id
-    // re-aliases to the next survivor → silent wrong colour (see test
-    // "resolve: deleted middle mixed's virtual id re-aliases to a survivor").
+    // painting them, would broaden this invariant breach → a deleted row's
+    // virtual id re-aliases to the next survivor → silent wrong colour (see
+    // test "resolve: deleted middle mixed's virtual id re-aliases to a
+    // survivor").
     const std::unordered_set<uint64_t> to_mark(redundant_mixed_stable_ids.begin(),
                                                redundant_mixed_stable_ids.end());
     for (auto &mf : mfs) {

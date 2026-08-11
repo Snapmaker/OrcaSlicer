@@ -48,6 +48,8 @@ std::pair<bool, std::string> GLShadersManager::init()
     valid &= append_shader("background", { prefix + "background.vs", prefix + "background.fs" });
     // used to composite the selection fill and outline over the completed scene
     valid &= append_shader("selection_composite", { prefix + "background.vs", prefix + "selection_composite.fs" });
+    // used to horizontally dilate the selection mask into a reusable 4px-wide outline band
+    valid &= append_shader("selection_dilate", { prefix + "background.vs", prefix + "selection_dilate.fs" });
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
     //used to render thumbnail

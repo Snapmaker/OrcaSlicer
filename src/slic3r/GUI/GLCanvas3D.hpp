@@ -516,13 +516,13 @@ private:
         StencilFallback
     };
 
-    /** @brief GPU resources shared by the selection Mask and Composite passes. */
+    /** @brief GPU resources shared by the selection Mask, Dilation and Composite passes. */
     struct SelectionHighlightResources
     {
-        unsigned int msaaFramebuffer{ 0 };
-        unsigned int msaaColorRenderbuffer{ 0 };
-        unsigned int resolveFramebuffer{ 0 };
-        unsigned int resolveTexture{ 0 };
+        unsigned int maskFramebuffer{ 0 };
+        unsigned int maskTexture{ 0 };
+        unsigned int dilationFramebuffer{ 0 };
+        unsigned int dilationTexture{ 0 };
         unsigned int width{ 0 };
         unsigned int height{ 0 };
     };
@@ -1171,14 +1171,17 @@ private:
     /**
      * @brief Creates or resizes the selection highlight framebuffer resources.
      * @param canvasSize Physical framebuffer dimensions in pixels.
-     * @return true when the fixed 4x MSAA and resolve framebuffers are ready.
+     * @return true when the Mask and Dilation framebuffers are ready.
      */
     bool EnsureSelectionHighlightResources(const Size& canvasSize);
 
-    /** @brief Renders selected volumes into the multisampled selection mask and resolves it. */
+    /** @brief Renders selected volumes into the texture-backed selection mask. */
     bool RenderSelectionHighlightMask();
 
-    /** @brief Composites the resolved selection Fill and Outline over the main scene. */
+    /** @brief Horizontally dilates the Mask into the intermediate outline texture. */
+    bool DilateSelectionMaskHorizontal();
+
+    /** @brief Composites the selection Fill and vertically dilated Outline over the main scene. */
     void CompositeSelectionHighlight();
 
     /** @brief Renders an occlusion-independent selection Outline through the default framebuffer stencil. */

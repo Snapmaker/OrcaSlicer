@@ -1,0 +1,33 @@
+name: Fetch mac deps (temp)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          lfs: 'true'
+
+      - name: restore deps cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: deps/build
+          key: macos-14-cache-orcaslicer_deps-build-${{ hashFiles('deps/**') }}
+          fail-on-cache-miss: true
+
+      - name: pack arm64 deps
+        run: |
+          du -sh deps/build/arm64/OrcaSlicer_dep
+          cd deps/build/arm64
+          tar -czf ../../../deps-arm64.tar.gz OrcaSlicer_dep
+          ls -lh ../../../deps-arm64.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-arm64
+          path: deps-arm64.tar.gz
+          if-no-files-found: error

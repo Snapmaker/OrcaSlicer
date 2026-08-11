@@ -1984,6 +1984,19 @@ void apply_batch_match_to_model(const BatchMatchResult& result)
             }
         }
 
+        // Object-level extruder is remapped UNCONDITIONALLY (even when every
+        // volume owns its own extruder, so object_extruder_written stayed
+        // false).  The object list's parent-node colour swatch reads
+        // mo->config "extruder" directly (AddObject / update_filament_values_
+        // for_items), so a root node whose source slot is remapped must follow
+        // the match — otherwise it keeps the old source colour while its
+        // volumes migrate onto the new mixed slot ("root node colour wrong
+        // after batch match").  This also keeps the object-level default
+        // (inherited by any volume without an own extruder) consistent with
+        // the volumes that were remapped above.
+        if (obj_remap && !object_extruder_written)
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+
         // Level 3: layer-object extruder (layer_config_ranges). A layer object
         // holds the user-assigned filament for a height range; remap it with
         // the same table used for volumes so it follows the match instead of

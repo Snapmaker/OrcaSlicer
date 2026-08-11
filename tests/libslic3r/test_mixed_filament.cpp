@@ -4600,6 +4600,13 @@ static void apply_config_layer_remap_mirror(
             }
         }
 
+        // Object-level extruder remapped UNCONDITIONALLY when the object's
+        // source slot is in the remap — the object list's parent-node colour
+        // swatch reads mo->config directly, so it must follow the match even
+        // when every volume owns its own extruder.
+        if (obj_remap && !object_extruder_written)
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+
         for (auto& lr : mo->layer_config_ranges) {
             ModelConfig&         lcfg = lr.second;
             const ConfigOption*  lopt = lcfg.option("extruder");
@@ -4686,6 +4693,50 @@ TEST_CASE("apply config remap: modifier with own extruder is remapped alone", "[
     REQUIRE(obj->config.opt_int("extruder") == 1); // object untouched
 }
 
+TEST_CASE("apply config remap: object root-node colour follows the match even when all volumes own their extruder", "[MixedFilament][batch_apply]")
+{
+    // The object list's parent-node colour swatch reads mo->config "extruder"
+    // directly.  When every volume owns its own extruder (nothing inherits),
+    // the OLD apply loop never wrote the object config — so after the match
+    // the root node kept the old source colour while the volumes migrated to
+    // the new mixed slot.  apply now remaps the object config UNCONDITIONALLY
+    // whenever the object's source slot is in the remap.
+    Model model;
+    ModelObject *obj  = model.add_object();
+    ModelVolume  *part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume  *mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->config.set_key_value("extruder",  new ConfigOptionInt(5));
+    part->config.set_key_value("extruder", new ConfigOptionInt(5)); // owns it
+    mod->config.set_key_value("extruder",  new ConfigOptionInt(5)); // owns it
+
+    std::unordered_map<int, unsigned int> remap{{5, 7u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    // Root-node colour: object extruder follows the match...
+    REQUIRE(obj->config.opt_int("extruder") == 7);
+    // ...and the volumes were remapped on their own configs.
+    REQUIRE(part->config.opt_int("extruder") == 7);
+    REQUIRE(mod->config.opt_int("extruder")  == 7);
+    REQUIRE(part->extruder_id() == 7);
+    REQUIRE(mod->extruder_id()  == 7);
+}
+
+TEST_CASE("apply config remap: object NOT in remap stays untouched (root node keeps its colour)", "[MixedFilament][batch_apply]")
+{
+    // Unconditional object remap must NOT fire for objects whose source slot is
+    // not part of the match — e.g. an object already on the new mixed target
+    // before the match, or on a slot the match leaves alone.
+    Model model;
+    ModelObject *obj  = model.add_object();
+    obj->add_volume(make_cube(20., 20., 20.));
+    obj->config.set_key_value("extruder", new ConfigOptionInt(4)); // not in remap
+
+    std::unordered_map<int, unsigned int> remap{{5, 7u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 4);
+}
+
 TEST_CASE("apply layer remap: hit is remapped, miss is left untouched", "[MixedFilament][batch_apply]")
 {
     // Level-3 (layer_config_ranges): a height range whose extruder is in the
@@ -4749,6 +4800,165 @@ TEST_CASE("manual-mode apply migrates unselected-physical painting off its slot"
 
     // THEN cleanup's kept-aware state_map is safe to map 3 -> 0 (nothing left on
     // 3 to drop) and 6 -> 2 (survivor's new slot). This is the fix's guarantee.
+}
+
+// ===========================================================================
+// cleanup composite remap (remap_model_filament_refs mirror)
+//
+// Production function: Sidebar::cleanup_unused_filaments_after_batch_match
+// (Plater.cpp) — the kept-aware composite remap that repairs BOTH triangle
+// paint AND config-level extruder references after the per-deletion
+// array-index decrement (update_filament_values_for_items_when_delete_filament)
+// has shifted object/volume/layer configs onto wrong slots. The config pass
+// exists so the object list's parent-node colour swatch (reads mo->config
+// "extruder" directly) and the volumes/layers render the POST-match slots.
+// ===========================================================================
+
+// Mirror of remap_model_filament_refs (Plater.cpp). Kept byte-faithful to the
+// production loop; a change there must surface here.
+static void remap_model_filament_refs_mirror(Model&                                   model,
+                                             const std::vector<unsigned int>&         composite_remap,
+                                             size_t                                   total_filaments)
+{
+    if (composite_remap.empty()) return;
+
+    static const char* FEATURE_KEYS[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+                                         "support_filament", "support_interface_filament"};
+
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i < state_map.size(); ++i)
+        state_map[i] = EnforcerBlockerType(i);
+    for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
+        const unsigned int mapped = composite_remap[i];
+        if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
+            state_map[i] = EnforcerBlockerType::NONE;
+        else
+            state_map[i] = EnforcerBlockerType(mapped);
+    }
+
+    auto remap_feature_keys = [&](ModelConfig &cfg) {
+        for (const char *key : FEATURE_KEYS) {
+            if (!cfg.has(key)) continue;
+            const int old_id = cfg.opt_int(key);
+            if (old_id <= 0) continue;
+            if (size_t(old_id) >= composite_remap.size()) continue;
+            const unsigned int mapped = composite_remap[size_t(old_id)];
+            if (mapped == 0)
+                cfg.erase(key);
+            else if (mapped != static_cast<unsigned int>(old_id))
+                cfg.set_key_value(key, new ConfigOptionInt(static_cast<int>(mapped)));
+        }
+    };
+
+    for (ModelObject *mo : model.objects) {
+        const ConfigOption *obj_opt      = mo->config.option("extruder");
+        const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
+        const unsigned int  obj_target   = (orig_obj_eid > 0 &&
+                                            size_t(orig_obj_eid) < composite_remap.size())
+                                               ? composite_remap[size_t(orig_obj_eid)] : 0;
+        if (obj_target != 0)
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_target)));
+        else if (obj_opt && obj_opt->getInt() > 0)
+            mo->config.erase("extruder");
+        remap_feature_keys(mo->config);
+        for (ModelVolume *mv : mo->volumes) {
+            const ModelVolumeType vt = mv->type();
+            if (vt != ModelVolumeType::MODEL_PART && vt != ModelVolumeType::PARAMETER_MODIFIER)
+                continue;
+            const ConfigOption *vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0) {
+                const unsigned int mapped = (size_t(vol_opt->getInt()) < composite_remap.size())
+                                                ? composite_remap[size_t(vol_opt->getInt())] : 0;
+                if (mapped != 0)
+                    mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+                else
+                    mv->config.erase("extruder");
+            }
+            remap_feature_keys(mv->config);
+            if (vt == ModelVolumeType::MODEL_PART && !mv->mmu_segmentation_facets.empty())
+                mv->remap_extruder_ids(total_filaments, state_map);
+        }
+        for (auto &lr : mo->layer_config_ranges) {
+            ModelConfig        &lcfg = lr.second;
+            const ConfigOption *lopt = lcfg.option("extruder");
+            if (!lopt) continue;
+            const int old_eid = lopt->getInt();
+            if (old_eid <= 0) continue;
+            if (size_t(old_eid) >= composite_remap.size()) continue;
+            const unsigned int mapped = composite_remap[size_t(old_eid)];
+            if (mapped == 0)
+                lcfg.set_key_value("extruder", new ConfigOptionInt(0));
+            else
+                lcfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+        }
+    }
+}
+
+TEST_CASE("cleanup composite remap: config-level extruders follow the kept-aware remap (root-node colour)", "[MixedFilament][batch_apply]")
+{
+    // Scenario: manual subset [2,6,8,10] of 10 physicals, kept-aware remap
+    //   old 2 -> 1, 6 -> 2, 8 -> 3, 10 -> 4; others -> 0 (dropped).
+    // The per-deletion array-index decrement is SKIPPED during the batch loop,
+    // so the config references still hold their pre-deletion ids and the
+    // composite remap moves them to the post-match slots.  Object config is
+    // what the object list's parent-node colour swatch reads.
+    const std::vector<unsigned int> kept_aware = {0u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 3u, 0u, 4u}; // [1..10]
+
+    Model model;
+    ModelObject *obj  = model.add_object();
+    obj->config.set_key_value("extruder", new ConfigOptionInt(6)); // root-node colour source
+    ModelVolume *part = obj->add_volume(make_cube(20., 20., 20.));
+    part->config.set_key_value("extruder", new ConfigOptionInt(6));
+    ModelVolume *mod = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    mod->config.set_key_value("extruder", new ConfigOptionInt(8));
+    // Feature keys follow the same table; a dropped source is erased.
+    obj->config.set_key_value("wall_filament", new ConfigOptionInt(6));
+    part->config.set_key_value("support_filament", new ConfigOptionInt(4)); // dropped -> erased
+    obj->layer_config_ranges[t_layer_height_range{0.0, 1.0}].set_key_value("extruder", new ConfigOptionInt(10));
+    obj->layer_config_ranges[t_layer_height_range{1.0, 2.0}].set_key_value("extruder", new ConfigOptionInt(4)); // dropped -> must be removed
+
+    // Triangle paint on the part (facet on extruder 6) must follow 6 -> 2.
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(6));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+
+    constexpr size_t new_total = 4; // 4 physical survivors, no mixed
+    remap_model_filament_refs_mirror(model, kept_aware, new_total);
+
+    // Root node colour follows the match.
+    REQUIRE(obj->config.opt_int("extruder") == 2);
+    // Volumes follow their own configs.
+    REQUIRE(part->config.opt_int("extruder") == 2);
+    REQUIRE(mod->config.opt_int("extruder")  == 3);
+    // Feature keys: kept source follows, dropped source erased.
+    REQUIRE(obj->config.opt_int("wall_filament") == 2);
+    REQUIRE_FALSE(part->config.has("support_filament"));
+    // Layer ranges follow; a dropped source is reset to default (0).
+    REQUIRE(obj->layer_config_ranges.at(t_layer_height_range{0.0, 1.0}).opt_int("extruder") == 4);
+    REQUIRE(obj->layer_config_ranges.at(t_layer_height_range{1.0, 2.0}).opt_int("extruder") == 0);
+    // Triangle paint moved to the new slot.
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+    REQUIRE(!part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(6)));
+}
+
+TEST_CASE("cleanup composite remap: object on a dropped source falls back to default", "[MixedFilament][batch_apply]")
+{
+    // An object whose extruder references a slot the match dropped (mapped -> 0)
+    // has its key erased so it falls back to default; a volume referencing the
+    // dropped slot erases its own key and inherits the object.
+    const std::vector<unsigned int> kept_aware = {0u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 3u, 0u, 4u}; // [1..10]
+
+    Model model;
+    ModelObject *obj  = model.add_object();
+    obj->config.set_key_value("extruder", new ConfigOptionInt(4)); // dropped
+    ModelVolume *part = obj->add_volume(make_cube(20., 20., 20.));
+    part->config.set_key_value("extruder", new ConfigOptionInt(4)); // dropped
+
+    constexpr size_t new_total = 4;
+    remap_model_filament_refs_mirror(model, kept_aware, new_total);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));   // back to default
+    REQUIRE_FALSE(part->config.has("extruder"));  // inherits object (default)
 }
 
 // ===========================================================================

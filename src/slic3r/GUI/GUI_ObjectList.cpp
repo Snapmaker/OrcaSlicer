@@ -856,6 +856,18 @@ void ObjectList::selected_object(ObjectDataViewModelNode* item)
 
 void ObjectList::update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id)
 {
+    // During batch physical deletion (batch-match cleanup loop), skip the
+    // per-deletion config rewrite entirely.  Each iteration would shift
+    // config-level extruder references by ARRAY-INDEX decrement (a middle-
+    // deletion repack), which corrupts the kept-aware composite remap that
+    // cleanup applies ONCE after the loop: the remap is built over the
+    // PRE-deletion id space, so it can only repair references whose old ids
+    // are still intact.  The same guard already skips the per-deletion
+    // triangle-paint remap in Plater::on_filaments_delete; the composite
+    // pass (remap_model_filament_refs) then repairs paint AND config.
+    if (wxGetApp().plater()->batch_physical_deletion() > 0)
+        return;
+
     int replace_filament_id = replace_id == -1 ? 1 : (replace_id + 1);
     for (size_t i = 0; i < m_objects->size(); ++i) {
         wxDataViewItem item = m_objects_model->GetItemById(i);

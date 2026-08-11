@@ -619,6 +619,14 @@ public:
     PrinterTechnology   printer_technology() const;
     const DynamicPrintConfig * config() const;
     bool                set_printer_technology(PrinterTechnology printer_technology);
+    // Batch-match cleanup: remap the GLOBAL per-filament feature keys
+    // (wall_filament / sparse_infill_filament / solid_infill_filament /
+    // support_filament / support_interface_filament) in the plater's config by
+    // a kept-aware composite remap.  The per-deletion array-index decrement of
+    // these keys is skipped during the batch deletion loop; this applies the
+    // single composite table instead.  composite_remap[old_id] = new_id
+    // (1-based); 0 means the referenced filament was dropped -> key erased.
+    void                remap_config_filament_keys(const std::vector<unsigned int> &composite_remap);
 
     //BBS
     void cut_selection_to_clipboard();

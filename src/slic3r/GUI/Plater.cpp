@@ -8304,6 +8304,122 @@ static void extract_batch_kept_sets(const BatchMatchResult &result,
     }
 }
 
+// Apply a filament-id remap (1-based, composite_remap[old_id] = new_id) to BOTH
+// the model's triangle-level MMU paint and its config-level extruder references.
+// The config pass covers MODEL_PART and PARAMETER_MODIFIER volumes, the OBJECT
+// config ("extruder" is what the object list's parent-node colour swatch reads)
+// and layer_config_ranges — mirroring apply_batch_match_to_model so a match
+// never leaves a config reference stranded on a deleted slot.
+//
+// WHY THIS IS NEEDED: the per-deletion loop below (delete_filament with
+// skip_update=true) rewrites config-level extruder references by ARRAY-INDEX
+// decrement (every value > deleted_id is shifted down by one, treating the
+// deleted slot as a middle-index removal). That is correct for sequential
+// palette-slot deletion, but the batch match deletes NON-CONTIGUOUS ids with a
+// kept-aware remap (old 2/6/8/10 -> new 1..4), so the per-deletion shift would
+// corrupt surviving mixed virtual ids AND shift kept physical ids onto wrong
+// slots. The per-deletion rewrite is therefore SKIPPED during the batch loop
+// (ObjectList::update_filament_values_for_items_when_delete_filament guards on
+// batch_physical_deletion), and THIS composite pass — built over the
+// PRE-deletion id space — is the single authority that moves every reference:
+// paint, object/volume/modifier extruder, feature filaments, layer ranges.
+static void remap_model_filament_refs(const std::vector<unsigned int> &composite_remap,
+                                      size_t                           total_filaments)
+{
+    if (composite_remap.empty()) return;
+
+    // Per-filament feature settings (wall/infill/support filament) live on the
+    // object and volume configs.  The per-deletion rewrite of these keys is
+    // skipped during the batch loop (same reason as "extruder"), so the
+    // composite pass must move them by the same table: mapped != 0 -> follow;
+    // mapped == 0 -> the referenced filament was dropped -> erase (mirrors the
+    // per-deletion "key == deleted -> erase" rule).
+    static const char* FEATURE_KEYS[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+                                         "support_filament", "support_interface_filament"};
+
+    EnforcerBlockerStateMap state_map;
+    for (size_t i = 0; i < state_map.size(); ++i)
+        state_map[i] = EnforcerBlockerType(i);
+    for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
+        const unsigned int mapped = composite_remap[i];
+        if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
+            state_map[i] = EnforcerBlockerType::NONE;
+        else
+            state_map[i] = EnforcerBlockerType(mapped);
+    }
+
+    auto remap_feature_keys = [&](ModelConfig &cfg) {
+        for (const char *key : FEATURE_KEYS) {
+            if (!cfg.has(key)) continue;
+            const int old_id = cfg.opt_int(key);
+            if (old_id <= 0) continue;
+            if (size_t(old_id) >= composite_remap.size()) continue;
+            const unsigned int mapped = composite_remap[size_t(old_id)];
+            if (mapped == 0)
+                cfg.erase(key);
+            else if (mapped != static_cast<unsigned int>(old_id))
+                cfg.set_key_value(key, new ConfigOptionInt(static_cast<int>(mapped)));
+        }
+    };
+
+    for (ModelObject *mo : wxGetApp().model().objects) {
+        // Config-level references.  Object first (write once): every volume
+        // that inherits the object's extruder follows it through the same
+        // lookup, mirroring apply_batch_match_to_model.  mapped == 0 means the
+        // source slot was dropped by the match: erase the key so the object
+        // falls back to default (and inheriting volumes follow) instead of
+        // pointing at a deleted slot.
+        const ConfigOption *obj_opt     = mo->config.option("extruder");
+        const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
+        const unsigned int  obj_target  = (orig_obj_eid > 0 &&
+                                           size_t(orig_obj_eid) < composite_remap.size())
+                                              ? composite_remap[size_t(orig_obj_eid)] : 0;
+        if (obj_target != 0)
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_target)));
+        else if (obj_opt && obj_opt->getInt() > 0)
+            mo->config.erase("extruder");
+        remap_feature_keys(mo->config);
+        for (ModelVolume *mv : mo->volumes) {
+            const ModelVolumeType vt = mv->type();
+            if (vt != ModelVolumeType::MODEL_PART && vt != ModelVolumeType::PARAMETER_MODIFIER)
+                continue;
+            const ConfigOption *vol_opt = mv->config.option("extruder");
+            if (vol_opt && vol_opt->getInt() > 0) {
+                const unsigned int mapped = (size_t(vol_opt->getInt()) < composite_remap.size())
+                                                ? composite_remap[size_t(vol_opt->getInt())] : 0;
+                if (mapped != 0)
+                    mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+                else
+                    mv->config.erase("extruder"); // source slot dropped -> inherit object
+            }
+            remap_feature_keys(mv->config);
+            // Triangle-level MMU paint (MODEL_PART only — modifiers carry none).
+            if (vt == ModelVolumeType::MODEL_PART && !mv->mmu_segmentation_facets.empty())
+                // Pass total_filaments (physical + mixed), NOT new_num_physical —
+                // remap_enforcer_block_types clips any state > max_type to NONE,
+                // and remapped mixed virtual ids (N+1..total) must survive.
+                mv->remap_extruder_ids(total_filaments, state_map);
+        }
+        // Layer-object extruders (layer_config_ranges) follow the same table so
+        // height-range filaments are not stranded on a deleted slot.  mapped==0
+        // -> the layer's filament was dropped: reset to default (0), mirroring
+        // the per-deletion reset-to-default rule for layers.
+        for (auto &lr : mo->layer_config_ranges) {
+            ModelConfig        &lcfg = lr.second;
+            const ConfigOption *lopt = lcfg.option("extruder");
+            if (!lopt) continue;
+            const int old_eid = lopt->getInt();
+            if (old_eid <= 0) continue;
+            if (size_t(old_eid) >= composite_remap.size()) continue;
+            const unsigned int mapped = composite_remap[size_t(old_eid)];
+            if (mapped == 0)
+                lcfg.set_key_value("extruder", new ConfigOptionInt(0));
+            else
+                lcfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+        }
+    }
+}
+
 void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult &match_result,
                                                           std::function<void(int, int)> on_progress)
 {
@@ -8472,24 +8588,14 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
                                                 size_t(-1), kept_physical);
             const std::vector<unsigned int> composite_remap = pb->consume_last_filament_id_remap();
             if (!composite_remap.empty()) {
-                EnforcerBlockerStateMap state_map;
-                for (size_t i = 0; i < state_map.size(); ++i)
-                    state_map[i] = EnforcerBlockerType(i);
                 const size_t total_filaments = new_num_physical + pb->mixed_filaments.enabled_count();
-                for (size_t i = 1; i < composite_remap.size() && i < state_map.size(); ++i) {
-                    const unsigned int mapped = composite_remap[i];
-                    if (mapped == 0 || mapped >= state_map.size() || mapped > total_filaments)
-                        state_map[i] = EnforcerBlockerType::NONE;
-                    else
-                        state_map[i] = EnforcerBlockerType(mapped);
-                }
-                for (ModelObject* mo : wxGetApp().model().objects)
-                    for (ModelVolume* mv : mo->volumes)
-                        if (mv->type() == ModelVolumeType::MODEL_PART)
-                            // Pass total_filaments (physical + mixed), NOT new_num_physical —
-                            // remap_enforcer_block_types clips any state > max_type to NONE,
-                            // and remapped mixed virtual ids (N+1..total) must survive.
-                            mv->remap_extruder_ids(total_filaments, state_map);
+                // Single composite pass over paint AND config-level references
+                // (object root-node colour, volume/modifier extruder, feature
+                // filaments, layer ranges) — the per-deletion rewrite was
+                // skipped during the loop above.  Global per-filament feature
+                // keys in the plater config follow the same table.
+                remap_model_filament_refs(composite_remap, total_filaments);
+                wxGetApp().plater()->remap_config_filament_keys(composite_remap);
             }
         } else {
             // Safe fallback: delete one by one with full per-deletion update so each
@@ -8556,23 +8662,12 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     }
 
     // Apply the mixed-deletion remap now that the rows are marked (T3 epoch).
-    // Mirrors the physical-deletion composite remap above.
+    // Mirrors the physical-deletion composite remap above — triangle paint AND
+    // config-level extruder references follow the same table.
     if (!mixed_deletion_remap.empty()) {
-        EnforcerBlockerStateMap state_map;
-        for (size_t i = 0; i < state_map.size(); ++i)
-            state_map[i] = EnforcerBlockerType(i);
         const size_t t3_total = pb->filament_presets.size() + pb->mixed_filaments.enabled_count();
-        for (size_t i = 1; i < mixed_deletion_remap.size() && i < state_map.size(); ++i) {
-            const unsigned int mapped = mixed_deletion_remap[i];
-            if (mapped == 0 || mapped >= state_map.size() || mapped > t3_total)
-                state_map[i] = EnforcerBlockerType::NONE;
-            else
-                state_map[i] = EnforcerBlockerType(mapped);
-        }
-        for (ModelObject* mo : wxGetApp().model().objects)
-            for (ModelVolume* mv : mo->volumes)
-                if (mv->type() == ModelVolumeType::MODEL_PART)
-                    mv->remap_extruder_ids(t3_total, state_map);
+        remap_model_filament_refs(mixed_deletion_remap, t3_total);
+        wxGetApp().plater()->remap_config_filament_keys(mixed_deletion_remap);
     }
 
     // Final authoritative serialization of the post-cleanup state (it must
@@ -8586,6 +8681,11 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // Rebuild panels once (skipped per-deletion in the loop above).
     update_mixed_filament_panel();
     update_color_mix_panel();
+    // Re-sync the object list filament column: the per-deletion
+    // update_filament_values_for_items_when_delete_filament was skipped during
+    // the batch loop (composite remap repaired the configs instead), so the
+    // list rows (incl. the parent-node colour swatches) still show stale ids.
+    obj_list()->update_objects_list_filament_column(pb->filament_presets.size());
     wxGetApp().plater()->update();
 }
 
@@ -21237,17 +21337,26 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().on_filaments_delete(filament_id);
 
     // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
-                                 "support_filament", "support_interface_filament"};
-    for (auto key : keys)
-        if (p->config->has(key)) {
-            if (p->config->opt_int(key) == filament_id + 1)
-                (*(p->config)).erase(key);
-            else {
-                int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
+    // During batch physical deletion (batch-match cleanup loop) this
+    // per-deletion ARRAY-INDEX decrement is skipped: the batch deletes
+    // non-contiguous ids with a kept-aware composite remap, so a per-deletion
+    // shift would corrupt the surviving slots.  The composite pass
+    // (remap_model_filament_refs in cleanup_unused_filaments_after_batch_match)
+    // re-syncs these keys once after the loop — the same guard pattern as
+    // ObjectList::update_filament_values_for_items_when_delete_filament.
+    if (p->m_batch_physical_deletion == 0) {
+        static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+                                     "support_filament", "support_interface_filament"};
+        for (auto key : keys)
+            if (p->config->has(key)) {
+                if (p->config->opt_int(key) == filament_id + 1)
+                    (*(p->config)).erase(key);
+                else {
+                    int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
+                    (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
+                }
             }
-        }
+    }
 
     // update object/volume/support(object and volume) filament id
     sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
@@ -21267,6 +21376,29 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
             if (item.type == CustomGCode::Type::ToolChange && item.extruder > filament_id)
                 item.extruder--;
         }
+    }
+}
+
+void Plater::remap_config_filament_keys(const std::vector<unsigned int> &composite_remap)
+{
+    if (composite_remap.empty() || p->config == nullptr)
+        return;
+
+    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+                                 "support_filament", "support_interface_filament"};
+    for (auto key : keys) {
+        if (!p->config->has(key))
+            continue;
+        const int old_id = p->config->opt_int(key);
+        if (old_id <= 0)
+            continue;
+        if (size_t(old_id) >= composite_remap.size())
+            continue;
+        const unsigned int mapped = composite_remap[size_t(old_id)];
+        if (mapped == 0)
+            p->config->erase(key); // referenced filament was dropped
+        else if (mapped != static_cast<unsigned int>(old_id))
+            p->config->set_key_value(key, new ConfigOptionInt(static_cast<int>(mapped)));
     }
 }
 

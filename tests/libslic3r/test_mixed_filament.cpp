@@ -208,6 +208,41 @@ TEST_CASE("Mixed filament remap keeps later painted colors stable when an earlie
     CHECK(remap[8] == virtual_id_for_stable_id(mixed, 4, stable_id_8));
 }
 
+TEST_CASE("Mixed filament remap shifts virtual ids on physical-count expansion with structurally identical rows", "[MixedFilament]")
+{
+    PresetBundle bundle;
+    bundle.filament_presets = {"F1", "F2"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour")->values = {"#FF0000", "#00FF00"};
+
+    // One enabled mixed row after 2 physical filaments: virtual id 3.
+    MixedFilament row;
+    row.component_a = 1;
+    row.component_b = 2;
+    row.stable_id   = 4242;
+    row.enabled     = true;
+    row.custom      = true;
+    std::vector<MixedFilament> old_mixed{row};
+    bundle.mixed_filaments.mixed_filaments() = old_mixed;
+
+    // Physical-count expansion 2 -> 4: the row keeps every field, so the two
+    // lists are structurally identical (MixedFilament::operator== ignores
+    // display_color) — yet the row's virtual id shifts from 3 (2 physical + 1)
+    // to 5 (4 physical + 1) because virtual ids are positional. The remap must
+    // still be built in this case (Sidebar runs it whenever the count changes,
+    // not only when the row list differs).
+    std::vector<MixedFilament> new_mixed{row};
+    bundle.mixed_filaments.mixed_filaments() = new_mixed;
+    REQUIRE(bundle.mixed_filaments.mixed_filaments() == old_mixed);
+
+    bundle.update_mixed_filament_id_remap(old_mixed, 2, 4);
+    const std::vector<unsigned int> remap = bundle.consume_last_filament_id_remap();
+
+    REQUIRE(remap.size() >= 4);
+    CHECK(remap[1] == 1);   // physical ids keep identity
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 5);   // mixed row vid 3 -> 5 (shifted past the 2 new physicals)
+}
+
 TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#0000FF"};

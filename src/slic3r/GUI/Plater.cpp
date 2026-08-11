@@ -2692,10 +2692,67 @@ Sidebar::Sidebar(Plater *parent)
 
             // Build a remap from old→new virtual IDs so on_filaments_change
             // correctly remaps existing painted mixed-IDs before
-            // apply_batch_match_to_model runs.
-            if (old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
+            // apply_batch_match_to_model runs.  A physical-count change shifts
+            // every mixed row's virtual id even when the rows are structurally
+            // identical (operator== ignores display_color), so run the remap
+            // whenever the count changes, not only when the row list differs.
+            if (current_count != target_count ||
+                old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
                 pb->update_mixed_filament_id_remap(
                     old_mixed_snapshot, current_count, target_count);
+            }
+
+            // Remap config-level extruder references (object/volume/layer) with
+            // the remap just built: the triangle remap inside on_filaments_change
+            // only touches mmu_segmentation_facets, so without this a config
+            // entry on a mixed row would stay on its stale pre-expansion id
+            // (e.g. vid 3 → 5 on a 2→4 physical-count expansion). Scoped to this
+            // batch-match branch only — other paths that build a remap (row
+            // delete/enable, manual add/remove) are intentionally left unchanged.
+            // last_filament_id_remap is read non-destructively; on_filaments_change
+            // below consumes it for the triangle remap.
+            const std::vector<unsigned int>& batch_remap = pb->last_filament_id_remap();
+            if (!batch_remap.empty()) {
+                const size_t total_filaments = target_count + pb->mixed_filaments.enabled_count();
+                // NONE is the default: a stale id NOT in the remap must not
+                // stay identity, because after a 2-to-4 renumbering the old
+                // mixed id 3 would alias onto physical slot 3 and silently
+                // reassign the object.  The loop overlays the actual remap on
+                // top of the NONE-filled baseline.
+                EnforcerBlockerStateMap batch_state_map;
+                batch_state_map.fill(EnforcerBlockerType::NONE);
+                for (size_t i = 1; i < batch_state_map.size(); ++i) {
+                    const unsigned int mapped = i < batch_remap.size() ? batch_remap[i] : 0;
+                    if (mapped == 0 || mapped >= batch_state_map.size() || mapped > total_filaments)
+                        continue;  // stays NONE: deleted/expired row, config falls back to default
+                    batch_state_map[i] = EnforcerBlockerType(mapped);
+                }
+                auto remap_config_extruder = [&batch_state_map](ModelConfig& cfg, bool is_layer) {
+                    if (!cfg.has("extruder"))
+                        return;
+                    const int eid = cfg.extruder();
+                    if (eid <= 0 || static_cast<size_t>(eid) >= batch_state_map.size())
+                        return;
+                    const unsigned int mapped = static_cast<unsigned int>(batch_state_map[static_cast<size_t>(eid)]);
+                    if (mapped == 0) {
+                        // Deleted/expired row: revert to default (layers keep the
+                        // key with 0; objects/volumes erase it so inheriting
+                        // children stay "default").
+                        if (is_layer)
+                            cfg.set("extruder", 0);
+                        else
+                            cfg.erase("extruder");
+                    } else if (mapped != static_cast<unsigned int>(eid)) {
+                        cfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+                    }
+                };
+                for (ModelObject* mo : wxGetApp().model().objects) {
+                    remap_config_extruder(mo->config, /*is_layer=*/false);
+                    for (ModelVolume* mv : mo->volumes)
+                        remap_config_extruder(mv->config, /*is_layer=*/false);
+                    for (auto& lr : mo->layer_config_ranges)
+                        remap_config_extruder(lr.second, /*is_layer=*/true);
+                }
             }
 
             // Write Full Spectrum to slots 1-4 only when the preset is

@@ -15399,8 +15399,8 @@ msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜
 msgid "No model detected. Import a multi-color model to continue."
 msgstr "未检测到模型，请先导入多色模型。"
 
-msgid "Automatic color mixing match is not supported with the current nozzle diameter. Use Manual mode or switch to a 0.4 mm nozzle."
-msgstr "当前喷嘴直径不支持混色自动匹配。请使用手动匹配，或更换为 0.4mm 喷嘴。"
+msgid "Automatic color mixing matching is not supported for the current nozzle diameter. Please use manual matching or replace with a smaller-size nozzle."
+msgstr "当前喷嘴直径不支持混色自动匹配。请使用手动匹配，或更换为更小尺寸喷嘴。"
 
 msgid "Updating the Filaments and Color Mixing list..."
 msgstr "正在更新耗材列表和混色列表……"

@@ -14145,6 +14145,10 @@ void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
 void Plater::priv::on_slicing_completed(wxCommandEvent & evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": event_type %1%, string %2%") % evt.GetEventType() % evt.GetString();
+
+    if (GUI::wxGetApp().is_recreating_gui())
+        return;
+
     //BBS: add slice project logic
     if (m_slice_all && (m_cur_slice_plate < (partplate_list.get_plate_count() - 1))) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format("slicing all, finished plate %1%, will continue next.")%m_cur_slice_plate;

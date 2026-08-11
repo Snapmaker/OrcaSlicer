@@ -356,7 +356,21 @@ BoundingBoxf3 GLVolume::transformed_convex_hull_bounding_box(const Transform3d& 
 
 BoundingBoxf3 GLVolume::transformed_non_sinking_bounding_box(const Transform3d& trafo) const
 {
-    return GUI::wxGetApp().plater()->model().objects[object_idx()]->volumes[volume_idx()]->mesh().transformed_bounding_box(trafo, 0.0);
+    auto* plater = GUI::wxGetApp().plater();
+    if (!plater)
+        return bounding_box().transformed(trafo);
+
+    const auto& objects = plater->model().objects;
+    int         obj_idx = object_idx();
+    if (obj_idx < 0 || obj_idx >= (int) objects.size() || !objects[obj_idx])
+        return bounding_box().transformed(trafo);
+
+    const auto& volumes = objects[obj_idx]->volumes;
+    int         vol_idx = volume_idx();
+    if (vol_idx < 0 || vol_idx >= (int) volumes.size())
+        return bounding_box().transformed(trafo);
+
+    return volumes[vol_idx]->mesh().transformed_bounding_box(trafo, 0.0);
 }
 
 const BoundingBoxf3& GLVolume::transformed_non_sinking_bounding_box() const
@@ -1037,7 +1051,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
 
 bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state) const
 {
-    if (GUI::wxGetApp().plater() == NULL) {
+    if (GUI::wxGetApp().plater() == NULL || GUI::wxGetApp().is_recreating_gui()) {
         if (out_state != nullptr)
             *out_state = ModelInstancePVS_Inside;
         return false;

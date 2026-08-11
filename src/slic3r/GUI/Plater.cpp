@@ -2692,10 +2692,72 @@ Sidebar::Sidebar(Plater *parent)
 
             // Build a remap from old→new virtual IDs so on_filaments_change
             // correctly remaps existing painted mixed-IDs before
-            // apply_batch_match_to_model runs.
-            if (old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
+            // apply_batch_match_to_model runs.  A physical-count change shifts
+            // every mixed row's virtual id even when the rows are structurally
+            // identical (operator== ignores display_color), so run the remap
+            // whenever the count changes, not only when the row list differs.
+            if (current_count != target_count ||
+                old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
                 pb->update_mixed_filament_id_remap(
                     old_mixed_snapshot, current_count, target_count);
+            }
+
+            // Remap config-level extruder references (object/volume/layer) with
+            // the remap just built: the triangle remap inside on_filaments_change
+            // only touches mmu_segmentation_facets, so without this a config
+            // entry on a mixed row would stay on its stale pre-expansion id
+            // (e.g. vid 3 → 5 on a 2→4 physical-count expansion). Scoped to this
+            // batch-match branch only — other paths that build a remap (row
+            // delete/enable, manual add/remove) are intentionally left unchanged.
+            // Copy, don't borrow: last_filament_id_remap() returns a reference
+            // into PresetBundle's buffer, which on_filaments_change below
+            // consumes (moves + clears). A copy keeps this block independent
+            // of that consume ordering.
+            const std::vector<unsigned int> batch_remap = pb->last_filament_id_remap();
+            if (!batch_remap.empty()) {
+                const size_t total_filaments = target_count + pb->mixed_filaments.enabled_count();
+                // NONE is the default: a stale id NOT in the remap must not
+                // stay identity, because after a 2-to-4 renumbering the old
+                // mixed id 3 would alias onto physical slot 3 and silently
+                // reassign the object.  The loop overlays the actual remap on
+                // top of the NONE-filled baseline.
+                EnforcerBlockerStateMap batch_state_map;
+                batch_state_map.fill(EnforcerBlockerType::NONE);
+                for (size_t i = 1; i < batch_state_map.size(); ++i) {
+                    const unsigned int mapped = i < batch_remap.size() ? batch_remap[i] : 0;
+                    if (mapped == 0 || mapped >= batch_state_map.size() || mapped > total_filaments)
+                        continue;  // stays NONE: deleted/expired row, config falls back to default
+                    batch_state_map[i] = EnforcerBlockerType(mapped);
+                }
+                auto remap_config_extruder = [&batch_state_map](ModelConfig& cfg) {
+                    if (!cfg.has("extruder"))
+                        return;
+                    const int eid = cfg.extruder();
+                    if (eid <= 0 || static_cast<size_t>(eid) >= batch_state_map.size())
+                        return;
+                    const unsigned int mapped = static_cast<unsigned int>(batch_state_map[static_cast<size_t>(eid)]);
+                    if (mapped == 0) {
+                        // Deleted/expired row: revert to default.  Set the key to
+                        // 0 rather than erasing it — a missing "extruder" would
+                        // make cfg.extruder() (opt_int, nullptr on absent key) a
+                        // dangling dereference for any unprotected reader, and an
+                        // explicit 0 matches the out-of-range normalization in
+                        // update_filament_values_for_items (GUI_ObjectList.cpp).
+                        // Objects/volumes with extruder 0 resolve to "default"
+                        // via ModelVolume::extruder_id()'s inherit-from-object
+                        // fallback, so inheriting children stay "default" too.
+                        cfg.set("extruder", 0);
+                    } else if (mapped != static_cast<unsigned int>(eid)) {
+                        cfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
+                    }
+                };
+                for (ModelObject* mo : wxGetApp().model().objects) {
+                    remap_config_extruder(mo->config);
+                    for (ModelVolume* mv : mo->volumes)
+                        remap_config_extruder(mv->config);
+                    for (auto& lr : mo->layer_config_ranges)
+                        remap_config_extruder(lr.second);
+                }
             }
 
             // Write Full Spectrum to slots 1-4 only when the preset is
@@ -8827,7 +8889,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
         // the table is cascade-aware (T2) — consistent only with no cascade removal
         // (the batch-match flow's case); if a cascade ever fires, skip via
         // cascade_mixed_count == 0 or normalise first.
-        auto remap_config_extruder = [&mixed_deletion_remap](ModelConfig &cfg, bool is_layer) {
+        auto remap_config_extruder = [&mixed_deletion_remap](ModelConfig &cfg) {
             if (!cfg.has("extruder")) return;
             const int old = cfg.extruder();
             if (old <= 0) return;
@@ -8835,23 +8897,24 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             if (idx >= mixed_deletion_remap.size()) return;
             const unsigned int mapped = mixed_deletion_remap[idx];
             if (mapped == 0) {
-                // Deleted row: revert to default. Layer ranges keep the key
-                // (GUI_ObjectList's delete path also writes 0 there); objects
-                // and volumes erase it so inheriting children stay "default".
-                if (is_layer)
-                    cfg.set("extruder", 0);
-                else
-                    cfg.erase("extruder");
+                // Deleted row: revert to default.  Set the key to 0 rather than
+                // erasing it — a missing "extruder" would make cfg.extruder()
+                // (opt_int, nullptr on absent key) a dangling dereference for
+                // any unprotected reader (GUI_ObjectList's delete path writes 0
+                // to layer ranges too).  Objects/volumes with extruder 0 resolve
+                // to "default" via ModelVolume::extruder_id()'s inherit-from-
+                // object fallback, so inheriting children stay "default".
+                cfg.set("extruder", 0);
             } else if (mapped != static_cast<unsigned int>(old)) {
                 cfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
             }
         };
         for (ModelObject* mo : wxGetApp().model().objects) {
-            remap_config_extruder(mo->config, /*is_layer=*/false);
+            remap_config_extruder(mo->config);
             for (ModelVolume* mv : mo->volumes)
-                remap_config_extruder(mv->config, /*is_layer=*/false);
+                remap_config_extruder(mv->config);
             for (auto &lr : mo->layer_config_ranges)
-                remap_config_extruder(lr.second, /*is_layer=*/true);
+                remap_config_extruder(lr.second);
         }
     }
 

@@ -1481,14 +1481,9 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         bool has_extrusions = (layer_to_print.object_layer && layer_to_print.object_layer->has_extrusions()) ||
                               (layer_to_print.support_layer && layer_to_print.support_layer->has_extrusions());
 
-        // Check that there are extrusions on the very first layer. The case with empty
-        // first layer may result in skirt/brim in the air and maybe other issues.
-        if (layers_to_print.size() == 1u) {
-            if (!has_extrusions)
-                throw Slic3r::SlicingError(
-                    _(L("One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports.")),
-                    object.id().id);
-        }
+        // Defer the first-layer empty check: leading layers may be too narrow
+        // to accommodate an extrusion line (e.g. a cube rotated 45° around Y),
+        // but valid layers further up can still print correctly.
 
         // In case there are extrusions on this layer, check there is a layer to lay it on.
         if ((layer_to_print.object_layer && layer_to_print.object_layer->has_extrusions())
@@ -1524,6 +1519,24 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         // Remember last layer with extrusions.
         if (has_extrusions)
             last_extrusion_layer = &layers_to_print.back();
+    }
+
+    // Strip leading empty layers that are too narrow for extrusion
+    // (e.g. first few layers of a cube rotated 45° around Y).
+    // Only throw if all layers are empty.
+
+    while (!layers_to_print.empty()) {
+        const LayerToPrint& ltp = layers_to_print.front();
+        bool ltp_has_extrusions = (ltp.object_layer && ltp.object_layer->has_extrusions()) ||
+                                  (ltp.support_layer && ltp.support_layer->has_extrusions());
+        if (ltp_has_extrusions)
+            break;
+        layers_to_print.erase(layers_to_print.begin());
+    }
+    if (layers_to_print.empty()) {
+        throw Slic3r::SlicingError(
+            _(L("One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports.")),
+            object.id().id);
     }
 
     if (!warning_ranges.empty()) {

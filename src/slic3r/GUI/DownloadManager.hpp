@@ -139,7 +139,6 @@ public:
 
     size_t start_internal_download(const std::string& file_url,
                                     const std::string& file_name,
-                                    const std::string& dest_path,
                                     DownloadCallbacks callbacks,
                                     bool need_decrypt,
                                     const std::string& sn);

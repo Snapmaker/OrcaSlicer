@@ -5309,11 +5309,19 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
 
     // Compute save_path and check disk space BEFORE responding to flutter.
     const std::string& sn = files[0].sn;
-    boost::filesystem::path save_path_fs =
-        boost::filesystem::path(wxGetApp().app_config->get("download_path")) / sn;
+#ifdef _WIN32
+    boost::filesystem::path save_path_fs(boost::nowide::widen(wxGetApp().app_config->get("download_path")));
+#else
+    boost::filesystem::path save_path_fs(wxGetApp().app_config->get("download_path"));
+#endif
+    save_path_fs /= sn;
     boost::system::error_code mk_ec;
     boost::filesystem::create_directories(save_path_fs, mk_ec);
+#ifdef _WIN32
+    std::string save_path = boost::nowide::narrow(save_path_fs.wstring());
+#else
     std::string save_path = save_path_fs.string();
+#endif
 
     if (mk_ec) {
         // Download path invalid (e.g. configured USB drive was removed).
@@ -5660,7 +5668,7 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             };
 
             ctx->current_task_id = DownloadManager::getInstance().start_internal_download(
-                url, info.file_name, ctx->save_path,
+                url, info.file_name,
                 std::move(callbacks), info.mode == "wan", info.sn);
         };
 

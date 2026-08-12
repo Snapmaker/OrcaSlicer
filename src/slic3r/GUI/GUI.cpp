@@ -577,9 +577,7 @@ void desktop_open_any_folderEx(const std::string& path)
 void desktop_open_folder(const std::string& path)
 {
 #ifdef _WIN32
-    boost::filesystem::path dir_path(path);
-    dir_path.make_preferred();
-    wxString widepath = from_path(dir_path);
+    wxString widepath = wxString::FromUTF8(path);
     wxString cmd = L"explorer \"" + widepath + L"\"";
     ::wxExecute(cmd, wxEXEC_ASYNC, nullptr);
 #elif __APPLE__

@@ -11,6 +11,7 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
 
 namespace Slic3r {
 
@@ -55,7 +56,7 @@ bool decrypt_file_aes_cbc(const std::string& input_path,
                           int iterations,
                           const std::string& output_path)
 {
-    std::ifstream ifs(input_path, std::ios::binary | std::ios::ate);
+    boost::nowide::ifstream ifs(input_path, std::ios::binary | std::ios::ate);
     if (!ifs.is_open()) {
         BOOST_LOG_TRIVIAL(error) << "FileDecrypt: cannot open input file: " << input_path;
         return false;
@@ -127,7 +128,7 @@ bool decrypt_file_aes_cbc(const std::string& input_path,
 
     const int total_len = out_len + final_len;
 
-    std::ofstream ofs(output_path, std::ios::binary);
+    boost::nowide::ofstream ofs(output_path, std::ios::binary);
     if (!ofs.is_open()) {
         BOOST_LOG_TRIVIAL(error) << "FileDecrypt: cannot open output file: " << output_path;
         return false;

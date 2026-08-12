@@ -84,6 +84,12 @@ public:
     // Split an expolygon with holes into up to 4 sub-expolygons,
     // cutting along the centroid of the largest hole. Ported from Bambu 976b5062c.
     ExPolygons split_expoly_with_holes(coord_t gap_width, const ExPolygons& collision) const;
+
+    // Compute auto-brim width (mm) from area moment and height.
+    // Ported from BambuStudio: uses second moment of area to estimate
+    // how much first-layer expansion a support node needs for stability.
+    // Returns value clamped to [1.0, 10.0] mm.
+    double     map_moment_to_expansion(double speed, double height) const;
 };
 
 inline bool operator==(const ExPolygon &lhs, const ExPolygon &rhs) { return lhs.contour == rhs.contour && lhs.holes == rhs.holes; }

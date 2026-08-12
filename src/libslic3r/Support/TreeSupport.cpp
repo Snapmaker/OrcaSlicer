@@ -2310,15 +2310,6 @@ void TreeSupport::draw_circles()
                                 circle.points[i] = circle.points[i] * scale + node.position;
                             }
                         }
-                        if (obj_layer_nr == 0 && m_raft_layers == 0) {
-                            // -1 (auto) -> Orca branch-radius heuristic (Bambu's
-                            // map_moment_to_expansion is not available in Orca);
-                            // 0 -> no brim; >=1 -> explicit width in mm.
-                            double brim_width = tree_brim_width >= 0.f ? tree_brim_width : std::max(MIN_BRANCH_RADIUS_FIRST_LAYER, std::min(node.radius + node.dist_mm_to_top / (scale * branch_radius) * 0.5, MAX_BRANCH_RADIUS_FIRST_LAYER) - node.radius);
-                            auto tmp=offset(circle, scale_(brim_width));
-                            if(!tmp.empty())
-                                circle = tmp[0];
-                        }
                         area = avoid_object_remove_extra_small_parts(ExPolygon(circle), get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
                         // area = diff_clipped({ ExPolygon(circle) }, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
 
@@ -2342,6 +2333,16 @@ void TreeSupport::draw_circles()
                             area = diff_clipped(area, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
                             if (!area.empty()) has_circle_node = true;
                         }
+                    }
+
+                    if (obj_layer_nr == 0 && m_raft_layers == 0) {
+                        double brim_width = tree_brim_width >= 0.f ? tree_brim_width : 0.;
+                        for (const ExPolygon &expoly : area) {
+                            brim_width = std::max(brim_width,
+                                expoly.map_moment_to_expansion(config.support_speed.value, node.dist_mm_to_top));
+                        }
+                        area = safe_offset_inc(area, scale_(brim_width), get_collision(false),
+                                               scale_(MIN_BRANCH_RADIUS * 0.5), 0, 1);
                     }
 
                     if (obj_layer_nr>0 && node.distance_to_top < 0)

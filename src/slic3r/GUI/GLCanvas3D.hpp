@@ -516,13 +516,23 @@ private:
         StencilFallback
     };
 
-    /** @brief GPU resources shared by the selection Mask, Dilation and Composite passes. */
+    /** @brief GPU resources shared by the selection Mask, Edge, Glow and Composite passes. */
     struct SelectionHighlightResources
     {
+        unsigned int fullResolutionMaskFramebuffer{ 0 };
+        unsigned int fullResolutionMaskTexture{ 0 };
         unsigned int maskFramebuffer{ 0 };
         unsigned int maskTexture{ 0 };
-        unsigned int dilationFramebuffer{ 0 };
-        unsigned int dilationTexture{ 0 };
+        unsigned int edgeTempFramebuffer{ 0 };
+        unsigned int edgeTempTexture{ 0 };
+        unsigned int edgeFramebuffer{ 0 };
+        unsigned int edgeTexture{ 0 };
+        unsigned int glowTempFramebuffer{ 0 };
+        unsigned int glowTempTexture{ 0 };
+        unsigned int glowFramebuffer{ 0 };
+        unsigned int glowTexture{ 0 };
+        unsigned int fullResolutionWidth{ 0 };
+        unsigned int fullResolutionHeight{ 0 };
         unsigned int width{ 0 };
         unsigned int height{ 0 };
     };
@@ -1171,17 +1181,17 @@ private:
     /**
      * @brief Creates or resizes the selection highlight framebuffer resources.
      * @param canvasSize Physical framebuffer dimensions in pixels.
-     * @return true when the Mask and Dilation framebuffers are ready.
+     * @return true when the Mask, Edge and Glow framebuffers are ready.
      */
     bool EnsureSelectionHighlightResources(const Size& canvasSize);
 
-    /** @brief Renders selected volumes into the texture-backed selection mask. */
+    /** @brief Renders selected volumes at full resolution and downscales the selection Mask. */
     bool RenderSelectionHighlightMask();
 
-    /** @brief Horizontally dilates the Mask into the intermediate outline texture. */
-    bool DilateSelectionMaskHorizontal();
+    /** @brief Generates the main selection edge and its outer Glow from the selection Mask. */
+    bool RenderSelectionOutlineTextures();
 
-    /** @brief Composites the selection Fill and vertically dilated Outline over the main scene. */
+    /** @brief Composites the linearly upsampled selection Fill and Outline over the main scene. */
     void CompositeSelectionHighlight();
 
     /** @brief Renders an occlusion-independent selection Outline through the default framebuffer stencil. */

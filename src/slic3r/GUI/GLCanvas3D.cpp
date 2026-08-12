@@ -104,8 +104,20 @@ namespace GUI {
 namespace {
 
 constexpr float SELECTION_FILL_ALPHA = 0.4f;
-constexpr float SELECTION_OUTLINE_ALPHA = 1.0f;
+constexpr float SELECTION_MASK_SCALE = 0.5f;
+constexpr float SELECTION_GLOW_SCALE = 0.5f;
+constexpr float SELECTION_OUTLINE_EXCLUSION_LOW = 0.25f;
+constexpr float SELECTION_OUTLINE_EXCLUSION_HIGH = 0.75f;
+constexpr float SELECTION_EDGE_STRENGTH = 5.0f;
+constexpr float SELECTION_EDGE_GLOW = 1.0f;
+constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
+constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
 constexpr double STENCIL_OUTLINE_SCALE = 1.02;
+const ColorRGB SELECTION_OUTLINE_COLOR{
+    245.0f / 255.0f,
+    158.0f / 255.0f,
+    11.0f / 255.0f
+};
 
 /** @brief Persistent OpenGL states changed by the selection Mask Pass. */
 struct MaskRenderState
@@ -120,6 +132,7 @@ struct MaskRenderState
     GLint currentProgram{ 0 };
     GLint drawFramebuffer{ 0 };
     GLint readFramebuffer{ 0 };
+    std::array<GLint, 4> viewport{ 0, 0, 0, 0 };
 };
 
 /**
@@ -138,6 +151,7 @@ MaskRenderState SaveMaskRenderState(OpenGLManager::EFramebufferType framebufferT
     glsafe(::glGetIntegerv(GL_FRONT_FACE, &state.frontFace));
     glsafe(::glGetIntegerv(GL_CULL_FACE_MODE, &state.cullFaceMode));
     glsafe(::glGetIntegerv(GL_CURRENT_PROGRAM, &state.currentProgram));
+    glsafe(::glGetIntegerv(GL_VIEWPORT, state.viewport.data()));
 
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
     {
@@ -186,6 +200,8 @@ void RestoreMaskRenderState(const MaskRenderState& state)
         glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(state.drawFramebuffer)));
         glsafe(::glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, static_cast<GLuint>(state.readFramebuffer)));
     }
+
+    glsafe(::glViewport(state.viewport[0], state.viewport[1], state.viewport[2], state.viewport[3]));
 }
 
 /** @brief Persistent OpenGL states changed by the selection Composite Pass. */
@@ -201,6 +217,7 @@ struct CompositeRenderState
     GLint activeTexture{ GL_TEXTURE0 };
     GLint texture0Binding2D{ 0 };
     GLint texture1Binding2D{ 0 };
+    GLint texture2Binding2D{ 0 };
     GLint currentProgram{ 0 };
 };
 
@@ -223,6 +240,8 @@ CompositeRenderState SaveCompositeRenderState()
     glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &state.texture0Binding2D));
     glsafe(::glActiveTexture(GL_TEXTURE1));
     glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &state.texture1Binding2D));
+    glsafe(::glActiveTexture(GL_TEXTURE2));
+    glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &state.texture2Binding2D));
     glsafe(::glActiveTexture(static_cast<GLenum>(state.activeTexture)));
     glsafe(::glGetIntegerv(GL_CURRENT_PROGRAM, &state.currentProgram));
     return state;
@@ -238,6 +257,8 @@ void RestoreCompositeRenderState(const CompositeRenderState& state)
     glsafe(::glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(state.texture0Binding2D)));
     glsafe(::glActiveTexture(GL_TEXTURE1));
     glsafe(::glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(state.texture1Binding2D)));
+    glsafe(::glActiveTexture(GL_TEXTURE2));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(state.texture2Binding2D)));
     glsafe(::glActiveTexture(static_cast<GLenum>(state.activeTexture)));
     glsafe(::glBlendFuncSeparate(static_cast<GLenum>(state.blendSourceRgb),
                                  static_cast<GLenum>(state.blendDestinationRgb),
@@ -259,6 +280,65 @@ void RestoreCompositeRenderState(const CompositeRenderState& state)
         glsafe(::glEnable(GL_CULL_FACE));
     else
         glsafe(::glDisable(GL_CULL_FACE));
+}
+
+/**
+ * @brief Binds a framebuffer as the active selection-highlight draw target.
+ * @param framebufferType Available framebuffer API implementation.
+ * @param framebuffer Target framebuffer object.
+ */
+void BindSelectionHighlightDrawFramebuffer(OpenGLManager::EFramebufferType framebufferType, unsigned int framebuffer)
+{
+    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
+        glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer));
+    else if (framebufferType == OpenGLManager::EFramebufferType::Ext)
+        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, framebuffer));
+}
+
+/**
+ * @brief Creates a texture-backed framebuffer used by the selection highlight.
+ * @param framebufferType Available framebuffer API implementation.
+ * @param width Target texture width in pixels.
+ * @param height Target texture height in pixels.
+ * @param framebuffer Destination framebuffer object.
+ * @param texture Destination color texture object.
+ * @return true when the framebuffer is complete.
+ */
+bool CreateSelectionHighlightFramebuffer(OpenGLManager::EFramebufferType framebufferType, unsigned int width,
+                                         unsigned int height, unsigned int& framebuffer, unsigned int& texture)
+{
+    if (width == 0 || height == 0 || framebuffer != 0 || texture != 0 ||
+        framebufferType == OpenGLManager::EFramebufferType::Unknown)
+        return false;
+
+    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
+    {
+        glsafe(::glGenFramebuffers(1, &framebuffer));
+        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, framebuffer));
+    }
+    else
+    {
+        glsafe(::glGenFramebuffersEXT(1, &framebuffer));
+        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, framebuffer));
+    }
+
+    glsafe(::glGenTextures(1, &texture));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, texture));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+    glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+
+    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
+    {
+        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0));
+        return ::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    }
+
+    glsafe(::glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, texture, 0));
+    return ::glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT) == GL_FRAMEBUFFER_COMPLETE_EXT;
 }
 
 /** @brief Persistent OpenGL states changed by the selection Stencil Fallback. */
@@ -1476,10 +1556,18 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
 GLCanvas3D::~GLCanvas3D()
 {
     const bool hasSelectionHighlightResources =
+        m_selectionHighlightResources.fullResolutionMaskFramebuffer != 0 ||
+        m_selectionHighlightResources.fullResolutionMaskTexture != 0 ||
         m_selectionHighlightResources.maskFramebuffer != 0 ||
         m_selectionHighlightResources.maskTexture != 0 ||
-        m_selectionHighlightResources.dilationFramebuffer != 0 ||
-        m_selectionHighlightResources.dilationTexture != 0;
+        m_selectionHighlightResources.edgeTempFramebuffer != 0 ||
+        m_selectionHighlightResources.edgeTempTexture != 0 ||
+        m_selectionHighlightResources.edgeFramebuffer != 0 ||
+        m_selectionHighlightResources.edgeTexture != 0 ||
+        m_selectionHighlightResources.glowTempFramebuffer != 0 ||
+        m_selectionHighlightResources.glowTempTexture != 0 ||
+        m_selectionHighlightResources.glowFramebuffer != 0 ||
+        m_selectionHighlightResources.glowTexture != 0;
     if (hasSelectionHighlightResources && m_canvas != nullptr && _set_current())
         ReleaseSelectionHighlightResources();
 
@@ -1579,11 +1667,12 @@ GLCanvas3D::ESelectionHighlightMode GLCanvas3D::ResolveSelectionHighlightMode()
 
     GLShaderProgram* const maskShader = wxGetApp().get_shader("selection_mask");
     GLShaderProgram* const compositeShader = wxGetApp().get_shader("selection_composite");
-    GLShaderProgram* const dilateShader = wxGetApp().get_shader("selection_dilate");
+    GLShaderProgram* const edgeShader = wxGetApp().get_shader("selection_edge");
+    GLShaderProgram* const gaussianShader = wxGetApp().get_shader("selection_gaussian");
     const bool framebufferSupported = OpenGLManager::are_framebuffers_supported() &&
                                       m_selectionFramebufferAvailable;
-    if (framebufferSupported && maskShader != nullptr && compositeShader != nullptr &&
-        dilateShader != nullptr && RenderSelectionHighlightMask())
+    if (framebufferSupported && maskShader != nullptr && compositeShader != nullptr && edgeShader != nullptr &&
+        gaussianShader != nullptr && RenderSelectionHighlightMask())
     {
         return ESelectionHighlightMode::UnifiedFramebuffer;
     }
@@ -1602,12 +1691,22 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
     if (!m_selectionFramebufferAvailable)
         return false;
 
-    const unsigned int width = static_cast<unsigned int>(canvasSize.get_width());
-    const unsigned int height = static_cast<unsigned int>(canvasSize.get_height());
+    const unsigned int canvasWidth = static_cast<unsigned int>(canvasSize.get_width());
+    const unsigned int canvasHeight = static_cast<unsigned int>(canvasSize.get_height());
+    const unsigned int width = std::max(1U, static_cast<unsigned int>(std::ceil(canvasWidth * SELECTION_MASK_SCALE)));
+    const unsigned int height = std::max(1U, static_cast<unsigned int>(std::ceil(canvasHeight * SELECTION_MASK_SCALE)));
+    const unsigned int glowWidth = std::max(1U, static_cast<unsigned int>(std::ceil(width * SELECTION_GLOW_SCALE)));
+    const unsigned int glowHeight = std::max(1U, static_cast<unsigned int>(std::ceil(height * SELECTION_GLOW_SCALE)));
     const SelectionHighlightResources& resources = m_selectionHighlightResources;
-    const bool resourcesReady = resources.maskFramebuffer != 0 && resources.maskTexture != 0 &&
-                                resources.dilationFramebuffer != 0 && resources.dilationTexture != 0;
-    if (resourcesReady && resources.width == width && resources.height == height)
+    const bool resourcesReady = resources.fullResolutionMaskFramebuffer != 0 &&
+                                resources.fullResolutionMaskTexture != 0 &&
+                                resources.maskFramebuffer != 0 && resources.maskTexture != 0 &&
+                                resources.edgeTempFramebuffer != 0 && resources.edgeTempTexture != 0 &&
+                                resources.edgeFramebuffer != 0 && resources.edgeTexture != 0 &&
+                                resources.glowTempFramebuffer != 0 && resources.glowTempTexture != 0 &&
+                                resources.glowFramebuffer != 0 && resources.glowTexture != 0;
+    if (resourcesReady && resources.fullResolutionWidth == canvasWidth &&
+        resources.fullResolutionHeight == canvasHeight && resources.width == width && resources.height == height)
         return true;
 
     const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
@@ -1633,71 +1732,25 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
 
     ReleaseSelectionHighlightResources();
 
-    bool framebufferComplete = false;
-    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-    {
-        glsafe(::glGenFramebuffers(1, &m_selectionHighlightResources.maskFramebuffer));
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, m_selectionHighlightResources.maskFramebuffer));
-        glsafe(::glGenTextures(1, &m_selectionHighlightResources.maskTexture));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.maskTexture));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
-        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                        m_selectionHighlightResources.maskTexture, 0));
-        const bool maskFramebufferComplete =
-            ::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-
-        glsafe(::glGenFramebuffers(1, &m_selectionHighlightResources.dilationFramebuffer));
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, m_selectionHighlightResources.dilationFramebuffer));
-        glsafe(::glGenTextures(1, &m_selectionHighlightResources.dilationTexture));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.dilationTexture));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
-        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                        m_selectionHighlightResources.dilationTexture, 0));
-        framebufferComplete = maskFramebufferComplete &&
-                              ::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    }
-    else
-    {
-        glsafe(::glGenFramebuffersEXT(1, &m_selectionHighlightResources.maskFramebuffer));
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_selectionHighlightResources.maskFramebuffer));
-        glsafe(::glGenTextures(1, &m_selectionHighlightResources.maskTexture));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.maskTexture));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
-        glsafe(::glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D,
-                                           m_selectionHighlightResources.maskTexture, 0));
-        const bool maskFramebufferComplete =
-            ::glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT) == GL_FRAMEBUFFER_COMPLETE_EXT;
-
-        glsafe(::glGenFramebuffersEXT(1, &m_selectionHighlightResources.dilationFramebuffer));
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_selectionHighlightResources.dilationFramebuffer));
-        glsafe(::glGenTextures(1, &m_selectionHighlightResources.dilationTexture));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.dilationTexture));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
-                             GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
-        glsafe(::glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D,
-                                           m_selectionHighlightResources.dilationTexture, 0));
-        framebufferComplete = maskFramebufferComplete &&
-                              ::glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT) == GL_FRAMEBUFFER_COMPLETE_EXT;
-    }
+    const bool framebufferComplete =
+        CreateSelectionHighlightFramebuffer(framebufferType, canvasWidth, canvasHeight,
+                                            m_selectionHighlightResources.fullResolutionMaskFramebuffer,
+                                            m_selectionHighlightResources.fullResolutionMaskTexture) &&
+        CreateSelectionHighlightFramebuffer(framebufferType, width, height,
+                                            m_selectionHighlightResources.maskFramebuffer,
+                                            m_selectionHighlightResources.maskTexture) &&
+        CreateSelectionHighlightFramebuffer(framebufferType, width, height,
+                                            m_selectionHighlightResources.edgeTempFramebuffer,
+                                            m_selectionHighlightResources.edgeTempTexture) &&
+        CreateSelectionHighlightFramebuffer(framebufferType, width, height,
+                                            m_selectionHighlightResources.edgeFramebuffer,
+                                            m_selectionHighlightResources.edgeTexture) &&
+        CreateSelectionHighlightFramebuffer(framebufferType, glowWidth, glowHeight,
+                                            m_selectionHighlightResources.glowTempFramebuffer,
+                                            m_selectionHighlightResources.glowTempTexture) &&
+        CreateSelectionHighlightFramebuffer(framebufferType, glowWidth, glowHeight,
+                                            m_selectionHighlightResources.glowFramebuffer,
+                                            m_selectionHighlightResources.glowTexture);
 
     if (!framebufferComplete)
         ReleaseSelectionHighlightResources();
@@ -1721,6 +1774,8 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
         return false;
     }
 
+    m_selectionHighlightResources.fullResolutionWidth = canvasWidth;
+    m_selectionHighlightResources.fullResolutionHeight = canvasHeight;
     m_selectionHighlightResources.width = width;
     m_selectionHighlightResources.height = height;
     return true;
@@ -1733,7 +1788,8 @@ bool GLCanvas3D::RenderSelectionHighlightMask()
         return false;
 
     GLShaderProgram* const shader = wxGetApp().get_shader("selection_mask");
-    if (shader == nullptr)
+    GLShaderProgram* const downsampleShader = wxGetApp().get_shader("selection_gaussian");
+    if (shader == nullptr || downsampleShader == nullptr || !m_background.is_initialized())
         return false;
 
     const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
@@ -1746,15 +1802,9 @@ bool GLCanvas3D::RenderSelectionHighlightMask()
         RestoreMaskRenderState(previousState);
     });
 
-    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-    {
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, m_selectionHighlightResources.maskFramebuffer));
-    }
-    else
-    {
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, m_selectionHighlightResources.maskFramebuffer));
-    }
-
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.fullResolutionMaskFramebuffer);
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(m_selectionHighlightResources.fullResolutionWidth),
+                        static_cast<GLsizei>(m_selectionHighlightResources.fullResolutionHeight)));
     glsafe(::glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
     glsafe(::glDisable(GL_BLEND));
     glsafe(::glDisable(GL_CULL_FACE));
@@ -1779,19 +1829,46 @@ bool GLCanvas3D::RenderSelectionHighlightMask()
         if (!m_render_sla_auxiliaries && volume->composite_id.volume_id < 0)
             continue;
 
+        if (!camera.GetFrustum().Intersects(volume->transformed_bounding_box()))
+            continue;
+
         shader->set_uniform("view_model_matrix", viewMatrix * volume->world_matrix());
         volume->render();
     }
     shader->stop_using();
 
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.maskFramebuffer);
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(m_selectionHighlightResources.width),
+                        static_cast<GLsizei>(m_selectionHighlightResources.height)));
+    downsampleShader->start_using();
+    downsampleShader->set_uniform("source_texture", 0);
+    downsampleShader->set_uniform("inverse_texture_size",
+                                  Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.fullResolutionWidth),
+                                        1.0f / static_cast<float>(m_selectionHighlightResources.fullResolutionHeight)));
+    downsampleShader->set_uniform("blur_radius", 0.0f);
+    downsampleShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.fullResolutionMaskTexture));
+    m_background.render();
+    downsampleShader->stop_using();
+
     return true;
 }
 
-bool GLCanvas3D::DilateSelectionMaskHorizontal()
+bool GLCanvas3D::RenderSelectionOutlineTextures()
 {
-    GLShaderProgram* const shader = wxGetApp().get_shader("selection_dilate");
-    if (shader == nullptr || m_selectionHighlightResources.dilationFramebuffer == 0 ||
-        m_selectionHighlightResources.dilationTexture == 0)
+    GLShaderProgram* const edgeShader = wxGetApp().get_shader("selection_edge");
+    GLShaderProgram* const gaussianShader = wxGetApp().get_shader("selection_gaussian");
+    if (edgeShader == nullptr || gaussianShader == nullptr ||
+        m_selectionHighlightResources.maskTexture == 0 ||
+        m_selectionHighlightResources.edgeTempFramebuffer == 0 ||
+        m_selectionHighlightResources.edgeTempTexture == 0 ||
+        m_selectionHighlightResources.edgeFramebuffer == 0 ||
+        m_selectionHighlightResources.edgeTexture == 0 ||
+        m_selectionHighlightResources.glowTempFramebuffer == 0 ||
+        m_selectionHighlightResources.glowTempTexture == 0 ||
+        m_selectionHighlightResources.glowFramebuffer == 0 ||
+        m_selectionHighlightResources.glowTexture == 0)
     {
         return false;
     }
@@ -1801,35 +1878,96 @@ bool GLCanvas3D::DilateSelectionMaskHorizontal()
         return false;
 
     GLint previousDrawFramebuffer = 0;
+    std::array<GLint, 4> previousViewport{ 0, 0, 0, 0 };
+    glsafe(::glGetIntegerv(GL_VIEWPORT, previousViewport.data()));
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-    {
         glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer));
-        glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_selectionHighlightResources.dilationFramebuffer));
-    }
     else
-    {
         glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT, &previousDrawFramebuffer));
-        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, m_selectionHighlightResources.dilationFramebuffer));
-    }
+    ScopeGuard stateGuard([framebufferType, previousDrawFramebuffer, previousViewport]()
+    {
+        if (framebufferType == OpenGLManager::EFramebufferType::Arb)
+            glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer)));
+        else
+            glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(previousDrawFramebuffer)));
 
+        glsafe(::glViewport(previousViewport[0], previousViewport[1],
+                            previousViewport[2], previousViewport[3]));
+    });
+
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(m_selectionHighlightResources.width),
+                        static_cast<GLsizei>(m_selectionHighlightResources.height)));
     glsafe(::glDisable(GL_DEPTH_TEST));
     glsafe(::glDisable(GL_BLEND));
     glsafe(::glDisable(GL_CULL_FACE));
 
-    shader->start_using();
-    shader->set_uniform("mask_texture", 0);
-    shader->set_uniform("inverse_viewport_size",
-                        Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
-                              1.0f / static_cast<float>(m_selectionHighlightResources.height)));
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeFramebuffer);
+    edgeShader->start_using();
+    edgeShader->set_uniform("mask_texture", 0);
+    edgeShader->set_uniform("inverse_texture_size",
+                            Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
+                                  1.0f / static_cast<float>(m_selectionHighlightResources.height)));
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.maskTexture));
     m_background.render();
-    shader->stop_using();
+    edgeShader->stop_using();
 
-    if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-        glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer)));
-    else
-        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(previousDrawFramebuffer)));
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeTempFramebuffer);
+    gaussianShader->start_using();
+    gaussianShader->set_uniform("source_texture", 0);
+    gaussianShader->set_uniform("inverse_texture_size",
+                                Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
+                                      1.0f / static_cast<float>(m_selectionHighlightResources.height)));
+    gaussianShader->set_uniform("blur_radius", SELECTION_EDGE_THICKNESS);
+    gaussianShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
+    m_background.render();
+    gaussianShader->stop_using();
+
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeFramebuffer);
+    gaussianShader->start_using();
+    gaussianShader->set_uniform("source_texture", 0);
+    gaussianShader->set_uniform("inverse_texture_size",
+                                Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
+                                      1.0f / static_cast<float>(m_selectionHighlightResources.height)));
+    gaussianShader->set_uniform("blur_radius", SELECTION_EDGE_THICKNESS);
+    gaussianShader->set_uniform("blur_direction", Vec2f(0.0f, 1.0f));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTempTexture));
+    m_background.render();
+    gaussianShader->stop_using();
+
+    const unsigned int glowWidth = std::max(1U, static_cast<unsigned int>(
+        std::ceil(m_selectionHighlightResources.width * SELECTION_GLOW_SCALE)));
+    const unsigned int glowHeight = std::max(1U, static_cast<unsigned int>(
+        std::ceil(m_selectionHighlightResources.height * SELECTION_GLOW_SCALE)));
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowTempFramebuffer);
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(glowWidth), static_cast<GLsizei>(glowHeight)));
+    gaussianShader->start_using();
+    gaussianShader->set_uniform("source_texture", 0);
+    gaussianShader->set_uniform("inverse_texture_size",
+                                Vec2f(1.0f / static_cast<float>(glowWidth),
+                                      1.0f / static_cast<float>(glowHeight)));
+    gaussianShader->set_uniform("blur_radius", SELECTION_GLOW_BLUR_RADIUS);
+    gaussianShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
+    m_background.render();
+    gaussianShader->stop_using();
+
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowFramebuffer);
+    gaussianShader->start_using();
+    gaussianShader->set_uniform("source_texture", 0);
+    gaussianShader->set_uniform("inverse_texture_size",
+                                Vec2f(1.0f / static_cast<float>(glowWidth),
+                                      1.0f / static_cast<float>(glowHeight)));
+    gaussianShader->set_uniform("blur_radius", SELECTION_GLOW_BLUR_RADIUS);
+    gaussianShader->set_uniform("blur_direction", Vec2f(0.0f, 1.0f));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.glowTempTexture));
+    m_background.render();
+    gaussianShader->stop_using();
 
     return true;
 }
@@ -1842,10 +1980,13 @@ void GLCanvas3D::CompositeSelectionHighlight()
 
     const unsigned int canvasWidth = static_cast<unsigned int>(canvasSize.get_width());
     const unsigned int canvasHeight = static_cast<unsigned int>(canvasSize.get_height());
+    const unsigned int maskWidth = std::max(1U, static_cast<unsigned int>(std::ceil(canvasWidth * SELECTION_MASK_SCALE)));
+    const unsigned int maskHeight = std::max(1U, static_cast<unsigned int>(std::ceil(canvasHeight * SELECTION_MASK_SCALE)));
     if (m_selectionHighlightResources.maskTexture == 0 ||
-        m_selectionHighlightResources.dilationTexture == 0 ||
-        m_selectionHighlightResources.width != canvasWidth ||
-        m_selectionHighlightResources.height != canvasHeight || !m_background.is_initialized())
+        m_selectionHighlightResources.edgeTexture == 0 ||
+        m_selectionHighlightResources.glowTexture == 0 ||
+        m_selectionHighlightResources.width != maskWidth ||
+        m_selectionHighlightResources.height != maskHeight || !m_background.is_initialized())
     {
         return;
     }
@@ -1860,7 +2001,7 @@ void GLCanvas3D::CompositeSelectionHighlight()
         RestoreCompositeRenderState(previousState);
     });
 
-    if (!DilateSelectionMaskHorizontal())
+    if (!RenderSelectionOutlineTextures())
         return;
 
     glsafe(::glDisable(GL_DEPTH_TEST));
@@ -1870,19 +2011,31 @@ void GLCanvas3D::CompositeSelectionHighlight()
 
     shader->start_using();
     shader->set_uniform("mask_texture", 0);
-    shader->set_uniform("dilated_mask_texture", 1);
-    shader->set_uniform("inverse_viewport_size",
-                        Vec2f(1.0f / static_cast<float>(canvasSize.get_width()),
-                              1.0f / static_cast<float>(canvasSize.get_height())));
+    shader->set_uniform("edge_texture", 1);
+    shader->set_uniform("glow_texture", 2);
     shader->set_uniform("fill_alpha", SELECTION_FILL_ALPHA);
-    shader->set_uniform("outline_alpha", SELECTION_OUTLINE_ALPHA);
-    const ColorRGB highlightColor = m_canvas_type == ECanvasType::CanvasAssembleView ? ColorRGB::YELLOW() : ColorRGB::WHITE();
-    shader->set_uniform("highlight_color", highlightColor);
+    shader->set_uniform("outline_color", SELECTION_OUTLINE_COLOR);
+    shader->set_uniform("outline_exclusion_low", SELECTION_OUTLINE_EXCLUSION_LOW);
+    shader->set_uniform("outline_exclusion_high", SELECTION_OUTLINE_EXCLUSION_HIGH);
+    shader->set_uniform("edge_strength", SELECTION_EDGE_STRENGTH);
+    shader->set_uniform("edge_glow", SELECTION_EDGE_GLOW);
 
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.maskTexture));
     glsafe(::glActiveTexture(GL_TEXTURE1));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.dilationTexture));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
+    glsafe(::glActiveTexture(GL_TEXTURE2));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.glowTexture));
+
+    shader->set_uniform("render_fill", 1.0f);
+    m_background.render();
+
+    shader->set_uniform("render_fill", 0.0f);
+    shader->set_uniform("render_glow", 0.0f);
+    m_background.render();
+
+    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE));
+    shader->set_uniform("render_glow", 1.0f);
     m_background.render();
     shader->stop_using();
 }
@@ -1966,23 +2119,47 @@ void GLCanvas3D::ReleaseSelectionHighlightResources()
     const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
     {
+        if (m_selectionHighlightResources.fullResolutionMaskFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.fullResolutionMaskFramebuffer));
         if (m_selectionHighlightResources.maskFramebuffer != 0)
             glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.maskFramebuffer));
-        if (m_selectionHighlightResources.dilationFramebuffer != 0)
-            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.dilationFramebuffer));
+        if (m_selectionHighlightResources.edgeTempFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.edgeTempFramebuffer));
+        if (m_selectionHighlightResources.edgeFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.edgeFramebuffer));
+        if (m_selectionHighlightResources.glowTempFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.glowTempFramebuffer));
+        if (m_selectionHighlightResources.glowFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.glowFramebuffer));
     }
     else if (framebufferType == OpenGLManager::EFramebufferType::Ext)
     {
+        if (m_selectionHighlightResources.fullResolutionMaskFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.fullResolutionMaskFramebuffer));
         if (m_selectionHighlightResources.maskFramebuffer != 0)
             glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.maskFramebuffer));
-        if (m_selectionHighlightResources.dilationFramebuffer != 0)
-            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.dilationFramebuffer));
+        if (m_selectionHighlightResources.edgeTempFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.edgeTempFramebuffer));
+        if (m_selectionHighlightResources.edgeFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.edgeFramebuffer));
+        if (m_selectionHighlightResources.glowTempFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.glowTempFramebuffer));
+        if (m_selectionHighlightResources.glowFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.glowFramebuffer));
     }
 
+    if (m_selectionHighlightResources.fullResolutionMaskTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.fullResolutionMaskTexture));
     if (m_selectionHighlightResources.maskTexture != 0)
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.maskTexture));
-    if (m_selectionHighlightResources.dilationTexture != 0)
-        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.dilationTexture));
+    if (m_selectionHighlightResources.edgeTempTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.edgeTempTexture));
+    if (m_selectionHighlightResources.edgeTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.edgeTexture));
+    if (m_selectionHighlightResources.glowTempTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowTempTexture));
+    if (m_selectionHighlightResources.glowTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowTexture));
 
     m_selectionHighlightResources = SelectionHighlightResources{};
 }

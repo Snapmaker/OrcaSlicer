@@ -1,11 +1,16 @@
 #version 140
 
 uniform sampler2D mask_texture;
-uniform sampler2D dilated_mask_texture;
-uniform vec2 inverse_viewport_size;
-uniform vec3 highlight_color;
+uniform sampler2D edge_texture;
+uniform sampler2D glow_texture;
+uniform vec3 outline_color;
 uniform float fill_alpha;
-uniform float outline_alpha;
+uniform float outline_exclusion_low;
+uniform float outline_exclusion_high;
+uniform float edge_strength;
+uniform float edge_glow;
+uniform float render_fill;
+uniform float render_glow;
 
 in vec2 tex_coord;
 out vec4 frag_color;
@@ -13,21 +18,17 @@ out vec4 frag_color;
 void main()
 {
     float coverage = texture(mask_texture, tex_coord).a;
-    const float coverageThreshold = 0.25;
-    float mask = step(coverageThreshold, coverage);
-    float expanded = 0.0;
-    const int radius = 4;
-
-    for (int y = -radius; y <= radius; ++y) {
-        vec2 offset = vec2(0.0, float(y)) * inverse_viewport_size;
-        expanded = max(expanded, texture(dilated_mask_texture, tex_coord + offset).r);
-        if (expanded > 0.5)
-            break;
+    if (render_fill > 0.5)
+    {
+        frag_color = vec4(vec3(fill_alpha), coverage * fill_alpha);
+        return;
     }
 
-    float fillOpacity = coverage * fill_alpha;
-    float outlineOpacity = expanded * (1.0 - mask) * outline_alpha;
-    float outputAlpha = max(fillOpacity, outlineOpacity);
-    vec3 outputColor = outlineOpacity > fillOpacity ? highlight_color : highlight_color * fill_alpha;
-    frag_color = vec4(outputColor, outputAlpha);
+    float edgeCoverage = texture(edge_texture, tex_coord).a;
+    float glowCoverage = texture(glow_texture, tex_coord).a;
+    float outlineExclusion = smoothstep(outline_exclusion_low, outline_exclusion_high, coverage);
+    float outsideFill = 1.0 - outlineExclusion;
+    float sourceCoverage = render_glow > 0.5 ? glowCoverage * edge_glow : edgeCoverage;
+    float outlineAlpha = clamp(edge_strength * sourceCoverage * outsideFill, 0.0, 1.0);
+    frag_color = vec4(outline_color, outlineAlpha);
 }

@@ -1289,8 +1289,35 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_default_object_config.option("mixed_filament_surface_indentation", true);
     m_default_object_config.option("mixed_filament_region_collapse", true);
     m_default_object_config.option("mixed_filament_definitions", true);
+    m_default_object_config.option("support_top_contact_speed_split", true);
+    m_default_object_config.option("support_top_contact_speed_first", true);
+    m_default_object_config.option("support_top_contact_speed_middle", true);
+    m_default_object_config.option("support_top_contact_speed_top", true);
     // BBS
     int used_filaments = this->extruders(true).size();
+
+    // Sync the support top contact speed split params into m_default_object_config before diffing.
+    // These keys live on the Print/full config; without this, toggling only the split checkbox
+    // would leave the default object config stale and object_diff would miss the change.
+    t_config_option_keys split_changed_keys;
+    {
+        const char* split_keys[] = {
+            "support_top_contact_speed_split",
+            "support_top_contact_speed_first",
+            "support_top_contact_speed_middle",
+            "support_top_contact_speed_top"
+        };
+        for (const char* key : split_keys) {
+            new_full_config.option(key, true);
+            const ConfigOption* old_opt = m_default_object_config.option(key);
+            const ConfigOption* new_opt = new_full_config.option(key);
+            if (old_opt && new_opt && *old_opt != *new_opt) {
+                m_default_object_config.apply_only(new_full_config,
+                    t_config_option_keys{key}, true);
+                split_changed_keys.emplace_back(key);
+            }
+        }
+    }
 
     //new_full_config.normalize_fdm(used_filaments);
     new_full_config.normalize_fdm_1();
@@ -1334,6 +1361,15 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // Collect changes to object and region configs.
     t_config_option_keys object_diff      = m_default_object_config.diff(new_full_config);
     t_config_option_keys region_diff      = m_default_region_config.diff(new_full_config);
+
+    // Merge the support top contact speed split keys synced above into object_diff so the
+    // rest of apply() treats them as object config changes, avoiding duplicates that diff()
+    // may already have reported.
+    if (! split_changed_keys.empty()) {
+        for (const t_config_option_key &key : split_changed_keys)
+            if (std::find(object_diff.begin(), object_diff.end(), key) == object_diff.end())
+                object_diff.emplace_back(key);
+    }
 
     // Do not use the ApplyStatus as we will use the max function when updating apply_status.
     unsigned int apply_status = APPLY_STATUS_UNCHANGED;

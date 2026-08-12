@@ -9251,6 +9251,32 @@ msgstr "간격 채우기"
 
 msgid "Support interface"
 msgstr "서포트 접점"
+msgid "Support top contact speed"
+msgstr "서포트 상단 접촉 속도"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "서포트 상단 접촉 레이어의 첫 번째, 중간, 상단 속도를 개별적으로 설정할 수 있습니다."
+
+msgid "First layer contact speed"
+msgstr "첫 번째 접촉 레이어 속도"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "서포트 최하단 접촉 레이어 속도(모델에서 가장 먼)."
+
+msgid "Middle layer contact speed"
+msgstr "중간 접촉 레이어 속도"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "서포트 중간 접촉 레이어 속도."
+
+msgid "Top layer contact speed"
+msgstr "상단 접촉 레이어 속도"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "서포트 최상단 접촉 레이어 속도(모델에 가장 가까운)."
+
+msgid "Support transition speed"
+msgstr "서포트 전환 속도"
 
 msgid "Support transition"
 msgstr "서포트 전환"

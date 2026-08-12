@@ -869,6 +869,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
     ((ConfigOptionFloat,               support_interface_speed))
+    // Support top contact speed split
+    ((ConfigOptionBool,                support_top_contact_speed_split))
+    ((ConfigOptionFloat,               support_top_contact_speed_first))
+    ((ConfigOptionFloat,               support_top_contact_speed_middle))
+    ((ConfigOptionFloat,               support_top_contact_speed_top))
     ((ConfigOptionEnum<SupportMaterialPattern>, support_base_pattern))
     ((ConfigOptionEnum<SupportMaterialInterfacePattern>, support_interface_pattern))
     // Spacing between support material lines (the hatching distance).

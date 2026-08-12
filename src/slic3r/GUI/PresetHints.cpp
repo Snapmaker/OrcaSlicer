@@ -99,6 +99,13 @@ std::string PresetHints::maximum_volumetric_flow_description(const PresetBundle 
     double initial_layer_print_height               = print_config.opt_float("initial_layer_print_height");
     double support_speed           = print_config.opt_float("support_speed");
     double support_interface_speed = print_config.get_abs_value("support_interface_speed");
+    // Support top contact speed may be split into first / middle / top layers when enabled.
+    double support_top_contact_speed = support_interface_speed;
+    if (print_config.opt_bool("support_top_contact_speed_split")) {
+        support_top_contact_speed = std::max(support_top_contact_speed, print_config.opt_float("support_top_contact_speed_first"));
+        support_top_contact_speed = std::max(support_top_contact_speed, print_config.opt_float("support_top_contact_speed_middle"));
+        support_top_contact_speed = std::max(support_top_contact_speed, print_config.opt_float("support_top_contact_speed_top"));
+    }
     double bridge_speed                     = print_config.opt_float("bridge_speed");
     double bridge_flow                = print_config.opt_float("bridge_flow");
     double inner_wall_speed                  = print_config.opt_float("inner_wall_speed");
@@ -181,7 +188,7 @@ std::string PresetHints::maximum_volumetric_flow_description(const PresetBundle 
         if (! bridging && support_material_extruder_active)
             test_flow(frSupportMaterial, support_line_width, support_speed, L("support"));
         if (support_material_interface_extruder_active)
-            test_flow(frSupportMaterialInterface, support_line_width, support_interface_speed, L("support interface"));
+            test_flow(frSupportMaterialInterface, support_line_width, support_top_contact_speed, L("support interface"));
         //FIXME handle gap_infill_speed
         if (! out.empty())
             out += "\n";

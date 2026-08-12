@@ -893,8 +893,11 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "sparse_infill_speed"
             || opt_key == "inner_wall_speed"
             || opt_key == "support_speed"
+            || opt_key == "support_top_contact_speed_split"
             || opt_key == "internal_solid_infill_speed"
             || opt_key == "top_surface_speed") {
+            // support_top_contact_speed_split changes ExtrusionRole assignment,
+            // which affects support toolpaths structurally, not just feedrates.
             // Brim is printed below supports, support invalidates brim and skirt.
             steps.emplace_back(posSupportMaterial);
             if (opt_key == "brim_type") {
@@ -1208,6 +1211,10 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "seam_slope_inner_walls"
             || opt_key == "support_speed"
             || opt_key == "support_interface_speed"
+            || opt_key == "support_top_contact_speed_split"
+            || opt_key == "support_top_contact_speed_first"
+            || opt_key == "support_top_contact_speed_middle"
+            || opt_key == "support_top_contact_speed_top"
             || opt_key == "overhang_1_4_speed"
             || opt_key == "overhang_2_4_speed"
             || opt_key == "overhang_3_4_speed"

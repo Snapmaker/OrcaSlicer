@@ -5321,7 +5321,9 @@ LayerResult GCode::process_layer(const Print& print,
             if (!support_layer.support_fills.entities.empty()) {
                 ExtrusionRole role          = support_layer.support_fills.role();
                 bool          has_support   = role == erMixed || role == erSupportMaterial || role == erSupportTransition;
-                bool          has_interface = role == erMixed || role == erSupportMaterialInterface;
+                bool          has_interface = role == erMixed || role == erSupportMaterialInterface ||
+                                        role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle ||
+                                        role == erSupportMaterialInterfaceTop;
                 // Extruder ID of the support base. -1 if "don't care".
                 unsigned int support_extruder = object.config().support_filament.value - 1;
                 // Shall the support be printed with the active extruder, preferably with non-soluble, to avoid tool changes?
@@ -7193,6 +7195,7 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
             const ExtrusionRole role = ee->role();
             if ((role == support_extrusion_role) ||
                 (role == erSupportTransition && support_extrusion_role == erSupportMaterial) ||
+                (support_extrusion_role == erSupportMaterialInterface && (role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle || role == erSupportMaterialInterfaceTop)) ||
                 (support_extrusion_role == erMixed && role != erIroning)) {
                 extrusions.emplace_back(ee);
             }
@@ -7206,10 +7209,10 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
         const double support_interface_speed = m_config.get_abs_value("support_interface_speed");
         for (const ExtrusionEntity* ee : extrusions) {
             ExtrusionRole role = ee->role();
-            assert(role == erSupportMaterial || role == erSupportMaterialInterface || role == erSupportTransition || role == erIroning);
+            assert(role == erSupportMaterial || role == erSupportMaterialInterface || role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle || role == erSupportMaterialInterfaceTop || role == erSupportTransition || role == erIroning);
             const char* label = (role == erSupportMaterial) ?
                                     support_label :
-                                    ((role == erSupportMaterialInterface) ?
+                                    ((role == erSupportMaterialInterface || role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle || role == erSupportMaterialInterfaceTop) ?
                                          support_interface_label :
                                          ((role == erIroning) ? support_ironing_label : support_transition_label));
             // BBS
@@ -7475,10 +7478,24 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             speed = m_config.get_abs_value("initial_layer_infill_speed");
         } else if (path.role() == erGapFill) {
             speed = m_config.get_abs_value("gap_infill_speed");
-        } else if (path.role() == erSupportMaterial || path.role() == erSupportMaterialInterface) {
+        } else if (path.role() == erSupportMaterial || path.role() == erSupportMaterialInterface ||
+                   path.role() == erSupportMaterialInterfaceFirst || path.role() == erSupportMaterialInterfaceMiddle ||
+                   path.role() == erSupportMaterialInterfaceTop) {
             const double support_speed           = m_config.support_speed.value;
             const double support_interface_speed = m_config.get_abs_value("support_interface_speed");
-            speed                                = (path.role() == erSupportMaterial) ? support_speed : support_interface_speed;
+            const bool   split_enabled           = m_config.support_top_contact_speed_split.value;
+            if (path.role() == erSupportMaterial) {
+                speed = support_speed;
+            } else if (path.role() == erSupportMaterialInterfaceFirst) {
+                speed = split_enabled ? m_config.get_abs_value("support_top_contact_speed_first") : support_interface_speed;
+            } else if (path.role() == erSupportMaterialInterfaceMiddle) {
+                speed = split_enabled ? m_config.get_abs_value("support_top_contact_speed_middle") : support_interface_speed;
+            } else if (path.role() == erSupportMaterialInterfaceTop) {
+                speed = split_enabled ? m_config.get_abs_value("support_top_contact_speed_top") : support_interface_speed;
+            } else {
+                // erSupportMaterialInterface: always use support_interface_speed
+                speed = support_interface_speed;
+            }
         } else {
             throw Slic3r::InvalidArgument("Invalid speed");
         }
@@ -7781,7 +7798,8 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                                        supp_interface_fan_speed = EXTRUDER_CONFIG(support_material_interface_fan_speed),
                                        ironing_fan_speed        = EXTRUDER_CONFIG(ironing_fan_speed)] {
         append_role_based_fan_marker(erSupportMaterialInterface, "_SUPP_INTERFACE"sv,
-                                     supp_interface_fan_speed >= 0 && path.role() == erSupportMaterialInterface);
+                                     supp_interface_fan_speed >= 0 &&
+                                         (path.role() == erSupportMaterialInterface || path.role() == erSupportMaterialInterfaceFirst || path.role() == erSupportMaterialInterfaceMiddle || path.role() == erSupportMaterialInterfaceTop));
         append_role_based_fan_marker(erIroning, "_IRONING"sv, ironing_fan_speed >= 0 && path.role() == erIroning);
     };
 
@@ -8088,7 +8106,10 @@ std::string GCode::extrusion_role_to_string_for_parser(const ExtrusionRole& role
     case erSkirt: return "Skirt";
     case erBrim: return "Brim";
     case erSupportMaterial: return "SupportMaterial";
-    case erSupportMaterialInterface: return "SupportMaterialInterface";
+    case erSupportMaterialInterface:
+    case erSupportMaterialInterfaceFirst:
+    case erSupportMaterialInterfaceMiddle:
+    case erSupportMaterialInterfaceTop: return "SupportMaterialInterface";
     case erSupportTransition: return "SupportTransition";
     case erWipeTower: return "WipeTower";
     case erCustom:

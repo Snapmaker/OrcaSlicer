@@ -9558,6 +9558,32 @@ msgstr "Relleno de huecos"
 
 msgid "Support interface"
 msgstr "Interfaz de soporte"
+msgid "Support top contact speed"
+msgstr "Velocidad de contacto superior del soporte"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Permite establecer velocidades separadas para la primera, intermedia y superior capa de contacto del soporte."
+
+msgid "First layer contact speed"
+msgstr "Velocidad de la primera capa de contacto"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Velocidad de la capa de contacto inferior del soporte (mas alejada del modelo)."
+
+msgid "Middle layer contact speed"
+msgstr "Velocidad de la capa de contacto intermedia"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Velocidad de las capas de contacto intermedias del soporte."
+
+msgid "Top layer contact speed"
+msgstr "Velocidad de la capa de contacto superior"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Velocidad de la capa de contacto superior del soporte (mas cercana al modelo)."
+
+msgid "Support transition speed"
+msgstr "Velocidad de transicion del soporte"
 
 msgid "Support transition"
 msgstr "Transición de soporte"

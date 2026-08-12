@@ -9660,6 +9660,32 @@ msgstr "Заполнение пробелов"
 
 msgid "Support interface"
 msgstr "Связующий слой"
+msgid "Support top contact speed"
+msgstr "Скорость верхнего контакта поддержки"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Позволяет задать разные скорости для первого, среднего и верхнего контактных слоев поддержки."
+
+msgid "First layer contact speed"
+msgstr "Скорость первого контактного слоя"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Скорость самого нижнего контактного слоя поддержки (дальше всего от модели)."
+
+msgid "Middle layer contact speed"
+msgstr "Скорость среднего контактного слоя"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Скорость средних контактных слоев поддержки."
+
+msgid "Top layer contact speed"
+msgstr "Скорость верхнего контактного слоя"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Скорость самого верхнего контактного слоя поддержки (ближе всего к модели)."
+
+msgid "Support transition speed"
+msgstr "Скорость перехода поддержки"
 
 msgid "Support transition"
 msgstr "Переход поддержки"

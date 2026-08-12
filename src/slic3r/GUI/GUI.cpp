@@ -562,11 +562,8 @@ void desktop_open_datadir_folder()
 void desktop_open_any_folderEx(const std::string& path)
 {
 #ifdef _WIN32
-    // Convert path to Windows format (backslashes) and ensure it's properly quoted
-    boost::filesystem::path file_path(path);
-    file_path.make_preferred(); // Convert forward slashes to backslashes
-    wxString widepath = from_path(file_path);
-    // Quote the path to handle spaces and special characters
+    wxString widepath = wxString::FromUTF8(path);
+    widepath.Replace("/", "\\");
     wxString cmd = L"explorer /select,\"" + widepath + L"\"";
     ::wxExecute(cmd, wxEXEC_ASYNC, nullptr);
 #else

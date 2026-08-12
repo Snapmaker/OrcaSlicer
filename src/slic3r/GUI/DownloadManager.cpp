@@ -1,7 +1,7 @@
 #include "DownloadManager.hpp"
 #include "GUI_App.hpp"
-#include "HttpServer.hpp"
 #include "libslic3r/Utils.hpp"
+#include "HttpServer.hpp"
 #include "slic3r/Utils/FileDecrypt.hpp"
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -21,15 +21,15 @@ std::string DownloadManager::get_unique_file_path(const boost::filesystem::path&
     // file_path should be the complete absolute path: directory + filename
     std::string original_path = file_path.string();
     BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Checking path '%1%'") % original_path;
-
+    
     // Check if file exists, if not return original path
     if (!boost::filesystem::exists(file_path)) {
         BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: File does not exist, returning original path '%1%'") % original_path;
         return original_path;
     }
-
+    
     BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: File exists, generating unique name");
-
+    
     boost::filesystem::path parent_dir = file_path.parent_path();
     std::string filename = file_path.filename().string();
     std::string extension = file_path.extension().string();
@@ -43,7 +43,7 @@ std::string DownloadManager::get_unique_file_path(const boost::filesystem::path&
         BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: filename='%1%', extension='%2%', name_without_ext='%3%'")
             % filename % extension % name_without_ext;
     }
-
+    
     // Generate unique filename with Windows-style numbering: filename(1).ext, filename(2).ext, etc.
     size_t version = 1;
     boost::filesystem::path unique_path;
@@ -60,7 +60,7 @@ std::string DownloadManager::get_unique_file_path(const boost::filesystem::path&
         BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Trying version %1%: '%2%'") % version % unique_path.string();
         version++;
     } while (boost::filesystem::exists(unique_path) && version < 10000);  // Safety limit
-
+    
     if (version >= 10000) {
         // If we hit the limit, log a warning and return a timestamp-based name
         BOOST_LOG_TRIVIAL(warning) << boost::format("DownloadManager::get_unique_file_path: Too many duplicate files for '%1%', using timestamp-based name")
@@ -75,7 +75,11 @@ std::string DownloadManager::get_unique_file_path(const boost::filesystem::path&
         unique_path = parent_dir / new_filename;
     }
 
+#ifdef _WIN32
+    std::string result = boost::nowide::narrow(unique_path.wstring());
+#else
     std::string result = unique_path.string();
+#endif
     BOOST_LOG_TRIVIAL(debug) << boost::format("DownloadManager::get_unique_file_path: Final unique path: '%1%'") % result;
     return result;
 }
@@ -96,10 +100,10 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
                                              bool use_original_event_id,
                                              bool need_decrypt,
                                              const std::string& sn) {
-
+    
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     size_t task_id = m_next_task_id++;
-
+    
     auto downloadPath = wxGetApp().app_config->get("download_path");
 #ifdef _WIN32
     boost::filesystem::path dest_folder(boost::nowide::widen(downloadPath));
@@ -108,17 +112,17 @@ size_t DownloadManager::start_wcp_download(const std::string& file_url,
 #endif
     boost::filesystem::create_directories(dest_folder);
     boost::filesystem::path dest_file = dest_folder / file_name;
-
+    
     // Generate unique file path if file already exists
     std::string dest_path = get_unique_file_path(dest_file);
-
+    
     // Update file_name if it was changed due to duplicate
     std::string actual_file_name = boost::filesystem::path(dest_path).filename().string();
-
-    auto task = std::make_shared<DownloadTask>(task_id,
-                                                file_url,
-                                                actual_file_name,
-                                                dest_path,
+    
+    auto task = std::make_shared<DownloadTask>(task_id, 
+                                                file_url, 
+                                                actual_file_name, 
+                                                dest_path, 
                                                 wcp_instance,
                                                 use_original_event_id,
                                                 need_decrypt,
@@ -139,12 +143,16 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
                                                  const std::string& file_name,
                                                  const std::string& dest_path,
                                                  DownloadCallbacks callbacks) {
-
+    
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     size_t task_id = m_next_task_id++;
 
+#ifdef _WIN32
+    boost::filesystem::path dest_path_obj(boost::nowide::widen(dest_path));
+#else
     boost::filesystem::path dest_path_obj(dest_path);
-
+#endif
+    
     boost::filesystem::path dest_file_path;
     if (boost::filesystem::is_directory(dest_path_obj) || dest_path_obj.filename().empty()) {
         // dest_path is a directory, need to append file_name
@@ -157,15 +165,15 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
             % dest_path;
         dest_file_path = dest_path_obj;
     }
-
+    
     boost::filesystem::create_directories(dest_file_path.parent_path());
-
+    
     std::string unique_dest_path = get_unique_file_path(dest_file_path);
 
-    auto task = std::make_shared<DownloadTask>(task_id,
-                                                file_url,
-                                                file_name,
-                                                unique_dest_path,
+    auto task = std::make_shared<DownloadTask>(task_id, 
+                                                file_url, 
+                                                file_name, 
+                                                unique_dest_path, 
                                                 std::move(callbacks));
 
     m_tasks[task_id] = task;
@@ -173,7 +181,7 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
     task->state = DownloadTaskState::Downloading;
 
     start_download_impl(task);
-
+    
     return task_id;
 }
 
@@ -188,12 +196,12 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
     boost::filesystem::path dest_folder(downloadPath);
 #endif
     boost::filesystem::create_directories(dest_folder);
-
+    
     boost::filesystem::path dest_file = dest_folder / file_name;
-
+    
     // Generate unique file path if file already exists
     std::string dest_path = get_unique_file_path(dest_file);
-
+    
     return start_internal_download(file_url, file_name, dest_path, std::move(callbacks));
 }
 
@@ -213,19 +221,19 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
         dest_folder /= sn;
     }
     boost::filesystem::create_directories(dest_folder);
-
+    
     boost::filesystem::path dest_file = dest_folder / file_name;
-
+    
     // Generate unique file path if file already exists
     std::string dest_path = get_unique_file_path(dest_file);
-
+    
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     size_t task_id = m_next_task_id++;
-
-    auto task = std::make_shared<DownloadTask>(task_id,
-                                                file_url,
-                                                file_name,
-                                                dest_path,
+    
+    auto task = std::make_shared<DownloadTask>(task_id, 
+                                                file_url, 
+                                                file_name, 
+                                                dest_path, 
                                                 std::move(callbacks),
                                                 need_decrypt,
                                                 sn);
@@ -239,16 +247,16 @@ size_t DownloadManager::start_internal_download(const std::string& file_url,
 }
 
 void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
-
+    
     wxGetApp().CallAfter([this, task]() {
         try {
             // Step 1: Create Http object
             Http http = Http::get(task->file_url);
+            
+            http.timeout_max(0);
 
-        http.timeout_max(0);
-
-        // Step 2: Set progress callback
-        http.on_progress([this, task](Http::Progress progress, bool& cancel) {
+            // Step 2: Set progress callback
+            http.on_progress([this, task](Http::Progress progress, bool& cancel) {
                 // Check if task is canceled or already cleaned up
                 {
                     std::lock_guard<std::mutex> lock(m_tasks_mutex);
@@ -258,12 +266,12 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         return;
                     }
                 }
-
+                
                 if (task->state == DownloadTaskState::Canceled) {
                     cancel = true;
                     return;
                 }
-
+                
                 int percent = 0;
                 if (progress.dltotal > 0) {
                     percent = (int)(progress.dlnow * 100 / progress.dltotal);
@@ -290,27 +298,27 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                 // Throttle progress updates: update every 5% or every second
                 auto now = std::chrono::steady_clock::now();
                 bool should_update = false;
-
+                
                 if (percent - last_pct >= 5) {
                     should_update = true;
                     last_pct = percent;
                 } else if (now - last_upd >= std::chrono::seconds(1)) {
                     should_update = true;
                 }
-
+                
                 if (should_update) {
                     last_upd = now;
                     wxGetApp().CallAfter([this, task, percent, progress]() {
                         // Check if task still exists before sending update
                         std::lock_guard<std::mutex> lock(m_tasks_mutex);
-                        if (m_tasks.find(task->task_id) != m_tasks.end() &&
+                        if (m_tasks.find(task->task_id) != m_tasks.end() && 
                             task->state != DownloadTaskState::Canceled) {
                             send_progress_update(task, percent, progress.dlnow, progress.dltotal);
                         }
                     });
                 }
             });
-
+            
             // Step 3: Set complete callback
             http.on_complete([this, task](std::string body, unsigned status) {
                 wxGetApp().CallAfter([this, task, body]() {
@@ -338,7 +346,7 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                             cleanup_task(task->task_id);
                             return;
                         }
-
+                        
                         file.write(body.c_str(), body.size());
                         if (file.fail()) {
                             std::string error_msg = "Failed to write file: " + task->dest_path;
@@ -384,7 +392,7 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                     }
                 });
             });
-
+            
             // Step 4: Set error callback
             http.on_error([this, task](std::string body, std::string error, unsigned status) {
                 wxGetApp().CallAfter([this, task, error, status]() {
@@ -394,10 +402,10 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                         BOOST_LOG_TRIVIAL(debug) << "DownloadManager: Ignoring error callback for canceled task " << task->task_id;
                         return;
                     }
-
+                    
                     std::string error_msg = boost::str(boost::format("HTTP error: %1% (status: %2%)") % error % status);
-                    BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg
-                        << ", URL: " << task->file_url
+                    BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg 
+                        << ", URL: " << task->file_url 
                         << ", file: " << task->file_name
                         << ", dest: " << task->dest_path;
                     // Flush logs immediately for critical errors to ensure they are written
@@ -408,14 +416,14 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
                     cleanup_task(task->task_id);
                 });
             });
-
+            
             // Step 5: Start download and save Http::Ptr for cancellation
             task->http_object = http.perform();
-
+            
         } catch (std::exception& e) {
             std::string error_msg = std::string("Download exception: ") + e.what();
-            BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg
-                << ", URL: " << task->file_url
+            BOOST_LOG_TRIVIAL(error) << "DownloadManager: " << error_msg 
+                << ", URL: " << task->file_url 
                 << ", file: " << task->file_name
                 << ", dest: " << task->dest_path;
             task->state = DownloadTaskState::Error;
@@ -426,24 +434,25 @@ void DownloadManager::start_download_impl(std::shared_ptr<DownloadTask> task) {
     });
 }
 
+//this function not currently in use
 bool DownloadManager::cancel_download(size_t task_id) {
     std::shared_ptr<SSWCP_Instance> wcp_to_destroy;
-
+    
     {
         std::lock_guard<std::mutex> lock(m_tasks_mutex);
-
+        
         auto it = m_tasks.find(task_id);
         if (it == m_tasks.end()) {
             return false;
         }
-
+        
         auto task = it->second;
         if (task->state == DownloadTaskState::Downloading) {
             task->state = DownloadTaskState::Canceled;
             if (task->http_object) {
                 task->http_object->cancel();
             }
-
+            
             // Only for WCP downloads
             if (task->is_wcp_download()) {
                 wcp_to_destroy = task->wcp_instance.lock();
@@ -470,7 +479,7 @@ bool DownloadManager::cancel_download(size_t task_id) {
     if (wcp_to_destroy) {
         wcp_to_destroy->finish_job();
     }
-
+    
     return true;
 }
 
@@ -479,7 +488,7 @@ bool DownloadManager::pause_download(size_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
     if (it != m_tasks.end() && it->second->state == DownloadTaskState::Downloading) {
-        it->second->state = DownloadTaskState::Paused;
+        it->second->state = DownloadTaskState::Paused;        
         return true;
     }
     return false;
@@ -490,7 +499,7 @@ bool DownloadManager::resume_download(size_t task_id) {
     std::lock_guard<std::mutex> lock(m_tasks_mutex);
     auto it = m_tasks.find(task_id);
     if (it != m_tasks.end() && it->second->state == DownloadTaskState::Paused) {
-        return false;
+        return false; 
     }
     return false;
 }
@@ -529,9 +538,9 @@ std::vector<std::shared_ptr<DownloadTask>> DownloadManager::get_all_tasks() {
 // ============================================================================
 // Progress/Complete/Error Update Handlers
 // ============================================================================
-void DownloadManager::send_progress_update(std::shared_ptr<DownloadTask> task,
-                                               int percent,
-                                               size_t downloaded,
+void DownloadManager::send_progress_update(std::shared_ptr<DownloadTask> task, 
+                                               int percent, 
+                                               size_t downloaded, 
                                                size_t total) {
     if (task->is_wcp_download()) {
         send_wcp_progress_update(task, percent, downloaded, total);
@@ -540,14 +549,14 @@ void DownloadManager::send_progress_update(std::shared_ptr<DownloadTask> task,
     }
 }
 
-void DownloadManager::send_wcp_progress_update(std::shared_ptr<DownloadTask> task,
-                                                  int percent,
-                                                  size_t downloaded,
-                                                  size_t total) {
+void DownloadManager::send_wcp_progress_update(std::shared_ptr<DownloadTask> task, 
+                                                  int percent, 
+                                                  size_t downloaded, 
+                                                  size_t total) {    
     if (!task->use_original_event_id) {
         return;
     }
-
+    
     if (auto wcp = task->wcp_instance.lock()) {
         json progress_data;
         progress_data["task_id"] = task->task_id;
@@ -555,11 +564,11 @@ void DownloadManager::send_wcp_progress_update(std::shared_ptr<DownloadTask> tas
         progress_data["downloaded"] = downloaded;
         progress_data["total"] = total;
         progress_data["state"] = "downloading";
-
+        
         wcp->m_res_data = progress_data;
         wcp->m_status = 0;
         wcp->m_msg = "Download progress";
-
+                
         json header;
         if (task->use_original_event_id) {
             header["event_id"] = wcp->m_event_id;
@@ -569,7 +578,7 @@ void DownloadManager::send_wcp_progress_update(std::shared_ptr<DownloadTask> tas
 
         header["command"] = "download_progress";
         wcp->m_header = header;
-
+        
         wcp->send_to_js();
     }
 }
@@ -584,7 +593,7 @@ void DownloadManager::call_internal_progress_callback(std::shared_ptr<DownloadTa
     }
 }
 
-void DownloadManager::send_complete_update(std::shared_ptr<DownloadTask> task,
+void DownloadManager::send_complete_update(std::shared_ptr<DownloadTask> task, 
                                                const std::string& file_path) {
     if (task->is_wcp_download()) {
         send_wcp_complete_update(task, file_path);
@@ -593,9 +602,9 @@ void DownloadManager::send_complete_update(std::shared_ptr<DownloadTask> task,
     }
 }
 
-void DownloadManager::send_wcp_complete_update(std::shared_ptr<DownloadTask> task,
+void DownloadManager::send_wcp_complete_update(std::shared_ptr<DownloadTask> task, 
                                                  const std::string& file_path) {
-
+    
     if (!task->use_original_event_id) {
         return;
     }
@@ -607,11 +616,11 @@ void DownloadManager::send_wcp_complete_update(std::shared_ptr<DownloadTask> tas
         complete_data["file_name"] = task->file_name;
         complete_data["percent"] = 100;
         complete_data["state"] = "completed";
-
+        
         wcp->m_res_data = complete_data;
         wcp->m_status = 0;
         wcp->m_msg = "Download completed";
-
+        
         wcp->send_to_js();
         wcp->finish_job();
     }
@@ -625,7 +634,7 @@ void DownloadManager::call_internal_complete_callback(std::shared_ptr<DownloadTa
     }
 }
 
-void DownloadManager::send_error_update(std::shared_ptr<DownloadTask> task,
+void DownloadManager::send_error_update(std::shared_ptr<DownloadTask> task, 
                                            const std::string& error) {
     if (task->is_wcp_download()) {
         send_wcp_error_update(task, error);
@@ -634,19 +643,19 @@ void DownloadManager::send_error_update(std::shared_ptr<DownloadTask> task,
     }
 }
 
-void DownloadManager::send_wcp_error_update(std::shared_ptr<DownloadTask> task,
+void DownloadManager::send_wcp_error_update(std::shared_ptr<DownloadTask> task, 
                                               const std::string& error) {
-
+    
     if (!task->use_original_event_id) {
         return;
     }
-
+    
     if (auto wcp = task->wcp_instance.lock()) {
         json error_data;
         error_data["task_id"] = task->task_id;
         error_data["error"] = error;
         error_data["state"] = "error";
-
+        
         wcp->m_res_data = error_data;
         wcp->m_status = -1;
         wcp->m_msg = error;
@@ -672,3 +681,4 @@ void DownloadManager::cleanup_task(size_t task_id) {
 }
 
 }} // namespace Slic3r::GUI
+

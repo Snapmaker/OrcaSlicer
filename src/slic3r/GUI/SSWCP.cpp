@@ -4446,32 +4446,6 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
     }
 }
 
-void SSWCP_UserLogin_Instance::sw_DownloadFile()
-{
-    {
-        std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
-        std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
-
-        if (fileUrl.empty() || fileName.empty()) {
-            handle_general_fail(-1, "file_url and file_name are required");
-            return;
-        }
-
-        // Use Download Manager
-        DownloadManager* download_mgr = wxGetApp().download_manager();
-        if (!download_mgr) {
-            handle_general_fail(-1, "Download Manager not available");
-            return;
-        }
-
-        m_status  = 0;
-        m_msg     = "success";
-        send_to_js();
-        finish_job();
-
-    }
-}
-
 void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
     {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
@@ -4505,9 +4479,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
     }
 }
 
-void SSWCP_UserLogin_Instance::sw_CancelDownload() {
-    {
-        size_t task_id = m_param_data.count("task_id") ? m_param_data["task_id"].get<size_t>() : 0;
+namespace {
 
 // WAN upload orchestration helpers for sw_DownLoadFile. Kept in an anonymous
 // namespace so sw_DownLoadFile stays focused on param parsing + queue setup;

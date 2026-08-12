@@ -2247,6 +2247,26 @@ void Moonraker_Mqtt::async_upload_camera_timelapse(const nlohmann::json& targets
     }
 }
 
+// Request to upload timelapse file (async instance path used by WAN download)
+void Moonraker_Mqtt::async_upload_timelapse_instance(const nlohmann::json& targets,
+    std::function<void(const nlohmann::json& response)> callback)
+{
+    std::string method = "camera.upload_async_timelapse_instance";
+    json params = json::object();
+    params = targets;
+
+    if (!send_to_request(method, params, true, callback,
+                         [callback]() {
+                             json res;
+                             res["error"] = "timeout";
+                             callback(res);
+                         }) &&
+        callback) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] Failed to send request to upload timelapse file";
+        callback(json::value_t::null);
+    }
+}
+
 // get timelapse list
 void Moonraker_Mqtt::async_get_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)> callback)
 {

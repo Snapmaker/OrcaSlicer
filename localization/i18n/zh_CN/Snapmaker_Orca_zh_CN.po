@@ -3350,6 +3350,42 @@ msgstr "热床调平"
 msgid "Timelapse"
 msgstr "延时摄影"
 
+msgid "Download Lists"
+msgstr "下载列表"
+
+msgid "Download Lists (%d)"
+msgstr "下载列表 (%d)"
+
+msgid "Downloaded"
+msgstr "下载完成"
+
+msgid "Download Cancelled"
+msgstr "下载已取消"
+
+msgid "Download Failed"
+msgstr "下载失败"
+
+msgid "Failed to download the file. Please check your network and try again."
+msgstr "文件下载失败，请检查网络后重试。"
+
+msgid "Device disconnected."
+msgstr "设备已断开连接"
+
+msgid "Waiting for device to upload"
+msgstr "等待设备上传"
+
+msgid "Insufficient storage space. Please free up space."
+msgstr "磁盘空间不足，请清理存储空间。"
+
+msgid "File was removed. Download canceled."
+msgstr "文件已被移除，下载中断"
+
+msgid "Network timeout"
+msgstr "网络连接超时"
+
+msgid "Request timed out. Please check the device connection."
+msgstr "加载超时，请检查设备连接。"
+
 msgid "Flow Dynamic Calibration"
 msgstr "动态流量校准"
 

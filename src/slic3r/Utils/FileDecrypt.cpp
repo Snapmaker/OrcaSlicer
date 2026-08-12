@@ -87,7 +87,7 @@ bool decrypt_file_aes_cbc(const std::string& input_path,
     std::vector<unsigned char> salt(raw.begin() + 8, raw.begin() + 16);
     std::vector<unsigned char> cipher_data(raw.begin() + 16, raw.end());
 
-    // password = SN + 固定字符串(PBKDF2 派生密钥的密码,SN 为设备序列号)
+    // password = SN + fixed suffix (PBKDF2 key derivation password, SN is the device serial number)
     static const std::string PASSWORD_SUFFIX = "kN2C6si0OK98p7IibGmJ1bQxY9PLWRQi94mPCxqUVgSr5w6YGGXGBaF5bKb";
     const std::string password = sn + PASSWORD_SUFFIX;
     const DecryptKeyIV dkiv = derive_key_iv(password, salt, iterations);

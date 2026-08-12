@@ -101,6 +101,16 @@ private:
     // commitment, not as a banner at match-completion time. See the .cpp impl for
     // the precise n / enabled_mixed / new_mixed_rows derivations.
     bool predict_slot_overflow() const;
+    // Post-match advisory priority: slot overflow (data-loss) outranks the ratio hint —
+    // the red error banner and the orange ratio banner are mutually exclusive. Shows the
+    // overflow advisory via display_error_advisory and returns true when predict_slot_overflow
+    // holds; otherwise leaves banners untouched and returns false. Centralizes both the
+    // overflow message and the "overflow wins over ratio" invariant so every caller of
+    // check_manual_recipe_ratio (on_manual_selection_changed, on_method_changed,
+    // handle_batch_match_result) honours the same priority — without it, a post-match combo
+    // edit re-enters check_manual_recipe_ratio and its display_warning call hides the
+    // already-shown overflow error, replacing a serious data-loss warning with the ratio hint.
+    bool try_show_slot_overflow_advisory();
     // Re-layout the scrolled region after its content height changes (add/remove filament row,
     // mode switch, legend rebuild). Layout() alone re-arranges within the existing virtual size;
     // FitInside() also re-computes the virtual (scrollable) extent from the children's best size,

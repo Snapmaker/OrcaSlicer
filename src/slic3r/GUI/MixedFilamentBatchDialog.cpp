@@ -2077,6 +2077,14 @@ void MixedFilamentBatchDialog::check_manual_recipe_ratio()
     if (m_matching_method != MANUAL) return;
     if (!m_match_completed || m_result.mappings.empty()) return;
 
+    // Overflow outranks the ratio hint (the two banners are mutually exclusive — see
+    // handle_batch_match_result). This path is also reached from on_manual_selection_changed
+    // after a match that already surfaced the overflow error: without this guard the
+    // display_warning call below would hide that error and replace it with the ratio hint.
+    // m_result is unchanged by a combo edit (no re-match), so an overflow predicted at match
+    // time still holds here — re-show the advisory and skip the ratio evaluation entirely.
+    if (try_show_slot_overflow_advisory()) return;
+
     // NOTE: size by m_physical_colors.size(). In manual mode, launch_background_match's
     // manual-remap branch rewrites recipe component ids to project-wide 1-based indices, so
     // expand_color_match_recipe_weights must be sized against the FULL physical palette.
@@ -2236,6 +2244,18 @@ bool MixedFilamentBatchDialog::predict_slot_overflow() const
     const size_t enabled_mixed = pb->mixed_filaments.enabled_count();
     const size_t post_apply_total = n + enabled_mixed + new_mixed_rows;
     return post_apply_total > MAXIMUM_FILAMENT_NUMBER;
+}
+
+bool MixedFilamentBatchDialog::try_show_slot_overflow_advisory()
+{
+    // Single source of truth for the overflow banner + the "overflow wins over ratio"
+    // priority. Returns true (and shows the red advisory) when applying m_result would
+    // exceed the 64-slot cap; otherwise returns false and leaves the banners as they are
+    // so the caller is free to surface the lower-priority ratio hint.
+    if (!predict_slot_overflow()) return false;
+    display_error_advisory(
+        _L("Color mapping list limit reached (max 64 colors). Excess colors will be removed."));
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2655,14 +2675,11 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     //     match completion (not at confirm time) so the user sees the risk before deciding
     //     to Confirm. Confirm stays enabled; overflow is dropped silently at apply time.
     //   • Ratio hint ("single component > 70%", gap doc case 13): warning banner.
-    // The two banners are mutually exclusive (display_error_advisory / display_warning hide
-    // each other); overflow is the more serious condition, so check it first.
-    if (predict_slot_overflow()) {
-        display_error_advisory(
-            _L("Color mapping list limit reached (max 64 colors). Excess colors will be removed."));
-    } else {
+    // The two banners are mutually exclusive and overflow is the more serious condition, so
+    // it wins — try_show_slot_overflow_advisory centralizes that priority (also honoured by
+    // check_manual_recipe_ratio on the re-evaluation paths).
+    if (!try_show_slot_overflow_advisory())
         check_manual_recipe_ratio();
-    }
     // Defer the button-state flip until AFTER refresh_previews() has rendered and
     // pushed the After-Match bitmap, so Confirm/Re-match light up in lockstep with
     // the preview — not a frame earlier. m_match_completed stays true throughout so

@@ -564,6 +564,7 @@ target_link_libraries(libslic3r
         libigl
         libnest2d
         miniz
+        nanosvg
         opencv_world
     PRIVATE
         ${CMAKE_DL_LIBS}

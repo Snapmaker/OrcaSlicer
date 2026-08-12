@@ -5960,7 +5960,7 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
 void SSWCP_UserLogin_Instance::sw_FileView() {
     try {
         std::string file_path = m_param_data.count("file_path") ? m_param_data["file_path"].get<std::string>() : "";
-        wxFileName  file(file_path);
+        wxFileName  file(wxString::FromUTF8(file_path));
 
         if (!file.FileExists()) {
             handle_general_fail();
@@ -5993,7 +5993,7 @@ void SSWCP_UserLogin_Instance::sw_FileView() {
 // file) instead of failing — matches the "open folder" button expectation.
 void SSWCP_UserLogin_Instance::sw_OpenTimelapseFolder() {
     std::string file_path = m_param_data.count("file_path") ? m_param_data["file_path"].get<std::string>() : "";
-    wxFileName  file(file_path);
+    wxFileName  file(wxString::FromUTF8(file_path));
 
     std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
 

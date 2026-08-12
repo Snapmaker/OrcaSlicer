@@ -341,6 +341,10 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         m_recommended_card->Layout();
     }
 
+    // X must signal cancellation like Cancel/Stop Matching — the default close
+    // handler would EndModal(wxID_CANCEL) without setting m_cancel_requested.
+    Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent&) { cancel_batch_match(); EndModal(wxID_CANCEL); });
+
     // Generate thumbnails for plates that don't have slicing data yet
     wxWeakRef<wxWindow> weak_self(this);
     CallAfter([weak_self]() {
@@ -1823,6 +1827,9 @@ void MixedFilamentBatchDialog::build_footer()
     // the Confirm-button enable condition (set_match_buttons_state): a discardable result
     // exists iff m_match_completed && m_result.success.
     m_btn_cancel_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        // Idempotent: align Cancel with Stop Matching. join() in the destructor
+        // still waits for the worker's next checkpoint (per-combo/per-color).
+        cancel_batch_match();
         if (!m_match_completed || !m_result.success) {
             EndModal(wxID_CANCEL);
             return;

@@ -2006,7 +2006,7 @@ void GLCanvas3D::CompositeSelectionHighlight()
 
     glsafe(::glDisable(GL_DEPTH_TEST));
     glsafe(::glEnable(GL_BLEND));
-    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    glsafe(::glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA));
     glsafe(::glDisable(GL_CULL_FACE));
 
     shader->start_using();
@@ -2027,15 +2027,6 @@ void GLCanvas3D::CompositeSelectionHighlight()
     glsafe(::glActiveTexture(GL_TEXTURE2));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.glowTexture));
 
-    shader->set_uniform("render_fill", 1.0f);
-    m_background.render();
-
-    shader->set_uniform("render_fill", 0.0f);
-    shader->set_uniform("render_glow", 0.0f);
-    m_background.render();
-
-    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE));
-    shader->set_uniform("render_glow", 1.0f);
     m_background.render();
     shader->stop_using();
 }

@@ -9,8 +9,6 @@ uniform float outline_exclusion_low;
 uniform float outline_exclusion_high;
 uniform float edge_strength;
 uniform float edge_glow;
-uniform float render_fill;
-uniform float render_glow;
 
 in vec2 tex_coord;
 out vec4 frag_color;
@@ -18,17 +16,17 @@ out vec4 frag_color;
 void main()
 {
     float coverage = texture(mask_texture, tex_coord).a;
-    if (render_fill > 0.5)
-    {
-        frag_color = vec4(vec3(fill_alpha), coverage * fill_alpha);
-        return;
-    }
-
     float edgeCoverage = texture(edge_texture, tex_coord).a;
     float glowCoverage = texture(glow_texture, tex_coord).a;
     float outlineExclusion = smoothstep(outline_exclusion_low, outline_exclusion_high, coverage);
     float outsideFill = 1.0 - outlineExclusion;
-    float sourceCoverage = render_glow > 0.5 ? glowCoverage * edge_glow : edgeCoverage;
-    float outlineAlpha = clamp(edge_strength * sourceCoverage * outsideFill, 0.0, 1.0);
-    frag_color = vec4(outline_color, outlineAlpha);
+    float fillAlpha = coverage * fill_alpha;
+    float edgeAlpha = clamp(edge_strength * edgeCoverage * outsideFill, 0.0, 1.0);
+    float glowAlpha = clamp(edge_strength * edge_glow * glowCoverage * outsideFill, 0.0, 1.0);
+
+    // Precompose normal-alpha Fill and Edge followed by additive Glow.
+    float compositeAlpha = fillAlpha + edgeAlpha * (1.0 - fillAlpha);
+    vec3 compositeColor = vec3(fill_alpha) * fillAlpha * (1.0 - edgeAlpha) +
+                          outline_color * (edgeAlpha + glowAlpha);
+    frag_color = vec4(compositeColor, compositeAlpha);
 }

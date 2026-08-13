@@ -66,5 +66,6 @@
   ],
   "pressure_advance": [
     "0.015"
-  ]
+  ],
+  "filament_type": ["ABS"]
 }

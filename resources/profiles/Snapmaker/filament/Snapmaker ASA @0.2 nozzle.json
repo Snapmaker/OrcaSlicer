@@ -17,5 +17,6 @@
   ],
   "filament_max_volumetric_speed": [
     "2.4"
-  ]
+  ],
+  "filament_type": ["ASA"]
 }

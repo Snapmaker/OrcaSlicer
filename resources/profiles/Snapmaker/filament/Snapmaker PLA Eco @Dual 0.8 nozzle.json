@@ -18,5 +18,6 @@
   ],
   "slow_down_min_speed": [
     "20"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

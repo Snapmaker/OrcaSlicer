@@ -28,7 +28,7 @@
   "filament_multitool_ramming_flow": ["2"],
   "filament_multitool_ramming_volume": ["5"],
   "filament_retract_length_toolchange": ["5"],
-  "filament_retraction_length": ["4"],
+  "filament_retraction_length": ["0.4"],
   "filament_unloading_speed": ["90"],
   "filament_unloading_speed_start": ["100"],
   "filament_z_hop": ["nil"],
@@ -37,10 +37,11 @@
   "hot_plate_temp_initial_layer": ["100"],
   "nozzle_temperature": ["270"],
   "nozzle_temperature_initial_layer": ["280"],
-  "pressure_advance": ["0.01"],
+  "pressure_advance": ["0.1"],
   "slow_down_layer_time": ["12"],
   "textured_plate_temp": ["100"],
   "textured_plate_temp_initial_layer": ["100"],
   "overhang_fan_speed": ["80"],
-  "activate_air_filtration": ["1"]
+  "activate_air_filtration": ["1"],
+  "filament_type": ["ABS"]
 }

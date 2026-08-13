@@ -24,5 +24,6 @@
     "Snapmaker A350 Dual QSKit (0.6 nozzle)",
     "Snapmaker Artisan (0.4 nozzle)",
     "Snapmaker Artisan (0.6 nozzle)"
-  ]
+  ],
+  "filament_type": ["PLA-CF"]
 }

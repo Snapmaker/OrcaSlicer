@@ -35,5 +35,6 @@
     ],
     "nozzle_temperature_initial_layer": [
         "220"
-    ]
+    ],
+    "filament_type": ["TPU"]
 }

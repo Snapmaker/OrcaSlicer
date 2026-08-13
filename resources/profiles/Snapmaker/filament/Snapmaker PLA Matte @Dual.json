@@ -51,5 +51,6 @@
   ],
   "pressure_advance": [
     "0.055"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

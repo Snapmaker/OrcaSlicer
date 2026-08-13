@@ -2234,6 +2234,18 @@ void GUI_App::init_app_config()
         }
         // Save orig_version here, so its empty if no app_config existed before this run.
         m_last_config_version = app_config->orig_version();//parse_semver_from_ini(app_config->config_path());
+
+        // SM: restore persisted Snapmaker account login (if any) before the webview's
+        // first sw_GetUserLoginState call, so the session survives app restarts.
+        std::string sm_saved_token = app_config->get("sm_user", "token");
+        if (!sm_saved_token.empty()) {
+            m_login_userinfo.set_user_id(app_config->get("sm_user", "id"));
+            m_login_userinfo.set_user_name(app_config->get("sm_user", "nickname"));
+            m_login_userinfo.set_user_icon_url(app_config->get("sm_user", "icon"));
+            m_login_userinfo.set_user_account(app_config->get("sm_user", "account"));
+            m_login_userinfo.set_user_token(sm_saved_token);
+            m_login_userinfo.set_user_login(true);
+        }
     }
     else {
 #ifdef _WIN32
@@ -4285,6 +4297,9 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    // SM: drop the persisted session so a stale token isn't restored on next launch.
+    app_config->set("sm_user", "token", "");
+    app_config->save();
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";

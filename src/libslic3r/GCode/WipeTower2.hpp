@@ -74,6 +74,7 @@ public:
         return BoundingBoxf(unscale(box.min), unscale(box.max));
     }
 	float get_wipe_tower_height() const { return m_wipe_tower_height; }
+    Vec2f get_rib_offset() const { return m_rib_offset; }
 
     bool get_floating_area(float& start_pos_y, float& end_pos_y) const;
     bool need_thick_bridge_flow(float pos_y) const;
@@ -244,6 +245,7 @@ private:
     WipeTower::NozzleChangeResult m_nozzle_change_result;
     Polygons m_shared_print_bed;
     float m_contact_speed = 20 * 60.f;
+    int m_first_contact_layer_id = -1;
 
     WipeTowerBlock* get_block_by_category(int filament_adhesiveness_category, bool create);
     void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);

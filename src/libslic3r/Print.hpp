@@ -724,7 +724,7 @@ struct WipeTowerData
     std::vector<std::vector<WipeTower::box_coordinates>>  local_z_reserve_boxes;
     float                                                 brim_width;
     float                                                 height;
-    BoundingBoxf                                           bbx;
+    BoundingBoxf bbx;
     Vec2f rib_offset;
     std::optional<WipeTowerMeshData> wipe_tower_mesh_data;
 
@@ -951,6 +951,8 @@ public:
     const PrintRegion&          get_print_region(size_t idx) const  { return *m_print_regions[idx]; }
     const ToolOrdering&         get_tool_ordering() const { return m_wipe_tower_data.tool_ordering; }
     const FakeWipeTower& get_fake_wipe_tower() const { return m_fake_wipe_tower; }
+    BoundingBoxf get_wipe_tower_bbx() const { return m_wipe_tower_data.bbx; }
+    Vec2f get_rib_offset() const { return m_wipe_tower_data.rib_offset; }
 
     //BBS: plate's origin related functions
     void set_plate_origin(Vec3d origin) { m_origin = origin; }

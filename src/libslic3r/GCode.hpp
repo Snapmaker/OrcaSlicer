@@ -126,18 +126,20 @@ public:
     void set_is_first_print(bool is) { m_is_first_print = is; }
 
     bool enable_timelapse_print() const { return m_enable_timelapse_print; }
+    void set_wipe_tower_bbx(const BoundingBoxf& bbx) { m_wipe_tower_bbx = bbx; }
+    void set_rib_offset(const Vec2f& rib_offset) { m_rib_offset = rib_offset; }
 
 private:
     WipeTowerIntegration& operator=(const WipeTowerIntegration&);
     std::string append_tcr(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
     std::string append_tcr2(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
-    Polyline   detour_around_wipe_tower(const Point &start_pos, const Point &target_pos,
-                                                const BoundingBox &avoid_bbx) const;
+    Polyline detour_around_wipe_tower(const Point &start_pos, 
+        const Point &target_pos, const BoundingBox &avoid_bbx) const;
+    Polyline generate_path_to_wipe_tower(const Point& start_pos, const Point& end_pos, 
+        const BoundingBox& avoid_polygon, const BoundingBox& printer_bbx) const;
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
     std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
-    std::string post_process_wipe_tower_moves(const std::string& gcode, const Vec2f& start_pos, int initial_tool, int new_tool, const Vec2f& translation, float angle) const;
-    // Left / right edges of the wipe tower, for the planning of wipe moves.
 
     Vec2d extruder_offset_at(size_t extruder_id) const;
 
@@ -147,7 +149,6 @@ private:
     const Vec2f                                                  m_wipe_tower_pos;
     const float                                                  m_wipe_tower_rotation;
     const float                                                  m_wipe_tower_depth;
-    const BoundingBoxf                                            m_wipe_tower_bbx;
     const std::vector<Vec2d>                                     m_extruder_offsets;
 
     // Reference to cached values at the Printer class.
@@ -168,6 +169,8 @@ private:
     bool                                                         m_single_extruder_multi_material;
     bool                                                         m_enable_timelapse_print;
     bool                                                         m_is_first_print;
+    BoundingBoxf m_wipe_tower_bbx;
+    Vec2f m_rib_offset{ Vec2f(0, 0) };
 };
 
 class ColorPrintColors

@@ -2291,17 +2291,21 @@ WipeTower::NozzleChangeResult WipeTower2::ramming(const WipeTowerInfo::ToolChang
             nozzle_change_line_count = std::floor(EPSILON + (cleaning_box.ru[1] - cleaning_box.rd[1] +
                 (line_width - m_perimeter_width) / 2.f) / line_width);
 
+        float ramming_e = e * (nozzle_change_box_width / real_length);
         m_left_to_right = true;
         for (int i = 0; true; ++i) {
             if (m_left_to_right)
-                writer.extrude(xr, writer.y(), ramming_speed);
+                //writer.extrude(xr, writer.y(), ramming_speed);
+                writer.ram(xl, xr, 0.f, 0.f, ramming_e, ramming_speed);
             else
-                writer.extrude(xl, writer.y(), ramming_speed);
+                //writer.extrude(xl, writer.y(), ramming_speed);
+                writer.ram(xr, xl, 0.f, 0.f, ramming_e, ramming_speed);
             if (i == nozzle_change_line_count - 1)
                 break;
             if ((writer.y() + dy - cleaning_box.ru.y() + (line_width + m_perimeter_width) / 2) > (float)EPSILON)
                 break;
-            writer.extrude(writer.x(), writer.y() + dy, ramming_speed);
+            //writer.extrude_explicit(writer.x(), writer.y() + dy, ramming_e, ramming_speed, true);
+            writer.travel(writer.x(), writer.y() + dy);
             m_left_to_right = !m_left_to_right;
         }
 
@@ -2334,7 +2338,7 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
 
     // This is where we want to place the custom gcodes. We will use placeholders for this.
     // These will be substituted by the actual gcodes when the gcode is generated.
-    // writer.append("[end_filament_gcode]\n");
+    //writer.append("[filament_end_gcode]\n");
     writer.append("[change_filament_gcode]\n");
 
     if (m_is_mk4mmu3)
@@ -4394,7 +4398,12 @@ void WipeTower2::generate_wipe_tower_blocks(bool add_solid_flag)
                 if (layer_id > 0) {
                     bool cur_has_block_category = layers_used_tools[layer_id].count(block.filament_adhesiveness_category);
                     bool pre_has_block_category = layers_used_tools[layer_id - 1].count(block.filament_adhesiveness_category);
-                    if (cur_has_block_category != pre_has_block_category) { block.layers_type[layer_id] = WipeTowerLayerType::Contact; }
+                    if (cur_has_block_category != pre_has_block_category) { 
+                        block.layers_type[layer_id] = WipeTowerLayerType::Contact; 
+                        if (m_first_contact_layer_id < 0) {
+                            m_first_contact_layer_id = layer_id;
+                        }
+                    }
                     if (block.layers_type[layer_id - 1] == WipeTowerLayerType::Contact && block.layers_type[layer_id] != WipeTowerLayerType::Contact) {
                         block.layers_type[layer_id] = WipeTowerLayerType::Contact_UP;
                     }
@@ -4452,7 +4461,15 @@ Vec2f WipeTower2::get_next_pos(const WipeTower::box_coordinates& cleaning_box, f
     bool is_contact_pre_extrusion = solid_toolchange && m_enable_tower_interface_features;
     if (is_contact_pre_extrusion) {
         Vec2f stop_pos = res;
-        float filament_tower_interface_pre_extrusion_dist = m_filpar[m_current_tool].filament_tower_interface_pre_extrusion_dist;
+        float filament_tower_interface_pre_extrusion_dist = 0.f;
+        if (m_use_gap_wall) {
+            filament_tower_interface_pre_extrusion_dist =  m_filpar[m_current_tool].filament_tower_interface_pre_extrusion_dist;
+        }
+        if (m_no_sparse_layers && m_first_contact_layer_id >= 0) {
+            filament_tower_interface_pre_extrusion_dist = 0.f;
+            m_first_contact_layer_id = -1;
+        }
+        
         BoundingBoxf printer_bbx = unscaled(get_extents(m_shared_print_bed));
         printer_bbx.translate((-m_wipe_tower_pos - m_rib_offset).cast<double>()); // first layer never be contact
         if (stop_pos.x() < m_wipe_tower_width / 2.f)
@@ -4752,7 +4769,13 @@ WipeTower::ToolChangeResult WipeTower2::finish_block_solid(const WipeTowerBlock&
         bool is_full_block = std::abs(block.cur_depth - block.start_depth) < EPSILON;
         if (is_full_block && layer_type == WipeTowerLayerType::Contact && m_enable_tower_interface_features) {
             Vec2f stop_pos = initial_pos;
-            float filament_tower_interface_pre_extrusion_dist = m_filpar[m_current_tool].filament_tower_interface_pre_extrusion_dist;
+            float filament_tower_interface_pre_extrusion_dist = 0.f;
+            if (m_use_gap_wall) {
+                filament_tower_interface_pre_extrusion_dist = m_filpar[m_current_tool].filament_tower_interface_pre_extrusion_dist;
+            }
+            /*if (m_no_sparse_layers && m_first_contact_layer_id >= 0) {
+                filament_tower_interface_pre_extrusion_dist = 0.f;
+            }*/
             BoundingBoxf printer_bbx = unscaled(get_extents(m_shared_print_bed));
             printer_bbx.translate((-m_wipe_tower_pos - m_rib_offset).cast<double>()); // first layer never be contact
             if (stop_pos.x() < m_wipe_tower_width / 2.f)

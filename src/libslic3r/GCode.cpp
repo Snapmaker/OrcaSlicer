@@ -364,6 +364,18 @@ float get_wipe_avoid_pos_x(const Vec2f& wt_min, const Vec2f& wt_max, float offse
     return 0.5f * (bed_min_x + bed_max_x);
 }
 
+float get_wipe_avoid_pos_x(const Vec2f& wt_min, const Vec2f& wt_max, float offset)
+{
+    float left = 100, right = 250;
+    float default_value = 110.f;
+    float a = 0.f, b = 0.f;
+    a = wt_max.x() + offset;
+    b = wt_min.x() - offset;
+    if (a > left && a < right) return a;
+    if (b > left && b < right) return b;
+    return default_value;
+}
+
 // Orca:
 // Function to calculate the excess retraction length that should be retracted either before or after wiping
 // in order for the wipe operation to respect the filament retraction speed
@@ -770,119 +782,107 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
     auto transform_wt_pt = [&alpha, this](const Vec2f& pt) -> Vec2f {
         Vec2f out = Eigen::Rotation2Df(alpha) * pt;
-        out += m_wipe_tower_pos;
+        out += m_wipe_tower_pos + m_rib_offset;
         return out;
     };
 
     Vec2f start_pos = tcr.start_pos;
-    Vec2f end_pos   = tcr.end_pos;
+    Vec2f end_pos = tcr.end_pos;
     Vec2f tool_change_start_pos = start_pos;
     if (tcr.is_tool_change)
         tool_change_start_pos = tcr.tool_change_start_pos;
     if (!tcr.priming) {
-        start_pos             = transform_wt_pt(start_pos);
-        end_pos               = transform_wt_pt(end_pos);
+        start_pos = transform_wt_pt(start_pos);
+        end_pos = transform_wt_pt(end_pos);
         tool_change_start_pos = transform_wt_pt(tool_change_start_pos);
     }
 
-    Vec2f wipe_tower_offset   = tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos;
+    Vec2f wipe_tower_offset = (tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos) + m_rib_offset;
     float wipe_tower_rotation = tcr.priming ? 0.f : alpha;
-    Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
     std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
 
-    gcode += gcodegen.writer().unlift(); // Make sure there is no z-hop (in most cases, there isn't).
-
-    double current_z = gcodegen.writer().get_position().z();
-
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
-
-    const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
-    // True when a departure/return detour will be emitted (mirrors the detour block below).
-    const bool will_detour = gcodegen.config().wipe_tower_wall_gap.value
-                           && !tcr.priming && needs_toolchange;
-    const bool will_go_down     = !is_approx(z, current_z);
-    const bool is_ramming       = (gcodegen.config().single_extruder_multi_material) ||
-                            (!gcodegen.config().single_extruder_multi_material &&
-                             gcodegen.config().filament_multitool_ramming.get_at(tcr.initial_tool));
-    const bool should_travel_to_tower = !tcr.priming && (tcr.force_travel     // wipe tower says so
-                                                         || !needs_toolchange // this is just finishing the tower with no toolchange
-                                                         || is_ramming);
-
-    // Check whether this TCR carries a separate nozzle change (ramming) result.
-    bool has_nozzle_change = !tcr.nozzle_change_result.gcode.empty()
-        && (gcodegen.config().nozzle_diameter.size() > 1);
-
-    Vec2f ramming_start, ramming_end;
-    if (has_nozzle_change) {
-        ramming_start = transform_wt_pt(tcr.nozzle_change_result.start_pos);
-        ramming_end = transform_wt_pt(tcr.nozzle_change_result.end_pos);
-    }
-    // When there is a separate nozzle change, travel to the ramming area first;
-    // otherwise travel to the wipe area (existing behaviour).
-    Vec2f travel_target = has_nozzle_change ? ramming_start : start_pos;
-
-    if (should_travel_to_tower || gcodegen.m_need_change_layer_lift_z) {
-        auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
-        if (type == ZHopType::zhtAuto) {
-            type = ZHopType::zhtSpiral;
-        }
-        auto lift_type = gcodegen.to_lift_type(type);
-
-        if (gcodegen.m_config.z_hop_when_prime.get_at(gcodegen.m_writer.extruder()->id())) {
-            gcode += gcodegen.retract(false, false, lift_type);
-        }
-
+    Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
+    if (!tcr.priming && tcr.is_finish_first) {
+        // Move over the wipe tower.
+        gcode += gcodegen.retract();
         gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-        gcode += gcodegen.travel_to(wipe_tower_point_to_object_point(gcodegen, travel_target + plate_origin_2d), erMixed,
-                                    "Travel to a Wipe Tower");
+        Point move_pos = wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d);
+        gcode += gcodegen.travel_to(move_pos,erMixed,"Travel to a Wipe Tower");
         gcode += gcodegen.unretract();
     }
 
+    double current_z = gcodegen.writer().get_position().z();
+    if (z == -1.) // in case no specific z was provided, print at current_z pos
+        z = current_z;
+
+    const bool will_go_down = !is_approx(z, current_z);
     if (will_go_down) {
         gcode += gcodegen.writer().retract();
         gcode += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
         gcode += gcodegen.writer().unretract();
     }
 
-    // Process separate nozzle change (ramming) G-code before the toolchange command.
-    if (has_nozzle_change) {
-        std::string ramming_rotated = transform_gcode(
-            tcr.nozzle_change_result.gcode, tcr.nozzle_change_result.start_pos, wipe_tower_offset, wipe_tower_rotation);
-        gcode += ramming_rotated;
+    const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
+    const bool will_detour = gcodegen.config().wipe_tower_wall_gap.value
+        && !tcr.priming && needs_toolchange;
+    
+    const bool is_ramming = (gcodegen.config().single_extruder_multi_material) ||
+        (!gcodegen.config().single_extruder_multi_material &&
+            gcodegen.config().filament_multitool_ramming.get_at(tcr.initial_tool));
+    const bool should_travel_to_tower = !tcr.priming && (tcr.force_travel     // wipe tower says so
+        || !needs_toolchange // this is just finishing the tower with no toolchange
+        || is_ramming);
 
-        // Update the writer's internal position to the ramming end point.
-        gcodegen.writer().travel_to_xy((ramming_end + plate_origin_2d).cast<double>());
-        gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, ramming_end + plate_origin_2d));
+    // Check whether this TCR carries a separate nozzle change (ramming) result.
+    bool has_nozzle_change = !tcr.nozzle_change_result.gcode.empty()
+        && (gcodegen.config().nozzle_diameter.size() > 1);
 
-        // Travel from the ramming area to the wipe area if they are not contiguous.
-        if ((ramming_end - start_pos).norm() > EPSILON) {
-            // Detour case: retract full toolchange length now and skip the deretract,
-            // so set_extruder's toolchange retract becomes a no-op (differential state).
-            gcode += gcodegen.retract(will_detour, false, gcodegen.to_lift_type(ZHopType::zhtSpiral));
-            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-            gcode += gcodegen.travel_to(
-                wipe_tower_point_to_object_point(gcodegen, start_pos + plate_origin_2d),
-                erMixed, "Travel from ramming to wipe area", z);
-            if (will_detour)
-                gcode += gcodegen.writer().unlift();
-            else
-                gcode += gcodegen.unretract();
-        }
+    auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+    if (type == ZHopType::zhtAuto) {
+        type = ZHopType::zhtSpiral;
     }
+    auto auto_lift_type = gcodegen.to_lift_type(type);
+    //std::string toolchange_retract_str = gcodegen.retract_new(tcr.is_tool_change && !has_nozzle_change, false, auto_lift_type, true);
+    std::string toolchange_retract_str = gcodegen.retract(tcr.is_tool_change && !has_nozzle_change, false, auto_lift_type);
+    check_add_eol(toolchange_retract_str);
 
-    std::string toolchange_gcode_str;
+    std::string end_filament_gcode_str;
+    std::string nozzle_change_gcode_trans;
+    if (has_nozzle_change) {
+        // move to start_pos before nozzle change
+        std::string start_pos_str;
+        Point start_pos = wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(tcr.nozzle_change_result.start_pos) + plate_origin_2d);
+        if (will_go_down) {
+            start_pos_str = gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(start_pos), "Move to nozzle change start pos");
+        }
+        else {
+            start_pos_str = gcodegen.travel_to(start_pos, erMixed, "Move to nozzle change start pos");
+        }
+        //start_pos_str = gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(start_pos), "Move to nozzle change start pos");
+        check_add_eol(start_pos_str);
+        nozzle_change_gcode_trans += start_pos_str;
+        nozzle_change_gcode_trans += gcodegen.unretract();
+        nozzle_change_gcode_trans += transform_gcode(tcr.nozzle_change_result.gcode, tcr.nozzle_change_result.start_pos, wipe_tower_offset, wipe_tower_rotation);
+        gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(tcr.nozzle_change_result.end_pos) + plate_origin_2d));
+        gcodegen.m_wipe.reset_path();
+        for (const Vec2f& wipe_pt : tcr.nozzle_change_result.wipe_path)
+            gcodegen.m_wipe.path.points.emplace_back(wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt) + plate_origin_2d));
+        nozzle_change_gcode_trans += gcodegen.retract(tcr.is_tool_change, false);
+        end_filament_gcode_str = nozzle_change_gcode_trans + end_filament_gcode_str;
+    }
+    end_filament_gcode_str = toolchange_retract_str + end_filament_gcode_str;
+
+    std::string toolchange_gcode_str = end_filament_gcode_str;
     std::string deretraction_str;
 
-    // Build wipe tower bounding box in object coordinates, shared by
-    // departure and return detours (mirrors approach detour lines 769-778).
+    // Build wipe tower bounding box in object coordinates
     bool has_detour_bbox = false;
     BoundingBox tower_bbx;
     if (will_detour) {
         BoundingBox bbox = scaled(m_wipe_tower_bbx);
         Polygon pp = bbox.polygon();
-        for (auto &p : pp.points) {
+        for (auto& p : pp.points) {
             Vec2f pt = transform_wt_pt(unscale(p).cast<float>());
             p = wipe_tower_point_to_object_point(gcodegen, pt + plate_origin_2d);
         }
@@ -894,54 +894,47 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         const Vec2f wt_min = transform_wt_pt(m_wipe_tower_bbx.min.cast<float>()) + plate_origin_2d;
         const Vec2f wt_max = transform_wt_pt(m_wipe_tower_bbx.max.cast<float>()) + plate_origin_2d;
         const float safe_x = get_wipe_avoid_pos_x(wt_min, wt_max, 3.0f,
-                                                   float(bed_bbx.min.x()), float(bed_bbx.max.x()));
+            float(bed_bbx.min.x()), float(bed_bbx.max.x()));
         Point tower_obj = wipe_tower_point_to_object_point(
             gcodegen, start_pos + plate_origin_2d);
         Point safe_obj = wipe_tower_point_to_object_point(
             gcodegen, Vec2f(safe_x, tool_change_start_pos.y() + plate_origin_2d.y()));
 
-        Polyline dep_detour = detour_around_wipe_tower(
-            tower_obj, safe_obj, tower_bbx);
-        for (size_t i = 0; i < dep_detour.points.size(); ++i) {
-            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-            toolchange_gcode_str += gcodegen.travel_to(
-                dep_detour.points[i], erMixed,
-                i == dep_detour.points.size() - 1
-                    ? "Depart wipe tower"
-                    : "Wipe tower departure detour");
-        }
+        toolchange_gcode_str += gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(safe_obj));
         gcodegen.set_last_pos(safe_obj);
-    }
-
-    // Return detour: route back from the safe position to the wipe tower,
-    // avoiding the tower body.  Mirrors Bambu Studio GCode.cpp:1133.
-    if (has_detour_bbox) {
-        Point start_obj  = gcodegen.last_pos();
-        Point target_obj = wipe_tower_point_to_object_point(
-            gcodegen, tool_change_start_pos + plate_origin_2d);
-
-        Polyline detour = detour_around_wipe_tower(start_obj, target_obj, tower_bbx);
-        for (size_t i = 0; i < detour.points.size(); ++i) {
-            gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
-            toolchange_gcode_str += gcodegen.travel_to(
-                detour.points[i], erMixed,
-                i == detour.points.size() - 1
-                    ? "Return to wipe tower"
-                    : "Wipe tower return detour");
-        }
-        gcodegen.set_last_pos(target_obj);
     }
 
     if (tcr.priming || (new_extruder_id >= 0 && needs_toolchange)) {
         if (is_ramming)
             gcodegen.m_wipe.reset_path();
         toolchange_gcode_str += gcodegen.set_extruder(new_extruder_id, tcr.print_z, false);
-        if (gcodegen.config().enable_prime_tower) {
-            deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
-            Vec3d position{ gcodegen.writer().get_position() };
-            position.z() = z;
-            gcodegen.writer().set_position(position);
+    }
+
+    // Return detour: route back from the safe position to the wipe tower, avoiding the tower body
+    if (has_detour_bbox && needs_toolchange) {
+        Point start_obj = gcodegen.last_pos();
+        Point target_obj = wipe_tower_point_to_object_point(
+            gcodegen, tool_change_start_pos + plate_origin_2d);
+
+        Polyline detour = detour_around_wipe_tower(start_obj, target_obj, tower_bbx);
+
+        bool use_avoid = true;
+        BoundingBoxf bed_bbx(gcodegen.config().printable_area.values);
+        for (size_t i = 0; i < detour.points.size(); ++i) {
+            Vec2d pt = gcodegen.point_to_gcode(detour.points[i]);
+            if (!bed_bbx.contains(pt)) {
+                use_avoid = false;
+                break;
+            }
         }
+        if (use_avoid) {
+            for (size_t i = 0; i < detour.points.size(); ++i) {
+                gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
+                toolchange_gcode_str += gcodegen.writer().travel_to_xy(
+                    gcodegen.point_to_gcode(detour.points[i]), "Return to wipe tower");
+            }
+        }
+        gcodegen.set_last_pos(target_obj);
     }
 
     if (gcodegen.config().enable_prime_tower) {
@@ -949,10 +942,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         if (tcr.is_contact && gcodegen.m_config.enable_tower_interface_features) {
             extra_unretract = gcodegen.m_config.filament_tower_interface_pre_extrusion_length.get_at(tcr.new_tool);
         }
+        deretraction_str += gcodegen.retract();
+        deretraction_str += gcodegen.writer().travel_to_z(z, "Force restore layer Z", true);
         deretraction_str += gcodegen.unretract(extra_unretract);
     }
     toolchange_gcode_str += deretraction_str;
-
 
     DynamicConfig config;
     config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
@@ -1011,15 +1005,7 @@ Polyline WipeTowerIntegration::detour_around_wipe_tower(
     BoundingBox avoid_bbx = avoid_bbx_in;
     avoid_bbx.offset(scaled(2.0));
 
-    // Debug: log bbox and travel line
-    BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: bbox_min=("
-        << unscale(avoid_bbx.min).x() << "," << unscale(avoid_bbx.min).y() << ") max=("
-        << unscale(avoid_bbx.max).x() << "," << unscale(avoid_bbx.max).y()
-        << ") start=(" << unscale(start_pos).x() << "," << unscale(start_pos).y()
-        << ") target=(" << unscale(target_pos).x() << "," << unscale(target_pos).y() << ")";
-
     if (start_pos == target_pos) {
-        BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: start==target, no detour";
         result.points.push_back(target_pos);
         return result;
     }
@@ -1063,7 +1049,7 @@ Polyline WipeTowerIntegration::detour_around_wipe_tower(
     }
 
     // Second intersection: line from start to pt1 with the remaining bbox edges.
-    int   idx2 = -1;
+    int idx2 = -1;
     Vec2d pt2;
     for (size_t i = 0; i < bbox_pts.size(); ++i) {
         if (int(i) == idx1) continue;
@@ -1077,7 +1063,8 @@ Polyline WipeTowerIntegration::detour_around_wipe_tower(
 
     if (idx2 < 0) {
         result.points.push_back(Point(scaled(pt1)));
-    } else {
+    }
+    else {
         // Walk the shorter perimeter path between the two intersection points.
         auto walk = [&](bool fwd) {
             std::vector<Point> p; p.push_back(Point(scaled(pt2)));
@@ -1098,12 +1085,127 @@ Polyline WipeTowerIntegration::detour_around_wipe_tower(
     }
 
     result.points.push_back(target_pos);
-
-    BOOST_LOG_TRIVIAL(debug) << "WipeTowerDetour: "
-        << result.points.size() << " waypoints, detour="
-        << (result.points.size() > 1 ? "yes" : "no (direct)");
-
     return result;
+}
+
+Polyline WipeTowerIntegration::generate_path_to_wipe_tower(const Point& start_pos, const Point& end_pos, 
+    const BoundingBox& avoid_polygon, const BoundingBox& printer_bbx) const
+{
+    Polyline res;
+    coord_t alpha = scaled(2.f); // offset distance
+    BoundingBox avoid_polygon_inner = avoid_polygon;
+    avoid_polygon_inner.offset(alpha);
+    coord_t width = avoid_polygon_inner.max[0] - avoid_polygon_inner.min[0];
+    Polygon bed_polygon = printer_bbx.polygon();
+    Vec2f v(1, 0); // the first print direction of end_pos.
+    if (abs(end_pos[0] - avoid_polygon_inner.min[0]) < width / 2) v = -v; // judge whether the wipe tower's infill goes to the left or right.
+    // Judge whether the avoid_polygon_inner is outside the printer_bbx.
+    // If so, do nothing and just go directly to the end_pos.
+    bool is_bbx_in_bed = true;
+    Points avoid_points = avoid_polygon_inner.polygon().points;
+    for (auto& wipe_tower_bbx_p : avoid_points) {
+        if (ClipperLib::PointInPolygon(wipe_tower_bbx_p, bed_polygon.points) != 1) {
+            is_bbx_in_bed = false;
+            break;
+        }
+    }
+    if (!is_bbx_in_bed) {
+        res.points.push_back(end_pos);
+        return res;
+    }
+    // Ray-Line Segment Intersection
+    auto ray_intersetion_line = [](const Vec2d& a, const Vec2d& v1, const Vec2d& b, const Vec2d& c) -> std::pair<bool, Point> {
+        const Vec2d v2 = c - b;
+        double denom = cross2(v1, v2);
+        if (fabs(denom) < EPSILON) return { false, Point(0, 0) };
+        const Vec2d v12 = (a - b);
+        double nume_a = cross2(v2, v12);
+        double nume_b = cross2(v1, v12);
+        double t1 = nume_a / denom;
+        double t2 = nume_b / denom;
+        if (t1 >= 0 && t2 >= 0 && t2 <= 1.) {
+            // Get the intersection point.
+            Vec2d res = a + t1 * v1;
+            return std::pair<bool, Point>(true, scaled(res));
+        }
+        return std::pair<bool, Point>(false, { 0, 0 });
+    };
+    struct Inter_info
+    {
+        int inter_idx0 = -1;
+        Point inter_p;
+    };
+    auto calc_path_len = [](Points& points, Inter_info& beg_info, Inter_info& end_info, bool is_add) -> std::pair<std::vector<Point>, double> {
+        int beg = is_add ? (beg_info.inter_idx0 + 1) % points.size() : beg_info.inter_idx0;
+        int end = is_add ? end_info.inter_idx0 : (end_info.inter_idx0 + 1) % points.size();
+        int i = beg;
+        double len = 0;
+        std::vector<Point> path;
+        path.push_back(beg_info.inter_p);
+        len += (unscale(beg_info.inter_p) - unscale(points[beg])).squaredNorm();
+        while (i != end) {
+            int  ni = is_add ? (i + 1) % points.size() : (i - 1 + points.size()) % points.size();
+            auto a = unscale(points[i]);
+            auto b = unscale(points[ni]);
+            len += (a - b).squaredNorm();
+            path.push_back(points[i]);
+            i = ni;
+        }
+        path.push_back(points[end]);
+        path.push_back(end_info.inter_p);
+        len += (unscale(end_info.inter_p) - unscale(points[end])).squaredNorm();
+        return { path, len };
+    };
+    // calculate the intersection point of end_pos along vector v with the avoid_polygon.
+    // store in inter_info.
+    // represent this intersection by 'p'.
+    Inter_info inter_info;
+    for (size_t i = 0; i < avoid_points.size(); i++) {
+        const auto& a = avoid_points[i];
+        const auto& b = avoid_points[(i + 1) % avoid_points.size()];
+        auto [is_inter, inter_p] = ray_intersetion_line(unscale(end_pos), v.cast<double>(), unscale(a), unscale(b));
+        if (is_inter) {
+            inter_info.inter_idx0 = i;
+            inter_info.inter_p = inter_p;
+            break;
+        }
+    }
+    if (inter_info.inter_idx0 == -1) {
+        res.points.push_back(end_pos);
+        return res;
+    }
+    // calculate the other intersection of start_to_p with the avoid_polygon.
+    // represent this intersection by 'p_'.
+    Inter_info inter_info2;
+    Linef start_to_p(unscale(start_pos), unscale(inter_info.inter_p));
+    for (size_t i = 0; i < avoid_points.size(); i++) {
+        if (i == inter_info.inter_idx0) continue;
+        Vec2d a = unscale(avoid_points[i]);
+        Vec2d b = unscale(avoid_points[(i + 1) % avoid_points.size()]);
+        Linef tower_edge(a, b);
+        Vec2d inter;
+        if (line_alg::intersection(start_to_p, tower_edge, &inter)) {
+            inter_info2.inter_p = scaled(inter);
+            inter_info2.inter_idx0 = i;
+            break;
+        }
+    }
+    // if p_ does not exist, go directly to p.
+    // else p travels along the shorter path on the wipe_tower_offset_polygon to p_
+    if (inter_info2.inter_idx0 == -1) {
+        res.points.push_back(inter_info.inter_p);
+    }
+    else {
+        std::vector<Point> path;
+        auto [path1, len1] = calc_path_len(avoid_points, inter_info2, inter_info, true);
+        auto [path2, len2] = calc_path_len(avoid_points, inter_info2, inter_info, false);
+        path = len1 < len2 ? path1 : path2;
+        for (size_t i = 0; i < path.size(); i++) {
+            res.points.push_back(path[i]);
+        }
+    }
+    res.points.push_back(end_pos);
+    return res;
 }
 
 // This function postprocesses gcode_original, rotates and moves all G1 extrusions and returns resulting gcode
@@ -3212,6 +3314,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                                                             *print.wipe_tower_data().final_purge.get(),
                                                             print.wipe_tower_data().depth,
                                                             print.wipe_tower_data().bbx));
+                m_wipe_tower->set_wipe_tower_bbx(print.get_wipe_tower_bbx());
+                m_wipe_tower->set_rib_offset(print.get_rib_offset());
                 // BBS
                 file.write(m_writer.travel_to_z(initial_layer_print_height + m_config.z_offset.value, "Move to the first layer height"));
 

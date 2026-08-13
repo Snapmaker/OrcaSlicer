@@ -415,96 +415,6 @@ void GLVolume::render()
     simple_render(shader, model_objects, colors);
 }
 
-// BBS: add outline related logic
-void GLVolume::render_with_outline(const GUI::Size& cnv_size)
-{
-    if (!is_active)
-        return;
-
-    GLShaderProgram* shader = GUI::wxGetApp().get_current_shader();
-    if (shader == nullptr)
-        return;
-
-    ModelObjectPtrs&       model_objects = GUI::wxGetApp().model().objects;
-    std::vector<ColorRGBA> colors        = get_extruders_colors();
-
-    const GUI::OpenGLManager::EFramebufferType framebuffers_type = GUI::OpenGLManager::get_framebuffers_type();
-    if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Unknown) {
-        // No supported, degrade to normal rendering
-        simple_render(shader, model_objects, colors);
-        return;
-    }
-
-    // 1st. render pass, render the model into a separate render target that has only depth buffer
-    GLuint depth_fbo = 0;
-    GLuint depth_tex = 0;
-    if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Arb) {
-        glsafe(::glGenFramebuffers(1, &depth_fbo));
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, depth_fbo));
-
-        glActiveTexture(GL_TEXTURE0);
-        glsafe(::glGenTextures(1, &depth_tex));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, depth_tex));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, cnv_size.get_width(), cnv_size.get_height(), 0, GL_DEPTH_COMPONENT,
-                              GL_FLOAT, nullptr));
-
-        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_tex, 0));
-    } else {
-        glsafe(::glGenFramebuffersEXT(1, &depth_fbo));
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, depth_fbo));
-
-        glActiveTexture(GL_TEXTURE0);
-        glsafe(::glGenTextures(1, &depth_tex));
-        glsafe(::glBindTexture(GL_TEXTURE_2D, depth_tex));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-        glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-        glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, cnv_size.get_width(), cnv_size.get_height(), 0, GL_DEPTH_COMPONENT,
-                              GL_FLOAT, nullptr));
-
-        glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_TEXTURE_2D, depth_tex, 0));
-    }
-    glsafe(::glClear(GL_DEPTH_BUFFER_BIT));
-    if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-        model.render();
-    else
-        model.render(this->tverts_range);
-    glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
-
-    // 2nd. render pass, just a normal render with the depth buffer passed as a texture
-    if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Arb) {
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
-    } else if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Ext) {
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0));
-    }
-    shader->set_uniform("is_outline", true);
-    shader->set_uniform("screen_size", Vec2f{cnv_size.get_width(), cnv_size.get_height()});
-    glActiveTexture(GL_TEXTURE0);
-    glsafe(::glBindTexture(GL_TEXTURE_2D, depth_tex));
-    shader->set_uniform("depth_tex", 0);
-    simple_render(shader, model_objects, colors);
-
-    // Some clean up to do
-    glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
-    shader->set_uniform("is_outline", false);
-    if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Arb) {
-        glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
-        if (depth_fbo != 0)
-            glsafe(::glDeleteFramebuffers(1, &depth_fbo));
-    } else if (framebuffers_type == GUI::OpenGLManager::EFramebufferType::Ext) {
-        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0));
-        if (depth_fbo != 0)
-            glsafe(::glDeleteFramebuffersEXT(1, &depth_fbo));
-    }
-    if (depth_tex != 0)
-        glsafe(::glDeleteTextures(1, &depth_tex));
-}
-
 // BBS add render for simple case
 void GLVolume::simple_render(GLShaderProgram*        shader,
                              ModelObjectPtrs&        model_objects,
@@ -875,11 +785,9 @@ int GLVolumeCollection::get_selection_support_threshold_angle(bool& enable_suppo
     return support_threshold_angle;
 }
 
-// BBS: add outline drawing logic
 void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                                 bool                                 disable_cullface,
                                 const GUI::Camera&                   camera,
-                                const GUI::Size&                     cnv_size,
                                 std::function<bool(const GLVolume&)> filter_func,
                                 bool                                 partly_inside_enable) const
 {
@@ -948,10 +856,6 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         shader->set_uniform("color_clip_plane", m_color_clip_plane);
         shader->set_uniform("uniform_color_clip_plane_1", m_color_clip_plane_colors[0]);
         shader->set_uniform("uniform_color_clip_plane_2", m_color_clip_plane_colors[1]);
-        // BOOST_LOG_TRIVIAL(info) << boost::format("set uniform_color to {%1%, %2%, %3%, %4%}, with_outline=%5%, selected %6%")
-        //     %volume.first->render_color[0]%volume.first->render_color[1]%volume.first->render_color[2]%volume.first->render_color[3]
-        //     %with_outline%volume.first->selected;
-
         // BBS set print_volume to render volume
         // shader->set_uniform("print_volume.type", static_cast<int>(m_render_volume.type));
         // shader->set_uniform("print_volume.xy_data", m_render_volume.data);
@@ -995,11 +899,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) *
                                             model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
         shader->set_uniform("view_normal_matrix", view_normal_matrix);
-        // BBS: add outline related logic
-        if (volume.first->selected && GUI::wxGetApp().show_outline())
-            volume.first->render_with_outline(cnv_size);
-        else
-            volume.first->render();
+        volume.first->render();
 
 #if ENABLE_ENVIRONMENT_MAP
         if (use_environment_texture)

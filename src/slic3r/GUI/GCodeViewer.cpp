@@ -928,9 +928,68 @@ std::vector<int> GCodeViewer::get_plater_extruder()
     return m_plater_extruder;
 }
 
+// Extracts layer z-values, extruder ids, extrusion roles, and plater extruder
+// ids from GCodeProcessorResult moves. Shared by the skip_toolpaths path in
+// load() and by load_toolpaths(). Both call sites rely on this for layer
+// slider, extruder legend, and role filtering.
+void GCodeViewer::extract_layer_metadata(const GCodeProcessorResult& gcode_result)
+{
+    m_layers.reset();
+    m_extruder_ids.clear();
+    m_roles.clear();
+
+    size_t last_travel_s_id = 0;
+    size_t seams_count      = 0;
+    for (size_t i = 0; i < m_moves_count; ++i) {
+        const GCodeProcessorResult::MoveVertex& move = gcode_result.moves[i];
+        if (move.type == EMoveType::Seam)
+            ++seams_count;
+
+        size_t move_id = i - seams_count;
+
+        if (move.type == EMoveType::Extrude) {
+            const double* last_z = m_layers.empty() ? nullptr : &m_layers.get_zs().back();
+            const double  z      = static_cast<double>(move.position.z());
+            if (last_z == nullptr || z < *last_z - EPSILON || *last_z + EPSILON < z)
+                m_layers.append(z, { last_travel_s_id, move_id });
+            else
+                m_layers.get_endpoints().back().last = move_id;
+            m_extruder_ids.emplace_back(move.extruder_id);
+            if (i > 0)
+                m_roles.emplace_back(move.extrusion_role);
+        } else if (move.type == EMoveType::Travel) {
+            if (move_id - last_travel_s_id > 1 && !m_layers.empty())
+                m_layers.get_endpoints().back().last = move_id;
+            last_travel_s_id = move_id;
+        }
+    }
+
+    sort_remove_duplicates(m_roles);
+    m_roles.shrink_to_fit();
+    sort_remove_duplicates(m_extruder_ids);
+    m_extruder_ids.shrink_to_fit();
+
+    m_plater_extruder.clear();
+    for (auto mid : m_extruder_ids) {
+        int eid = static_cast<int>(mid);
+        m_plater_extruder.push_back(++eid);
+    }
+
+    // replace layers for spiral vase mode
+    if (!gcode_result.spiral_vase_layers.empty()) {
+        m_layers.reset();
+        for (const auto& layer : gcode_result.spiral_vase_layers)
+            m_layers.append(layer.first, { layer.second.first, layer.second.second });
+    }
+
+    if (!m_layers.empty())
+        m_layers_z_range = { 0, static_cast<unsigned int>(m_layers.size() - 1) };
+}
+
 //BBS: always load shell at preview
 void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& print, const BuildVolume& build_volume,
-                const std::vector<BoundingBoxf3>& exclude_bounding_box, ConfigOptionMode mode, bool only_gcode)
+                const std::vector<BoundingBoxf3>& exclude_bounding_box, ConfigOptionMode mode, bool only_gcode,
+                bool skip_toolpaths)
 {
     // avoid processing if called with the same gcode_result
     if (m_last_result_id == gcode_result.id) {
@@ -939,14 +998,14 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
         return;
     }
 
-    //BBS: add logs
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": gcode result %1%, new id %2%, gcode file %3% ") % (&gcode_result) % m_last_result_id % gcode_result.filename;
+   //BBS: add logs
+  BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": gcode result %1%, new id %2%, gcode file %3% ") % (&gcode_result) % m_last_result_id % gcode_result.filename;
 
-    // release gpu memory, if used
-    reset();
+   // release gpu memory, if used
+   reset();
 
-    //BBS: add mutex for protection of gcode result
-    gcode_result.lock();
+   //BBS: add mutex for protection of gcode result
+   gcode_result.lock();
     //BBS: add safe check
     if (gcode_result.moves.size() == 0) {
         //result cleaned before slicing ,should return here
@@ -969,7 +1028,56 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 
     m_max_print_height = gcode_result.printable_height;
 
-    load_toolpaths(gcode_result, build_volume, exclude_bounding_box);
+    // When skip_toolpaths is set (user confirmed memory warning), build layer metadata
+    // via Z-scan but skip GPU vertex buffers entirely to avoid OOM.
+    if (skip_toolpaths) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": skip_toolpaths=true, building layers only (no GPU vertex buffers), moves=%1%") % gcode_result.moves.size() << log_memory_info(true);
+        m_moves_count = gcode_result.moves.size();
+        m_extruders_count = gcode_result.extruders_count;
+
+        // build sequential view gcode_ids and paths bounding box (skip-specific;
+        // load_toolpaths builds these in separate passes during vertex extraction)
+        for (size_t i = 0; i < m_moves_count; ++i) {
+            const GCodeProcessorResult::MoveVertex& move = gcode_result.moves[i];
+            if (move.type != EMoveType::Seam)
+                m_sequential_view.gcode_ids.push_back(move.gcode_id);
+            if (move.type == EMoveType::Extrude && move.extrusion_role != erCustom
+                && move.width != 0.0f && move.height != 0.0f)
+                m_paths_bounding_box.merge(move.position.cast<double>());
+        }
+
+        // shared layer/extruder/role metadata extraction (same as load_toolpaths)
+        extract_layer_metadata(gcode_result);
+
+        // set bounding box for camera framing
+        if (m_paths_bounding_box.defined) {
+            m_max_bounding_box = m_paths_bounding_box;
+            m_max_bounding_box.merge(m_paths_bounding_box.max + m_sequential_view.marker.get_bounding_box().size().z() * Vec3d::UnitZ());
+            // skip all_paths_inside() here: it iterates all moves again for
+            // circular / convex beds, adding page faults. m_contained_in_bed
+            // defaults to true (from reset), so no false warning is shown.
+        }
+
+        // initialize tool colors so render_legend() does not access an empty vector.
+        // refresh() will be skipped by its guard, so colors must be set up here.
+        if (!gcode_result.extruder_colors.empty())
+            decode_colors(gcode_result.extruder_colors, m_tools.m_tool_colors);
+        m_tools.m_tool_visibles.assign(m_tools.m_tool_colors.size(), true);
+        for (size_t ci = 0; ci < m_tools.m_tool_colors.size(); ++ci)
+            m_tools.m_tool_colors[ci] = adjust_color_for_rendering(m_tools.m_tool_colors[ci]);
+        {
+            ColorRGBA default_color;
+            decode_color("#FF8000", default_color);
+            while (m_tools.m_tool_colors.size() < std::max(size_t(1), gcode_result.extruders_count)) {
+                m_tools.m_tool_colors.push_back(default_color);
+                m_tools.m_tool_visibles.push_back(true);
+            }
+        }
+        // no GPU vertex buffers were built, so there is nothing to render as toolpath
+        m_no_render_path = true;
+    } else {
+        load_toolpaths(gcode_result, build_volume, exclude_bounding_box);
+    }
 
     //BBS: add mutex for protection of gcode result
     if (m_layers.empty()) {
@@ -1074,7 +1182,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     //BBS: add mutex for protection of gcode result
     gcode_result.unlock();
     //BBS: add logs
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, m_buffers size %1%!")%m_buffers.size();
+   BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, m_buffers size %1%!")%m_buffers.size();
 }
 
 void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors)
@@ -1097,6 +1205,14 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
     //BBS: add mutex for protection of gcode result
     if (m_moves_count == 0) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": gcode result m_moves_count is 0, return directly!");
+        gcode_result.unlock();
+        return;
+    }
+
+    // If load() took the Z-scan path (skip_toolpaths), m_no_render_path is true.
+    // Skip all GPU rendering work here to avoid OOM.
+    if (m_no_render_path) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": m_no_render_path is set, skipping toolpath rendering (no GPU buffers were built)";
         gcode_result.unlock();
         return;
     }
@@ -1235,6 +1351,7 @@ void GCodeViewer::reset()
     m_statistics.reset_all();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
     m_contained_in_bed = true;
+    m_no_render_path = false;
 }
 
 //BBS: GUI refactor: add canvas width and height
@@ -2332,10 +2449,10 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
     m_moves_count = gcode_result.moves.size();
-    if (m_moves_count == 0)
-        return;
+   if (m_moves_count == 0)
+       return;
 
-    m_extruders_count = gcode_result.extruders_count;
+   m_extruders_count = gcode_result.extruders_count;
 
     unsigned int progress_count = 0;
     static const unsigned int progress_threshold = 1000;
@@ -2814,9 +2931,9 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     auto smooth_vertices_time = std::chrono::high_resolution_clock::now();
     m_statistics.smooth_vertices = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - load_vertices_time).count();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
-    log_memory_usage("Loaded G-code generated vertex buffers ", vertices, indices);
+   log_memory_usage("Loaded G-code generated vertex buffers ", vertices, indices);
 
-    // dismiss vertices data, no more needed
+   // dismiss vertices data, no more needed
     std::vector<MultiVertexBuffer>().swap(vertices);
     std::vector<InstanceBuffer>().swap(instances);
     std::vector<InstanceIdBuffer>().swap(instances_ids);
@@ -2993,69 +3110,13 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     m_statistics.load_indices = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - smooth_vertices_time).count();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
-    log_memory_usage("Loaded G-code generated indices buffers ", vertices, indices);
+   log_memory_usage("Loaded G-code generated indices buffers ", vertices, indices);
 
-    // dismiss indices data, no more needed
+   // dismiss indices data, no more needed
     std::vector<MultiIndexBuffer>().swap(indices);
 
     // layers zs / roles / extruder ids -> extract from result
-    size_t last_travel_s_id = 0;
-    seams_count = 0;
-    for (size_t i = 0; i < m_moves_count; ++i) {
-        const GCodeProcessorResult::MoveVertex& move = gcode_result.moves[i];
-        if (move.type == EMoveType::Seam)
-            ++seams_count;
-
-        size_t move_id = i - seams_count;
-
-        if (move.type == EMoveType::Extrude) {
-            // layers zs
-            const double* const last_z = m_layers.empty() ? nullptr : &m_layers.get_zs().back();
-            const double z = static_cast<double>(move.position.z());
-            if (last_z == nullptr || z < *last_z - EPSILON || *last_z + EPSILON < z)
-                m_layers.append(z, { last_travel_s_id, move_id });
-            else
-                m_layers.get_endpoints().back().last = move_id;
-            // extruder ids
-            m_extruder_ids.emplace_back(move.extruder_id);
-            // roles
-            if (i > 0)
-                m_roles.emplace_back(move.extrusion_role);
-        }
-        else if (move.type == EMoveType::Travel) {
-            if (move_id - last_travel_s_id > 1 && !m_layers.empty())
-                m_layers.get_endpoints().back().last = move_id;
-
-            last_travel_s_id = move_id;
-        }
-    }
-
-    // roles -> remove duplicates
-    sort_remove_duplicates(m_roles);
-    m_roles.shrink_to_fit();
-
-    // extruder ids -> remove duplicates
-    sort_remove_duplicates(m_extruder_ids);
-    m_extruder_ids.shrink_to_fit();
-
-    std::vector<int> plater_extruder;
-	for (auto mid : m_extruder_ids){
-        int eid = mid;
-        plater_extruder.push_back(++eid);
-	}
-    m_plater_extruder = plater_extruder;
-
-    // replace layers for spiral vase mode
-    if (!gcode_result.spiral_vase_layers.empty()) {
-        m_layers.reset();
-        for (const auto& layer : gcode_result.spiral_vase_layers) {
-            m_layers.append(layer.first, { layer.second.first, layer.second.second });
-        }
-    }
-
-    // set layers z range
-    if (!m_layers.empty())
-        m_layers_z_range = { 0, static_cast<unsigned int>(m_layers.size() - 1) };
+    extract_layer_metadata(gcode_result);
 
     // change color of paths whose layer contains option points
     if (!options_zs.empty()) {
@@ -4040,7 +4101,7 @@ void GCodeViewer::render_shells(int canvas_width, int canvas_height)
     const Camera& camera = wxGetApp().plater()->get_camera();
     shader->set_uniform("z_far", camera.get_far_z());
     shader->set_uniform("z_near", camera.get_near_z());
-    m_shells.volumes.render(GLVolumeCollection::ERenderType::Transparent, false, camera.get_view_matrix(), camera.get_projection_matrix(), {canvas_width, canvas_height});
+    m_shells.volumes.render(GLVolumeCollection::ERenderType::Transparent, false, camera, {canvas_width, canvas_height});
     shader->set_uniform("emission_factor", 0.0f);
     shader->stop_using();
 

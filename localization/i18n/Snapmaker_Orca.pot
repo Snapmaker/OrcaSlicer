@@ -7610,9 +7610,15 @@ msgstr ""
 msgid "Cool Plate (SuperTack)"
 msgstr ""
 
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+
+msgid "Cool Steel Plate"
+msgstr ""
+
 msgid ""
-"Bed temperature when the Cool Plate SuperTack is installed. A value of 0 "
-"means the filament does not support printing on the Cool Plate SuperTack."
+"Bed temperature when the Cool Steel Plate is installed. A value of 0 "
+"means the filament does not support printing on the Cool Steel Plate."
 msgstr ""
 
 msgid "Cool Plate"
@@ -9324,7 +9330,12 @@ msgstr ""
 
 msgid ""
 "Bed temperature for layers except the initial one. A value of 0 means the "
-"filament does not support printing on the Cool Plate SuperTack."
+"filament does not support printing on the Cool Steel Plate."
+msgstr ""
+
+msgid ""
+"Bed temperature for layers except the initial one. A value of 0 means the "
+"filament does not support printing on this plate."
 msgstr ""
 
 msgid ""
@@ -9360,7 +9371,12 @@ msgstr ""
 
 msgid ""
 "Bed temperature of the initial layer. A value of 0 means the filament does "
-"not support printing on the Cool Plate SuperTack."
+"not support printing on the Cool Steel Plate."
+msgstr ""
+
+msgid ""
+"Bed temperature of the initial layer. A value of 0 means the filament does "
+"not support printing on this plate."
 msgstr ""
 
 msgid ""

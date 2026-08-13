@@ -95,7 +95,6 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
         wxLogError("Could not init m_browser");
         return;
     }
-    m_browser->Hide();
     SetSizer(topsizer);
 
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
@@ -603,7 +602,6 @@ void WebViewPanel::OnNavigationRequest(wxWebViewEvent& evt)
     */
 void WebViewPanel::OnNavigationComplete(wxWebViewEvent& evt)
 {
-    m_browser->Show();
     Layout();
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << ": " << evt.GetTarget().ToUTF8().data();
     if (wxGetApp().get_mode() == comDevelop)

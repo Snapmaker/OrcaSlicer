@@ -1,6 +1,6 @@
 {
     "type": "filament",
-    "name": "Generic ASA",
+    "name": "Generic ASA @U1 0.4 nozzle",
     "inherits": "Generic ASA @base",
     "from": "system",
     "setting_id": "GFSB98",

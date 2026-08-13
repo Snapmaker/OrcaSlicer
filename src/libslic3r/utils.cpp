@@ -1483,6 +1483,68 @@ size_t total_physical_memory()
 #endif
 }
 
+// Returns the more constraining of physical-RAM-available and commit-available.
+// Physical RAM exhaustion  -> page-fault thrashing (unresponsive hang).
+// Commit exhaustion        -> malloc failure (OOM crash).
+// Taking the min catches both failure modes with a single threshold.
+size_t get_available_physical_memory()
+{
+#ifdef _WIN32
+    // Physical RAM available (predicts page-fault thrashing).
+    size_t phys_avail = 0;
+    {
+        MEMORYSTATUSEX memInfo;
+        memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo))
+            phys_avail = static_cast<size_t>(memInfo.ullAvailPhys);
+    }
+    // System commit available (predicts OOM crash).
+    size_t commit_avail = 0;
+    {
+        PERFORMANCE_INFORMATION perfInfo;
+        perfInfo.cb = sizeof(perfInfo);
+        if (GetPerformanceInfo(&perfInfo, sizeof(perfInfo)) && perfInfo.PageSize > 0) {
+            if (perfInfo.CommitLimit > perfInfo.CommitTotal)
+                commit_avail = static_cast<size_t>(perfInfo.CommitLimit - perfInfo.CommitTotal)
+                             * static_cast<size_t>(perfInfo.PageSize);
+        }
+    }
+    // Return whichever is more constraining.
+    if (phys_avail == 0) return commit_avail;
+    if (commit_avail == 0) return phys_avail;
+    return phys_avail < commit_avail ? phys_avail : commit_avail;
+#elif defined(__linux__)
+	// Prefer /proc/meminfo MemAvailable (accounts for reclaimable cache).
+	std::ifstream f("/proc/meminfo");
+	if (f) {
+		std::string line;
+		while (std::getline(f, line)) {
+			if (line.rfind("MemAvailable:", 0) == 0) {
+				size_t kb = 0;
+				if (sscanf(line.c_str() + 13, "%zu", &kb) == 1)
+					return kb * 1024;
+			}
+		}
+	}
+	// Fallback: _SC_AVPHYS_PAGES
+	long avail_pages = sysconf(_SC_AVPHYS_PAGES);
+	long page_size   = sysconf(_SC_PAGE_SIZE);
+	return (avail_pages > 0 && page_size > 0) ? static_cast<size_t>(avail_pages) * static_cast<size_t>(page_size) : 0;
+#elif defined(__APPLE__)
+	vm_size_t page_size = 0;
+	mach_port_t host_port = mach_host_self();
+	if (host_page_size(host_port, &page_size) != KERN_SUCCESS)
+		return 0;
+	vm_statistics64_data_t vm_stats;
+	mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
+	if (host_statistics64(host_port, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
+		return 0;
+	return static_cast<size_t>(vm_stats.free_count) * static_cast<size_t>(page_size);
+#else
+	return 0;
+#endif
+}
+
 bool makedir(const std::string path) {
 	// if dir doesn't exist, make it
 #ifdef WIN32

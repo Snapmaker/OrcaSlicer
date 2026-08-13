@@ -103,21 +103,13 @@ namespace GUI {
 
 namespace {
 
-constexpr float SELECTION_FILL_ALPHA = 0.4f;
 constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
-constexpr float SELECTION_OUTLINE_EXCLUSION_LOW = 0.25f;
-constexpr float SELECTION_OUTLINE_EXCLUSION_HIGH = 0.75f;
-constexpr float SELECTION_EDGE_STRENGTH = 5.0f;
-constexpr float SELECTION_EDGE_GLOW = 1.0f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
 constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
 constexpr double STENCIL_OUTLINE_SCALE = 1.02;
-const ColorRGB SELECTION_OUTLINE_COLOR{
-    245.0f / 255.0f,
-    158.0f / 255.0f,
-    11.0f / 255.0f
-};
+const ColorRGB SELECTION_OUTLINE_COLOR = ColorRGB::WHITE();
+const ColorRGB ASSEMBLE_VIEW_SELECTION_OUTLINE_COLOR{ 0.76f, 0.76f, 0.16f };
 
 /** @brief Persistent OpenGL states changed by the selection Mask Pass. */
 struct MaskRenderState
@@ -2013,12 +2005,9 @@ void GLCanvas3D::CompositeSelectionHighlight()
     shader->set_uniform("mask_texture", 0);
     shader->set_uniform("edge_texture", 1);
     shader->set_uniform("glow_texture", 2);
-    shader->set_uniform("fill_alpha", SELECTION_FILL_ALPHA);
-    shader->set_uniform("outline_color", SELECTION_OUTLINE_COLOR);
-    shader->set_uniform("outline_exclusion_low", SELECTION_OUTLINE_EXCLUSION_LOW);
-    shader->set_uniform("outline_exclusion_high", SELECTION_OUTLINE_EXCLUSION_HIGH);
-    shader->set_uniform("edge_strength", SELECTION_EDGE_STRENGTH);
-    shader->set_uniform("edge_glow", SELECTION_EDGE_GLOW);
+    const ColorRGB outlineColor = m_canvas_type == ECanvasType::CanvasAssembleView ?
+                                      ASSEMBLE_VIEW_SELECTION_OUTLINE_COLOR : SELECTION_OUTLINE_COLOR;
+    shader->set_uniform("outline_color", outlineColor);
 
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.maskTexture));
@@ -2056,7 +2045,9 @@ void GLCanvas3D::RenderSelectionStencilFallback()
     glsafe(::glDisable(GL_CULL_FACE));
 
     shader->start_using();
-    shader->set_uniform("output_color", ColorRGB::WHITE());
+    const ColorRGB outlineColor = m_canvas_type == ECanvasType::CanvasAssembleView ?
+                                      ASSEMBLE_VIEW_SELECTION_OUTLINE_COLOR : SELECTION_OUTLINE_COLOR;
+    shader->set_uniform("output_color", outlineColor);
 
     const Camera& camera = wxGetApp().plater()->get_camera();
     const Transform3d& viewMatrix = camera.get_view_matrix();

@@ -4169,6 +4169,13 @@ void SSWCP_MachineOption_Instance::sw_exception_query()
 
 // SSWCP_MachineConnect_Instance
 void SSWCP_MachineConnect_Instance::process() {
+    if (m_cmd == "sw_SubscribeForegroundChange") {
+        if (m_event_id != "") {
+            m_header["event_id"] = m_event_id;
+            sw_SubscribeForegroundChange();
+        }
+        return;
+    }
     if (m_event_id != "") {
         json header;
         send_to_js();
@@ -4188,8 +4195,6 @@ void SSWCP_MachineConnect_Instance::process() {
         sw_connect_other_device();
     } else if (m_cmd == "sw_GetPincode") {
         sw_get_pin_code();
-    } else if (m_cmd == "sw_SubscribeForegroundChange") {
-        sw_SubscribeForegroundChange();
     }
     else {
         handle_general_fail();

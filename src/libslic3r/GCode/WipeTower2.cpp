@@ -4204,7 +4204,10 @@ Polygon WipeTower2::generate_support_cone_wall(
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
     writer.generate_path(result_wall, feedrate, retract_length, retract_speed, m_used_fillet);
-
+    if (m_cur_layer_id == 0) {
+        BoundingBox bbox = get_extents(result_wall);
+        m_rib_offset = Vec2f(-unscaled<float>(bbox.min.x()), -unscaled<float>(bbox.min.y()));
+    }
     return insert_skip_polygon;
 }
 

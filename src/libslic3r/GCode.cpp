@@ -1288,9 +1288,9 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                     gcode_out += oss.str();
                 }
             }
-            old_pos = Vec2f{ -1000.1f, -1000.1f };
+            /*old_pos = Vec2f{ -1000.1f, -1000.1f };
             pos = tcr.tool_change_start_pos;
-            transformed_pos = pos;
+            transformed_pos = pos;*/
         }
     }
     return gcode_out;

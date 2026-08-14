@@ -240,7 +240,7 @@ private:
     bool m_enable_tower_interface_cooldown_during_tower = false;
     size_t m_cur_layer_id;
     bool m_use_rib_wall;
-    Vec2f m_rib_offset;
+    Vec2f m_rib_offset{0.f,0.f};
     int m_wall_filament;
     WipeTower::NozzleChangeResult m_nozzle_change_result;
     Polygons m_shared_print_bed;

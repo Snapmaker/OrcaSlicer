@@ -2966,11 +2966,18 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
     WipeTower::box_coordinates wt_box(Vec2f(0.f, 0.f), m_wipe_tower_width, wipe_tower_depth);
     wt_box = align_perimeter(wt_box);
 
+    // brim chamfer
+    float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
     Polygon outer_wall;
     if (m_wall_type == (int)wtwCone) {
-        const float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
+        WipeTower::box_coordinates wt_cone_box(Vec2f(0.f, (m_current_shape == SHAPE_REVERSED ? m_layer_info->toolchanges_depth() : 0.f)),
+            m_wipe_tower_width, m_layer_info->depth + m_perimeter_width);
         bool infill_cone = first_layer && m_wipe_tower_width > 2 * spacing && m_wipe_tower_depth > 2 * spacing;
-        outer_wall = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing);
+        std::vector<Vec2f> skip_points;
+        if (m_cur_layer_id < m_wall_skip_points.size()) {
+            skip_points = m_wall_skip_points[m_cur_layer_id];
+        }
+        outer_wall = generate_support_cone_wall(writer, wt_cone_box, feedrate, infill_cone, spacing, skip_points);
     }
     else {
         outer_wall = generate_support_wall_new(writer, wt_box, feedrate, first_layer, m_use_rib_wall, extrude_perimeter, m_use_gap_wall);
@@ -2981,8 +2988,6 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
         m_outer_wall[m_z_pos].push_back(shift_polyline);
     }
 
-    // brim chamfer
-    float spacing = m_perimeter_width - m_layer_height * float(1. - M_PI_4);
     // How many perimeters shall the brim have?
     int loops_num = (m_wipe_tower_brim_width + spacing / 2.f) / spacing;
     const float max_chamfer_width = 3.f;
@@ -3019,10 +3024,9 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
     else {
         // Now prepare future wipe. box contains rectangle that was extruded last (ccw).
         Vec2f target = (writer.pos() == wt_box.ld ? wt_box.rd : (writer.pos() == wt_box.rd ? wt_box.ru : (writer.pos() == wt_box.ru ? wt_box.lu : wt_box.ld)));
-
         // BBS: add wipe_path for this case: only with finish rectangle
-        if (finish_rect_wipe_path.size() == 2 && finish_rect_wipe_path[0] == writer.pos()) target = finish_rect_wipe_path[1];
-
+        if (finish_rect_wipe_path.size() == 2 && finish_rect_wipe_path[0] == writer.pos()) 
+            target = finish_rect_wipe_path[1];
         writer.add_wipe_point(writer.pos()).add_wipe_point(target);
     }
     writer.append(";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Wipe_Tower_End) + "\n");

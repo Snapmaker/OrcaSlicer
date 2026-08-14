@@ -31,10 +31,25 @@ public:
 		float					n_sin;
 	};
 
+	// A curved edge constraint: the bend of the surface across an edge shared by two facets,
+	// expressed as the normal curvature of the surface in the vertical (slicing) direction.
+	struct EdgeZ {
+		std::pair<float, float> z_span;
+		// Normal curvature of the surface in the vertical (slicing) direction at this edge,
+		// an estimate of 1/R where R is the radius of curvature of the vertical section
+		// (the curve of the surface intersected by the vertical plane spanned by Z and the
+		// surface normal). Discrete estimate:
+		// kappa_v = dihedral_angle * horizontal_component(edge_direction) / centroid_distance.
+		float					kappa_v;
+	};
+
 protected:
 	SlicingParameters 		m_slicing_params;
 
 	std::vector<FaceZ>		m_faces;
+	std::vector<EdgeZ>		m_edges;
+	// Cursor into m_edges, advancing monotonically with the increasing print_z.
+	size_t					m_current_edge { 0 };
 };
 
 }; // namespace Slic3r

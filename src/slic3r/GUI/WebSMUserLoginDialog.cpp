@@ -184,7 +184,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
         std::string token;
         
         start += std::string("token=").size(); // 跳过"token="的长度
-        size_t end = tmpUrl.find("?", start);
+        size_t end = tmpUrl.find_first_of("?&#", start);
         if (end != std::string::npos) {
             token = tmpUrl.substr(start, end - start).ToStdString();
         } else {

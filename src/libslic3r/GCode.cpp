@@ -838,12 +838,14 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     bool has_nozzle_change = !tcr.nozzle_change_result.gcode.empty()
         && (gcodegen.config().nozzle_diameter.size() > 1);
 
-    auto type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+    ZHopType type = ZHopType::zhtAuto;
+    if (gcodegen.m_writer.extruder() != nullptr) {
+        type = ZHopType(gcodegen.m_config.z_hop_types.get_at(gcodegen.m_writer.extruder()->id()));
+    }
     if (type == ZHopType::zhtAuto) {
         type = ZHopType::zhtSpiral;
     }
     auto auto_lift_type = gcodegen.to_lift_type(type);
-    //std::string toolchange_retract_str = gcodegen.retract_new(tcr.is_tool_change && !has_nozzle_change, false, auto_lift_type, true);
     std::string toolchange_retract_str = gcodegen.retract(tcr.is_tool_change && !has_nozzle_change, false, auto_lift_type);
     check_add_eol(toolchange_retract_str);
 
@@ -859,7 +861,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         else {
             start_pos_str = gcodegen.travel_to(start_pos, erMixed, "Move to nozzle change start pos");
         }
-        //start_pos_str = gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(start_pos), "Move to nozzle change start pos");
         check_add_eol(start_pos_str);
         nozzle_change_gcode_trans += start_pos_str;
         nozzle_change_gcode_trans += gcodegen.unretract();
@@ -1287,9 +1288,9 @@ std::string WipeTowerIntegration::post_process_wipe_tower_moves(const WipeTower:
                     gcode_out += oss.str();
                 }
             }
-            /*old_pos = Vec2f{ -1000.1f, -1000.1f };
+            old_pos = Vec2f{ -1000.1f, -1000.1f };
             pos = tcr.tool_change_start_pos;
-            transformed_pos = pos;*/
+            transformed_pos = pos;
         }
     }
     return gcode_out;

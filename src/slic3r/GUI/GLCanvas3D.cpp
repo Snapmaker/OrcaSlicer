@@ -121,9 +121,10 @@ struct MaskRenderState
     std::array<GLfloat, 4> clearColor{ 0.0f, 0.0f, 0.0f, 0.0f };
     GLint frontFace{ GL_CCW };
     GLint cullFaceMode{ GL_BACK };
+    GLint activeTexture{ GL_TEXTURE0 };
+    GLint texture0Binding2D{ 0 };
     GLint currentProgram{ 0 };
     GLint drawFramebuffer{ 0 };
-    GLint readFramebuffer{ 0 };
     std::array<GLint, 4> viewport{ 0, 0, 0, 0 };
 };
 
@@ -142,19 +143,17 @@ MaskRenderState SaveMaskRenderState(OpenGLManager::EFramebufferType framebufferT
     glsafe(::glGetFloatv(GL_COLOR_CLEAR_VALUE, state.clearColor.data()));
     glsafe(::glGetIntegerv(GL_FRONT_FACE, &state.frontFace));
     glsafe(::glGetIntegerv(GL_CULL_FACE_MODE, &state.cullFaceMode));
+    glsafe(::glGetIntegerv(GL_ACTIVE_TEXTURE, &state.activeTexture));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &state.texture0Binding2D));
+    glsafe(::glActiveTexture(static_cast<GLenum>(state.activeTexture)));
     glsafe(::glGetIntegerv(GL_CURRENT_PROGRAM, &state.currentProgram));
     glsafe(::glGetIntegerv(GL_VIEWPORT, state.viewport.data()));
 
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-    {
         glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &state.drawFramebuffer));
-        glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &state.readFramebuffer));
-    }
     else if (framebufferType == OpenGLManager::EFramebufferType::Ext)
-    {
-        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT, &state.drawFramebuffer));
-        glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT, &state.readFramebuffer));
-    }
+        glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &state.drawFramebuffer));
 
     return state;
 }
@@ -181,17 +180,14 @@ void RestoreMaskRenderState(const MaskRenderState& state)
     glsafe(::glFrontFace(static_cast<GLenum>(state.frontFace)));
     glsafe(::glCullFace(static_cast<GLenum>(state.cullFaceMode)));
     glsafe(::glUseProgram(static_cast<GLuint>(state.currentProgram)));
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(state.texture0Binding2D)));
+    glsafe(::glActiveTexture(static_cast<GLenum>(state.activeTexture)));
 
     if (state.framebufferType == OpenGLManager::EFramebufferType::Arb)
-    {
         glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(state.drawFramebuffer)));
-        glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(state.readFramebuffer)));
-    }
     else if (state.framebufferType == OpenGLManager::EFramebufferType::Ext)
-    {
-        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(state.drawFramebuffer)));
-        glsafe(::glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, static_cast<GLuint>(state.readFramebuffer)));
-    }
+        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, static_cast<GLuint>(state.drawFramebuffer)));
 
     glsafe(::glViewport(state.viewport[0], state.viewport[1], state.viewport[2], state.viewport[3]));
 }
@@ -284,7 +280,7 @@ void BindSelectionHighlightDrawFramebuffer(OpenGLManager::EFramebufferType frame
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
         glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer));
     else if (framebufferType == OpenGLManager::EFramebufferType::Ext)
-        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, framebuffer));
+        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, framebuffer));
 }
 
 /**
@@ -1704,6 +1700,7 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
     const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
     GLint previousDrawFramebuffer = 0;
     GLint previousReadFramebuffer = 0;
+    GLint previousExtFramebuffer = 0;
     GLint previousTexture = 0;
     glsafe(::glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture));
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
@@ -1712,10 +1709,7 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
         glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer));
     }
     else if (framebufferType == OpenGLManager::EFramebufferType::Ext)
-    {
-        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT, &previousDrawFramebuffer));
-        glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING_EXT, &previousReadFramebuffer));
-    }
+        glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &previousExtFramebuffer));
     else
     {
         m_selectionFramebufferAvailable = false;
@@ -1754,10 +1748,7 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
         glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer)));
     }
     else
-    {
-        glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(previousDrawFramebuffer)));
-        glsafe(::glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, static_cast<GLuint>(previousReadFramebuffer)));
-    }
+        glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, static_cast<GLuint>(previousExtFramebuffer)));
 
     if (!framebufferComplete)
     {
@@ -1869,19 +1860,19 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     if (framebufferType == OpenGLManager::EFramebufferType::Unknown)
         return false;
 
-    GLint previousDrawFramebuffer = 0;
+    GLint previousFramebuffer = 0;
     std::array<GLint, 4> previousViewport{ 0, 0, 0, 0 };
     glsafe(::glGetIntegerv(GL_VIEWPORT, previousViewport.data()));
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer));
+        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer));
     else
-        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING_EXT, &previousDrawFramebuffer));
-    ScopeGuard stateGuard([framebufferType, previousDrawFramebuffer, previousViewport]()
+        glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &previousFramebuffer));
+    ScopeGuard stateGuard([framebufferType, previousFramebuffer, previousViewport]()
     {
         if (framebufferType == OpenGLManager::EFramebufferType::Arb)
-            glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer)));
+            glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer)));
         else
-            glsafe(::glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, static_cast<GLuint>(previousDrawFramebuffer)));
+            glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, static_cast<GLuint>(previousFramebuffer)));
 
         glsafe(::glViewport(previousViewport[0], previousViewport[1],
                             previousViewport[2], previousViewport[3]));

@@ -9,6 +9,7 @@
 #include <string_view>
 using namespace std::literals;
 
+#include <boost/log/trivial.hpp>
 #include <GL/glew.h>
 
 namespace Slic3r {
@@ -29,6 +30,16 @@ std::pair<bool, std::string> GLShadersManager::init()
         return true;
     };
 
+    auto appendOptionalShader = [&append_shader, &error](const std::string& name,
+                                                          const GLShaderProgram::ShaderFilenames& filenames) {
+        const size_t errorLength = error.size();
+        if (append_shader(name, filenames))
+            return;
+
+        error.erase(errorLength);
+        BOOST_LOG_TRIVIAL(warning) << "Selection highlight shader unavailable: " << name;
+    };
+
     assert(m_shaders.empty());
 
     bool valid = true;
@@ -39,7 +50,7 @@ std::pair<bool, std::string> GLShadersManager::init()
     // basic shader, used to render all what was previously rendered using the immediate mode
     valid &= append_shader("flat", { prefix + "flat.vs", prefix + "flat.fs" });
     // used to render selected geometry into the unified mask and stencil fallback
-    valid &= append_shader("selection_mask", { prefix + "flat.vs", prefix + "selection_mask.fs" });
+    appendOptionalShader("selection_mask", { prefix + "flat.vs", prefix + "selection_mask.fs" });
     // basic shader with plane clipping, used to render volumes in picking pass
     valid &= append_shader("flat_clip", { prefix + "flat_clip.vs", prefix + "flat_clip.fs" });
     // basic shader for textures, used to render textures
@@ -47,11 +58,11 @@ std::pair<bool, std::string> GLShadersManager::init()
     // used to render 3D scene background
     valid &= append_shader("background", { prefix + "background.vs", prefix + "background.fs" });
     // used to composite the selection fill and outline over the completed scene
-    valid &= append_shader("selection_composite", { prefix + "background.vs", prefix + "selection_composite.fs" });
+    appendOptionalShader("selection_composite", { prefix + "background.vs", prefix + "selection_composite.fs" });
     // used to extract the selection edge from the low-resolution selection mask
-    valid &= append_shader("selection_edge", { prefix + "background.vs", prefix + "selection_edge.fs" });
+    appendOptionalShader("selection_edge", { prefix + "background.vs", prefix + "selection_edge.fs" });
     // used to apply directional Gaussian blur to selection edge textures
-    valid &= append_shader("selection_gaussian", { prefix + "background.vs", prefix + "selection_gaussian.fs" });
+    appendOptionalShader("selection_gaussian", { prefix + "background.vs", prefix + "selection_gaussian.fs" });
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
     //used to render thumbnail

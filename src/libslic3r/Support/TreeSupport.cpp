@@ -2819,6 +2819,32 @@ void TreeSupport::drop_nodes()
                 unsupported_branch_leaves.push_front({ layer_nr, p_node });
                 continue;
             }
+            // Port of Bambu Studio: a node that can no longer reach the build plate and is
+            // allowed to rest on the model must stop growing downward here. If the node
+            // center is already inside the (radius-shrunk) collision area it has landed;
+            // otherwise it is converted to a polygon overhang on the model surface.
+            // Without this guard such "wall-hugging orphan" nodes keep spawning children
+            // every layer. Their MST neighbour lines are all cut by the object contour, so
+            // they never converge, never merge, and grow into isolated slender trunks that
+            // run from the overhang down to the build plate.
+            if (!node.to_buildplate) {
+                auto overlap_with_circle = shrink_ex(get_collision(0, obj_layer_nr), scale_(node.radius));
+                if (!overlap_with_circle.empty() && is_inside_ex(overlap_with_circle, node.position)) {
+                    continue;
+                }
+                Polygon circle = make_circle(scale_(node.radius), 0.00789 * scale_(node.radius));
+                circle.translate(node.position);
+                ExPolygons area = avoid_object_remove_extra_small_parts(ExPolygon(circle), get_collision(0, obj_layer_nr));
+                if (!area.empty()) {
+                    p_node->overhang = area[0];
+                    if (area[0].area() < SQ(scale_(1.)) || (!node.parent->to_buildplate && !overlaps({node.overhang}, {node.parent->overhang}))) {
+                        p_node->valid        = false;
+                        p_node->is_processed = true;
+                        continue;
+                    }
+                } else
+                    continue;
+            }
             if (node.to_buildplate || parts.empty()) //It's outside, so make it go towards the build plate.
             {
                 nodes_per_part[0][node.position] = p_node;

@@ -60,5 +60,6 @@
         "4"
     ],
     "additional_cooling_fan_speed": ["100"],
-    "filament_z_hop_types": ["Slope Lift"]
+    "filament_z_hop_types": ["Slope Lift"],
+    "filament_type": ["PLA"]
 }

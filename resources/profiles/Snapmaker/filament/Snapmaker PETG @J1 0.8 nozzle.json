@@ -13,5 +13,6 @@
   ],
   "fan_min_speed": [
     "20"
-  ]
+  ],
+  "filament_type": ["PETG"]
 }

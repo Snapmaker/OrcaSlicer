@@ -9,6 +9,7 @@
 #include "GLToolbar.hpp"
 #include "Event.hpp"
 #include "Selection.hpp"
+#include "ThumbnailView.hpp"     // ThumbnailView enum (kept lightweight, separate from this header)
 #include "Gizmos/GLGizmosManager.hpp"
 #include "GUI_ObjectLayers.hpp"
 #include "GLSelectionRectangle.hpp"
@@ -899,17 +900,38 @@ public:
                                  bool                      use_top_view = false,
                                  bool                      for_picking  = false,
                                  bool                      ban_light    = false);
+    void render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                 const GLVolumeCollection &volumes,
+                                 std::vector<ColorRGBA>&   extruder_colors,
+                                 Camera::EType             camera_type,
+                                 bool                      use_top_view = false,
+                                 bool                      for_picking  = false,
+                                 bool                      ban_light    = false);
+    // New named-viewpoint overload (pure addition; existing overloads above are unchanged).
+    // The 8th param is ThumbnailView (scoped enum) vs the bool use_top_view of the overloads
+    // above — overload resolution picks this one only when a ThumbnailView is passed, so the
+    // ~21 existing call sites that pass bool/omit are unaffected.
+    // Note: this overload forces use_top_view=false internally, so ThumbnailView::Top routes
+    // through the named-view algorithm in render_thumbnail_internal, NOT the legacy
+    // use_top_view=true branch. See ThumbnailView.hpp for the framing implications.
+    void render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                 const GLVolumeCollection &volumes,
+                                 std::vector<ColorRGBA>&   extruder_colors,
+                                 Camera::EType             camera_type,
+                                 ThumbnailView             view,
+                                 bool                      for_picking  = false,
+                                 bool                      ban_light    = false);
     static void render_thumbnail_internal(ThumbnailData& thumbnail_data, const ThumbnailsParams& thumbnail_params, PartPlateList& partplate_list, ModelObjectPtrs& model_objects,
         const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
     // render thumbnail using an off-screen framebuffer
     static void render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
         PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
     // render thumbnail using an off-screen framebuffer when GLEW_EXT_framebuffer_object is supported
     static void render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
         PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
 
     //BBS use gcoder viewer render calibration thumbnails
     void render_calibration_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params);

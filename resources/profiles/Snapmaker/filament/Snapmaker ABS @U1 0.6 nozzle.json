@@ -39,5 +39,6 @@
   "slow_down_layer_time": ["12"],
   "textured_plate_temp": ["100"],
   "textured_plate_temp_initial_layer": ["100"],
-  "activate_air_filtration": ["1"]
+  "activate_air_filtration": ["1"],
+  "filament_type": ["ABS"]
 }

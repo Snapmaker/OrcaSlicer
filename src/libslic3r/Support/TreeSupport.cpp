@@ -3193,13 +3193,16 @@ void TreeSupport::drop_nodes()
                         movement = move_to_neighbor_center; // otherwise move to neighbor center first
                 }
 
-                if (node.is_sharp_tail && node.dist_mm_to_top < 3) {
+                // Port of Bambu 976b5062c: keep the movement computed above (the blend of
+                // neighbour convergence and the push away from the object) and only clamp
+                // its magnitude. The previous else-if chain discarded the convergence
+                // component whenever dist2_to_outer > 0 (the common case), so branches
+                // only ever moved away from the object and never toward their neighbours.
+                // Only sharp-tail nodes keep a fixed skin_direction for their first layers.
+                if (node.is_sharp_tail && node.dist_mm_to_top < 3 && node.skin_direction != Point(0, 0))
                     movement = normal(node.skin_direction, scale_(get_max_move_dist(&node)));
-                }
-                else if (dist2_to_outer > 0)
-                    movement = normal(direction_to_outer, scale_(get_max_move_dist(&node)));
-                else
-                    movement = normal(move_to_neighbor_center, scale_(get_max_move_dist(&node)));
+                if (vsize2_with_unscale(movement) > get_max_move_dist(&node, 2))
+                    movement = normal(movement, scale_(get_max_move_dist(&node)));
 
                 next_layer_vertex += movement;
 

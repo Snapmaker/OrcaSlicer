@@ -23,6 +23,7 @@ bool is_soft_disconnect_error(const mqtt::exception& e)
 // @param client_id: Unique identifier for this client
 // @param clean_session: Whether to start with a clean session
 MqttClient::MqttClient(const std::string& server_address, const std::string& client_id, const std::string& username, const std::string& password,  bool clean_session)
+try
     : server_address_(server_address)
     , client_id_(client_id)
     , client_(std::make_unique<mqtt::async_client>(server_address_, client_id_))
@@ -51,6 +52,9 @@ MqttClient::MqttClient(const std::string& server_address, const std::string& cli
             connOpts_.set_password(password);
         }
     }
+} catch (const std::exception& e) {
+    BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client construction failed: " << e.what();
+    throw;
 }
 
 // SSL/TLS
@@ -142,7 +146,14 @@ bool MqttClient::Connect(std::string& msg)
         return true;
     }
 
-    {                        
+    if (!client_) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Cannot connect: MQTT client pointer is null";
+        msg = "MQTT client is null";
+        connected_.store(false, std::memory_order_release);
+        return false;
+    }
+
+    try {
          {
             auto ssl_opts = connOpts_.get_ssl_options();
             BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] SSL config info:"
@@ -194,6 +205,18 @@ bool MqttClient::Connect(std::string& msg)
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Successfully connected to MQTT server";
         msg = "success";
         return true;
+    } catch (const mqtt::exception& exc) {
+        connected_.store(false, std::memory_order_release);
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT exception during connect: " << exc.what()
+                                << ", Return code: " << exc.get_return_code()
+                                << ", Message: " << exc.get_message();
+        msg = std::string(exc.what()) + ";" + exc.get_reason_code_str() + ";" + exc.get_message();
+        return false;
+    } catch (const std::exception& e) {
+        connected_.store(false, std::memory_order_release);
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] General exception during connect: " << e.what();
+        msg = std::string(e.what());
+        return false;
     }
 }
 
@@ -225,6 +248,10 @@ bool MqttClient::Disconnect(std::string& msg)
         }
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT disconnect failed: " << e.what()
                                  << ", rc=" << e.get_return_code();
+        msg = e.what();
+        return false;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] General exception during disconnect: " << e.what();
         msg = e.what();
         return false;
     }
@@ -343,35 +370,39 @@ void MqttClient::SetMessageCallback(std::function<void(const std::string& topic,
 // @return: true if connected, false otherwise
 bool MqttClient::CheckConnected()
 {
-    if (!connected_.load(std::memory_order_acquire)) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client is not connected to server";
-        return false;
-    }
+    try {
+        if (!connected_.load(std::memory_order_acquire)) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client is not connected to server";
+            return false;
+        }
 
-    
-    if (!client_) {
-        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client pointer is null";
-        connected_.store(false, std::memory_order_release);
-        return false;
-    }
-    
-    auto check_future = std::async(std::launch::async, [this]() {
-        
-        return client_->is_connected();      
-    });
-    
-    if (check_future.wait_for(std::chrono::seconds(3)) == std::future_status::timeout) {
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Connection status check timeout";
-        connected_.store(false, std::memory_order_release);
-        return false;
-    }
-    
-    if (!check_future.get()) {
-        connected_.store(false, std::memory_order_release);
-        return false;
-    }
+        if (!client_) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client pointer is null";
+            connected_.store(false, std::memory_order_release);
+            return false;
+        }
 
-    return true;
+        auto check_future = std::async(std::launch::async, [this]() {
+            return client_->is_connected();
+        });
+
+        if (check_future.wait_for(std::chrono::seconds(3)) == std::future_status::timeout) {
+            BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Connection status check timeout";
+            connected_.store(false, std::memory_order_release);
+            return false;
+        }
+
+        if (!check_future.get()) {
+            connected_.store(false, std::memory_order_release);
+            return false;
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Exception checking connection: " << e.what();
+        connected_.store(false, std::memory_order_release);
+        return false;
+    }
 }
 
 // Callback when connection is lost
@@ -506,12 +537,12 @@ void MqttClient::connected(const std::string& cause)
 }
 
 void MqttClient::resubscribe_topics() {
-    if (topics_to_resubscribe_.empty()) {
+    if (topics_to_resubscribe_.empty() || !client_) {
         return;
-    }    
-    
+    }
+
     for (const auto& topic_pair : topics_to_resubscribe_) {
-        {
+        try {
             auto tok = client_->subscribe(topic_pair.first, topic_pair.second, nullptr,  subListener_);
             if (!tok->wait_for(std::chrono::seconds(5))) {
                 BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Subscribe timeout for topic: " << topic_pair.first;
@@ -520,6 +551,8 @@ void MqttClient::resubscribe_topics() {
             if (!tok->is_complete() || tok->get_return_code() != 0) {
                 BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Failed to resubscribe to topic: " << topic_pair.first;
             }
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error resubscribing to topic '" << topic_pair.first << "': " << e.what();
         }
     }
 }

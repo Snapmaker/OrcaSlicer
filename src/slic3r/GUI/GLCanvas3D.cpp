@@ -1596,9 +1596,7 @@ bool GLCanvas3D::init()
     if (m_multisample_allowed)
         glsafe(::glEnable(GL_MULTISAMPLE));
 
-    const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
-    m_selectionFramebufferAvailable = framebufferType != OpenGLManager::EFramebufferType::Unknown &&
-                                      OpenGLManager::are_framebuffers_supported();
+    m_selectionFramebufferAvailable = OpenGLManager::are_framebuffers_supported();
 
     if (!m_selectionFramebufferAvailable)
     {
@@ -1657,9 +1655,7 @@ GLCanvas3D::ESelectionHighlightMode GLCanvas3D::ResolveSelectionHighlightMode()
     GLShaderProgram* const compositeShader = wxGetApp().get_shader("selection_composite");
     GLShaderProgram* const edgeShader = wxGetApp().get_shader("selection_edge");
     GLShaderProgram* const gaussianShader = wxGetApp().get_shader("selection_gaussian");
-    const bool framebufferSupported = OpenGLManager::are_framebuffers_supported() &&
-                                      m_selectionFramebufferAvailable;
-    if (framebufferSupported && maskShader != nullptr && compositeShader != nullptr && edgeShader != nullptr &&
+    if (m_selectionFramebufferAvailable && maskShader != nullptr && compositeShader != nullptr && edgeShader != nullptr &&
         gaussianShader != nullptr && RenderSelectionHighlightMask())
     {
         return ESelectionHighlightMode::UnifiedFramebuffer;
@@ -1738,9 +1734,6 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
                                             m_selectionHighlightResources.glowFramebuffer,
                                             m_selectionHighlightResources.glowTexture);
 
-    if (!framebufferComplete)
-        ReleaseSelectionHighlightResources();
-
     glsafe(::glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture)));
     if (framebufferType == OpenGLManager::EFramebufferType::Arb)
     {
@@ -1752,6 +1745,7 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
 
     if (!framebufferComplete)
     {
+        ReleaseSelectionHighlightResources();
         m_selectionFramebufferAvailable = false;
         BOOST_LOG_TRIVIAL(warning) << "Unable to create complete selection highlight framebuffers";
         return false;
@@ -1895,8 +1889,9 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     m_background.render();
     edgeShader->stop_using();
 
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeTempFramebuffer);
     gaussianShader->start_using();
+
+    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeTempFramebuffer);
     gaussianShader->set_uniform("source_texture", 0);
     gaussianShader->set_uniform("inverse_texture_size",
                                 Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
@@ -1906,10 +1901,8 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
     m_background.render();
-    gaussianShader->stop_using();
 
     BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeFramebuffer);
-    gaussianShader->start_using();
     gaussianShader->set_uniform("source_texture", 0);
     gaussianShader->set_uniform("inverse_texture_size",
                                 Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
@@ -1919,7 +1912,6 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTempTexture));
     m_background.render();
-    gaussianShader->stop_using();
 
     const unsigned int glowWidth = std::max(1U, static_cast<unsigned int>(
         std::ceil(m_selectionHighlightResources.width * SELECTION_GLOW_SCALE)));
@@ -1927,7 +1919,6 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
         std::ceil(m_selectionHighlightResources.height * SELECTION_GLOW_SCALE)));
     BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowTempFramebuffer);
     glsafe(::glViewport(0, 0, static_cast<GLsizei>(glowWidth), static_cast<GLsizei>(glowHeight)));
-    gaussianShader->start_using();
     gaussianShader->set_uniform("source_texture", 0);
     gaussianShader->set_uniform("inverse_texture_size",
                                 Vec2f(1.0f / static_cast<float>(glowWidth),
@@ -1937,10 +1928,8 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     glsafe(::glActiveTexture(GL_TEXTURE0));
     glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
     m_background.render();
-    gaussianShader->stop_using();
 
     BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowFramebuffer);
-    gaussianShader->start_using();
     gaussianShader->set_uniform("source_texture", 0);
     gaussianShader->set_uniform("inverse_texture_size",
                                 Vec2f(1.0f / static_cast<float>(glowWidth),

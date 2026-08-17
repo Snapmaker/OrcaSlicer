@@ -5850,8 +5850,11 @@ msgstr "该项目由 Snapmaker Orca 2.3.1-alpha 创建，并使用了填充旋�
 msgid "Would you like Snapmaker Orca to automatically fix this by clearing the rotation template settings?"
 msgstr "您是否希望 Snapmaker Orca 清除旋转模板设置以自动修复此问题？"
 
-msgid "Since the current version of SnapmakerOrca is relatively low, this 3mf file cannot be fully loaded, and the nozzle flow rate type may not match the file."
-msgstr "由于当前SnapmakerOrca版本较低，无法完整加载此3mf文件，喷嘴流量类型可能与文件不匹配。"
+msgid "The current version of Snapmaker Orca cannot fully load this 3MF file. Please update to the latest version and try again."
+msgstr "当前 Snapmaker Orca 版本过低，无法完整加载此 3MF 文件。请更新至最新版本后重试。"
+
+msgid "Loading 3MF"
+msgstr "加载 3MF"
 
 #, c-format, boost-format
 msgid "The 3mf's version %s is newer than %s's version %s, found following unrecognized keys:"

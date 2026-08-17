@@ -223,8 +223,8 @@ static void handle_newer_3mf_schema(wxWindow* parent,
                             << ": file_version=" << file_schema
                             << ", supported_version=" << definition.current_version;
     show_info(parent,
-              _L("Since the current version of SnapmakerOrca is relatively low, this 3mf file cannot be fully loaded, and the nozzle flow rate type may not match the file."),
-              _L("Newer 3mf version"));
+              _L("The current version of Snapmaker Orca cannot fully load this 3MF file. Please update to the latest version and try again."),
+              _L("Loading 3MF"));
 }
 
 static std::string filament_temp_mixing_warning_text()

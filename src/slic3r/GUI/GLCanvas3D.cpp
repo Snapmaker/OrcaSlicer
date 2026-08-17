@@ -1649,7 +1649,7 @@ bool GLCanvas3D::init()
 
 GLCanvas3D::ESelectionHighlightMode GLCanvas3D::ResolveSelectionHighlightMode()
 {
-    const bool highlightEnabled = m_picking_enabled && !m_selection.is_empty() && !m_gizmos.is_running();
+    const bool highlightEnabled = m_picking_enabled && !m_selection.is_empty();
     if (!highlightEnabled)
         return ESelectionHighlightMode::Disabled;
 
@@ -8485,8 +8485,7 @@ void GLCanvas3D::_render_selection()
     scale_factor = m_retina_helper->get_scale_factor();
 #endif // ENABLE_RETINA_GL
 
-    if (!m_gizmos.is_running())
-        m_selection.render(scale_factor);
+    m_selection.render(scale_factor);
 }
 
 void GLCanvas3D::_render_sequential_clearance()

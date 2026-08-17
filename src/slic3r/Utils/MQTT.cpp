@@ -289,6 +289,10 @@ bool MqttClient::Subscribe(const std::string& topic, int qos, std::string& msg)
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error subscribing to topic '" << topic << "': " << exc.what();
         msg = "Error: " + std::string(exc.what());
         return false;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] General exception subscribing to topic '" << topic << "': " << e.what();
+        msg = "Error: " + std::string(e.what());
+        return false;
     }
 }
 
@@ -318,6 +322,10 @@ bool MqttClient::Unsubscribe(const std::string& topic, std::string& msg)
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error unsubscribing from topic '" << topic << "': " << exc.what();
         msg = "Error unsubscribing from topic: " + std::string(exc.what());
         return false;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] General exception unsubscribing from topic '" << topic << "': " << e.what();
+        msg = "Error unsubscribing from topic: " + std::string(e.what());
+        return false;
     }
 }
 
@@ -333,10 +341,10 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
         return false;
     }
 
-    mqtt::message_ptr pubmsg = mqtt::make_message(topic, payload);
-    pubmsg->set_qos(qos);
-
     try {
+        mqtt::message_ptr pubmsg = mqtt::make_message(topic, payload);
+        pubmsg->set_qos(qos);
+
         BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] Publishing message to topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr pubtok = client_->publish(pubmsg);
         /*if (!pubtok->wait_for(std::chrono::seconds(5))) {
@@ -348,6 +356,10 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
     } catch (const mqtt::exception& exc) {
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error publishing to topic '" << topic << "': " << exc.what();
         msg = "error: " + std::string(exc.what());
+        return false;
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] General exception publishing to topic '" << topic << "': " << e.what();
+        msg = "error: " + std::string(e.what());
         return false;
     }
 }

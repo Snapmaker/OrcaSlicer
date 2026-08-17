@@ -29,12 +29,18 @@ using tcp = asio::ip::tcp;
 #define UPDATE_PRIVACY_STATUS "sw_SubUserUpdatePrivacy"
 #define GET_PRIVACY_STATUS "sw_GetUserUpdatePrivacy"
 #define UPLOAD_CAMERA_TIMELAPSE "sw_UploadCameraTimelapse"
+#define UPLOAD_ASYNC_TIMELAPSE_INSTANCE "sw_UploadAsyncTimelapseInstance"
 #define DELETE_CAMERA_TIMELAPSE "sw_DeleteCameraTimelapse"
 #define GET_DEVICEDATA_STORAGESPACE "sw_GetDeviceDataStorageSpace"
-#define DOWNLOAD_FILE "sw_DownloadFile"
 #define DOWNLOAD_FILE_AND_OPEN "sw_DownLoadFileAndOpen"
 #define CANCEL_DOWNLOAD "sw_CancelDownload"
+#define SUBSCRIBE_DOWNLOAD_STATE "sw_SubscribeDownloadState"
+#define UNSUBSCRIBE_DOWNLOAD_STATE "sw_UnsubscribeDownloadState"
+#define DOWN_LOAD_FILE "sw_DownLoadFile"
 #define FILE_VIEW "sw_FileView"
+#define OPEN_TIMELAPSE_FOLDER "sw_OpenTimelapseFolder"
+#define GET_FILES_FROM_DIR "sw_GetFilesFromDir"
+#define NOTIFY_UPLOAD_TIMELASPE "sw_NotifyUploadTimelaspe"
 
 namespace Slic3r { namespace GUI {
 
@@ -196,8 +202,7 @@ private:
     void sw_OpenNetworkDialog();
 
 
-public:
-    // 抽象工具类函数
+public:    
     void update_filament_info(const json& objects, bool send_message = false);
 
 protected:
@@ -428,10 +433,12 @@ private:
     void sw_exception_query();
     void sw_GetFileListPage();
     void sw_UploadCameraTimelapse();
+    void sw_UploadAsyncTimelapseInstance();
     void sw_DeleteCameraTimelapse();
     void sw_GetCameraTimelapseInstance();
 
     void sw_DefectDetactionConfig();    
+    void sw_PrinterDefectDetection();
 
     void sw_GetDeviceDataStorageSpace();
 
@@ -445,23 +452,18 @@ private:
 
     // get is legal to send & print
     void sw_GetPrintLegal();
-
-    // get 打印任务zip流
-    void sw_GetPrintZip();
-
-    // 结束预打印流程
-    void sw_FinishPreprint();
-
-    // 设置已绑定用户信息
+    
+    void sw_GetPrintZip();    
+    void sw_FinishPreprint();    
     void sw_ServerClientManagerSetUserinfo();
 
-    // 请求设备下载文件并打印
+    // request device download file and print
     void sw_PullCloudFile();
 
-    // 请求设备取消下载文件
+    // request deivice cancel download file
     void sw_CancelPullCloudFile();
 
-    // 请求设备下载文件并打印
+    // request device download file and print
     void sw_StartCloudPrint();
 
     // Request device to start local file print
@@ -470,10 +472,8 @@ private:
     // Request device heartbeat
     void sw_MachineHeartbeat();
 
-    // 设备耗材同步
+    // update machine filament info
     void sw_UpdateMachineFilamentInfo();
-
-
 };
 
 // Instance class for Snapmaker machine manage
@@ -551,15 +551,42 @@ private:
 
     void sw_SubUserUpdatePrivacy();
 
-    void sw_DownloadFile();
-
     void sw_DownloadFileAndOpen();
 
     void sw_DownloadFileEx();
 
+    void sw_DownLoadFile();
+
     void sw_CancelDownload();
 
     void sw_FileView();
+    void sw_OpenTimelapseFolder();
+    void sw_SubscribeDownloadState();
+    void sw_UnsubscribeDownloadState();
+    void sw_GetFilesFromDir();
+    void sw_NotifyUploadTimelaspe();
+
+public:
+    // Passive subscription entry — sw_SubscribeDownloadState only registers,
+    // downloads are triggered by sw_DownLoadFile which pushes "download_complete"
+    // to matching subscribers on completion.
+    struct SubscribeInfo {
+        std::string event_id;
+        std::string sn;
+        std::string type;     // "timelapse"
+        wxWebView*  webview;  // not owned — captured so we can push events after the caller instance is gone
+    };
+    static std::unordered_map<std::string, std::shared_ptr<SubscribeInfo>> m_subscribe_map;  // event_id -> info
+
+    // Push a single file's download state to every subscriber whose sn matches.
+    // Does NOT remove subscribers (can be called multiple times).
+    // state: "success" | "failed" | "cancelled"
+    static void push_timelapse_state(const std::string& sn,
+                                     const std::string& file_name,
+                                     const std::string& file_url,
+                                     const std::string& date_index,
+                                     const std::string& save_path,
+                                     const std::string& state);
 };
 
 // Instance class for homepage business
@@ -698,6 +725,9 @@ private:
     std::unordered_map<std::string, std::string> m_ip_type_map;
 
 };
+
+std::string base64_encode(const char* data, size_t len);
+std::string make_wcp_download_url(const std::string& file_path);
 
 }};
 

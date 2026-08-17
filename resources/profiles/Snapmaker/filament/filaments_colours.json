@@ -1,6 +1,6 @@
 {
 	"vendor": "Snapmaker",
-	"updated_date": "2026-06-11",
+	"updated_date": "2026-07-30",
 	"filaments": [
 		{
 			"filament_id": "1682237920",
@@ -1040,7 +1040,8 @@
 					"sku": "34202",
 					"mode": 0,
 					"filament_color": [
-						"#D9A63A", "#CC434F"
+						"#D9A63A",
+						"#CC434F"
 					],
 					"color_name": {
 						"en": "Sunset Ember",
@@ -1052,7 +1053,8 @@
 					"sku": "34203",
 					"mode": 0,
 					"filament_color": [
-						"#D9A63A", "#9675CD"
+						"#D9A63A",
+						"#9675CD"
 					],
 					"color_name": {
 						"en": "Aurora Gold",
@@ -1064,7 +1066,8 @@
 					"sku": "34204",
 					"mode": 0,
 					"filament_color": [
-						"#D9A63A", "#C4C7D9"
+						"#D9A63A",
+						"#C4C7D9"
 					],
 					"color_name": {
 						"en": "Solar Alloy",
@@ -1076,7 +1079,8 @@
 					"sku": "34205",
 					"mode": 0,
 					"filament_color": [
-						"#ECED17", "#44ADE5"
+						"#ECED17",
+						"#44ADE5"
 					],
 					"color_name": {
 						"en": "Mint Lemonade",
@@ -1088,7 +1092,8 @@
 					"sku": "34206",
 					"mode": 0,
 					"filament_color": [
-						"#44ADE5", "#18CCAF"
+						"#44ADE5",
+						"#18CCAF"
 					],
 					"color_name": {
 						"en": "Sea Glass",
@@ -1100,7 +1105,8 @@
 					"sku": "34207",
 					"mode": 0,
 					"filament_color": [
-						"#C4C7D9", "#44ADE5"
+						"#C4C7D9",
+						"#44ADE5"
 					],
 					"color_name": {
 						"en": "Ice Lake",
@@ -1112,7 +1118,8 @@
 					"sku": "34208",
 					"mode": 0,
 					"filament_color": [
-						"#CBF914", "#D623AA"
+						"#CBF914",
+						"#D623AA"
 					],
 					"color_name": {
 						"en": "City Billboard",
@@ -1793,6 +1800,62 @@
 					"color_name": {
 						"en": "Green",
 						"zh_CN": "绿色"
+					},
+					"enabled": true
+				}
+			]
+		},
+		{
+			"filament_id": "GFL9922",
+			"filament_name": "Snapmaker PLA Wood @U1",
+			"filament_type": "PLA",
+			"enabled": true,
+			"filament_color": [
+				{
+					"sku": "34056",
+					"mode": 0,
+					"filament_color": [
+						"#C0A086"
+					],
+					"color_name": {
+						"en": "Oak",
+						"zh_CN": "橡木色"
+					},
+					"enabled": true
+				},
+				{
+					"sku": "34057",
+					"mode": 0,
+					"filament_color": [
+						"#F2C6A2"
+					],
+					"color_name": {
+						"en": "Maple",
+						"zh_CN": "枫木色"
+					},
+					"enabled": true
+				},
+				{
+					"sku": "34058",
+					"mode": 0,
+					"filament_color": [
+						"#775C50"
+					],
+					"color_name": {
+						"en": "Walnut",
+						"zh_CN": "胡桃木色"
+					},
+					"enabled": true
+				},
+				{
+					"sku": "34059",
+					"mode": 0,
+					"filament_color": [
+						"#AE7575"
+					],
+					"color_name": {
+						"en": "Rosewood",
+						"zh_CN": "玫瑰木色"
 					},
 					"enabled": true
 				}

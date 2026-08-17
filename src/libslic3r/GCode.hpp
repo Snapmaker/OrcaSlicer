@@ -628,11 +628,14 @@ private:
     std::set<unsigned int>                  m_initial_layer_extruders;
     // BBS
     int get_bed_temperature(const int extruder_id, const bool is_first_layer, const BedType bed_type) const;
+    // BBS: max bed temperature over all used extruders, so that the bed temperature always
+    // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
+    int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
     void print_machine_envelope(GCodeOutputStream &file, Print &print);
-    void _print_first_layer_bed_temperature(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);
+    void _print_first_layer_bed_temperature(GCodeOutputStream &file, Print &print, const std::string &gcode, bool wait);
     void _print_first_layer_extruder_temperatures(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);
     // On the first printing layer. This flag triggers first layer speeds.
     //BBS

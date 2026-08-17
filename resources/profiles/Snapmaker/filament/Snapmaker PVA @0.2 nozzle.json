@@ -7,5 +7,6 @@
   "inherits": "Snapmaker PVA @base",
   "compatible_printers": [
     "Snapmaker A250 (0.2 nozzle)"
-  ]
+  ],
+  "filament_type": ["PVA"]
 }

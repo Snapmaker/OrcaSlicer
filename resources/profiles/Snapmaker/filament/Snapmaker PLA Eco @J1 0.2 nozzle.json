@@ -10,5 +10,6 @@
   ],
   "filament_max_volumetric_speed": [
     "2"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

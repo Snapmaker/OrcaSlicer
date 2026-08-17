@@ -335,14 +335,20 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to get machine info, error: " << error << ", HTTP status: " << status;
             wcp_loger.add_log("failed to get machine info, error: " + error + ", HTTP status: " + std::to_string(status), false, "", "Moonraker_Mqtt", "error");
             res = false;
-            response = json::parse(body);
-
+            try{
+                response = json::parse(body);
+            } catch (std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis error: " << e.what();
+            }
         })
         .on_complete([&](std::string body, unsigned) {
         
             wcp_loger.add_log("got machine info successfully", false, "", "Moonraker_Mqtt", "info");
-            response = json::parse(body);
-
+            try {
+                response = json::parse(body);
+            } catch (std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis machine response: " << e.what();
+            }
         })
         .perform_sync();
 
@@ -861,6 +867,7 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
     if (change_engine) {        
         std::string local_ip = "";
         {
+        try {
             #ifdef _WIN32
                 SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
                 if (sock == INVALID_SOCKET) {
@@ -911,6 +918,9 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
                 close(sock);
             #endif
 
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
+            local_ip = "0.0.0.0"; 
         }
         m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
         m_mqtt_client_tls.reset();

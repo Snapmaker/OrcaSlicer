@@ -247,7 +247,7 @@ bool MqttClient::Subscribe(const std::string& topic, int qos, std::string& msg)
         return false;
     }
 
-    {
+    try {
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Subscribing to MQTT topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr subtok = client_->subscribe(topic, qos, nullptr, subListener_);
         if (!subtok->wait_for(std::chrono::seconds(5))) {
@@ -258,6 +258,10 @@ bool MqttClient::Subscribe(const std::string& topic, int qos, std::string& msg)
         add_topic_to_resubscribe(topic, qos);
         msg = "success";
         return true;
+    } catch (const mqtt::exception& exc) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error subscribing to topic '" << topic << "': " << exc.what();
+        msg = "Error: " + std::string(exc.what());
+        return false;
     }
 }
 
@@ -272,7 +276,7 @@ bool MqttClient::Unsubscribe(const std::string& topic, std::string& msg)
         return false;
     }
 
-    {
+    try {
         BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] Unsubscribing from MQTT topic '" << topic << "'";
         mqtt::token_ptr unsubtok = client_->unsubscribe(topic);
         if (!unsubtok->wait_for(std::chrono::seconds(5))) {
@@ -283,6 +287,10 @@ bool MqttClient::Unsubscribe(const std::string& topic, std::string& msg)
         remove_topic_from_resubscribe(topic);
         msg = "success";
         return true;
+    } catch (const mqtt::exception& exc) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error unsubscribing from topic '" << topic << "': " << exc.what();
+        msg = "Error unsubscribing from topic: " + std::string(exc.what());
+        return false;
     }
 }
 
@@ -301,7 +309,7 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
     mqtt::message_ptr pubmsg = mqtt::make_message(topic, payload);
     pubmsg->set_qos(qos);
 
-    {
+    try {
         BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] Publishing message to topic '" << topic << "' with QoS " << qos;
         mqtt::token_ptr pubtok = client_->publish(pubmsg);
         /*if (!pubtok->wait_for(std::chrono::seconds(5))) {
@@ -310,7 +318,11 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
         }*/
         msg = "success";
         return true;
-    } 
+    } catch (const mqtt::exception& exc) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Error publishing to topic '" << topic << "': " << exc.what();
+        msg = "error: " + std::string(exc.what());
+        return false;
+    }
 }
 
 // Set callback function for handling incoming messages

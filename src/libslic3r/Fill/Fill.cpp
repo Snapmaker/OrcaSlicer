@@ -896,6 +896,14 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                         params.extrusion_role = erSolidInfill;
                     }
                 }
+                // ORCA: per-feature filaments. Top and internal solid fills are already resolved
+                // by layerm.extruder(extrusion_role) above; bottom surfaces print with the bottom
+                // surface filament, routed through the same mixed-filament remapping as top surfaces.
+                // External bridges are bottom surfaces, so they print with the bottom surface filament
+                // too (internal bridges keep their pre-seeded filament).
+                if (params.extrusion_role == erBottomSurface || params.extrusion_role == erBridgeInfill)
+                    params.extruder = effective_layer_filament_id(layer,
+                        (unsigned int)std::max(0, region_config.bottom_surface_filament_id.value));
                 // Orca: apply fill multiline only for sparse infill
                 params.multiline = params.extrusion_role == erInternalInfill ? int(region_config.fill_multiline) : 1;
 
@@ -919,9 +927,12 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 		        params.bridge = is_bridge || Fill::use_bridge_flow(params.pattern);
                 const bool is_thick_bridge = surface.is_bridge() && (surface.is_internal_bridge() ? object_config.thick_internal_bridges : object_config.thick_bridges);
 				params.flow   = params.bridge ?
-					//Orca: enable thick bridge based on config
-					layerm.bridging_flow(extrusion_role, is_thick_bridge) :
-					layerm.flow(extrusion_role, (surface.thickness == -1) ? layer.height : surface.thickness);
+					//Orca: enable thick bridge based on config. Combined layers stamp their full thickness on the surface; the non-thick bridge flow must be based on it.
+					layerm.bridging_flow(extrusion_role, is_thick_bridge, params.extruder,
+					                     (surface.thickness == -1) ? 0. : surface.thickness) :
+					// Width resolves against the nozzle of the filament that actually prints
+					// (params.extruder), which may differ from the role's default filament mapping.
+					layerm.flow(extrusion_role, (surface.thickness == -1) ? layer.height : surface.thickness, params.extruder);
 				// record speed params
                 if (!params.bridge) {
                     if (params.extrusion_role == erInternalInfill)
@@ -1530,12 +1541,12 @@ void Layer::make_ironing()
 				    ((config.top_shell_layers > 0 || (this->object()->print()->config().spiral_mode && config.bottom_shell_layers > 1)) &&
 					    (config.ironing_type == IroningType::TopSurfaces ||
 					        (config.ironing_type == IroningType::TopmostOnly && layerm->layer()->upper_layer == nullptr))))) {
-				if (config.wall_filament == config.solid_infill_filament || config.wall_loops == 0) {
+				if (config.outer_wall_filament_id == config.top_surface_filament_id || config.wall_loops == 0) {
 					// Iron the whole face.
-					ironing_params.extruder = config.solid_infill_filament;
+					ironing_params.extruder = config.top_surface_filament_id;
 				} else {
 					// Iron just the infill.
-					ironing_params.extruder = config.solid_infill_filament;
+					ironing_params.extruder = config.top_surface_filament_id;
 				}
 			}
 			if (ironing_params.extruder != -1) {

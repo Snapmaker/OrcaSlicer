@@ -5,6 +5,7 @@
 #include "Geometry.hpp"
 #include "PerimeterGenerator.hpp"
 #include "Print.hpp"
+#include "GCode/ToolOrdering.hpp"
 #include "Surface.hpp"
 #include "BoundingBox.hpp"
 #include "SVG.hpp"
@@ -19,8 +20,6 @@
 #include <boost/algorithm/clamp.hpp>
 
 namespace Slic3r {
-
-namespace {
 
 unsigned int effective_layer_filament_id(const Layer &layer, unsigned int filament_id)
 {
@@ -81,17 +80,15 @@ unsigned int effective_infill_filament_id(const Layer &layer, const PrintRegionC
                                        object);
 }
 
-} // namespace
-
 unsigned int LayerRegion::extruder(FlowRole role) const
 {
     const PrintRegionConfig &config = this->region().config();
     unsigned int             filament_id = 0;
     if (role == frInfill)
-        filament_id = config.sparse_infill_filament.value;
-    else if (role == frSolidInfill && std::abs(config.sparse_infill_density.value - 100.) < EPSILON)
-        filament_id = config.sparse_infill_filament.value;
+        filament_id = config.sparse_infill_filament_id.value;
     else
+        // Internal solid infill resolves to the internal solid filament at every density,
+        // including the 100% dense interior (PrintRegion::extruder()).
         filament_id = this->region().extruder(role);
 
     return (role == frInfill || role == frSolidInfill) ?
@@ -109,7 +106,13 @@ Flow LayerRegion::flow(FlowRole role, double layer_height) const
     return this->flow(role, layer_height, m_layer->id() == 0);
 }
 
-Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width) const
+// filament_id: 1-based filament actually printing this flow when it differs from the role's default mapping (e.g. top/bottom surface fills, external bridges), 0 to resolve from the role.
+Flow LayerRegion::flow(FlowRole role, double layer_height, unsigned int filament_id) const
+{
+    return this->flow(role, layer_height, m_layer->id() == 0, filament_id);
+}
+
+Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id) const
 {
     const PrintConfig          &print_config = m_layer->object()->print()->config();
     ConfigOptionFloatOrPercent config_width;
@@ -134,17 +137,19 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_laye
     if (config_width.value == 0)
         config_width = m_layer->object()->config().line_width;
 
-    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(this->extruder(role) - 1));
+    // Width resolves against the nozzle of the filament that actually prints (filament_id, when given),
+    // which may differ from the role's default filament mapping.
+    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
     return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
-Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
+Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge, unsigned int filament_id, double layer_height) const
 {
     const PrintRegion       &region         = this->region();
     const PrintRegionConfig &region_config  = region.config();
     const PrintObject       &print_object   = *this->layer()->object();
     Flow bridge_flow;
-    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(this->extruder(role) - 1));
+    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
     if (thick_bridge) {
         // The old Slic3r way (different from all other slicers): Use rounded extrusions.
         // Get the configured nozzle_diameter for the extruder associated to the flow role requested.
@@ -153,7 +158,8 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge) const
         bridge_flow = Flow::bridging_flow(float(sqrt(region_config.bridge_flow)) * nozzle_diameter, nozzle_diameter);
     } else {
         // The same way as other slicers: Use normal extrusions. Apply bridge_flow while maintaining the original spacing.
-        bridge_flow = this->flow(role).with_flow_ratio(region_config.bridge_flow);
+        // Combined layer groups stamp their full thickness on the surface; the base flow must be resolved at that height.
+        bridge_flow = this->flow(role, layer_height > 0. ? layer_height : m_layer->height, filament_id).with_flow_ratio(region_config.bridge_flow);
     }
     return bridge_flow;
 
@@ -179,6 +185,28 @@ void LayerRegion::slices_to_fill_surfaces_clipped()
     }
 }
 
+// ORCA: split wall layer heights - drop one wall class from freshly generated perimeters.
+// Classification matches the G-code dispatch (perimeter_entity_uses_outer_wall_filament()), so
+// the class printing at a cadence is exactly the class dispatched to its wall filament.
+static void remove_wall_class(ExtrusionEntityCollection &collection, bool outer_class)
+{
+    ExtrusionEntitiesPtr &entities = collection.entities;
+    for (size_t i = 0; i < entities.size(); ) {
+        if (auto *sub = dynamic_cast<ExtrusionEntityCollection*>(entities[i])) {
+            remove_wall_class(*sub, outer_class);
+            if (! sub->entities.empty()) {
+                ++ i;
+                continue;
+            }
+        } else if (perimeter_entity_uses_outer_wall_filament(*entities[i]) != outer_class) {
+            ++ i;
+            continue;
+        }
+        delete entities[i];
+        entities.erase(entities.begin() + i);
+    }
+}
+
 void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRegionPtrs &compatible_regions, SurfaceCollection* fill_surfaces, ExPolygons* fill_no_overlap)
 {
     this->perimeters.clear();
@@ -188,54 +216,106 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
     const PrintRegionConfig &region_config = this->region().config();
     const PrintObjectConfig& object_config = this->layer()->object()->config();
     PrintRegionConfig        perimeter_config = region_config;
-    perimeter_config.wall_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.wall_filament.value))));
-    perimeter_config.sparse_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament.value))));
-    perimeter_config.solid_infill_filament.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.solid_infill_filament.value))));
+    perimeter_config.outer_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.outer_wall_filament_id.value))));
+    perimeter_config.inner_wall_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.inner_wall_filament_id.value))));
+    perimeter_config.sparse_infill_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.sparse_infill_filament_id.value))));
+    perimeter_config.internal_solid_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.internal_solid_filament_id.value))));
+    perimeter_config.top_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.top_surface_filament_id.value))));
+    perimeter_config.bottom_surface_filament_id.value = int(effective_layer_filament_id(*this->layer(), unsigned(std::max(0, region_config.bottom_surface_filament_id.value))));
     // This needs to be in sync with PrintObject::_slice() slicing_mode_normal_below_layer!
     bool spiral_mode = print_config.spiral_mode &&
         //FIXME account for raft layers.
         (this->layer()->id() >= size_t(region_config.bottom_shell_layers.value) &&
          this->layer()->print_z >= region_config.bottom_shell_thickness - EPSILON);
 
-    PerimeterGenerator g(
-        // input:
-        &slices,
-        &compatible_regions,
-        this->layer()->height,
-        this->layer()->slice_z,
-        this->flow(frPerimeter),
-        &perimeter_config,
-        &this->layer()->object()->config(),
-        &print_config,
-        spiral_mode,
-        
-        // output:
-        &this->perimeters,
-        &this->thin_fills,
-        fill_surfaces,
-        //BBS
-        fill_no_overlap
-    );
-    
-    if (this->layer()->lower_layer != nullptr)
-        // Cummulative sum of polygons over all the regions.
-        g.lower_slices = &this->layer()->lower_layer->lslices;
-    if (this->layer()->upper_layer != NULL)
-        g.upper_slices = &this->layer()->upper_layer->lslices;
+    // ORCA: on the top layer of a combined group all perimeters extrude with the whole group's
+    // height. On layers of a walls-only run (wall_combined_count()) the walls are generated with
+    // the run height on every run layer - so the fill boundaries line up with the walls printed
+    // once at the run top - and the wall extrusions of the layers below the top are dropped below.
+    // Shared by the main pass and the coarse-wall pass of split wall layer heights below.
+    const int region_id = this->region().print_object_region_id();
+    auto generate_perimeters = [&](double height, const Layer *lower_layer, ExtrusionEntityCollection *perimeters,
+                                   ExtrusionEntityCollection *thin_fills, SurfaceCollection *surfaces, ExPolygons *no_overlap) {
+        PerimeterGenerator g(
+            // input:
+            &slices,
+            &compatible_regions,
+            height,
+            this->layer()->slice_z,
+            this->flow(frPerimeter, height),
+            &perimeter_config,
+            &this->layer()->object()->config(),
+            &print_config,
+            spiral_mode,
 
-    int region_id = this->region().print_object_region_id();
-    if (this->layer()->upper_layer != NULL)
-        g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
+            // output:
+            perimeters,
+            thin_fills,
+            surfaces,
+            //BBS
+            no_overlap
+        );
 
-    g.layer_id              = (int)this->layer()->id();
-    g.ext_perimeter_flow    = this->flow(frExternalPerimeter);
-    g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges);
-    g.solid_infill_flow     = this->flow(frSolidInfill);
+        // Detect overhangs / bridges against the layer below the whole combined group or wall run
+        // (wall_combined_lower_layer() == lower_layer for regular regions).
+        if (lower_layer != nullptr)
+            // Cummulative sum of polygons over all the regions.
+            g.lower_slices = &lower_layer->lslices;
+        if (this->layer()->upper_layer != NULL) {
+            g.upper_slices             = &this->layer()->upper_layer->lslices;
+            g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
+        }
 
-    if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
-        g.process_arachne();
-    else
-        g.process_classic();
+        g.layer_id              = (int)this->layer()->id();
+        g.ext_perimeter_flow    = this->flow(frExternalPerimeter, height);
+        g.overhang_flow         = this->bridging_flow(frPerimeter, object_config.thick_bridges, 0, height);
+        // Overhangs of external / fully overhanging loops dispatch to the outer wall filament (GCode::process_layer() splits mixed perimeters); resolve their width against its nozzle.
+        // The filament id comes from the resolved perimeter_config (mixed-filament aware), not the raw region config.
+        g.ext_overhang_flow     = this->bridging_flow(frPerimeter, object_config.thick_bridges,
+                                                      (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value), height);
+        g.solid_infill_flow     = this->flow(frSolidInfill, height);
+        // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
+        g.gap_fill_flow         = this->flow(frSolidInfill, height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
+
+        if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
+            g.process_arachne();
+        else
+            g.process_classic();
+    };
+    generate_perimeters(this->wall_combined_height(), this->wall_combined_lower_layer(),
+                        &this->perimeters, &this->thin_fills, fill_surfaces, fill_no_overlap);
+
+    // ORCA: walls-only pitch. The run layers below the top only generated their perimeters to
+    // carve fill boundaries consistent with the run; the walls themselves (and their thin fills /
+    // gap fills, which print with the walls) extrude once at the run top.
+    if (this->wall_combined_count() == 0) {
+        this->perimeters.clear();
+        this->thin_fills.clear();
+    }
+
+    // ORCA: split wall layer heights. Inside a coarse run the pass above laid out both wall
+    // classes at the fine cadence; the coarse class prints on its own runs instead: drop its
+    // loops here and, on the run top, regenerate them once at the full coarse height with the
+    // layer below the run as overhang reference (their space stays reserved - the fine pass
+    // placed the remaining loops around them). Thin / gap fills and the fill boundaries stay
+    // with the fine pass; the coarse pass's copies are scratch. Outside a committed coarse run
+    // the coarse class simply follows the fine cadence.
+    if (this->wall_split_height() > 0. && ! this->perimeters.empty()) {
+        unsigned int fine = 0, coarse = 0;
+        bool         coarse_is_outer = false;
+        if (this->layer()->object()->wall_split_pitches(this->region(), fine, coarse, coarse_is_outer)) {
+            remove_wall_class(this->perimeters, coarse_is_outer);
+            if (this->wall_split_count() > 1) {
+                ExtrusionEntityCollection coarse_perimeters, scratch_thin_fills;
+                SurfaceCollection         scratch_surfaces;
+                ExPolygons                scratch_no_overlap;
+                generate_perimeters(this->wall_split_height(), this->wall_split_lower_layer(),
+                                    &coarse_perimeters, &scratch_thin_fills, &scratch_surfaces, &scratch_no_overlap);
+                remove_wall_class(coarse_perimeters, ! coarse_is_outer);
+                this->perimeters.append(std::move(coarse_perimeters.entities));
+            }
+        }
+    }
 }
 
 #if 1

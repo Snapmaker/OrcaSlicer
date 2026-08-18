@@ -21002,3 +21002,219 @@ msgstr ""
 #~ "inferiore a quella del primo layer di oltre questa soglia. Una "
 #~ "temperatura del piano troppo bassa degli altri layer può causare il "
 #~ "distacco dell'oggetto dal piatto."
+msgid "Adjust wall layer height"
+msgstr "Regola l'altezza strato delle pareti"
+
+msgid "Adjusted walls"
+msgstr "Pareti regolate"
+
+msgid "Adjustment direction"
+msgstr "Direzione della regolazione"
+
+msgid "Consistent"
+msgstr "Coerente"
+
+msgid "Decrease"
+msgstr "Diminuisci"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare la superficie inferiore.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare le pareti interne.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare il riempimento solido interno.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare il riempimento sparso interno.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare le pareti esterne.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Filamento per stampare basi di supporto e zattere. \"Predefinito\" indica che non verrà utilizzato alcun filamento specifico per il supporto e che sarà utilizzato il filamento corrente."
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Filamento per la stampa delle interfacce di supporto. \"Predefinito\" indica che non verrà utilizzato alcun filamento specifico per l'interfaccia di supporto e che sarà utilizzato il filamento corrente."
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filamento per stampare la superficie superiore.\n\"Predefinito\" usa il filamento attivo dell'oggetto/parte."
+
+msgid "Fixed"
+msgstr "Fissa"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Quanto aggressivamente le parti assegnate a un estrusore con un'altezza strato preferita più spessa vengono combinate in strati spessi.\nCoerente: le parti stampano con al massimo due altezze strato - l'altezza strato dell'estrusore dove entrano serie intere di strati e l'altezza strato dell'oggetto ovunque altrove. Questo dà le pareti più uniformi.\nAdattiva: le serie possono anche essere combinate a multipli intermedi dell'altezza strato dell'oggetto, così una parte maggiore del pezzo stampa con strati più spessi, al prezzo di fasce di altezze strato variabili sui bordi curvi.\nFissa: le parti stampano sempre all'altezza strato dell'estrusore, anche dove la forma cambia attraverso gli strati combinati o sporge; i bordi curvi diventano gradini e i dettagli più fini degli strati spessi vanno persi. Solo la geometria troppo corta per un intero strato spesso (le sommità delle parti e il primo strato) stampa più sottile."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Di quanto il profilo di una parte assegnata a un estrusore con un'altezza strato preferita più spessa può spostarsi lateralmente attraverso gli strati di una serie spessa restando comunque combinabile, come percentuale del diametro ugello di quell'estrusore. Valori più alti combinano più bordi curvi in strati spessi, al prezzo di pareti di bordo più ruvide: le deviazioni fino a questa frazione del diametro dell'ugello vengono assorbite dalle estrusioni spesse."
+
+msgid "Increase"
+msgstr "Aumenta"
+
+msgid "Inner walls"
+msgstr "Pareti interne"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Altezza strato con cui questo estrusore dovrebbe stampare, per stampanti i cui estrusori hanno ugelli di dimensioni diverse. Deve essere un multiplo intero dell'altezza strato dell'oggetto. Una parte le cui caratteristiche seguono tutte questo estrusore stampa solo ogni N strati con estrusioni corrispondentemente più spesse, dove la sua geometria lo consente; altrove torna all'altezza strato dell'oggetto. Quando il resto della parte non può seguirla, le pareti assegnate a questo estrusore si combinano comunque da sole a questa altezza, le superfici superiori a piena densità assorbono gli strati solidi sottostanti, e il riempimento sparso o denso al 100% si combina indipendentemente a questa altezza. 0 significa usare l'altezza strato dell'oggetto."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Altezza strato con cui questo estrusore dovrebbe stampare: un multiplo intero dell'altezza strato dell'oggetto entro i limiti di altezza strato di questo estrusore. Predefinito mantiene l'altezza strato dell'oggetto."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Nessun estrusore ha un ugello corrispondente al diametro ugello dei supporti."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Nessun filamento caricato corrisponde al materiale della base supporti/zattera (e al diametro ugello dei supporti)."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Nessun filamento caricato corrisponde al materiale dell'interfaccia supporti/zattera (e al diametro ugello dei supporti)."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Ugello %1%: limiti altezza strato impostati a %2%-%3% mm, da \"%4%\"."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "Sulle stampanti i cui estrusori hanno diametri ugello diversi, solo i filamenti di questo diametro ugello vengono usati per stampare supporti, zattera e interfaccia dei supporti. Questo tiene i filamenti di altre dimensioni ugello - con le loro diverse larghezze linea e limiti di altezza strato - fuori dai supporti. I filamenti di supporto impostati su un valore non predefinito devono corrispondere a questo diametro. Il valore 0 consente a qualsiasi filamento di stampare i supporti."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Le pareti esterne e interne stampano automaticamente alle proprie altezze strato preferite quando un'altezza è un multiplo intero dell'altra. Quando le altezze non si dividono esattamente, questa opzione regola l'altezza strato delle pareti di uno dei due filamenti parete (scelto sotto) al multiplo o divisore più vicino dell'altra, così le pareti possono ancora separarsi. L'altezza regolata si applica solo alle pareti di quel filamento; le altre caratteristiche mantengono l'altezza strato preferita. Le regolazioni non escono mai dai limiti di altezza strato del filamento: se nella direzione scelta non esiste un'altezza consentita, le pareti stampano insieme all'altezza inferiore come al solito."
+
+msgid "Outer walls"
+msgstr "Pareti esterne"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Le altezze strato per estrusore non sono supportate in modalità vaso a spirale."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Le altezze strato per estrusore non sono supportate insieme ai gusci di interfaccia."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Le altezze strato per estrusore non sono supportate insieme all'altezza strato variabile."
+
+msgid "Preferred layer height"
+msgstr "Altezza strato preferita"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Stampa la base dei supporti e la zattera solo con filamenti di questo tipo di materiale; gli estrusori caricati con altri tipi non vengono usati per essa. Si combina con la restrizione del diametro ugello dei supporti. Lasciare vuoto per nessuna restrizione; un filamento base supporti/zattera selezionato esplicitamente ha comunque la precedenza."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Stampa l'interfaccia dei supporti e della zattera solo con filamenti di questo tipo di materiale; gli estrusori caricati con altri tipi non vengono usati per essa. Si combina con la restrizione del diametro ugello dei supporti. Lasciare vuoto per nessuna restrizione; un filamento interfaccia supporti/zattera selezionato esplicitamente ha comunque la precedenza."
+
+msgid "Raft and support base"
+msgstr "Zattera e base dei supporti"
+
+msgid "Show legacy filament selection"
+msgstr "Mostra la selezione filamento precedente"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Alcune parti preferiscono strati di %1% mm, ma l'ugello del filamento %2% che stampa altre caratteristiche della parte è troppo piccolo per estrudere quell'altezza. Queste parti stampano invece con l'altezza strato dell'oggetto."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Alcune parti preferiscono strati di %1% mm, ma l'ugello del filamento parete %2% è troppo piccolo per estrudere quell'altezza. Le pareti esterne e interne stampano insieme, quindi queste pareti mantengono l'altezza strato dell'oggetto. Assegnare entrambe le caratteristiche parete a filamenti con ugelli abbastanza grandi."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Alcune parti stampano strati di %1% mm con il filamento %2%, la cui altezza strato massima è %3% mm. Assegnare le caratteristiche della parte ai filamenti dell'ugello più grosso, aumentare l'altezza strato massima del filamento, oppure accettare di stampare oltre."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Alcune parti stampano strati di %1% mm con il filamento %2%, la cui altezza strato minima è %3% mm. Aumentare l'altezza strato dell'oggetto, usare un filamento con un ugello più fine per queste caratteristiche, oppure accettare di stampare sotto il minimo dell'estrusore."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Alcune parti usano filamenti le cui altezze strato preferite non possono essere tutte rispettate: una parte stampa le sue caratteristiche con un solo passo di strato (fissato dai suoi filamenti parete o, quando nessun filamento parete ha una preferenza, dall'accordo delle altre caratteristiche); le pareti, le superfici superiori e il riempimento possono combinarsi ciascuno alla propria altezza quando il resto della parte non può seguirli, ma le caratteristiche rimanenti stampano con il passo della parte."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Supporti con dimensioni ugello miste"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "I supporti potrebbero stampare con estrusori di diametri ugello diversi. Impostare il diametro ugello dei supporti (o filamenti espliciti di supporto e interfaccia) per mantenere i supporti su una sola dimensione ugello."
+
+msgid "Support nozzle diameter"
+msgstr "Diametro ugello dei supporti"
+
+msgid "Support nozzle size"
+msgstr "Dimensione ugello dei supporti"
+
+msgid "Support/raft base material"
+msgstr "Materiale base supporti/zattera"
+
+msgid "Support/raft interface material"
+msgstr "Materiale interfaccia supporti/zattera"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "La larghezza linea del riempimento di %1% mm è troppo piccola per riempimento combinato in strati alti %2% mm. Aumentare la larghezza linea o abbassare l'altezza strato preferita del filamento di riempimento."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "La larghezza linea di %1% mm è troppo piccola per l'altezza strato di %2% mm del suo estrusore. Aumentare la larghezza linea o abbassare l'altezza strato dell'estrusore."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "L'altezza strato dell'estrusore %1% (%2% mm) non può superare il suo diametro ugello."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "L'altezza strato dell'estrusore %1% (%2% mm) viene ignorata per alcune parti: deve essere un multiplo intero dell'altezza strato dell'oggetto (%3% mm), non inferiore, e non deve superare il diametro ugello dell'estrusore."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "L'altezza strato dell'estrusore %1% (%2% mm) è più piccola dell'altezza strato dell'oggetto (%3% mm). Abbassare l'altezza strato dell'oggetto all'altezza strato di estrusore più fine."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "L'altezza strato dell'estrusore %1% (%2% mm) deve essere un multiplo intero dell'altezza strato dell'oggetto (%3% mm)."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "L'altezza strato stampabile più bassa dell'estrusore. Serve a limitare l'altezza strato minima quando l'altezza strato adattiva è attiva. Anche le parti stampate con un'altezza strato di estrusore preferita più spessa non scendono mai sotto questa altezza (eccetto il primo strato)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "L'altezza strato preferita dell'ugello %1% non passa più attraverso di esso ed è stata ripristinata a Predefinito."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Il filamento della base supporti/zattera non è del materiale della base supporti/zattera."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Il filamento della base supporti/zattera stampa con un ugello che non corrisponde al diametro ugello dei supporti."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Il filamento dell'interfaccia supporti/zattera non è del materiale dell'interfaccia supporti/zattera."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Il filamento dell'interfaccia supporti/zattera stampa con un ugello che non corrisponde al diametro ugello dei supporti."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "I filamenti parete di alcune parti preferiscono altezze strato diverse. Le pareti esterne e interne stampano insieme, quindi queste pareti mantengono l'altezza strato dell'oggetto. Assegnare entrambe le caratteristiche parete a filamenti che preferiscono la stessa altezza per stampare pareti più spesse."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "I filamenti parete di alcune parti preferiscono altezze strato diverse. Le pareti esterne e interne stampano insieme, quindi queste pareti stampano con l'altezza inferiore (%1% mm)."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "L'altezza strato delle pareti del filamento %1% è stata regolata dai %2% mm preferiti a %3% mm perché le pareti esterne e interne possano stampare ad altezze strato compatibili (\"Regola l'altezza strato delle pareti\"). Solo le pareti di questo filamento stampano l'altezza regolata; le sue altre caratteristiche mantengono quella preferita."
+
+msgid "Thick layer regions"
+msgstr "Regioni a strati spessi"
+
+msgid "Thick layer tolerance"
+msgstr "Tolleranza strati spessi"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "Questa stampante non ha un profilo per un ugello da %1% mm. Verificare i limiti di altezza strato dell'ugello %2% nelle impostazioni della stampante."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Questa stampante usa dimensioni ugello diverse. Selezionare la dimensione ugello che stampa i supporti e i tipi di filamento usati per la zattera e l'interfaccia dei supporti."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Se l'altezza strato delle pareti del filamento regolato viene diminuita o aumentata per raggiungere un'altezza compatibile con l'altro filamento parete. Le altezze fuori dai limiti di altezza strato del filamento regolato non vengono mai usate: se in questa direzione non esiste un'altezza consentita, le pareti stampano insieme all'altezza inferiore come al solito."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Quale dei due filamenti parete riceve la regolazione dell'altezza strato delle pareti quando le altezze strato preferite non si dividono esattamente."

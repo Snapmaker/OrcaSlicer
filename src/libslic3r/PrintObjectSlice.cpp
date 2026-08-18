@@ -848,6 +848,11 @@ void PrintObject::slice()
     // BBS: the actual first layer slices stored in layers are re-sorted by volume group and will be used to generate brim
     groupingVolumesForBrim(this, m_layers, firstLayerReplacedBy);
 
+    // Per-extruder layer height: combine region slices into every Nth layer where geometry allows.
+    // Must run before backup_untyped_slices() below so the combined slices survive the restore_untyped_slices*() calls in make_perimeters() / prepare_infill().
+    this->apply_extruder_layer_heights();
+    m_print->throw_if_canceled();
+
     // Update bounding boxes, back up raw slices of complex models.
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, m_layers.size()),
@@ -867,6 +872,400 @@ void PrintObject::slice()
 
     // BBS
     this->set_done(posSlice);
+}
+
+// ORCA: per-extruder layer height ("extruder_layer_height" printer option).
+// For every region whose extruder prefers an integer multiple N (> 1) of the object layer height,
+// greedily combine bottom-up runs of up to N layers on which the region keeps a (nearly) identical
+// shape, merging the run's slices into its top layer to be extruded once at the run's full height
+// (see LayerRegion::combined_height()); combined-away layers carry no slices for the region and
+// trigger no toolchange. A run requires near-identical slices, uniform layer heights and full support
+// from below (no overhang / bridge hidden inside a run). Only full runs plus the clean cap of a
+// column ending above are committed, so each region prints at two consistent heights rather than
+// ever-changing intermediate bands. Region tops / bottoms and overhangs keep the finer base layers.
+void PrintObject::apply_extruder_layer_heights()
+{
+    if (m_layers.size() < 2 || this->num_printing_regions() == 0)
+        return;
+    std::vector<unsigned int> multipliers(this->num_printing_regions(), 1);
+    // Walls-only pitch (see wall_layer_height_multiplier()): the region prints every layer, only
+    // its walls combine. Mutually exclusive with a whole-region multiplier > 1.
+    std::vector<unsigned int> wall_multipliers(this->num_printing_regions(), 1);
+    // Split wall layer heights (see wall_split_pitches()): the wall min-merge above already
+    // equals the fine class's pitch; the coarse class additionally combines to its own runs.
+    std::vector<unsigned int> split_coarses(this->num_printing_regions(), 1);
+    bool any_combined = false;
+    for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
+        multipliers[region_id] = this->region_layer_height_multiplier(this->printing_region(region_id));
+        if (multipliers[region_id] <= 1) {
+            wall_multipliers[region_id] = this->wall_layer_height_multiplier(this->printing_region(region_id));
+            unsigned int fine = 0, coarse = 0;
+            bool         coarse_is_outer = false;
+            if (this->wall_split_pitches(this->printing_region(region_id), fine, coarse, coarse_is_outer))
+                split_coarses[region_id] = coarse;
+        }
+        any_combined |= multipliers[region_id] > 1 || wall_multipliers[region_id] > 1 || split_coarses[region_id] > 1;
+    }
+    if (! any_combined)
+        return;
+    if (m_print->config().spiral_mode || m_config.interface_shells)
+        // These combinations are rejected by Print::validate(), fail safe here.
+        return;
+
+    BOOST_LOG_TRIVIAL(debug) << "Combining region slices to extruder layer heights for " << this->model_object()->name;
+
+    // Never combine the first printed layer: it keeps its own height for bed adhesion (mirrors the
+    // id() == 0 exclusion in PrintObject::combine_infill()), and with a raft detect_surfaces_type()
+    // needs its slices to seed the object's bottom surfaces.
+    const size_t first_idx = 1;
+    if (m_layers.size() <= first_idx + 1)
+        return;
+
+    // Adaptive mode commits runs cut short by shape drift at intermediate heights instead of
+    // falling back to the object layer height. Fixed mode has no drift concept at all: runs grow
+    // to the full pitch wherever the region exists with a common shape, ignoring the tolerance
+    // and overhangs, so the extruder never drops to finer layers (boundaries become steps).
+    const bool adaptive = m_config.extruder_layer_height_mode.value == elhmAdaptive;
+    const bool fixed    = m_config.extruder_layer_height_mode.value == elhmFixed;
+    const PrintConfig &print_config = m_print->config();
+    for (size_t region_id = 0; region_id < this->num_printing_regions(); ++ region_id) {
+        // Walls-only mode marks the runs on the LayerRegions for make_perimeters() instead of
+        // moving any slices: every layer keeps its geometry, fills and surfaces.
+        const bool   split      = split_coarses[region_id] > 1;
+        const bool   walls_only = wall_multipliers[region_id] > 1 || split;
+        const size_t mult       = walls_only ? wall_multipliers[region_id] : multipliers[region_id];
+        if (mult <= 1 && ! split)
+            continue;
+        // Shapes deviating by less than this fraction of the region's nozzle diameter are considered
+        // identical; the deviations swallowed stay below what printing N layers at once causes anyway.
+        const double nozzle_diameter = print_config.nozzle_diameter.get_at(m_print->extruder_index_of(
+            feature_filament_idx(this->printing_region(region_id).config().outer_wall_filament_id.value)));
+        const float tolerance = float(scale_(m_config.extruder_layer_height_tolerance.get_abs_value(nozzle_diameter)));
+        // Where geometry would fall back below the extruders' minimum layer height, runs of at least
+        // min_run layers are forced instead, ignoring the shape tolerance (the nozzle cannot print
+        // finer). All the region's pitch filaments print fallback runs, so the coarsest minimum decides
+        // (with a feature-derived pitch the coarse feature filament matters, not just the walls).
+        const PrintRegionConfig &region_config = this->printing_region(region_id).config();
+        double min_layer_height = 0.;
+        {
+            std::vector<unsigned int> pitch_filaments; // 0-based filament indices
+            if (walls_only) {
+                // Only the wall filaments print the combined runs here.
+                pitch_filaments.emplace_back(feature_filament_idx(region_config.outer_wall_filament_id.value));
+                if (region_prints_inner_walls(region_config))
+                    pitch_filaments.emplace_back(feature_filament_idx(region_config.inner_wall_filament_id.value));
+            } else {
+                bool pitch_from_features = false;
+                this->collect_region_pitch_filaments(region_config, pitch_filaments, pitch_from_features);
+            }
+            for (unsigned int filament : pitch_filaments)
+                min_layer_height = std::max(min_layer_height, print_config.min_layer_height.get_at(m_print->extruder_index_of(filament)));
+        }
+        size_t min_run = 1;
+        if (min_layer_height > m_config.layer_height.value + EPSILON)
+            min_run = std::min(mult, (size_t)std::ceil(min_layer_height / m_config.layer_height.value - EPSILON));
+        // With a fine multiplier of 1 (split with the finer wall at the object layer height)
+        // there are no fine runs to walk; only the coarse pass below applies.
+        size_t idx = mult > 1 ? first_idx : m_layers.size();
+        while (idx < m_layers.size()) {
+            m_print->throw_if_canceled();
+            ExPolygons merged = to_expolygons(m_layers[idx]->regions()[region_id]->slices.surfaces);
+            if (merged.empty()) {
+                // The region does not exist at this layer.
+                ++ idx;
+                continue;
+            }
+            // Grow the run upwards while nothing sticks out of the run's common shape by more than
+            // the tolerance. Uniform layer heights only (variable heights are rejected by Print::validate()).
+            Polygons unioned = to_polygons(merged);
+            size_t top_idx       = idx;
+            bool   shape_drifted = false;
+            while (top_idx + 1 < m_layers.size() && top_idx + 1 - idx < mult) {
+                const size_t next = top_idx + 1;
+                if (std::abs(m_layers[next]->height - m_layers[idx]->height) > EPSILON)
+                    break;
+                const ExPolygons expolys = to_expolygons(m_layers[next]->regions()[region_id]->slices.surfaces);
+                if (expolys.empty())
+                    // The region ends above, the run is the clean cap of its column.
+                    break;
+                ExPolygons next_merged = intersection_ex(expolys, merged);
+                if (next_merged.empty())
+                    // Laterally displaced (a painted-boundary step): this column ends, the next anchors above.
+                    break;
+                if (fixed) {
+                    // Even fixed mode ends a column where the shape displaces so far sideways that
+                    // the surviving intersection cannot carry a bead of the region's nozzle anymore:
+                    // committing such a sliver would erase the layers' real geometry, not step it.
+                    if (opening_ex(next_merged, 0.25f * float(scale_(nozzle_diameter))).empty())
+                        break;
+                } else {
+                    Polygons next_unioned = unioned;
+                    polygons_append(next_unioned, to_polygons(expolys));
+                    if (! opening(diff(union_(next_unioned), offset(next_merged, tolerance)), 0.5f * tolerance).empty()) {
+                        shape_drifted = true;
+                        break;
+                    }
+                    unioned = std::move(next_unioned);
+                }
+                merged  = std::move(next_merged);
+                top_idx = next;
+            }
+            // Full runs and clean caps commit as grown; a run cut short by shape drift falls back to
+            // the object layer height (unless adaptive) to avoid bands of ever-changing heights on
+            // curved boundaries. The fallback is raised to min_run where required.
+            const size_t grown = top_idx + 1 - idx;
+            size_t commit_length;
+            if (grown == mult || ! shape_drifted)
+                commit_length = grown;
+            else if (adaptive)
+                commit_length = std::max(grown, min_run);
+            else
+                commit_length = min_run;
+            if (commit_length >= 2 && min_run > 1) {
+                // Don't leave a remainder shorter than min_run above: shorten so the next run can reach it.
+                size_t above = 0;
+                for (size_t i = idx + commit_length; i < m_layers.size() && above < min_run; ++ i) {
+                    if (m_layers[i]->regions()[region_id]->slices.empty())
+                        break;
+                    ++ above;
+                }
+                if (above > 0 && above < min_run) {
+                    const size_t shift = min_run - above;
+                    if (commit_length >= min_run + shift && commit_length - shift >= 2)
+                        commit_length -= shift;
+                }
+            }
+            if (commit_length < 2) {
+                // Print this layer with the object layer height.
+                ++ idx;
+                continue;
+            }
+            size_t commit_top = std::min(idx + commit_length - 1, m_layers.size() - 1);
+            if (commit_top != top_idx) {
+                // Forced or shortened run: recompute its shape without the tolerance check,
+                // shrinking the range where the region ends or jumps.
+                merged = to_expolygons(m_layers[idx]->regions()[region_id]->slices.surfaces);
+                for (size_t i = idx + 1; i <= commit_top; ++ i) {
+                    if (std::abs(m_layers[i]->height - m_layers[idx]->height) > EPSILON) {
+                        commit_top = i - 1;
+                        break;
+                    }
+                    const ExPolygons expolys = to_expolygons(m_layers[i]->regions()[region_id]->slices.surfaces);
+                    ExPolygons next_merged = expolys.empty() ? ExPolygons() : intersection_ex(expolys, merged);
+                    if (next_merged.empty()) {
+                        commit_top = i - 1;
+                        break;
+                    }
+                    merged = std::move(next_merged);
+                }
+                if (commit_top + 1 - idx < 2) {
+                    // Nothing to force here, the object layer height is the last resort.
+                    ++ idx;
+                    continue;
+                }
+            }
+            // The run must rest on the object below, else the finer per-layer bridge / overhang path
+            // is needed. Skipped when min_run > 1 or in fixed mode: no finer path is allowed then,
+            // overhangs are detected against the layer below the whole run instead.
+            if (min_run <= 1 && ! fixed)
+                if (const Layer *below = m_layers[idx]->lower_layer; below != nullptr &&
+                    ! opening_ex(diff_ex(merged, below->lslices, ApplySafetyOffset::Yes), 0.5f * tolerance).empty()) {
+                    ++ idx;
+                    continue;
+                }
+            double combined_height = 0.;
+            for (size_t i = idx; i <= commit_top; ++ i)
+                combined_height += m_layers[i]->height;
+            if (walls_only) {
+                // Commit: mark the run for LayerRegion::make_perimeters(). The run's top layer
+                // extrudes all its walls at once at the full run height; the layers below keep
+                // their slices, fills and surfaces but drop their wall extrusions (count 0). All
+                // run layers carry the run height so their perimeters are generated with the same
+                // flow and the fill boundaries line up with the walls actually printed at the top.
+                for (size_t i = idx; i <= commit_top; ++ i) {
+                    LayerRegion *layerm = m_layers[i]->regions()[region_id];
+                    layerm->m_wall_combined_count  = i == commit_top ? (unsigned short)(commit_top - idx + 1) : 0;
+                    layerm->m_wall_combined_height = combined_height;
+                }
+                idx = commit_top + 1;
+                continue;
+            }
+            // Commit: move the common shape to the top layer of the run, drop the layers below.
+            LayerRegion *top_layerm = m_layers[commit_top]->regions()[region_id];
+            ExPolygons top_remainder = to_expolygons(top_layerm->slices.surfaces);
+            top_layerm->slices.set(std::move(merged), stInternal);
+            top_layerm->m_combined_layer_count = (unsigned short)(commit_top - idx + 1);
+            top_layerm->m_combined_height      = combined_height;
+            const ExPolygons committed = to_expolygons(top_layerm->slices.surfaces);
+            top_layerm->m_combined_away_exposed = diff_ex(top_remainder, committed);
+            for (size_t i = idx; i < commit_top; ++ i) {
+                LayerRegion *combined_away = m_layers[i]->regions()[region_id];
+                // The run prints only its common shape; this layer's own geometry outside it is
+                // approximated by the run's step. Surface detection classifies the step faces it
+                // exposes via this remainder (lslices still carry the uncombined shape).
+                combined_away->m_combined_away_exposed = diff_ex(to_expolygons(combined_away->slices.surfaces), committed);
+                combined_away->slices.clear();
+                // 0 marks "extrudes at the run top above", as opposed to genuinely absent geometry.
+                combined_away->m_combined_layer_count = 0;
+            }
+            // Do not touch Layer::lslices here: they describe the final object and keep driving
+            // top / bottom detection of the other regions, brim, supports and overhang handling.
+            idx = commit_top + 1;
+        }
+        // ORCA: split wall layer heights - group the fine cadence into coarse runs of
+        // split_coarses[region_id] layers and mark them for LayerRegion::make_perimeters(): the
+        // coarse wall class extrudes once per coarse run at the full run height and follows the
+        // fine cadence wherever no coarse run forms (both walls then print at the lower pitch,
+        // like the min-merge fallback).
+        if (split) {
+            const size_t coarse = split_coarses[region_id];
+            const size_t fine   = std::max<size_t>(1, mult);
+            size_t bottom = first_idx;
+            while (bottom + coarse <= m_layers.size()) {
+                m_print->throw_if_canceled();
+                // When the fine class combines, a coarse run must span whole fine runs so both
+                // classes' tops stay flush: every expected fine-run top must carry a full run.
+                bool aligned = true;
+                if (fine > 1)
+                    for (size_t top = bottom + fine - 1; aligned && top < bottom + coarse; top += fine)
+                        aligned = m_layers[top]->regions()[region_id]->wall_combined_count() == fine;
+                if (! aligned) {
+                    ++ bottom;
+                    continue;
+                }
+                // Uniform layer heights, the region present everywhere, and the whole span's
+                // shape within the run tolerance (mirrors the fine walk above).
+                ExPolygons merged = to_expolygons(m_layers[bottom]->regions()[region_id]->slices.surfaces);
+                Polygons unioned  = to_polygons(merged);
+                bool     valid    = ! merged.empty();
+                for (size_t i = bottom + 1; valid && i < bottom + coarse; ++ i) {
+                    const ExPolygons expolys = to_expolygons(m_layers[i]->regions()[region_id]->slices.surfaces);
+                    merged = expolys.empty() ? ExPolygons() : intersection_ex(expolys, merged);
+                    polygons_append(unioned, to_polygons(expolys));
+                    valid = ! merged.empty() && std::abs(m_layers[i]->height - m_layers[bottom]->height) <= EPSILON;
+                }
+                if (valid)
+                    valid = fixed ? ! opening_ex(merged, 0.25f * float(scale_(nozzle_diameter))).empty()
+                                  : opening(diff(union_(unioned), offset(merged, tolerance)), 0.5f * tolerance).empty();
+                // The coarse walls must rest on the object below the whole run, like the fine walk.
+                if (valid && ! fixed)
+                    if (const Layer *below = m_layers[bottom]->lower_layer; below != nullptr &&
+                        ! opening_ex(diff_ex(merged, below->lslices, ApplySafetyOffset::Yes), 0.5f * tolerance).empty())
+                        valid = false;
+                if (! valid) {
+                    bottom += fine;
+                    continue;
+                }
+                const size_t top = bottom + coarse - 1;
+                double split_height = 0.;
+                for (size_t i = bottom; i <= top; ++ i)
+                    split_height += m_layers[i]->height;
+                for (size_t i = bottom; i <= top; ++ i) {
+                    LayerRegion *layerm = m_layers[i]->regions()[region_id];
+                    layerm->m_wall_split_count  = i == top ? (unsigned short)coarse : 0;
+                    layerm->m_wall_split_height = split_height;
+                }
+                bottom = top + 1;
+            }
+        }
+        m_print->throw_if_canceled();
+    }
+
+    // ORCA: floating pieces at region boundaries. Combining defers or drops a region's layer
+    // geometry (cleared run members extrude at their run top; remainders outside the committed
+    // shape never print), so a neighboring region's per-layer geometry can lose both its support
+    // below and its same-layer lateral anchor: it would extrude into thin air before the covering
+    // pass exists. Unanchored pieces are dropped (recorded as exposed step faces) and the column
+    // resumes - bridging - on the first layer with a printed anchor; a piece whose only anchor is
+    // a run committing at its own layer is filled by that run instead and resumes fully supported
+    // on top of the pass. Pieces away from any deferred neighbor geometry are genuine model
+    // overhangs and print as usual.
+    const size_t num_regions = this->num_printing_regions();
+    const float  anchor_dist = float(scale_(0.1));
+    auto printed_at = [this, num_regions](size_t layer_idx) {
+        Polygons printed;
+        for (size_t region_id = 0; region_id < num_regions; ++ region_id)
+            polygons_append(printed, to_polygons(m_layers[layer_idx]->regions()[region_id]->slices.surfaces));
+        return printed;
+    };
+    for (size_t idx = first_idx; idx < m_layers.size(); ++ idx) {
+        m_print->throw_if_canceled();
+        // Only layers around active combining can need work.
+        bool combining_nearby = false;
+        for (size_t region_id = 0; region_id < num_regions && ! combining_nearby; ++ region_id)
+            combining_nearby = m_layers[idx]->regions()[region_id]->combined_layer_count() != 1 ||
+                               m_layers[idx - 1]->regions()[region_id]->combined_layer_count() != 1;
+        if (! combining_nearby)
+            continue;
+        const Polygons printed_below = printed_at(idx - 1);
+        const Polygons printed_now   = printed_at(idx);
+        // Object areas of this layer nothing extrudes at: deferred to a run top above, or dropped.
+        // The opening removes hairline residue along region boundaries (lslices are safety-offset
+        // unions of the region slices), keeping only real deferred geometry.
+        const Polygons unprinted_now = to_polygons(opening_ex(diff_ex(m_layers[idx]->lslices, printed_now), anchor_dist));
+        for (size_t region_id = 0; region_id < num_regions; ++ region_id) {
+            LayerRegion *layerm = m_layers[idx]->regions()[region_id];
+            // Only plain per-layer regions: run members print at their run top, and wall-combined
+            // and split runs delegate their walls to the run top and must not be trimmed.
+            if (layerm->combined_layer_count() != 1 || layerm->wall_combined_count() != 1 ||
+                layerm->wall_split_count() != 1 || layerm->slices.empty())
+                continue;
+            const ExPolygons own      = to_expolygons(layerm->slices.surfaces);
+            ExPolygons       floating = diff_ex(own, printed_below);
+            if (floating.empty())
+                continue;
+            const Polygons anchors = diff(printed_now, to_polygons(floating));
+            // An anchored piece is normally a legitimate flush bridge. But when its anchor is a
+            // run committing at this very layer and nothing below that run's whole span carries
+            // the piece, the bridge would hang beside the pass over the run's full height of air;
+            // object volume exists through the pass height, so the run fills it instead.
+            LayerRegion *fill_target = nullptr;
+            ExPolygons   filled;
+            auto fill_by_covering_run = [&](const ExPolygon &piece, const Polygons &near) {
+                for (size_t other = 0; other < num_regions; ++ other) {
+                    LayerRegion *neighbor = m_layers[idx]->regions()[other];
+                    if (other == region_id || neighbor->combined_layer_count() < 2 ||
+                        intersection(near, to_polygons(neighbor->slices.surfaces)).empty())
+                        continue;
+                    const size_t run_bottom = idx + 1 - size_t(neighbor->combined_layer_count());
+                    if (run_bottom > 0 && ! intersection(to_polygons(piece), printed_at(run_bottom - 1)).empty())
+                        return; // carried below the covering run: the flush bridge is fine
+                    ExPolygons fill { piece };
+                    for (size_t i = run_bottom; i <= idx && ! fill.empty(); ++ i)
+                        fill = intersection_ex(fill, m_layers[i]->lslices);
+                    if (! fill.empty()) {
+                        fill_target = neighbor;
+                        append(filled, std::move(fill));
+                    }
+                    return;
+                }
+            };
+            ExPolygons dropped;
+            for (ExPolygon &piece : floating) {
+                const Polygons near = offset(piece, anchor_dist);
+                if (! intersection(near, anchors).empty())
+                    fill_by_covering_run(piece, near);
+                else if (! intersection(near, unprinted_now).empty())
+                    // Beside or over deferred geometry, with no anchor: would extrude into thin air.
+                    dropped.emplace_back(std::move(piece));
+            }
+            if (dropped.empty() && filled.empty())
+                continue;
+            ExPolygons removed = dropped;
+            append(removed, filled);
+            layerm->slices.set(diff_ex(own, removed), stInternal);
+            // Dropped pieces never print and classify the surfaces around them; filled ones DO
+            // print (as the neighbor's pass), so they must not count as exposed remainders.
+            layerm->m_combined_away_exposed = union_ex(layerm->m_combined_away_exposed, std::move(dropped));
+            if (fill_target != nullptr) {
+                // Safety-offset union: the filled pieces must weld into the committed shape, or
+                // they stay separate islands walled off by their own mid-air perimeters.
+                Polygons merged = to_polygons(fill_target->slices.surfaces);
+                polygons_append(merged, to_polygons(filled));
+                fill_target->slices.set(union_safety_offset_ex(merged), stInternal);
+            }
+        }
+    }
 }
 
 static bool bool_from_full_config(const DynamicPrintConfig &full_cfg, const char *key, bool fallback)
@@ -2575,7 +2974,7 @@ static bool apply_mixed_region_surface_offsets(PrintObject &print_object)
             if (layerm == nullptr || layerm->slices.empty())
                 continue;
 
-            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().wall_filament.value));
+            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().outer_wall_filament_id.value));
             if (!mixed_mgr.is_mixed(filament_id, num_physical))
                 continue;
 
@@ -2769,7 +3168,7 @@ static std::vector<std::vector<ExPolygons>> whole_object_local_z_segmentation_by
             if (layerm == nullptr || layerm->slices.empty())
                 continue;
 
-            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().wall_filament.value));
+            const unsigned int filament_id = unsigned(std::max(0, layerm->region().config().outer_wall_filament_id.value));
             if (!mixed_mgr.is_mixed(filament_id, num_physical))
                 continue;
             if (filament_id >= segmentation[layer_id].size())
@@ -4469,7 +4868,7 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     int               self_extruder_id         = -1; // 1-based extruder ID
                     ExPolygons        explicit_self_expolygons;
                     ExPolygons        default_self_expolygons;
-                    if (const int cfg_wall = parent_print_region.config().wall_filament.value;
+                    if (const int cfg_wall = parent_print_region.config().outer_wall_filament_id.value;
                         cfg_wall >= 1 && cfg_wall <= int(by_extruder.size()))
                         self_extruder_id = cfg_wall;
                     if (clamp_parent_to_geometry && default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
@@ -4732,7 +5131,7 @@ static std::vector<SurfaceEmbossMixedDebugCandidate> collect_surface_emboss_mixe
             continue;
         processed_region_ids.emplace_back(region_id);
 
-        if (!mixed_mgr.is_mixed(unsigned(std::max(0, volume_region.region->config().wall_filament.value)), num_physical))
+        if (!mixed_mgr.is_mixed(unsigned(std::max(0, volume_region.region->config().outer_wall_filament_id.value)), num_physical))
             continue;
 
         out.push_back({ volume, region_id });
@@ -4767,7 +5166,7 @@ static void export_surface_emboss_mixed_layer_svg(
         }) != candidates.end();
 
         SVG::ExPolygonAttributes attrs(
-            "region " + std::to_string(region_id) + " wall=" + std::to_string(layerm->region().config().wall_filament.value),
+            "region " + std::to_string(region_id) + " wall=" + std::to_string(layerm->region().config().outer_wall_filament_id.value),
             is_candidate ? "#3b82f6" : "#bfc5cc",
             is_candidate ? 0.35f : 0.14f);
         attrs.outline_width = scale_(0.05f);
@@ -4829,9 +5228,9 @@ static void dump_surface_emboss_mixed_layer_state(
         std::ostringstream line;
         line << std::fixed << std::setprecision(4)
              << "  region=" << region_id
-             << " wall=" << layerm->region().config().wall_filament.value
-             << " sparse=" << layerm->region().config().sparse_infill_filament.value
-             << " solid=" << layerm->region().config().solid_infill_filament.value
+             << " wall=" << layerm->region().config().outer_wall_filament_id.value
+             << " sparse=" << layerm->region().config().sparse_infill_filament_id.value
+             << " solid=" << layerm->region().config().internal_solid_filament_id.value
              << " area=" << slice_area;
         append_surface_emboss_mixed_debug_line(print_object, line.str());
     }
@@ -4848,14 +5247,14 @@ static void dump_surface_emboss_mixed_layer_state(
              << "  candidate region=" << candidate.region_id
              << " volume_name=" << candidate.volume->name
              << " volume_extruder=" << candidate.volume->extruder_id()
-             << " cfg_wall=" << layerm->region().config().wall_filament.value
+             << " cfg_wall=" << layerm->region().config().outer_wall_filament_id.value
              << " depth=" << float(candidate.volume->emboss_shape->projection.depth)
              << " shell_delta_mm=" << unscale<double>(shell_delta_scaled)
              << " area=" << slice_area;
         append_surface_emboss_mixed_debug_line(print_object, line.str());
 
         if (segmentation_layer != nullptr) {
-            const int cfg_wall = layerm->region().config().wall_filament.value;
+            const int cfg_wall = layerm->region().config().outer_wall_filament_id.value;
             if (cfg_wall >= 1 && cfg_wall <= int(segmentation_layer->size())) {
                 const double seg_area = std::abs(area((*segmentation_layer)[size_t(cfg_wall - 1)]));
                 std::ostringstream seg_line;
@@ -4949,7 +5348,7 @@ static bool apply_surface_emboss_mixed_region_override(PrintObject &print_object
                 continue;
             processed_region_ids.emplace_back(region_id);
 
-            const unsigned int filament_id = unsigned(std::max(0, volume_region.region->config().wall_filament.value));
+            const unsigned int filament_id = unsigned(std::max(0, volume_region.region->config().outer_wall_filament_id.value));
             if (!mixed_mgr.is_mixed(filament_id, num_physical))
                 continue;
 
@@ -4982,7 +5381,7 @@ static bool apply_surface_emboss_mixed_region_override(PrintObject &print_object
                      << " region=" << region_id
                      << " volume_name=" << volume->name
                      << " volume_extruder=" << volume->extruder_id()
-                     << " cfg_wall=" << volume_region.region->config().wall_filament.value
+                     << " cfg_wall=" << volume_region.region->config().outer_wall_filament_id.value
                      << " depth=" << float(volume->emboss_shape->projection.depth)
                      << " shell_delta_mm=" << unscale<double>(emboss_surface_mixed_shell_override_delta(*emboss_layerm, *volume))
                      << " mask_area=" << std::abs(area(override_mask));
@@ -5007,7 +5406,7 @@ static bool apply_surface_emboss_mixed_region_override(PrintObject &print_object
                 LayerRegion *target_layerm = layer.get_region(target_region_id);
                 if (target_layerm == nullptr || target_layerm->slices.empty())
                     continue;
-                if (target_layerm->region().config().wall_filament.value == int(filament_id))
+                if (target_layerm->region().config().outer_wall_filament_id.value == int(filament_id))
                     continue;
 
                 ExPolygons stolen = intersection_ex(target_layerm->slices.surfaces, override_mask);
@@ -5024,7 +5423,7 @@ static bool apply_surface_emboss_mixed_region_override(PrintObject &print_object
                      << " layer=" << layer_id
                      << " emboss_region=" << region_id
                      << " from_region=" << target_region_id
-                     << " from_wall=" << target_layerm->region().config().wall_filament.value
+                     << " from_wall=" << target_layerm->region().config().outer_wall_filament_id.value
                      << " stolen_area=" << std::abs(area(stolen));
                 append_surface_emboss_mixed_debug_line(print_object, line.str());
 

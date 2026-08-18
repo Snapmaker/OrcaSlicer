@@ -18697,3 +18697,219 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Oriënteer het model"
+msgid "Adjust wall layer height"
+msgstr "Laaghoogte van wanden aanpassen"
+
+msgid "Adjusted walls"
+msgstr "Aangepaste wanden"
+
+msgid "Adjustment direction"
+msgstr "Aanpassingsrichting"
+
+msgid "Consistent"
+msgstr "Consistent"
+
+msgid "Decrease"
+msgstr "Verlagen"
+
+msgid "Filament to print bottom surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor het bodemoppervlak.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Filament to print inner walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor de binnenste wanden.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Filament to print internal solid infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor de interne massieve vulling.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Filament to print internal sparse infill.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor de interne dunne vulling.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Filament to print outer walls.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor de buitenste wanden.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Filament to print support base and raft.\n\"Default\" means no specific filament for support and current filament is used."
+msgstr "Filament voor het printen van ondersteuning (support) en raft. \"Standaard\" betekent geen specifiek filament voor  ondersteuning (support) en het huidige filament wordt gebruikt."
+
+msgid "Filament to print support interface.\n\"Default\" means no specific filament for support interface and current filament is used."
+msgstr "Filament om  ondersteuning (support) te printen. \"Standaard\" betekent geen specifiek filament voor  ondersteuning (support), en het huidige filament wordt gebruikt."
+
+msgid "Filament to print top surface.\n\"Default\" uses the active object/part filament."
+msgstr "Filament voor het bovenvlak.\n\"Standaard\" gebruikt het actieve filament van het object/onderdeel."
+
+msgid "Fixed"
+msgstr "Vast"
+
+msgid "How aggressively object parts assigned to an extruder with a thicker preferred layer height are combined into thick layers.\nConsistent: parts print with at most two layer heights, the extruder layer height wherever whole runs of layers fit and the object layer height everywhere else. This gives the most uniform walls.\nAdaptive: runs may also be combined at intermediate multiples of the object layer height, so more of the part prints with thicker layers, at the price of bands of varying layer heights on curved part boundaries.\nFixed: parts always print at the extruder layer height, even where the shape changes across the combined layers or overhangs; curved boundaries turn into steps and detail finer than the thick layers is lost. Only geometry too short for a whole thick layer (part tops and the first layer) prints thinner."
+msgstr "Hoe agressief onderdelen die zijn toegewezen aan een extruder met een dikkere voorkeurslaaghoogte worden gecombineerd tot dikke lagen.\nConsistent: onderdelen printen met hoogstens twee laaghoogtes - de extruderlaaghoogte waar hele reeksen lagen passen en de objectlaaghoogte overal elders. Dit geeft de meest gelijkmatige wanden.\nAdaptief: reeksen mogen ook worden gecombineerd op tussenliggende veelvouden van de objectlaaghoogte, zodat meer van het onderdeel met dikkere lagen print, ten koste van banden met wisselende laaghoogtes op gebogen randen.\nVast: onderdelen printen altijd op de extruderlaaghoogte, ook waar de vorm over de gecombineerde lagen verandert of overhangt; gebogen randen worden trappen en details fijner dan de dikke lagen gaan verloren. Alleen geometrie die te kort is voor een hele dikke laag (bovenkanten van onderdelen en de eerste laag) print dunner."
+
+msgid "How far the outline of an object part assigned to an extruder with a thicker preferred layer height may drift sideways across the layers of one thick run and still be combined, as a percentage of that extruder's nozzle diameter. Higher values combine more of curved part boundaries into thick layers, at the price of rougher boundary walls: deviations up to this fraction of the nozzle diameter are swallowed by the thick extrusions."
+msgstr "Hoe ver de omtrek van een onderdeel dat is toegewezen aan een extruder met een dikkere voorkeurslaaghoogte zijwaarts mag verschuiven over de lagen van één dikke reeks en toch gecombineerd wordt, als percentage van de mondstukdiameter van die extruder. Hogere waarden combineren meer gebogen randen tot dikke lagen, ten koste van ruwere randwanden: afwijkingen tot dit deel van de mondstukdiameter worden opgeslokt door de dikke extrusies."
+
+msgid "Increase"
+msgstr "Verhogen"
+
+msgid "Inner walls"
+msgstr "Binnenste wanden"
+
+#, no-c-format, no-boost-format
+msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. It must be an integer multiple of the object layer height. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height independently. 0 means to use the object layer height."
+msgstr "Laaghoogte waarmee deze extruder moet printen, voor printers waarvan de extruders verschillende mondstukmaten hebben. Moet een geheel veelvoud van de objectlaaghoogte zijn. Een onderdeel waarvan alle kenmerken deze extruder volgen, print alleen op elke N-de laag met dienovereenkomstig dikkere extrusies, waar de geometrie het toelaat; elders valt het terug op de objectlaaghoogte. Als de rest van het onderdeel niet kan volgen, combineren wanden die aan deze extruder zijn toegewezen zich toch zelfstandig tot deze hoogte, absorberen volledig dichte bovenvlakken de massieve lagen eronder, en combineert dunne of 100% dichte vulling zich onafhankelijk tot deze hoogte. 0 betekent de objectlaaghoogte gebruiken."
+
+msgid "Layer height this extruder should print with: an integer multiple of the object layer height within this extruder's layer height limits. Default keeps the object layer height."
+msgstr "Laaghoogte waarmee deze extruder moet printen: een geheel veelvoud van de objectlaaghoogte binnen de laaghoogtelimieten van deze extruder. Standaard behoudt de objectlaaghoogte."
+
+msgid "No extruder has a nozzle matching the support nozzle diameter."
+msgstr "Geen enkele extruder heeft een mondstuk dat overeenkomt met de mondstukdiameter voor ondersteuning."
+
+msgid "No loaded filament matches the support/raft base material (and the support nozzle diameter)."
+msgstr "Geen geladen filament komt overeen met het materiaal van de ondersteunings-/vlotbasis (en de mondstukdiameter voor ondersteuning)."
+
+msgid "No loaded filament matches the support/raft interface material (and the support nozzle diameter)."
+msgstr "Geen geladen filament komt overeen met het materiaal van de ondersteunings-/vlotinterface (en de mondstukdiameter voor ondersteuning)."
+
+#, no-c-format, boost-format
+msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
+msgstr "Mondstuk %1%: laaghoogtelimieten ingesteld op %2%-%3% mm, uit \"%4%\"."
+
+msgid "On printers whose extruders have different nozzle diameters, only filaments of this nozzle diameter are used to print support, raft and support interface. This keeps filaments of other nozzle sizes - with their different line widths and layer height limits - out of the support. Support filaments set to a non-default value must match this diameter. Value 0 allows any filament to print support."
+msgstr "Op printers waarvan de extruders verschillende mondstukdiameters hebben, worden alleen filamenten van deze mondstukdiameter gebruikt om ondersteuning, vlot en ondersteuningsinterface te printen. Dit houdt filamenten van andere mondstukmaten - met hun andere lijnbreedtes en laaghoogtelimieten - uit de ondersteuning. Ondersteuningsfilamenten met een niet-standaardwaarde moeten met deze diameter overeenkomen. Waarde 0 laat elk filament ondersteuning printen."
+
+msgid "Outer and inner walls automatically print at their own preferred layer heights when one height is an integer multiple of the other. When the heights do not divide evenly, this option adjusts the wall layer height of one of the two wall filaments (chosen below) to the nearest multiple or divisor of the other, so the walls can still split. The adjusted height only applies to that filament's walls; other features keep the preferred layer height. Adjustments never leave the filament's layer height limits: if no allowed height exists in the chosen direction, the walls print together at the lower height as usual."
+msgstr "Buitenste en binnenste wanden printen automatisch op hun eigen voorkeurslaaghoogtes wanneer de ene hoogte een geheel veelvoud van de andere is. Wanneer de hoogtes niet gelijk deelbaar zijn, past deze optie de wandlaaghoogte van één van de twee wandfilamenten (hieronder gekozen) aan naar het dichtstbijzijnde veelvoud of de dichtstbijzijnde deler van de andere, zodat de wanden zich toch kunnen splitsen. De aangepaste hoogte geldt alleen voor de wanden van dat filament; andere kenmerken behouden de voorkeurslaaghoogte. Aanpassingen verlaten nooit de laaghoogtelimieten van het filament: bestaat er in de gekozen richting geen toegestane hoogte, dan printen de wanden zoals gebruikelijk samen op de lagere hoogte."
+
+msgid "Outer walls"
+msgstr "Buitenste wanden"
+
+msgid "Per-extruder layer heights are not supported in spiral vase mode."
+msgstr "Laaghoogtes per extruder worden niet ondersteund in de spiraalvaasmodus."
+
+msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr "Laaghoogtes per extruder worden niet ondersteund samen met interfaceschillen."
+
+msgid "Per-extruder layer heights are not supported together with variable layer height."
+msgstr "Laaghoogtes per extruder worden niet ondersteund samen met variabele laaghoogte."
+
+msgid "Preferred layer height"
+msgstr "Voorkeurslaaghoogte"
+
+msgid "Print the support and raft base only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft base filament still takes precedence."
+msgstr "Print de ondersteuning en vlotbasis alleen met filamenten van dit materiaaltype; extruders met andere types worden hiervoor niet gebruikt. Werkt samen met de mondstukdiameterbeperking voor ondersteuning. Leeg laten voor geen beperking; een expliciet gekozen ondersteunings-/vlotbasisfilament heeft nog steeds voorrang."
+
+msgid "Print the support and raft interface only with filaments of this material type; extruders loaded with other types are not used for it. Combines with the support nozzle diameter restriction. Leave empty for no restriction; an explicitly selected support/raft interface filament still takes precedence."
+msgstr "Print de ondersteunings- en vlotinterface alleen met filamenten van dit materiaaltype; extruders met andere types worden hiervoor niet gebruikt. Werkt samen met de mondstukdiameterbeperking voor ondersteuning. Leeg laten voor geen beperking; een expliciet gekozen ondersteunings-/vlotinterfacefilament heeft nog steeds voorrang."
+
+msgid "Raft and support base"
+msgstr "Vlot en ondersteuningsbasis"
+
+msgid "Show legacy filament selection"
+msgstr "Oude filamentselectie tonen"
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of filament %2% printing other features of the part is too small to extrude that height. These parts print with the object layer height instead."
+msgstr "Sommige onderdelen prefereren lagen van %1% mm, maar het mondstuk van filament %2% dat andere kenmerken van het onderdeel print is te klein om die hoogte te extruderen. Deze onderdelen printen in plaats daarvan met de objectlaaghoogte."
+
+#, no-c-format, boost-format
+msgid "Some object parts prefer %1% mm layers, but the nozzle of wall filament %2% is too small to extrude that height. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments with large enough nozzles."
+msgstr "Sommige onderdelen prefereren lagen van %1% mm, maar het mondstuk van wandfilament %2% is te klein om die hoogte te extruderen. Buitenste en binnenste wanden printen samen, dus deze wanden behouden de objectlaaghoogte. Wijs beide wandkenmerken toe aan filamenten met voldoende grote mondstukken."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose maximum layer height is %3% mm. Assign the part's features to filaments of the coarser nozzle, raise the filament's maximum layer height, or accept printing above it."
+msgstr "Sommige onderdelen printen lagen van %1% mm met filament %2%, waarvan de maximale laaghoogte %3% mm is. Wijs de kenmerken van het onderdeel toe aan filamenten van het grovere mondstuk, verhoog de maximale laaghoogte van het filament, of accepteer erboven te printen."
+
+#, no-c-format, boost-format
+msgid "Some object parts print %1% mm layers with filament %2% whose minimum layer height is %3% mm. Raise the object layer height, use a filament with a finer nozzle for these features, or accept printing below the extruder's minimum."
+msgstr "Sommige onderdelen printen lagen van %1% mm met filament %2%, waarvan de minimale laaghoogte %3% mm is. Verhoog de objectlaaghoogte, gebruik voor deze kenmerken een filament met een fijner mondstuk, of accepteer onder het minimum van de extruder te printen."
+
+msgid "Some object parts use filaments whose preferred layer heights cannot all be honored: a part prints its features with one layer pitch (set by its wall filaments, or by the other features' agreement when no wall filament has a preference); the walls, the top surfaces and the infill can each combine to their own height when the rest of the part cannot follow them, but the remaining features print with the part's pitch."
+msgstr "Sommige onderdelen gebruiken filamenten waarvan de voorkeurslaaghoogtes niet allemaal kunnen worden gehonoreerd: een onderdeel print zijn kenmerken met één laagstap (bepaald door zijn wandfilamenten, of door de overeenstemming van de andere kenmerken als geen wandfilament een voorkeur heeft); de wanden, de bovenvlakken en de vulling kunnen zich elk tot hun eigen hoogte combineren wanneer de rest van het onderdeel ze niet kan volgen, maar de overige kenmerken printen met de stap van het onderdeel."
+
+msgid "Support for mixed nozzle sizes"
+msgstr "Ondersteuning bij gemengde mondstukmaten"
+
+msgid "Support may print with extruders of differing nozzle diameters. Set the support nozzle diameter (or explicit support and interface filaments) to keep the support on one nozzle size."
+msgstr "Ondersteuning kan printen met extruders van verschillende mondstukdiameters. Stel de mondstukdiameter voor ondersteuning in (of expliciete ondersteunings- en interfacefilamenten) om de ondersteuning op één mondstukmaat te houden."
+
+msgid "Support nozzle diameter"
+msgstr "Mondstukdiameter voor ondersteuning"
+
+msgid "Support nozzle size"
+msgstr "Mondstukmaat voor ondersteuning"
+
+msgid "Support/raft base material"
+msgstr "Materiaal ondersteunings-/vlotbasis"
+
+msgid "Support/raft interface material"
+msgstr "Materiaal ondersteunings-/vlotinterface"
+
+#, no-c-format, boost-format
+msgid "The %1% mm infill line width is too small for infill combined to %2% mm high layers. Increase the line width or lower the preferred layer height of the infill filament."
+msgstr "De vullijnbreedte van %1% mm is te klein voor vulling gecombineerd tot lagen van %2% mm hoog. Vergroot de lijnbreedte of verlaag de voorkeurslaaghoogte van het vulfilament."
+
+#, no-c-format, boost-format
+msgid "The %1% mm line width is too small for the %2% mm layer height of its extruder. Increase the line width or lower the extruder layer height."
+msgstr "De lijnbreedte van %1% mm is te klein voor de laaghoogte van %2% mm van zijn extruder. Vergroot de lijnbreedte of verlaag de extruderlaaghoogte."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."
+msgstr "De laaghoogte van extruder %1% (%2% mm) kan de mondstukdiameter niet overschrijden."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is ignored for some object parts: it must be an integer multiple of the object layer height (%3% mm), not below it, and must not exceed the extruder's nozzle diameter."
+msgstr "De laaghoogte van extruder %1% (%2% mm) wordt voor sommige onderdelen genegeerd: ze moet een geheel veelvoud van de objectlaaghoogte (%3% mm) zijn, niet eronder liggen, en mag de mondstukdiameter van de extruder niet overschrijden."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) is smaller than the object layer height (%3% mm). Lower the object layer height to the finest extruder layer height."
+msgstr "De laaghoogte van extruder %1% (%2% mm) is kleiner dan de objectlaaghoogte (%3% mm). Verlaag de objectlaaghoogte tot de fijnste extruderlaaghoogte."
+
+#, no-c-format, boost-format
+msgid "The layer height of extruder %1% (%2% mm) must be an integer multiple of the object layer height (%3% mm)."
+msgstr "De laaghoogte van extruder %1% (%2% mm) moet een geheel veelvoud van de objectlaaghoogte (%3% mm) zijn."
+
+msgid "The lowest printable layer height for the extruder. Used to limit the minimum layer height when enable adaptive layer height. Parts printed with a thicker preferred extruder layer height never fall back below this height either (the first layer excepted)."
+msgstr "De laagste printbare laaghoogte van de extruder. Beperkt de minimale laaghoogte wanneer adaptieve laaghoogte is ingeschakeld. Onderdelen die met een dikkere voorkeursextruderlaaghoogte printen, vallen ook nooit onder deze hoogte terug (behalve de eerste laag)."
+
+#, no-c-format, boost-format
+msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr "De voorkeurslaaghoogte van mondstuk %1% past er niet meer doorheen en is teruggezet op Standaard."
+
+msgid "The support/raft base filament is not of the support/raft base material."
+msgstr "Het ondersteunings-/vlotbasisfilament is niet van het materiaal van de ondersteunings-/vlotbasis."
+
+msgid "The support/raft base filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Het ondersteunings-/vlotbasisfilament print met een mondstuk dat niet overeenkomt met de mondstukdiameter voor ondersteuning."
+
+msgid "The support/raft interface filament is not of the support/raft interface material."
+msgstr "Het ondersteunings-/vlotinterfacefilament is niet van het materiaal van de ondersteunings-/vlotinterface."
+
+msgid "The support/raft interface filament prints with a nozzle that does not match the support nozzle diameter."
+msgstr "Het ondersteunings-/vlotinterfacefilament print met een mondstuk dat niet overeenkomt met de mondstukdiameter voor ondersteuning."
+
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls keep the object layer height. Assign both wall features to filaments preferring the same height to print thicker walls."
+msgstr "De wandfilamenten van sommige onderdelen prefereren verschillende laaghoogtes. Buitenste en binnenste wanden printen samen, dus deze wanden behouden de objectlaaghoogte. Wijs beide wandkenmerken toe aan filamenten met dezelfde voorkeurshoogte om dikkere wanden te printen."
+
+#, no-c-format, boost-format
+msgid "The wall filaments of some object parts prefer different layer heights. Outer and inner walls print together, so these walls print with the lower height (%1% mm)."
+msgstr "De wandfilamenten van sommige onderdelen prefereren verschillende laaghoogtes. Buitenste en binnenste wanden printen samen, dus deze wanden printen met de lagere hoogte (%1% mm)."
+
+#, no-c-format, boost-format
+msgid "The wall layer height of filament %1% was adjusted from the preferred %2% mm to %3% mm so the outer and inner walls can print at compatible layer heights (\"Adjust wall layer height\"). Only this filament's walls print the adjusted height; its other features keep the preferred one."
+msgstr "De wandlaaghoogte van filament %1% is aangepast van de voorkeur van %2% mm naar %3% mm zodat de buitenste en binnenste wanden op compatibele laaghoogtes kunnen printen (\"Laaghoogte van wanden aanpassen\"). Alleen de wanden van dit filament printen de aangepaste hoogte; zijn andere kenmerken behouden de voorkeurshoogte."
+
+msgid "Thick layer regions"
+msgstr "Regio's met dikke lagen"
+
+msgid "Thick layer tolerance"
+msgstr "Tolerantie voor dikke lagen"
+
+#, no-c-format, boost-format
+msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
+msgstr "Deze printer heeft geen profiel voor een mondstuk van %1% mm. Controleer de laaghoogtelimieten van mondstuk %2% in de printerinstellingen."
+
+msgid "This printer uses different nozzle sizes. Select the nozzle size that prints the support, and the filament types used for the raft and the support interface."
+msgstr "Deze printer gebruikt verschillende mondstukmaten. Selecteer de mondstukmaat die de ondersteuning print, en de filamenttypes voor het vlot en de ondersteuningsinterface."
+
+msgid "Whether the adjusted wall filament's wall layer height is decreased or increased to reach a height compatible with the other wall filament. Heights outside the adjusted filament's layer height limits are never used: if no allowed height exists in this direction, the walls print together at the lower height as usual."
+msgstr "Of de wandlaaghoogte van het aangepaste wandfilament wordt verlaagd of verhoogd om een hoogte te bereiken die compatibel is met het andere wandfilament. Hoogtes buiten de laaghoogtelimieten van het aangepaste filament worden nooit gebruikt: bestaat er in deze richting geen toegestane hoogte, dan printen de wanden zoals gebruikelijk samen op de lagere hoogte."
+
+msgid "Which of the two wall filaments gets its wall layer height adjusted when the preferred layer heights do not divide evenly."
+msgstr "Welk van de twee wandfilamenten zijn wandlaaghoogte aangepast krijgt wanneer de voorkeurslaaghoogtes niet gelijk deelbaar zijn."

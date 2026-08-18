@@ -1513,7 +1513,13 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
                 }
                 extra_gap = std::max(extra_gap, object.config().raft_contact_distance.value);
             }
-            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_to_print.layer()->height +
+            double layer_span = layer_to_print.layer()->height;
+            // ORCA: the top layer of a combined group or walls-only run prints the whole group at
+            // once, so tolerate a gap of its height (equals the layer height when not combined).
+            if (layer_to_print.object_layer != nullptr)
+                for (const LayerRegion *layerm : layer_to_print.object_layer->regions())
+                    layer_span = std::max(layer_span, layerm->wall_combined_height());
+            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_span +
                                      std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
 
@@ -5019,6 +5025,7 @@ LayerResult GCode::process_layer(const Print& print,
 
     // Group extrusions by an extruder, then by an object, an island and a region.
     std::map<unsigned int, std::vector<ObjectByExtruder>> by_extruder;
+    std::vector<std::unique_ptr<ExtrusionEntityCollection>> split_perimeter_storage;
     bool is_anything_overridden = const_cast<LayerTools&>(layer_tools).wiping_extrusions().is_anything_overridden();
     const double nozzle_0_mm = m_config.nozzle_diameter.values.empty() ? 0.4 : m_config.nozzle_diameter.get_at(0);
     const double pointillism_pixel_size_cfg = std::max(0.0, double(m_config.mixed_filament_pointillism_pixel_size.value));
@@ -5040,28 +5047,60 @@ LayerResult GCode::process_layer(const Print& print,
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
             if (layer_tools.extruder_override != 0)
                 return layer_tools.extruder_override;
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
-            if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return unsigned(region.config().sparse_infill_filament.value);
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return unsigned(region.config().outer_wall_filament_id.value);
+            if (role == erTopSolidInfill || role == erIroning)
+                return unsigned(region.config().top_surface_filament_id.value);
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+                return unsigned(region.config().bottom_surface_filament_id.value);
             if (is_solid_infill(role))
-                return unsigned(region.config().solid_infill_filament.value);
-            return unsigned(region.config().sparse_infill_filament.value);
+                return unsigned(region.config().internal_solid_filament_id.value);
+            return unsigned(region.config().sparse_infill_filament_id.value);
         }
-        return layer_tools.extruder_override == 0 ? unsigned(region.config().wall_filament.value) : layer_tools.extruder_override;
+        if (layer_tools.extruder_override != 0)
+            return layer_tools.extruder_override;
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? unsigned(region.config().inner_wall_filament_id.value)
+                                        : unsigned(region.config().outer_wall_filament_id.value);
     };
 
     auto configured_extruder_id = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
                                                  const ExtrusionEntityCollection&                    entities,
                                                  const PrintRegion&                                  region) -> int {
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
-            if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return int(layer_tools.sparse_infill_filament(region));
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return int(layer_tools.wall_extruder_id(region));
+            if (role == erTopSolidInfill || role == erIroning)
+                return int(layer_tools.top_surface_filament_id(region));
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+                return int(layer_tools.bottom_surface_filament_id(region));
             if (is_solid_infill(role))
-                return int(layer_tools.solid_infill_filament(region));
-            return int(layer_tools.sparse_infill_filament(region));
+                return int(layer_tools.internal_solid_filament_id(region));
+            return int(layer_tools.sparse_infill_filament_id(region));
         }
-        return int(layer_tools.wall_filament(region));
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? int(layer_tools.inner_wall_extruder_id(region))
+                                        : int(layer_tools.wall_extruder_id(region));
     };
 
     auto pointillism_sequence_for_filament = [&](unsigned int filament_id_1based) -> const std::vector<unsigned int>* {
@@ -5397,6 +5436,29 @@ LayerResult GCode::process_layer(const Print& print,
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
                 }
+                // ORCA: with support nozzle diameter / material restrictions, ("don't care") support/interface may only use a passing extruder; prefer one scheduled on this layer (as ToolOrdering did).
+                if (object.has_support_filament_restriction()) {
+                    auto restrict_to_support_filaments = [&print, &object, &layer_tools](unsigned int extruder_id, bool interface_role) -> unsigned int {
+                        if (object.support_filament_allowed(extruder_id + 1, interface_role))
+                            return extruder_id;
+                        unsigned int fallback   = extruder_id;
+                        bool have_fallback      = false;
+                        for (unsigned int candidate : layer_tools.extruders) // 0 based at this point
+                            if (object.support_filament_allowed(candidate + 1, interface_role)) {
+                                if (! print.config().filament_soluble.get_at(candidate))
+                                    return candidate;
+                                if (! have_fallback) {
+                                    fallback      = candidate;
+                                    have_fallback = true;
+                                }
+                            }
+                        return fallback;
+                    };
+                    if (support_dontcare)
+                        support_extruder = restrict_to_support_filaments(support_extruder, false);
+                    if (interface_dontcare)
+                        interface_extruder = restrict_to_support_filaments(interface_extruder, true);
+                }
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.
                 bool single_extruder = !has_support || support_extruder == interface_extruder;
@@ -5601,155 +5663,194 @@ LayerResult GCode::process_layer(const Print& print,
                             local_z_clipped_collections.emplace_back(std::move(clipped_base));
                         }
 
-                        const unsigned int configured_filament_id = configured_filament_id_1based(entity_type, *filtered_extrusions, region);
-                        const std::vector<unsigned int>* pointillism_sequence =
-                            is_anything_overridden ? nullptr : pointillism_sequence_for_filament(configured_filament_id);
-                        if (pointillism_sequence != nullptr) {
-                            std::vector<std::unique_ptr<ExtrusionEntityCollection>> split_by_extruder;
-                            PointillismPathSplitStats split_stats;
-                            const size_t sequence_phase = pointillism_sequence->empty() ?
-                                0 : size_t(std::max(0, layer_tools.layer_index)) % pointillism_sequence->size();
-                            if (split_extrusion_collection_for_pointillism_paths(*filtered_extrusions,
-                                                                                  *pointillism_sequence,
-                                                                                  layer_tools.num_physical,
-                                                                                  pointillism_segment_len_scaled,
-                                                                                  pointillism_line_gap_scaled,
-                                                                                  sequence_phase,
-                                                                                  split_by_extruder,
-                                                                                  split_stats) &&
-                                split_stats.bucket_count >= 2) {
-                                ++pointillism_path_split_entities;
-                                pointillism_path_split_segments += split_stats.segment_count;
-                                for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
-                                    std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
-                                    if (!split_collection || split_collection->entities.empty())
-                                        continue;
-                                    const ExtrusionEntityCollection* split_ptr = split_collection.get();
-                                    local_z_clipped_collections.emplace_back(std::move(split_collection));
-                                    std::vector<ObjectByExtruder::Island>& islands =
-                                        object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
-                                    for (size_t i = 0; i <= n_slices; ++i) {
-                                        const bool   last       = i == n_slices;
-                                        const size_t island_idx = last ? n_slices : slices_test_order[i];
-                                        if (last || entity_matches_surface(island_idx, *split_ptr)) {
-                                            if (islands[island_idx].by_region.empty())
-                                                islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
-                                            islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
-                                            break;
-                                        }
-                                    }
-                                }
-                                continue;
-                            }
-                            ++pointillism_path_split_fallbacks;
-                        }
-
-                        // This extrusion is part of certain Region, which tells us which extruder should be used for it:
-                        int correct_extruder_id = configured_extruder_id(entity_type, *filtered_extrusions, region);
-                        if (!is_anything_overridden &&
-                            entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
-                            layer_tools.mixed_mgr != nullptr &&
-                            layer_tools.num_physical > 0 &&
-                            correct_extruder_id >= 0) {
-                            const unsigned int mixed_filament_id =
-                                grouped_manual_pattern_mixed_filament_id(entity_type, *filtered_extrusions, region);
-                            if (mixed_filament_id != 0) {
+                        auto process_extrusions = [&](const ExtrusionEntityCollection* current_extrusions,
+                                                      const ExtrusionEntityCollection* overrides_key,
+                                                      bool                             use_overrides) {
+                            const unsigned int configured_filament_id = configured_filament_id_1based(entity_type, *current_extrusions, region);
+                            const std::vector<unsigned int>* pointillism_sequence =
+                                is_anything_overridden ? nullptr : pointillism_sequence_for_filament(configured_filament_id);
+                            if (pointillism_sequence != nullptr) {
                                 std::vector<std::unique_ptr<ExtrusionEntityCollection>> split_by_extruder;
-                                size_t bucket_count = 0;
-                                const PrintObject* current_object_for_gradient =
-                                    layer_to_print.original_object != nullptr ? layer_to_print.original_object : layer_to_print.object();
-                                if (split_extrusion_collection_for_multi_perimeter_pattern(*filtered_extrusions,
-                                                                                           *layer_tools.mixed_mgr,
-                                                                                           mixed_filament_id,
-                                                                                           layer_tools.num_physical,
-                                                                                           layer_tools.layer_index,
-                                                                                           split_by_extruder,
-                                                                                           bucket_count,
-                                                                                           current_object_for_gradient)) {
-                                    if (bucket_count >= 2) {
-                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
-                                            std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
-                                            if (!split_collection || split_collection->entities.empty())
-                                                continue;
-                                            const ExtrusionEntityCollection* split_ptr = split_collection.get();
-                                            local_z_clipped_collections.emplace_back(std::move(split_collection));
-                                            std::vector<ObjectByExtruder::Island>& islands =
-                                                object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
-                                            for (size_t i = 0; i <= n_slices; ++i) {
-                                                const bool   last       = i == n_slices;
-                                                const size_t island_idx = last ? n_slices : slices_test_order[i];
-                                                if (last || entity_matches_surface(island_idx, *split_ptr)) {
-                                                    if (islands[island_idx].by_region.empty())
-                                                        islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
-                                                    islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                    if (bucket_count == 1) {
-                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
-                                            const std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
-                                            if (split_collection && !split_collection->entities.empty()) {
-                                                // by_extruder keys and LayerTools runtime extruder IDs are zero-based here.
-                                                correct_extruder_id = int(extruder_idx);
+                                PointillismPathSplitStats split_stats;
+                                const size_t sequence_phase = pointillism_sequence->empty() ?
+                                    0 : size_t(std::max(0, layer_tools.layer_index)) % pointillism_sequence->size();
+                                if (split_extrusion_collection_for_pointillism_paths(*current_extrusions,
+                                                                                      *pointillism_sequence,
+                                                                                      layer_tools.num_physical,
+                                                                                      pointillism_segment_len_scaled,
+                                                                                      pointillism_line_gap_scaled,
+                                                                                      sequence_phase,
+                                                                                      split_by_extruder,
+                                                                                      split_stats) &&
+                                    split_stats.bucket_count >= 2) {
+                                    ++pointillism_path_split_entities;
+                                    pointillism_path_split_segments += split_stats.segment_count;
+                                    for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                        std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                        if (!split_collection || split_collection->entities.empty())
+                                            continue;
+                                        const ExtrusionEntityCollection* split_ptr = split_collection.get();
+                                        local_z_clipped_collections.emplace_back(std::move(split_collection));
+                                        std::vector<ObjectByExtruder::Island>& islands =
+                                            object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
+                                        for (size_t i = 0; i <= n_slices; ++i) {
+                                            const bool   last       = i == n_slices;
+                                            const size_t island_idx = last ? n_slices : slices_test_order[i];
+                                            if (last || entity_matches_surface(island_idx, *split_ptr)) {
+                                                if (islands[island_idx].by_region.empty())
+                                                    islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                                islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
                                                 break;
                                             }
                                         }
                                     }
+                                    return;
+                                }
+                                ++pointillism_path_split_fallbacks;
+                            }
+
+                            // This extrusion is part of certain Region, which tells us which extruder should be used for it:
+                            int correct_extruder_id = configured_extruder_id(entity_type, *current_extrusions, region);
+                            if (!is_anything_overridden &&
+                                entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
+                                layer_tools.mixed_mgr != nullptr &&
+                                layer_tools.num_physical > 0 &&
+                                correct_extruder_id >= 0) {
+                                const unsigned int mixed_filament_id =
+                                    grouped_manual_pattern_mixed_filament_id(entity_type, *current_extrusions, region);
+                                if (mixed_filament_id != 0) {
+                                    std::vector<std::unique_ptr<ExtrusionEntityCollection>> split_by_extruder;
+                                    size_t bucket_count = 0;
+                                    const PrintObject* current_object_for_gradient =
+                                        layer_to_print.original_object != nullptr ? layer_to_print.original_object : layer_to_print.object();
+                                    if (split_extrusion_collection_for_multi_perimeter_pattern(*current_extrusions,
+                                                                                               *layer_tools.mixed_mgr,
+                                                                                               mixed_filament_id,
+                                                                                               layer_tools.num_physical,
+                                                                                               layer_tools.layer_index,
+                                                                                               split_by_extruder,
+                                                                                               bucket_count,
+                                                                                               current_object_for_gradient)) {
+                                        if (bucket_count >= 2) {
+                                            for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                                std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                                if (!split_collection || split_collection->entities.empty())
+                                                    continue;
+                                                const ExtrusionEntityCollection* split_ptr = split_collection.get();
+                                                local_z_clipped_collections.emplace_back(std::move(split_collection));
+                                                std::vector<ObjectByExtruder::Island>& islands =
+                                                    object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
+                                                for (size_t i = 0; i <= n_slices; ++i) {
+                                                    const bool   last       = i == n_slices;
+                                                    const size_t island_idx = last ? n_slices : slices_test_order[i];
+                                                    if (last || entity_matches_surface(island_idx, *split_ptr)) {
+                                                        if (islands[island_idx].by_region.empty())
+                                                            islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                                        islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            return;
+                                        }
+                                        if (bucket_count == 1) {
+                                            for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                                const std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                                if (split_collection && !split_collection->entities.empty()) {
+                                                    // by_extruder keys and LayerTools runtime extruder IDs are zero-based here.
+                                                    correct_extruder_id = int(extruder_idx);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        }
 
-                        // Let's recover vector of extruder overrides:
-                        const WipingExtrusions::ExtruderPerCopy* entity_overrides = nullptr;
-                        if (!layer_tools.has_extruder(correct_extruder_id)) {
-                            // this entity is not overridden, but its extruder is not in layer_tools - we'll print it
-                            // by last extruder on this layer (could happen e.g. when a wiping object is taller than others - dontcare
-                            // extruders are eradicated from layer_tools)
-                            correct_extruder_id = layer_tools.extruders.back();
-                        }
-                        printing_extruders.clear();
-                        if (is_anything_overridden) {
-                            entity_overrides = const_cast<LayerTools&>(layer_tools)
-                                                   .wiping_extrusions()
-                                                   .get_extruder_overrides(filtered_extrusions, layer_to_print.original_object, correct_extruder_id,
-                                                                           layer_to_print.object()->instances().size());
-                            if (entity_overrides == nullptr) {
+                            // Let's recover vector of extruder overrides:
+                            const WipingExtrusions::ExtruderPerCopy* entity_overrides = nullptr;
+                            if (!layer_tools.has_extruder(correct_extruder_id)) {
+                                // this entity is not overridden, but its extruder is not in layer_tools - we'll print it
+                                // by last extruder on this layer (could happen e.g. when a wiping object is taller than others - dontcare
+                                // extruders are eradicated from layer_tools)
+                                correct_extruder_id = layer_tools.extruders.back();
+                            }
+                            printing_extruders.clear();
+                            if (is_anything_overridden && use_overrides) {
+                                entity_overrides = const_cast<LayerTools&>(layer_tools)
+                                                       .wiping_extrusions()
+                                                       .get_extruder_overrides(overrides_key, layer_to_print.original_object, correct_extruder_id,
+                                                                               layer_to_print.object()->instances().size());
+                                if (entity_overrides == nullptr) {
+                                    printing_extruders.emplace_back(correct_extruder_id);
+                                } else {
+                                    printing_extruders.reserve(entity_overrides->size());
+                                    for (int extruder : *entity_overrides)
+                                        printing_extruders.emplace_back(extruder >= 0 ?
+                                                                            // at least one copy is overridden to use this extruder
+                                                                            extruder :
+                                                                            // at least one copy would normally be printed with this extruder
+                                                                            // (see get_extruder_overrides function for explanation)
+                                                                            static_cast<unsigned int>(-extruder - 1));
+                                    Slic3r::sort_remove_duplicates(printing_extruders);
+                                }
+                            } else
                                 printing_extruders.emplace_back(correct_extruder_id);
-                            } else {
-                                printing_extruders.reserve(entity_overrides->size());
-                                for (int extruder : *entity_overrides)
-                                    printing_extruders.emplace_back(extruder >= 0 ?
-                                                                        // at least one copy is overridden to use this extruder
-                                                                        extruder :
-                                                                        // at least one copy would normally be printed with this extruder
-                                                                        // (see get_extruder_overrides function for explanation)
-                                                                        static_cast<unsigned int>(-extruder - 1));
-                                Slic3r::sort_remove_duplicates(printing_extruders);
-                            }
-                        } else
-                            printing_extruders.emplace_back(correct_extruder_id);
 
-                        // Now we must add this extrusion into the by_extruder map, once for each extruder that will print it:
-                        for (unsigned int extruder : printing_extruders) {
-                            std::vector<ObjectByExtruder::Island>& islands =
-                                object_islands_by_extruder(by_extruder, extruder, layer_to_print_idx, layers.size(), n_slices + 1);
-                            for (size_t i = 0; i <= n_slices; ++i) {
-                                bool   last       = i == n_slices;
-                                size_t island_idx = last ? n_slices : slices_test_order[i];
-                                if ( // extrusions->first_point does not fit inside any slice
-                                    last ||
-                                    // extrusions->first_point fits inside ith slice
-                                    entity_matches_surface(island_idx, *filtered_extrusions)) {
-                                    if (islands[island_idx].by_region.empty())
-                                        islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
-                                    islands[island_idx].by_region[region.print_region_id()].append(entity_type, filtered_extrusions,
-                                                                                                   entity_overrides);
-                                    break;
+                            // Now we must add this extrusion into the by_extruder map, once for each extruder that will print it:
+                            for (unsigned int extruder : printing_extruders) {
+                                std::vector<ObjectByExtruder::Island>& islands =
+                                    object_islands_by_extruder(by_extruder, extruder, layer_to_print_idx, layers.size(), n_slices + 1);
+                                for (size_t i = 0; i <= n_slices; ++i) {
+                                    bool   last       = i == n_slices;
+                                    size_t island_idx = last ? n_slices : slices_test_order[i];
+                                    if ( // extrusions->first_point does not fit inside any slice
+                                        last ||
+                                        // extrusions->first_point fits inside ith slice
+                                        entity_matches_surface(island_idx, *current_extrusions)) {
+                                        if (islands[island_idx].by_region.empty())
+                                            islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                        islands[island_idx].by_region[region.print_region_id()].append(entity_type, current_extrusions,
+                                                                                                       entity_overrides);
+                                        break;
+                                    }
                                 }
                             }
+                        };
+
+                        // ORCA: gate the split on the actual per-path classification: the collection
+                        // role() is erMixed only when the loops' FIRST paths differ, missing e.g. a
+                        // collection whose loops all start with an overhang path.
+                        bool any_outer_wall = false, any_inner_wall = false;
+                        if (entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
+                            region.config().outer_wall_filament_id.value != region.config().inner_wall_filament_id.value)
+                            classify_wall_filaments(*filtered_extrusions, any_outer_wall, any_inner_wall);
+                        const bool split_mixed_perimeters = any_outer_wall && any_inner_wall;
+
+                        if (split_mixed_perimeters) {
+                            auto outer_perimeters = std::make_unique<ExtrusionEntityCollection>();
+                            auto inner_perimeters = std::make_unique<ExtrusionEntityCollection>();
+                            for (const ExtrusionEntity* entity : filtered_extrusions->entities) {
+                                // Same classification as the wall filament dispatch (LayerTools::extruder()).
+                                if (perimeter_entity_uses_outer_wall_filament(*entity))
+                                    outer_perimeters->append(*entity);
+                                else
+                                    inner_perimeters->append(*entity);
+                            }
+
+                            // Wiping-extrusion overrides were marked (and their purge volume
+                            // credited) against the ORIGINAL collection - look them up under that
+                            // key so a purge planned into these perimeters still happens.
+                            if (!outer_perimeters->entities.empty()) {
+                                split_perimeter_storage.emplace_back(std::move(outer_perimeters));
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
+                            }
+                            if (!inner_perimeters->entities.empty()) {
+                                split_perimeter_storage.emplace_back(std::move(inner_perimeters));
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
+                            }
+                        } else {
+                            process_extrusions(filtered_extrusions, filtered_extrusions, true);
                         }
                     }
                 }

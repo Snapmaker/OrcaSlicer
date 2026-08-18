@@ -32,6 +32,7 @@
 #include <future>
 #include <functional>
 #include <sstream>
+#include <locale>
 #include <utility>
 #include <boost/algorithm/string.hpp>
 #include <boost/iterator/counting_iterator.hpp>
@@ -411,16 +412,20 @@ static void collect_filament_slots_from_config(
     const DynamicPrintConfig& config,
     int num_filaments, std::set<int>& used_slots_0_based)
 {
-    // Support/feature filaments
-    static const std::vector<const char*> feature_keys = {
+    // All feature filament keys use 0 = "Default" (inherit the active object/part filament),
+    // so only explicit selections (>= 1) mark a slot as used.
+    static const std::vector<const char*> keys_with_default = {
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "support_filament",
         "support_interface_filament",
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament",
         "wipe_tower_filament"
     };
-    for (const char* key : feature_keys)
+    for (const char* key : keys_with_default)
     {
         const ConfigOptionInt* option = config.option<ConfigOptionInt>(key);
         if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
@@ -445,13 +450,17 @@ static void collect_filament_slots_from_model_config(
             used_slots_0_based.insert(extruder_id - 1);
     }
 
-    // Support/feature filaments
+    // Per-object feature-specific keys (outer_wall_filament_id, etc.) may be
+    // overridden independently of the object's primary extruder.
     static const std::vector<const char*> feature_keys = {
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "support_filament",
         "support_interface_filament",
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament",
         "wipe_tower_filament"
     };
     for (const char* key : feature_keys)
@@ -469,7 +478,9 @@ static void collect_filament_slots_from_model_config(
 /// \details Mirrors the slot-collection block of Plater::check_filament_temp_mixing so that
 ///          cold-plate incompatibility checking uses the same definition of "used filament".
 ///          Includes: plate config, per-object/volume configs, plus Plater working config
-///          (wipe_tower / support / wall / infill defaults when any object uses extruder=0).
+///          (wipe_tower / support always; global feature selectors unless every object/part
+///          on the plate overrides the same key; the default extruder when any object uses
+///          extruder=0).
 /// \param[in]  plate                 Non-null target plate.
 /// \param[in]  num_filaments         Total number of filaments in the current configuration.
 /// \param[in]  plater_working_config The Plater's current working config (this->config()).
@@ -488,7 +499,17 @@ static void collect_used_filament_slots_on_plate(
     // Plate-local config
     collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
-    // Per-object + per-volume config
+    // Per-object + per-volume config. Also track, per feature selector, whether
+    // any object/part on the plate still follows the global value.
+    static const std::vector<const char*> selector_keys = {
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id"
+    };
+    std::vector<bool> selector_overridden_everywhere(selector_keys.size(), true);
     bool uses_default_extruder = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
@@ -506,10 +527,25 @@ static void collect_used_filament_slots_on_plate(
                     used_slots_0_based.insert(extruder_id - 1);
             }
         }
+
+        // A global selector reaches this object's regions unless the object (or each of its
+        // printed parts) explicitly overrides the same key.
+        for (size_t k = 0; k < selector_keys.size(); ++k) {
+            if (!selector_overridden_everywhere[k] || model_object->config.has(selector_keys[k]))
+                continue;
+            bool all_parts_override = true;
+            for (const ModelVolume* model_volume : model_object->volumes)
+                if (model_volume->is_model_part() && !model_volume->config.has(selector_keys[k])) {
+                    all_parts_override = false;
+                    break;
+                }
+            if (!all_parts_override)
+                selector_overridden_everywhere[k] = false;
+        }
     }
 
-    // Plater working config — global features (always apply) + feature-specific
-    // keys (only when at least one object uses the default extruder).
+    // Plater working config — global features (always apply) + feature selectors
+    // (collected unless every object/part on the plate overrides the same key).
     if (plater_working_config != nullptr) {
         static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
         for (const char* key : always_collect) {
@@ -518,13 +554,12 @@ static void collect_used_filament_slots_on_plate(
                 used_slots_0_based.insert(option->value - 1);
         }
 
-        if (uses_default_extruder) {
-            static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-            for (const char* key : default_keys) {
-                const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(key);
-                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots_0_based.insert(option->value - 1);
-            }
+        for (size_t k = 0; k < selector_keys.size(); ++k) {
+            if (selector_overridden_everywhere[k])
+                continue;
+            const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(selector_keys[k]);
+            if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                used_slots_0_based.insert(option->value - 1);
         }
     }
 
@@ -1246,7 +1281,9 @@ struct Sidebar::priv
     // nozzle notebook  and related controls
     CustomNotebook*                  m_nozzle_notebook{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
+    std::vector<ComboBox*>       m_nozzle_layer_height_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
+    bool                         m_nozzle_rebuild_scheduled{false};
 
     ObjectList          *m_object_list{ nullptr };
     ObjectSettings      *object_settings{ nullptr };
@@ -1474,54 +1511,6 @@ struct DynamicFilamentList : DynamicList
         }
         DynamicList::update();
     }
-};
-
-struct DynamicFilamentList1Based : DynamicFilamentList
-{
-    void apply_on(Choice *c) override
-    {
-        if (items.empty())
-            update(true);
-        auto cb = dynamic_cast<ComboBox *>(c->window);
-        auto n  = cb->GetSelection();
-        cb->Clear();
-        for (auto i : items) {
-            cb->Append(i.first, *i.second);
-        }
-        if (n < cb->GetCount())
-            cb->SetSelection(n);
-    }
-    wxString get_value(int index) override
-    {
-        wxString str;
-        str << index+1;
-        return str;
-    }
-    int index_of(wxString value) override
-    {
-        long n = 0;
-        if(!value.ToLong(&n))
-            return -1;
-        --n;
-        return (n >= 0 && n <= items.size()) ? int(n) : -1;
-    }
-    void update(bool force = false)
-    {
-        items.clear();
-        if (!force && m_choices.empty())
-            return;
-        auto icons = get_extruder_color_icons(true);
-        auto presets = wxGetApp().preset_bundle->filament_presets;
-        for (int i = 0; i < presets.size(); ++i) {
-            wxString str;
-            std::string type;
-            wxGetApp().preset_bundle->filaments.find_preset(presets[i])->get_filament_type(type);
-            str << type;
-            items.push_back({str, icons[i]});
-        }
-        DynamicList::update();
-    }
-
 };
 
 class MixedFilamentColorMatchDialog : public DPIDialog
@@ -2048,7 +2037,6 @@ MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow*            
 }
 
 static DynamicFilamentList dynamic_filament_list;
-static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
 static wxString nozzle_type_key_to_label(const std::string& key)
 {
@@ -2068,9 +2056,12 @@ Sidebar::Sidebar(Plater *parent)
 {
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
-    Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("sparse_infill_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list_1_based);
+    Choice::register_dynamic_list("outer_wall_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("inner_wall_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("sparse_infill_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("internal_solid_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("top_surface_filament_id", &dynamic_filament_list);
+    Choice::register_dynamic_list("bottom_surface_filament_id", &dynamic_filament_list);
     Choice::register_dynamic_list("wipe_tower_filament", &dynamic_filament_list);
 
     p->scrolled = new wxPanel(this);
@@ -2461,7 +2452,8 @@ Sidebar::Sidebar(Plater *parent)
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
         nozzle_sizer->Add(p->m_nozzle_notebook, 1, wxEXPAND | wxALL, FromDIP(0));
         nozzle_container->SetSizer(nozzle_sizer);
-        nozzle_container->SetMinSize(wxSize(-1, FromDIP(80)));
+        // Tall enough for the tab strip plus the Diameter and Preferred layer height rows.
+        nozzle_container->SetMinSize(wxSize(-1, FromDIP(112)));
 
         // 添加到主布局
         vsizer_printer->Add(nozzle_container, 0, wxEXPAND | wxALL, FromDIP(4));
@@ -9330,7 +9322,100 @@ void Sidebar::show_SEMM_buttons(bool bshow)
 void Sidebar::update_dynamic_filament_list()
 {
     dynamic_filament_list.update();
-    dynamic_filament_list_1_based.update();
+}
+
+// ORCA multi-nozzle-size: label of a nozzle diameter / layer height combo item. Formatted with
+// the C locale (period decimal) to match the other "x.xmm" items and the ToCDouble parsing of
+// the selection handlers.
+static wxString nozzle_combo_label(double value)
+{
+    std::ostringstream oss;
+    oss.imbue(std::locale::classic());
+    oss << value;
+    return wxString(oss.str()) + "mm";
+}
+
+// Numeric part of a nozzle_combo_label() item ("0.4mm" -> "0.4"); parse with ToCDouble().
+static wxString nozzle_combo_number(wxString label)
+{
+    if (label.EndsWith("mm"))
+        label.RemoveLast(2);
+    return label;
+}
+
+// Show THIS nozzle's own diameter (per-nozzle sizes are supported), selecting the matching
+// "x.xmm" item so the read-only combo accepts it. Falls back to the uniform printer_variant
+// label only when the per-nozzle value is unavailable.
+static void select_nozzle_diameter_label(ComboBox *diameter_combo, double this_nd)
+{
+    wxString this_label;
+    for (unsigned int n = 0; n < diameter_combo->GetCount(); ++n) {
+        const wxString item = diameter_combo->GetString(n);
+        double item_nd = 0.;
+        if (nozzle_combo_number(item).ToCDouble(&item_nd) && std::abs(item_nd - this_nd) < EPSILON) {
+            this_label = item;
+            break;
+        }
+    }
+    if (this_label.empty() && this_nd > 0.) {
+        // A per-nozzle diameter not among the printer's variant list (e.g. an imported config):
+        // add it so the combo can display the true value.
+        this_label = nozzle_combo_label(this_nd);
+        diameter_combo->AppendString(this_label);
+    }
+    if (this_label.empty()) {
+        const auto *pv = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant");
+        this_label = (pv ? wxString(pv->value) : wxString()) + "mm";
+    }
+    diameter_combo->SetValue(this_label);
+}
+
+// ORCA multi-nozzle-size: (re)fill one sidebar "Preferred layer height" combo with the target
+// heights extruder `extruder_idx` may use: "Default" (= 0, follow the object layer height) plus
+// every integer multiple of the object layer height that fits through the nozzle bore and lies
+// within the extruder's layer height limits.
+static void fill_nozzle_layer_height_combo(ComboBox *combo, size_t extruder_idx)
+{
+    const DynamicPrintConfig &printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const DynamicPrintConfig &print_config   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+
+    const auto  *nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
+    const auto  *preferred       = printer_config.option<ConfigOptionFloats>("extruder_layer_height");
+    const auto  *min_lh          = printer_config.option<ConfigOptionFloats>("min_layer_height");
+    const auto  *max_lh          = printer_config.option<ConfigOptionFloats>("max_layer_height");
+    const auto  *base_opt        = print_config.option<ConfigOptionFloat>("layer_height");
+    const double base_height     = base_opt != nullptr ? base_opt->value : 0.;
+
+    combo->Clear();
+    combo->AppendString(_L("Default"));
+
+    const double bore = (nozzle_diameter != nullptr && extruder_idx < nozzle_diameter->values.size()) ?
+        nozzle_diameter->values[extruder_idx] : 0.;
+    double cap = bore;
+    if (max_lh != nullptr && !max_lh->values.empty() && max_lh->get_at(extruder_idx) > EPSILON)
+        cap = std::min(cap, max_lh->get_at(extruder_idx));
+    const double floor_lh = (min_lh != nullptr && !min_lh->values.empty()) ? min_lh->get_at(extruder_idx) : 0.;
+    const double current  = (preferred != nullptr && !preferred->values.empty()) ?
+        std::max(0., preferred->get_at(extruder_idx)) : 0.;
+
+    wxString current_label;
+    if (base_height > EPSILON)
+        for (int n = 1; n * base_height <= cap + EPSILON; ++n) {
+            const double height = n * base_height;
+            if (height + EPSILON < floor_lh)
+                continue;
+            const wxString label = nozzle_combo_label(height);
+            combo->AppendString(label);
+            if (current > 0. && std::abs(height - current) < EPSILON)
+                current_label = label;
+        }
+    if (current_label.empty() && current > 0.) {
+        // An explicit preference no longer among the valid values (the object layer height or
+        // the limits changed after it was set) is still displayed truthfully; slicing warns.
+        current_label = nozzle_combo_label(current);
+        combo->AppendString(current_label);
+    }
+    combo->SetValue(current_label.empty() ? _L("Default") : current_label);
 }
 
 void Sidebar::update_nozzle_settings(bool switch_machine)
@@ -9343,9 +9428,11 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
     size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
 
-    // Clear existing pages and controls
+    // Clear existing pages and controls, keeping the selected tab across the rebuild.
+    const int prev_page = p->m_nozzle_notebook->GetSelection();
     p->m_nozzle_notebook->DeleteAllPages();
     p->m_nozzle_diameter_lists.clear();
+    p->m_nozzle_layer_height_lists.clear();
     p->m_nozzle_edit_btns.clear();
 
     // Recreate pages for new nozzle count
@@ -9355,7 +9442,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                             wxTAB_TRAVERSAL | wxBORDER_NONE);
         // nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
 
-        wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);
+        wxBoxSizer* tab_sizer = new wxBoxSizer(wxVERTICAL);
 
         // Add diameter label and combobox
         wxBoxSizer*   diameter_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -9390,61 +9477,96 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         }
 
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
+            // ORCA multi-nozzle-size: set ONLY this nozzle's diameter, mirroring the
+            // Printer Settings -> Extruder tab. Previously this switched the whole printer preset
+            // to a single-diameter variant (forcing all nozzles to the same size); that defeats
+            // per-nozzle sizes, which the slicer now supports.
 
-            //auto* pNotice = p->plater->get_notification_manager();
-            //if (pNotice)
-            //{
-            //    pNotice->close_notification_of_type(NotificationType::CustomNotification);
-            //    pNotice->push_notification(_u8L("Note: Printing PLA Silk on the hot end of 0.6mm hardened steel is not recommended. 0.4mm or smaller specifications are suggested."), 0); 
-            //    pNotice->set_slicing_progress_hidden();            
-            //}
+            // Parse the selected diameter from the "0.4mm" combo item.
+            const wxString sel_num = nozzle_combo_number(diameter_combo->GetValue());
+            double new_nd = 0.;
+            if (!sel_num.ToCDouble(&new_nd) || new_nd <= 0.)
+                return;
 
-            auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-            auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-            if (printer_model_opt) {
-                std::string printer_model   = printer_model_opt->value;
-                bool        is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+            Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+            if (printer_tab == nullptr)
+                return;
 
-                if (is_snapmaker_u1)
-                {
-                    //check the config has flags to tips switch nozzle and all nozzle will be changed to the same type
-                    auto  notShow = wxGetApp().app_config->get("app", "sync_diameter_flags");
-                    if (notShow != "true")
-                    {
-                        RichMessageDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe),
-                                              _L("Note: Changing this will sync all other nozzles to the same diameter."),
-                                              _L("Set Nozzle Diameter"), 
-                                               wxOK);
-                        dlg.ShowCheckBox(_L("Don't show this again"), false);
-                        auto res = dlg.ShowModal();
-                        bool isCheckBox = dlg.IsCheckBoxChecked();
+            // Write nozzle_diameter[i] into the edited printer config, like Tab.cpp's extruder page.
+            DynamicPrintConfig  new_conf         = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            const auto*         nozzle_diam_opt  = static_cast<const ConfigOptionFloats*>(new_conf.option("nozzle_diameter"));
+            if (nozzle_diam_opt == nullptr || i >= nozzle_diam_opt->values.size())
+                return;
+            std::vector<double> nozzle_diameters = nozzle_diam_opt->values;
+            if (std::abs(nozzle_diameters[i] - new_nd) < EPSILON)
+                return; // unchanged
+            nozzle_diameters[i] = new_nd;
+            new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(nozzle_diameters));
 
-                        if (wxID_OK == res)
-                            wxGetApp().app_config->set("app", "sync_diameter_flags", isCheckBox);     
-                    }
+            // ORCA multi-nozzle-size: a different nozzle size usually means different layer
+            // height limits. Adopt them from the printer's profile for the new nozzle size when
+            // one exists, otherwise ask the user to review the limits manually.
+            std::string notice;
+            bool        variant_found = false;
+            {
+                const PrinterPresetCollection &printers = wxGetApp().preset_bundle->printers;
+                const std::string model   = new_conf.opt_string("printer_model");
+                const std::string variant = sel_num.ToStdString();
+                const Preset *variant_preset = printers.find_system_preset_by_model_and_variant(model, variant);
+                if (variant_preset == nullptr)
+                    variant_preset = printers.find_custom_preset_by_model_and_variant(model, variant);
+                const auto *v_min = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("min_layer_height");
+                const auto *v_max = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("max_layer_height");
+                const auto *e_min = static_cast<const ConfigOptionFloats*>(new_conf.option("min_layer_height"));
+                const auto *e_max = static_cast<const ConfigOptionFloats*>(new_conf.option("max_layer_height"));
+                if (v_min != nullptr && !v_min->values.empty() && v_max != nullptr && !v_max->values.empty() &&
+                    e_min != nullptr && e_max != nullptr) {
+                    variant_found = true;
+                    std::vector<double> mins = e_min->values, maxs = e_max->values;
+                    mins.resize(nozzle_diameters.size(), mins.empty() ? 0. : mins.back());
+                    maxs.resize(nozzle_diameters.size(), maxs.empty() ? 0. : maxs.back());
+                    mins[i] = v_min->get_at(i);
+                    maxs[i] = v_max->get_at(i);
+                    new_conf.set_key_value("min_layer_height", new ConfigOptionFloats(mins));
+                    new_conf.set_key_value("max_layer_height", new ConfigOptionFloats(maxs));
+                    notice = GUI::format(_u8L("Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."),
+                                         i + 1, mins[i], maxs[i], variant_preset->name);
+                } else {
+                    notice = GUI::format(_u8L("This printer has no profile for a %1% mm nozzle. Please review the "
+                                              "layer height limits of nozzle %2% in the printer settings."),
+                                         variant, i + 1);
                 }
             }
-
-            auto diameter = diameter_combo->GetValue().substr(0, 3);
-            auto preset          = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter.ToStdString());
-            if (preset == nullptr) {
-                BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                return;
-            }
-            preset->is_visible = true; // force visible
-            
-            for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                //set all nozzle use the diameter
-                p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+            // A preferred layer height that no longer fits through the new nozzle cannot print;
+            // reset it to Default rather than leave a dead setting behind.
+            if (const auto *height_opt = static_cast<const ConfigOptionFloats*>(new_conf.option("extruder_layer_height"));
+                height_opt != nullptr && !height_opt->values.empty() && height_opt->get_at(i) > new_nd + EPSILON) {
+                std::vector<double> heights = height_opt->values;
+                heights.resize(nozzle_diameters.size(), 0.);
+                heights[i] = 0.;
+                new_conf.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+                notice += "\n";
+                notice += GUI::format(_u8L("The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."), i + 1);
             }
 
-            wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
+            // load_config marks the printer preset modified and propagates the change without
+            // rebuilding these combos or switching presets, so the other nozzles keep their sizes.
+            printer_tab->load_config(new_conf);
+
+            wxGetApp().plater()->get_notification_manager()->push_notification(
+                NotificationType::CustomNotification,
+                variant_found ? NotificationManager::NotificationLevel::RegularNotificationLevel :
+                                NotificationManager::NotificationLevel::WarningNotificationLevel,
+                notice);
+            // The valid preferred layer heights of this nozzle follow its bore and limits.
+            if (i < p->m_nozzle_layer_height_lists.size() && p->m_nozzle_layer_height_lists[i] != nullptr)
+                fill_nozzle_layer_height_combo(p->m_nozzle_layer_height_lists[i], i);
+            // Do not event.Skip(): this is a plain ComboBox; skipping would let the sidebar treat
+            // it as the bed-type combo (Plater::priv::on_combobox_select) and mishandle it.
         });
         
-        auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
-        
-        diameter_combo->SetValue(diam_str + "mm");
+        const double this_nd = (nozzle_diameter && i < nozzle_diameter->values.size()) ? nozzle_diameter->values[i] : 0.;
+        select_nozzle_diameter_label(diameter_combo, this_nd);
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 
@@ -9453,9 +9575,55 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         diameter_sizer->AddSpacer(10);
         diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
+        // Preferred layer height row: which multiple of the object layer height this extruder
+        // should print with (the "extruder_layer_height" printer option).
+        wxBoxSizer*   lh_sizer = new wxBoxSizer(wxHORIZONTAL);
+        wxStaticText* lh_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Preferred layer height"));
+        lh_label->SetForegroundColour(is_dark ? wxColor(194, 194, 194) : wxColor(0, 0, 0));
+        lh_label->SetFont(Label::Body_14);
+
+        ComboBox* lh_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
+                                          nullptr, wxCB_READONLY);
+        lh_combo->SetToolTip(_L("Layer height this extruder should print with: an integer multiple of the object "
+                                "layer height within this extruder's layer height limits. Default keeps the object "
+                                "layer height."));
+        fill_nozzle_layer_height_combo(lh_combo, i);
+
+        lh_combo->Bind(wxEVT_COMBOBOX, [lh_combo, i](wxCommandEvent& event) {
+            // "Default" (or anything non-numeric) clears the preference: 0 = object layer height.
+            double new_height = 0.;
+            if (!nozzle_combo_number(lh_combo->GetValue()).ToCDouble(&new_height) || new_height < 0.)
+                new_height = 0.;
+
+            Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+            if (printer_tab == nullptr)
+                return;
+            DynamicPrintConfig new_conf   = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            const auto*        height_opt = static_cast<const ConfigOptionFloats*>(new_conf.option("extruder_layer_height"));
+            const auto*        nd_opt     = static_cast<const ConfigOptionFloats*>(new_conf.option("nozzle_diameter"));
+            if (height_opt == nullptr || nd_opt == nullptr)
+                return;
+            std::vector<double> heights = height_opt->values;
+            heights.resize(nd_opt->values.size(), 0.);
+            if (i >= heights.size() || std::abs(heights[i] - new_height) < EPSILON)
+                return;
+            heights[i] = new_height;
+            new_conf.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+            // As with the diameter combo: marks the printer preset modified and propagates the
+            // change without switching presets. Do not event.Skip() (plain ComboBox, see above).
+            printer_tab->load_config(new_conf);
+        });
+        p->m_nozzle_layer_height_lists.push_back(lh_combo);
+
+        lh_sizer->AddSpacer(15);
+        lh_sizer->Add(lh_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
+        lh_sizer->AddSpacer(10);
+        lh_sizer->Add(lh_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
+
         // 删除Flow相关控件
 
-        tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
+        tab_sizer->Add(diameter_sizer, 0, wxEXPAND | wxTOP, FromDIP(6));
+        tab_sizer->Add(lh_sizer, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(6));
 
         nozzle_panel->SetSizer(tab_sizer);
 
@@ -9486,6 +9654,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         p->m_nozzle_notebook->AddPage(nozzle_panel, tab_name);
     }
 
+    if (prev_page > 0 && prev_page < (int) p->m_nozzle_notebook->GetPageCount())
+        p->m_nozzle_notebook->SetSelection(size_t(prev_page));
+
     p->m_nozzle_notebook->Layout();
 
     if (switch_machine) {
@@ -9493,6 +9664,40 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     } else {
         p->combo_printer->GetParent()->SetFocus();
     }
+}
+
+// ORCA multi-nozzle-size: refresh the values shown by the nozzle tabs in place, without
+// rebuilding them (no focus or tab-selection changes). Called whenever the printer's nozzle
+// sizes, layer height limits or preferred layer heights change, or the object layer height
+// changes (it defines which preferred layer heights are valid). A change of the extruder
+// count escalates to a deferred full rebuild of the tabs.
+void Sidebar::update_nozzle_values()
+{
+    if (p->m_nozzle_notebook == nullptr)
+        return;
+
+    const auto *nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(
+        wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+    const size_t nozzle_count = nozzle_diameter != nullptr ? nozzle_diameter->values.size() : 1;
+    if (nozzle_count != p->m_nozzle_notebook->GetPageCount()) {
+        // Defer the rebuild: this can be reached from an event handler of a control that lives
+        // on one of the pages about to be destroyed.
+        if (!p->m_nozzle_rebuild_scheduled) {
+            p->m_nozzle_rebuild_scheduled = true;
+            wxGetApp().CallAfter([this]() {
+                p->m_nozzle_rebuild_scheduled = false;
+                update_nozzle_settings();
+            });
+        }
+        return;
+    }
+    if (nozzle_diameter != nullptr)
+        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size() && i < nozzle_diameter->values.size(); ++i)
+            if (p->m_nozzle_diameter_lists[i] != nullptr)
+                select_nozzle_diameter_label(p->m_nozzle_diameter_lists[i], nozzle_diameter->values[i]);
+    for (size_t i = 0; i < p->m_nozzle_layer_height_lists.size(); ++i)
+        if (p->m_nozzle_layer_height_lists[i] != nullptr)
+            fill_nozzle_layer_height_combo(p->m_nozzle_layer_height_lists[i], i);
 }
 
 ObjectList* Sidebar::obj_list()
@@ -10488,8 +10693,9 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         "enable_prime_tower", "wipe_tower_x", "wipe_tower_y", "prime_tower_width", "prime_tower_brim_width", "prime_volume",
         "extruder_colour", "filament_colour", "material_colour", "printable_height", "printer_model", "printer_technology",
         // These values are necessary to construct SlicingParameters by the Canvas3D variable layer height editor.
-        "layer_height", "initial_layer_print_height", "min_layer_height", "max_layer_height",
-        "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "solid_infill_filament", "top_shell_layers",
+        "layer_height", "initial_layer_print_height", "min_layer_height", "max_layer_height", "extruder_layer_height",
+        "brim_width", "wall_loops", "outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_density", "sparse_infill_filament_id",
+        "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id", "top_shell_layers",
         "enable_support", "support_filament", "support_interface_filament",
         "support_top_z_distance", "support_bottom_z_distance", "raft_layers",
         "wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
@@ -11888,6 +12094,26 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 file_wipe_tower_x = *wipe_tower_x_opt;
                             if (wipe_tower_y_opt)
                                 file_wipe_tower_y = *wipe_tower_y_opt;
+
+                            // ORCA: a project carrying an explicit legacy support filament
+                            // selection reveals the legacy selectors in the Support page.
+                            {
+                                auto assigned = [](const DynamicPrintConfig &c) {
+                                    const auto *base = c.option<ConfigOptionInt>("support_filament");
+                                    const auto *intf = c.option<ConfigOptionInt>("support_interface_filament");
+                                    return (base != nullptr && base->value > 0) || (intf != nullptr && intf->value > 0);
+                                };
+                                bool legacy_assigned = assigned(config);
+                                for (const ModelObject *object : model.objects) {
+                                    legacy_assigned |= assigned(object->config.get());
+                                    for (const ModelVolume *volume : object->volumes)
+                                        legacy_assigned |= assigned(volume->config.get());
+                                    for (const auto &range : object->layer_config_ranges)
+                                        legacy_assigned |= assigned(range.second.get());
+                                }
+                                if (legacy_assigned)
+                                    wxGetApp().app_config->set_bool("show_legacy_support_filament", true);
+                            }
 
                             preset_bundle->load_config_model(filename.string(), std::move(config), file_version);
 
@@ -13427,7 +13653,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             // Validate passed, but also check filament temp mixing as a final
             // guard. check_filament_temp_mixing() reads directly from preset
             // configs and catches cases that Print::validate() may miss (e.g.
-            // wall_filament changes that haven't propagated to PrintRegions yet).
+            // outer_wall_filament_id changes that haven't propagated to PrintRegions yet).
             bool filament_ok = q->sync_filament_temp_mixing_notification();
             bool cold_ok    = q->sync_cold_plate_notification();
             if (filament_ok && cold_ok) {
@@ -21794,8 +22020,11 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().on_filaments_delete(filament_id);
 
     // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
-                                 "support_filament", "support_interface_filament"};
+    static const char* keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                 "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
+                                 "support_filament", "support_interface_filament",
+                                 // 0 = "auto" for the wipe tower, the same deleted -> 0 / shift-down rule applies.
+                                 "wipe_tower_filament"};
     for (auto key : keys)
         if (p->config->has(key)) {
             if (p->config->opt_int(key) == filament_id + 1)
@@ -21805,6 +22034,29 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
                 (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
             }
         }
+    // The slicer reads these selections from the edited print preset (preset_bundle->full_config()),
+    // not from the plater's cached config above - remap it too, or a deleted filament's id silently
+    // shifts onto the wrong physical filament.
+    {
+        DynamicPrintConfig &print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        bool print_config_changed = false;
+        for (auto key : keys)
+            if (print_config.has(key)) {
+                const int value = print_config.opt_int(key);
+                if (value == filament_id + 1) {
+                    // Back to "Default" (0): use the part's filament.
+                    print_config.set_key_value(key, new ConfigOptionInt(0));
+                    print_config_changed = true;
+                } else if (value > filament_id + 1) {
+                    print_config.set_key_value(key, new ConfigOptionInt(value - 1));
+                    print_config_changed = true;
+                }
+            }
+        if (print_config_changed) {
+            wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
+            wxGetApp().get_tab(Preset::TYPE_PRINT)->reload_config();
+        }
+    }
 
     // update object/volume/support(object and volume) filament id
     sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
@@ -22049,7 +22301,19 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
         const int num_filaments = static_cast<int>(filament_type_option->values.size());
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
-        // ModelObject config
+        // Collect from ModelObject/ModelVolume configs and painting extruders for
+        // objects on the current plate. Also track whether any object relies on the
+        // global default extruder (extruder=0) so we can resolve it at the end, and
+        // per feature selector whether any part still follows the global value.
+        static const std::vector<const char*> selector_keys = {
+            "outer_wall_filament_id",
+            "inner_wall_filament_id",
+            "sparse_infill_filament_id",
+            "internal_solid_filament_id",
+            "top_surface_filament_id",
+            "bottom_surface_filament_id"
+        };
+        std::vector<bool> selector_overridden_everywhere(selector_keys.size(), true);
         bool uses_default_extruder = false;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
         {
@@ -22071,36 +22335,49 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
                         used_slots_0_based.insert(extruder_id - 1);
                 }
             }
+
+            // A global selector reaches this object's regions unless the object (or each of its
+            // printed parts) explicitly overrides the same key.
+            for (size_t k = 0; k < selector_keys.size(); ++k)
+            {
+                if (!selector_overridden_everywhere[k] || model_object->config.has(selector_keys[k]))
+                    continue;
+                bool all_parts_override = true;
+                for (const ModelVolume* model_volume : model_object->volumes)
+                    if (model_volume->is_model_part() && !model_volume->config.has(selector_keys[k]))
+                    {
+                        all_parts_override = false;
+                        break;
+                    }
+                if (!all_parts_override)
+                    selector_overridden_everywhere[k] = false;
+            }
         }
 
-        // Collect from the Plater working config. The approach balances
-        // sensitivity against false positives:
-        // - Global features (wipe tower, support) always apply → always collected.
-        // - Feature-specific keys (wall_filament, infill) depend on the global
-        //   process defaults. They are only collected when at least one object
-        //   on the plate uses the default extruder (e=0), which means those
-        //   defaults WILL affect the actual slicing output.
+        // Collect from the Plater working config. Global features (wipe tower, support)
+        // always apply. An explicit (non-zero) global feature selector is the region
+        // default regardless of the part's own extruder, so it is collected whenever at
+        // least one part on the plate does not override the same key per object/volume
+        // (per-object overrides were already collected from the model configs above).
         {
-            // Always collect: features that cannot be overridden per-object.
-            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
+            static const std::vector<const char*> always_collect = {
+                "wipe_tower_filament",
+                "support_filament",
+                "support_interface_filament"
+            };
             for (const char* key : always_collect)
             {
                 const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
                 if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
                     used_slots_0_based.insert(option->value - 1);
             }
-
-            // If any object uses e=0, the global process defaults for
-            // wall / infill extruders apply and must be collected.
-            if (uses_default_extruder)
+            for (size_t k = 0; k < selector_keys.size(); ++k)
             {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-                for (const char* key : default_keys)
-                {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
-                }
+                if (selector_overridden_everywhere[k])
+                    continue;
+                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(selector_keys[k]);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots_0_based.insert(option->value - 1);
             }
         }
 
@@ -22371,6 +22648,15 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
         const int num_filaments = static_cast<int>(filament_type_option->values.size());
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
+        static const std::vector<const char*> selector_keys = {
+            "outer_wall_filament_id",
+            "inner_wall_filament_id",
+            "sparse_infill_filament_id",
+            "internal_solid_filament_id",
+            "top_surface_filament_id",
+            "bottom_surface_filament_id"
+        };
+        std::vector<bool> selector_overridden_everywhere(selector_keys.size(), true);
         bool uses_default_extruder = false;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
@@ -22388,6 +22674,21 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
                         used_slots_0_based.insert(extruder_id - 1);
                 }
             }
+
+            // A global selector reaches this object's regions unless the object (or each of its
+            // printed parts) explicitly overrides the same key.
+            for (size_t k = 0; k < selector_keys.size(); ++k) {
+                if (!selector_overridden_everywhere[k] || model_object->config.has(selector_keys[k]))
+                    continue;
+                bool all_parts_override = true;
+                for (const ModelVolume* model_volume : model_object->volumes)
+                    if (model_volume->is_model_part() && !model_volume->config.has(selector_keys[k])) {
+                        all_parts_override = false;
+                        break;
+                    }
+                if (!all_parts_override)
+                    selector_overridden_everywhere[k] = false;
+            }
         }
 
         {
@@ -22398,13 +22699,12 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
                     used_slots_0_based.insert(option->value - 1);
             }
 
-            if (uses_default_extruder) {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-                for (const char* key : default_keys) {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
-                }
+            for (size_t k = 0; k < selector_keys.size(); ++k) {
+                if (selector_overridden_everywhere[k])
+                    continue;
+                const ConfigOptionInt* option = config()->option<ConfigOptionInt>(selector_keys[k]);
+                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
+                    used_slots_0_based.insert(option->value - 1);
             }
         }
 
@@ -22737,6 +23037,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 {
     bool update_scheduled = false;
     bool bed_shape_changed = false;
+    bool nozzle_tabs_changed = false;
     //bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
     for (auto opt_key : diff_keys) {
@@ -22803,11 +23104,24 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
             update_scheduled = true;
         }
         // Orca: update when *_filament changed
-        else if (opt_key == "support_interface_filament" || opt_key == "support_filament" || opt_key == "wall_filament" ||
-                 opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
+        else if (opt_key == "support_interface_filament" || opt_key == "support_filament" ||
+                 opt_key == "outer_wall_filament_id" || opt_key == "inner_wall_filament_id" ||
+                 opt_key == "sparse_infill_filament_id" || opt_key == "internal_solid_filament_id" ||
+                 opt_key == "top_surface_filament_id" || opt_key == "bottom_surface_filament_id") {
             update_scheduled = true;
         }
+        // ORCA multi-nozzle-size: the sidebar nozzle tabs mirror the printer's extruder count,
+        // nozzle sizes, layer height limits and preferred layer heights, and the valid preferred
+        // heights follow the object layer height. update_nozzle_values() refreshes them in place
+        // (and defers a full tab rebuild when the extruder count changed).
+        else if (opt_key == "nozzle_diameter" || opt_key == "extruder_layer_height" ||
+                 opt_key == "layer_height" || opt_key == "min_layer_height" || opt_key == "max_layer_height") {
+            nozzle_tabs_changed = true;
+        }
     }
+
+    if (nozzle_tabs_changed && p->sidebar != nullptr)
+        p->sidebar->update_nozzle_values();
 
     if (bed_shape_changed)
         set_bed_shape();

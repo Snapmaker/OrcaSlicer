@@ -7,6 +7,7 @@
 #include <wx/gdicmn.h>
 #include <wx/statbmp.h>
 #include <wx/dcclient.h>
+#include <wx/wupdlock.h>
 
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/GUI_App.hpp"

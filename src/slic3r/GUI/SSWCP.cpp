@@ -513,7 +513,7 @@ void SSWCP_Instance::process() {
 }
 
 void SSWCP_Instance::sw_UploadEvent() {
-    {
+    try {
         if(!m_param_data.count("traceId")){
             handle_general_fail(-1, "param [traceId] required!");
             return;
@@ -544,6 +544,9 @@ void SSWCP_Instance::sw_UploadEvent() {
         finish_job();
 
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_GetSoftwareInfo()
@@ -557,7 +560,7 @@ void SSWCP_Instance::sw_GetSoftwareInfo()
 }
 
 void SSWCP_Instance::sw_OpenNetworkDialog() {
-    {
+    try {
         send_to_js();
         finish_job();
 
@@ -586,11 +589,14 @@ void SSWCP_Instance::sw_OpenNetworkDialog() {
             new DelayedReleaseTimer(dlg);
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 
 void SSWCP_Instance::sw_OpenBrowser() {
-    {
+    try {
         std::string url = m_param_data.count("url") ? m_param_data["url"].get<std::string>() : "";
         wxString wx_url  = wxString::FromUTF8(url);
 
@@ -609,10 +615,13 @@ void SSWCP_Instance::sw_OpenBrowser() {
             }
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_OpenOrcaWebview() {
-    {
+    try {
         std::string url = m_param_data.count("url") ? m_param_data["url"].get<std::string>() : "";
         wxString wx_url = wxString::FromUTF8(url);
 
@@ -629,10 +638,13 @@ void SSWCP_Instance::sw_OpenOrcaWebview() {
             dialog->Show();
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_FileLog() {
-    {
+    try {
         std::string level = m_param_data.count("level") ? m_param_data["level"].get<std::string>() : "debug";
         std::string content = m_param_data.count("content") ? m_param_data["content"].get<std::string>() : "";
 
@@ -650,6 +662,9 @@ void SSWCP_Instance::sw_FileLog() {
 
         send_to_js();
         finish_job();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -745,7 +760,7 @@ void SSWCP_Instance::sw_GetActiveFile()
 }
 
 void SSWCP_Instance::sw_LaunchConsole() {
-    {
+    try {
         bool res = WCP_Logger::getInstance().run();
         if (res) {
             m_msg = "Orca Console has been launched";
@@ -755,10 +770,14 @@ void SSWCP_Instance::sw_LaunchConsole() {
             handle_general_fail(-1, "Orca Console launched failed");
         }
     }
+    catch (std::exception& e) {
+        wxString reason = e.what();
+        handle_general_fail(-1, "Exception caught: " + reason);
+    }
 }
 
 void SSWCP_Instance::sw_SetLogLevel() {
-    {
+    try {
         if (m_param_data.count("level")) {
             wxString level = m_param_data["level"].get<std::string>();
             bool res = WCP_Logger::getInstance().set_level(level);
@@ -773,11 +792,15 @@ void SSWCP_Instance::sw_SetLogLevel() {
             handle_general_fail(-1, "param [level] required!");
         }
     }
+    catch (std::exception& e) {
+        wxString reason = e.what();
+        handle_general_fail(-1, "Exception caught: " + reason);
+    }
 }
 
 void SSWCP_Instance::sw_Log()
 {
-    {
+    try {
         wxString time = m_param_data.count("time") ? m_param_data["time"].get<wxString>() : "";
         wxString level = m_param_data.count("level") ? m_param_data["level"].get<wxString>() : "";
         wxString module = m_param_data.count("module") ? m_param_data["module"].get<wxString>() : "";
@@ -796,10 +819,13 @@ void SSWCP_Instance::sw_Log()
         finish_job();
 
     }
+    catch (std::exception& e) {
+        finish_job();
+    }
 }
 
 void SSWCP_Instance::sw_GetFileStream() {
-    {
+    try {
         std::string file_path = SSWCP::get_active_filename();
         std::string file_name = SSWCP::get_display_filename();
         if (file_path == "" || file_name == "") {
@@ -894,6 +920,9 @@ void SSWCP_Instance::sw_GetFileStream() {
                 });
             });
         }
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -1007,7 +1036,7 @@ void SSWCP_Instance::sync_test() {
 }
 
 void SSWCP_Instance::test_mqtt_request() {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -1024,11 +1053,14 @@ void SSWCP_Instance::test_mqtt_request() {
             }
         });
         // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_Instance::sw_SwitchTab() {
-    {        
+    try {
+
         if (m_param_data.count("target")) {
             std::string target_tab = m_param_data["target"].get<std::string>();
             if (SSWCP::m_tab_map.count(target_tab)) {
@@ -1040,11 +1072,13 @@ void SSWCP_Instance::sw_SwitchTab() {
         }        
         handle_general_fail();
     }
-
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_SetCache() {
-    {
+    try {
         if (m_param_data.count("objects") && m_param_data["objects"].is_array() &&
             m_param_data["objects"].size() > 0) {
             json objects = m_param_data["objects"];
@@ -1059,12 +1093,15 @@ void SSWCP_Instance::sw_SetCache() {
             handle_general_fail();
         }
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 
 }
 
 void SSWCP_Instance::sw_GetCache()
 {
-    {
+    try {
         if (m_param_data.count("keys") && m_param_data["keys"].is_array() && m_param_data["keys"].size() > 0) {
             json res_data;
             json keys = m_param_data["keys"];
@@ -1082,13 +1119,15 @@ void SSWCP_Instance::sw_GetCache()
         } else {
             handle_general_fail();
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 
 void SSWCP_Instance::sw_RemoveCache()
 {
-    {
+    try {
         if (m_param_data.count("keys") && m_param_data["keys"].is_array()) {
             json keys = m_param_data["keys"];
             if (keys.size() == 0) {
@@ -1111,12 +1150,14 @@ void SSWCP_Instance::sw_RemoveCache()
         } else {
             handle_general_fail();
         }
-    } 
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_SubscribeCacheKey()
 {
-    {
+    try {
         if (!m_param_data.count("key") || !m_param_data["key"].is_string()) {
             handle_general_fail(-1, "param [keys] required or wrong type");
             return;
@@ -1137,11 +1178,14 @@ void SSWCP_Instance::sw_SubscribeCacheKey()
         std::weak_ptr<SSWCP_Instance> weak_self = shared_from_this();
         cache_map[{m_webview, weak_self}]       = key;
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_Instance::sw_UnsubscribeCacheKeys()
 {
-    {
+    try {
         if (!m_param_data.count("keys") || !m_param_data["keys"].is_array()) {
             handle_general_fail(-1, "param [keys] required or wrong type!");
             return;
@@ -1169,6 +1213,9 @@ void SSWCP_Instance::sw_UnsubscribeCacheKeys()
                 }
             }
         }
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -1278,7 +1325,7 @@ void SSWCP_Instance::sw_Webview_Unsubscribe() {
 }
 
 void SSWCP_Instance::sw_Unsubscribe_Filter() {
-    {
+    try {
         std::string cmd = m_param_data.count("cmd") ? m_param_data["cmd"].get<std::string>() : "";
         std::string event_id = m_param_data.count("event_id") ? m_param_data["event_id"].get<std::string>() : "";
         if (cmd == "" || event_id == "") {
@@ -1474,6 +1521,9 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
         send_to_js();
         finish_job();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 
@@ -1522,9 +1572,13 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
             return;
         } else {
             json j_value;
-           
-            j_value = json::parse(value);
-           
+            try {
+                j_value = json::parse(value);
+            } catch (std::exception& e) {
+                if (send_message)
+                    handle_general_fail(-1, "value parse failed");
+                return;
+            }
 
             if (!j_value.count("nozzle_diameters") ||!j_value.count("filament_vendor") || !j_value["filament_vendor"].is_array() ||
                 !j_value.count("filament_type") ||
@@ -1739,10 +1793,10 @@ void SSWCP_MachineFind_Instance::sw_GetMachineFindSupportInfo()
 
 void SSWCP_MachineFind_Instance::sw_WakeupFind()
 {
-    {
+    try {
         // 1) Wide Area Service Browsing: _services._dns-sd._udp.local will work for ~8s
         //    this query causes the AP/switch to build 224.0.0.251:5353 multicast forwarding, prompting the device to issue a notification
-        {
+        try {
             Bonjour::TxtKeys warmup_txt_keys = {};
             auto warmup = Bonjour("services._dns-sd")
                               .set_protocol("udp")
@@ -1753,6 +1807,7 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
                               .on_complete([](){})
                               .lookup();
             (void)warmup;
+        } catch (...) {
         }
 
         // the target service queries once every 2 seconds
@@ -1764,6 +1819,7 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
                             .on_complete([](){})
                             .lookup();
             (void)kick;
+        } catch (...) {
         }
 
         // query in thread
@@ -1773,12 +1829,15 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
         send_to_js();
         finish_job();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 // Start machine discovery
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
-    {
+    try {
 
         std::vector<string> protocols;
 
@@ -1947,15 +2006,20 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
             }
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineFind_Instance::sw_StopMachineFind()
 {
-    {
+    try {
         SSWCP::stop_machine_find();
         send_to_js();
         finish_job();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -1963,7 +2027,7 @@ void SSWCP_MachineFind_Instance::sw_StopMachineFind()
 
 void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
 {
-    {
+    try {
         BOOST_LOG_TRIVIAL(info) << "check the machine list on json: " << machine_info.dump();
         for (const auto& [key, value] : machine_info.items()) {
             std::string sn        = value["sn"].get<std::string>();
@@ -2015,6 +2079,9 @@ void SSWCP_MachineFind_Instance::add_machine_to_list(const json& machine_info)
                 send_to_js();
             }
         }
+    }
+    catch (std::exception& e) {
+
     }
 }
 
@@ -2155,7 +2222,7 @@ void SSWCP_MachineOption_Instance::process()
 }
 
 void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2178,11 +2245,13 @@ void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
         SSWCP::stop_subscribe_machine();
 
 
-    } 
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2203,11 +2272,13 @@ void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2224,10 +2295,13 @@ void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
             }
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetMachineState() {
-    {
+    try {
         if (m_param_data.count("objects")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2265,11 +2339,14 @@ void SSWCP_MachineOption_Instance::sw_GetMachineState() {
         } else {
             handle_general_fail();
         }
+
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_SystemGetDeviceInfo() {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
         if (!host) {
@@ -2285,12 +2362,14 @@ void SSWCP_MachineOption_Instance::sw_SystemGetDeviceInfo() {
             }
         });
 
+    } catch (const std::exception&) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_FileGetStatus()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2307,10 +2386,13 @@ void SSWCP_MachineOption_Instance::sw_FileGetStatus()
             }
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_SendGCodes() {
-    {
+    try {
         if (m_param_data.count("script")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2340,11 +2422,13 @@ void SSWCP_MachineOption_Instance::sw_SendGCodes() {
             });
         }
 
+    } catch (const std::exception&) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachinePrintStart() {
-    {
+    try {
         if (m_param_data.count("filename")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2365,11 +2449,14 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintStart() {
             });
         }
     }
+    catch(std::exception& e){
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachinePrintPause()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2385,12 +2472,14 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintPause()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachinePrintResume()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2406,12 +2495,14 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintResume()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2427,12 +2518,14 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2449,11 +2542,14 @@ void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
             }
         });
     }
+    catch(std::exception& e){
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
 {
-    {
+    try {
         if (m_param_data.count("objects")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2491,11 +2587,13 @@ void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
             handle_general_fail();
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2512,12 +2610,14 @@ void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_PullCloudFile()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2535,12 +2635,14 @@ void SSWCP_MachineOption_Instance::sw_PullCloudFile()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
 {
-    {
+    try {
         if (!m_param_data.count("objects") || !m_param_data["objects"].is_array()) {
             handle_general_fail(-1, "param [objects] required or wrong type!");
             return;
@@ -2549,11 +2651,14 @@ void SSWCP_MachineOption_Instance::sw_UpdateMachineFilamentInfo()
         update_filament_info(m_param_data["objects"], true);
 
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_CancelPullCloudFile()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2569,12 +2674,14 @@ void SSWCP_MachineOption_Instance::sw_CancelPullCloudFile()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_StartCloudPrint()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2592,6 +2699,9 @@ void SSWCP_MachineOption_Instance::sw_StartCloudPrint()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -2645,7 +2755,7 @@ void SSWCP_MachineOption_Instance::sw_MachineHeartbeat()
 
 void SSWCP_MachineOption_Instance::sw_MachineFilesRoots()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -2661,11 +2771,13 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesRoots()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachineFilesMetadata() {
-    {
+    try {
         if (m_param_data.count("filename")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2686,13 +2798,16 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesMetadata() {
             });
         } else {
             handle_general_fail();
-        }        
+        }
+
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachineFilesThumbnails()
 {
-    {
+    try {
         if (m_param_data.count("filename")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2715,12 +2830,15 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesThumbnails()
         } else {
             handle_general_fail();
         }
+
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
 {
-    {
+    try {
         if (m_param_data.count("path") && m_param_data.count("extended")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -2744,12 +2862,14 @@ void SSWCP_MachineOption_Instance::sw_MachineFilesGetDirectory()
             handle_general_fail();
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_ServerClientManagerSetUserinfo()
 {
-    {
+    try {
         if (!m_param_data.count("auther")) {
             handle_general_fail(-1, "param [auther] is required");
             return;
@@ -2780,11 +2900,14 @@ void SSWCP_MachineOption_Instance::sw_ServerClientManagerSetUserinfo()
         });
 
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_FinishPreprint()
 {
-    {
+    try {
         if (m_param_data.count("status")) {
             std::string status = m_param_data["status"].get<std::string>();
 
@@ -2802,11 +2925,14 @@ void SSWCP_MachineOption_Instance::sw_FinishPreprint()
 
         handle_general_fail();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetPrintZip()
 {
-    {
+    try {
         auto oriname = SSWCP::get_active_filename();
         auto targetname = SSWCP::get_display_filename();
 
@@ -2834,11 +2960,14 @@ void SSWCP_MachineOption_Instance::sw_GetPrintZip()
         });
 
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetPrintLegal()
 {
-    {
+    try {
         if (m_param_data.count("connected_model")) {
             std::string connected_model = m_param_data["connected_model"].get<std::string>();
             const auto& edit_preset     = wxGetApp().preset_bundle->printers.get_edited_preset();
@@ -2863,10 +2992,13 @@ void SSWCP_MachineOption_Instance::sw_GetPrintLegal()
 
         handle_general_fail();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
-    {
+    try {
         if (!m_param_data.count("url")) {
             handle_general_fail();
             return;
@@ -2909,7 +3041,7 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
                     });
                 })
                 .on_complete([=](std::string body, unsigned) {
-                    {
+                    try {
                         wxGetApp().CallAfter([=]() {
                             json response;
                             response["filename"] = std::string(filename.ToUTF8());
@@ -2922,6 +3054,8 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
                             msg_window.ShowModal();
                             finish_job();
                         });
+                    } catch (std::exception& e) {
+                        handle_general_fail();
                     }
                 })
                 .on_progress([&](Http::Progress progress, bool& cancel) {
@@ -2930,10 +3064,13 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
                 .perform();
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
-    {
+    try {
         if (!m_param_data.count("url")) {
             handle_general_fail();
             return;
@@ -2998,7 +3135,7 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                     });
                 })
                 .on_complete([=](std::string body, unsigned) {
-                    {
+                    try {
                         boost::nowide::ofstream file(path.ToStdString(wxConvUTF8), std::ios::binary);
                         if (!file.is_open()) {
                             BOOST_LOG_TRIVIAL(error) << "Failed to open file for writing: " << path;
@@ -3013,6 +3150,8 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                                                      _L("DownLoad Successfully"), wxICON_QUESTION | wxOK);
                             msg_window.ShowModal();
                         });
+                    } catch (std::exception& e) {
+                        handle_general_fail();
                     }
                 })
                 .on_progress([&](Http::Progress progress, bool& cancel) {
@@ -3020,12 +3159,14 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                 })
                 .perform();
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
 {
-    {
+    try {
         // Parse params.event (defaults to None / legacy behavior when absent).
         if (wxGetApp().get_web_preprint_dialog()) {
             WebPreprintDialog* dialog = dynamic_cast<WebPreprintDialog*>(wxGetApp().get_web_preprint_dialog());
@@ -3054,6 +3195,8 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
                 }
             }
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regroup()
@@ -3075,7 +3218,7 @@ void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regrou
 }
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
-    {
+    try {
         std::string filename = m_param_data.count("filename") ? m_param_data["filename"].get<std::string>() : "";
 
         if (filename == "") {
@@ -3348,12 +3491,14 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
         send_to_js();
         finish_job();
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
 {
-    {
+    try {
         if (!m_param_data.count("status")) {
             handle_general_fail();
         }
@@ -3383,10 +3528,13 @@ void SSWCP_MachineOption_Instance::sw_SetFilamentMappingComplete()
         send_to_js();
         finish_job();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
-    {
+    try {
         if (m_param_data.count("domain")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -3413,11 +3561,13 @@ void SSWCP_MachineOption_Instance::sw_CameraStartMonitor() {
             handle_general_fail();
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_DeleteMachineFile() {
-    {
+    try {
         if(!m_param_data.count("path")){
             handle_general_fail(-1, "param [path] required!");
             return;
@@ -3441,11 +3591,13 @@ void SSWCP_MachineOption_Instance::sw_DeleteMachineFile() {
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_CameraStopMonitor() {
-    {
+    try {
         if (m_param_data.count("domain")) {
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
@@ -3468,12 +3620,14 @@ void SSWCP_MachineOption_Instance::sw_CameraStopMonitor() {
             handle_general_fail();
         }
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_SetDeviceName()
 {
-    {
+    try {
         if (m_param_data.count("name")) {
             std::string name = m_param_data["name"].get<std::string>();
 
@@ -3495,12 +3649,14 @@ void SSWCP_MachineOption_Instance::sw_SetDeviceName()
         } else {
             handle_general_fail(-1, "param [name] required!");
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlLed()
 {
-    {
+    try {
         if (!m_param_data.count("name")) {
             handle_general_fail(-1, "param [name] required!");
             return;
@@ -3529,12 +3685,14 @@ void SSWCP_MachineOption_Instance::sw_ControlLed()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlPrintSpeed()
 {
-    {
+    try {
         if (!m_param_data.count("percentage")) {
             handle_general_fail(-1, "param [percentage] required!");
             return;
@@ -3557,12 +3715,14 @@ void SSWCP_MachineOption_Instance::sw_ControlPrintSpeed()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_BedMesh_AbortProbeMesh()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3578,6 +3738,8 @@ void SSWCP_MachineOption_Instance::sw_BedMesh_AbortProbeMesh()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -3603,7 +3765,7 @@ void SSWCP_MachineOption_Instance::sw_ControlPurifier()
 
 void SSWCP_MachineOption_Instance::sw_ControlMainFan()
 {
-    {
+    try {
         if (!m_param_data.count("speed")) {
             handle_general_fail(-1, "param [speed] required!");
             return;
@@ -3626,12 +3788,14 @@ void SSWCP_MachineOption_Instance::sw_ControlMainFan()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlGenericFan()
 {
-    {
+    try {
         if (!m_param_data.count("name")) {
             handle_general_fail(-1, "param [fan_id] required!");
             return;
@@ -3660,13 +3824,15 @@ void SSWCP_MachineOption_Instance::sw_ControlGenericFan()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 
 void SSWCP_MachineOption_Instance::sw_ControlBedTemp()
 {
-    {
+    try {
         if (!m_param_data.count("temp")) {
             handle_general_fail(-1, "param [temp] required!");
             return;
@@ -3689,12 +3855,14 @@ void SSWCP_MachineOption_Instance::sw_ControlBedTemp()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_ControlExtruderTemp()
 {
-    {
+    try {
         if (!m_param_data.count("temp")) {
             handle_general_fail(-1, "param [temp] required!");
             return;
@@ -3720,12 +3888,14 @@ void SSWCP_MachineOption_Instance::sw_ControlExtruderTemp()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
 {
-    {
+    try {
         if (!m_param_data.count("path")) {
             handle_general_fail(-1, "param [path] required");
             return;
@@ -3749,12 +3919,14 @@ void SSWCP_MachineOption_Instance::sw_FilesThumbnailsBase64()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_UploadCameraTimelapse()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3770,6 +3942,9 @@ void SSWCP_MachineOption_Instance::sw_UploadCameraTimelapse()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 void SSWCP_MachineOption_Instance::sw_UploadAsyncTimelapseInstance()
@@ -3792,7 +3967,7 @@ void SSWCP_MachineOption_Instance::sw_UploadAsyncTimelapseInstance()
 }
 void SSWCP_MachineOption_Instance::CmdForwarding()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3808,12 +3983,14 @@ void SSWCP_MachineOption_Instance::CmdForwarding()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_GetCameraTimelapseInstance()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3830,10 +4007,14 @@ void SSWCP_MachineOption_Instance::sw_GetCameraTimelapseInstance()
             }
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 void SSWCP_MachineOption_Instance::sw_GetDeviceDataStorageSpace()
 {
-    {
+
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3849,6 +4030,8 @@ void SSWCP_MachineOption_Instance::sw_GetDeviceDataStorageSpace()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -3858,7 +4041,7 @@ namespace { void cancel_active_timelapse_by_date_index(const std::string& date_i
 
 void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3881,12 +4064,14 @@ void SSWCP_MachineOption_Instance::sw_DeleteCameraTimelapse()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineOption_Instance::sw_DefectDetactionConfig()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3902,6 +4087,8 @@ void SSWCP_MachineOption_Instance::sw_DefectDetactionConfig()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -3927,7 +4114,7 @@ void SSWCP_MachineOption_Instance::sw_PrinterDefectDetection()
 
 void SSWCP_MachineOption_Instance::sw_GetFileListPage()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3963,13 +4150,15 @@ void SSWCP_MachineOption_Instance::sw_GetFileListPage()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 
 void SSWCP_MachineOption_Instance::sw_exception_query()
 {
-    {
+    try {
         std::shared_ptr<PrintHost> host = nullptr;
         wxGetApp().get_connect_host(host);
 
@@ -3986,6 +4175,8 @@ void SSWCP_MachineOption_Instance::sw_exception_query()
             }
         });
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -4019,7 +4210,7 @@ void SSWCP_MachineConnect_Instance::process() {
 
 void SSWCP_MachineConnect_Instance::sw_get_pin_code()
 {
-    {
+    try {
         if (m_param_data.count("ip") && m_param_data.count("userid") && m_param_data.count("nickname")) {
             std::string ip = m_param_data["ip"].get<std::string>();
             std::string userid    = m_param_data["userid"].get<std::string>();
@@ -4077,12 +4268,14 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
         } else {
             handle_general_fail();
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 
 void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
-    {
+    try {
         auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
         wxGetApp().CallAfter([weak_self](){
 
@@ -4110,10 +4303,13 @@ void SSWCP_MachineConnect_Instance::sw_connect_other_device() {
 
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineConnect_Instance::sw_test_connect() {
-    {
+    try {
         if (m_param_data.count("ip")) {
             std::string protocol = "moonraker";
 
@@ -4159,6 +4355,8 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
             
             finish_job();
         }
+    } catch (const std::exception&) {
+        handle_general_fail();
     }
 }
 
@@ -4167,7 +4365,7 @@ void SSWCP_MachineConnect_Instance::sw_connect() {
 }
 
 void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
-    {
+    try {
         auto devices = wxGetApp().app_config->get_devices();
         for (const auto& device : devices) {
             if (device.connected) {
@@ -4178,6 +4376,9 @@ void SSWCP_MachineConnect_Instance::sw_get_connect_machine() {
 
         send_to_js();
         finish_job();
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -4268,13 +4469,13 @@ void SSWCP_SliceProject_Instance::process()
 
 void SSWCP_SliceProject_Instance::sw_NewProject()
 {
-    { 
+    try {
         if (!m_param_data.count("preset_name") || m_param_data["preset_name"].get<std::string>() == "")
             wxGetApp().request_open_project("<new>");
         else {
             std::string preset_name = m_param_data["preset_name"].get<std::string>();
             wxGetApp().CallAfter([this, preset_name]() {
-                {
+                try {
                     if (wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset_name)) {
                         wxGetApp().plater()->new_project();
                     } else {
@@ -4283,26 +4484,33 @@ void SSWCP_SliceProject_Instance::sw_NewProject()
                         msg_window.ShowModal();
                     }
 
+                } catch (std::exception& e) {
                 }
             });
         }
         send_to_js();
         finish_job();
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_SliceProject_Instance::sw_OpenProject()
 {
-    {
+    try {
         wxGetApp().request_open_project({});
         send_to_js();
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_SliceProject_Instance::sw_GetRecentProjects()
 {
-    {        
+    try {
+
         json data;
         wxGetApp().mainframe->get_recent_projects(data, INT_MAX);
 
@@ -4310,12 +4518,14 @@ void SSWCP_SliceProject_Instance::sw_GetRecentProjects()
 
         send_to_js();
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_SliceProject_Instance::sw_OpenRecentFile()
 {
-    {
+    try {
         if (m_param_data.count("path")) {
             std::string path = m_param_data["path"].get<std::string>();
             if (path != "") {
@@ -4330,12 +4540,14 @@ void SSWCP_SliceProject_Instance::sw_OpenRecentFile()
         }
         send_to_js();
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_SliceProject_Instance::sw_DeleteRecentFiles()
 {
-    {
+    try {
         if (m_param_data.count("paths") && m_param_data["paths"].is_array()) {
             auto paths = m_param_data["paths"];
             send_to_js();
@@ -4353,13 +4565,19 @@ void SSWCP_SliceProject_Instance::sw_DeleteRecentFiles()
         }
 
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_SliceProject_Instance::sw_SubscribeRecentFiles()
 {
-    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    wxGetApp().m_recent_file_subscribers[m_webview] = weak_self;
+    try {
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().m_recent_file_subscribers[m_webview] = weak_self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 // SSWCP_UserLogin_Instance
@@ -4410,7 +4628,7 @@ void SSWCP_UserLogin_Instance::process()
 }
 void SSWCP_UserLogin_Instance::sw_UserLogin()
 {
-    {
+    try {
         send_to_js();
         finish_job();
         bool show = m_param_data.count("show") ? m_param_data["show"].get<bool>() : true;
@@ -4419,20 +4637,25 @@ void SSWCP_UserLogin_Instance::sw_UserLogin()
             wxGetApp().sm_request_login(show);
         });               
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_UserLogin_Instance::sw_UserLogout()
 {
-    {
+    try {
         send_to_js();
         wxGetApp().sm_request_user_logout();
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
 {
-    {
+    try {
         json data;
         auto pInfo = wxGetApp().sm_get_userinfo();
         if (pInfo) {
@@ -4455,6 +4678,9 @@ void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
             handle_general_fail();
         }
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 {
@@ -4475,7 +4701,7 @@ void SSWCP_UserLogin_Instance::sw_GetUserUpdatePrivacy()
 
 void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
 {
-    {
+    try {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
 
@@ -4501,20 +4727,24 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
                 self->handle_general_fail(-1, wxString::FromUTF8("Main window not available"));
                 return;
             }
-            {
+            try {
                 wxGetApp().mainframe->downloadOpenProject(fileUrl, fileName, "");
                 self->m_status = 0;
                 self->m_msg    = "success";
                 self->send_to_js();
                 self->finish_job();
+            } catch (const std::exception& e) {
+                self->handle_general_fail(-1, wxString::FromUTF8(e.what()));
             }
         });
 
+    } catch (const std::exception& e) {
+        handle_general_fail(-1, wxString::FromUTF8(e.what()));
     }
 }
 
 void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
-    {
+    try {
         std::string fileName = m_param_data.count("file_name") ? m_param_data["file_name"].get<std::string>() : "";
         std::string fileUrl  = m_param_data.count("file_url") ? m_param_data["file_url"].get<std::string>() : "";
 
@@ -4543,6 +4773,8 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileEx() {
         m_msg = "success";
         send_to_js();
 
+    } catch (std::exception& e) {
+        handle_general_fail(-1, e.what());
     }
 }
 
@@ -5696,7 +5928,7 @@ void SSWCP_UserLogin_Instance::sw_CancelDownload() {
 }
 
 void SSWCP_UserLogin_Instance::sw_FileView() {
-    {
+    try {
         std::string file_path = m_param_data.count("file_path") ? m_param_data["file_path"].get<std::string>() : "";
         wxFileName  file(wxString::FromUTF8(file_path));
 
@@ -5721,6 +5953,8 @@ void SSWCP_UserLogin_Instance::sw_FileView() {
             self->finish_job();
 
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -5819,14 +6053,24 @@ void SSWCP_UserLogin_Instance::sw_GetFilesFromDir()
 
 void SSWCP_UserLogin_Instance::sw_SubUserUpdatePrivacy()
 {
-    std::weak_ptr<SSWCP_Instance> weak_ptr         = shared_from_this();
-    wxGetApp().m_user_update_privacy_subscribers[m_webview] = weak_ptr;
+    try {
+        std::weak_ptr<SSWCP_Instance> weak_ptr         = shared_from_this();
+        wxGetApp().m_user_update_privacy_subscribers[m_webview] = weak_ptr;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
+
 }
 
 void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
 {
-    std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-    wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
+    try {
+        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
+        wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 // SSWCP_MachineManage_Instance
@@ -5859,19 +6103,27 @@ void SSWCP_MachineManage_Instance::process()
 
 void SSWCP_MachineManage_Instance::sw_GetLocalDevices()
 {
-    {
+    try {
         auto devices = wxGetApp().app_config->get_devices();
         m_res_data = devices;
 
         send_to_js();
         finish_job();
     }
+    catch (std::exception& e)
+    {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MachineManage_Instance::sw_SubscribeLocalDevices()
-{    
-    auto self = shared_from_this();
-    wxGetApp().m_device_card_subscribers[m_webview] = self;
+{
+    try {
+        auto self = shared_from_this();
+        wxGetApp().m_device_card_subscribers[m_webview] = self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 // SSWCP_PageStateChange_Instance
@@ -5896,13 +6148,17 @@ void SSWCP_PageStateChange_Instance::process()
 
 void SSWCP_PageStateChange_Instance::sw_SubscribePageStateChange()
 {
-    auto self = shared_from_this();
-    wxGetApp().m_page_state_subscribers[m_webview] = self;
+    try {
+        auto self = shared_from_this();
+        wxGetApp().m_page_state_subscribers[m_webview] = self;
+    } catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
 {
-    {
+    try {
         auto& page_state_map = wxGetApp().m_page_state_subscribers;
         std::string event_id = m_param_data.count("event_id") ? m_param_data["event_id"].get<std::string>() : "";
 
@@ -5925,12 +6181,14 @@ void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
 
         send_to_js();
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineManage_Instance::sw_AddDevice()
 {
-    {
+    try {
         wxGetApp().CallAfter([] {
             if (wxGetApp().web_device_dialog)
                 delete wxGetApp().web_device_dialog;
@@ -5941,12 +6199,14 @@ void SSWCP_MachineManage_Instance::sw_AddDevice()
         send_to_js();
 
         finish_job();
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineManage_Instance::sw_RenameDevice()
 {
-    {
+    try {
         if (m_param_data.count("dev_id") && m_param_data.count("dev_name")) {
             std::string dev_id = m_param_data["dev_id"].get<std::string>();
             std::string dev_name = m_param_data["dev_name"].get<std::string>();
@@ -5968,12 +6228,14 @@ void SSWCP_MachineManage_Instance::sw_RenameDevice()
         } else {
             handle_general_fail();
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineManage_Instance::sw_DeleteDevices()
 {
-    {
+    try {
         if (m_param_data.count("dev_ids") && m_param_data["dev_ids"].is_array()) {
             auto ids = m_param_data["dev_ids"];
             if (ids.size() == 0) {
@@ -6020,12 +6282,14 @@ void SSWCP_MachineManage_Instance::sw_DeleteDevices()
         } else {
             handle_general_fail();
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MachineManage_Instance::sw_SwitchModel()
 {
-    {
+    try {
         if (m_param_data.count("dev_id")) {
             std::string dev_id = m_param_data["dev_id"].get<std::string>();
             send_to_js();
@@ -6039,6 +6303,8 @@ void SSWCP_MachineManage_Instance::sw_SwitchModel()
         } else {
             handle_general_fail();
         }
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -6162,7 +6428,7 @@ void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::
 
 void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 {
-    {
+    try {
         std::string server_address = "";
         std::string clientId       = "";
         std::string ca             = "";
@@ -6241,13 +6507,15 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         send_to_js();
         finish_job();
 
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 // mqtt connect
 void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 {
-    {
+    try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
 
@@ -6297,13 +6565,16 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
             });
         });
 
+
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 
 void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
 {
-    {
+    try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
             return;
@@ -6344,12 +6615,15 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
                 }
             });
         });
-    }    
+    }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
 {
-    {
+    try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
             Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_subscribe param [id] is required or wrong type"), DEVICE_SUBSCRIBE_ERR);
@@ -6428,10 +6702,13 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
             });
         });
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
-    {
+    try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
             return;
@@ -6490,12 +6767,14 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_unsubscribe() {
                 }
             });
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
 void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
 {
-    {
+    try {
         if (!m_param_data.count("engine_id") || !m_param_data["engine_id"].is_string()) {
             handle_general_fail(-1, "param [engine_id] is required or wrong type");
             Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_set_engine param [engine_id] is required or wrong type"),DEVICE_SET_ENGINE_ERR);
@@ -7067,11 +7346,14 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
         }
 
     }
+    catch (std::exception& e) {
+        handle_general_fail();
+    }
 }
 
 void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
 {
-    {
+    try {
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
             Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_ERROR, std::string("device_publish host created failed"), DEVICE_PBLISH_ERR);
@@ -7136,6 +7418,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_publish()
                 }
             });
         });
+    } catch (std::exception& e) {
+        handle_general_fail();
     }
 }
 
@@ -7295,7 +7579,7 @@ std::shared_ptr<SSWCP_Instance> SSWCP::create_sswcp_instance(std::string cmd, co
 
 // Handle incoming web messages
 void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
-    {
+    try {        
 
         if (!webview) {
             return;
@@ -7335,6 +7619,8 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
             instance->process();
         }
 
+    }
+    catch (std::exception& e) {
     }
 }
 

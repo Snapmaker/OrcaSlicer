@@ -864,9 +864,8 @@ std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> Moon
 Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) : Moonraker(config) {
     std::string host_info = config->option<ConfigOptionString>("print_host")->value;
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    if (change_engine) {        
+    if (change_engine) {
         std::string local_ip = "";
-        {
         try {
             #ifdef _WIN32
                 SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);

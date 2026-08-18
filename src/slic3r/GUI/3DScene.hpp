@@ -15,6 +15,7 @@
 #include "GLShader.hpp"
 #include "MeshUtils.hpp"
 
+#include <atomic>
 #include <functional>
 #include <optional>
 
@@ -158,6 +159,13 @@ public:
     mutable unsigned char            m_lodUpdateIndex{ 0 };
     std::shared_ptr<GUI::GLModel>    m_modelMiddle;
     std::shared_ptr<GUI::GLModel>    m_modelSmall;
+    // Completion flags for the background simplification threads. The worker
+    // stores true (release) as its last touch of the LOD model; the main
+    // thread loads it (acquire) in promote_ready_lod_models() and only then
+    // calls enable_render() and starts using the model. Shared alongside the
+    // models so volumes sharing a LOD model share its readiness too.
+    std::shared_ptr<std::atomic<bool>> m_lodMiddleReady;
+    std::shared_ptr<std::atomic<bool>> m_lodSmallReady;
     const TriangleMesh*              m_oriMesh{ nullptr };
     std::pair<size_t, size_t>        m_tvertsRangeLod;
 
@@ -357,8 +365,11 @@ public:
     void simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_objects, std::vector<ColorRGBA>& extruder_colors, bool ban_light =false);
 
     // LOD mesh simplification (async, uses quadric edge collapse)
-    bool SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, LODLevel lod) const;
-    bool SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI::GLModel> model, LODLevel lod) const;
+    bool SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const;
+    bool SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const;
+    // Main-thread handoff: enable rendering of LOD models whose background
+    // initialization has completed (see SimplifyMesh). Call once per frame.
+    void promote_ready_lod_models();
 
     void                set_bounding_boxes_as_dirty();
 

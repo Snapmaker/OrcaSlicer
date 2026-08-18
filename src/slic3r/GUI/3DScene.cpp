@@ -396,12 +396,12 @@ ColorRGBA color_from_model_volume(const ModelVolume& model_volume)
     return color;
 }
 
-bool GLVolume::SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, LODLevel lod) const
+bool GLVolume::SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const
 {
-    return SimplifyMesh(mesh.its, model, lod);
+    return SimplifyMesh(mesh.its, model, readyFlag, lod);
 }
 
-bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI::GLModel> model, LODLevel lod) const
+bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const
 {
     if (its.indices.size() == 0 || its.vertices.size() == 0) 
     { 
@@ -441,7 +441,7 @@ bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI
     // Run simplification in background thread (async, detached)
     // Ref: https://people.eecs.berkeley.edu/~jrs/meshpapers/GarlandHeckbert2.pdf
     std::thread worker = std::thread(
-        [model, maxError, originMesh](std::unique_ptr<indexed_triangle_set> itsPtr) {
+        [model, readyFlag, maxError, originMesh](std::unique_ptr<indexed_triangle_set> itsPtr) {
             int      initFaceCount  = itsPtr->indices.size();
             uint32_t triangleCount  = 0;
             float    maxErrCopy     = maxError;
@@ -468,6 +468,9 @@ bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI
                 originMax.y() > simplifiedMesh.stats().max.y() &&
                 originMax.z() > simplifiedMesh.stats().max.z()) {
                 if (model && model.use_count() >= 2) {
+                    // The model is render-disabled until the main thread sees
+                    // readyFlag (GLModel.hpp threading contract), so this
+                    // write is exclusive to this thread.
                     model->init_from(simplifiedMesh);
                     BOOST_LOG_TRIVIAL(warning) << "LOD simplify: completed successfully, faces=" << initFaceCount
                                             << " -> " << endFaceCount
@@ -480,6 +483,12 @@ bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI
                 BOOST_LOG_TRIVIAL(warning) << "LOD simplify: rejected (out of AABB bounds)";
             }
 
+            // Last touch of the model: hand it over to the main thread. The
+            // release store pairs with the acquire load in
+            // promote_ready_lod_models(), making the init_from() writes above
+            // visible before enable_render() is called.
+            if (readyFlag)
+                readyFlag->store(true, std::memory_order_release);
         },
         std::move(itsCopy));
 
@@ -497,6 +506,18 @@ void GLVolume::set_bounding_boxes_as_dirty()
     m_transformed_bounding_box.reset();
     m_transformed_convex_hull_bounding_box.reset();
     m_transformed_non_sinking_bounding_box.reset();
+}
+
+void GLVolume::promote_ready_lod_models()
+{
+    // The LOD models stay render-disabled while their background thread may
+    // still be writing them. Once the worker signals completion (release
+    // store in SimplifyMesh), the acquire load below makes its writes
+    // visible, and enable_render() hands the model over to the main thread.
+    if (m_modelMiddle && m_lodMiddleReady && m_modelMiddle->is_render_disabled() && m_lodMiddleReady->load(std::memory_order_acquire))
+        m_modelMiddle->enable_render();
+    if (m_modelSmall && m_lodSmallReady && m_modelSmall->is_render_disabled() && m_lodSmallReady->load(std::memory_order_acquire))
+        m_modelSmall->enable_render();
 }
 
 Transform3d GLVolume::world_matrix() const
@@ -663,12 +684,12 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
         // Use LOD model for depth pass if available (consistent with body rendering)
         auto renderDepthModel = [this]() {
             if (!picking) {
-                if (m_curLodLevel == LODLevel::Small && m_modelSmall && m_modelSmall->is_initialized()) {
+                if (m_curLodLevel == LODLevel::Small && m_modelSmall && !m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) {
                     m_modelSmall->set_color(render_color);
                     m_modelSmall->render();
                     return;
                 }
-                if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && m_modelMiddle->is_initialized()) {
+                if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
                     m_modelMiddle->set_color(render_color);
                     m_modelMiddle->render();
                     return;
@@ -810,13 +831,13 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         if (!picking) {
             // DEBUG: color-code LOD levels for visual verification
             // GREEN = HIGH (original), BLUE = MIDDLE, RED = SMALL
-            if (m_curLodLevel == LODLevel::Small && m_modelSmall && m_modelSmall->is_initialized()) {
+            if (m_curLodLevel == LODLevel::Small && m_modelSmall && !m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(warning) << "LOD: SMALL '" << name << "'";
                 m_modelSmall->set_color(render_color);
                 //m_modelSmall->set_color(ColorRGBA::GREEN());
                 m_modelSmall->render();
-            } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && m_modelMiddle->is_initialized()) {
+            } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(warning) << "LOD: MID '" << name << "'";
                 m_modelMiddle->set_color(render_color);
@@ -826,8 +847,8 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 if (lodRenderLogCounter % 180 == 0) {
                     BOOST_LOG_TRIVIAL(warning) << "LOD: HIGH fallback '" << name
                                               << "' lv=" << static_cast<int>(m_curLodLevel)
-                                              << " s=" << (m_modelSmall ? (int)m_modelSmall->is_initialized() : -1)
-                                              << " m=" << (m_modelMiddle ? (int)m_modelMiddle->is_initialized() : -1);
+                                              << " s=" << (m_modelSmall ? (int)(!m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) : -1)
+                                              << " m=" << (m_modelMiddle ? (int)(!m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) : -1);
                 }
                 // model.set_color() already called in render loop line 1301
                 //model.set_color(ColorRGBA::RED());
@@ -953,6 +974,11 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
             // Share LOD models via shared_ptr (ref-counted, safe GPU buffer sharing)
             v.m_modelMiddle = firstVolume->m_modelMiddle;
             v.m_modelSmall  = firstVolume->m_modelSmall;
+            // Share the readiness flags together with the models: while a
+            // flag is false its model may still be written by the background
+            // thread and must stay render-disabled.
+            v.m_lodMiddleReady = firstVolume->m_lodMiddleReady;
+            v.m_lodSmallReady  = firstVolume->m_lodSmallReady;
             // Note: model (main mesh) is always created per-volume since it's a value type
             // This avoids dangling GPU buffer issues when one volume is destroyed
         }
@@ -976,10 +1002,18 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
         BOOST_LOG_TRIVIAL(warning) << "LOD: Creating simplified models for '" << v.name
                                 << "' faces=" << mesh.its.indices.size();
         v.m_modelMiddle = std::make_shared<GUI::GLModel>();
-        v.SimplifyMesh(mesh, v.m_modelMiddle, LODLevel::Middle);
+        // Keep rendering disabled until the background thread finishes
+        // init_from() (GLModel.hpp threading contract); the main thread
+        // re-enables it in promote_ready_lod_models() once the ready flag
+        // is observed.
+        v.m_modelMiddle->disable_render();
+        v.m_lodMiddleReady = std::make_shared<std::atomic<bool>>(false);
+        v.SimplifyMesh(mesh, v.m_modelMiddle, v.m_lodMiddleReady, LODLevel::Middle);
 
         v.m_modelSmall = std::make_shared<GUI::GLModel>();
-        v.SimplifyMesh(mesh, v.m_modelSmall, LODLevel::Small);
+        v.m_modelSmall->disable_render();
+        v.m_lodSmallReady = std::make_shared<std::atomic<bool>>(false);
+        v.SimplifyMesh(mesh, v.m_modelSmall, v.m_lodSmallReady, LODLevel::Small);
     } else if (!lodEnabled) {
         BOOST_LOG_TRIVIAL(warning) << "LOD: Disabled for '" << v.name << "'";
     }
@@ -1218,10 +1252,13 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     {
         GLVolume::s_lastCameraZoomValue = curZoom;
     }
-    for (GLVolumeWithIdAndZ& volume : to_render) 
+    for (GLVolumeWithIdAndZ& volume : to_render)
     {
         GLVolume* v = volume.first;
-        if (!v->picking && (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY)) 
+        // Hand over LOD models whose background initialization finished.
+        // Must run every frame, on the main thread only.
+        v->promote_ready_lod_models();
+        if (!v->picking && (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY))
         {
             v->m_lodUpdateIndex = 0;
             LODLevel prevLod = v->m_curLodLevel;

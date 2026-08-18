@@ -9648,11 +9648,10 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
 
     m_mainframe.Raise();
     // Do not force the 3D editor before we even know what was dropped. When a
-    // G-code is already loaded (only-gcode mode) and the same file is dropped
-    // again, load_gcode() early-returns on its same-file guard and never
-    // switches back to Preview, so forcing the 3D editor here would strand the
-    // UI there and make the already-loaded G-code preview look like it
-    // "disappeared". Let the user stay on the Preview tab in that case.
+    // G-code is already loaded (only-gcode mode) the user is on the Preview
+    // tab: load_gcode()'s same-file guard switches straight back to Preview
+    // on a repeat drop, and the other load paths select their own final view,
+    // so switching here would only flash the (empty) 3D editor.
     if (!m_plater.only_gcode_mode()) {
         m_mainframe.select_tab(size_t(MainFrame::tp3DEditor));
         if (wxGetApp().is_editor())
@@ -9675,13 +9674,6 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
     }
     bool res = m_plater.load_files(filenames);
     m_mainframe.update_title();
-    // After dropping a G-code file, make sure we land on the Preview tab. On a
-    // fresh load load_gcode() switches to Preview itself, but when the *same*
-    // G-code is dropped again load_gcode() early-returns via its same-file
-    // guard, so without this the UI stays on the (empty) 3D editor and the
-    // already-loaded G-code preview looks like it "disappeared".
-    if (m_plater.only_gcode_mode())
-        m_plater.select_view_3D("Preview");
     return res;
 }
 
@@ -17977,10 +17969,21 @@ void Plater::load_gcode(const wxString& filename)
 {
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << __LINE__ << " entry and filename: " << filename;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__;
-    if (! is_gcode_file(into_u8(filename))
-        || (m_last_loaded_gcode == filename && m_only_gcode)
-        )
+    if (! is_gcode_file(into_u8(filename)))
         return;
+
+    if (m_last_loaded_gcode == filename && m_only_gcode) {
+        // The same G-code is already loaded: reloading would be a no-op, so
+        // just make sure the user is looking at its preview — callers may
+        // have left the UI on another view (e.g. the 3D editor after a
+        // drag & drop).
+        wxGetApp().mainframe->select_tab(MainFrame::tpPreview);
+        p->set_current_panel(p->preview, true);
+        GLCanvas3D* canvas = p->get_current_canvas3D();
+        if (canvas)
+            canvas->render();
+        return;
+    }
 
     // Reject a missing / inaccessible file up front. Without this check the
     // code below would walk through process_file -> parse_file_raw_internal,

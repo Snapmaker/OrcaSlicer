@@ -23,10 +23,9 @@ bool is_soft_disconnect_error(const mqtt::exception& e)
 // @param client_id: Unique identifier for this client
 // @param clean_session: Whether to start with a clean session
 MqttClient::MqttClient(const std::string& server_address, const std::string& client_id, const std::string& username, const std::string& password,  bool clean_session)
-try
     : server_address_(server_address)
     , client_id_(client_id)
-    , client_(std::make_unique<mqtt::async_client>(server_address_, client_id_))
+    , client_(nullptr)
     , connOpts_()
     , subListener_("Subscription")
     , connected_(false)            
@@ -37,24 +36,28 @@ try
 {
     BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] initializing MQTT connection, server_address: " << server_address << ", client_id: " << client_id;
 
-    // Configure connection options    
-    connOpts_.set_clean_session(false);
-    connOpts_.set_keep_alive_interval(30);
-    connOpts_.set_connect_timeout(10);
-    // auto-reconnect enabled only after first successful connection
-    connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
-    client_->set_callback(*this);
+    try {
+        client_ = std::make_unique<mqtt::async_client>(server_address_, client_id_);
 
-    // set authentication info
-    if (!username.empty()) {
-        connOpts_.set_user_name(username);
-        if (!password.empty()) {
-            connOpts_.set_password(password);
+        // Configure connection options    
+        connOpts_.set_clean_session(false);
+        connOpts_.set_keep_alive_interval(30);
+        connOpts_.set_connect_timeout(10);
+        // auto-reconnect enabled only after first successful connection
+        connOpts_.set_automatic_reconnect(std::chrono::seconds(0), std::chrono::seconds(0));
+        client_->set_callback(*this);
+
+        // set authentication info
+        if (!username.empty()) {
+            connOpts_.set_user_name(username);
+            if (!password.empty()) {
+                connOpts_.set_password(password);
+            }
         }
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client construction failed: " << e.what();
+        client_.reset();
     }
-} catch (const std::exception& e) {
-    BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client construction failed: " << e.what();
-    throw;
 }
 
 // SSL/TLS
@@ -71,6 +74,11 @@ MqttClient::MqttClient(const std::string& server_address,
     BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] initializing MQTT SSL connection, server_address: " << server_address << ", client_id: " << client_id
                             << ", ca_content: " << ca_content << ", cert_content: " << cert_content << ", username: " << username
                             << ", password: " << password;
+
+    if (!client_) {
+        BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] skip SSL initialization because MQTT client was not created";
+        return;
+    }
     
     try {
         boost::filesystem::path temp_dir = boost::filesystem::temp_directory_path();
@@ -131,7 +139,7 @@ MqttClient::MqttClient(const std::string& server_address,
     } catch (const std::exception& e) {
         cleanup_temp_files();
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT SSL initialization failed: " << e.what();
-        throw;
+        client_.reset();
     }
 }
 

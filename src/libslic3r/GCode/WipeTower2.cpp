@@ -2977,7 +2977,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
         if (m_cur_layer_id < m_wall_skip_points.size()) {
             skip_points = m_wall_skip_points[m_cur_layer_id];
         }
-        outer_wall = generate_support_cone_wall(writer, wt_cone_box, feedrate, infill_cone, spacing, skip_points);
+        outer_wall = generate_support_cone_wall(writer, wt_box, feedrate, infill_cone, spacing, skip_points);
     }
     else {
         outer_wall = generate_support_wall_new(writer, wt_box, feedrate, first_layer, m_use_rib_wall, extrude_perimeter, m_use_gap_wall);
@@ -3033,9 +3033,11 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer_new(bool extrude_perimeter,
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
-    if (!m_no_sparse_layers || toolchanges_on_layer)
+    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
         if (m_current_tool < m_used_filament_length.size())
             m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
+        m_current_height += m_layer_info->height; // Necessary for m_no_sparse_layers
+    }
 
     m_nozzle_change_result.gcode.clear();
     return construct_tcr_new(writer, false, m_current_tool, true, false, 0.f, false);
@@ -4697,9 +4699,11 @@ WipeTower::ToolChangeResult WipeTower2::finish_block(const WipeTowerBlock& block
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
-    if (!m_no_sparse_layers || toolchanges_on_layer)
+    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
         if (filament_id < m_used_filament_length.size())
             m_used_filament_length[filament_id] += writer.get_and_reset_used_filament_length();
+        m_current_height += m_layer_info->height;
+    }
 
     return construct_block_tcr(writer, false, filament_id, true, 0.f);
 }
@@ -4822,10 +4826,11 @@ WipeTower::ToolChangeResult WipeTower2::finish_block_solid(const WipeTowerBlock&
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
-    if (!m_no_sparse_layers || toolchanges_on_layer)
+    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
         if (filament_id < m_used_filament_length.size())
             m_used_filament_length[filament_id] += writer.get_and_reset_used_filament_length();
-
+        m_current_height += m_layer_info->height;
+    }
     return construct_block_tcr(writer, false, filament_id, true, 0.f);
 }
 

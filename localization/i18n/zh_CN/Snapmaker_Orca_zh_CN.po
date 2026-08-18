@@ -15350,9 +15350,6 @@ msgstr "粘接性类别"
 msgid "Filament category"
 msgstr "材料类别"
 
-msgid "Prime volume"
-msgstr "清理量"
-
 msgid "Interface layer pre-extrusion distance"
 msgstr "接触层预挤出距离"
 
@@ -15393,3 +15390,9 @@ msgstr "内支撑肋"
 
 msgid "Enable internal ribs to increase the stability of the prime tower."
 msgstr "启用内支撑肋以增强擦料塔的稳定性。"
+
+msgid "Enable tower interface features"
+msgstr "启用擦拭塔接触层功能"
+
+msgid "Enable optimized prime tower interface behavior when different materials meet."
+msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"

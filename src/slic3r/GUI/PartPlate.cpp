@@ -1685,8 +1685,8 @@ std::vector<int> PartPlate::get_used_extruders()
 	return std::vector(used_extruders_set.begin(), used_extruders_set.end());
 }
 
-Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double wipe_volume, 
-    const double d, int plate_extruder_size, bool use_global_objects) const
+Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, const double width, 
+    const double wipe_volume, int plate_extruder_size, bool use_global_objects) const
 {
     Vec3d wipe_tower_size;
 
@@ -1746,21 +1746,14 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
     if (use_rib_wall) {
         depth = std::sqrt(volume / layer_height * extra_spacing);
         if (need_wipe_tower || plate_extruder_size > 1) {
-            float min_wipe_tower_depth = WipeTowerHelper::get_limit_depth_by_height(max_height);
-            double volume_depth = depth;
-            depth = std::max((double)min_wipe_tower_depth, depth);
             rib_width = std::min(rib_width, depth / 2);
-            depth = rib_width + std::max(depth + m_print->config().wipe_tower_extra_rib_length.value, volume_depth);
+            depth = rib_width + std::max(depth + m_print->config().wipe_tower_extra_rib_length.value, depth);
             wipe_tower_size(0) = wipe_tower_size(1) = depth;
         }
     }
     else {
         depth = volume / (layer_height * wipe_volume) * extra_spacing;
-        if (need_wipe_tower || depth > EPSILON) {
-            float min_wipe_tower_depth = WipeTowerHelper::get_limit_depth_by_height(max_height);
-            depth = std::max((double)min_wipe_tower_depth, depth);
-        }
-        wipe_tower_size(0) = wipe_volume;
+        wipe_tower_size(0) = width;
         wipe_tower_size(1) = depth;
     }
     return wipe_tower_size;

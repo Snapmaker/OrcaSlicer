@@ -1,18 +1,14 @@
 #include "PrintConfig.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
-#include "I18N.hpp"
 #include "format.hpp"
 
 #include "GCode/Thumbnails.hpp"
 #include <set>
-#include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/thread.hpp>
-#include <float.h>
 
 namespace {
 std::set<std::string> SplitStringAndRemoveDuplicateElement(const std::string &str, const std::string &separator)
@@ -5169,7 +5165,8 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no tool changes. "
                     "On layers with a tool change, extruder will travel downward to print the wipe tower. "
                     "User is responsible for ensuring there is no collision with the print.");
-    def->mode = comAdvanced;
+    def->mode = comDevelop;
+    def->readonly = true;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("single_extruder_multi_material_priming", coBool);
@@ -5951,7 +5948,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("enable_tower_interface_features", coBool);
     def->label = L("Enable tower interface features");
-    def->tooltip = L("When enabled, use dedicated temperature, pre-extrusion and purge settings for prime tower interface layers (where different materials meet), to improve multi-material tool change quality.");
+    def->tooltip = L("Enable optimized prime tower interface behavior when different materials meet.");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 

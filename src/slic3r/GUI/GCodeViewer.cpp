@@ -1001,16 +1001,27 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
    //BBS: add logs
   BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": gcode result %1%, new id %2%, gcode file %3% ") % (&gcode_result) % m_last_result_id % gcode_result.filename;
 
-   // release gpu memory, if used
-   reset();
+    // release gpu memory, if used.
+    // NOTE: this MUST run before m_loading is armed below. reset() early-returns
+    // when m_loading is set, so arming first would silently skip this cleanup and
+    // the previous gcode's buffers would leak / be appended to by load_toolpaths().
+    reset();
 
-   //BBS: add mutex for protection of gcode result
-   gcode_result.lock();
+    // load_toolpaths() below pumps the event loop through its modal progress
+    // dialog; a dispatched event can re-enter reset() (via reset_gcode_toolpaths)
+    // and zero m_moves_count mid-flight -> unsigned underflow in reserve().
+    // Arm the guard so any re-entrant reset() is ignored. ScopeGuard clears the
+    // flag on every exit, including exceptions thrown from load_toolpaths().
+    m_loading = true;
+    ScopeGuard loading_guard([this]() { m_loading = false; });
+
+    //BBS: add mutex for protection of gcode result
+    gcode_result.lock();
+    ScopeGuard unlock_guard([&gcode_result]() { gcode_result.unlock(); });
     //BBS: add safe check
     if (gcode_result.moves.size() == 0) {
         //result cleaned before slicing ,should return here
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": gcode result reset before, return directly!");
-        gcode_result.unlock();
         return;
     }
 
@@ -1081,7 +1092,6 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 
     //BBS: add mutex for protection of gcode result
     if (m_layers.empty()) {
-        gcode_result.unlock();
         return;
     }
 
@@ -1179,10 +1189,9 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     m_conflict_result = gcode_result.conflict_result;
     if (m_conflict_result) { m_conflict_result.value().layer = m_layers.get_l_at(m_conflict_result.value()._height); }
 
-    //BBS: add mutex for protection of gcode result
-    gcode_result.unlock();
     //BBS: add logs
-   BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, m_buffers size %1%!")%m_buffers.size();
+    // gcode_result.unlock() and m_loading = false run here via the ScopeGuards above.
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished, m_buffers size %1%!")%m_buffers.size();
 }
 
 void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors)
@@ -1193,19 +1202,18 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
 
     //BBS: add mutex for protection of gcode result
     gcode_result.lock();
+    ScopeGuard unlock_guard([&gcode_result]() { gcode_result.unlock(); });
 
     //BBS: add safe check
     if (gcode_result.moves.size() == 0) {
         //result cleaned before slicing ,should return here
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": gcode result reset before, return directly!");
-        gcode_result.unlock();
         return;
     }
 
     //BBS: add mutex for protection of gcode result
     if (m_moves_count == 0) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": gcode result m_moves_count is 0, return directly!");
-        gcode_result.unlock();
         return;
     }
 
@@ -1213,7 +1221,7 @@ void GCodeViewer::refresh(const GCodeProcessorResult& gcode_result, const std::v
     // Skip all GPU rendering work here to avoid OOM.
     if (m_no_render_path) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": m_no_render_path is set, skipping toolpath rendering (no GPU buffers were built)";
-        gcode_result.unlock();
+        // gcode_result.unlock() runs here via the ScopeGuard above.
         return;
     }
 
@@ -1286,8 +1294,6 @@ m_extrusions.ranges.layer_duration_log.update_from(curr.layer_duration);
     m_statistics.refresh_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time).count();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
-    //BBS: add mutex for protection of gcode result
-    gcode_result.unlock();
 
     // update buffers' render paths
     refresh_render_paths();
@@ -1317,6 +1323,8 @@ void GCodeViewer::reset_shell()
 
 void GCodeViewer::reset()
 {
+    if (m_loading)
+        return;
     //BBS: should also reset the result id
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current result id %1% ")%m_last_result_id;
     m_last_result_id = -1;
@@ -2663,8 +2671,18 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     };
     //BBS: generate map from ssid to move id in advance to reduce computation
     m_ssid_to_moveid_map.clear();
-    m_ssid_to_moveid_map.reserve( m_moves_count - biased_seams_ids.size());
-    for (size_t i = 0; i < m_moves_count - biased_seams_ids.size(); i++)
+    // Defensive clamp: if m_moves_count were ever smaller than the seam count
+    // (e.g. zeroed by a re-entrant reset()), this unsigned subtraction would wrap
+    // to ~SIZE_MAX and reserve() would throw std::length_error. The m_loading
+    // guard prevents that today; this keeps it safe regardless.
+    const size_t ssid_count = (m_moves_count > biased_seams_ids.size()) ? (m_moves_count - biased_seams_ids.size()) : 0;
+   m_ssid_to_moveid_map.reserve(ssid_count);
+   if (ssid_count == 0 && m_moves_count > 0) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+            << boost::format(": reentrancy detected -- m_moves_count=%1% biased_seams=%2% moves.size=%3%")
+                   % m_moves_count % biased_seams_ids.size() % gcode_result.moves.size();
+   }
+   for (size_t i = 0; i < ssid_count; i++)
         m_ssid_to_moveid_map.push_back(extract_move_id(i));
 
     //BBS: smooth toolpaths corners for the given TBuffer using triangles

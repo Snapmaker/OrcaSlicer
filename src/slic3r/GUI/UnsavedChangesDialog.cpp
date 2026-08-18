@@ -1632,6 +1632,32 @@ std::string UnsavedChangesDialog::subreplace(std::string resource_str, std::stri
     return dst_str;
 }
 
+static wxString get_flow_variant_string_value(const std::string& opt_key,
+                                              const DynamicPrintConfig& config,
+                                              const DynamicPrintConfig& edited_config,
+                                              ConfigFlowDomain domain)
+{
+    const size_t separator = opt_key.find('#');
+    if (separator == std::string::npos)
+        return get_string_value(opt_key, config);
+
+    const auto* edited_modes = edited_config.option<ConfigOptionStrings>(flow_support_key(domain));
+    const size_t edited_index = static_cast<size_t>(atoi(opt_key.c_str() + separator + 1));
+    if (edited_modes == nullptr || edited_index >= edited_modes->values.size())
+        return get_string_value(opt_key, config);
+
+    const auto* modes = config.option<ConfigOptionStrings>(flow_support_key(domain));
+    if (modes == nullptr)
+        return _L("N/A");
+
+    const auto mode = std::find(modes->values.begin(), modes->values.end(), edited_modes->values[edited_index]);
+    if (mode == modes->values.end())
+        return _L("N/A");
+
+    const size_t config_index = size_t(std::distance(modes->values.begin(), mode));
+    return get_string_value(get_pure_opt_key(opt_key) + "#" + std::to_string(config_index), config);
+}
+
 void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* presets_)
 {
     Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
@@ -1665,6 +1691,28 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         // Collect dirty options.
         const bool deep_compare = (type == Preset::TYPE_PRINTER || type == Preset::TYPE_SLA_MATERIAL);
         auto dirty_options = presets->current_dirty_options(deep_compare);
+        const std::vector<std::string>* flow_options = nullptr;
+        ConfigFlowDomain flow_domain = ConfigFlowDomain::Process;
+        if (type == Preset::TYPE_FILAMENT)
+        {
+            flow_domain = ConfigFlowDomain::Filament;
+            flow_options = &filament_flow_variant_options();
+        }
+        else if (type == Preset::TYPE_PRINT)
+        {
+            flow_options = &process_flow_variant_options();
+        }
+
+        if (flow_options != nullptr)
+        {
+            dirty_options.erase(std::remove_if(dirty_options.begin(), dirty_options.end(), [flow_options](const std::string& key) {
+                return std::find(flow_options->begin(), flow_options->end(), key) != flow_options->end();
+            }), dirty_options.end());
+
+            const std::vector<std::string> flow_dirty_options =
+                presets->current_flow_variant_dirty_options(flow_domain, *flow_options);
+            dirty_options.insert(dirty_options.end(), flow_dirty_options.begin(), flow_dirty_options.end());
+        }
 
         // process changes of extruders count
         if (type == Preset::TYPE_PRINTER && old_pt == ptFFF &&
@@ -1684,31 +1732,38 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         }
 
         for (const std::string& opt_key : dirty_options) {
-            const Search::Option& option = searcher.get_option(opt_key, type);
-            if (option.opt_key() != opt_key) {
+            const std::string pure_opt_key = get_pure_opt_key(opt_key);
+            const Search::Option& option = searcher.get_option(pure_opt_key, type);
+            const bool flow_variant = flow_options != nullptr && pure_opt_key != opt_key &&
+                std::find(flow_options->begin(), flow_options->end(), pure_opt_key) != flow_options->end();
+            const wxString old_value = flow_variant ?
+                get_flow_variant_string_value(opt_key, old_config, new_config, flow_domain) :
+                get_string_value(opt_key, old_config);
+            const wxString new_value = get_string_value(opt_key, new_config);
+            if (option.opt_key() != pure_opt_key) {
                 // Only show the fallback for user-facing option types
                 // (bool/float/int/enum). Internal keys like IDs and
                 // serialized blobs are coString — skip those silently.
-                const ConfigOption* o = old_config.option(opt_key);
-                if (!o) o = new_config.option(opt_key);
+                const ConfigOption* o = old_config.option(pure_opt_key);
+                if (!o) o = new_config.option(pure_opt_key);
                 if (!o || o->type() == coString || o->type() == coStrings)
                     continue;
-                wxString label = from_u8(opt_key);
+                wxString label = from_u8(pure_opt_key);
                 if (old_config.def()) {
-                    const ConfigOptionDef* def = old_config.def()->get(opt_key);
+                    const ConfigOptionDef* def = old_config.def()->get(pure_opt_key);
                     if (def && !def->label.empty())
                         label = def->label;
                 }
                 PresetItem pi = {type, opt_key,
                     _L("Other"), wxEmptyString,
                     label,
-                    get_string_value(opt_key, old_config),
-                    get_string_value(opt_key, new_config)};
+                    old_value,
+                    new_value};
                 m_presetitems.push_back(pi);
                 continue;
             }
 
-            PresetItem pi = {type, opt_key, option.category_local, option.group_local, option.label_local, get_string_value(opt_key, old_config), get_string_value(opt_key, new_config)};
+            PresetItem pi = {type, opt_key, option.category_local, option.group_local, option.label_local, old_value, new_value};
             m_presetitems.push_back(pi);
 
         }

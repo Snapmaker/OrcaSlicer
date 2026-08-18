@@ -35,6 +35,7 @@ struct ConnectMachineInfo
     std::string filament_info {""};
     std::string filament_type {""};
     std::string nozzle_info {""};
+    std::string nozzle_volume_type {""};
     std::string color_info{""};
     std::vector<std::string> multiColors;
     Slic3r::FilamentColorMode colorMode { Slic3r::FilamentColorMode::Segment };
@@ -134,6 +135,9 @@ public:
     unsigned int sync_ams_list(unsigned int & unknowns);
     //BBS: check whether this is the only edited filament
     bool is_the_only_edited_filament(unsigned int filament_index);
+
+    std::vector<FilamentVolumeType> get_filament_volume_types() const;
+    void                            set_filament_volume_types(const std::vector<FilamentVolumeType> &types);
 
     // Orca: update selected filament and print
     void           update_selections(AppConfig &config);

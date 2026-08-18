@@ -440,6 +440,26 @@ std::ostream& ConfigDef::print_cli_help(std::ostream& out, bool show_defaults, s
     return out;
 }
 
+namespace {
+
+bool parse_indexed_option_key(const std::string &key, std::string &base_key, size_t &index)
+{
+    const size_t hash = key.rfind('#');
+    if (hash == std::string::npos || hash == 0 || hash + 1 == key.size())
+        return false;
+    size_t parsed = 0;
+    for (size_t i = hash + 1; i < key.size(); ++i) {
+        if (key[i] < '0' || key[i] > '9')
+            return false;
+        parsed = parsed * 10 + size_t(key[i] - '0');
+    }
+    base_key = key.substr(0, hash);
+    index = parsed;
+    return true;
+}
+
+} // namespace
+
 void ConfigBase::apply_only(const ConfigBase &other, const t_config_option_keys &keys, bool ignore_nonexistent)
 {
     // loop through options and apply them
@@ -449,17 +469,31 @@ void ConfigBase::apply_only(const ConfigBase &other, const t_config_option_keys 
         // an exception is thrown if not ignore_nonexistent.
         ConfigOption *my_opt = this->option(opt_key, true);
         if (my_opt == nullptr) {
+            std::string base_key;
+            size_t index = 0;
+            if (parse_indexed_option_key(opt_key, base_key, index)) {
+                auto *my_vector = dynamic_cast<ConfigOptionVectorBase *>(this->option(base_key, true));
+                const auto *other_vector = dynamic_cast<const ConfigOptionVectorBase *>(other.option(base_key));
+                if (my_vector != nullptr && other_vector != nullptr && index < other_vector->size()) {
+                    if (my_vector->empty())
+                        my_vector->resize(index + 1, other_vector);
+                    else if (index >= my_vector->size())
+                        my_vector->resize(index + 1);
+                    my_vector->set_at(other_vector, index, index);
+                    continue;
+                }
+            }
             // opt_key does not exist in this ConfigBase and it cannot be created, because it is not defined by this->def().
             // This is only possible if other is of DynamicConfig type.
             if (ignore_nonexistent)
                 continue;
             throw UnknownOptionException(opt_key);
         }
-		const ConfigOption *other_opt = other.option(opt_key);
-		if (other_opt == nullptr) {
+        const ConfigOption *other_opt = other.option(opt_key);
+        if (other_opt == nullptr) {
             // The key was not found in the source config, therefore it will not be initialized!
 //			printf("Not found, therefore not initialized: %s\n", opt_key.c_str());
-		} else
+        } else
             my_opt->set(other_opt);
     }
 }
@@ -676,6 +710,12 @@ double ConfigBase::get_abs_value(const t_config_option_key &opt_key) const
       return static_cast<const ConfigOptionInt *>(raw_opt)->value;
     if (raw_opt->type() == coBool)
       return static_cast<const ConfigOptionBool *>(raw_opt)->value ? 1 : 0;
+    // Snapmaker: flow-variant
+    if (raw_opt->type() == coFloats) {
+        const auto *floats = static_cast<const ConfigOptionFloats*>(raw_opt);
+        if (!floats->values.empty())
+            return floats->values.front();
+    }
 
     const ConfigOptionPercent *cast_opt = nullptr;
     if (raw_opt->type() == coFloatOrPercent) {

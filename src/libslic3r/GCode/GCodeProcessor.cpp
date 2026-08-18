@@ -735,8 +735,8 @@ void GCodeProcessor::apply_config(const PrintConfig& config)
     for (size_t i = 0; i < extruders_count; ++ i) {
         m_extruder_offsets[i]           = to_3d(config.extruder_offset.get_at(i).cast<float>().eval(), 0.f);
         m_extruder_colors[i]            = static_cast<unsigned char>(i);
-        m_extruder_temps_first_layer_config[i] = static_cast<int>(config.nozzle_temperature_initial_layer.get_at(i));
-        m_extruder_temps_config[i]      = static_cast<int>(config.nozzle_temperature.get_at(i));
+        m_extruder_temps_first_layer_config[i] = static_cast<int>(get_value_at(config, config.nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, i));
+        m_extruder_temps_config[i]      = static_cast<int>(get_value_at(config, config.nozzle_temperature, ConfigFlowDomain::Filament, i));
         if (m_extruder_temps_config[i] == 0) {
             // This means the value should be ignored and first layer temp should be used.
             m_extruder_temps_config[i] = m_extruder_temps_first_layer_config[i];
@@ -3474,16 +3474,16 @@ void GCodeProcessor::process_G29(const GCodeReader::GCodeLine& line)
 void GCodeProcessor::process_G10(const GCodeReader::GCodeLine& line)
 {
     GCodeReader::GCodeLine g10;
-    g10.set(Axis::E, -this->m_parser.config().retraction_length.get_at(m_extruder_id));
-    g10.set(Axis::F,  this->m_parser.config().retraction_speed.get_at(m_extruder_id) * 60);
+    g10.set(Axis::E, -get_value_at(this->m_parser.config(), this->m_parser.config().retraction_length, ConfigFlowDomain::Filament, m_extruder_id));
+    g10.set(Axis::F,  get_value_at(this->m_parser.config(), this->m_parser.config().retraction_speed, ConfigFlowDomain::Filament, m_extruder_id) * 60);
     process_G1(g10);
 }
 
 void GCodeProcessor::process_G11(const GCodeReader::GCodeLine& line)
 {
     GCodeReader::GCodeLine g11;
-    g11.set(Axis::E, this->m_parser.config().retraction_length.get_at(m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
-    g11.set(Axis::F, this->m_parser.config().deretraction_speed.get_at(m_extruder_id) * 60);
+    g11.set(Axis::E, get_value_at(this->m_parser.config(), this->m_parser.config().retraction_length, ConfigFlowDomain::Filament, m_extruder_id) + this->m_parser.config().retract_restart_extra.get_at(m_extruder_id));
+    g11.set(Axis::F, get_value_at(this->m_parser.config(), this->m_parser.config().deretraction_speed, ConfigFlowDomain::Filament, m_extruder_id) * 60);
     process_G1(g11);
 }
 

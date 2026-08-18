@@ -1,7 +1,11 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/ProjectSchemaVersion.hpp"
+#include "libslic3r/Preset.hpp"
 #include "libslic3r/LocalesUtils.hpp"
+
+#include <algorithm>
 
 #include <cereal/types/polymorphic.hpp>
 #include <cereal/types/string.hpp> 
@@ -9,6 +13,24 @@
 #include <cereal/archives/binary.hpp>
 
 using namespace Slic3r;
+
+TEST_CASE("Project schema registry handles versions", "[Config][FlowVariant]")
+{
+    const auto& schema = ProjectSchemaRegistry::definition();
+    REQUIRE(schema.config_key == std::string("project_schema_version"));
+    REQUIRE(schema.current_version == 1);
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.erase(schema.config_key);
+    REQUIRE(ProjectSchemaRegistry::version_from(config) == schema.legacy_version);
+    REQUIRE_FALSE(ProjectSchemaRegistry::is_newer(config));
+
+    config.set_key_value(schema.config_key, new ConfigOptionInt(schema.current_version));
+    REQUIRE_FALSE(ProjectSchemaRegistry::is_newer(config));
+
+    config.set_key_value(schema.config_key, new ConfigOptionInt(schema.current_version + 1));
+    REQUIRE(ProjectSchemaRegistry::is_newer(config));
+}
 
 SCENARIO("Generic config validation performs as expected.", "[Config]") {
     GIVEN("A config generated from default options") {

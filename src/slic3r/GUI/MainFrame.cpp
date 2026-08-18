@@ -57,6 +57,9 @@
 #include <ctime>
 
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
+#include "FlowTypeHelper.hpp"
+#include "SliceModePopup.hpp"
 #include "UnsavedChangesDialog.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
@@ -1711,6 +1714,21 @@ wxBoxSizer* MainFrame::create_side_tools()
     sizer->Add(m_print_option_btn, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(2));
     sizer->Add(m_print_btn       , 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, FromDIP(19));
 
+    // Snapmaker requirement 7.1: hover popup on the slice button for choosing the
+    // standard / custom filament grouping mode. Shown only when the nozzles mix flow
+    // variant types (>= 2 distinct across the per-nozzle flow combos) AND at least one
+    // filament actually supports high flow -- otherwise there is nothing to group, so
+    // slicing routes every filament to its single nozzle type.
+    m_slice_mode_popup = new SliceModePopup(this);
+    auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
+        e.Skip();
+        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
+            && GUI::FlowType::any_filament_supports_high_flow())
+            m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
+    };
+    m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
+    m_slice_option_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
+
     sizer->Layout();
 
     // m_publish_btn->Bind(wxEVT_BUTTON, [this](auto& e) {
@@ -1730,13 +1748,24 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
+            if (m_slice_mode_popup)
+                m_slice_mode_popup->HidePopup();
+            // Snapmaker requirement 7.1: the custom per-filament grouping applies only
+            // in custom mode with mixed nozzle flow types -- then confirm the mapping
+            // before slicing (both "Slice plate" and "Slice all" go through this
+            // button). Otherwise every filament follows the single selected nozzle
+            // flow type (all standard -> standard, all high flow -> high flow; standard
+            // mode with mixed nozzles falls back to standard), dropping stale mappings.
+            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
+                && GUI::FlowType::any_filament_supports_high_flow()) {
+                GUI::FilamentGroupDialog dlg(this);
+                if (dlg.ShowModal() != wxID_OK)
+                    return;
+            } else {
+                GUI::FlowType::sync_filament_volume_types_for_slice();
+            }
             //this->m_plater->select_view_3D("Preview");
-            m_plater->exit_gizmo();
-            m_plater->update(true, true);
-            if (m_slice_select == eSliceAll)
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
-            else
-                wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
+            start_slice();
 
         });
 
@@ -1778,6 +1807,8 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_option_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
+            if (m_slice_mode_popup)
+                m_slice_mode_popup->HidePopup();
             SidePopup* p = new SidePopup(this);
             SideButton* slice_all_btn = new SideButton(p, _L("Slice all"), "");
             slice_all_btn->SetCornerRadius(0);
@@ -3334,6 +3365,18 @@ void MainFrame::reslice_now()
 {
     if (m_plater)
         (void)m_plater->reslice();
+}
+
+void MainFrame::start_slice()
+{
+    if (!m_plater)
+        return;
+    m_plater->exit_gizmo();
+    m_plater->update(true, true);
+    if (m_slice_select == eSliceAll)
+        wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
+    else
+        wxPostEvent(m_plater, SimpleEvent(EVT_GLTOOLBAR_SLICE_PLATE));
 }
 
 struct ConfigsOverwriteConfirmDialog : MessageDialog

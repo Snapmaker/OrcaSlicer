@@ -26,7 +26,6 @@
 #include <cmath>
 #include <thread>
 
-#include <wx/window.h>
 #include <wx/scrolwin.h>
 #include <wx/dcbuffer.h>
 #include <boost/log/trivial.hpp>

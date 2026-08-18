@@ -63,5 +63,6 @@
   ],
   "fan_min_speed": [
     "10"
-  ]
+  ],
+  "filament_type": ["ASA"]
 }

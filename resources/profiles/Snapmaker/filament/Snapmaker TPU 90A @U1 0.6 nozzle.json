@@ -59,5 +59,6 @@
     "nozzle_temperature_range_high": ["240"],
     "filament_z_hop_types": ["Slope Lift"],
     "filament_wipe": ["1"],
-    "filament_wipe_distance": ["0"]
+    "filament_wipe_distance": ["0"],
+    "filament_type": ["TPU"]
 }

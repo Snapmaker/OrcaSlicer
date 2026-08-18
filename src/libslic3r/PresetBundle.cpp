@@ -3772,9 +3772,10 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
 void PresetBundle::update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
                                                   size_t old_num_filaments,
                                                   size_t new_num_filaments,
-                                                  size_t deleted_mixed_idx)
+                                                  size_t deleted_mixed_idx,
+                                                  const std::vector<unsigned int> &kept_physical_ids)
 {
-    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u, deleted_mixed_idx);
+    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u, deleted_mixed_idx, kept_physical_ids);
 }
 
 // Checks manual_pattern and gradient dependency.
@@ -3814,7 +3815,8 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
                                            size_t new_num_filaments,
                                            bool deleting_filament,
                                            unsigned int deleted_1based,
-                                           size_t deleted_mixed_idx)
+                                           size_t deleted_mixed_idx,
+                                           const std::vector<unsigned int> &kept_physical_ids)
 {
     size_t old_enabled_mixed = 0;
     for (const auto &mf : old_mixed)
@@ -3824,12 +3826,37 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
     const size_t old_total_filaments = old_num_filaments + old_enabled_mixed;
     m_last_filament_id_remap.assign(old_total_filaments + 1, 0);
 
+    // kept-aware physical remap (batch path only). When the caller supplies the
+    // actual set of surviving physical ids, map each old physical id by its
+    // position in the kept set (sorted ascending: the i-th survivor -> new id
+    // i+1; ids not in the kept set -> 0/NONE). This replaces the batch path's
+    // tail-truncation assumption (survivors == {1..new_num}), which only holds
+    // when the palette is head-rewritten (recommended mode). For non-contiguous
+    // selections like manual-mode [2,6,8,10] the tail-truncation maps survivors
+    // to NONE and deleted head ids to identity — the "partial colour loss" bug.
+    // Default empty kept_physical_ids preserves the original behaviour for all
+    // existing callers (recommended confirm + the 4 mixed-only callers that pass
+    // old_num == new_num and never hit this branch).
+    std::vector<unsigned int> kept_sorted;
+    if (!deleting_filament && !kept_physical_ids.empty()) {
+        kept_sorted = kept_physical_ids;
+        std::sort(kept_sorted.begin(), kept_sorted.end());
+        kept_sorted.erase(std::unique(kept_sorted.begin(), kept_sorted.end()), kept_sorted.end());
+    }
+
     for (unsigned int old_id = 1; old_id <= unsigned(old_num_filaments); ++old_id) {
         unsigned int mapped = 0;
         if (deleting_filament && old_id == deleted_1based) {
             mapped = 0;
         } else if (deleting_filament && old_id > deleted_1based) {
             mapped = old_id - 1;
+        } else if (!kept_sorted.empty()) {
+            // kept-aware: find old_id's position in the surviving set.
+            auto it = std::lower_bound(kept_sorted.begin(), kept_sorted.end(), old_id);
+            if (it != kept_sorted.end() && *it == old_id)
+                mapped = static_cast<unsigned int>(it - kept_sorted.begin() + 1);
+            else
+                mapped = 0; // not kept -> removed (painting already migrated by apply)
         } else if (old_id <= unsigned(new_num_filaments)) {
             mapped = old_id;
         }

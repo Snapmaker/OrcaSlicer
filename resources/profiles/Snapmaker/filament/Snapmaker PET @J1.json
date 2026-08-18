@@ -9,5 +9,6 @@
     "Snapmaker J1 (0.4 nozzle)",
     "Snapmaker J1 (0.6 nozzle)",
     "Snapmaker J1 (0.8 nozzle)"
-  ]
+  ],
+  "filament_type": ["PET"]
 }

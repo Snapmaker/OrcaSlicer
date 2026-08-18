@@ -3350,6 +3350,42 @@ msgstr "热床调平"
 msgid "Timelapse"
 msgstr "延时摄影"
 
+msgid "Download Lists"
+msgstr "下载列表"
+
+msgid "Download Lists (%d)"
+msgstr "下载列表 (%d)"
+
+msgid "Downloaded"
+msgstr "下载完成"
+
+msgid "Download Cancelled"
+msgstr "下载已取消"
+
+msgid "Download Failed"
+msgstr "下载失败"
+
+msgid "Failed to download the file. Please check your network and try again."
+msgstr "文件下载失败，请检查网络后重试。"
+
+msgid "Device disconnected."
+msgstr "设备已断开连接"
+
+msgid "Waiting for device to upload"
+msgstr "等待设备上传"
+
+msgid "Insufficient storage space. Please free up space."
+msgstr "磁盘空间不足，请清理存储空间。"
+
+msgid "File was removed. Download canceled."
+msgstr "文件已被移除，下载中断"
+
+msgid "Network timeout"
+msgstr "网络连接超时"
+
+msgid "Request timed out. Please check the device connection."
+msgstr "加载超时，请检查设备连接。"
+
 msgid "Flow Dynamic Calibration"
 msgstr "动态流量校准"
 
@@ -7732,6 +7768,12 @@ msgstr "不保存"
 
 msgid "Discard"
 msgstr "放弃"
+
+msgid "Discard Matching"
+msgstr "放弃匹配"
+
+msgid "Are you sure you want to discard this match? The current configuration will not be saved."
+msgstr "确定放弃匹配吗？当前配置将不会保存。"
 
 msgid "Click the right mouse button to display the full text."
 msgstr "单击鼠标右键显示全文。"
@@ -15182,6 +15224,15 @@ msgstr "删除最后一个混色"
 msgid "Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be subdivided for better color mixing results."
 msgstr "启用混色区域独立层高。启用后，使用混色区域的层高将被细分，以实现更好混色效果。"
 
+msgid "Configuration Conflict"
+msgstr "配置冲突"
+
+msgid "The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."
+msgstr "当前层高为 0.1 mm 或更小。启用混色细分层高后，细分后的层高可能超出打印机支持范围，从而影响打印质量。"
+
+msgid "Subdivide Mixing Layers is enabled. At a layer height of 0.1 mm or below, the subdivided layer height may fall outside the printer's supported range. This could affect print quality."
+msgstr "当前已启用混色细分层高。当层高为 0.1 mm 或更小时，细分后的层高可能超出打印机支持范围，从而影响打印质量。"
+
 msgid "Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."
 msgstr "耗材%d与耗材%d无法混合，请选择相同类型耗材。"
 
@@ -15250,6 +15301,12 @@ msgstr "\n合并该耗材将导致这些混色耗材配置失效。是否继续�
 
 msgid "Filament %d ratio is too high. Mix may be affected."
 msgstr "耗材%d参与混色的比例过高，可能会影响混色效果。"
+
+msgid ""
+"The mix ratios for %s in the Color Mapping list are outside the recommended %d"
+"%%–%d%% range. Adjust the mix ratios manually for better results."
+msgstr ""
+"Color Mapping 列表中 %s 的混色比例超出推荐范围 %d%%–%d%%。请手动调整混色比例以获得更好效果。"
 
 msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
 msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
@@ -15577,3 +15634,72 @@ msgstr "是，继续"
 
 msgid "No, Stop"
 msgstr "否，停止"
+
+msgid "Color Mixing Match"
+msgstr "混色匹配"
+
+msgid "Color Mixing Match is unavailable when only one filament is added to Filament Management."
+msgstr "耗材管理列表仅存在单条耗材时，无法启用混色匹配功能。"
+
+msgid "Color mapping list limit reached (max 64 colors). Excess colors will be removed."
+msgstr "颜色映射列表已达上限（64 色），超出颜色将被移除。"
+
+msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n2.The order of the Color Mapping list may differ from that of the Color Mixing list."
+msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜色映射。\n提示：\n1.混色匹配基于官方推荐的 CMYG 耗材进行计算，匹配结果可能与模型原始颜色存在差异。\n2.颜色映射列表中的顺序可能与耗材混色列表的顺序不同。"
+
+msgid "No model detected. Import a multi-color model to continue."
+msgstr "未检测到模型，请先导入多色模型。"
+
+msgid "Automatic color mixing matching is not supported for the current nozzle diameter. Please use manual matching or replace with a smaller-size nozzle."
+msgstr "当前喷嘴直径不支持混色自动匹配。请使用手动匹配，或更换为更小尺寸喷嘴。"
+
+msgid "Updating the Filaments and Color Mixing list..."
+msgstr "正在更新耗材列表和混色列表……"
+
+msgid "Filament Setup"
+msgstr "耗材配置"
+
+msgid "Match Mode"
+msgstr "匹配模式"
+
+msgid "Isometric"
+msgstr "等轴测"
+
+msgid "Top-Front"
+msgstr "前上方"
+
+msgid "Original"
+msgstr "原模型"
+
+msgid "Matched"
+msgstr "匹配结果"
+
+msgid "Stop Matching"
+msgstr "停止匹配"
+
+msgid "Good"
+msgstr "优"
+
+msgid "Fair"
+msgstr "中"
+
+msgid "Poor"
+msgstr "差"
+
+msgid "Color Difference: %s (ΔE=%.1f)"
+msgstr "色差：%s（ΔE=%.1f）"
+
+msgid "Color Mapping"
+msgstr "颜色映射"
+
+msgid "Start Matching"
+msgstr "开始匹配"
+
+msgid "Rematch"
+msgstr "重新匹配"
+
+msgid "Automatically uses official CMYG filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."
+msgstr "自动选择官方 CMYG 耗材进行混色匹配。单色混色比例范围：%d%%–%d%%。"
+
+msgid "Manually select filaments from the current list for color mixing."
+msgstr "手动选择当前列表中的耗材进行混色匹配。"

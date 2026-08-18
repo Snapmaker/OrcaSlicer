@@ -2307,7 +2307,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                 file.write(full_config);
 
             // SoftFever: write compatiple image
-            int first_layer_bed_temperature = get_bed_temperature(0, true, print.config().curr_bed_type);
+            int first_layer_bed_temperature = get_bed_temperature_max(print, true);
             file.write_format("; first_layer_bed_temperature = %d\n", first_layer_bed_temperature);
             file.write_format("; first_layer_temperature = %d\n", print.config().nozzle_temperature_initial_layer.get_at(0));
             file.write("; CONFIG_BLOCK_END\n\n");
@@ -2658,8 +2658,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         this->placeholder_parser().set("bbl_bed_temperature_gcode", new ConfigOptionBool(false));
         this->placeholder_parser().set("bed_temperature_initial_layer", new ConfigOptionInts(*first_bed_temp_opt));
         this->placeholder_parser().set("bed_temperature", new ConfigOptionInts(*bed_temp_opt));
-        this->placeholder_parser().set("bed_temperature_initial_layer_single",
-                                       new ConfigOptionInt(first_bed_temp_opt->get_at(initial_extruder_id)));
+        // BBS: the single bed temperature value accommodates the highest-temperature filament of the print
+        // (max over all used extruders instead of the initial extruder only).
+        int bed_temp_single = 0;
+        for (const unsigned int extruder_id : print.extruders())
+            bed_temp_single = std::max(bed_temp_single, first_bed_temp_opt->get_at(extruder_id));
+        this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
         this->placeholder_parser().set("chamber_temperature", new ConfigOptionInts(m_config.chamber_temperature));
         this->placeholder_parser().set("overall_chamber_temperature", new ConfigOptionInt(max_chamber_temp));
@@ -2731,7 +2735,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                                                                        initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {
         // Set bed temperature if the start G-code does not contain any bed temp control G-codes.
-        this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, initial_extruder_id, true);
+        this->_print_first_layer_bed_temperature(file, print, machine_start_gcode, true);
         // Set extruder(s) temperature before and after start G-code.
         this->_print_first_layer_extruder_temperatures(file, print, machine_start_gcode, initial_extruder_id, false);
     }
@@ -2906,7 +2910,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                                                                                             print.config().printing_by_object_gcode.value,
                                                                                             initial_extruder_id);
                     // Set first layer bed and extruder temperatures, don't wait for it to reach the temperature.
-                    this->_print_first_layer_bed_temperature(file, print, printing_by_object_gcode, initial_extruder_id, false);
+                    this->_print_first_layer_bed_temperature(file, print, printing_by_object_gcode, false);
                     this->_print_first_layer_extruder_temperatures(file, print, printing_by_object_gcode, initial_extruder_id, false);
                     file.writeln(printing_by_object_gcode);
                 }
@@ -3089,7 +3093,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             file.write(full_config);
 
         // SoftFever: write compatiple info
-        int first_layer_bed_temperature = get_bed_temperature(0, true, print.config().curr_bed_type);
+        int first_layer_bed_temperature = get_bed_temperature_max(print, true);
         file.write_format("; first_layer_bed_temperature = %d\n", first_layer_bed_temperature);
         file.write_format("; bed_shape = %s\n", print.full_print_config().opt_serialize("printable_area").c_str());
         file.write_format("; first_layer_temperature = %d\n", print.config().nozzle_temperature_initial_layer.get_at(0));
@@ -3524,9 +3528,26 @@ void GCode::print_machine_envelope(GCodeOutputStream& file, Print& print)
 // BBS
 int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer, const BedType bed_type) const
 {
-    std::string             bed_temp_key = is_first_layer ? get_bed_temp_1st_layer_key(bed_type) : get_bed_temp_key(bed_type);
+    // Fall back to PEI temps for bed types without dedicated temp options (e.g. btDefault),
+    // mirroring the placeholder setup in _do_export.
+    std::string bed_temp_key = is_first_layer ? get_bed_temp_1st_layer_key(bed_type) : get_bed_temp_key(bed_type);
+    if (bed_temp_key.empty())
+        bed_temp_key = is_first_layer ? get_bed_temp_1st_layer_key(btPEI) : get_bed_temp_key(btPEI);
     const ConfigOptionInts* bed_temp_opt = m_config.option<ConfigOptionInts>(bed_temp_key);
     return bed_temp_opt->get_at(extruder_id);
+}
+
+// BBS
+// Max bed temperature over all used extruders (object/support/wipe tower/brim-introduced extruders),
+// so a compatible mixed print (e.g. PLA 65C + TPU 35C) always runs the highest bed temperature.
+// A value of 0 means the filament does not support the current bed type, and is naturally skipped by max().
+int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer) const
+{
+    int max_bed_temp = 0;
+    for (const unsigned int extruder_id : print.extruders())
+        max_bed_temp = std::max(
+            max_bed_temp, get_bed_temperature(extruder_id, is_first_layer, print.config().curr_bed_type));
+    return max_bed_temp;
 }
 
 // Write 1st layer bed temperatures into the G-code.
@@ -3534,21 +3555,15 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
 // M140 - Set Extruder Temperature
 // M190 - Set Extruder Temperature and Wait
 void GCode::_print_first_layer_bed_temperature(
-    GCodeOutputStream& file, Print& print, const std::string& gcode, unsigned int first_printing_extruder_id, bool wait)
+    GCodeOutputStream& file, Print& print, const std::string& gcode, bool wait)
 {
-    // Initial bed temperature based on the first extruder.
-    // BBS
-    std::vector<int> temps_per_bed;
-    int              bed_temp = get_bed_temperature(first_printing_extruder_id, true, print.config().curr_bed_type);
+    // BBS: bed temperature accommodates the highest-temperature filament of the print
+    // (max over all used extruders instead of the first printing extruder only).
+    int bed_temp = get_bed_temperature_max(print, true);
 
     // Is the bed temperature set by the provided custom G-code?
     int  temp_by_gcode     = -1;
     bool temp_set_by_gcode = custom_gcode_sets_temperature(gcode, 140, 190, false, temp_by_gcode);
-    // BBS
-#if 0
-    if (temp_set_by_gcode && temp_by_gcode >= 0 && temp_by_gcode < 1000)
-        temp = temp_by_gcode;
-#endif
 
     // Always call m_writer.set_bed_temperature() so it will set the internal "current" state of the bed temp as if
     // the custom start G-code emited these.
@@ -4960,8 +4975,9 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // BBS
-        int bed_temp = get_bed_temperature(first_extruder_id, false, print.config().curr_bed_type);
+        // BBS: bed temperature accommodates the highest-temperature filament of the print
+        // (max over all used extruders instead of the first extruder of this layer only).
+        int bed_temp = get_bed_temperature_max(print, false);
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.
         m_second_layer_things_done = true;

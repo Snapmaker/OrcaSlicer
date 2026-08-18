@@ -24,17 +24,12 @@ WebPreprintDialog::WebPreprintDialog()
                      "/web/flutter_web/index.html?path=5");
     SetBackgroundColour(*wxWHITE);
 
-    // Create the webview
-
-    // 语言判断
-    wxString target_url = wxGetApp().get_international_url(m_prePrint_url);
-
-    m_browser = WebView::CreateWebView(this, target_url);
+    // Create the webview with about:blank; the actual page will be loaded by run()
+    m_browser = WebView::CreateWebView(this, "about:blank");
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
     }
-    //m_browser->Hide();
 
     // Connect the webview events
     Bind(wxEVT_WEBVIEW_NAVIGATING, &WebPreprintDialog::OnNavigationRequest, this, m_browser->GetId());
@@ -120,9 +115,8 @@ void WebPreprintDialog::reload()
 void WebPreprintDialog::load_url(wxString &url)
 {
     wxGetApp().fltviews().add_view(m_browser, url);
-    m_browser->Show();
     m_browser->LoadURL(url);
-   
+
     Layout();
 }
 
@@ -167,7 +161,6 @@ void WebPreprintDialog::OnNavigationRequest(wxWebViewEvent &evt)
 
 void WebPreprintDialog::OnNavigationComplete(wxWebViewEvent &evt)
 {
-    m_browser->Show();
     Layout();
 }
 

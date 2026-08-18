@@ -538,8 +538,8 @@
       "sub_path": "process/0.10 Standard @Snapmaker U1 (0.2 nozzle).json"
     },
     {
-      "name": "0.10 Color Mixing @Snapmaker U1 (0.4 Nozzle)",
-      "sub_path": "process/0.10 Color Mixing @Snapmaker U1 (0.4 Nozzle).json"
+      "name": "0.10mm Color Mixing @Snapmaker U1 (0.4 nozzle)",
+      "sub_path": "process/0.10mm Color Mixing @Snapmaker U1 (0.4 nozzle).json"
     },
     {
       "name": "0.12 Standard @Snapmaker U1 (0.2 nozzle)",
@@ -1967,6 +1967,14 @@
     {
       "name": "Generic ASA @U1 0.8 nozzle",
       "sub_path": "filament/Generic ASA @U1 0.8 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Full Spectrum @U1 0.2 nozzle",
+      "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.2 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Full Spectrum @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.6 nozzle.json"
     }
     ],
   "machine_list": [

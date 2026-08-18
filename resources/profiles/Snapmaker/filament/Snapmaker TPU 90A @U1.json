@@ -73,5 +73,6 @@
         "35"
     ],
     "supertack_plate_temp": ["40"],
-    "supertack_plate_temp_initial_layer": ["40"]
+    "supertack_plate_temp_initial_layer": ["40"],
+    "filament_type": ["TPU"]
 }

@@ -107,9 +107,18 @@ Slic3r::ColorRGBA adjust_color_for_rendering(const Slic3r::ColorRGBA& colors)
 
 namespace Slic3r {
 
-// LOD mesh sharing map: maps TriangleMesh* -> set of GLVolume* sharing the same mesh
-// When multiple volumes reference the same TriangleMesh, LOD simplified models are shared
-static std::map<const TriangleMesh*, std::set<GLVolume*>> g_meshVolumesMap;
+// LOD mesh sharing map: maps TriangleMesh* -> LOD entry for that mesh.
+// When multiple volumes reference the same TriangleMesh, LOD simplified models are shared.
+// The entry holds an owning shared_ptr to the mesh, so the raw pointer used as
+// lookup key cannot dangle or be reused by another mesh while the entry
+// exists. Entries are maintained by load_object_volume()/release_volume():
+// a volume registers itself on creation and is removed on deletion; the entry
+// dies (releasing the mesh) with its last volume.
+struct MeshLodEntry {
+    std::shared_ptr<const TriangleMesh> mesh; // keeps the key mesh alive
+    std::set<GLVolume*>                  volumes;
+};
+static std::map<const TriangleMesh*, MeshLodEntry> g_meshVolumesMap;
 
 // LOD run-time constants
 const unsigned char LOD_UPDATE_FREQUENCY = 20;
@@ -965,12 +974,11 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
 
     // LOD mesh sharing: if another volume already loaded this mesh, reuse its LOD data
     v.m_oriMesh = meshPtr;
-    bool needCreateMesh = true;
     auto iter = g_meshVolumesMap.find(meshPtr);
     if (iter != g_meshVolumesMap.end()) {
-        std::set<GLVolume*>& volumeSet = iter->second;
-        if (!volumeSet.empty()) {
-            GLVolume* firstVolume = *(volumeSet.begin());
+        MeshLodEntry& entry = iter->second;
+        if (!entry.volumes.empty()) {
+            GLVolume* firstVolume = *entry.volumes.begin();
             // Share LOD models via shared_ptr (ref-counted, safe GPU buffer sharing)
             v.m_modelMiddle = firstVolume->m_modelMiddle;
             v.m_modelSmall  = firstVolume->m_modelSmall;
@@ -982,11 +990,12 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
             // Note: model (main mesh) is always created per-volume since it's a value type
             // This avoids dangling GPU buffer issues when one volume is destroyed
         }
-        volumeSet.emplace(&v);
+        entry.volumes.emplace(&v);
     } else {
-        std::set<GLVolume*> volumeSet;
-        volumeSet.emplace(&v);
-        g_meshVolumesMap.emplace(meshPtr, std::move(volumeSet));
+        MeshLodEntry entry;
+        entry.mesh = meshSharedPtr; // keep the mesh (and thus the map key) alive
+        entry.volumes.emplace(&v);
+        g_meshVolumesMap.emplace(meshPtr, std::move(entry));
     }
 
     // Always init the main model (GLModel is a value type, not shared)
@@ -1153,16 +1162,17 @@ GLVolume* GLVolumeCollection::new_nontoolpath_volume(const ColorRGBA& rgba)
 
 void GLVolumeCollection::release_volume(GLVolume* volume)
 {
-    if (volume->m_oriMesh) {
-        auto iter = g_meshVolumesMap.find(volume->m_oriMesh);
-        if (iter != g_meshVolumesMap.end()) {
-            std::set<GLVolume*>& volumeSet = iter->second;
-            volumeSet.erase(volume);
-            if (volumeSet.empty()) {
-                g_meshVolumesMap.erase(iter);
-            }
-        }
-    }
+    if (volume == nullptr || volume->m_oriMesh == nullptr)
+        return;
+    auto iter = g_meshVolumesMap.find(volume->m_oriMesh);
+    if (iter == g_meshVolumesMap.end())
+        return;
+    MeshLodEntry& entry = iter->second;
+    entry.volumes.erase(volume);
+    if (entry.volumes.empty())
+        // Last holder is gone: drop the entry together with its owning
+        // reference to the mesh, so the key address can be reused safely.
+        g_meshVolumesMap.erase(iter);
 }
 
 GLVolumeWithIdAndZList volumes_to_render(const GLVolumePtrs&                  volumes,

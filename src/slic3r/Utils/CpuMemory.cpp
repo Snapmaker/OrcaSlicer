@@ -1,8 +1,22 @@
 #include "CpuMemory.hpp"
 
-namespace Slic3r {
+// Platform headers must stay outside namespace Slic3r: including them inside
+// a namespace puts their declarations into that namespace and breaks (or
+// silently depends) on the SDK's internal structure.
 #ifdef _WIN32
 #include <windows.h>
+#endif
+
+#ifdef __linux__
+#include <unistd.h>
+#include <sys/sysinfo.h>
+#elif defined(__APPLE__)
+#include <mach/mach_host.h>
+#include <sys/sysctl.h>
+#endif
+
+namespace Slic3r {
+#ifdef _WIN32
 unsigned long long GetFreeMemoryWin()
 {
     MEMORYSTATUSEX status;
@@ -12,13 +26,6 @@ unsigned long long GetFreeMemoryWin()
 }
 #endif
 
-#ifdef __linux__
-#include <unistd.h>
-#include <sys/sysinfo.h>
-#elif __APPLE__
-#include <mach/mach_host.h>
-#include <sys/sysctl.h>
-#endif
 #if defined(__linux__) || defined(__APPLE__)
 unsigned long long GetFreMemoryUnix()
 {

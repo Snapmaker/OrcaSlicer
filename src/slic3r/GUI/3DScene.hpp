@@ -517,8 +517,9 @@ public:
                 bool                                  partly_inside_enable =true
            ) const;
 
-    // Clear the geometry
-    void clear() { for (auto *v : volumes) delete v; volumes.clear(); }
+    // Clear the geometry. Volumes are unregistered from the LOD sharing map
+    // (release_volume) before being deleted.
+    void clear() { for (auto *v : volumes) { release_volume(v); delete v; } volumes.clear(); }
 
     void release_volume(GLVolume* volume);
 

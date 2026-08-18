@@ -2581,6 +2581,9 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 // BBS
                 if (volume->is_wipe_tower)
                     deleted_wipe_towers.emplace_back(volume, volume_id);
+                // Unregister from the LOD sharing map before the pointer
+                // becomes dangling (P0-2).
+                m_volumes.release_volume(volume);
                 delete volume;
             }
         }

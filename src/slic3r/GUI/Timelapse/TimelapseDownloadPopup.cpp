@@ -6,6 +6,7 @@
 #include <wx/toplevel.h>
 #include <wx/gdicmn.h>
 #include <wx/statbmp.h>
+#include <wx/dcclient.h>
 
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -186,6 +187,8 @@ TimelapseTaskRow::TimelapseTaskRow(wxWindow* parent, const wxString& file_name)
     SetSizer(outer);
     Layout();
 
+    SetDoubleBuffered(true);
+
     set_state(State::Pending);
 }
 
@@ -256,7 +259,7 @@ void TimelapseTaskRow::set_state(State s)
 
     m_status_label->SetLabel(m_status_text);
     Layout();
-    Refresh(false);
+    Refresh();
 }
 
 void TimelapseTaskRow::set_progress(int percent)
@@ -280,7 +283,8 @@ void TimelapseTaskRow::set_status_text(const wxString& text)
 {
     m_status_text = text;
     m_status_label->SetLabel(text);
-    m_status_label->Refresh();
+    Layout();
+    Refresh();
 }
 
 void TimelapseTaskRow::set_cancel_callback(std::function<void()> cb)
@@ -358,9 +362,15 @@ void TimelapseTaskRow::on_cancel_down(wxMouseEvent&)
 // TimelapseDownloadPopup implementation
 // ===========================================================================
 TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
+#ifdef __WXMSW__
+    : DPIDialog(parent, wxID_ANY, wxEmptyString, wxDefaultPosition,
+                wxDefaultSize,
+                wxSTAY_ON_TOP | wxBORDER_NONE)
+#else
     : DPIDialog(parent, wxID_ANY, wxEmptyString, wxDefaultPosition,
                 wxDefaultSize,
                 wxSTAY_ON_TOP | wxBORDER_SIMPLE)
+#endif
     , m_content_panel(nullptr)
     , m_title_bar(nullptr)
     , m_title_divider(nullptr)
@@ -379,6 +389,21 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     SetBackgroundColour(divider_color());
     m_content_panel = new wxPanel(this, wxID_ANY);
     m_content_panel->SetBackgroundColour(bg_color());
+
+    // Flicker-free for the whole popup subtree (title bar, scrolled list, rows).
+    SetDoubleBuffered(true);
+
+#ifdef __WXMSW__
+    // The 1px ring is this dialog's background showing around m_content_panel.
+    // Under WS_EX_COMPOSITED + Freeze/Thaw the erase pass is intermittently
+    // skipped, leaving the ring showing stale content. Fill it on every paint
+    // so the border is deterministic.
+    Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
+        wxPaintDC dc(this);
+        dc.SetBackground(wxBrush(divider_color()));
+        dc.Clear();
+    });
+#endif
 
     // ---- Title bar (375×40) ----
     m_title_bar = new wxPanel(m_content_panel, wxID_ANY);
@@ -411,6 +436,7 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     // ---- Task panel (scrolled window) ----
     m_task_panel = new wxScrolledWindow(m_content_panel, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
     m_task_panel->SetBackgroundColour(bg_color());
+    m_task_panel->SetDoubleBuffered(true);
     m_task_panel->SetScrollRate(0, FromDIP(SCROLL_RATE));
     m_task_panel->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_NEVER);
     m_task_sizer = new wxBoxSizer(wxVERTICAL);
@@ -460,6 +486,11 @@ TimelapseDownloadPopup::~TimelapseDownloadPopup() = default;
 
 int TimelapseDownloadPopup::add_tasks(const std::vector<TaskInfo>& tasks)
 {
+    // Freeze the entire popup while batch-creating rows + reordering + resizing.
+    // Without this, creating 30+ rows triggers a repaint per row → heavy flicker.
+    // RAII: Freeze on construct, Thaw on destruct (function return).
+    wxWindowUpdateLocker lock(this);
+
     int row_offset = static_cast<int>(m_rows.size());
     m_task_count += static_cast<int>(tasks.size());
 

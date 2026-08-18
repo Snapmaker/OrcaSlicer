@@ -1531,15 +1531,13 @@ size_t get_available_physical_memory()
 	long page_size   = sysconf(_SC_PAGE_SIZE);
 	return (avail_pages > 0 && page_size > 0) ? static_cast<size_t>(avail_pages) * static_cast<size_t>(page_size) : 0;
 #elif defined(__APPLE__)
-	vm_size_t page_size = 0;
-	mach_port_t host_port = mach_host_self();
-	if (host_page_size(host_port, &page_size) != KERN_SUCCESS)
-		return 0;
-	vm_statistics64_data_t vm_stats;
-	mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
-	if (host_statistics64(host_port, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
-		return 0;
-	return static_cast<size_t>(vm_stats.free_count) * static_cast<size_t>(page_size);
+	// Memory guard detection on macOS is intentionally disabled by product
+	// decision: the vm_statistics64-based "available" estimate counts free
+	// pages only and ignores reclaimable cache (inactive/purgeable), so it
+	// sits far below the guard threshold on any normally-used system and
+	// raised false low-memory warnings even for small models. Returning 0
+	// makes check_memory_guard() skip the sample entirely (avail == 0).
+	return 0;
 #else
 	return 0;
 #endif

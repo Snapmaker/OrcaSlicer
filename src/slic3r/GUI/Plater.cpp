@@ -9242,6 +9242,10 @@ void Sidebar::show_sync_filament_dialog()
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 
         size_t effective_size = syncedData.size();
+        // The number of filaments cannot be reduced to zero.
+        if (effective_size == 0)
+            return;
+
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
             if (effective_size > combo_Size &&

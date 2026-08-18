@@ -234,8 +234,16 @@ private:
         const wxBitmap& draw_bmp = m_bmp.IsOk() ? m_bmp :
             (m_placeholder_loaded ? m_placeholder.bmp() : wxNullBitmap);
         if (draw_bmp.IsOk()) {
-            const int bw = draw_bmp.GetWidth();
-            const int bh = draw_bmp.GetHeight();
+            // Center by LOGICAL size. On macOS a ScalableBitmap raster carries a Retina
+            // scale factor (physical = logical x2) and DrawBitmap renders it at its
+            // logical size in this point-based DC, so centering on GetWidth()/
+            // GetHeight() (physical) shifted the placeholder left/up by
+            // (physical - logical)/2. GetScaledSize() divides out the bitmap's own
+            // scale factor; it is an identity op for scale-1.0 bitmaps (Windows/Linux
+            // rasters and the GL-rendered thumbnails), so those paths are unchanged.
+            const wxSize logical_sz = draw_bmp.GetScaledSize();
+            const int bw = logical_sz.x;
+            const int bh = logical_sz.y;
             if (bw > 0 && bh > 0)
                 dc.DrawBitmap(draw_bmp, (sz.x - bw) / 2, (sz.y - bh) / 2, false);
         }
@@ -1351,11 +1359,19 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         // overridden by the GTK theme — set fg+bg explicitly via darkModeColorFor.
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Pin the title row height to match the recommended card's (avoids a content shift on mode switch).
+        lbl->SetMinSize(wxSize(-1, FromDIP(20)));
         title_row->Add(lbl, 0, wxALIGN_CENTER_VERTICAL);
         title_row->AddStretchSpacer();
 
-        m_btn_remove_filament = new ScalableButton(card, wxID_ANY, "icon_minus");
+        // Palette swap: base icon (#8F8F8F) and its _light variant (#CCCCCC) exchange
+        // enabled/disabled roles between themes — two assets cover all four states.
+        const bool dark = wxGetApp().dark_mode();
+        m_btn_remove_filament = new ScalableButton(card, wxID_ANY, dark ? "icon_minus_light" : "icon_minus");
+        m_btn_remove_filament->SetBitmapDisabled_(ScalableBitmap(card, dark ? "icon_minus" : "icon_minus_light", 16));
         m_btn_remove_filament->SetToolTip(_L("Remove filament"));
+        m_btn_remove_filament->SetMinSize(wxSize(FromDIP(16), FromDIP(16)));
+        m_btn_remove_filament->SetMaxSize(wxSize(FromDIP(16), FromDIP(16)));
         m_btn_remove_filament->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             if (m_manual_filament_count > 2) {
                 --m_manual_filament_count;
@@ -1367,8 +1383,11 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         });
         title_row->Add(m_btn_remove_filament, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
 
-        m_btn_add_filament = new ScalableButton(card, wxID_ANY, "icon_plus");
+        m_btn_add_filament = new ScalableButton(card, wxID_ANY, dark ? "icon_plus_light" : "icon_plus");
+        m_btn_add_filament->SetBitmapDisabled_(ScalableBitmap(card, dark ? "icon_plus" : "icon_plus_light", 16));
         m_btn_add_filament->SetToolTip(_L("Add filament"));
+        m_btn_add_filament->SetMinSize(wxSize(FromDIP(16), FromDIP(16)));
+        m_btn_add_filament->SetMaxSize(wxSize(FromDIP(16), FromDIP(16)));
         m_btn_add_filament->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             // Cap at the number of physical filaments — you can't pick more rows than the
             // spools the printer actually has — and never exceed the 4-row UI bound.
@@ -1407,8 +1426,10 @@ void MixedFilamentBatchDialog::build_manual_card(wxBoxSizer& parent)
         // selected filament's name is. wxFlexGridSizer sizes columns by content (best size)
         // first, then distributes leftover via AddGrowableCol(0/1, 1) — without a pinned
         // base width, slots 1/2 and 3/4 drift apart when names differ in length.
-        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
-        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), -1));
+        // Height pinned to 30 like the recommended card's rows, so mode switching doesn't
+        // shift the cards below.
+        panel->SetMinSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), FromDIP(30)));
+        panel->SetMaxSize(wxSize(FromDIP(FILAMENT_COL_WIDTH_DIP), FromDIP(30)));
         auto* r = new wxBoxSizer(wxHORIZONTAL);
 
         // §68: read-only selection would normally call for wxChoice, but this
@@ -1484,6 +1505,8 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
         // resists GTK theme override.
         lbl->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         lbl->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
+        // Pin the title row height to match the manual card's (avoids a content shift on mode switch).
+        lbl->SetMinSize(wxSize(-1, FromDIP(20)));
         s->Add(lbl, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
     }
     // No divider between title and grid — matches build_manual_card (Figma spec relies on
@@ -1642,7 +1665,9 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
     // Centered controls: Plate (prev arrow + label + combo + next arrow) | View (label + combo)
     {
         auto* crow = new wxBoxSizer(wxHORIZONTAL);
-        m_btn_tray_prev = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_left_arrow");
+        const bool dark = wxGetApp().dark_mode();
+        m_btn_tray_prev = new ScalableButton(m_preview_card, wxID_ANY, dark ? "filament_picker_left_arrow_light" : "filament_picker_left_arrow");
+        m_btn_tray_prev->SetBitmapDisabled_(ScalableBitmap(m_preview_card, dark ? "filament_picker_left_arrow" : "filament_picker_left_arrow_light", 16));
         m_btn_tray_prev->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(-1); });
         crow->Add(m_btn_tray_prev, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
@@ -1671,7 +1696,8 @@ void MixedFilamentBatchDialog::build_preview_card(wxBoxSizer& parent)
         });
         crow->Add(m_tray_combo, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(10));
 
-        m_btn_tray_next = new ScalableButton(m_preview_card, wxID_ANY, "filament_picker_right_arrow");
+        m_btn_tray_next = new ScalableButton(m_preview_card, wxID_ANY, dark ? "filament_picker_right_arrow_light" : "filament_picker_right_arrow");
+        m_btn_tray_next->SetBitmapDisabled_(ScalableBitmap(m_preview_card, dark ? "filament_picker_right_arrow" : "filament_picker_right_arrow_light", 16));
         m_btn_tray_next->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { on_tray_nav(1); });
         crow->Add(m_btn_tray_next, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(48));
 

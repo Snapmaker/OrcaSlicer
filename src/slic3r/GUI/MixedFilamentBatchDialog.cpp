@@ -28,6 +28,7 @@
 
 #include <wx/scrolwin.h>
 #include <wx/dcbuffer.h>
+#include <wx/wupdlock.h>
 #include <boost/log/trivial.hpp>
 
 namespace Slic3r { namespace GUI {

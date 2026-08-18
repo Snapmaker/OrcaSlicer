@@ -82,5 +82,6 @@
   ],
   "slow_down_layer_time": [
     "0"
-  ]
+  ],
+  "filament_type": ["ABS"]
 }

@@ -274,7 +274,8 @@ public:
     void                        update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
                                                                size_t old_num_filaments,
                                                                size_t new_num_filaments,
-                                                               size_t deleted_mixed_idx = size_t(-1));
+                                                               size_t deleted_mixed_idx = size_t(-1),
+                                                               const std::vector<unsigned int> &kept_physical_ids = {});
     // Mapping generated during the latest filament count change.
     // Index is old 1-based filament ID, value is new 1-based filament ID (0 = removed).
     const std::vector<unsigned int>& last_filament_id_remap() const { return m_last_filament_id_remap; }
@@ -435,7 +436,8 @@ private:
                                                         size_t new_num_filaments,
                                                         bool deleting_filament,
                                                         unsigned int deleted_1based,
-                                                        size_t deleted_mixed_idx = size_t(-1));
+                                                        size_t deleted_mixed_idx = size_t(-1),
+                                                        const std::vector<unsigned int> &kept_physical_ids = {});
     // Update renamed_from and alias maps of system profiles.
     void 						update_system_maps();
 

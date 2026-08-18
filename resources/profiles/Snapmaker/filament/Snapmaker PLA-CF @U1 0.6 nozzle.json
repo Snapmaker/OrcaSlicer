@@ -69,5 +69,6 @@
   "graphic_effect_plate_temp": ["65"],
   "graphic_effect_plate_temp_initial_layer": ["65"],
   "slow_down_layer_time": ["8"],
-  "filament_wipe_distance": ["2"]
+  "filament_wipe_distance": ["2"],
+  "filament_type": ["PLA-CF"]
 }

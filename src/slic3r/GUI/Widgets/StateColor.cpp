@@ -59,6 +59,9 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#FFF3EB", "#452A1A"}, // rgb(255, 243, 235)  Warning banner background
     {"#FF842D", "#FF9F43"}, // rgb(255, 132, 45)   Warning text
     {"#B4B4B4", "#73737D"}, // rgb(180, 180, 180)  Preview/strip border
+    {"#E7E7E7", "#54545B"}, // rgb(231, 231, 231)  MixedFilament preview panel background
+    // NOTE: removed {"#939393","#000000"} — its dark value #000000 collided with
+    // {"#000000","#FFFFFE"} in revert()'s reverse map and broke lightModeColorFor(#000000).
     {"#D1D5DC", "#52525B"}, // rgb(209, 213, 220)  Cancel button border
     {"#FF0000", "#FF5252"}, // rgb(255, 0, 0)      Hex input error border
     {"#019687", "#00675B"}, // rgb(1, 150, 135)    Confirm button bg (near #009688)

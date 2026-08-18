@@ -37,5 +37,8 @@
   "slow_down_min_speed": ["10"],
   "textured_plate_temp": ["80"],
   "textured_plate_temp_initial_layer": ["80"],
-  "filament_density": ["1.25"]
+  "filament_density": ["1.25"],
+  "supertack_plate_temp": ["75"],
+  "supertack_plate_temp_initial_layer": ["75"],
+  "filament_type": ["PETG"]
 }

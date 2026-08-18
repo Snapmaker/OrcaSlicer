@@ -33,5 +33,6 @@
     "Snapmaker Artisan (0.4 nozzle)",
     "Snapmaker Artisan (0.6 nozzle)",
     "Snapmaker Artisan (0.8 nozzle)"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

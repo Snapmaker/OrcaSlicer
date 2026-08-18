@@ -9,6 +9,7 @@
 #include "GLToolbar.hpp"
 #include "Event.hpp"
 #include "Selection.hpp"
+#include "ThumbnailView.hpp"     // ThumbnailView enum (kept lightweight, separate from this header)
 #include "Gizmos/GLGizmosManager.hpp"
 #include "GUI_ObjectLayers.hpp"
 #include "GLSelectionRectangle.hpp"
@@ -855,6 +856,7 @@ public:
     void zoom_to_gcode();
     //BBS -1 for current plate
     void zoom_to_plate(int plate_idx = -1);
+    void ZoomToFit();
     void select_view(const std::string& direction);
     //BBS: add part plate related logic
     void select_plate();
@@ -898,17 +900,38 @@ public:
                                  bool                      use_top_view = false,
                                  bool                      for_picking  = false,
                                  bool                      ban_light    = false);
+    void render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                 const GLVolumeCollection &volumes,
+                                 std::vector<ColorRGBA>&   extruder_colors,
+                                 Camera::EType             camera_type,
+                                 bool                      use_top_view = false,
+                                 bool                      for_picking  = false,
+                                 bool                      ban_light    = false);
+    // New named-viewpoint overload (pure addition; existing overloads above are unchanged).
+    // The 8th param is ThumbnailView (scoped enum) vs the bool use_top_view of the overloads
+    // above — overload resolution picks this one only when a ThumbnailView is passed, so the
+    // ~21 existing call sites that pass bool/omit are unaffected.
+    // Note: this overload forces use_top_view=false internally, so ThumbnailView::Top routes
+    // through the named-view algorithm in render_thumbnail_internal, NOT the legacy
+    // use_top_view=true branch. See ThumbnailView.hpp for the framing implications.
+    void render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                 const GLVolumeCollection &volumes,
+                                 std::vector<ColorRGBA>&   extruder_colors,
+                                 Camera::EType             camera_type,
+                                 ThumbnailView             view,
+                                 bool                      for_picking  = false,
+                                 bool                      ban_light    = false);
     static void render_thumbnail_internal(ThumbnailData& thumbnail_data, const ThumbnailsParams& thumbnail_params, PartPlateList& partplate_list, ModelObjectPtrs& model_objects,
         const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
     // render thumbnail using an off-screen framebuffer
     static void render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
         PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
     // render thumbnail using an off-screen framebuffer when GLEW_EXT_framebuffer_object is supported
     static void render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
         PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false);
+        GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view = false, bool for_picking = false, bool ban_light = false, ThumbnailView view = ThumbnailView::Iso);
 
     //BBS use gcoder viewer render calibration thumbnails
     void render_calibration_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params);
@@ -950,7 +973,7 @@ public:
     void set_shells_on_previewing(bool is_preview) { m_gcode_viewer.set_shells_on_preview(is_preview); }
 
     //BBS: add only gcode mode
-    void load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode);
+    void load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode, bool skip_toolpaths = false);
     void refresh_gcode_preview_render_paths();
     void set_gcode_view_preview_type(GCodeViewer::EViewType type) { return m_gcode_viewer.set_view_type(type); }
     GCodeViewer::EViewType get_gcode_view_preview_type() const { return m_gcode_viewer.get_view_type(); }
@@ -1209,6 +1232,13 @@ private:
     bool _render_orient_menu(float left, float right, float bottom, float top);
     bool _render_arrange_menu(float left, float right, float bottom, float top);
     void _render_3d_navigator();
+    /**
+     * @brief Renders the fit-camera button next to the 3D navigator.
+     * @param left Left position in ImGui screen coordinates.
+     * @param top Top position in ImGui screen coordinates.
+     * @param buttonSize Width and height of the square button.
+     */
+    void RenderFitCameraButton(float left, float top, float buttonSize);
     // render thumbnail using the default framebuffer
     void render_thumbnail_legacy(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params, PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors, GLShaderProgram* shader, Camera::EType camera_type);
 

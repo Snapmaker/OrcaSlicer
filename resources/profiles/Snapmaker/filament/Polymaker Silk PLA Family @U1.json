@@ -31,5 +31,6 @@
     ],
     "textured_plate_temp_initial_layer": [
         "65"
-    ]
+    ],
+    "filament_type": ["PLA"]
 }

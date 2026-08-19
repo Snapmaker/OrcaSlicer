@@ -1186,9 +1186,11 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
         const int obj_idx = m_objects_model->GetIdByItem(m_objects_model->GetObject(item));
         if (item_type & itVolume){
              const int ui_volume_idx = m_objects_model->GetVolumeIdByItem(item);
-             if (obj_idx < 0 || ui_volume_idx < 0)
+             if (obj_idx < 0 || size_t(obj_idx) >= m_objects->size() || ui_volume_idx < 0)
                 return;
              int volume_in3d_idx = m_objects_model->get_real_volume_index_in_3d(obj_idx,ui_volume_idx);
+             if (volume_in3d_idx < 0 || size_t(volume_in3d_idx) >= (*m_objects)[obj_idx]->volumes.size())
+                return;
              config              = &(*m_objects)[obj_idx]->volumes[volume_in3d_idx]->config;
         }
         else if (item_type & itLayer)
@@ -4225,11 +4227,11 @@ wxDataViewItemArray ObjectList::add_volumes_to_object_in_list(size_t obj_idx, st
 
         int volume_idx{-1};
         auto& ui_and_3d_volume_map = m_objects_model->get_ui_and_3d_volume_map();
-        for (auto item : ui_and_3d_volume_map) {
-            if (item.first == obj_idx) {
-                item.second.clear();
-            }
-        }
+        // Clear the actual map entry; iterating by value only cleared a copy,
+        // leaving stale volume indices that later cause out-of-range accesses.
+        auto map_it = ui_and_3d_volume_map.find(obj_idx);
+        if (map_it != ui_and_3d_volume_map.end())
+            map_it->second.clear();
         int ui_volume_idx = 0;
         for (const ModelVolume *volume : object->volumes) {
             ++volume_idx;
@@ -6653,11 +6655,12 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
             const int obj_idx = m_objects_model->GetObjectIdByItem(item);
             int vol_idx = m_objects_model->GetVolumeIdByItem(item);
             vol_idx     = m_objects_model->get_real_volume_index_in_3d(obj_idx, vol_idx);
-            if ((obj_idx < m_objects->size()) && (obj_idx < (*m_objects)[obj_idx]->volumes.size())) {
-                auto volume_type = (*m_objects)[obj_idx]->volumes[vol_idx]->type();
-                if (volume_type != ModelVolumeType::MODEL_PART && volume_type != ModelVolumeType::PARAMETER_MODIFIER)
-                    continue;
-            }
+            if (obj_idx < 0 || size_t(obj_idx) >= m_objects->size() ||
+                vol_idx < 0 || size_t(vol_idx) >= (*m_objects)[obj_idx]->volumes.size())
+                continue;
+            auto volume_type = (*m_objects)[obj_idx]->volumes[vol_idx]->type();
+            if (volume_type != ModelVolumeType::MODEL_PART && volume_type != ModelVolumeType::PARAMETER_MODIFIER)
+                continue;
         }
 
         if (type & itLayerRoot)

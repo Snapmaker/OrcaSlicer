@@ -12371,7 +12371,9 @@ void Sidebar::auto_calc_flushing_volumes_internal(const int modify_id, const int
     int m_max_flush_volume = Slic3r::g_max_flush_volume;
     unsigned int m_number_of_extruders = (int)(sqrt(init_matrix.size()) + 0.001);
 
-    const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    // Physical filaments only: the flush matrix and min_flush_volumes are sized by the
+    // physical filament count, so mixed (virtual) filaments must not extend this loop.
+    const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, /*include_mixed=*/false);
     std::vector<std::vector<wxColour>> multi_colours;
 
     // Support for multi-color filament
@@ -12392,8 +12394,11 @@ void Sidebar::auto_calc_flushing_volumes_internal(const int modify_id, const int
         multi_colours.push_back(single_filament);
     }
 
-    if (modify_id >= 0 && modify_id < multi_colours.size()) {
-        for (int i = 0; i < multi_colours.size(); ++i) {
+    // Defence in depth: never index past the matrix / flush-volume buffers.
+    const size_t flush_count = std::min<size_t>(multi_colours.size(),
+                               std::min<size_t>(m_number_of_extruders, min_flush_volumes.size()));
+    if (modify_id >= 0 && modify_id < (int)flush_count) {
+        for (int i = 0; i < (int)flush_count; ++i) {
             // from to modify
             int from_idx = i;
             if (from_idx != modify_id) {

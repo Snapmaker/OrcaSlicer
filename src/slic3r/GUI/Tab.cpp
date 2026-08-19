@@ -7176,8 +7176,9 @@ bool Tab::select_preset(
             };
             Preset *to_be_selected = m_presets->find_preset(preset_name, false, true);
             ConfigOptionStrings* cur_opt2 = dynamic_cast <ConfigOptionStrings *>(m_presets->get_edited_preset().config.option("printer_extruder_variant"));
-            ConfigOptionStrings* to_select_opt2 = dynamic_cast <ConfigOptionStrings *>(to_be_selected->config.option("printer_extruder_variant"));
-            bool no_transfer_variant = cur_opt2->values != to_select_opt2->values;
+            ConfigOptionStrings* to_select_opt2 = to_be_selected ? dynamic_cast <ConfigOptionStrings *>(to_be_selected->config.option("printer_extruder_variant")) : nullptr;
+            // Unknown target preset or missing variant info: do not transfer variant settings.
+            bool no_transfer_variant = !cur_opt2 || !to_select_opt2 || cur_opt2->values != to_select_opt2->values;
             for (PresetUpdate &pu : updates) {
                 pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty();
                 pu.new_preset_compatible = (new_printer_technology == pu.technology) && is_compatible_with_printer(pu.presets->get_edited_preset_with_vendor_profile(), new_printer_preset_with_vendor_profile);

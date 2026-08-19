@@ -133,6 +133,7 @@ public:
     bool bbl_button(const wxString &label, const wxString& tooltip = {});
     bool button(const wxString& label, float width, float height);
     bool button(const wxString& label, const ImVec2 &size, bool enable); // default size = ImVec2(0.f, 0.f)
+    bool glyph_button(wchar_t icon_char, ImVec2 icon_size); // ORCA
     bool radio_button(const wxString &label, bool active);
     static ImVec4          to_ImVec4(const ColorRGB &color);
     bool input_double(const std::string &label, const double &value, const std::string &format = "%.3f");
@@ -154,7 +155,13 @@ public:
     void text_wrapped(const std::string &label, float wrap_width);
     void text_wrapped(const wxString &label, float wrap_width);
     void tooltip(const char *label, float wrap_width);
+    void tooltip(const std::string &label, float wrap_width);
     void tooltip(const wxString &label, float wrap_width);
+    void filament_group(const std::string &filament_type, const char *hex_color, unsigned char filament_id, float align_width);
+
+    // text size and is_multi_line
+    std::tuple<ImVec2,bool> calculate_filament_group_text_size(const std::string& filament_type);
+    void sub_title(const std::string &label);
 
 
     // Float sliders: Manually inserted values aren't clamped by ImGui.Using this wrapper function does (when clamp==true).
@@ -341,6 +348,11 @@ public:
     static const ImVec4 COL_SEPARATOR;
     static const ImVec4 COL_SEPARATOR_DARK;
     static const ImVec4 COL_ORCA;
+    static const ImVec4 COL_ORCA_DARK;
+    static const ImVec4 COL_ORCA_HOVER;
+    static const ImVec4 COL_ORCA_HOVER_DARK;
+    static const ImVec4 COL_MODIFIED;
+    static const ImVec4 COL_WARNING;
 
     //BBS
     static void on_change_color_mode(bool is_dark);
@@ -358,18 +370,19 @@ public:
     static void pop_button_disable_style();
     static void push_combo_style(const float scale);
     static void pop_combo_style();
-    static void push_radio_style();
+    static void push_radio_style(const float scale);
     static void pop_radio_style();
 
     //BBS
     static int TOOLBAR_WINDOW_FLAGS;
+
+    bool display_initialized() const;
 
 private:
     void init_font(bool compress);
     void init_input();
     void init_style();
     void render_draw_data(ImDrawData *draw_data);
-    bool display_initialized() const;
     void destroy_font();
     std::vector<unsigned char> load_svg(const std::string& bitmap_name, unsigned target_width, unsigned target_height, unsigned *outwidth, unsigned *outheight);
 
@@ -388,7 +401,6 @@ class IMTexture
 public:
     // load svg file to thumbnail data, specific width, height is thumbnailData width, height
     static bool load_from_svg_file(const std::string& filename, unsigned width, unsigned height, ImTextureID &texture_id);
-
 };
 
 

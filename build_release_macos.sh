@@ -2,8 +2,9 @@
 
 set -e
 set -o pipefail
+SECONDS=0
 
-while getopts ":dpa:snt:xbc:1h" opt; do
+while getopts ":dpa:snt:xbc:i:1Tuh" opt; do
   case "${opt}" in
     d )
         export BUILD_TARGET="deps"
@@ -34,19 +35,31 @@ while getopts ":dpa:snt:xbc:1h" opt; do
     c )
         export BUILD_CONFIG="$OPTARG"
         ;;
+    i )
+        export CMAKE_IGNORE_PREFIX_PATH="${CMAKE_IGNORE_PREFIX_PATH:+$CMAKE_IGNORE_PREFIX_PATH;}$OPTARG"
+        ;;
     1 )
         export CMAKE_BUILD_PARALLEL_LEVEL=1
+        ;;
+    T )
+        export BUILD_TESTS="1"
+        ;;
+    u )
+        export BUILD_TARGET="universal"
         ;;
     h ) echo "Usage: ./build_release_macos.sh [-d]"
         echo "   -d: Build deps only"
         echo "   -a: Set ARCHITECTURE (arm64 or x86_64 or universal)"
         echo "   -s: Build slicer only"
+        echo "   -u: Build universal app only (requires existing arm64 and x86_64 app bundles)"
         echo "   -n: Nightly build"
         echo "   -t: Specify minimum version of the target platform, default is 11.3"
         echo "   -x: Use Ninja Multi-Config CMake generator, default is Xcode"
         echo "   -b: Build without reconfiguring CMake"
         echo "   -c: Set CMake build configuration, default is Release"
+        echo "   -i: Add a prefix to ignore during CMake dependency discovery (repeatable), defaults to /opt/local:/usr/local:/opt/homebrew"
         echo "   -1: Use single job for building"
+        echo "   -T: Build and run tests (set ORCA_TESTS_BUILD_ONLY=1 to build without running)"
         exit 0
         ;;
     * )
@@ -85,12 +98,26 @@ if [ -z "$OSX_DEPLOYMENT_TARGET" ]; then
   export OSX_DEPLOYMENT_TARGET="12.0"
 fi
 
+if [ -z "$CMAKE_IGNORE_PREFIX_PATH" ]; then
+  export CMAKE_IGNORE_PREFIX_PATH="/opt/local:/usr/local:/opt/homebrew"
+fi
+
+CMAKE_VERSION=$(cmake --version | head -1 | sed 's/[^0-9]*\([0-9]*\).*/\1/')
+if [ "$CMAKE_VERSION" -ge 4 ] 2>/dev/null; then
+  export CMAKE_POLICY_VERSION_MINIMUM=3.5
+  export CMAKE_POLICY_COMPAT="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+  echo "Detected CMake 4.x, adding compatibility flag (env + cmake arg)"
+else
+  export CMAKE_POLICY_COMPAT=""
+fi
+
 echo "Build params:"
 echo " - ARCH: $ARCH"
 echo " - BUILD_CONFIG: $BUILD_CONFIG"
 echo " - BUILD_TARGET: $BUILD_TARGET"
 echo " - CMAKE_GENERATOR: $SLICER_CMAKE_GENERATOR for Slicer, $DEPS_CMAKE_GENERATOR for deps"
 echo " - OSX_DEPLOYMENT_TARGET: $OSX_DEPLOYMENT_TARGET"
+echo " - CMAKE_IGNORE_PREFIX_PATH: $CMAKE_IGNORE_PREFIX_PATH"
 echo
 
 # if which -s brew; then
@@ -109,8 +136,6 @@ echo
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
 DEPS_DIR="$PROJECT_DIR/deps"
-DEPS_BUILD_DIR="$DEPS_DIR/build/$ARCH"
-DEPS="$DEPS_BUILD_DIR/OrcaSlicer_deps"
 
 # For Multi-config generators like Ninja and Xcode
 export BUILD_DIR_CONFIG_SUBDIR="/$BUILD_CONFIG"
@@ -133,11 +158,11 @@ function build_deps() {
                 if [ "1." != "$BUILD_ONLY". ]; then
                     cmake "${DEPS_DIR}" \
                         -G "${DEPS_CMAKE_GENERATOR}" \
-                        -DDESTDIR="$DEPS" \
-                        -DOPENSSL_ARCH="darwin64-${_ARCH}-cc" \
                         -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
                         -DCMAKE_OSX_ARCHITECTURES:STRING="${_ARCH}" \
-                        -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
+                        -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}" \
+                        -DCMAKE_IGNORE_PREFIX_PATH="${CMAKE_IGNORE_PREFIX_PATH}" \
+                        ${CMAKE_POLICY_COMPAT}
                 fi
                 cmake --build . --config "$BUILD_CONFIG" --target deps
             )
@@ -152,6 +177,66 @@ function pack_deps() {
         cd "$DEPS_DIR"
         tar -zcvf "OrcaSlicer_dep_mac_${ARCH}_$(date +"%Y%m%d").tar.gz" "build"
     )
+}
+
+# codesign cannot seal the runtime's dotted directories (include/python3.12,
+# lib/python3.12) anywhere under Contents/MacOS -- it mistakes any dotted
+# directory there for a nested bundle and fails with "bundle format
+# unrecognized" -- so packaged apps ship the runtime under Contents/Resources
+# with a compatibility symlink that keeps every Contents/MacOS/python path and
+# the @executable_path/python/lib rpath resolving unchanged.
+function relocate_python_runtime() {
+    local app="$1"
+    local pydir="$app/Contents/MacOS/python"
+    if [ -d "$pydir" ] && [ ! -L "$pydir" ]; then
+        rm -rf "$app/Contents/Resources/python"
+        mv "$pydir" "$app/Contents/Resources/python"
+        ln -s ../Resources/python "$pydir"
+    fi
+}
+
+# --- Bundled Python runtime verification --------------------------------------
+# Relocation is handled at the source: deps/python3/python3.cmake stamps
+# libpython with an @rpath id and src/CMakeLists.txt gives the app a matching
+# rpath. This gate catches regressions that would otherwise only surface as
+# launch failures on end users' machines (the absolute deps path still exists
+# on the build host, so a plain run can pass while relocation is broken --
+# hence the otool checks). The x86_64 leg runs under Rosetta on arm64 hosts.
+function verify_python_runtime() {
+    local app="$1"
+    local pydir="$app/Contents/MacOS/python"
+    [ -d "$pydir" ] || return 0  # app doesn't bundle Python (e.g. profile validator)
+    if [ ! -L "$pydir" ]; then
+        echo "ERROR: Contents/MacOS/python must be a symlink into Contents/Resources" >&2
+        echo "       (see relocate_python_runtime in this script)" >&2
+        exit 1
+    fi
+    # Version-agnostic interpreter name so a CPython version bump cannot
+    # silently skip the gate; if the dir exists the interpreter must too.
+    local pybin="$pydir/bin/python3"
+    if [ ! -x "$pybin" ]; then
+        echo "ERROR: bundled python/ present but no interpreter at $pybin" >&2
+        exit 1
+    fi
+    echo "  Verifying bundled Python runtime in $(basename "$app")..."
+    local bad
+    bad=$(otool -arch all -L "$pybin" "$app/Contents/MacOS/Snapmaker_Orca" | grep "libpython" | grep -v "@rpath/" || true)
+    if [ -n "$bad" ]; then
+        echo "ERROR: a bundled binary references libpython by absolute path (relocation regression):" >&2
+        echo "$bad" >&2
+        exit 1
+    fi
+    # otool -L shows load commands only; assert the consumer rpath separately.
+    # Its loss is masked on the build host by CMake's absolute build-tree rpath.
+    if ! otool -arch all -l "$app/Contents/MacOS/Snapmaker_Orca" | grep -q "path @executable_path/python/lib "; then
+        echo "ERROR: Snapmaker_Orca lacks the @executable_path/python/lib rpath (relocation regression)" >&2
+        exit 1
+    fi
+    if ! "$pybin" -c "import ssl"; then
+        echo "ERROR: bundled Python failed to start (libpython relocation broken," >&2
+        echo "       or missing Rosetta 2 for the x86_64 leg?)" >&2
+        exit 1
+    fi
 }
 
 function build_slicer() {
@@ -172,17 +257,16 @@ function build_slicer() {
             if [ "1." != "$BUILD_ONLY". ]; then
                 cmake "${PROJECT_DIR}" \
                     -G "${SLICER_CMAKE_GENERATOR}" \
-                    -DBBL_RELEASE_TO_PUBLIC=1 \
                     -DORCA_TOOLS=ON \
                     ${ORCA_UPDATER_SIG_KEY:+-DORCA_UPDATER_SIG_KEY="$ORCA_UPDATER_SIG_KEY"} \
+                    ${BUILD_TESTS:+-DBUILD_TESTS=ON} \
                     -DCMAKE_PREFIX_PATH="$DEPS/usr/local" \
                     -DCMAKE_INSTALL_PREFIX="$PWD/Snapmaker_Orca" \
                     -DCMAKE_BUILD_TYPE="$BUILD_CONFIG" \
-                    -DCMAKE_MACOSX_RPATH=ON \
-                    -DCMAKE_INSTALL_RPATH="${DEPS}/usr/local" \
-                    -DCMAKE_MACOSX_BUNDLE=ON \
                     -DCMAKE_OSX_ARCHITECTURES="${_ARCH}" \
-                    -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}"
+                    -DCMAKE_OSX_DEPLOYMENT_TARGET="${OSX_DEPLOYMENT_TARGET}" \
+                    -DCMAKE_IGNORE_PREFIX_PATH="${CMAKE_IGNORE_PREFIX_PATH}" \
+                    ${CMAKE_POLICY_COMPAT}
             fi
             cmake --build . --config "$BUILD_CONFIG" --target "$SLICER_BUILD_TARGET"
             # Explicitly build profile_validator if ORCA_TOOLS is enabled
@@ -190,6 +274,12 @@ function build_slicer() {
                 cmake --build . --config "$BUILD_CONFIG" --target Snapmaker_Orca_profile_validator || echo "Warning: Snapmaker_Orca_profile_validator build failed or not available"
             fi
         )
+
+        # -T also runs the tests; ORCA_TESTS_BUILD_ONLY=1 builds them without
+        # running, so CI can build here and run them in a dedicated job.
+        if [ "1." == "$BUILD_TESTS". ] && [ "1." != "$ORCA_TESTS_BUILD_ONLY". ]; then
+            "$PROJECT_DIR/scripts/run_unit_tests.sh" "build/$_ARCH/tests" "$BUILD_CONFIG"
+        fi
 
         echo "Verify localization with gettext..."
         (
@@ -219,8 +309,11 @@ function build_slicer() {
         resources_path=$(readlink "./Snapmaker Orca.app/Contents/Resources")
         rm "./Snapmaker Orca.app/Contents/Resources"
         cp -R "$resources_path" "./Snapmaker Orca.app/Contents/Resources"
+        relocate_python_runtime "./Snapmaker Orca.app"
         # delete .DS_Store file
         find "./Snapmaker Orca.app/" -name '.DS_Store' -delete
+
+        verify_python_runtime "./Snapmaker Orca.app"
 
         # Copy Sentry crashpad_handler and libsentry.dylib for crash reporting
         CRASHPAD_HANDLER="${DEPS}/usr/local/bin/crashpad_handler"
@@ -263,6 +356,7 @@ function build_slicer() {
             cp -pR "../src$BUILD_DIR_CONFIG_SUBDIR/Snapmaker_Orca_profile_validator.app" ./Snapmaker_Orca_profile_validator.app
             # delete .DS_Store file
             find ./Snapmaker_Orca_profile_validator.app/ -name '.DS_Store' -delete
+            verify_python_runtime ./Snapmaker_Orca_profile_validator.app
         fi
 
         # Generate dSYM debug symbols for debugging and Sentry crash reporting
@@ -314,83 +408,73 @@ function build_slicer() {
     done
 }
 
+function lipo_dir() {
+    local universal_dir="$1"
+    local x86_64_dir="$2"
+
+    # Find all Mach-O files in the universal (arm64-based) copy and lipo them
+    while IFS= read -r -d '' f; do
+        local rel="${f#"$universal_dir"/}"
+        local x86="$x86_64_dir/$rel"
+        if [ -f "$x86" ]; then
+            echo "  lipo: $rel"
+            lipo -create "$f" "$x86" -output "$f.tmp"
+            mv "$f.tmp" "$f"
+        else
+            echo "  warning: no x86_64 counterpart for $rel, keeping arm64 only"
+        fi
+    done < <(find "$universal_dir" -type f -print0 | while IFS= read -r -d '' candidate; do
+        if file "$candidate" | grep -q "Mach-O"; then
+            printf '%s\0' "$candidate"
+        fi
+    done)
+}
+
 function build_universal() {
     echo "Building universal binary..."
 
     PROJECT_BUILD_DIR="$PROJECT_DIR/build/$ARCH"
-    
-    # Create universal binary
-    echo "Creating universal binary..."
-    # PROJECT_BUILD_DIR="$PROJECT_DIR/build_Universal"
+    ARM64_APP="$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker Orca.app"
+    X86_64_APP="$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app"
+
     mkdir -p "$PROJECT_BUILD_DIR/Snapmaker_Orca"
     UNIVERSAL_APP="$PROJECT_BUILD_DIR/Snapmaker_Orca/Snapmaker Orca.app"
     rm -rf "$UNIVERSAL_APP"
-    cp -R "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker Orca.app" "$UNIVERSAL_APP"
-    
-    # Get the binary path inside the .app bundle
+    cp -R "$ARM64_APP" "$UNIVERSAL_APP"
+
+    # Binary path inside the .app bundle (also used by the dSYM step below)
     BINARY_PATH="Contents/MacOS/Snapmaker_Orca"
-    
-    # Create universal binary using lipo
-    lipo -create \
-        "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/$BINARY_PATH" \
-        "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/$BINARY_PATH" \
-        -output "$UNIVERSAL_APP/$BINARY_PATH"
-        
-    echo "Universal binary created at $UNIVERSAL_APP"
-    
-    # Create universal crashpad_handler if both architectures have it
-    CRASHPAD_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
-    CRASHPAD_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
-    CRASHPAD_UNIVERSAL="${UNIVERSAL_APP}/Contents/MacOS/crashpad_handler"
-    if [ -f "${CRASHPAD_ARM64}" ] && [ -f "${CRASHPAD_X86}" ]; then
-        echo "Creating universal crashpad_handler..."
-        lipo -create "${CRASHPAD_X86}" "${CRASHPAD_ARM64}" -output "${CRASHPAD_UNIVERSAL}"
-        codesign --force --sign - "${CRASHPAD_UNIVERSAL}" 2>/dev/null || true
-    elif [ -f "${CRASHPAD_ARM64}" ]; then
-        cp -f "${CRASHPAD_ARM64}" "${CRASHPAD_UNIVERSAL}"
-        codesign --force --sign - "${CRASHPAD_UNIVERSAL}" 2>/dev/null || true
-    fi
-    
-    # Create universal libsentry.dylib if both architectures have it
-    LIBSENTRY_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/Frameworks/libsentry.dylib"
-    LIBSENTRY_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/Frameworks/libsentry.dylib"
-    LIBSENTRY_UNIVERSAL="${UNIVERSAL_APP}/Contents/Frameworks/libsentry.dylib"
-    if [ -f "${LIBSENTRY_ARM64}" ] && [ -f "${LIBSENTRY_X86}" ]; then
-        echo "Creating universal libsentry.dylib..."
-        mkdir -p "${UNIVERSAL_APP}/Contents/Frameworks"
-        lipo -create "${LIBSENTRY_X86}" "${LIBSENTRY_ARM64}" -output "${LIBSENTRY_UNIVERSAL}"
-        codesign --force --sign - "${LIBSENTRY_UNIVERSAL}" 2>/dev/null || true
-    elif [ -f "${LIBSENTRY_ARM64}" ]; then
-        mkdir -p "${UNIVERSAL_APP}/Contents/Frameworks"
-        cp -f "${LIBSENTRY_ARM64}" "${LIBSENTRY_UNIVERSAL}"
-        codesign --force --sign - "${LIBSENTRY_UNIVERSAL}" 2>/dev/null || true
-    fi
-    
-    # Update rpath in universal Snapmaker_Orca
+
+    echo "Creating universal binaries for Snapmaker Orca.app..."
+    lipo_dir "$UNIVERSAL_APP" "$X86_64_APP"
+    echo "Universal Snapmaker Orca.app created at $UNIVERSAL_APP"
+    verify_python_runtime "$UNIVERSAL_APP"
+
+    # Sentry: lipo invalidates the ad-hoc signatures and can drop the rewritten
+    # libsentry install name, so re-apply both on the universal bundle.
+    LIBSENTRY_UNIVERSAL="$UNIVERSAL_APP/Contents/Frameworks/libsentry.dylib"
     if [ -f "${LIBSENTRY_UNIVERSAL}" ]; then
         echo "Updating libsentry.dylib rpath in universal Snapmaker_Orca..."
-        install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "${UNIVERSAL_APP}/${BINARY_PATH}" 2>/dev/null || true
-        codesign --force --sign - "${UNIVERSAL_APP}/${BINARY_PATH}" 2>/dev/null || true
+        install_name_tool -change "@rpath/libsentry.dylib" "@executable_path/../Frameworks/libsentry.dylib" "$UNIVERSAL_APP/$BINARY_PATH" 2>/dev/null || true
+        codesign --force --sign - "${LIBSENTRY_UNIVERSAL}" 2>/dev/null || true
     fi
-    
+    if [ -f "$UNIVERSAL_APP/Contents/MacOS/crashpad_handler" ]; then
+        codesign --force --sign - "$UNIVERSAL_APP/Contents/MacOS/crashpad_handler" 2>/dev/null || true
+    fi
+    codesign --force --sign - "$UNIVERSAL_APP/$BINARY_PATH" 2>/dev/null || true
+
     # Create universal binary for profile validator if it exists
-    if [ -f "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ] && \
-       [ -f "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
-        echo "Creating universal binary for Snapmaker_Orca_profile_validator..."
+    ARM64_VALIDATOR="$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+    X86_64_VALIDATOR="$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
+    VALIDATOR_BINARY_PATH="Contents/MacOS/Snapmaker_Orca_profile_validator"
+    if [ -d "$ARM64_VALIDATOR" ] && [ -d "$X86_64_VALIDATOR" ]; then
+        echo "Creating universal binaries for Snapmaker_Orca_profile_validator.app..."
         UNIVERSAL_VALIDATOR_APP="$PROJECT_BUILD_DIR/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app"
         rm -rf "$UNIVERSAL_VALIDATOR_APP"
-        cp -R "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app" "$UNIVERSAL_VALIDATOR_APP"
-        
-        # Get the binary path inside the profile validator .app bundle
-        VALIDATOR_BINARY_PATH="Contents/MacOS/Snapmaker_Orca_profile_validator"
-        
-        # Create universal binary using lipo
-        lipo -create \
-            "$PROJECT_DIR/build/x86_64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/$VALIDATOR_BINARY_PATH" \
-            "$PROJECT_DIR/build/arm64/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/$VALIDATOR_BINARY_PATH" \
-            -output "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH"
-            
-        echo "Universal binary for Snapmaker_Orca_profile_validator created at $UNIVERSAL_VALIDATOR_APP"
+        cp -R "$ARM64_VALIDATOR" "$UNIVERSAL_VALIDATOR_APP"
+        lipo_dir "$UNIVERSAL_VALIDATOR_APP" "$X86_64_VALIDATOR"
+        echo "Universal Snapmaker_Orca_profile_validator.app created at $UNIVERSAL_VALIDATOR_APP"
+        codesign --force --sign - "$UNIVERSAL_VALIDATOR_APP/$VALIDATOR_BINARY_PATH" 2>/dev/null || true
     fi
     
     # Generate dSYM for universal binary - always generate for debugging and Sentry crash reporting
@@ -437,16 +521,22 @@ case "${BUILD_TARGET}" in
     slicer)
         build_slicer
         ;;
+    universal)
+        build_universal
+        ;;
     *)
-        echo "Unknown target: $BUILD_TARGET. Available targets: deps, slicer, all."
+        echo "Unknown target: $BUILD_TARGET. Available targets: deps, slicer, universal, all."
         exit 1
         ;;
 esac
 
-if [ "$ARCH" = "universal" ] && [ "$BUILD_TARGET" != "deps" ]; then
+if [ "$ARCH" = "universal" ] && { [ "$BUILD_TARGET" = "all" ] || [ "$BUILD_TARGET" = "slicer" ]; }; then
     build_universal
 fi
 
 if [ "1." == "$PACK_DEPS". ]; then
     pack_deps
 fi
+
+elapsed=$SECONDS
+printf "\nBuild completed in %dh %dm %ds\n" $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60))

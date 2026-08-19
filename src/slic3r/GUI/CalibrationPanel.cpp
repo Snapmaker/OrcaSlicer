@@ -7,6 +7,8 @@
 #include "SelectMachine.hpp"
 #include "SelectMachinePop.hpp"
 
+#include "DeviceCore/DevManager.h"
+
 namespace Slic3r { namespace GUI {
 
 #define REFRESH_INTERVAL       1000
@@ -23,7 +25,7 @@ wxString get_calibration_type_name(CalibMode cali_mode)
     case CalibMode::Calib_PA_Line:
         return _L("Flow Dynamics");
     case CalibMode::Calib_Flow_Rate:
-        return _L("Flow Rate");
+        return _L("Flow ratio");
     case CalibMode::Calib_Vol_speed_Tower:
         return _L("Max Volumetric Speed");
     case CalibMode::Calib_Temp_Tower:
@@ -112,7 +114,7 @@ void MObjectPanel::doRender(wxDC& dc)
     dc.SetTextForeground(StateColor::darkModeColorFor(SELECT_MACHINE_GREY900));
     wxString dev_name = "";
     if (m_info) {
-        dev_name = from_u8(m_info->dev_name);
+        dev_name = from_u8(m_info->get_dev_name());
 
         if (m_state == PrinterState::IN_LAN) {
             dev_name += _L("(LAN)");
@@ -170,13 +172,13 @@ void MObjectPanel::on_mouse_left_up(wxMouseEvent& evt)
             if (m_info->has_access_right() && m_info->is_avaliable()) {
                 Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
                 if (!dev) return;
-                dev->set_selected_machine(m_info->dev_id);
+                dev->set_selected_machine(m_info->get_dev_id());
             }
         }
         else {
             Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
             if (!dev) return;
-            dev->set_selected_machine(m_info->dev_id);
+            dev->set_selected_machine(m_info->get_dev_id());
         }
         wxCommandEvent event(EVT_DISSMISS_MACHINE_LIST);
         event.SetEventObject(this->GetParent()->GetParent());
@@ -242,13 +244,14 @@ void SelectMObjectPopup::Popup(wxWindow* WXUNUSED(focus))
         m_refresh_timer->Start(MACHINE_LIST_REFRESH_INTERVAL);
     }
 
-    if (wxGetApp().is_user_login()) {
+    const std::string provider = wxGetApp().get_printer_cloud_provider();
+    if (wxGetApp().is_user_login(provider)) {
         if (!get_print_info_thread) {
-            get_print_info_thread = new boost::thread(Slic3r::create_thread([this, token = std::weak_ptr<int>(m_token)] {
+            get_print_info_thread = new boost::thread(Slic3r::create_thread([this, token = std::weak_ptr<int>(m_token), provider] {
                 NetworkAgent* agent = wxGetApp().getAgent();
                 unsigned int http_code;
                 std::string body;
-                int result = agent->get_user_print_info(&http_code, &body);
+                int result = agent->get_user_print_info(&http_code, &body, provider);
 
                 wxGetApp().CallAfter([token, this, result, body]() {
                     if (token.expired()) {return;}
@@ -267,7 +270,7 @@ void SelectMObjectPopup::Popup(wxWindow* WXUNUSED(focus))
         }
     }
 
-    wxPostEvent(this, wxTimerEvent());
+    wxPostEvent(this, wxTimerEvent(*m_refresh_timer));
     PopupWindow::Popup();
 }
 
@@ -309,7 +312,6 @@ bool SelectMObjectPopup::Show(bool show) {
 void SelectMObjectPopup::on_timer(wxTimerEvent& event)
 {
     BOOST_LOG_TRIVIAL(trace) << "SelectMObjectPopup on_timer";
-    wxGetApp().reset_to_active();
     wxCommandEvent user_event(EVT_UPDATE_USER_MLIST);
     user_event.SetEventObject(this);
     wxPostEvent(this, user_event);
@@ -336,7 +338,7 @@ void SelectMObjectPopup::update_user_devices()
 
     std::sort(user_machine_list.begin(), user_machine_list.end(), [&](auto& a, auto& b) {
         if (a.second && b.second) {
-            return a.second->dev_name.compare(b.second->dev_name) < 0;
+            return a.second->get_dev_name().compare(b.second->get_dev_name()) < 0;
         }
         return false;
         });
@@ -474,7 +476,7 @@ void CalibrationPanel::init_tabpanel() {
 
     m_tabpanel = new Tabbook(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, sizer_side_tools, wxNB_LEFT | wxTAB_TRAVERSAL | wxNB_NOPAGETHEME);
     m_side_tools->set_table_panel(m_tabpanel);
-    m_tabpanel->SetBackgroundColour(*wxWHITE);
+    m_tabpanel->SetBackgroundColour(wxColour("#FEFFFF")); // ORCA match sidebar background color
 
     m_cali_panels[0] = new PressureAdvanceWizard(m_tabpanel);
     m_cali_panels[1] = new FlowRateWizard(m_tabpanel);
@@ -490,11 +492,12 @@ void CalibrationPanel::init_tabpanel() {
             selected);
     }
 
-    for (int i = 0; i < (int)CALI_MODE_COUNT; i++)
-        m_tabpanel->SetPageImage(i, "");
+    // ORCA use standard paddings and keep arrow icon for consistent look between sidebars
+    //for (int i = 0; i < (int)CALI_MODE_COUNT; i++)
+    //    m_tabpanel->SetPageImage(i, "");
 
-    auto padding_size = m_tabpanel->GetBtnsListCtrl()->GetPaddingSize(0);
-    m_tabpanel->GetBtnsListCtrl()->SetPaddingSize({ FromDIP(15), padding_size.y });
+    //auto padding_size = m_tabpanel->GetBtnsListCtrl()->GetPaddingSize(0);
+    //m_tabpanel->GetBtnsListCtrl()->SetPaddingSize({ FromDIP(15), padding_size.y });
 
     m_initialized = true;
 }
@@ -504,7 +507,7 @@ void CalibrationPanel::init_timer()
     m_refresh_timer = new wxTimer();
     m_refresh_timer->SetOwner(this);
     m_refresh_timer->Start(REFRESH_INTERVAL);
-    wxPostEvent(this, wxTimerEvent());
+    wxPostEvent(this, wxCommandEvent(wxEVT_TIMER));
 }
 
 void CalibrationPanel::on_timer(wxTimerEvent& event) {
@@ -539,7 +542,7 @@ void CalibrationPanel::update_all() {
     obj = dev->get_selected_machine();
 
     // check valid machine
-    if (obj && dev->get_my_machine(obj->dev_id) == nullptr) {
+    if (obj && dev->get_my_machine(obj->get_dev_id()) == nullptr) {
         dev->set_selected_machine("");
         if (m_agent) m_agent->set_user_selected_machine("");
         show_status((int) MONITOR_NO_PRINTER);
@@ -563,21 +566,8 @@ void CalibrationPanel::update_all() {
         }
     }
 
-    if (wxGetApp().is_user_login()) {
-        dev->check_pushing();
-        try {
-            m_agent->refresh_connection();
-        }
-        catch (...) {
-            ;
-        }
-    }
-
-    if (obj) {
-        wxGetApp().reset_to_active();
-        if (obj->connection_type() != last_conn_type) {
-            last_conn_type = obj->connection_type();
-        }
+    if (obj && obj->connection_type() != last_conn_type) {
+        last_conn_type = obj->connection_type();
     }
 
     m_side_tools->update_status(obj);
@@ -596,7 +586,7 @@ void CalibrationPanel::update_all() {
         // only disconnected server in cloud mode
         if (obj->connection_type() != "lan") {
             if (m_agent) {
-                server_status = m_agent->is_server_connected() ? 0 : (int)MONITOR_DISCONNECTED_SERVER;
+                server_status = m_agent->is_server_connected(wxGetApp().get_printer_cloud_provider()) ? 0 : (int)MONITOR_DISCONNECTED_SERVER;
             }
         }
         show_status((int)MONITOR_DISCONNECTED + server_status);
@@ -646,7 +636,7 @@ bool CalibrationPanel::Show(bool show) {
         m_refresh_timer->Stop();
         m_refresh_timer->SetOwner(this);
         m_refresh_timer->Start(REFRESH_INTERVAL);
-        wxPostEvent(this, wxTimerEvent());
+        wxPostEvent(this, wxCommandEvent(wxEVT_TIMER));
 
         DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
         if (dev) {
@@ -654,9 +644,6 @@ bool CalibrationPanel::Show(bool show) {
             obj = dev->get_selected_machine();
             if (obj == nullptr) {
                 dev->load_last_machine();
-                obj = dev->get_selected_machine();
-                if (obj)
-                    GUI::wxGetApp().sidebar().load_ams_list(obj->dev_id, obj);
             }
             else {
                 obj->reset_update_time();
@@ -694,7 +681,6 @@ void CalibrationPanel::set_default()
 {
     obj = nullptr;
     last_conn_type = "undefined";
-    wxGetApp().sidebar().load_ams_list({}, {});
 }
 
 void CalibrationPanel::msw_rescale()

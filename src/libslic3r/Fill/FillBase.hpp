@@ -79,6 +79,12 @@ struct FillParams
     // Layer height for Concentric infill with Arachne.
     coordf_t    layer_height    { 0.f };
 
+    // For Gyroid: when true, use the parameterized "optimized" variant.
+    bool        gyroid_optimized { false };
+
+    // Orca: corner smoothing factor in the range [0, 1].
+    double      smooth_factor { 0. };
+
     // For Lateral lattice
     coordf_t    lateral_lattice_angle_1    { 0.f };
     coordf_t    lateral_lattice_angle_2    { 0.f };
@@ -97,12 +103,17 @@ struct FillParams
     bool            dont_sort{ false }; // do not sort the lines, just simply connect them
     bool            can_reverse{true};
 
+    // Orca: forced print order of surface fill loops/fragments for center-based patterns
+    // (Concentric, Archimedean Chords, Octagram Spiral). Default keeps shortest-path ordering.
+    SurfaceFillOrder fill_order { SurfaceFillOrder::Default };
+
     float           horiz_move{0.0}; //move infill to get cross zag pattern
     bool            symmetric_infill_y_axis{false};
     coord_t         symmetric_y_axis{0};
     bool            locked_zag{false};
     float           infill_lock_depth{0.0};
     float           skin_infill_depth{0.0};
+    CenterOfSurfacePattern center_of_surface_pattern{CenterOfSurfacePattern::Each_Surface};
 };
 static_assert(IsTriviallyCopyable<FillParams>::value, "FillParams class is not POD (and it should be - see constructor).");
 
@@ -119,8 +130,9 @@ public:
     coordf_t    overlap;
     // in radians, ccw, 0 = East
     float       angle;
-    // Orca: is_using_template_angle
-    bool        is_using_template_angle{false};
+
+    // Orca: Fill direction is fixed absolute angle if SurfaceFillParams.fixed_angle or config.ironing_angle_fixed
+    bool        fixed_angle{false};
     // In scaled coordinates. Maximum lenght of a perimeter segment connecting two infill lines.
     // Used by the FillRectilinear2, FillGrid2, FillTriangles, FillStars and FillCubic.
     // If left to zero, the links will not be limited.
@@ -140,6 +152,7 @@ public:
 
     // BBS: all no overlap expolygons in same layer
     ExPolygons  no_overlap_expolygons;
+    bool dont_alternate_fill_direction = false;
 
     static float infill_anchor;
     static float infill_anchor_max;
@@ -203,7 +216,7 @@ protected:
         ExPolygon                      expolygon,
         ThickPolylines& thick_polylines_out) {}
 
-    virtual float _layer_angle(size_t idx) const { return is_using_template_angle ? 0.f : (idx & 1) ? float(M_PI/2.) : 0.f; }
+    virtual float _layer_angle(size_t idx) const { return fixed_angle ? 0.f : (idx & 1) ? float(M_PI/2.) : 0.f; }
 
     virtual std::pair<float, Point> _infill_direction(const Surface *surface) const;
     

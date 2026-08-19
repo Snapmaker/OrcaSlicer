@@ -1,5 +1,6 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "ICloudServiceAgent.hpp"
 #include "format.hpp"
 #include "I18N.hpp"
 
@@ -79,6 +80,12 @@ void break_to_debugger()
     #endif /* _WIN32 */
 }
 
+const std::string& shortkey_shift_prefix()
+{
+	static const std::string str = _u8L("Shift+");
+    return str;
+}
+
 const std::string& shortkey_ctrl_prefix()
 {
 	static const std::string str =
@@ -120,8 +127,13 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
             config.set_key_value(opt_key, opt_def->create_default_option());
 
         if (opt_def->type == coBools && opt_def->nullable) {
-            ConfigOptionBoolsNullable* vec_new = new ConfigOptionBoolsNullable{ boost::any_cast<unsigned char>(value) };
-            config.option<ConfigOptionBoolsNullable>(opt_key)->set_at(vec_new, opt_index, 0);
+            const auto v = boost::any_cast<unsigned char>(value);
+            auto vec_new = std::make_unique<ConfigOptionBoolsNullable>(1, v);
+            if (v == ConfigOptionBoolsNullable::nil_value()) {
+                vec_new->set_at_to_nil(0);
+            }
+
+            config.option<ConfigOptionBoolsNullable>(opt_key)->set_at(vec_new.get(), opt_index, 0);
             return;
         }
 
@@ -136,6 +148,17 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
             double val = std::stod(str); // locale-dependent (on purpose - the input is the actual content of the field)
 			config.set_key_value(opt_key, new ConfigOptionFloatOrPercent(val, percent));
 			break;}
+		case coFloatsOrPercents:{
+			std::string str = boost::any_cast<std::string>(value);
+			bool percent = false;
+			if (str.back() == '%') {
+				str.pop_back();
+				percent = true;
+			}
+            double val = std::stod(str); // locale-dependent (on purpose - the input is the actual content of the field)
+            auto   vec_new = std::make_unique<ConfigOptionFloatOrPercent>(val, percent);
+            config.option<ConfigOptionFloatsOrPercents>(opt_key)->set_at(vec_new.get(), opt_index, opt_index);
+			break;}
 		case coPercent:
 			config.set_key_value(opt_key, new ConfigOptionPercent(boost::any_cast<double>(value)));
 			break;
@@ -145,13 +168,13 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			break;
 		}
 		case coPercents:{
-			ConfigOptionPercents* vec_new = new ConfigOptionPercents{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new, opt_index, opt_index);
+            auto vec_new = std::make_unique <ConfigOptionPercent>(boost::any_cast<double>(value));
+			config.option<ConfigOptionPercents>(opt_key)->set_at(vec_new.get(), opt_index, opt_index);
 			break;
 		}
 		case coFloats:{
-			ConfigOptionFloats* vec_new = new ConfigOptionFloats{ boost::any_cast<double>(value) };
-			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new, opt_index, opt_index);
+            auto vec_new = std::make_unique<ConfigOptionFloat>(boost::any_cast<double>(value));
+			config.option<ConfigOptionFloats>(opt_key)->set_at(vec_new.get(), opt_index, opt_index);
  			break;
 		}
 		case coString:
@@ -161,6 +184,16 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			if (opt_key == "compatible_prints" || opt_key == "compatible_printers") {
 				config.option<ConfigOptionStrings>(opt_key)->values =
 					boost::any_cast<std::vector<std::string>>(value);
+			}
+			else if (config.def()->get(opt_key)->gui_type == ConfigOptionDef::GUIType::plugin_picker) {
+				if (value.type() == typeid(std::vector<std::string>)) {
+					config.option<ConfigOptionStrings>(opt_key)->values =
+						boost::any_cast<std::vector<std::string>>(value);
+				} else {
+					std::string str = boost::any_cast<std::string>(value);
+					config.option<ConfigOptionStrings>(opt_key)->values = str.empty() ?
+						std::vector<std::string>() : std::vector<std::string>{str};
+				}
 			}
 			else if (config.def()->get(opt_key)->gui_flags.compare("serialized") == 0) {
 				std::string str = boost::any_cast<std::string>(value);
@@ -176,8 +209,8 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 				config.option<ConfigOptionStrings>(opt_key)->values = values;
 			}
 			else{
-				ConfigOptionStrings* vec_new = new ConfigOptionStrings{ boost::any_cast<std::string>(value) };
-				config.option<ConfigOptionStrings>(opt_key)->set_at(vec_new, opt_index, 0);
+                auto vec_new = std::make_unique<ConfigOptionString>(boost::any_cast<std::string>(value));
+				config.option<ConfigOptionStrings>(opt_key)->set_at(vec_new.get(), opt_index, 0);
 			}
 			}
 			break;
@@ -185,15 +218,15 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			config.set_key_value(opt_key, new ConfigOptionBool(boost::any_cast<bool>(value)));
 			break;
 		case coBools:{
-			ConfigOptionBools* vec_new = new ConfigOptionBools{ boost::any_cast<unsigned char>(value) != 0 };
-			config.option<ConfigOptionBools>(opt_key)->set_at(vec_new, opt_index, 0);
+            auto vec_new = std::make_unique<ConfigOptionBool>(boost::any_cast<unsigned char>(value) != 0);
+			config.option<ConfigOptionBools>(opt_key)->set_at(vec_new.get(), opt_index, 0);
 			break;}
 		case coInt:
 			config.set_key_value(opt_key, new ConfigOptionInt(boost::any_cast<int>(value)));
 			break;
 		case coInts:{
-			ConfigOptionInts* vec_new = new ConfigOptionInts{ boost::any_cast<int>(value) };
-			config.option<ConfigOptionInts>(opt_key)->set_at(vec_new, opt_index, 0);
+            auto vec_new = std::make_unique<ConfigOptionInt>(boost::any_cast<int>(value));
+			config.option<ConfigOptionInts>(opt_key)->set_at(vec_new.get(), opt_index, 0);
 			}
 			break;
 		case coEnum:{
@@ -204,9 +237,9 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			break;
 		// BBS
 		case coEnums:{
-			ConfigOptionEnumsGeneric* vec_new = new ConfigOptionEnumsGeneric{ boost::any_cast<int>(value) };
+            auto vec_new = std::make_unique<ConfigOptionEnumsGeneric>(std::vector<int>{boost::any_cast<int>(value)});
 			if (config.has(opt_key))
-				config.option<ConfigOptionEnumsGeneric>(opt_key)->set_at(vec_new, opt_index, 0);
+				config.option<ConfigOptionEnumsGeneric>(opt_key)->set_at(vec_new.get(), opt_index, 0);
 			}
 			break;
 		case coPoint:{
@@ -214,12 +247,12 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 			}
 			break;
 		case coPoints:{
-			if (opt_key == "printable_area" || opt_key == "bed_exclude_area" || opt_key == "thumbnails") {
+			if (opt_key == "printable_area" || opt_key == "bed_exclude_area" || opt_key == "thumbnails" || opt_key == "wrapping_exclude_area" ) {
 				config.option<ConfigOptionPoints>(opt_key)->values = boost::any_cast<std::vector<Vec2d>>(value);
 				break;
 			}
-			ConfigOptionPoints* vec_new = new ConfigOptionPoints{ boost::any_cast<Vec2d>(value) };
-			config.option<ConfigOptionPoints>(opt_key)->set_at(vec_new, opt_index, 0);
+            auto vec_new = std::make_unique<ConfigOptionPoint>(boost::any_cast<Vec2d>(value));
+			config.option<ConfigOptionPoints>(opt_key)->set_at(vec_new.get(), opt_index, 0);
 			}
 			break;
 		case coNone:
@@ -234,18 +267,18 @@ void change_opt_value(DynamicPrintConfig& config, const t_config_option_key& opt
 	}
 }
 
-void show_error(wxWindow* parent, const wxString& message, bool monospaced_font)
+void show_error(wxWindow* parent, const wxString& message, bool has_code_excerpts)
 {
     wxGetApp().CallAfter([=] {
-        ErrorDialog msg(parent, message, monospaced_font);
+        ErrorDialog msg(parent, message, has_code_excerpts);
         msg.ShowModal();
     });
 }
 
-void show_error(wxWindow* parent, const char* message, bool monospaced_font)
+void show_error(wxWindow* parent, const char* message, bool has_code_excerpts)
 {
 	assert(message);
-	show_error(parent, wxString::FromUTF8(message), monospaced_font);
+	show_error(parent, wxString::FromUTF8(message), has_code_excerpts);
 }
 
 void show_error_id(int id, const std::string& message)
@@ -328,6 +361,14 @@ static void add_config_substitutions(const ConfigSubstitutions& conf_substitutio
 				new_val = wxString("\"") + values[val] + "\"" + " (" + from_u8(_utf8(labels[val])) + ")";
 			break;
 		}
+		case coEnums:
+		{
+			const std::vector<std::string>& labels = def->enum_labels;
+			const std::vector<std::string>& values = def->enum_values;
+			std::string val = conf_substitution.new_value->serialize();
+			new_val = wxString("\"") + from_u8(_utf8(val)) + "\"";
+			break;
+		}
 		case coBool:
 			new_val = conf_substitution.new_value->getBool() ? "true" : "false";
 			break;
@@ -383,7 +424,7 @@ void show_substitutions_info(const PresetsConfigSubstitutions& presets_config_su
 		add_config_substitutions(substitution.substitutions, changes);
 	}
 
-	InfoDialog msg(nullptr, _L("Configuration package was loaded, but some values were not recognized."), substitution_message(changes), true);
+	InfoDialog msg(nullptr, _L("The configuration package was loaded, but some values were not recognized."), substitution_message(changes), true);
 	msg.ShowModal();
 }
 
@@ -393,7 +434,7 @@ void show_substitutions_info(const ConfigSubstitutions& config_substitutions, co
 	add_config_substitutions(config_substitutions, changes);
 
 	InfoDialog msg(nullptr,
-		format_wxstr(_L("Configuration file \"%1%\" was loaded, but some values were not recognized."), from_u8(filename)),
+		format_wxstr(_L("The configuration file \u201c%1%\u201d was loaded, but some values were not recognized."), from_u8(filename)),
 		substitution_message(changes), true);
 	msg.ShowModal();
 }
@@ -448,7 +489,7 @@ unsigned int combochecklist_get_flags(wxComboCtrl* comboCtrl)
 {
 	unsigned int flags = 0;
 
-	wxCheckListBoxComboPopup* popup = wxDynamicCast(comboCtrl->GetPopupControl(), wxCheckListBoxComboPopup);
+	wxCheckListBoxComboPopup* popup = dynamic_cast<wxCheckListBoxComboPopup*>(comboCtrl->GetPopupControl());
 	if (popup != nullptr) {
 		for (unsigned int i = 0; i < popup->GetCount(); ++i) {
 			if (popup->IsChecked(i))
@@ -461,7 +502,7 @@ unsigned int combochecklist_get_flags(wxComboCtrl* comboCtrl)
 
 void combochecklist_set_flags(wxComboCtrl* comboCtrl, unsigned int flags)
 {
-	wxCheckListBoxComboPopup* popup = wxDynamicCast(comboCtrl->GetPopupControl(), wxCheckListBoxComboPopup);
+	wxCheckListBoxComboPopup* popup = dynamic_cast<wxCheckListBoxComboPopup*>(comboCtrl->GetPopupControl());
 	if (popup != nullptr) {
 		for (unsigned int i = 0; i < popup->GetCount(); ++i) {
 			popup->Check(i, (flags & (1 << i)) != 0);
@@ -514,16 +555,14 @@ void login()
 void desktop_open_datadir_folder()
 {
 	// Execute command to open a file explorer, platform dependent.
-	// FIXME: The const_casts aren't needed in wxWidgets 3.1, remove them when we upgrade.
-
 	const auto path = data_dir();
 #ifdef _WIN32
 		const wxString widepath = from_u8(path);
 		const wchar_t *argv[] = { L"explorer", widepath.GetData(), nullptr };
-		::wxExecute(const_cast<wchar_t**>(argv), wxEXEC_ASYNC, nullptr);
+		::wxExecute(argv, wxEXEC_ASYNC, nullptr);
 #elif __APPLE__
 		const char *argv[] = { "open", path.data(), nullptr };
-		::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr);
+		::wxExecute(argv, wxEXEC_ASYNC, nullptr);
 #else
 		const char *argv[] = { "xdg-open", path.data(), nullptr };
 
@@ -551,10 +590,10 @@ void desktop_open_datadir_folder()
 				exec_env.cwd = std::move(owd);
 			}
 
-			::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr, &exec_env);
+			::wxExecute(argv, wxEXEC_ASYNC, nullptr, &exec_env);
 		} else {
 			// Looks like we're NOT running from AppImage, we'll make no changes to the environment.
-			::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr, nullptr);
+			::wxExecute(argv, wxEXEC_ASYNC, nullptr, nullptr);
 		}
 #endif
 }
@@ -589,7 +628,6 @@ void desktop_open_folder(const std::string& path)
 void desktop_open_any_folder( const std::string& path )
 {
     // Execute command to open a file explorer, platform dependent.
-    // FIXME: The const_casts aren't needed in wxWidgets 3.1, remove them when we upgrade.
 
 #ifdef _WIN32
     const wxString widepath = from_u8(path);
@@ -630,10 +668,10 @@ void desktop_open_any_folder( const std::string& path )
             exec_env.cwd = std::move(owd);
         }
 
-        ::wxExecute(const_cast<char **>(argv), wxEXEC_ASYNC, nullptr, &exec_env);
+        ::wxExecute(argv, wxEXEC_ASYNC, nullptr, &exec_env);
     } else {
         // Looks like we're NOT running from AppImage, we'll make no changes to the environment.
-        ::wxExecute(const_cast<char **>(argv), wxEXEC_ASYNC, nullptr, nullptr);
+        ::wxExecute(argv, wxEXEC_ASYNC, nullptr, nullptr);
     }
 #endif
 }

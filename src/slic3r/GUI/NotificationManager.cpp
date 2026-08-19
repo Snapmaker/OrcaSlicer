@@ -9,6 +9,7 @@
 #include "GUI_ObjectList.hpp"
 #include "ParamsPanel.hpp"
 #include "MainFrame.hpp"
+#include "Tab.hpp"
 #include "libslic3r/Config.hpp"
 #include "format.hpp"
 
@@ -22,6 +23,7 @@
 #include <wx/glcanvas.h>
 
 #include "GUI_App.hpp"
+#include "FilamentMapDialog.hpp"
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -31,7 +33,7 @@
 static constexpr float GAP_WIDTH = 10.0f;
 static constexpr float SPACE_RIGHT_PANEL = 10.0f;
 static constexpr float FADING_OUT_DURATION = 2.0f;
-// Time in Miliseconds after next render when fading out is requested
+// Time in Milliseconds after next render when fading out is requested
 static constexpr int   FADING_OUT_TIMEOUT = 100;
 
 namespace Slic3r {
@@ -68,15 +70,13 @@ namespace {
 		// Code taken from desktop_open_datadir_folder()
 
 		// Execute command to open a file explorer, platform dependent.
-		// FIXME: The const_casts aren't needed in wxWidgets 3.1, remove them when we upgrade.
-
 #ifdef _WIN32
 		const wxString widepath = from_u8(path);
 		const wchar_t* argv[] = { L"explorer", widepath.GetData(), nullptr };
-		::wxExecute(const_cast<wchar_t**>(argv), wxEXEC_ASYNC, nullptr);
+		::wxExecute(argv, wxEXEC_ASYNC, nullptr);
 #elif __APPLE__
 		const char* argv[] = { "open", path.data(), nullptr };
-		::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr);
+		::wxExecute(argv, wxEXEC_ASYNC, nullptr);
 #else
 		const char* argv[] = { "xdg-open", path.data(), nullptr };
 
@@ -104,13 +104,28 @@ namespace {
 				exec_env.cwd = std::move(owd);
 			}
 
-			::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr, &exec_env);
+			::wxExecute(argv, wxEXEC_ASYNC, nullptr, &exec_env);
 		}
 		else {
 			// Looks like we're NOT running from AppImage, we'll make no changes to the environment.
-			::wxExecute(const_cast<char**>(argv), wxEXEC_ASYNC, nullptr, nullptr);
+			::wxExecute(argv, wxEXEC_ASYNC, nullptr, nullptr);
 		}
 #endif
+	}
+
+	// Orca: Resolve the type of a validation option based on its key
+	Preset::Type resolve_validation_option_type(const std::string& opt_key)
+	{
+		if (opt_key.empty())
+			return Preset::TYPE_PRINT;
+
+		if (wxGetApp().get_tab(Preset::TYPE_PRINTER)->get_config()->def()->has(opt_key))
+			return Preset::TYPE_PRINTER;
+
+		if (wxGetApp().get_tab(Preset::TYPE_FILAMENT)->get_config()->def()->has(opt_key))
+			return Preset::TYPE_FILAMENT;
+
+		return Preset::TYPE_PRINT;
 	}
 }
 
@@ -178,6 +193,18 @@ void NotificationManager::PopNotification::on_change_color_mode(bool is_dark)
 	m_is_dark = is_dark;
 }
 
+void NotificationManager::PopNotification::set_delete_callback(DeleteCallback callback)
+{
+    m_on_delete_callback =callback;
+}
+
+bool NotificationManager::PopNotification::is_valid_delete_callback()
+{
+    if(m_on_delete_callback)
+       return true;
+    return false;
+}
+
 void NotificationManager::PopNotification::use_bbl_theme()
 {
     ensure_ui_inited();
@@ -212,6 +239,8 @@ void NotificationManager::PopNotification::use_bbl_theme()
 	m_WindowBkgColor = m_is_dark ? ImVec4(45 / 255.f, 45 / 255.f, 49 / 255.f, 1.f) : ImVec4(1, 1, 1, 1);
 	m_TextColor = m_is_dark ? ImVec4(224 / 255.f, 224 / 255.f, 224 / 255.f, 1.f) : ImVec4(.2f, .2f, .2f, 1.0f);
 	m_HyperTextColor = m_is_dark ? ImVec4(0, 0.588, 0.533, 1) : ImVec4(0, 0.588, 0.533, 1);
+	m_HyperTextColorHover = m_is_dark ? ImVec4(38.f / 255.f, 166.f / 255.f, 154.f / 255.f, 1) : ImVec4(0.f, 129.f / 255.f, 114.f / 255.f, 1); //#26A69A / #008172;
+
 	m_is_dark ? push_style_color(ImGuiCol_Border, {62 / 255.f, 62 / 255.f, 69 / 255.f, 1.f}, true, m_current_fade_opacity) : push_style_color(ImGuiCol_Border, m_CurrentColor, true, m_current_fade_opacity);
     push_style_color(ImGuiCol_WindowBg, m_WindowBkgColor, true, m_current_fade_opacity);
     push_style_color(ImGuiCol_Text, m_TextColor, true, m_current_fade_opacity);
@@ -309,6 +338,13 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float init
 			render_minimize_button(imgui, win_pos.x, win_pos.y);
         render_close_button(imgui, win_size.x, win_size.y, win_pos.x, win_pos.y); // ORCA draw it after minimize button since its position related to minimize button
 	}
+
+	const bool gcode_window_visible = canvas.get_canvas_type() == GLCanvas3D::ECanvasType::CanvasPreview && wxGetApp().show_gcode_window();
+	if (!gcode_window_visible)
+	{
+		ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+	}
+	
 	imgui.end();
 
 	restore_default_theme();
@@ -408,6 +444,12 @@ void NotificationManager::PopNotification::bbl_render_block_notification(GLCanva
 
 	if (fading_pop)
 		ImGui::PopStyleColor(3);
+}
+
+void NotificationManager::PopNotification::close()
+{
+    m_state = EState::ClosePending;
+    wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
 }
 
 bool NotificationManager::PopNotification::push_background_color()
@@ -719,11 +761,17 @@ void NotificationManager::PopNotification::render_hypertext(ImGuiWrapper& imgui,
 		HyperColor = ImVec4(135.f / 255.f, 43 / 255.f, 43 / 255.f, 1); 
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_RectOnly)) 
 	{ 
-		HyperColor.y += 0.1f; 
-		if (m_data.level == NotificationLevel::SeriousWarningNotificationLevel || m_data.level == NotificationLevel::SeriousWarningNotificationLevel) 
-			HyperColor.x += 0.2f; 
+		if (m_data.level == NotificationLevel::SeriousWarningNotificationLevel){
+			HyperColor.y += 0.1f;
+			HyperColor.x += 0.2f;
+		}
+		else if(m_data.level == NotificationLevel::ErrorNotificationLevel){
+			HyperColor.y += 0.1f;
+		}
+		else {
+			HyperColor = m_HyperTextColorHover;
+		}
 	}
-		
 
 	//text
     push_style_color(ImGuiCol_Text, HyperColor, m_state == EState::FadingOut, m_current_fade_opacity);
@@ -741,6 +789,42 @@ void NotificationManager::PopNotification::render_hypertext(ImGuiWrapper& imgui,
                                         IM_COL32((int) (HyperColor.x * 255), (int) (HyperColor.y * 255), (int) (HyperColor.z * 255),
                                                  (int) (HyperColor.w * 255.f * (m_state == EState::FadingOut ? m_current_fade_opacity : 1.f))));
 
+}
+
+void NotificationManager::PopNotification::render_hyperlink_action(ImGuiWrapper& imgui, float text_x, float text_y,
+	const std::string& text, const char* button_id, const std::function<void()>& on_click)
+{
+	// Invisible button over the label
+	ImVec2 part_size = ImGui::CalcTextSize(text.c_str());
+	ImGui::SetCursorPosX(text_x - 4);
+	ImGui::SetCursorPosY(text_y - 5);
+	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.0f, .0f, .0f, .0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.0f, .0f, .0f, .0f));
+	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.0f, .0f, .0f, .0f));
+	if (imgui.button(button_id, part_size.x + 6, part_size.y + 10) && on_click)
+		on_click();
+	ImGui::PopStyleColor(3);
+
+	// Hover color
+	ImVec4 color = m_HyperTextColor;
+	if (ImGui::IsItemHovered(ImGuiHoveredFlags_RectOnly))
+		color = m_HyperTextColorHover;
+
+	// Text
+	push_style_color(ImGuiCol_Text, color, m_state == EState::FadingOut, m_current_fade_opacity);
+	ImGui::SetCursorPosX(text_x);
+	ImGui::SetCursorPosY(text_y);
+	imgui.text(text.c_str());
+	ImGui::PopStyleColor();
+
+	// Underline
+	ImVec2 lineEnd = ImGui::GetItemRectMax();
+	lineEnd.y -= 2;
+	ImVec2 lineStart = lineEnd;
+	lineStart.x = ImGui::GetItemRectMin().x;
+	ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd,
+		IM_COL32((int)(color.x * 255), (int)(color.y * 255), (int)(color.z * 255),
+			(int)(color.w * 255.f * (m_state == EState::FadingOut ? m_current_fade_opacity : 1.f))));
 }
 
 void NotificationManager::PopNotification::render_close_button(ImGuiWrapper& imgui, const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
@@ -966,6 +1050,12 @@ bool NotificationManager::PopNotification::compare_text(const std::string& text)
 	if (wt1.compare(wt2) == 0)
 		return true;
 	return false;
+}
+
+void NotificationManager::PopNotification::hide(bool h)
+{
+    if (is_finished()) return;
+    m_state = h ? EState::Hidden : EState::Unknown;
 }
 
 bool NotificationManager::PopNotification::update_state(bool paused, const int64_t delta)
@@ -1810,14 +1900,18 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 {
     auto po = dynamic_cast<PrintObjectBase const *>(error.object);
     auto mo = po ? po->model_object() : dynamic_cast<ModelObject const *>(error.object);
+    //ORCA: Update to handle ModelInstance selection for validation errors with fallback
+    /*
 	std::function<bool(wxEvtHandler*)> callback;
 	if (mo || !error.opt_key.empty()) {
 		callback =
 			[id = mo ? mo->id() : 0, opt = error.opt_key](wxEvtHandler*) {
 			auto& objects = wxGetApp().model().objects;
 			auto iter = id.id ? std::find_if(objects.begin(), objects.end(), [id](auto o) { return o->id() == id; }) : objects.end();
-			if (iter != objects.end())
+			if (iter != objects.end()) {
 				wxGetApp().obj_list()->select_items({ {*iter, nullptr} });
+                wxGetApp().obj_list()->update_selections_on_canvas();
+            }
 			if (!opt.empty()) {
 				if (iter != objects.end())
 					wxGetApp().params_panel()->switch_to_object();
@@ -1831,6 +1925,74 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 	}
     auto link = (mo || !error.opt_key.empty()) ? _u8L("Jump to") : "";
     if (mo) link += std::string(" [") + mo->name + "]";
+    */
+    auto mi = dynamic_cast<ModelInstance const *>(error.object);
+	std::function<bool(wxEvtHandler*)> callback;
+	if (mo || mi || !error.opt_key.empty()) {
+		callback =
+			[id = mo ? mo->id() : (mi ? mi->id() : 0),
+             parent_id = mi ? mi->get_object()->id() : 0,
+             is_inst = (mi != nullptr),
+             opt = error.opt_key](wxEvtHandler*) {
+			auto& objects = wxGetApp().model().objects;
+
+            if (is_inst) {
+                 bool selected = false;
+                 auto iter = std::find_if(objects.begin(), objects.end(), [parent_id](auto o) { return o->id() == parent_id; });
+                 if (iter != objects.end()) {
+                      ModelObject* obj = *iter;
+                      int inst_idx = -1;
+                      for(size_t i=0; i<obj->instances.size(); ++i) {
+                          if (obj->instances[i]->id() == id) {
+                              inst_idx = i;
+                              break;
+                          }
+                      }
+                      if (inst_idx != -1) {
+                         auto* model = wxGetApp().obj_list()->GetModel();
+                         wxDataViewItem item;
+                         wxDataViewItem objItem = model->GetObjectItem(obj);
+                         if (objItem.IsOk()) {
+                             int vm_obj_idx = model->GetIdByItem(objItem);
+                             if (vm_obj_idx != -1) {
+                                 item = model->GetItemByInstanceId(vm_obj_idx, inst_idx);
+                             }
+                         }
+                         if (item.IsOk()) {
+                             wxDataViewItemArray sel_items;
+                             sel_items.Add(item);
+                             wxGetApp().obj_list()->select_items(sel_items);
+                             selected = true;
+                         }
+                      }
+                      
+                      if (!selected) {
+                           wxGetApp().obj_list()->select_items({ {obj, nullptr} });
+                      }
+                 }
+            } else {
+			    auto iter = id.id ? std::find_if(objects.begin(), objects.end(), [id](auto o) { return o->id() == id; }) : objects.end();
+			    if (iter != objects.end())
+				    wxGetApp().obj_list()->select_items({ {*iter, nullptr} });
+            }
+
+			if (!opt.empty()) {
+				const Preset::Type opt_type = resolve_validation_option_type(opt);
+
+				if (opt_type == Preset::TYPE_PRINT && ((!is_inst && id.id) || (is_inst && parent_id.id))) // if object found and it's a print preset option, switch to object first
+					wxGetApp().params_panel()->switch_to_object();
+
+				wxGetApp().sidebar().jump_to_option(opt, opt_type, L"");
+			}
+			else {
+				wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
+			}
+			return false;
+		};
+	}
+    auto link = (mo || mi || !error.opt_key.empty()) ? _u8L("Jump to") : "";
+    if (mo) link += std::string(" [") + mo->name + "]";
+    if (mi) link += std::string(" [") + mi->get_object()->name + "]";
     if (!error.opt_key.empty()) link += std::string(" (") + error.opt_key + ")";
     push_notification_data({NotificationType::ValidateError, NotificationLevel::ErrorNotificationLevel, 0, _u8L("Error:") + "\n" + error.string, link, callback}, 0);
 	set_slicing_progress_hidden();
@@ -1922,10 +2084,40 @@ void NotificationManager::push_plater_error_notification(const std::string& text
 void NotificationManager::close_plater_error_notification(const std::string& text)
 {
 	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
-		if (notification->get_type() == NotificationType::PlaterError && notification->compare_text(_u8L("Error:") + "\n" + text)) {
+		if (notification->get_type() == NotificationType::PlaterError) {
 			notification->close();
 		}
 	}
+}
+
+void NotificationManager::push_general_error_notification(const std::string& text)
+{
+	push_notification_data({ NotificationType::BBLGeneralError, NotificationLevel::ErrorNotificationLevel, 0,  _u8L("Error:") + "\n" + text }, 0);
+}
+
+void NotificationManager::close_general_error_notification(const std::string& text)
+{
+	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+		if (notification->get_type() == NotificationType::BBLGeneralError && notification->compare_text(_u8L("Error:") + "\n" + text)) {
+			notification->close();
+		}
+	}
+}
+
+void NotificationManager::push_slicing_customize_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext, std::function<bool(wxEvtHandler *)> callback)
+{
+    set_all_slicing_errors_gray(false);
+    std::string prefix_msg = level == NotificationLevel::WarningNotificationLevel ? _u8L("Warning:") : _u8L("Error:");
+    push_notification_data({type, level, 0, prefix_msg + "\n" + text, hypertext, callback}, 0);
+}
+
+void NotificationManager::close_slicing_customize_error_notification(NotificationType type, NotificationLevel level)
+{
+    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+        if (notification->get_type() == type && notification->get_data().level == level) {
+            notification->close();
+        }
+    }
 }
 
 void NotificationManager::push_plater_warning_notification(const std::string& text)
@@ -1956,6 +2148,21 @@ void NotificationManager::close_plater_warning_notification(const std::string& t
 		}
 	}
 }
+
+void NotificationManager::push_flushing_volume_error_notification(NotificationType type, NotificationLevel level, const std::string &text, const std::string &hypertext, std::function<bool(wxEvtHandler *)> callback)
+{
+    set_all_slicing_errors_gray(false);
+    std::string prefix_msg = level == NotificationLevel::WarningNotificationLevel ? _u8L("Warning:") : _u8L("Error:");
+    push_notification_data({type, level, 0, prefix_msg + "\n" + text, hypertext, callback}, 0);
+}
+
+void NotificationManager::close_flushing_volume_error_notification(NotificationType type, NotificationLevel level)
+{
+    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
+        if (notification->get_type() == type && notification->get_data().level == level) { notification->close(); }
+    }
+}
+
 void NotificationManager::set_all_slicing_errors_gray(bool g)
 {
 	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
@@ -2023,6 +2230,36 @@ void NotificationManager::close_notification_of_type_and_text(const Notification
     }
 }
 
+void NotificationManager::close_and_delete_self(PopNotification * self)
+{
+    for (auto it = m_pop_notifications.begin(); it != m_pop_notifications.end();) {
+        std::unique_ptr<PopNotification> &notification = *it;
+        if (notification.get() == self) {
+            m_pop_notifications.erase(it);
+            break;
+        }else
+            ++it;
+    }
+}
+
+void NotificationManager::remove_notification_of_type(const NotificationType type) {
+    for (auto it = m_pop_notifications.begin(); it != m_pop_notifications.end();) {
+        std::unique_ptr<PopNotification> &notification = *it;
+        if (notification->get_type() == type) {
+            it = m_pop_notifications.erase(it);
+            break;
+        } else
+            ++it;
+    }
+}
+
+void NotificationManager::clear_all()
+{
+    for (size_t i = 0; i < size_t(NotificationType::NotificationTypeCount); i++) {
+        remove_notification_of_type((NotificationType)i);
+    }
+}
+
 void NotificationManager::remove_slicing_warnings_of_released_objects(const std::vector<ObjectID>& living_oids)
 {
 	for (std::unique_ptr<PopNotification> &notification : m_pop_notifications)
@@ -2074,6 +2311,261 @@ void NotificationManager::push_import_finished_notification(const std::string& p
     NotificationData data{ NotificationType::ExportFinished, NotificationLevel::RegularNotificationLevel, on_removable ? 0 : 20,  _u8L("Model file downloaded.") + "\n" + path };
     push_notification_data(std::make_unique<NotificationManager::ExportFinishedNotification>(data, m_id_provider, m_evt_handler, on_removable, path, dir_path), 0);
     set_slicing_progress_hidden();
+}
+
+// SharedProfilesNotification implementation
+
+void NotificationManager::SharedProfilesNotification::init()
+{
+	PopNotification::init();
+
+    // PopNotification::count_lines() may append a duplicate "hypertext doesn't fit inline" placeholder endline (same value as the previous entry)
+    // for the generic renderer's benefit. This class always renders its hyperlink on its own dedicated line regardless, 
+    // so that placeholder is meaningless here and would otherwise be drawn as a spurious blank text row.
+    if (!m_hypertext.empty() && m_endlines.size() >= 2 && m_endlines.back() == m_endlines[m_endlines.size() - 2]) {
+        m_endlines.pop_back();
+        m_lines_count--;
+    }
+
+    // Reserve rows for: "Browse shared profiles" hyperlink, spacing, "Don't show again"
+    m_lines_count += 3; 
+}
+
+void NotificationManager::SharedProfilesNotification::render_text(ImGuiWrapper& imgui,
+	const float win_size_x, const float win_size_y,
+	const float win_pos_x, const float win_pos_y)
+{
+	float x_offset = m_left_indentation;
+	float shift_y = m_line_height;
+	float starting_y = m_line_height / 2;
+
+	// Render main text line(s)
+	int last_end = 0;
+	std::string line;
+	for (size_t i = 0; i < m_endlines.size(); i++) {
+		if (m_text1.size() >= m_endlines[i]) {
+			line = m_text1.substr(last_end, m_endlines[i] - last_end);
+			last_end = m_endlines[i];
+			if (m_text1.size() > m_endlines[i])
+				last_end += (m_text1[m_endlines[i]] == '\n' || m_text1[m_endlines[i]] == ' ' ? 1 : 0);
+			ImGui::SetCursorPosX(x_offset);
+			ImGui::SetCursorPosY(starting_y + i * shift_y);
+			imgui.text(line.c_str());
+		}
+	}
+
+	{
+        float hyper_y     = starting_y + m_endlines.size() * shift_y + m_line_height * .5f;
+		float dont_show_y = hyper_y    + ImGui::CalcTextSize((m_hypertext + "  ").c_str()).y + m_line_height * .5f;
+		std::string dont_show_text = _u8L("Don't show again");
+		ImVec2 part_size = ImGui::CalcTextSize(dont_show_text.c_str());
+
+        if (!m_multiline && m_lines_count > 2) {
+		    render_hypertext(imgui, x_offset + (m_endlines.size() == 1 ? 0 : ImGui::CalcTextSize((line + " ").c_str()).x) , starting_y + shift_y, _u8L("More"), true);
+	    } 
+        else {
+	    // Render "Browse shared profiles" hyperlink on the next line	
+	    render_hypertext(imgui, x_offset, hyper_y, m_hypertext);
+
+		// Invisible button
+		ImGui::SetCursorPosX(x_offset); // ORCA render on new line to prevent long translations from being cut off
+		ImGui::SetCursorPosY(dont_show_y);
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.0f, .0f, .0f, .0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.0f, .0f, .0f, .0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.0f, .0f, .0f, .0f));
+        // Render "Don't show again" hyperlink after the browse link
+		if (imgui.button("##dont_show_btn", part_size.x + 6, part_size.y + 10)) {
+			wxGetApp().app_config->set_bool("show_shared_profiles_notification", false);
+			wxGetApp().app_config->save();
+			close();
+		}
+		ImGui::PopStyleColor(3);
+
+		// Hover color
+		ImVec4 color = m_HyperTextColor;
+		if (ImGui::IsItemHovered(ImGuiHoveredFlags_RectOnly))
+			color = m_HyperTextColorHover;
+
+		// Text
+		push_style_color(ImGuiCol_Text, color, m_state == EState::FadingOut, m_current_fade_opacity);
+		ImGui::SetCursorPosX(x_offset);
+		ImGui::SetCursorPosY(dont_show_y);
+		imgui.text(dont_show_text.c_str());
+		ImGui::PopStyleColor();
+
+		// Underline
+		ImVec2 lineEnd = ImGui::GetItemRectMax();
+		lineEnd.y -= 2;
+		ImVec2 lineStart = lineEnd;
+		lineStart.x = ImGui::GetItemRectMin().x;
+		ImGui::GetWindowDrawList()->AddLine(lineStart, lineEnd,
+			IM_COL32((int)(color.x * 255), (int)(color.y * 255), (int)(color.z * 255),
+				(int)(color.w * 255.f * (m_state == EState::FadingOut ? m_current_fade_opacity : 1.f))));
+        }
+	}
+}
+
+bool NotificationManager::SharedProfilesNotification::on_text_click()
+{
+	wxLaunchDefaultBrowser(m_explore_url);
+	return false;
+}
+
+void NotificationManager::SharedProfilesNotification::render_hypertext(ImGuiWrapper& imgui,
+	const float text_x, const float text_y, const std::string text, bool more)
+{
+    if (more)
+        PopNotification::render_hypertext(imgui, text_x, text_y, text, true);
+    else
+	    render_hyperlink_action(imgui, text_x, text_y, text, "##browse_btn", [this] { if (on_text_click()) close(); });
+}
+
+void NotificationManager::OrcaSyncConflictNotification::init()
+{
+	PopNotification::init();
+	// Reserve a dedicated action row for the two conflict-resolution links.
+	m_lines_count = m_lines_count + 1;
+}
+
+void NotificationManager::OrcaSyncConflictNotification::render_text(ImGuiWrapper& imgui,
+	const float win_size_x, const float win_size_y,
+	const float win_pos_x, const float win_pos_y)
+{
+	float x_offset = m_left_indentation;
+	float shift_y = m_line_height;
+	float starting_y = m_line_height / 2;
+
+	int last_end = 0;
+	std::string line;
+	for (size_t i = 0; i < m_endlines.size(); i++) {
+		if (m_text1.size() >= m_endlines[i]) {
+			line = m_text1.substr(last_end, m_endlines[i] - last_end);
+			last_end = m_endlines[i];
+			if (m_text1.size() > m_endlines[i])
+				last_end += (m_text1[m_endlines[i]] == '\n' || m_text1[m_endlines[i]] == ' ' ? 1 : 0);
+			ImGui::SetCursorPosX(x_offset);
+			ImGui::SetCursorPosY(starting_y + i * shift_y);
+			imgui.text(line.c_str());
+		}
+	}
+
+	const float action_y = starting_y + m_endlines.size() * shift_y;
+	const std::string pull_text = conflict_code == -3 ? _u8L("Delete") : _u8L("Pull");
+	render_hyperlink_action(imgui, x_offset, action_y, pull_text, "##orca_sync_pull",
+		[this] { if (m_pull_callback && m_pull_callback(m_evt_handler)) close(); });
+	if (m_force_push_callback) {
+		const std::string force_push_text = _u8L("Force push");
+		const float force_x = x_offset + ImGui::CalcTextSize((pull_text + "   ").c_str()).x;
+		render_hyperlink_action(imgui, force_x, action_y, force_push_text, "##orca_sync_force_push",
+			[this] { if (m_force_push_callback && m_force_push_callback(m_evt_handler)) close(); });
+	}
+}
+
+void NotificationManager::push_shared_profiles_notification(const std::string& explore_url)
+{
+	close_notification_of_type(NotificationType::OrcaSharedProfilesAvailable);
+	NotificationData data{ NotificationType::OrcaSharedProfilesAvailable, NotificationLevel::RegularNotificationLevel, 0,
+		_u8L("Shared profiles may be available for this printer."),
+		_u8L("Browse shared profiles") };
+	push_notification_data(std::make_unique<NotificationManager::SharedProfilesNotification>(data, m_id_provider, m_evt_handler, explore_url), 0);
+}
+
+void NotificationManager::push_orca_sync_conflict_notification(const std::string& text,
+	int conflict_code,
+	std::function<bool(wxEvtHandler*)> pull_callback,
+	std::function<bool(wxEvtHandler*)> force_push_callback)
+{
+	close_notification_of_type(NotificationType::OrcaSyncConflict);
+	NotificationData data{ NotificationType::OrcaSyncConflict, NotificationLevel::WarningNotificationLevel, 0, text };
+	push_notification_data(std::make_unique<NotificationManager::OrcaSyncConflictNotification>(
+		data, m_id_provider, m_evt_handler, std::move(pull_callback), std::move(force_push_callback), conflict_code), 0);
+}
+
+void NotificationManager::PluginMissingNotification::init()
+{
+	PopNotification::init();
+	// Reserve body rows, an optional spacer, and a dedicated action row for the two links.
+	m_lines_count = m_lines_count + m_body.size() + (m_body.empty() ? 0 : 1) + 1;
+}
+
+void NotificationManager::PluginMissingNotification::render_text(ImGuiWrapper& imgui,
+	const float win_size_x, const float win_size_y,
+	const float win_pos_x, const float win_pos_y)
+{
+	float x_offset   = m_left_indentation;
+	float shift_y    = m_line_height;
+	float starting_y = m_line_height / 2;
+
+	int last_end = 0;
+	std::string line;
+	for (size_t i = 0; i < m_endlines.size(); i++) {
+		if (m_text1.size() >= m_endlines[i]) {
+			line = m_text1.substr(last_end, m_endlines[i] - last_end);
+			last_end = m_endlines[i];
+			if (m_text1.size() > m_endlines[i])
+				last_end += (m_text1[m_endlines[i]] == '\n' || m_text1[m_endlines[i]] == ' ' ? 1 : 0);
+			ImGui::SetCursorPosX(x_offset);
+			ImGui::SetCursorPosY(starting_y + i * shift_y);
+			imgui.text(line.c_str());
+		}
+	}
+
+    const size_t body_start_row = m_endlines.size();
+    const std::string jump_text = _u8L("Jump to");
+    for (size_t i = 0; i < m_body.size(); ++i) {
+        const JumpTo& item          = m_body[i];
+        const std::string item_text = item.text.empty() ? item.opt : item.text;
+        const std::string prefix    = "- " + item_text + " ";
+        const float row_y           = starting_y + (body_start_row + i) * shift_y;
+
+        ImGui::SetCursorPosX(x_offset);
+        ImGui::SetCursorPosY(row_y);
+        imgui.text(prefix.c_str());
+
+        std::string button_id = "##plugin_missing_jump_" + std::to_string(i);
+        const float jump_x    = x_offset + ImGui::CalcTextSize(prefix.c_str()).x;
+        render_hyperlink_action(imgui, jump_x, row_y, jump_text, button_id.c_str(), [item] {
+            // Defer the jump: jump_to_option switches the settings tab/page, which must not run
+            // inside this notification's ImGui render pass. item is captured by value.
+            if (!item.opt.empty())
+                wxGetApp().CallAfter([item]() { wxGetApp().sidebar().jump_to_option(item.opt, item.opt_type, L""); });
+        });
+    }
+
+    const size_t action_row = body_start_row + m_body.size() + (m_body.empty() ? 0 : 1);
+	const float action_y = starting_y + action_row * shift_y;
+	render_hyperlink_action(imgui, x_offset, action_y, m_resolve_label, "##plugin_missing_resolve",
+		[this] { if (m_resolve_callback && m_resolve_callback(m_evt_handler)) close(); });
+}
+
+void NotificationManager::PluginMissingNotification::bbl_render_block_notif_text(ImGuiWrapper& imgui,
+	const float win_size_x, const float win_size_y,
+	const float win_pos_x, const float win_pos_y)
+{
+	const ImVec4 hyper_text_color       = m_HyperTextColor;
+	const ImVec4 hyper_text_color_hover = m_HyperTextColorHover;
+	m_HyperTextColor                    = ImVec4(1.f, 1.f, 1.f, 1.f);
+	m_HyperTextColorHover               = ImVec4(1.f, 1.f, 1.f, 0.75f);
+
+	render_text(imgui, win_size_x, win_size_y, win_pos_x, win_pos_y);
+
+	m_HyperTextColor      = hyper_text_color;
+	m_HyperTextColorHover = hyper_text_color_hover;
+}
+
+void NotificationManager::push_plugin_missing_notification(NotificationType type,
+                                                           const std::string& text,
+                                                           const std::string& resolve_label,
+                                                           std::vector<JumpTo> body,
+                                                           std::function<bool(wxEvtHandler*)> resolve_callback)
+{
+	m_pop_notifications.erase(std::remove_if(m_pop_notifications.begin(), m_pop_notifications.end(),
+		[type](const std::unique_ptr<PopNotification>& notification) {
+			return notification && notification->get_type() == type;
+		}), m_pop_notifications.end());
+	NotificationData data{ type, NotificationLevel::ErrorNotificationLevel, 0, text };
+	push_notification_data(std::make_unique<NotificationManager::PluginMissingNotification>(
+		data, m_id_provider, m_evt_handler, resolve_label, std::move(body), std::move(resolve_callback)), 0);
 }
 
 void NotificationManager::push_download_URL_progress_notification(size_t id, const std::string& text, std::function<bool(DownloaderUserAction, int)> user_action_callback)
@@ -2204,7 +2696,7 @@ void NotificationManager::upload_job_notification_show_error(int id, const std::
 	}
 }
 
-void NotificationManager::push_slicing_serious_warning_notification(const std::string &text, std::vector<ModelObject const *> objs) 
+void NotificationManager::push_slicing_serious_warning_notification(const std::string &text, std::vector<ModelObject const *> objs)
 {
     std::vector<ObjectID> ids;
     for (auto optr : objs) {
@@ -2222,19 +2714,113 @@ void NotificationManager::push_slicing_serious_warning_notification(const std::s
 			if (!ovs.empty()) {
 				wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
 				wxGetApp().obj_list()->select_items(ovs);
+				wxGetApp().obj_list()->update_selections_on_canvas();
 			}
 			return false;
 		};
 	}
     auto link     = callback ? _u8L("Jump to") : "";
-    if (!objs.empty()) {
-        link += " [";
-        for (auto obj : objs) {
-            if (obj) link += obj->name + ", ";
+    std::vector<std::string> names;
+    for (auto optr : objs) {
+        if (optr) {
+            names.push_back(optr->name);
         }
-        if (!objs.empty()) {
-            link.pop_back();
-            link.pop_back();
+    }
+    if (!names.empty()) {
+        link += " [";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0) link += ", ";
+            link += names[i];
+        }
+        link += "] ";
+    }
+    set_all_slicing_warnings_gray(false);
+    push_notification_data({NotificationType::SlicingSeriousWarning, NotificationLevel::SeriousWarningNotificationLevel, 0, _u8L("Serious warning:") + "\n" + text, link,
+                            callback},
+                           0);
+    set_slicing_progress_hidden();
+}
+
+void NotificationManager::push_slicing_serious_warning_notification(const std::string &text, std::vector<ModelInstance const *> insts)
+{
+    std::vector<std::pair<ObjectID, ObjectID>> ids;
+    for (auto iptr : insts) {
+        if (iptr && iptr->get_object()) {
+            ids.push_back({iptr->get_object()->id(), iptr->id()});
+        }
+    }
+    std::function<bool(wxEvtHandler*)> callback;
+    if (!insts.empty()) {
+        callback = [ids](wxEvtHandler*) {
+            auto& objects = wxGetApp().model().objects;
+            wxDataViewItemArray sel_items;
+            std::vector<ObjectVolumeID> fallback_ovs;
+            auto* obj_list = wxGetApp().obj_list();
+            if (!obj_list) return false;
+            auto* model = obj_list->GetModel();
+            if (!model) return false;
+
+            for (const auto& pair : ids) {
+                ObjectID obj_id = pair.first;
+                ObjectID inst_id = pair.second;
+                
+                auto iter = std::find_if(objects.begin(), objects.end(), [obj_id](auto o) { return o->id() == obj_id; });
+                if (iter != objects.end()) {
+                    ModelObject* obj = *iter;
+                    int inst_idx = -1;
+                    for (int i=0; i<obj->instances.size(); ++i) {
+                        if (obj->instances[i]->id() == inst_id) {
+                            inst_idx = i;
+                            break;
+                        }
+                    }
+                    
+                    if (inst_idx != -1) {
+                        wxDataViewItem item;
+                        wxDataViewItem objItem = model->GetObjectItem(obj);
+                        if (objItem.IsOk()) {
+                             int vm_obj_idx = model->GetIdByItem(objItem);
+                             if (vm_obj_idx != -1) {
+                                 item = model->GetItemByInstanceId(vm_obj_idx, inst_idx);
+                             }
+                        }
+
+                        if (item.IsOk()) {
+                            sel_items.Add(item);
+                        } else {
+                            fallback_ovs.push_back({obj, nullptr});
+                        }
+                    } else {
+                         fallback_ovs.push_back({obj, nullptr});
+                    }
+                }
+            }
+            
+            wxGetApp().mainframe->select_tab(MainFrame::tp3DEditor);
+            
+            if (!sel_items.empty()) {
+                obj_list->select_items(sel_items);
+                obj_list->update_selections_on_canvas();
+            } else if (!fallback_ovs.empty()) {
+                obj_list->select_items(fallback_ovs);
+                obj_list->update_selections_on_canvas();
+            }
+            
+            return false;
+        };
+    }
+    auto link     = callback ? _u8L("Jump to") : "";
+    std::vector<std::string> names;
+    for (auto iptr : insts) {
+        if (iptr && iptr->get_object()) {
+            names.push_back(iptr->get_object()->name);
+        }
+    }
+    if (!names.empty()) {
+        link += " [";
+        for (size_t i = 0; i < names.size(); ++i) {
+            if (i > 0) link += ", ";
+            link += names[i];
         }
         link += "] ";
     }
@@ -2508,7 +3094,12 @@ bool NotificationManager::push_notification_data(std::unique_ptr<NotificationMan
 			return false;
 		}
 	}
-
+    if(!notification->is_valid_delete_callback()){
+        auto delete_self = [this](NotificationManager::PopNotification* it) {
+             m_to_delete_after_finish_render = it;
+        };
+        notification->set_delete_callback(delete_self);
+    }
 	bool retval = false;
 	if (this->activate_existing(notification.get())) {
 		if (m_initialized) { // ignore update action - it cant be initialized if canvas and imgui context is not ready
@@ -2582,6 +3173,10 @@ void NotificationManager::render_notifications(GLCanvas3D &canvas, float overlay
 			;// assert(i <= 1);
 		}
 	}
+    if (m_to_delete_after_finish_render) {
+        close_and_delete_self(m_to_delete_after_finish_render);
+        m_to_delete_after_finish_render = nullptr;
+    }
 	m_last_render = GLCanvas3D::timestamp_now();
 }
 
@@ -3001,6 +3596,61 @@ void NotificationManager::bbl_close_gcode_overlap_notification()
         if (notification->get_type() == NotificationType::BBLGcodeOverlap) { notification->close(); }
 }
 
+void NotificationManager::bbl_show_bed_filament_incompatible_notification(const std::string& text)
+{
+	auto callback = [](wxEvtHandler*) {
+		const wxString bed_filament_compatibility_wiki = "https://wiki.bambulab.com/en/general/filament-guide-material-table";
+		wxGetApp().open_browser_with_warning_dialog(bed_filament_compatibility_wiki);
+		return false;
+	};
+	push_notification_data({ NotificationType::BBLBedFilamentIncompatible,NotificationLevel::ErrorNotificationLevel,0,_u8L("Error:") + "\n" + text,"Click for more.",callback }, 0);
+}
+
+void NotificationManager::bbl_close_bed_filament_incompatible_notification()
+{
+	close_notification_of_type(NotificationType::BBLBedFilamentIncompatible);
+}
+
+void NotificationManager::bbl_show_filament_map_invalid_notification_before_slice(const NotificationType type,const std::string& text)
+{
+    auto callback = [](wxEvtHandler*) {
+        auto plater = wxGetApp().plater();
+        auto partplate = plater->get_partplate_list().get_curr_plate();
+        try_pop_up_before_slice(false, plater, partplate, true); // ignore the return value
+        return false;
+    };
+
+    push_notification_data({ type,NotificationLevel::ErrorNotificationLevel,0,_u8L("Error:") + "\n" + text,_u8L("Click here to regroup"),callback }, 0);
+}
+
+void NotificationManager::bbl_close_filament_map_invalid_notification_before_slice(const NotificationType type)
+{
+    close_notification_of_type(type);
+}
+
+void NotificationManager::bbl_show_filament_map_invalid_notification_after_slice(const NotificationType type, const std::string& text)
+{
+    auto callback = [](wxEvtHandler*) {
+        auto plater = wxGetApp().plater();
+        wxCommandEvent evt(EVT_OPEN_FILAMENT_MAP_SETTINGS_DIALOG);
+        evt.SetEventObject(plater);
+        auto canvas_type = plater->canvas3D()->get_canvas_type();
+        if (canvas_type == GLCanvas3D::ECanvasType::CanvasPreview)
+            evt.SetInt(1); // 1 means from gcode viewer, should do slice right now
+        else
+            evt.SetInt(0);
+        wxPostEvent(plater, evt);
+        return false;
+    };
+
+    push_notification_data({ type,NotificationLevel::ErrorNotificationLevel,0,_u8L("Error:") + "\n" + text,_u8L("Click here to regroup"),callback }, 0);
+}
+
+void NotificationManager::bbl_close_filament_map_invalid_notification_after_slice(const NotificationType type)
+{
+    close_notification_of_type(type);
+}
+
 void NotificationManager::bbl_show_sole_text_notification(NotificationType sType, const std::string &text, bool bOverride, int level, bool autohide) {
 
 	NotificationLevel nlevel;
@@ -3056,5 +3706,13 @@ void NotificationManager::set_scale(float scale)
 }
 
 
-}//namespace GUI
-}//namespace Slic3r
+void NotificationManager::PlaterWarningNotification::close()
+{
+    if (is_finished())
+        return;
+    m_state = EState::Hidden;
+    wxGetApp().plater()->get_current_canvas3D()->schedule_extra_frame(0);
+    if(m_on_delete_callback)
+        m_on_delete_callback(this);
+}
+}}//namespace Slic3r

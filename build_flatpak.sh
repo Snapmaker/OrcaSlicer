@@ -5,6 +5,7 @@
 # Based on the GitHub Actions workflow in .github/workflows/build_all.yml
 
 set -e
+SECONDS=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -28,6 +29,8 @@ fi
 LOW_MEMORY=false
 FORCE_CLEAN=false
 ENABLE_CCACHE=false
+DISABLE_ROFILES_FUSE=false
+NO_DEBUGINFO=true
 CACHE_DIR=".flatpak-builder"
 
 # Help function
@@ -44,6 +47,8 @@ show_help() {
     echo "  -c, --cleanup          Clean build directory before building"
     echo "  -f, --force-clean      Force clean build (disables caching)"
     echo "  --ccache               Enable ccache for faster rebuilds (requires ccache in SDK)"
+    echo "  --disable-rofiles-fuse Disable rofiles-fuse (workaround for FUSE issues)"
+    echo "  --with-debuginfo       Include debug info (slower builds, needed for Flathub)"
     echo "  --cache-dir DIR        Flatpak builder cache directory [default: $CACHE_DIR]"
     echo "  -i, --install-runtime  Install required Flatpak runtime and SDK"
     echo "  -h, --help             Show this help message"
@@ -89,6 +94,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ccache)
             ENABLE_CCACHE=true
+            shift
+            ;;
+        --disable-rofiles-fuse)
+            DISABLE_ROFILES_FUSE=true
+            shift
+            ;;
+        --with-debuginfo)
+            NO_DEBUGINFO=false
             shift
             ;;
         --cache-dir)
@@ -211,6 +224,7 @@ echo -e "${GREEN}All required dependencies found${NC}"
 # Install runtime and SDK if requested
 if [[ "$INSTALL_RUNTIME" == true ]]; then
     echo -e "${YELLOW}Installing GNOME runtime and SDK...${NC}"
+    # GNOME runtime version must match `runtime-version` in the Snapmaker manifest.
     flatpak install --user -y flathub org.gnome.Platform//49
     flatpak install --user -y flathub org.gnome.Sdk//49
 fi
@@ -266,9 +280,13 @@ fi
 mkdir -p "$BUILD_DIR"
 rm -rf "$BUILD_DIR/build-dir"
 
+# Flatpak identity (must match app-id in the manifest)
+APP_ID="io.github.Snapmaker.Snapmaker_Orca"
+MANIFEST_BASE="scripts/flatpak/${APP_ID}.yml"
+
 # Check if flatpak manifest exists
-if [[ ! -f "./scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml" ]]; then
-    echo -e "${RED}Error: Flatpak manifest not found at scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml${NC}"
+if [[ ! -f "$MANIFEST_BASE" ]]; then
+    echo -e "${RED}Error: Flatpak manifest not found at ${MANIFEST_BASE}${NC}"
     exit 1
 fi
 
@@ -304,6 +322,7 @@ BUILDER_ARGS=(
     --verbose
     --state-dir="$CACHE_DIR"
     --jobs="$JOBS"
+    --mirror-screenshots-url=https://dl.flathub.org/media/
 )
 
 # Add force-clean only if explicitly requested (disables caching)
@@ -320,14 +339,34 @@ if [[ "$ENABLE_CCACHE" == true ]]; then
     echo -e "${GREEN}Using ccache for compiler caching${NC}"
 fi
 
+# Disable rofiles-fuse if requested (workaround for FUSE issues)
+if [[ "$DISABLE_ROFILES_FUSE" == true ]]; then
+    BUILDER_ARGS+=(--disable-rofiles-fuse)
+    echo -e "${YELLOW}rofiles-fuse disabled${NC}"
+fi
+
+# Use a temp manifest with no-debuginfo if requested
+MANIFEST="$MANIFEST_BASE"
+MANIFEST_NO_DEBUG="scripts/flatpak/${APP_ID}.no-debug.yml"
+if [[ "$NO_DEBUGINFO" == true ]]; then
+    MANIFEST="$MANIFEST_NO_DEBUG"
+    sed '/^build-options:/a\  no-debuginfo: true\n  strip: true' \
+        "$MANIFEST_BASE" > "$MANIFEST"
+    echo -e "${YELLOW}Debug info disabled (using temp manifest)${NC}"
+fi
+
 if ! flatpak-builder \
     "${BUILDER_ARGS[@]}" \
     "$BUILD_DIR/build-dir" \
-    scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml; then
+    "$MANIFEST"; then
     echo -e "${RED}Error: flatpak-builder failed${NC}"
     echo -e "${YELLOW}Check the build log above for details${NC}"
+    rm -f "$MANIFEST_NO_DEBUG"
     exit 1
 fi
+
+# Clean up temp manifest
+rm -f "$MANIFEST_NO_DEBUG"
 
 # Create bundle (app only; runtime comes from Flathub — matches GitHub flatpak-github-actions)
 FLATHUB_RUNTIME_REPO="https://flathub.org/repo/flathub.flatpakrepo"
@@ -340,7 +379,7 @@ if ! flatpak build-bundle \
     --arch="$ARCH" \
     "$BUILD_DIR/repo" \
     "$BUNDLE_NAME" \
-    io.github.Snapmaker.Snapmaker_Orca; then
+    "$APP_ID"; then
     echo -e "${RED}Error: Failed to create Flatpak bundle${NC}"
     exit 1
 fi
@@ -360,10 +399,10 @@ echo -e "flatpak install --user flathub org.gnome.Platform//49 org.gnome.Sdk//49
 echo -e "flatpak install --user $BUNDLE_NAME"
 echo ""
 echo -e "${BLUE}To run Snapmaker_Orca:${NC}"
-echo -e "flatpak run io.github.Snapmaker.Snapmaker_Orca"
+echo -e "flatpak run $APP_ID"
 echo ""
 echo -e "${BLUE}To uninstall:${NC}"
-echo -e "flatpak uninstall --user io.github.Snapmaker.Snapmaker_Orca"
+echo -e "flatpak uninstall --user $APP_ID"
 echo ""
 if [[ "$FORCE_CLEAN" != true ]]; then
     echo -e "${BLUE}Cache Management:${NC}"
@@ -371,3 +410,6 @@ if [[ "$FORCE_CLEAN" != true ]]; then
     echo -e "• To force a clean build: $0 -f"
     echo -e "• To clean cache manually: rm -rf $CACHE_DIR"
 fi
+
+elapsed=$SECONDS
+printf "\nBuild completed in %dh %dm %ds\n" $((elapsed/3600)) $((elapsed%3600/60)) $((elapsed%60))

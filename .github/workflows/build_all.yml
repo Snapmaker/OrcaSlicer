@@ -1,6 +1,7 @@
 name: Build all
 
 on:
+  # Snapmaker fork policy: no push/PR triggers, one nightly build.
   schedule:
     - cron: '0 18 * * *' # everyday 2:00(beijing time UTC+8)
 
@@ -16,35 +17,184 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
   
 
 jobs:
-  build_all:
-    name: Build All
+  build_linux:
     strategy:
       fail-fast: false
+      # SELF_HOSTED skips arm64 (no arm self-hosted server). amd64's empty arch
+      # is load-bearing: it keeps the historical 'linux-clang' deps cache key and
+      # the unsuffixed asset names.
       matrix:
-        include:
-          # Deprecate 20.04appimage
-          # - os: ubuntu-20.04
-          - os: ubuntu-24.04
-          - os: windows-2022
-          - os: macos-14
-            arch: arm64
+        include: ${{ fromJSON(vars.SELF_HOSTED
+          && '[{"arch":"","os":"orca-lnx-server"}]'
+          || '[{"arch":"","os":"ubuntu-24.04"},{"arch":"aarch64","os":"ubuntu-24.04-arm"}]') }}
+    # Don't run scheduled builds on forks:
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'Snapmaker/OrcaSlicer') }}
     uses: ./.github/workflows/build_check_cache.yml
     with:
       os: ${{ matrix.os }}
       arch: ${{ matrix.arch }}
       build-deps-only: ${{ inputs.build-deps-only || false }}
+      force-build: ${{ inputs.force-build || false }}
     secrets: inherit
+  build_windows:
+    name: Build Windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      # SELF_HOSTED skips arm64 (the self-hosted Windows server is x64-only).
+      matrix:
+        include: ${{ fromJSON(vars.SELF_HOSTED
+          && '[{"arch":"x64","os":"orca-win-server"}]'
+          || '[{"arch":"x64","os":"windows-latest"},{"arch":"arm64","os":"windows-11-arm"}]') }}
+    # Don't run scheduled builds on forks:
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'Snapmaker/OrcaSlicer') }}
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
+      build-deps-only: ${{ inputs.build-deps-only || false }}
+      force-build: ${{ inputs.force-build || false }}
+    secrets: inherit
+  build_macos_arch:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - arm64
+          - x86_64
+    # Don't run scheduled builds on forks:
+    if: ${{ !cancelled() && (github.event_name != 'schedule' || github.repository == 'Snapmaker/OrcaSlicer') }}
+    uses: ./.github/workflows/build_check_cache.yml
+    with:
+      os: ${{ vars.SELF_HOSTED && 'orca-macos-arm64' || 'macos-14' }}
+      arch: ${{ matrix.arch }}
+      build-deps-only: ${{ inputs.build-deps-only || false }}
+      force-build: ${{ inputs.force-build || false }}
+    secrets: inherit
+  build_macos_universal:
+    name: Build macOS Universal
+    needs: build_macos_arch
+    if: ${{ !cancelled() && needs.build_macos_arch.result == 'success' && !inputs.build-deps-only && (github.event_name != 'schedule' || github.repository == 'Snapmaker/OrcaSlicer') }}
+    uses: ./.github/workflows/build_orca.yml
+    with:
+      os: ${{ vars.SELF_HOSTED && 'orca-macos-arm64' || 'macos-14' }}
+      arch: universal
+      macos-combine-only: true
+    secrets: inherit
+  # The macOS dSYM is only produced by the universal combine leg above, so it is
+  # uploaded here rather than from build_deps.yml (which handles the Windows PDB).
+  upload_symbols_macos:
+    name: Upload macOS Debug Symbols to Sentry
+    needs: build_macos_universal
+    if: ${{ !cancelled() && needs.build_macos_universal.result == 'success' && !vars.SELF_HOSTED }}
+    uses: ./.github/workflows/sentry_cli.yml
+    with:
+      os: macos-14
+      dsym-artifact-name: dSYM_Mac_${{ needs.build_macos_universal.outputs.release }}
+      release: ${{ needs.build_macos_universal.outputs.release || github.sha }}
+    secrets: inherit
+  # One test job per built arch, on the runner that built it.
+  unit_tests_linux_x86_64:
+    name: Linux x86_64
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: ${{ vars.SELF_HOSTED && 'orca-lnx-server' || 'ubuntu-24.04' }}
+      artifact: ${{ github.sha }}-tests-linux-x86_64
+  unit_tests_linux_aarch64:
+    name: Linux aarch64
+    needs: build_linux
+    if: ${{ !cancelled() && success() && !vars.SELF_HOSTED }}
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: ubuntu-24.04-arm
+      artifact: ${{ github.sha }}-tests-linux-aarch64
+  unit_tests_windows_x64:
+    name: Windows x64
+    needs: build_windows
+    if: ${{ !cancelled() && success() }}
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: ${{ vars.SELF_HOSTED && 'orca-win-server' || 'windows-latest' }}
+      artifact: ${{ github.sha }}-tests-windows-x64
+  unit_tests_windows_arm64:
+    name: Windows arm64
+    needs: build_windows
+    if: ${{ !cancelled() && success() && !vars.SELF_HOSTED }}
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: windows-11-arm
+      artifact: ${{ github.sha }}-tests-windows-arm64
+      test-dir: build-arm64/tests
+  unit_tests_macos_arm64:
+    name: macOS arm64
+    needs: build_macos_arch
+    if: ${{ !cancelled() && success() }}
+    uses: ./.github/workflows/unit_tests.yml
+    with:
+      os: ${{ vars.SELF_HOSTED && 'orca-macos-arm64' || 'macos-14' }}
+      artifact: ${{ github.sha }}-tests-macos-arm64
+      test-dir: build/arm64/tests
+  # Slice a two-colour cube through every shipped printer so all custom g-code
+  # (change_filament_gcode, machine start/end, etc.) is expanded - catches
+  # slicing regressions the static profile checks and unit tests can't see.
+  # Profile-only PRs are covered by check_profiles.yml's nightly binary; this
+  # covers src/engine PRs with the PR-built binary.
+  slice_check_linux:
+    name: Slice check (Linux ${{ vars.SELF_HOSTED && 'x86_64' || 'aarch64' }})
+    needs: build_linux
+    if: ${{ !cancelled() && success() }}
+    # Follows whichever Linux leg built the validator.
+    runs-on: ${{ vars.SELF_HOSTED && 'orca-lnx-server' || 'ubuntu-24.04-arm' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Download profile validator
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ github.sha }}-profile-validator-linux-${{ vars.SELF_HOSTED && 'x86_64' || 'aarch64' }}
+          path: validator-bin
+      - name: Validate slice (expand custom g-code)
+        timeout-minutes: 60
+        run: |
+          chmod +x validator-bin/Snapmaker_Orca_profile_validator
+          ./validator-bin/Snapmaker_Orca_profile_validator -p "${{ github.workspace }}/resources/profiles" -s -l 2
+  publish_test_results:
+    name: Publish Test Results
+    needs: [unit_tests_linux_x86_64, unit_tests_linux_aarch64, unit_tests_windows_x64, unit_tests_windows_arm64, unit_tests_macos_arm64]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Test Results
+        uses: actions/download-artifact@v8
+        with:
+          pattern: test-results-*
+          path: test-results
+      # Best-effort: a read-only token (e.g. fork PRs) can't write the check, so
+      # don't let a publish failure fail the run. The test jobs gate correctness.
+      - name: Publish Test Results
+        continue-on-error: true
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: "test-results/**/*.xml"
+      - name: Delete Test Results
+        if: success()
+        uses: geekyeggo/delete-artifact@v6
+        with:
+          name: test-results-*
+          failOnError: false
   flatpak:
     name: "Flatpak"
     concurrency:
       group: flatpak-${{ matrix.variant.arch }}-${{ github.ref }}
       cancel-in-progress: false
     container:
+      # Must track `runtime-version` in scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
       volumes:
@@ -52,40 +202,77 @@ jobs:
         - /usr/share/dotnet:/usr/share/dotnet
         - /opt/ghc:/opt/ghc1
         - /usr/local/share/boost:/usr/local/share/boost1
+        - /opt/hostedtoolcache:/opt/hostedtoolcache1
     strategy:
+      fail-fast: false
       matrix:
         variant:
           - arch: x86_64
             runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
+    # Don't run scheduled builds on forks; skip entirely on self-hosted runners
+    if: ${{ !cancelled() && !vars.SELF_HOSTED && (github.event_name != 'schedule' || github.repository == 'Snapmaker/OrcaSlicer') }}
+
     runs-on: ${{ matrix.variant.runner }}
     env:
       date:
       ver:
       ver_pure:
+      # Belt-printer nightlies share the main nightly release but carry a `_belt`
+      # suffix so they never overwrite the main assets.
+      nightly_suffix: ${{ github.ref == 'refs/heads/belt-printer' && '_belt' || '' }}
     steps:
     - name: "Remove unneeded stuff to free disk space"
       run:
-        rm -rf /usr/local/lib/android/* /usr/share/dotnet/* /opt/ghc1/* "/usr/local/share/boost1/*"
-    - uses: actions/checkout@v5
+        rm -rf /usr/local/lib/android/* /usr/share/dotnet/* /opt/ghc1/* "/usr/local/share/boost1/*" /opt/hostedtoolcache1/*
+    - uses: actions/checkout@v7
     - name: Get the version and date
       run: |
         ver_pure=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
           ver="PR-${{ github.event.number }}"
+          git_commit_hash="${{ github.event.pull_request.head.sha }}"
         else
           ver=V$ver_pure
+          git_commit_hash="${{ github.sha }}"
         fi
         echo "ver=$ver" >> $GITHUB_ENV
         echo "ver_pure=$ver_pure" >> $GITHUB_ENV
         echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
+        echo "git_commit_hash=$git_commit_hash" >> $GITHUB_ENV
       shell: bash
-    - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+    # Manage flatpak-builder cache externally so PRs restore but never upload
+    - name: Restore flatpak-builder cache
+      if: github.event_name == 'pull_request'
+      uses: actions/cache/restore@v6
+      with:
+        path: .flatpak-builder
+        key: flatpak-builder-${{ matrix.variant.arch }}-${{ github.event.pull_request.base.sha }}
+        restore-keys: flatpak-builder-${{ matrix.variant.arch }}-
+    - name: Save/restore flatpak-builder cache
+      if: github.event_name != 'pull_request'
+      uses: actions/cache@v6
+      with:
+        path: .flatpak-builder
+        key: flatpak-builder-${{ matrix.variant.arch }}-${{ github.sha }}
+        restore-keys: flatpak-builder-${{ matrix.variant.arch }}-
+    - name: Disable debug info for faster CI builds
+      run: |
+        sed -i '/^build-options:/a\  no-debuginfo: true\n  strip: true' \
+          scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
+      shell: bash
+    - name: Inject git commit hash into Flatpak manifest
+      run: |
+        sed -i "/name: Snapmaker_Orca/{n;s|buildsystem: simple|buildsystem: simple\n    build-options:\n      env:\n        git_commit_hash: \"$git_commit_hash\"|}" \
+          scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
+      shell: bash
+    - uses: flatpak/flatpak-github-actions/flatpak-builder@master
       with:
         bundle: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         manifest-path: scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.yml
-        cache: true
+        # .flatpak-builder is cached by the explicit actions/cache steps above.
+        cache: false
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
     - name: Find Flatpak bundle file
@@ -116,14 +303,14 @@ jobs:
       shell: bash
 
     - name: Upload artifacts Flatpak
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: Snapmaker_Orca-Linux-flatpak_${{ env.ver }}_${{ matrix.variant.arch }}.flatpak
         path: ${{ steps.find_bundle.outputs.path }}
         if-no-files-found: error
 
     - name: Deploy Flatpak to nightly release
-      if: ${{github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final'}}
+      if: ${{ github.repository == 'Snapmaker/OrcaSlicer' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/2.3.0-final') }}
       uses: WebFreak001/deploy-nightly@v3.2.0
       with:
         upload_url: https://uploads.github.com/repos/Snapmaker/OrcaSlicer/releases/169912305/assets{?name,label}

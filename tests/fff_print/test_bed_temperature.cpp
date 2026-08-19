@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Print.hpp"
@@ -6,7 +6,7 @@
 #include <regex>
 #include <string>
 
-#include "test_data.hpp"
+#include "test_helpers.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -50,42 +50,52 @@ TEST_CASE("Single filament bed temperature is unchanged", "[BedTemperature]")
 // higher value, even if the first printing extruder (wall) is the low-temperature one.
 TEST_CASE("Mixed print uses the highest bed temperature", "[BedTemperature]")
 {
-    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
-    config.set_num_extruders(2);
-    config.set_num_filaments(2);
-    config.set_deserialize_strict({
+    // multifilament_config() is the only way to get a real 2-filament print here: the filament
+    // count is derived from filament_diameter, which it sizes (along with the distinct colours and
+    // the flush matrix). DynamicPrintConfig::set_num_filaments() is a no-op in this codebase
+    // (PrintConfigDef never calls init_filament_option_keys(), so filament_option_keys() is empty),
+    // and with a single configured filament Print::apply clamps every feature filament id back to 1.
+    // The feature selectors are the *_filament_id keys, where 0 means "inherit".
+    DynamicPrintConfig config = multifilament_config(2, {
         { "curr_bed_type", "High Temp Plate" },
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
-        // Wall printed by extruder 1 (0-based 0, low bed temp 35C), infill by extruder 2 (0-based 1, 65C).
-        { "wall_filament", 1 },
-        { "sparse_infill_filament", 2 },
-        { "solid_infill_filament", 2 }
+        // Walls print with filament 1 (low bed temp 35C), infill and solid surfaces with filament 2
+        // (65C), so the first layer already carries both filaments.
+        { "outer_wall_filament_id", 1 },
+        { "inner_wall_filament_id", 1 },
+        { "sparse_infill_filament_id", 2 },
+        { "internal_solid_filament_id", 2 },
+        { "top_surface_filament_id", 2 },
+        { "bottom_surface_filament_id", 2 }
     });
     std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
     REQUIRE(first_layer_bed_temp(gcode) == 65);
     REQUIRE(later_layer_bed_temp(gcode) == 60);
 }
 
-// All paths: with wall_loops = 0 the brim-introduced wall_filament extruder must be included in the
-// max, even though it is not the first printing extruder of the object.
-TEST_CASE("Brim-introduced extruder is covered when wall_loops is zero", "[BedTemperature]")
+// The brim follows the wall filament: with the walls (and therefore the brim) on the hot 65C
+// filament, the first layer's bed temperature must be the max, even though the object's infill and
+// solid surfaces print with the cold 35C filament and the walls are not the first printing filament.
+// NOTE: the btfHighestTemp formula maxes over the filaments in the first layer's *tool ordering*,
+// which is driven by the layer's extrusion entities. A filament that only a brim would introduce
+// (wall_loops = 0, i.e. no perimeter entities at all) is not part of that set, so the object keeps
+// one wall loop here.
+TEST_CASE("Brim/wall filament raises the bed temperature", "[BedTemperature]")
 {
-    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
-    config.set_num_extruders(2);
-    config.set_num_filaments(2);
-    config.set_deserialize_strict({
+    DynamicPrintConfig config = multifilament_config(2, {
         { "curr_bed_type", "High Temp Plate" },
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
-        // No walls. Infill uses extruder 1 (0-based 0, 35C); the brim follows wall_filament
-        // (extruder 2, 0-based 1, 65C) and must raise the bed temperature.
-        { "wall_loops", 0 },
+        { "wall_loops", 1 },
         { "brim_width", 5 },
         { "brim_type", "auto_brim" },
-        { "wall_filament", 2 },
-        { "sparse_infill_filament", 1 },
-        { "solid_infill_filament", 1 }
+        { "outer_wall_filament_id", 2 },
+        { "inner_wall_filament_id", 2 },
+        { "sparse_infill_filament_id", 1 },
+        { "internal_solid_filament_id", 1 },
+        { "top_surface_filament_id", 1 },
+        { "bottom_surface_filament_id", 1 }
     });
     std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);
     REQUIRE(first_layer_bed_temp(gcode) == 65);
@@ -96,16 +106,16 @@ TEST_CASE("Brim-introduced extruder is covered when wall_loops is zero", "[BedTe
 // (this is the path used by the Snapmaker U1 start gcode).
 TEST_CASE("bed_temperature_initial_layer_single expands to the max", "[BedTemperature]")
 {
-    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
-    config.set_num_extruders(2);
-    config.set_num_filaments(2);
-    config.set_deserialize_strict({
+    DynamicPrintConfig config = multifilament_config(2, {
         { "curr_bed_type", "High Temp Plate" },
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
-        { "wall_filament", 1 },
-        { "sparse_infill_filament", 2 },
-        { "solid_infill_filament", 2 },
+        { "outer_wall_filament_id", 1 },
+        { "inner_wall_filament_id", 1 },
+        { "sparse_infill_filament_id", 2 },
+        { "internal_solid_filament_id", 2 },
+        { "top_surface_filament_id", 2 },
+        { "bottom_surface_filament_id", 2 },
         { "machine_start_gcode", "M190 S{bed_temperature_initial_layer_single}" }
     });
     std::string gcode = Slic3r::Test::slice({TestMesh::cube_20x20x20}, config);

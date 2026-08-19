@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
@@ -307,33 +307,33 @@ TEST_CASE("Mixed filament apparent mix percent follows the signed bias target", 
 TEST_CASE("Mixed filament bias helper maps signed bias to a one-sided safe offset pair", "[MixedFilament]")
 {
     const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.06f, 0.4f);
-    CHECK(offset_a == Approx(0.0f));
-    CHECK(offset_b == Approx(0.06f));
+    CHECK(offset_a == Catch::Approx(0.0f));
+    CHECK(offset_b == Catch::Approx(0.06f));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Approx(0.06f));
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Catch::Approx(0.06f));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Approx(-0.02f));
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Approx(0.02f));
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Catch::Approx(-0.02f));
+    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Catch::Approx(0.02f));
 
     const auto [negative_a, negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.06f, 0.4f);
-    CHECK(negative_a == Approx(0.06f));
-    CHECK(negative_b == Approx(0.0f));
+    CHECK(negative_a == Catch::Approx(0.06f));
+    CHECK(negative_b == Catch::Approx(0.0f));
 
     const auto [unclamped_a, unclamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.30f, 0.4f);
-    CHECK(unclamped_a == Approx(0.0f));
-    CHECK(unclamped_b == Approx(0.30f));
+    CHECK(unclamped_a == Catch::Approx(0.0f));
+    CHECK(unclamped_b == Catch::Approx(0.30f));
 
     const auto [unclamped_negative_a, unclamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.30f, 0.4f);
-    CHECK(unclamped_negative_a == Approx(0.30f));
-    CHECK(unclamped_negative_b == Approx(0.0f));
+    CHECK(unclamped_negative_a == Catch::Approx(0.30f));
+    CHECK(unclamped_negative_b == Catch::Approx(0.0f));
 
     const auto [clamped_a, clamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.40f, 0.4f);
-    CHECK(clamped_a == Approx(0.0f));
-    CHECK(clamped_b == Approx(0.35f));
+    CHECK(clamped_a == Catch::Approx(0.0f));
+    CHECK(clamped_b == Catch::Approx(0.35f));
 
     const auto [clamped_negative_a, clamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.40f, 0.4f);
-    CHECK(clamped_negative_a == Approx(0.35f));
-    CHECK(clamped_negative_b == Approx(0.0f));
+    CHECK(clamped_negative_a == Catch::Approx(0.35f));
+    CHECK(clamped_negative_b == Catch::Approx(0.0f));
 }
 
 TEST_CASE("Mixed filament component surface offsets follow the signed bias target across alternating layers", "[MixedFilament]")
@@ -515,11 +515,12 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     REQUIRE(row.manual_pattern == "12,1");
 
     PrintRegionConfig region_config = static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults());
-    region_config.wall_filament.value                  = 3;
+    region_config.outer_wall_filament_id.value         = 3;
+    region_config.inner_wall_filament_id.value         = 3;
     region_config.wall_loops.value                     = 2;
     region_config.sparse_infill_density.value          = 15.;
-    region_config.sparse_infill_filament.value         = 2;
-    region_config.solid_infill_filament.value          = 3;
+    region_config.sparse_infill_filament_id.value      = 2;
+    region_config.internal_solid_filament_id.value     = 3;
 
     PrintRegion region(region_config);
 
@@ -537,21 +538,21 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     layer1.mixed_mgr         = &mgr;
     layer1.num_physical      = 2;
 
-    CHECK(layer0.wall_filament(region) == 0);
-    CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 1);
-    CHECK(layer1.sparse_infill_filament(region) == 1);
-    CHECK(layer0.solid_infill_filament(region) == 0);
-    CHECK(layer1.solid_infill_filament(region) == 0);
+    CHECK(layer0.wall_extruder_id(region) == 0);
+    CHECK(layer1.wall_extruder_id(region) == 1);
+    CHECK(layer0.sparse_infill_filament_id(region) == 1);
+    CHECK(layer1.sparse_infill_filament_id(region) == 1);
+    CHECK(layer0.internal_solid_filament_id(region) == 0);
+    CHECK(layer1.internal_solid_filament_id(region) == 0);
 
-    region_config.sparse_infill_filament.value          = 2;
-    region_config.solid_infill_filament.value           = 2;
+    region_config.sparse_infill_filament_id.value       = 2;
+    region_config.internal_solid_filament_id.value      = 2;
     PrintRegion overridden_region(region_config);
 
-    CHECK(layer0.sparse_infill_filament(overridden_region) == 1);
-    CHECK(layer1.sparse_infill_filament(overridden_region) == 1);
-    CHECK(layer0.solid_infill_filament(overridden_region) == 1);
-    CHECK(layer1.solid_infill_filament(overridden_region) == 1);
+    CHECK(layer0.sparse_infill_filament_id(overridden_region) == 1);
+    CHECK(layer1.sparse_infill_filament_id(overridden_region) == 1);
+    CHECK(layer0.internal_solid_filament_id(overridden_region) == 1);
+    CHECK(layer1.internal_solid_filament_id(overridden_region) == 1);
 }
 
 TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")

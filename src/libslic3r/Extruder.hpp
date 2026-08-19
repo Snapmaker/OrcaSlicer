@@ -17,8 +17,8 @@ public:
     void   reset() {
         // BBS
         if (m_share_extruder) {
-            m_share_E = 0.;
-            m_share_retracted = 0.;
+            m_share_E = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
+            m_share_retracted = std::vector<double>(MAXIMUM_EXTRUDER_NUMBER, 0);
         } else {
             m_E             = 0;
             m_retracted     = 0;
@@ -29,11 +29,19 @@ public:
 
     unsigned int id() const { return m_id; }
 
+    // Column of the per-variant filament/override arrays the getters read. Defaults to the
+    // filament id (one column per filament); the g-code generator refreshes it on layer changes
+    // and toolchanges when a per-layer nozzle grouping gives a filament several variant columns.
+    int  config_index() const { return m_config_index; }
+    // idx < 0 resets to the filament id. Re-syncs the cached e_per_mm3 flow term.
+    void set_config_index(int idx);
+
+    unsigned int extruder_id() const;
     double extrude(double dE);
     double retract(double length, double restart_extra);
     double unretract();
-    double E() const { return m_share_extruder ? m_share_E : m_E; }
-    void   reset_E() { m_E = 0.; m_share_E = 0.; }
+    double E() const { return m_share_extruder ? m_share_E[extruder_id()] : m_E; }
+    void   reset_E() { m_E = 0.; m_share_E[extruder_id()] = 0.; }
     // e_per_mm is extrusion_per_mm = geometric volume * (filament flow ratio / cross-sectional area)  [Doesn't account for print_flow_ratio, or modifiers like bridge flow ratio etc.]
     double e_per_mm(double mm3_per_mm) const { return mm3_per_mm * m_e_per_mm3; }
     // e_per_mm3 is extrusion_per_mm3 = filament flow ratio / cross-sectional area    [Doesn't account for print_flow_ratio, or modifiers like bridge flow ratio etc.]
@@ -50,6 +58,10 @@ public:
     double retracted() const { return m_retracted; }
     // Get extra retraction planned after
     double restart_extra() const { return m_restart_extra; }
+    // Share-aware retracted-length readers (for extruders shared between filaments), consumed by GCodeWriter::get_extruder_retracted_length.
+    bool   is_share_extruder() const { return m_share_extruder; }
+    double get_single_retracted_length() const { return m_retracted; }
+    double get_share_retracted_length() const { return m_share_retracted[extruder_id()]; }
     // Setters for the PlaceholderParser.
     // Set current extruder position. Only applicable with absolute extruder addressing.
     void   set_position(double e) { m_E = e; }
@@ -62,6 +74,8 @@ public:
     double filament_cost() const;
     double filament_flow_ratio() const;
     double retract_before_wipe() const;
+    // Orca:
+    double retract_after_wipe() const;
     double retraction_length() const;
     double retract_lift() const;
     int    retract_speed() const;
@@ -81,6 +95,8 @@ private:
     GCodeConfig *m_config;
     // Print-wide global ID of this extruder.
     unsigned int m_id;
+    // Column into the per-variant filament/override arrays; equals m_id unless refreshed.
+    int          m_config_index{0};
     // Current state of the extruder axis, may be resetted if use_relative_e_distances.
     double       m_E;
     // Current state of the extruder tachometer, used to output the extruded_volume() and used_filament() statistics.
@@ -94,8 +110,8 @@ private:
     // BBS.
     // Create shared E and retraction data for single extruder multi-material machine
     bool          m_share_extruder;
-    static double m_share_E;
-    static double m_share_retracted;
+    static std::vector<double> m_share_E;
+    static std::vector<double> m_share_retracted;
 };
 
 // Sort Extruder objects by the extruder id by default.

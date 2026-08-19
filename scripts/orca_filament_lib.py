@@ -131,7 +131,8 @@ def update_profile_library(vendor="",profile_type="filament"):
                 library = json.load(f)
                 library[profile_section] = sorted_profiles
                 f.seek(0)
-                json.dump(library, f, indent=4, ensure_ascii=False)
+                json.dump(library, f, indent="\t", ensure_ascii=False)
+                f.write('\n')
                 f.truncate()
                 
             print(f"Profile library for {vendor} updated successfully!")
@@ -160,6 +161,9 @@ def clean_up_profile(vendor="", profile_type="", force=False):
         for root, dirs, files in os.walk(profile_dir):
             for file in files:
                 if file.lower().endswith('.json'):
+                    if file == 'filaments_color_codes.json': # Ignore non-profile file
+                        continue
+                    
                     full_path = os.path.join(root, file)
                     
                     # Get relative path from base directory
@@ -190,11 +194,44 @@ def clean_up_profile(vendor="", profile_type="", force=False):
                                     print(f"Removed {field} field from {file}")
                                     need_update = True
 
+                            # Handle `extruder_clearance_radius`.
+                            if 'extruder_clearance_radius' in _profile and 'extruder_clearance_max_radius' in _profile:
+                                # BBS renamed `extruder_clearance_radius` to `extruder_clearance_max_radius`
+                                # however some of their profiles have both options exists with different value, which
+                                # could cause very bad consequence such as toolhead collision.
+                                # Here we make sure only one of these options exist, and if both present, we keep
+                                # the one with greater value.
+                                need_update = True
+                                if float(_profile['extruder_clearance_max_radius']) > float(_profile['extruder_clearance_radius']):
+                                    del _profile['extruder_clearance_radius']
+                                else:
+                                    del _profile['extruder_clearance_max_radius']
+
+                            # Convert filament fields to arrays if not already
+                            if profile_type == 'filament':
+                                fields_to_arrayify = ['filament_cost', 'filament_density', 'filament_type', "temperature_vitrification", "filament_max_volumetric_speed", "filament_vendor"]
+                                for field in fields_to_arrayify:
+                                    if field in _profile and not isinstance(_profile[field], list):
+                                        original_value = _profile[field]
+                                        _profile[field] = [original_value]
+                                        print(f"Converted {field} to array in {file}")
+                                        need_update = True
+
+                                # remove following fields from filament profile
+                                fields_to_remove = ['initial_layer_print_speed', 'outer_wall_speed', 'inner_wall_speed', 'infill_speed', 'top_surface_speed', 'travel_speed']
+                                for field in fields_to_remove:
+                                    if field in _profile:
+                                        del _profile[field]
+                                        print(f"Removed {field} field from {file}")
+                                        need_update = True
+
+
                             if need_update or force:
                                 # write back to file
                                 f.seek(0)
                                 ordered_profile = create_ordered_profile(_profile, ['type', 'name', 'renamed_from', 'inherits', 'from', 'setting_id', 'filament_id', 'instantiation'])
-                                json.dump(ordered_profile, f, indent=4, ensure_ascii=False)
+                                json.dump(ordered_profile, f, indent="\t", ensure_ascii=False)
+                                f.write('\n')
                                 f.truncate()
                                 print(f"Updated profile: {full_path}")
                     except Exception as e:
@@ -238,7 +275,8 @@ def rename_filament_system(vendor="OrcaFilamentLibrary"):
                         
                         if modified:
                             with open(full_path, 'w', encoding='utf-8') as f:
-                                json.dump(data, f, indent=4, ensure_ascii=False)
+                                json.dump(data, f, indent="\t", ensure_ascii=False)
+                                f.write('\n')
                             print(f"Updated {full_path}")
                             
                 except Exception as e:

@@ -79,7 +79,7 @@ else()
   )
 endif()
 
-Snapmaker_Orca_add_cmake_project(Sentry
+orcaslicer_add_cmake_project(Sentry
   GIT_REPOSITORY      https://github.com/getsentry/sentry-native.git
   GIT_TAG             0.12.2
   GIT_SHALLOW         ON

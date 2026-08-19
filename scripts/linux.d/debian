@@ -1,6 +1,4 @@
 #!/bin/bash
-export FOUND_GTK3
-FOUND_GTK3=$(dpkg -l libgtk* | grep gtk-3 || echo '')
 
 REQUIRED_DEV_PACKAGES=(
     autoconf
@@ -9,8 +7,10 @@ REQUIRED_DEV_PACKAGES=(
     eglexternalplatform-dev
     extra-cmake-modules
     file
+    g++
     gettext
     git
+    gstreamer1.0-gtk3
     libcurl4-openssl-dev
     libdbus-1-dev
     libglew-dev
@@ -22,6 +22,8 @@ REQUIRED_DEV_PACKAGES=(
     libssl-dev
     libtool
     libudev-dev
+    clang
+    lld
     ninja-build
     texinfo
     wget
@@ -36,7 +38,7 @@ then
         if dpkg --compare-versions "${VERSION_ID}" ge 22 && dpkg --compare-versions "${VERSION_ID}" lt 24 ;
         then
             # Some extra packages needed on Ubuntu 22.x and 23.x:
-            REQUIRED_DEV_PACKAGES+=(curl libfuse-dev libssl-dev libcurl4-openssl-dev m4)
+            REQUIRED_DEV_PACKAGES+=(curl libfuse-dev m4)
         fi
     fi
 

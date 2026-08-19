@@ -6,6 +6,8 @@
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
 
+#include "DeviceCore/DevManager.h"
+
 
 namespace Slic3r {
 
@@ -60,7 +62,7 @@ int UserManager::parse_json(std::string payload)
                             GUI::MessageDialog msgdialog(nullptr, _L("Log in successful."), "", wxAPPLY | wxOK);
                             msgdialog.ShowModal();
                         }
-                        dev->update_user_machine_list_info();
+                        dev->update_user_machine_list_info(GUI::wxGetApp().get_printer_cloud_provider());
                         dev->set_selected_machine(dev_id);
                         return 0;
                     }

@@ -65,9 +65,13 @@
 #define CLI_OBJECT_COLLISION_IN_SEQ_PRINT   -63
 #define CLI_OBJECT_COLLISION_IN_LAYER_PRINT -64
 #define CLI_SPIRAL_MODE_INVALID_PARAMS      -65
+#define CLI_FILAMENT_CAN_NOT_MAP      -66
+#define CLI_ONLY_ONE_TPU_SUPPORTED      -67
+#define CLI_FILAMENTS_NOT_SUPPORTED_BY_EXTRUDER  -68
 
 #define CLI_SLICING_ERROR                  -100
 #define CLI_GCODE_PATH_CONFLICTS           -101
+#define CLI_GCODE_PATH_IN_UNPRINTABLE_AREA -102
 
 
 namespace boost { namespace filesystem { class directory_entry; }}
@@ -75,12 +79,14 @@ namespace boost { namespace filesystem { class directory_entry; }}
 namespace Slic3r {
 
 extern void set_logging_level(unsigned int level);
+extern void set_logging_file(const std::string &file);
 extern unsigned int level_string_to_boost(std::string level);
 extern std::string  get_string_logging_level(unsigned level);
 extern unsigned get_logging_level();
 extern void trace(unsigned int level, const char *message);
 // Format memory allocated, separate thousands by comma.
 extern std::string format_memsize_MB(size_t n);
+extern std::string format_memsize(size_t bytes, unsigned int decimals = 1);
 // Return string to be added to the boost::log output to inform about the current process memory allocation.
 // The string is non-empty if the loglevel >= info (3) or ignore_loglevel==true.
 // Latter is used to get the memory info from SysInfoDialog.
@@ -102,6 +108,9 @@ void set_var_dir(const std::string &path);
 const std::string& var_dir();
 // Return a full resource path for a file_name.
 std::string var(const std::string &file_name);
+
+// Snap a nozzle diameter to the closest supported value and format it as a string (e.g. 0.4 -> "0.4").
+std::string format_diameter_to_str(double diameter, int precision = 1);
 
 // Set a path with various static definition data (for example the initial config bundles).
 void set_resources_dir(const std::string &path);
@@ -136,6 +145,29 @@ inline DataType round_divide(DataType dividend, DataType divisor) //!< Return di
     return (dividend + divisor / 2) / divisor;
 }
 
+template <typename From, typename To>
+std::vector<To> convert_vector(const std::vector<From>& src) {
+    std::vector<To> dst;
+    dst.reserve(src.size());
+    for (const auto& elem : src) {
+        if constexpr (std::is_signed_v<To>) {
+            if (elem > static_cast<From>(std::numeric_limits<To>::max())) {
+                throw std::overflow_error("Source value exceeds destination maximum");
+            }
+            if (elem < static_cast<From>(std::numeric_limits<To>::min())) {
+                throw std::underflow_error("Source value below destination minimum");
+            }
+        }
+        else {
+            if (elem < 0) {
+                throw std::invalid_argument("Negative value in source for unsigned destination");
+            }
+        }
+        dst.push_back(static_cast<To>(elem));
+    }
+    return dst;
+}
+
 // Set a path with GUI localization files.
 void set_local_dir(const std::string &path);
 // Return a full path to the localization directory.
@@ -148,6 +180,9 @@ const std::string& sys_shapes_dir();
 
 // Return a full path to the custom shapes gallery directory.
 std::string custom_shapes_dir();
+
+// Return a full path to the handy models directory.
+std::string handy_models_dir();
 
 // Set a path with shapes gallery files.
 void set_custom_gcodes_dir(const std::string &path);
@@ -173,6 +208,8 @@ void set_log_path_and_level(const std::string& file, unsigned int level);
  * TODO : This interface may have truncation issues.
  */
 void flush_logs();
+void shutdown_console_logging();
+boost::filesystem::path get_log_file_name();
 
 // A special type for strings encoded in the local Windows 8-bit code page.
 // This type is only needed for Perl bindings to relay to Perl that the string is raw, not UTF-8 encoded.
@@ -189,6 +226,7 @@ extern size_t get_utf8_sequence_length(const char *seq, size_t size);
 extern local_encoded_string encode_path(const char *src);
 extern std::string decode_path(const char *src);
 extern std::string normalize_utf8_nfc(const char *src);
+extern std::vector<std::string> split_string(const std::string &str, char delimiter);
 
 // Safely rename a file even if the target exists.
 // On Windows, the file explorer (or anti-virus or whatever else) often locks the file
@@ -210,7 +248,7 @@ CopyFileResult copy_file_inner(const std::string &from, const std::string &to, s
 // of the source file before renaming.
 // Additional error info is passed in error message.
 extern CopyFileResult copy_file(const std::string &from, const std::string &to, std::string& error_message, const bool with_check = false);
-
+extern bool           copy_framework(const std::string &from, const std::string &to);
 // Compares two files if identical.
 extern CopyFileResult check_copy(const std::string& origin, const std::string& copy);
 
@@ -279,6 +317,10 @@ std::string header_gcodeviewer_generated();
 
 // getpid platform wrapper
 extern unsigned get_current_pid();
+// Per-user id for isolating temp dirs; empty on Windows (its temp dir is already per-user).
+std::string per_user_temp_id();
+// Per-user temp root under `base`; an empty `user_id` returns `base` unchanged.
+std::string per_user_temp_dir(const std::string &base, const std::string &user_id);
 // BBS: backup & restore
 std::string get_process_name(int pid);
 
@@ -689,7 +731,13 @@ inline std::string filter_characters(const std::string& str, const std::string& 
     return filteredStr;
 }
 
-bool copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter = nullptr);
+// SM Orca: merged signature - the fork's non-throwing bool result plus Orca's merge_mode.
+// Returns false (and logs) on any failure instead of throwing; when merge_mode is true the
+// target directory is not wiped first, so existing files are preserved.
+bool copy_directory_recursively(const boost::filesystem::path& source,
+                                const boost::filesystem::path& target,
+                                std::function<bool(const std::string)> filter = nullptr,
+                                bool merge_mode                               = false);
 
 // Copy source tree to target + ".new", run validate_staging, then rename into place (target + ".old" rollback on failure).
 bool atomic_replace_directory(
@@ -697,6 +745,15 @@ bool atomic_replace_directory(
     const boost::filesystem::path &target,
     std::function<bool(const std::string)> filter,
     std::function<bool(const boost::filesystem::path &staging)> validate_staging);
+
+// Install vendor bundles from resources directory to data directory
+// bundle_names: vector of vendor bundle names (without .json extension)
+// resource_subdir: subdirectory under resources_dir() (default: "profiles")
+// data_subdir: subdirectory under data_dir() (default: "system")
+// Returns: true if all bundles installed successfully, false otherwise
+bool install_vendor_bundles_from_resources(const std::vector<std::string>& bundle_names,
+                                           const std::string& resource_subdir = "profiles",
+                                           const std::string& data_subdir     = "system");
 
 // Orca: Since 1.7.9 Boost deprecated save_string_file and load_string_file, copy and modified from boost 1.7.8
 void save_string_file(const boost::filesystem::path& p, const std::string& str);

@@ -5,6 +5,7 @@
 #include "Line.hpp"
 #include "PrintBase.hpp"
 #include "PrintConfig.hpp"
+#include "MaterialType.hpp"
 #include <boost/log/trivial.hpp>
 #include <cstddef>
 #include <vector>
@@ -17,11 +18,11 @@ namespace SupportSpotsGenerator {
 struct Params
 {
     Params(
-        const std::vector<std::string> &filament_types, float max_acceleration, int raft_layers_count, BrimType brim_type, float brim_width)
-        : max_acceleration(max_acceleration), raft_layers_count(raft_layers_count), brim_type(brim_type), brim_width(brim_width)
+        const std::vector<std::string> &filament_types/*, float max_acceleration*/, int raft_layers_count, BrimType brim_type, float brim_width)
+        : /*max_acceleration(max_acceleration), */raft_layers_count(raft_layers_count), brim_type(brim_type), brim_width(brim_width)
     {
         if (filament_types.size() > 1) {
-            BOOST_LOG_TRIVIAL(warning)
+            BOOST_LOG_TRIVIAL(debug)
                 << "SupportSpotsGenerator does not currently handle different materials properly, only first will be used";
         }
         if (filament_types.empty() || filament_types[0].empty()) {
@@ -35,8 +36,8 @@ struct Params
 
     // the algorithm should use the following units for all computations: distance [mm], mass [g], time [s], force [g*mm/s^2]
     const float bridge_distance = 16.0f; // mm
-    const float max_acceleration; // mm/s^2 ; max acceleration of object in XY -- should be applicable only to printers with bed slinger, 
-                                  // however we do not have such info yet. The force is usually small anyway, so not such a big deal to include it everytime
+    // const float max_acceleration; // mm/s^2 ; max acceleration of object in XY -- should be applicable only to printers with bed slinger, 
+    //                               // however we do not have such info yet. The force is usually small anyway, so not such a big deal to include it everytime
     const int raft_layers_count;
     std::string filament_type;
 
@@ -64,15 +65,9 @@ struct Params
             return get_support_spots_adhesion_strength() * 2.0;
         }
 
-        if (filament_type == "PLA") {
-            return 0.02 * 1e6;
-        } else if (filament_type == "PET" || filament_type == "PETG") {
-            return 0.3 * 1e6;
-        } else if (filament_type == "ABS" || filament_type == "ASA") {
-            return 0.1 * 1e6; //TODO do measurements
-        } else { //PLA default value - defensive approach, PLA has quite low adhesion
-            return 0.02 * 1e6;
-        }
+    double yield_strength = 0.02;
+    MaterialType::get_yield_strength(filament_type, yield_strength);
+        return yield_strength * 1e6;
     }
 
     double get_support_spots_adhesion_strength() const {

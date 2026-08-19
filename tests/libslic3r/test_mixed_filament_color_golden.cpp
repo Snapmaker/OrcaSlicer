@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_all.hpp>
 #include "libslic3r/filament_mixer.h"
 
 // Golden baseline for the legacy Justin-Hayes polynomial mixer backend

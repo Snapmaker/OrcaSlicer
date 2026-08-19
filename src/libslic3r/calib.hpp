@@ -2,21 +2,23 @@
 #include <string>
 #define calib_pressure_advance_dd
 
-#include "GCode.hpp"
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"
+#include "CustomGCode.hpp"
 
 namespace Slic3r {
 
 class GCode;
 class Model;
+class ModelObject;
 
 enum class CalibMode : int {
     Calib_None = 0,
     Calib_PA_Line,
     Calib_PA_Pattern,
     Calib_PA_Tower,
+    Calib_Auto_PA_Line,
     Calib_Flow_Rate,
     Calib_Temp_Tower,
     Calib_Vol_speed_Tower,
@@ -24,7 +26,7 @@ enum class CalibMode : int {
     Calib_Retraction_tower,
     Calib_Input_shaping_freq,
     Calib_Input_shaping_damp,
-    Calib_Junction_Deviation
+    Calib_Cornering
 };
 
 enum class CalibState { Start = 0, Preset, Calibration, CoarseSave, FineCalibration, Save, Finish };
@@ -33,15 +35,28 @@ struct Calib_Params
 {
     Calib_Params() : mode(CalibMode::Calib_None){};
     int extruder_id = 0;
-    double    start, end, step;
-    bool      print_numbers;
-    double freqStartX, freqEndX, freqStartY, freqEndY;
-    int test_model;
+    double    start = 0.0, end = 1.0, step = 0.1;
+    bool      print_numbers = false;
+    double freqStartX = 0.0, freqEndX = 1.0, freqStartY = 0.0, freqEndY = 1.0;
+    int test_model = 0;
+    std::string shaper_type;
     std::vector<double> accelerations;
     std::vector<double> speeds;
+    // Resolved layer height for the VFA tower (0 = auto: nozzle_diameter / 2). Each speed block is a
+    // fixed number of layers tall, so this also determines the physical block height / tower height.
+    double vfa_layer_height = 0.0;
+    // Scale the calibration model to the nozzle diameter and set the layer height accordingly (temp tower / VFA).
+    // When false the 0.4 mm / 0.2 mm reference model is printed as-is.
+    bool nozzle_based_resize = true;
 
     CalibMode mode;
 };
+
+// Number of printed layers per speed block in the VFA tower. The base model has 5 mm blocks designed
+// for a 0.2 mm layer height (0.4 mm nozzle), i.e. 25 layers per block.
+static constexpr int vfa_layers_per_block = 25;
+static constexpr double vfa_base_block_height = 5.0;
+static constexpr double vfa_base_nozzle_diameter = 0.4;
 
 enum FlowRatioCalibrationType {
     COMPLETE_CALIBRATION = 0,
@@ -53,12 +68,13 @@ class X1CCalibInfos
 public:
     struct X1CCalibInfo
     {
-        int         extruder_id = -1;
+        int         extruder_id = 0;
         int         tray_id;
         int         ams_id = 0;
         int         slot_id = 0;
         int         bed_temp;
-        NozzleVolumeType    nozzle_volume_type = NozzleVolumeType::nvtNormal;
+        ExtruderType        extruder_type{ExtruderType::etDirectDrive};
+        NozzleVolumeType    nozzle_volume_type = NozzleVolumeType::nvtStandard;
         int         nozzle_temp;
         float       nozzle_diameter;
         std::string filament_id;
@@ -68,13 +84,19 @@ public:
     };
 
     std::vector<X1CCalibInfo> calib_datas;
+    CalibMode                 cali_mode{ CalibMode::Calib_None };
 };
 
 class CaliPresetInfo
 {
 public:
     int         tray_id;
+    int         extruder_id;
+    NozzleVolumeType nozzle_volume_type;
+    BedType     bed_type;
     float       nozzle_diameter;
+    int         nozzle_pos_id{-1};
+    std::string nozzle_sn;
     std::string filament_id;
     std::string setting_id;
     std::string name;
@@ -82,7 +104,11 @@ public:
     CaliPresetInfo &operator=(const CaliPresetInfo &other)
     {
         this->tray_id         = other.tray_id;
+        this->extruder_id     = other.extruder_id;
+        this->nozzle_volume_type = other.nozzle_volume_type;
         this->nozzle_diameter = other.nozzle_diameter;
+        this->nozzle_pos_id   = other.nozzle_pos_id;
+        this->nozzle_sn       = other.nozzle_sn;
         this->filament_id     = other.filament_id;
         this->setting_id      = other.setting_id;
         this->name            = other.name;
@@ -107,13 +133,15 @@ public:
         CALI_RESULT_PROBLEM = 1,
         CALI_RESULT_FAILED  = 2,
     };
-    int         extruder_id = -1;
+    int         extruder_id = 0;
     NozzleVolumeType nozzle_volume_type;
     int         tray_id = 0;
     int         ams_id = 0;
     int         slot_id = 0;
     int         cali_idx = -1;
+    int         nozzle_pos_id = -1; //-1 means no nozzle pos
     float       nozzle_diameter;
+    std::string nozzle_sn;
     std::string filament_id;
     std::string setting_id;
     std::string name;
@@ -124,21 +152,25 @@ public:
 
 struct PACalibIndexInfo
 {
-    int         extruder_id = -1;
+    int         extruder_id = 0;
     NozzleVolumeType nozzle_volume_type;
     int         tray_id = 0;
     int         ams_id = 0;
     int         slot_id = 0;
-    int         cali_idx;
+    int         cali_idx = -1; // -1 means default
+    int         nozzle_pos_id = -1; //-1 means no nozzle pos
     float       nozzle_diameter;
+    std::string nozzle_sn;
     std::string filament_id;
 };
 
 struct PACalibExtruderInfo
 {
-    int              extruder_id = -1;
+    int              extruder_id = 0;
     NozzleVolumeType nozzle_volume_type;
+    int              nozzle_pos_id = -1; //-1 means no nozzle pos
     float            nozzle_diameter;
+    std::string      nozzle_sn;
     std::string      filament_id = "";
     bool             use_extruder_id{true};
     bool             use_nozzle_volume_type{true};
@@ -177,7 +209,7 @@ struct DrawBoxOptArgs
 class CalibPressureAdvance
 {
 public:
-    static float find_optimal_PA_speed(const DynamicPrintConfig &config, double line_width, double layer_height, int filament_idx = 0);
+    static float find_optimal_PA_speed(const DynamicPrintConfig &config, double line_width, double layer_height, int extruder_id = 0, int filament_idx = 0);
 
 protected:
     CalibPressureAdvance()  = default;
@@ -234,6 +266,8 @@ class CalibPressureAdvanceLine : public CalibPressureAdvance
 public:
     CalibPressureAdvanceLine(GCode* gcodegen);
     ~CalibPressureAdvanceLine(){};
+    // Return the X‑bounds of the pattern on the given bed.
+    BoundingBoxf print_extents(const BoundingBoxf &bed_ext) const;
 
     std::string generate_test(double start_pa = 0, double step_pa = 0.002, int count = 50);
 
@@ -270,9 +304,7 @@ private:
 
 struct SuggestedConfigCalibPAPattern
 {
-    const std::vector<std::pair<std::string, double>> float_pairs{{"initial_layer_print_height", 0.25},
-                                                                  {"layer_height", 0.2},
-                                                                  {"initial_layer_speed", 30}};
+    const std::vector<std::pair<std::string, std::vector<double>>> floats_pairs{{"initial_layer_speed", {30}}};
 
     const std::vector<std::pair<std::string, double>> nozzle_ratio_pairs{{"line_width", 112.5}, {"initial_layer_line_width", 140}};
 
@@ -303,23 +335,12 @@ public:
     Vec3d get_start_offset();
 
 protected:
-    double speed_first_layer() const { return m_config.option<ConfigOptionFloat>("initial_layer_speed")->value; };
-    double speed_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_speed")->value; };
-    double accel_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_acceleration")->value; }
-    double line_width_first_layer() const
-    {
-        // TODO: FIXME: find out current filament/extruder?
-        const double nozzle_diameter = m_config.opt_float("nozzle_diameter", 0);
-        return m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
-    };
-    double line_width() const
-    {
-        // TODO: FIXME: find out current filament/extruder?
-        const double nozzle_diameter = m_config.opt_float("nozzle_diameter", 0);
-        const double width = m_config.get_abs_value("line_width", nozzle_diameter);
-        if (width <= 0.) return Flow::auto_extrusion_width(frExternalPerimeter, nozzle_diameter);
-        return width;
-    };
+    // todo multi_extruders:
+    double speed_first_layer() const { return m_config.get_abs_value_at("initial_layer_speed", m_params.extruder_id); };
+    double speed_perimeter() const { return m_config.get_abs_value_at("outer_wall_speed", m_params.extruder_id); };
+    double accel_perimeter() const { return m_config.get_abs_value_at("outer_wall_acceleration", m_params.extruder_id); }
+    double line_width_first_layer() const;
+    double line_width() const;
     int    wall_count() const { return m_config.option<ConfigOptionInt>("wall_loops")->value; };
 
 private:

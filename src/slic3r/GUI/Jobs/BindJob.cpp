@@ -4,6 +4,8 @@
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 
+#include "slic3r/GUI/DeviceCore/DevManager.h"
+
 namespace Slic3r {
 namespace GUI {
 
@@ -16,10 +18,11 @@ static auto waiting_auth_str = _u8L("Logging in");
 static auto login_failed_str = _u8L("Login failed");
 
 
-BindJob::BindJob(std::string dev_id, std::string dev_ip, std::string sec_link, std::string ssdp_version)
+BindJob::BindJob(std::string dev_id, std::string dev_ip, std::string dev_model, std::string sec_link, std::string ssdp_version)
     :
     m_dev_id(dev_id),
     m_dev_ip(dev_ip),
+    m_dev_model(dev_model),
     m_sec_link(sec_link),
     m_ssdp_version(ssdp_version)
 {
@@ -56,30 +59,30 @@ void BindJob::process(Ctl &ctl)
     wxDateTime::TimeZone tz(wxDateTime::Local);
     long offset = tz.GetOffset();
     std::string timezone = get_timezone_utc_hm(offset);
-    
+
     m_agent->track_update_property("ssdp_version", m_ssdp_version, "string");
-    int result = m_agent->bind(m_dev_ip, m_dev_id, m_sec_link, timezone, m_improved,
+    int result = m_agent->bind(m_dev_ip, m_dev_id, m_dev_model, m_sec_link, timezone, m_improved,
         [this, &ctl, &curr_percent, &msg, &result_code, &result_info](int stage, int code, std::string info) {
 
             result_code = code;
             result_info = info;
 
-            if (stage == BBL::BindJobStage::LoginStageConnect) {
+            if (stage == BindJobStage::LoginStageConnect) {
                 curr_percent = 15;
                 msg = _u8L("Logging in");
-            } else if (stage == BBL::BindJobStage::LoginStageLogin) {
+            } else if (stage == BindJobStage::LoginStageLogin) {
                 curr_percent = 30;
                 msg = _u8L("Logging in");
-            } else if (stage == BBL::BindJobStage::LoginStageWaitForLogin) {
+            } else if (stage == BindJobStage::LoginStageWaitForLogin) {
                 curr_percent = 45;
                 msg = _u8L("Logging in");
-            } else if (stage == BBL::BindJobStage::LoginStageGetIdentify) {
+            } else if (stage == BindJobStage::LoginStageGetIdentify) {
                 curr_percent = 60;
                 msg = _u8L("Logging in");
-            } else if (stage == BBL::BindJobStage::LoginStageWaitAuth) {
+            } else if (stage == BindJobStage::LoginStageWaitAuth) {
                 curr_percent = 80;
                 msg = _u8L("Logging in");
-            } else if (stage == BBL::BindJobStage::LoginStageFinished) {
+            } else if (stage == BindJobStage::LoginStageFinished) {
                 curr_percent = 100;
                 msg = _u8L("Logging in");
             } else {
@@ -97,7 +100,7 @@ void BindJob::process(Ctl &ctl)
     );
 
     if (result < 0) {
-        BOOST_LOG_TRIVIAL(trace) << "login: result = " << result;
+        BOOST_LOG_TRIVIAL(info) << "login: result = " << result;
 
         if (result_code == BAMBU_NETWORK_ERR_BIND_ECODE_LOGIN_REPORT_FAILED || result_code == BAMBU_NETWORK_ERR_BIND_GET_PRINTER_TICKET_TIMEOUT) {
             int         error_code;
@@ -105,26 +108,25 @@ void BindJob::process(Ctl &ctl)
             try
             {
                 error_code = stoi(result_info);
-                wxString error_msg;
-                wxGetApp().get_hms_query()->query_print_error_msg(error_code, error_msg);
+                wxString error_msg = wxGetApp().get_hms_query()->query_print_error_msg(m_dev_id, error_code);
                 result_info = error_msg.ToStdString();
             }
             catch (...) {
                 ;
             }
         }
-        
+
         post_fail_event(result_code, result_info);
         return;
     }
 
     DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
     if (!dev) {
-        BOOST_LOG_TRIVIAL(trace) << "login: dev is null";
+        BOOST_LOG_TRIVIAL(error) << "login: dev is null";
         post_fail_event(result_code, result_info);
         return;
     }
-    dev->update_user_machine_list_info();
+    dev->update_user_machine_list_info(wxGetApp().get_printer_cloud_provider());
 
      wxCommandEvent event(EVT_BIND_MACHINE_SUCCESS);
      event.SetEventObject(m_event_handle);

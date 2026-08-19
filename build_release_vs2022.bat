@@ -15,10 +15,18 @@ if "%1"=="pack" (
 
 set debug=OFF
 set debuginfo=OFF
+@REM Default target architecture to the host CPU arch; override with x64/arm64 arg.
+set arch=x64
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set arch=ARM64
+if /I "%PROCESSOR_ARCHITEW6432%"=="ARM64" set arch=ARM64
 if "%1"=="debug" set debug=ON
 if "%2"=="debug" set debug=ON
 if "%1"=="debuginfo" set debuginfo=ON
 if "%2"=="debuginfo" set debuginfo=ON
+if /I "%1"=="arm64" set arch=ARM64
+if /I "%2"=="arm64" set arch=ARM64
+if /I "%1"=="x64" set arch=x64
+if /I "%2"=="x64" set arch=x64
 if "%debug%"=="ON" (
     set build_type=Debug
     set build_dir=build-dbg
@@ -31,13 +39,13 @@ if "%debug%"=="ON" (
         set build_dir=build
     )
 )
-echo build type set to %build_type%
+if "%arch%"=="ARM64" set build_dir=%build_dir%-arm64
+echo build type set to %build_type%, arch=%arch%
 
 setlocal DISABLEDELAYEDEXPANSION 
 cd deps
 mkdir %build_dir%
 cd %build_dir%
-set DEPS=%CD%/OrcaSlicer_dep
 set "SIG_FLAG="
 if defined ORCA_UPDATER_SIG_KEY set "SIG_FLAG=-DORCA_UPDATER_SIG_KEY=%ORCA_UPDATER_SIG_KEY%"
 
@@ -47,7 +55,9 @@ if "%1"=="slicer" (
 echo "building deps.."
 
 echo on
-cmake ../ -G "Visual Studio 17 2022" -A x64 -DDESTDIR="%DEPS%" -DCMAKE_BUILD_TYPE=%build_type% -DDEP_DEBUG=%debug% -DORCA_INCLUDE_DEBUG_INFO=%debuginfo%
+REM Set minimum CMake policy to avoid <3.5 errors
+set CMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake ../ -G "Visual Studio 17 2022" -A %arch% -DCMAKE_BUILD_TYPE=%build_type%
 cmake --build . --config %build_type% --target deps -- -m
 @echo off
 
@@ -60,7 +70,8 @@ mkdir %build_dir%
 cd %build_dir%
 
 echo on
-cmake .. -G "Visual Studio 17 2022" -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_PREFIX_PATH="%DEPS%/usr/local" -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type% -DWIN10SDK_PATH="%WindowsSdkDir%Include\%WindowsSDKVersion%\"
+set CMAKE_POLICY_VERSION_MINIMUM=3.5
+cmake .. -G "Visual Studio 17 2022" -A %arch% -DORCA_TOOLS=ON %SIG_FLAG% -DCMAKE_INSTALL_PREFIX="./Snapmaker_Orca" -DCMAKE_BUILD_TYPE=%build_type%
 cmake --build . --config %build_type% --target ALL_BUILD -- -m
 @echo off
 cd ..

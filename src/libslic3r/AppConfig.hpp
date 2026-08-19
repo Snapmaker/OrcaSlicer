@@ -24,6 +24,29 @@ using namespace nlohmann;
 #define OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK "always_ask"
 #define OPTION_PROJECT_LOAD_BEHAVIOUR_LOAD_GEOMETRY "load_geometry_only"
 
+#define SETTING_NETWORK_PLUGIN_VERSION "network_plugin_version"
+#define SETTING_NETWORK_PLUGIN_SKIPPED_VERSIONS "network_plugin_skipped_versions"
+#define SETTING_NETWORK_PLUGIN_UPDATE_DISABLED "network_plugin_update_prompts_disabled"
+#define SETTING_NETWORK_PLUGIN_REMIND_LATER "network_plugin_remind_later"
+#define SETTING_USE_ENCRYPTED_TOKEN_FILE "use_encrypted_token_file"
+#define SETTING_CLOUD_PROVIDERS "cloud_providers"
+#define SETTING_OPENGL_AA_SAMPLES "opengl_antialiasing_samples"
+#define SETTING_OPENGL_FXAA_ENABLED "opengl_fxaa_enabled"
+#define SETTING_OPENGL_FPS_CAP "opengl_fps_cap"
+#define SETTING_OPENGL_SHOW_FPS_OVERLAY "opengl_show_fps_overlay"
+#define SETTING_OPENGL_REALISTIC_MODE "opengl_realistic_mode"
+#define SETTING_OPENGL_REALISTIC_PHONG "opengl_realistic_phong"
+#define SETTING_OPENGL_SHADING_MODEL "opengl_shading_model"
+#define SETTING_OPENGL_PHONG_BASIC_PLATE_SHADOWS "opengl_phong_basic_plate_shadows"
+#define SETTING_OPENGL_PHONG_SSAO "opengl_phong_ssao"
+#define SETTING_OPENGL_PHONG_SMOOTH_NORMALS "opengl_phong_smooth_normals"
+
+#if defined(_WIN32) || defined(_WIN64)
+#define BAMBU_NETWORK_AGENT_VERSION_LEGACY "01.10.01.09"
+#else
+#define BAMBU_NETWORK_AGENT_VERSION_LEGACY "01.10.01.01"
+#endif
+
 #define SUPPORT_DARK_MODE
 //#define _MSW_DARK_MODE
 
@@ -97,6 +120,7 @@ public:
 	std::string get_language_code();
 	std::string get_hms_host();
 	bool get_stealth_mode();
+	bool get_hide_login_side_panel();
 
 	// Clear and reset to defaults.
 	void 			   	reset();
@@ -123,7 +147,7 @@ public:
 		if (it == m_storage.end())
 			return false;
 		auto it2 = it->second.find(key);
-		if (it2 == it->second.end()) 
+		if (it2 == it->second.end())
 			return false;
 		value = it2->second;
 		return true;
@@ -314,6 +338,10 @@ public:
 
     void                save_custom_color_to_config(const std::vector<std::string> &colors);
     std::vector<std::string> get_custom_color_from_config();
+
+    void save_nozzle_volume_types_to_config(const std::string& printer_name, const std::string& nozzle_volume_types);
+    std::string get_nozzle_volume_types_from_config(const std::string& printer_name);
+
 	// reset the current print / filament / printer selections, so that
 	// the  PresetBundle::load_selections(const AppConfig &config) call will select
 	// the first non-default preset when called.
@@ -328,6 +356,7 @@ public:
 
 	// Get the Slic3r version check url.
 	// This returns a hardcoded string unless it is overriden by "version_check_url" in the ini file.
+	std::string 		orca_profile_update_url() const;
 	std::string 		version_check_url(bool stable_only = false) const;
 	std::string 		get_version_upgrade_url(bool stable_only = false);
 	std::string 		get_preset_upgrade_url();
@@ -389,9 +418,31 @@ public:
 	void clear_filament_extruder_map();
     std::unordered_map<int, int>& get_filament_extruder_map_ref();
 
+    std::string get_network_plugin_version() const;
+    void set_network_plugin_version(const std::string& version);
+
+    std::vector<std::string> get_skipped_network_versions() const;
+    void add_skipped_network_version(const std::string& version);
+    bool is_network_version_skipped(const std::string& version) const;
+    void clear_skipped_network_versions();
+
+    bool is_network_update_prompt_disabled() const;
+    void set_network_update_prompt_disabled(bool disabled);
+
+    bool should_remind_network_update_later() const;
+    void set_remind_network_update_later(bool remind);
+    void clear_remind_network_update_later();
+
+    // Cloud providers (semicolon-delimited, e.g. "orca;bambu")
+    std::vector<std::string> get_cloud_providers() const;
+    void set_cloud_providers(const std::vector<std::string>& providers);
+    bool has_cloud_provider(const std::string& provider) const;
+    void add_cloud_provider(const std::string& provider);
+    void remove_cloud_provider(const std::string& provider);
+
 private:
 	template<typename T>
-	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const 
+	bool get_3dmouse_device_numeric_value(const std::string &device_name, const char *parameter_name, T &out) const
 	{
 	    std::string key = std::string("mouse_device:") + device_name;
 	    auto it = m_storage.find(key);
@@ -425,6 +476,8 @@ private:
 
 	std::vector<std::string>									m_filament_presets;
     std::vector<std::string>									m_filament_colors;
+	std::vector<std::string>									m_filament_multi_colors;
+	std::vector<std::string>									m_filament_color_types;
 
 	std::vector<PrinterCaliInfo>								m_printer_cali_infos;
 

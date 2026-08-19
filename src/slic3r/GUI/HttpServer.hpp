@@ -13,6 +13,7 @@
 #include <string>
 #include <set>
 #include <memory>
+#include <utility>
 
 #define LOCALHOST_PORT      13618
 #define PAGE_HTTP_PORT      13619
@@ -104,6 +105,16 @@ public:
         void write_response(std::stringstream& ssOut) override;
     };
 
+    class ResponseHtml : public Response
+    {
+        const std::string html;
+
+    public:
+        explicit ResponseHtml(std::string html) : html(std::move(html)) {}
+        ~ResponseHtml() override = default;
+        void write_response(std::stringstream& ssOut) override;
+    };
+
     class ResponseFile : public Response
     {
         std::string file_path;
@@ -145,6 +156,7 @@ public:
     bool is_started() { return start_http_server; }
     void start();
     void stop();
+    void set_port(boost::asio::ip::port_type new_port) { port = new_port; }
     void restart();  // 添加重启方法
     bool is_healthy();  // 添加健康检查方法
     void start_health_check();  // 启动健康检查
@@ -168,6 +180,7 @@ public:
     static std::string map_url_to_file_path(const std::string& url);
 
     static std::shared_ptr<Response> bbl_auth_handle_request(const std::string& url);
+    static std::shared_ptr<Response> auth_handle_request(const std::string& url, const std::string& provider);
 
     static std::shared_ptr<Response> web_server_handle_request(const std::string& url);
 

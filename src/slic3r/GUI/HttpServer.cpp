@@ -4,6 +4,7 @@
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
+#include "slic3r/Utils/BBLNetworkPlugin.hpp"
 #include  "sentry_wrapper/SentryWrapper.hpp"
 #include <boost/beast/core/detail/base64.hpp>
 #ifdef _WIN32
@@ -127,7 +128,7 @@ void session::read_body()
     int                                nbuffer = 1000;
     std::shared_ptr<std::vector<char>> bufptr  = std::make_shared<std::vector<char>>(nbuffer);
     async_read(socket, boost::asio::buffer(*bufptr, nbuffer),
-               [this, self](const boost::beast::error_code& e, std::size_t s) { server.stop(self); });
+               [this, self, bufptr](const boost::beast::error_code& e, std::size_t s) { server.stop(self); });
 }
 
 void session::read_next_line()
@@ -256,15 +257,24 @@ HttpServer::~HttpServer()
 
 bool HttpServer::is_port_available(boost::asio::ip::port_type port)
 {
+    // Probe by CONNECTING rather than binding: a bind probe with reuse_address(true)
+    // false-positives on macOS/BSD while another instance is actively LISTENING on the
+    // port (both listeners set SO_REUSEADDR), which made a second app instance believe
+    // 13619 was free, fail to serve, and leave the Flutter home blank. A connect probe
+    // reports an active listener as unavailable, while a TIME_WAIT-only port (fast app
+    // restart) refuses the connection and correctly reads as available - the real
+    // acceptor keeps reuse_address(true) to rebind through TIME_WAIT.
     try {
-        boost::asio::io_service        io_service;
-        boost::asio::ip::tcp::acceptor acceptor(io_service);
-        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::tcp::v4(), port);
-
-        acceptor.open(endpoint.protocol());
-        acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
-        acceptor.bind(endpoint);
-        acceptor.close();
+        boost::asio::io_service      io_service;
+        boost::asio::ip::tcp::socket probe(io_service);
+        boost::asio::ip::tcp::endpoint endpoint(boost::asio::ip::address_v4::loopback(), port);
+        boost::system::error_code    ec;
+        probe.connect(endpoint, ec);
+        if (!ec) {
+            // Something answered: the port is taken.
+            probe.close(ec);
+            return false;
+        }
         return true;
     } catch (const boost::system::system_error&) {
         return false;
@@ -287,6 +297,9 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
 
 void HttpServer::start()
 {
+    if (start_http_server)
+        return;
+
     BOOST_LOG_TRIVIAL(info) << "start_http_service...";
 
     try {
@@ -347,9 +360,14 @@ void HttpServer::stop()
     // 重启检查已集成到健康检查中，无需单独停止
     
     if (server_) {
-        server_->acceptor.close();
-        server_->stop_all();
-        server_->io_service.stop();
+        IOServer* io_server = server_.get();
+        boost::asio::post(io_server->io_service, [io_server] {
+            boost::system::error_code ec;
+            io_server->acceptor.cancel(ec);
+            io_server->acceptor.close(ec);
+            io_server->stop_all();
+            io_server->io_service.stop();
+        });
     }
     if (m_http_server_thread.joinable())
         m_http_server_thread.join();
@@ -647,7 +665,51 @@ void HttpServer::set_request_handler(const std::function<std::shared_ptr<Respons
 
 std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& url)
 {
+    return auth_handle_request(url, BBL_CLOUD_PROVIDER);
+}
+
+std::shared_ptr<HttpServer::Response> HttpServer::auth_handle_request(const std::string& url, const std::string& provider)
+{
     BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_response";
+
+    const std::string auth_code = url_get_param(url, "code");
+    if (!auth_code.empty()) {
+        std::string state = url_get_param(url, "orca_state");
+        if (state.empty()) {
+            state = url_get_param(url, "state");  // fallback
+        }
+        NetworkAgent* agent = wxGetApp().getAgent();
+        if (!agent) {
+            return std::make_shared<ResponseNotFound>();
+        }
+
+        json payload;
+        payload["command"] = "user_login";
+        payload["data"]["code"] = auth_code;
+        payload["data"]["state"] = state;
+
+        agent->change_user(payload.dump(), provider);
+        const bool login_ok = agent->is_user_login(provider);
+        if (login_ok) {
+            wxGetApp().request_user_login(1, provider);
+            GUI::wxGetApp().CallAfter([] { wxGetApp().ShowUserLogin(false); });
+        }
+
+        const std::string title = login_ok ? "Authentication complete" : "Authentication failed";
+        const std::string message = login_ok
+            ? "You can return to Snapmaker Orca. This window will close automatically."
+            : "Something went wrong. Please return to Snapmaker Orca and try again.";
+        const std::string html =
+            "<html><head><meta charset=\"utf-8\">"
+            "<style>body{font-family:Arial,sans-serif;background:#f7f7f7;color:#222;margin:32px;}"
+            "a.button{display:inline-block;padding:10px 16px;margin-top:12px;background:#0f8bff;color:#fff;text-decoration:none;border-radius:6px;}"
+            "</style></head><body><div class=\"container\">"
+            "<h2>" + title + "</h2>"
+            "<p>" + message + "</p>"
+            "<script>setTimeout(function(){try{window.close();}catch(e){}},1500);</script>"
+            "</div></body></html>";
+        return std::make_shared<ResponseHtml>(html);
+    }
 
     if (boost::contains(url, "access_token")) {
         std::string   redirect_url           = url_get_param(url, "redirect_url");
@@ -659,7 +721,7 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
 
         unsigned int http_code;
         std::string  http_body;
-        int          result = agent->get_my_profile(access_token, &http_code, &http_body);
+        int          result = agent->get_my_profile(access_token, &http_code, &http_body, provider);
         if (result == 0) {
             std::string user_id;
             std::string user_name;
@@ -689,9 +751,9 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
             j["data"]["user"]["name"]       = user_name;
             j["data"]["user"]["account"]    = user_account;
             j["data"]["user"]["avatar"]     = user_avatar;
-            agent->change_user(j.dump());
-            if (agent->is_user_login()) {
-                //wxGetApp().request_user_login(1);
+            agent->change_user(j.dump(), provider);
+            if (agent->is_user_login(provider)) {
+                wxGetApp().request_user_login(1, provider);
             }
             GUI::wxGetApp().CallAfter([] { wxGetApp().ShowUserLogin(false); });
             std::string location_str = (boost::format("%1%?result=success") % redirect_url).str();
@@ -701,9 +763,106 @@ std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const 
             std::string location_str = (boost::format("%1%?result=fail&error=%2%") % redirect_url % error_str).str();
             return std::make_shared<ResponseRedirect>(location_str);
         }
-    } else {
-        return std::make_shared<ResponseNotFound>();
     }
+
+    // Ticket-based redirect: Bambu Lab's auth server redirects here after a
+    // third-party (Google) OAuth so that the access token never travels through
+    // the URL. We exchange the ticket via the network plugin's get_my_token,
+    // then run the same get_my_profile + change_user flow as access_token.
+    // Skip entirely on legacy plugins missing bambu_network_get_my_token —
+    // those clients pin X-BBL-Client-Version so the server stays on the legacy
+    // ?access_token= redirect path and never sends ?ticket= here.
+    const std::string ticket = url_get_param(url, "ticket");
+    const std::string ticket_redirect_url = url_get_param(url, "redirect_url");
+    if (!ticket.empty() && !ticket_redirect_url.empty() &&
+        BBLNetworkPlugin::instance().get_get_my_token() != nullptr) {
+        BOOST_LOG_TRIVIAL(info) << "thirdparty_login: ticket flow";
+        NetworkAgent* agent = wxGetApp().getAgent();
+        if (!agent) {
+            std::string location_str = (boost::format("%1%?result=fail&error=no_agent") % ticket_redirect_url).str();
+            return std::make_shared<ResponseRedirect>(location_str);
+        }
+
+        auto fail_redirect = [&ticket_redirect_url](const std::string& reason) {
+            std::string location_str = (boost::format("%1%?result=fail&error=%2%") % ticket_redirect_url % reason).str();
+            return std::make_shared<ResponseRedirect>(location_str);
+        };
+
+        unsigned int token_http_code = 0;
+        std::string  token_body;
+        int          token_result = agent->get_my_token(ticket, &token_http_code, &token_body, provider);
+        if (token_result != 0) {
+            BOOST_LOG_TRIVIAL(warning) << "thirdparty_login: get_my_token failed, http_code=" << token_http_code;
+            return fail_redirect("get_my_token_error_" + std::to_string(token_result));
+        }
+
+        std::string access_token;
+        std::string refresh_token;
+        std::string expires_in_str;
+        std::string refresh_expires_in_str;
+        try {
+            json token_j = json::parse(token_body);
+            if (token_j.contains("accessToken"))
+                access_token = token_j["accessToken"].get<std::string>();
+            if (token_j.contains("refreshToken"))
+                refresh_token = token_j["refreshToken"].get<std::string>();
+            if (token_j.contains("expiresIn"))
+                expires_in_str = std::to_string(token_j["expiresIn"].get<double>());
+            if (token_j.contains("refreshExpiresIn"))
+                refresh_expires_in_str = std::to_string(token_j["refreshExpiresIn"].get<double>());
+        } catch (...) {
+            return fail_redirect("token_parse_error");
+        }
+
+        if (access_token.empty()) {
+            return fail_redirect("token_missing");
+        }
+
+        unsigned int profile_http_code = 0;
+        std::string  profile_body;
+        int          profile_result = agent->get_my_profile(access_token, &profile_http_code, &profile_body, provider);
+        if (profile_result != 0) {
+            BOOST_LOG_TRIVIAL(warning) << "thirdparty_login: get_my_profile failed, http_code=" << profile_http_code;
+            return fail_redirect("get_user_profile_error_" + std::to_string(profile_result));
+        }
+
+        std::string user_id;
+        std::string user_name;
+        std::string user_account;
+        std::string user_avatar;
+        try {
+            json user_j = json::parse(profile_body);
+            if (user_j.contains("uidStr"))
+                user_id = user_j["uidStr"].get<std::string>();
+            if (user_j.contains("name"))
+                user_name = user_j["name"].get<std::string>();
+            if (user_j.contains("avatar"))
+                user_avatar = user_j["avatar"].get<std::string>();
+            if (user_j.contains("account"))
+                user_account = user_j["account"].get<std::string>();
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(warning) << "thirdparty_login: profile JSON parse failed";
+        }
+
+        json j;
+        j["data"]["refresh_token"]      = refresh_token;
+        j["data"]["token"]              = access_token;
+        j["data"]["expires_in"]         = expires_in_str;
+        j["data"]["refresh_expires_in"] = refresh_expires_in_str;
+        j["data"]["user"]["uid"]        = user_id;
+        j["data"]["user"]["name"]       = user_name;
+        j["data"]["user"]["account"]    = user_account;
+        j["data"]["user"]["avatar"]     = user_avatar;
+        agent->change_user(j.dump(), provider);
+        if (agent->is_user_login(provider)) {
+            wxGetApp().request_user_login(1, provider);
+        }
+        GUI::wxGetApp().CallAfter([] { wxGetApp().ShowUserLogin(false); });
+        std::string location_str = (boost::format("%1%?result=success") % ticket_redirect_url).str();
+        return std::make_shared<ResponseRedirect>(location_str);
+    }
+
+    return std::make_shared<ResponseNotFound>();
 }
 
 std::shared_ptr<HttpServer::Response> HttpServer::web_server_handle_request(const std::string& url)
@@ -798,8 +957,19 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
 
 void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
 {
-    const std::string sHTML          = "<html><body><p>redirect to url </p></body></html>";
-    size_t            content_length = sHTML.size(); // 字节长度（与字符数相同，因无多字节字符）
+    // Orca's richer landing page (rebranded), emitted with the fork's strict CRLF/Content-Length headers.
+    const std::string sHTML =
+        "<html><head><meta charset=\"utf-8\">"
+        "<meta http-equiv=\"refresh\" content=\"0;url=" + location_str + "\">"
+        "<style>body{font-family:Arial,sans-serif;background:#f7f7f7;color:#222;margin:32px;}"
+        "a.button{display:inline-block;padding:10px 16px;margin-top:12px;background:#0f8bff;color:#fff;text-decoration:none;border-radius:6px;}"
+        "</style></head><body><div class=\"container\">"
+        "<h2>Authentication complete</h2>"
+        "<p>You can return to Snapmaker Orca. If your browser does not redirect automatically, use the button below.</p>"
+        "<a class=\"button\" href=\"" + location_str + "\">Continue</a>"
+        "<script>setTimeout(function(){try{window.close();}catch(e){}},1500);</script>"
+        "</div></body></html>";
+    size_t            content_length = sHTML.size(); // 字节长度
 
     ssOut << "HTTP/1.1 302 Found\r\n";
     ssOut << "Location: " << location_str << "\r\n";
@@ -883,6 +1053,18 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
     ssOut << "\r\n";      // 头和主体之间的空行（必须）
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
+}
+
+void HttpServer::ResponseHtml::write_response(std::stringstream& ssOut)
+{
+    const size_t content_length = html.size(); // 字节长度
+
+    ssOut << "HTTP/1.1 200 OK\r\n";
+    ssOut << "Content-Type: text/html\r\n";
+    ssOut << "Content-Length: " << content_length << "\r\n";
+    ssOut << "Access-Control-Allow-Origin: *\r\n"; // CORS头
+    ssOut << "\r\n";
+    ssOut << html;
 }
 
 }} // namespace Slic3r::GUI

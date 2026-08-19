@@ -106,7 +106,11 @@ protected:
     wxPanel* m_complete_text_panel;
     wxPanel* m_part_failed_panel;
     wxPanel*    m_grid_panel{ nullptr };
-    std::map<int, PACalibResult> m_calib_results;// map<tray_id, PACalibResult>
+    wxPanel*    m_multi_extruder_grid_panel{ nullptr };
+    // keyed by (tray_id, extruder_id): the same tray_id can appear under two
+    // extruders (rack / dual-address configs), so a tray_id-only map would
+    // silently overwrite one extruder's K/N.
+    std::vector<PACalibResult> m_calib_results;
     std::vector<PACalibResult> m_history_results;
     bool m_is_all_failed{ true };
     MachineObject* m_obj{ nullptr };

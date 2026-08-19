@@ -1539,7 +1539,9 @@ static std::pair<bool, bool> construct_extruder_unprintable_error(ObjectFilament
         left_z_max = (float) printable_height_option->values[0];
         right_z_max = (float) printable_height_option->values[1];
     }
-    std::vector<Pointfs> printable_areas = preset.config.option<ConfigOptionPointsGroups>("extruder_printable_area")->values;
+    // Not every printer profile defines per-extruder printable areas.
+    auto printable_area_option = preset.config.option<ConfigOptionPointsGroups>("extruder_printable_area");
+    std::vector<Pointfs> printable_areas = printable_area_option ? printable_area_option->values : std::vector<Pointfs>();
     if (printable_areas.size() == 2 && printable_areas[0].size() == 4) {
         left_x_min = printable_areas[0][0][0];
         left_y_min = printable_areas[0][0][1];
@@ -1591,6 +1593,12 @@ ModelInstanceEPrintVolumeState GLCanvas3D::check_volumes_outside_state(ObjectFil
     //assert(m_initialized);
 
     ModelInstanceEPrintVolumeState state;
+    // Several callers (e.g. Plater::validate_current_plate) use the default null
+    // argument; route them to a local so the error-text builders below always
+    // dereference a valid object.
+    ObjectFilamentResults local_results;
+    if (object_results == nullptr)
+        object_results = &local_results;
     m_volumes.check_outside_state(m_bed.build_volume(), &state, object_results);
 
     construct_error_string(*object_results, get_object_clashed_text());

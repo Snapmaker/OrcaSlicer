@@ -197,10 +197,14 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
             // outside the grown lower slices (thus where the distance between
             // the loop centerline and original lower slices is >= half nozzle diameter
             if (remain_polines.size() != 0) {
-                extrusion_paths_append(paths, std::move(remain_polines),
-                                       erOverhangPerimeter, perimeter_generator.mm3_per_mm_overhang(),
-                                       perimeter_generator.overhang_flow.width(),
-                                       perimeter_generator.overhang_flow.height());
+                // External / fully overhanging loops (no supported path at all) dispatch to the outer wall filament (GCode::process_layer()); their overhangs use that filament's flow.
+                const bool  overhang_external = is_external || paths.empty();
+                const Flow &loop_overhang_flow = overhang_external ? perimeter_generator.ext_overhang_flow :
+                                                                     perimeter_generator.overhang_flow;
+                extrusion_paths_append(paths, std::move(remain_polines), erOverhangPerimeter,
+                                       overhang_external ? perimeter_generator.ext_mm3_per_mm_overhang() :
+                                                           perimeter_generator.mm3_per_mm_overhang(),
+                                       loop_overhang_flow.width(), loop_overhang_flow.height());
             }
 
             // Reapply the nearest point search for starting point.
@@ -465,8 +469,13 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
             // get overhang paths by checking what parts of this loop fall
             // outside the grown lower slices (thus where the distance between
             // the loop centerline and original lower slices is >= half nozzle diameter
+            // External / fully overhanging extrusions (no supported path at all) dispatch to the outer
+            // wall filament (GCode::process_layer()); their overhangs use that filament's flow. Known
+            // corner: a fully overhanging fragment of the ExtrusionMultiPath split below keeps the inner
+            // flow, but widths come from the Arachne junctions either way; only thick-bridge height differs.
+            const bool overhang_external = is_external || paths.empty();
             extrusion_paths_append(paths, clip_extrusion(extrusion_path, lower_slices_paths, ClipperLib_Z::ctDifference), erOverhangPerimeter,
-                perimeter_generator.overhang_flow);
+                overhang_external ? perimeter_generator.ext_overhang_flow : perimeter_generator.overhang_flow);
 
             // Reapply the nearest point search for starting point.
             // We allow polyline reversal because Clipper may have randomly reversed polylines during clipping.
@@ -1258,8 +1267,9 @@ void PerimeterGenerator::apply_extra_perimeters(ExPolygons &infill_area)
     if (!m_spiral_vase && this->lower_slices != nullptr && this->config->detect_overhang_wall && this->config->extra_perimeters_on_overhangs &&
         this->config->wall_loops > 0 && this->layer_id > this->object_config->raft_layers) {
         // Generate extra perimeters on overhang areas, and cut them to these parts only, to save print time and material
+        // Pure erOverhangPerimeter entities dispatch to the outer wall filament, so use its flow.
         auto [extra_perimeters, filled_area] = generate_extra_perimeters_over_overhangs(infill_area, this->lower_slices_polygons(),
-                                                                                        this->config->wall_loops, this->overhang_flow,
+                                                                                        this->config->wall_loops, this->ext_overhang_flow,
                                                                                         this->m_scaled_resolution, *this->object_config,
                                                                                         *this->print_config);
         if (!extra_perimeters.empty()) {
@@ -1333,6 +1343,7 @@ void PerimeterGenerator::process_classic()
 
     // overhang perimeters
     m_mm3_per_mm_overhang      		= this->overhang_flow.mm3_per_mm();
+    m_ext_mm3_per_mm_overhang  		= this->ext_overhang_flow.mm3_per_mm();
 
     // solid infill
     coord_t solid_infill_spacing    = this->solid_infill_flow.scaled_spacing();
@@ -1841,7 +1852,8 @@ void PerimeterGenerator::process_classic()
 
             if (! polylines.empty()) {
 				ExtrusionEntityCollection gap_fill;
-				variable_width(polylines, erGapFill, this->solid_infill_flow, gap_fill.entities);
+				// Gap fill prints with the outer wall filament (LayerTools::extruder()).
+				variable_width(polylines, erGapFill, this->gap_fill_flow, gap_fill.entities);
                 /*  Make sure we don't infill narrow parts that are already gap-filled
                     (we only consider this surface's gaps to reduce the diff() complexity).
                     Growing actual extrusions ensures that gaps not filled by medial axis
@@ -2352,6 +2364,7 @@ void PerimeterGenerator::process_arachne()
     coord_t ext_perimeter_spacing2 = scaled<coord_t>(0.5f * (this->ext_perimeter_flow.spacing() + this->perimeter_flow.spacing()));
     // overhang perimeters
     m_mm3_per_mm_overhang = this->overhang_flow.mm3_per_mm();
+    m_ext_mm3_per_mm_overhang = this->ext_overhang_flow.mm3_per_mm();
 
     // solid infill
     coord_t solid_infill_spacing = this->solid_infill_flow.scaled_spacing();

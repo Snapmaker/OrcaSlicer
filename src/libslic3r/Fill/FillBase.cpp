@@ -313,7 +313,12 @@ std::pair<float, Point> Fill::_infill_direction(const Surface *surface) const
         // alternate fill direction
         //Orca: Do not alternate direction if Fill.fixed_angle is true
         if (!this->dont_alternate_fill_direction) {
-            out_angle += this->_layer_angle(this->layer_id / surface->thickness_layers);
+            // Combined internal groups (thickness_layers > 1) alternate per group. External
+            // surfaces alternate per layer even when combined: an absorbed thick top surface
+            // (see PrintObject::combine_top_surfaces()) must fill in the same direction as the
+            // same layer's uncombined remainder of that top face.
+            out_angle += this->_layer_angle(surface->is_external() ? this->layer_id :
+                                            this->layer_id / surface->thickness_layers);
         }
     } else {
 //    	printf("Layer_ID undefined!\n");

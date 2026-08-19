@@ -179,7 +179,8 @@ struct SupportParameters {
             assert(slicing_params.raft_layers() == 0);
         }
 
-	    const auto     nozzle_diameter = print_config.nozzle_diameter.get_at(object_config.support_interface_filament - 1);
+        // ORCA: honors the support nozzle diameter restriction for "default" support filaments.
+	    const auto     nozzle_diameter = support_material_nozzle_diameter(&object, object_config.support_interface_filament);
         const coordf_t extrusion_width = object_config.line_width.get_abs_value(nozzle_diameter);
         support_extrusion_width        = object_config.support_line_width.get_abs_value(nozzle_diameter);
         support_extrusion_width        = support_extrusion_width > 0 ? support_extrusion_width : extrusion_width;

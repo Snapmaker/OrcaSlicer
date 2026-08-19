@@ -290,6 +290,24 @@ enum EnsureVerticalShellThickness {
     evstAll,
 };
 
+// ORCA: per-extruder layer height ("extruder_layer_height").
+enum ExtruderLayerHeightMode {
+    elhmConsistent,
+    elhmAdaptive,
+    elhmFixed,
+};
+
+// ORCA: split wall layer heights - which wall class gets its wall-only layer height adjusted
+// when the two wall filaments' preferred heights do not divide evenly, and in which direction.
+enum WallSplitFilament {
+    wsfOuterWall,
+    wsfInnerWall,
+};
+enum WallSplitDirection {
+    wsdDecrease,
+    wsdIncrease,
+};
+
 //Orca
 enum InternalBridgeFilter {
     ibfDisabled, ibfLimited, ibfNofilter
@@ -648,6 +666,9 @@ extern std::vector<std::string> save_extruder_nozzle_stats_to_string(const std::
     template<> const t_config_enum_values& ConfigOptionEnum<NAME>::get_enum_values();
 
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(PrinterTechnology)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ExtruderLayerHeightMode)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WallSplitFilament)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(WallSplitDirection)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeFlavor)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(FuzzySkinMode)
@@ -1106,6 +1127,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Force the generation of solid shells between adjacent materials/volumes.
     ((ConfigOptionBool,                interface_shells))
     ((ConfigOptionFloat,               layer_height))
+    // ORCA: per-extruder layer height ("extruder_layer_height").
+    ((ConfigOptionEnum<ExtruderLayerHeightMode>, extruder_layer_height_mode))
+    ((ConfigOptionPercent,             extruder_layer_height_tolerance))
+    ((ConfigOptionBool,                split_wall_adjust))
+    ((ConfigOptionEnum<WallSplitFilament>,  split_wall_adjust_filament))
+    ((ConfigOptionEnum<WallSplitDirection>, split_wall_adjust_direction))
     ((ConfigOptionFloat,               mmu_segmented_region_max_width))
     ((ConfigOptionFloat,               mmu_segmented_region_interlocking_depth))
     ((ConfigOptionFloat,               raft_contact_distance))
@@ -1129,6 +1156,10 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_bottom_z_distance))
     ((ConfigOptionInt,                 enforce_support_layers))
     ((ConfigOptionInt,                 support_filament))
+    // ORCA: restrict support/raft/interface printing to filaments of this nozzle diameter (0 = no restriction).
+    ((ConfigOptionFloat,               support_nozzle_diameter))
+    ((ConfigOptionString,              support_base_material))
+    ((ConfigOptionString,              support_interface_material))
     ((ConfigOptionFloatOrPercent,      support_line_width))
     ((ConfigOptionBool,                support_interface_not_for_body))
     ((ConfigOptionBool,                support_interface_loop_pattern))
@@ -1801,6 +1832,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,             max_layer_height))
     ((ConfigOptionFloats,               fan_min_speed))
     ((ConfigOptionFloats,             min_layer_height))
+    ((ConfigOptionFloats,             extruder_layer_height))
     ((ConfigOptionFloat,              printable_height))
     ((ConfigOptionFloatsNullable,     extruder_printable_height))
     ((ConfigOptionPoint,              best_object_pos))
@@ -2415,6 +2447,17 @@ private:
 
     static uint64_t             s_last_timestamp;
 };
+
+// 0-based filament of a 1-based feature filament selector ("Default" = 0 falls back to filament 1).
+inline unsigned int feature_filament_idx(int filament_id) { return filament_id > 1 ? (unsigned int)(filament_id - 1) : 0u; }
+
+// True when any extruder carries a per-extruder preferred layer height.
+inline bool has_extruder_layer_heights(const PrintConfig &config) {
+    for (double h : config.extruder_layer_height.values)
+        if (h > 0.)
+            return true;
+    return false;
+}
 
 // const std::vector<double> &fv_matrix:  origin matrix from json
 // size_t extruder_id: -1 means single-nozzle for old file, 0 means the 1st extruder, 1 means the 2nd extruder

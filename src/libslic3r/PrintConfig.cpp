@@ -409,6 +409,27 @@ static t_config_enum_values s_keys_map_EnsureVerticalShellThickness{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(EnsureVerticalShellThickness)
 
+// ORCA: per-extruder layer height ("extruder_layer_height").
+static t_config_enum_values s_keys_map_ExtruderLayerHeightMode{
+    { "consistent", int(ExtruderLayerHeightMode::elhmConsistent) },
+    { "adaptive",   int(ExtruderLayerHeightMode::elhmAdaptive) },
+    { "fixed",      int(ExtruderLayerHeightMode::elhmFixed) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(ExtruderLayerHeightMode)
+
+// ORCA: split wall layer heights ("split_wall_adjust").
+static t_config_enum_values s_keys_map_WallSplitFilament{
+    { "outer_wall", int(WallSplitFilament::wsfOuterWall) },
+    { "inner_wall", int(WallSplitFilament::wsfInnerWall) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitFilament)
+
+static t_config_enum_values s_keys_map_WallSplitDirection{
+    { "decrease", int(WallSplitDirection::wsdDecrease) },
+    { "increase", int(WallSplitDirection::wsdIncrease) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitDirection)
+
 // Orca
 static t_config_enum_values s_keys_map_InternalBridgeFilter {
     { "disabled",        ibfDisabled },
@@ -5401,11 +5422,68 @@ void PrintConfigDef::init_fff_params()
     def = this->add("min_layer_height", coFloats);
     def->label = L("Min");
     def->tooltip = L("The lowest printable layer height for the extruder. "
-                     "Used to limit the minimum layer height when enable adaptive layer height.");
+                     "Used to limit the minimum layer height when enable adaptive layer height. "
+                     "Parts printed with a thicker preferred extruder layer height never fall back "
+                     "below this height either (the first layer excepted).");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0.07 });
+
+    def = this->add("extruder_layer_height", coFloats);
+    def->label = L("Preferred layer height");
+    def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
+                     "different nozzle sizes. It must be an integer multiple of the object layer height. "
+                     "A part whose features all follow this extruder prints only on every Nth layer with "
+                     "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
+                     "falls back to the object layer height. When the rest of the part cannot follow, "
+                     "walls assigned to this extruder still combine to this height on their own, "
+                     "full-density top surfaces absorb the solid layers below them, and sparse or 100% "
+                     "dense infill combines to this height independently. 0 means to use the object "
+                     "layer height.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("extruder_layer_height_mode", coEnum);
+    def->label = L("Thick layer regions");
+    def->category = L("Quality");
+    def->tooltip = L("How aggressively object parts assigned to an extruder with a thicker preferred layer "
+                     "height are combined into thick layers.\n"
+                     "Consistent: parts print with at most two layer heights, the extruder layer height "
+                     "wherever whole runs of layers fit and the object layer height everywhere else. This "
+                     "gives the most uniform walls.\n"
+                     "Adaptive: runs may also be combined at intermediate multiples of the object layer "
+                     "height, so more of the part prints with thicker layers, at the price of bands of "
+                     "varying layer heights on curved part boundaries.\n"
+                     "Fixed: parts always print at the extruder layer height, even where the shape changes "
+                     "across the combined layers or overhangs; curved boundaries turn into steps and detail "
+                     "finer than the thick layers is lost. Only geometry too short for a whole thick layer "
+                     "(part tops and the first layer) prints thinner.");
+    def->enum_keys_map = &ConfigOptionEnum<ExtruderLayerHeightMode>::get_enum_values();
+    def->enum_values.push_back("consistent");
+    def->enum_values.push_back("adaptive");
+    def->enum_values.push_back("fixed");
+    def->enum_labels.push_back(L("Consistent"));
+    def->enum_labels.push_back(L("Adaptive"));
+    def->enum_labels.push_back(L("Fixed"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<ExtruderLayerHeightMode>(elhmFixed));
+
+    def = this->add("extruder_layer_height_tolerance", coPercent);
+    def->label = L("Thick layer tolerance");
+    def->category = L("Quality");
+    def->tooltip = L("How far the outline of an object part assigned to an extruder with a thicker preferred "
+                     "layer height may drift sideways across the layers of one thick run and still be combined, "
+                     "as a percentage of that extruder's nozzle diameter. Higher values combine more of curved "
+                     "part boundaries into thick layers, at the price of rougher boundary walls: deviations up "
+                     "to this fraction of the nozzle diameter are swallowed by the thick extrusions.");
+    def->sidetext = "%";
+    def->min = 0;
+    def->max = 100;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(80));
 
     def = this->add("slow_down_min_speed", coFloats);
     def->label = L("Min print speed");
@@ -5606,6 +5684,54 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    // ORCA: split wall layer heights. When the outer and inner wall filaments print at their own
+    // preferred layer heights and one is an integer multiple of the other, the walls always split:
+    // the finer walls print every time their height is reached and the coarser walls once per
+    // multiple, so their tops stay flush. The options below additionally allow adjusting one wall
+    // filament's wall-only layer height so the split also happens when the preferred heights do
+    // not divide evenly.
+    def = this->add("split_wall_adjust", coBool);
+    def->label = L("Adjust wall layer height");
+    def->category = L("Extruders");
+    def->tooltip = L("Outer and inner walls automatically print at their own preferred layer heights when "
+                     "one height is an integer multiple of the other. When the heights do not divide evenly, "
+                     "this option adjusts the wall layer height of one of the two wall filaments (chosen "
+                     "below) to the nearest multiple or divisor of the other, so the walls can still split. "
+                     "The adjusted height only applies to that filament's walls; other features keep the "
+                     "preferred layer height. Adjustments never leave the filament's layer height limits: "
+                     "if no allowed height exists in the chosen direction, the walls print together at the "
+                     "lower height as usual.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("split_wall_adjust_filament", coEnum);
+    def->label = L("Adjusted walls");
+    def->category = L("Extruders");
+    def->tooltip = L("Which of the two wall filaments gets its wall layer height adjusted when the "
+                     "preferred layer heights do not divide evenly.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitFilament>::get_enum_values();
+    def->enum_values.push_back("outer_wall");
+    def->enum_values.push_back("inner_wall");
+    def->enum_labels.push_back(L("Outer walls"));
+    def->enum_labels.push_back(L("Inner walls"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitFilament>(wsfOuterWall));
+
+    def = this->add("split_wall_adjust_direction", coEnum);
+    def->label = L("Adjustment direction");
+    def->category = L("Extruders");
+    def->tooltip = L("Whether the adjusted wall filament's wall layer height is decreased or increased to "
+                     "reach a height compatible with the other wall filament. Heights outside the adjusted "
+                     "filament's layer height limits are never used: if no allowed height exists in this "
+                     "direction, the walls print together at the lower height as usual.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitDirection>::get_enum_values();
+    def->enum_values.push_back("decrease");
+    def->enum_values.push_back("increase");
+    def->enum_labels.push_back(L("Decrease"));
+    def->enum_labels.push_back(L("Increase"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitDirection>(wsdDecrease));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -7110,6 +7236,45 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("support_nozzle_diameter", coFloat);
+    def->label    = L("Support nozzle diameter");
+    def->category = L("Support");
+    def->tooltip = L("On printers whose extruders have different nozzle diameters, only filaments of this "
+                     "nozzle diameter are used to print support, raft and support interface. This keeps "
+                     "filaments of other nozzle sizes - with their different line widths and layer height "
+                     "limits - out of the support. Support filaments set to a non-default value must match "
+                     "this diameter. Value 0 allows any filament to print support.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("support_base_material", coString);
+    def->label    = L("Support/raft base material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft base only with filaments of this material type; "
+                      "extruders loaded with other types are not used for it. Combines with the "
+                      "support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft base filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("support_interface_material", coString);
+    def->label    = L("Support/raft interface material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft interface only with filaments of this material "
+                      "type; extruders loaded with other types are not used for it. Combines with "
+                      "the support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft interface filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
     def = this->add("support_line_width", coFloatOrPercent);
     def->label = L("Support");
     def->category = L("Quality");
@@ -8505,6 +8670,7 @@ void PrintConfigDef::init_extruder_option_keys()
         "default_nozzle_volume_type",
         "deretraction_speed",
         "extruder_colour",
+        "extruder_layer_height",
         "extruder_offset",
         "extruder_printable_height",
         "extruder_type",
@@ -9831,24 +9997,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             this->option("wipe_tower_filament")->setInt(0);
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // Note: no cross-propagation between the per-feature filament selectors here. Filling one
+    // selector from another (sparse -> internal solid, internal solid <-> top/bottom) silently
+    // overwrote "Default" (0), which means "use the part's filament", with an unrelated feature's
+    // explicit filament - e.g. assigning internal solid infill dragged the top/bottom surfaces along.
+    // Each selector resolves its own "Default" at slicing time (PrintRegion::extruder()).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
@@ -9928,24 +10081,7 @@ void DynamicPrintConfig::normalize_fdm_1()
         }
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // No cross-propagation between the per-feature filament selectors (see normalize_fdm() above).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {

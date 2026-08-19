@@ -2495,7 +2495,13 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
                 }
                 extra_gap = std::max(extra_gap, object.config().raft_contact_distance.value);
             }
-            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_to_print.layer()->height +
+            double layer_span = layer_to_print.layer()->height;
+            // ORCA: the top layer of a combined group or walls-only run prints the whole group at
+            // once, so tolerate a gap of its height (equals the layer height when not combined).
+            if (layer_to_print.object_layer != nullptr)
+                for (const LayerRegion *layerm : layer_to_print.object_layer->regions())
+                    layer_span = std::max(layer_span, layerm->wall_combined_height());
+            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_span +
                                      std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
 
@@ -6899,12 +6905,20 @@ LayerResult GCode::process_layer(
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
             if (layer_tools.extruder_override != 0)
                 return layer_tools.extruder_override;
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
-            if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return unsigned(region.config().sparse_infill_filament_id.value);
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return unsigned(region.config().outer_wall_filament_id.value);
             if (role == erTopSolidInfill || role == erIroning)
                 return unsigned(region.config().top_surface_filament_id.value);
-            if (role == erBottomSurface)
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
                 return unsigned(region.config().bottom_surface_filament_id.value);
             if (is_solid_infill(role))
                 return unsigned(region.config().internal_solid_filament_id.value);
@@ -6912,16 +6926,39 @@ LayerResult GCode::process_layer(
         }
         if (layer_tools.extruder_override != 0)
             return layer_tools.extruder_override;
-        return entities.role() == erPerimeter ? unsigned(region.config().inner_wall_filament_id.value)
-                                              : unsigned(region.config().outer_wall_filament_id.value);
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? unsigned(region.config().inner_wall_filament_id.value)
+                                        : unsigned(region.config().outer_wall_filament_id.value);
     };
 
-    // Zero based counterpart of configured_filament_id_1based(), which already folds in extruder_override.
-    auto configured_extruder_id = [&configured_filament_id_1based](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
-                                                                   const ExtrusionEntityCollection&                    entities,
-                                                                   const PrintRegion&                                  region) -> int {
-        const unsigned int filament_id = configured_filament_id_1based(entity_type, entities, region);
-        return filament_id == 0 ? 0 : int(filament_id) - 1;
+    auto configured_extruder_id = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
+                                                 const ExtrusionEntityCollection&                    entities,
+                                                 const PrintRegion&                                  region) -> int {
+        if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return int(layer_tools.wall_extruder_id(region));
+            if (role == erTopSolidInfill || role == erIroning)
+                return int(layer_tools.top_surface_filament_id(region));
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+                return int(layer_tools.bottom_surface_filament_id(region));
+            if (is_solid_infill(role))
+                return int(layer_tools.internal_solid_filament_id(region));
+            return int(layer_tools.sparse_infill_filament_id(region));
+        }
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? int(layer_tools.inner_wall_extruder_id(region))
+                                        : int(layer_tools.wall_extruder_id(region));
     };
 
     auto pointillism_sequence_for_filament = [&](unsigned int filament_id_1based) -> const std::vector<unsigned int>* {
@@ -7265,6 +7302,29 @@ LayerResult GCode::process_layer(
                         support_extruder = dontcare_extruder;
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
+                }
+                // ORCA: with support nozzle diameter / material restrictions, ("don't care") support/interface may only use a passing extruder; prefer one scheduled on this layer (as ToolOrdering did).
+                if (object.has_support_filament_restriction()) {
+                    auto restrict_to_support_filaments = [&print, &object, &layer_tools](unsigned int extruder_id, bool interface_role) -> unsigned int {
+                        if (object.support_filament_allowed(extruder_id + 1, interface_role))
+                            return extruder_id;
+                        unsigned int fallback   = extruder_id;
+                        bool have_fallback      = false;
+                        for (unsigned int candidate : layer_tools.extruders) // 0 based at this point
+                            if (object.support_filament_allowed(candidate + 1, interface_role)) {
+                                if (! print.config().filament_soluble.get_at(candidate))
+                                    return candidate;
+                                if (! have_fallback) {
+                                    fallback      = candidate;
+                                    have_fallback = true;
+                                }
+                            }
+                        return fallback;
+                    };
+                    if (support_dontcare)
+                        support_extruder = restrict_to_support_filaments(support_extruder, false);
+                    if (interface_dontcare)
+                        interface_extruder = restrict_to_support_filaments(interface_extruder, true);
                 }
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.
@@ -7635,29 +7695,36 @@ LayerResult GCode::process_layer(
                             }
                         };
 
-                        bool split_mixed_perimeters =
-                            entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
-                            region.config().outer_wall_filament_id.value != region.config().inner_wall_filament_id.value &&
-                            filtered_extrusions->role() == erMixed;
+                        // ORCA: gate the split on the actual per-path classification: the collection
+                        // role() is erMixed only when the loops' FIRST paths differ, missing e.g. a
+                        // collection whose loops all start with an overhang path.
+                        bool any_outer_wall = false, any_inner_wall = false;
+                        if (entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
+                            region.config().outer_wall_filament_id.value != region.config().inner_wall_filament_id.value)
+                            classify_wall_filaments(*filtered_extrusions, any_outer_wall, any_inner_wall);
+                        const bool split_mixed_perimeters = any_outer_wall && any_inner_wall;
 
                         if (split_mixed_perimeters) {
                             auto outer_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             auto inner_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             for (const ExtrusionEntity* entity : filtered_extrusions->entities) {
-                                const ExtrusionRole role = entity->role();
-                                if (role == erExternalPerimeter || role == erOverhangPerimeter)
+                                // Same classification as the wall filament dispatch (LayerTools::extruder()).
+                                if (perimeter_entity_uses_outer_wall_filament(*entity))
                                     outer_perimeters->append(*entity);
-                                else if (role == erPerimeter)
+                                else
                                     inner_perimeters->append(*entity);
                             }
 
+                            // Wiping-extrusion overrides were marked (and their purge volume
+                            // credited) against the ORIGINAL collection - look them up under that
+                            // key so a purge planned into these perimeters still happens.
                             if (!outer_perimeters->entities.empty()) {
                                 split_perimeter_storage.emplace_back(std::move(outer_perimeters));
-                                process_extrusions(split_perimeter_storage.back().get(), nullptr, false);
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
                             }
                             if (!inner_perimeters->entities.empty()) {
                                 split_perimeter_storage.emplace_back(std::move(inner_perimeters));
-                                process_extrusions(split_perimeter_storage.back().get(), nullptr, false);
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
                             }
                         } else {
                             process_extrusions(filtered_extrusions, filtered_extrusions, true);

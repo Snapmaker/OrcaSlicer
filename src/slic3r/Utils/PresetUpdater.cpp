@@ -2034,6 +2034,11 @@ void PresetUpdater::sync(std::string http_url, std::string language, std::string
 
 void PresetUpdater::check_vendor_update(const std::string& vendor_id)
 {
+    // Snapmaker Orca: vendor profile updates come exclusively through the
+    // Snapmaker OTA channel (sync_config); the mainline Orca profile CDN is
+    // not used by this fork. Shipped third-party vendor profiles update with
+    // the application itself.
+    return;
     if (!p->enabled_config_update) return;
     if (vendor_id.empty()) return;
 

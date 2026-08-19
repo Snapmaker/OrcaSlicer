@@ -1,6 +1,6 @@
 {
     "type": "process",
-    "name": "0.10 High Quality @Snapmaker U1 (0.2 nozzle)",
+    "name": "0.10mm High Quality @Snapmaker U1 (0.2 nozzle)",
     "inherits": "fdm_process_U1_0.10_nozzle_0.2",
     "from": "system",
     "setting_id": "GP111",
@@ -27,5 +27,6 @@
     "support_type": "tree(auto)",
     "wipe_tower_extra_rib_length": "8",
     "wipe_tower_extra_spacing": "120%",
-    "wipe_tower_wall_type": "rib"
+    "wipe_tower_wall_type": "rib",
+    "initial_layer_print_height": 0.12
 }

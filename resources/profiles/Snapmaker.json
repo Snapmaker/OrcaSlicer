@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.03.01.02",
+  "version": "02.03.01.03",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -483,84 +483,48 @@
       "sub_path": "process/fdm_process_U1_0.56_nozzle_0.8.json"
     },
     {
-      "name": "0.06 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.06 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.06 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.06 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.08 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.08 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.08 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.08 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.10 High Quality @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.10 High Quality @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
-      "name": "0.10 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.10 Standard @Snapmaker U1 (0.2 nozzle).json"
-    },
-    {
       "name": "0.10mm Color Mixing @Snapmaker U1 (0.4 nozzle)",
       "sub_path": "process/0.10mm Color Mixing @Snapmaker U1 (0.4 nozzle).json"
     },
     {
-      "name": "0.12 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.12 Standard @Snapmaker U1 (0.2 nozzle).json"
+      "name": "0.08mm High Quality @Snapmaker U1 (0.2 nozzle)",
+      "sub_path": "process/0.08mm High Quality @Snapmaker U1 (0.2 nozzle).json"
     },
     {
-      "name": "0.14 Standard @Snapmaker U1 (0.2 nozzle)",
-      "sub_path": "process/0.14 Standard @Snapmaker U1 (0.2 nozzle).json"
+      "name": "0.10mm High Quality @Snapmaker U1 (0.2 nozzle)",
+      "sub_path": "process/0.10mm High Quality @Snapmaker U1 (0.2 nozzle).json"
     },
     {
-      "name": "0.18 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.18 Standard @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.12mm Standard @Snapmaker U1 (0.2 nozzle)",
+      "sub_path": "process/0.12mm Standard @Snapmaker U1 (0.2 nozzle).json"
     },
     {
-      "name": "0.24 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.24 Standard @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.18mm Standard @Snapmaker U1 (0.6 nozzle)",
+      "sub_path": "process/0.18mm Standard @Snapmaker U1 (0.6 nozzle).json"
     },
     {
-      "name": "0.30 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.30 Standard @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.24mm Standard @Snapmaker U1 (0.6 nozzle)",
+      "sub_path": "process/0.24mm Standard @Snapmaker U1 (0.6 nozzle).json"
     },
     {
-      "name": "0.30 Strength @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.30 Strength @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.30mm Standard @Snapmaker U1 (0.6 nozzle)",
+      "sub_path": "process/0.30mm Standard @Snapmaker U1 (0.6 nozzle).json"
     },
     {
-      "name": "0.36 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.36 Standard @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.24mm Standard @Snapmaker U1 (0.8 nozzle)",
+      "sub_path": "process/0.24mm Standard @Snapmaker U1 (0.8 nozzle).json"
     },
     {
-      "name": "0.42 Standard @Snapmaker U1 (0.6 nozzle)",
-      "sub_path": "process/0.42 Standard @Snapmaker U1 (0.6 nozzle).json"
+      "name": "0.32mm Standard @Snapmaker U1 (0.8 nozzle)",
+      "sub_path": "process/0.32mm Standard @Snapmaker U1 (0.8 nozzle).json"
     },
     {
-      "name": "0.40 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.40 Standard @Snapmaker U1 (0.8 nozzle).json"
+      "name": "0.40mm Standard @Snapmaker U1 (0.8 nozzle)",
+      "sub_path": "process/0.40mm Standard @Snapmaker U1 (0.8 nozzle).json"
     },
     {
-      "name": "0.48 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.48 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-    {
-      "name": "0.32 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.32 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-    {
-      "name": "0.24 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.24 Standard @Snapmaker U1 (0.8 nozzle).json"
-    },
-    {
-      "name": "0.56 Standard @Snapmaker U1 (0.8 nozzle)",
-      "sub_path": "process/0.56 Standard @Snapmaker U1 (0.8 nozzle).json"
+      "name": "0.40mm Strength @Snapmaker U1 (0.8 nozzle)",
+      "sub_path": "process/0.40mm Strength @Snapmaker U1 (0.8 nozzle).json"
     }
   ],
   "filament_list": [
@@ -1649,8 +1613,16 @@
       "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 base.json"
     },
     {
+      "name": "Snapmaker PLA Full Spectrum @U1 0.2 nozzle",
+      "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.2 nozzle.json"
+    },
+    {
       "name": "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",
       "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Full Spectrum @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PLA Full Spectrum @U1 0.6 nozzle.json"
     },
     {
       "name": "Snapmaker ABS @U1 base",

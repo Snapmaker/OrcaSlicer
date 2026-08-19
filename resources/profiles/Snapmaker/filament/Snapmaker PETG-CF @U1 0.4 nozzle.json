@@ -105,10 +105,10 @@
     "80"
   ],
   "supertack_plate_temp": [
-    "60"
+    "0"
   ],
   "supertack_plate_temp_initial_layer": [
-    "60"
+    "0"
   ],
   "filament_type": [
     "PETG-CF"

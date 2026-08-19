@@ -11,6 +11,7 @@
 #import <WebKit/WebKit.h>
 
 #include <objc/runtime.h>
+#include <objc/message.h>
 
 @interface MacDarkMode : NSObject {}
 @end
@@ -98,6 +99,50 @@ void WKWebView_setTransparentBackground(void * web)
     WKWebView * webView = (WKWebView*)web;
     [webView layer].backgroundColor = [NSColor clearColor].CGColor;
     [webView registerForDraggedTypes: @[NSFilenamesPboardType]];
+}
+
+void WKWebViewConfiguration_keepActiveWhenHidden(void * configuration)
+{
+    // The embedded Flutter web views are created hidden (and some at zero size)
+    // while their page loads. Modern WebKit suspends scheduling for inactive
+    // pages, which under the wxWidgets 3.3 WKWebView hosting leaves the async
+    // flutter_bootstrap.js load undispatched and the engine never boots - the
+    // page stays blank. Opt these views out of inactive throttling so they
+    // keep loading and rendering like they did under wxWidgets 3.1.
+    //
+    // This MUST be applied to the WKWebViewConfiguration BEFORE the WKWebView
+    // is created: -[WKWebView configuration] returns a copy, so setting the
+    // policy through an existing web view has no effect.
+    WKWebViewConfiguration * config = (WKWebViewConfiguration*)configuration;
+    if (@available(macOS 14.0, *)) {
+        config.preferences.inactiveSchedulingPolicy = WKInactiveSchedulingPolicyNone;
+    }
+    // WebKit SPI used by apps that run web content in offscreen/hidden views:
+    // keeps the page's activity state at foreground priority regardless of the
+    // hosting view's visibility. Guarded so it degrades gracefully if the SPI
+    // disappears from a future WebKit.
+    // WebKit SPI used by apps that run web content in offscreen/hidden views:
+    // keeps the page's activity state at foreground priority regardless of the
+    // hosting view's visibility. Not present on macOS 26/27 WebKit (verified),
+    // but harmless and potentially useful on older systems; guarded so it
+    // degrades gracefully.
+    SEL fgSel = NSSelectorFromString(@"_setAlwaysRunsAtForegroundPriority:");
+    if ([config respondsToSelector:fgSel]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(config, fgSel, YES);
+    }
+}
+
+void WKWebView_keepActiveWhenHidden(void * web)
+{
+    // Post-creation companion to WKWebViewConfiguration_keepActiveWhenHidden:
+    // disable occlusion-driven visibility demotion on the created web view.
+    // Verified present on macOS 27 WebKit; with it, an occluded-but-shown
+    // page reports document.visibilityState == "visible".
+    WKWebView * webView = (WKWebView*)web;
+    SEL occlSel = NSSelectorFromString(@"_setWindowOcclusionDetectionEnabled:");
+    if ([webView respondsToSelector:occlSel]) {
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(webView, occlSel, NO);
+    }
 }
 
 void openFolderForFile(wxString const & file)

@@ -184,13 +184,23 @@ class WebViewWebKit : public wxWebViewWebKit
 {
 public:
     WebViewWebKit()
-        : wxWebViewWebKit(wxWebView::NewConfiguration(wxWebViewBackendWebKit))
+        : wxWebViewWebKit(MakeConfiguration())
     {
     }
 
     ~WebViewWebKit() override
     {
         RemoveScriptMessageHandler("wx");
+    }
+
+private:
+    static wxWebViewConfiguration MakeConfiguration()
+    {
+        wxWebViewConfiguration config = wxWebView::NewConfiguration(wxWebViewBackendWebKit);
+        // Must be applied to the native WKWebViewConfiguration before the
+        // WKWebView is created (post-creation the configuration is a copy).
+        Slic3r::GUI::WKWebViewConfiguration_keepActiveWhenHidden(config.GetNativeConfiguration());
+        return config;
     }
 };
 
@@ -313,13 +323,17 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #endif
-        webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        // Set the user agent BEFORE Create(): wx buffers it and applies it ahead of the
+        // first navigation, so the live WKWebView is not mutated mid-provisional-load.
+        // Mirrors the Windows branch order.
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) BBL-Language/%s",
                                                SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light", language_code.mb_str()));
+        webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
 #endif
 #ifdef __WXMAC__
         WKWebView * wkWebView = (WKWebView *) webView->GetNativeBackend();
         Slic3r::GUI::WKWebView_setTransparentBackground(wkWebView);
+        Slic3r::GUI::WKWebView_keepActiveWhenHidden(wkWebView);
 #endif
         auto addScriptMessageHandler = [] (wxWebView *webView) {
             // Skip if SendAPIKey() already registered "wx"; a duplicate add throws an

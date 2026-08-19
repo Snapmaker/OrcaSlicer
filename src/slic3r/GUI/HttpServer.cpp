@@ -107,7 +107,10 @@ void session::read_first_line()
 {
     auto self(shared_from_this());
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    // Read up to the full CRLF: completing on '\r' alone can fire before the
+    // trailing '\n' has arrived, desyncing the line parser and deadlocking the
+    // connection (the peer waits for a response that is never sent).
+    async_read_until(socket, buff, "\r\n", [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
             std::string  line, ignore;
             std::istream stream{&buff};
@@ -143,6 +146,7 @@ void session::read_next_line()
         ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";          // 允许的方法
         ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
         ssOut << "Content-Length: 0\r\n";                                         // 无响应体
+        ssOut << "Connection: close\r\n";
         ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
 
         // 异步发送响应
@@ -153,7 +157,8 @@ void session::read_next_line()
         return; // 提前返回，避免后续逻辑
     }
 
-    async_read_until(socket, buff, '\r', [this, self](const boost::beast::error_code& e, std::size_t s) {
+    // "\r\n" delimiter for the same reason as in read_first_line().
+    async_read_until(socket, buff, "\r\n", [this, self](const boost::beast::error_code& e, std::size_t s) {
         if (!e) {
             std::string  line, ignore;
             std::istream stream{&buff};
@@ -976,6 +981,7 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
+    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -989,6 +995,7 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
+    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -1051,6 +1058,7 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";      // 头和主体之间的空行（必须）
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
 }
@@ -1063,6 +1071,7 @@ void HttpServer::ResponseHtml::write_response(std::stringstream& ssOut)
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n";
     ssOut << "Access-Control-Allow-Origin: *\r\n"; // CORS头
+    ssOut << "Connection: close\r\n";
     ssOut << "\r\n";
     ssOut << html;
 }

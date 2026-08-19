@@ -2,6 +2,7 @@
 #define slic3r_GLCanvas3D_hpp_
 
 #include <stddef.h>
+#include <array>
 #include <memory>
 #include <chrono>
 #include <cstdint>
@@ -523,18 +524,27 @@ private:
         unsigned int fullResolutionMaskTexture{ 0 };
         unsigned int maskFramebuffer{ 0 };
         unsigned int maskTexture{ 0 };
-        unsigned int edgeTempFramebuffer{ 0 };
-        unsigned int edgeTempTexture{ 0 };
+        unsigned int edgeBlurPingPongFramebuffer{ 0 };
+        unsigned int edgeBlurPingPongTexture{ 0 };
         unsigned int edgeFramebuffer{ 0 };
         unsigned int edgeTexture{ 0 };
-        unsigned int glowTempFramebuffer{ 0 };
-        unsigned int glowTempTexture{ 0 };
+        unsigned int glowBlurPingPongFramebuffer{ 0 };
+        unsigned int glowBlurPingPongTexture{ 0 };
         unsigned int glowFramebuffer{ 0 };
         unsigned int glowTexture{ 0 };
         unsigned int fullResolutionWidth{ 0 };
         unsigned int fullResolutionHeight{ 0 };
         unsigned int width{ 0 };
         unsigned int height{ 0 };
+    };
+
+    /** @brief Data-driven symmetric samples for one Gaussian blur pass. */
+    struct GaussianSampleKernel
+    {
+        float centerWeight{ 1.0f };
+        std::array<float, 4> sampleOffsets{};
+        std::array<float, 4> sampleWeights{};
+        int symmetricSampleCount{ 0 };
     };
 
     bool m_is_dark = false;
@@ -1187,6 +1197,30 @@ private:
 
     /** @brief Renders selected volumes at full resolution and downscales the selection Mask. */
     bool RenderSelectionHighlightMask();
+
+    /**
+     * @brief Builds a normalized Gaussian kernel expressed in source-texture texels.
+     * @param blurRadius Blur radius in target-framebuffer pixels.
+     * @param sourceExtent Source texture width or height along the blur direction.
+     * @param targetExtent Target framebuffer width or height along the blur direction.
+     * @param outputKernel Generated kernel used by RenderSelectionGaussianPass().
+     * @return true when a valid normalized kernel was generated.
+     */
+    static bool BuildGaussianSampleKernel(float blurRadius, unsigned int sourceExtent,
+                                          unsigned int targetExtent, GaussianSampleKernel& outputKernel);
+
+    /**
+     * @brief Renders one alpha-channel Gaussian blur pass using the currently bound Gaussian shader.
+     * @param targetFramebuffer Framebuffer that receives the blurred texture.
+     * @param sourceTexture Texture whose alpha channel is blurred.
+     * @param renderSize Physical dimensions of the target framebuffer.
+     * @param sampleStepUv Normalized UV distance of one source-texture texel along the blur direction.
+     * @param kernel Normalized symmetric Gaussian samples generated for this pass.
+     * @return true when the pass was rendered successfully.
+     */
+    bool RenderSelectionGaussianPass(unsigned int targetFramebuffer, unsigned int sourceTexture,
+                                     const Size& renderSize, const Vec2f& sampleStepUv,
+                                     const GaussianSampleKernel& kernel);
 
     /** @brief Generates the main selection edge and its outer Glow from the selection Mask. */
     bool RenderSelectionOutlineTextures();

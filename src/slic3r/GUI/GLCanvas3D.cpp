@@ -107,6 +107,17 @@ constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
 constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
+constexpr int GAUSSIAN_LOGICAL_TAP_COUNT = 4;
+constexpr float GAUSSIAN_MAX_RADIUS = 4.0f; // Larger radii use the original nine-fetch kernel.
+constexpr float GAUSSIAN_EPSILON = 1.0e-6f;
+// Normalized weights for offset_i = radius * i / 4 and sigma = radius * 0.5.
+constexpr std::array<float, GAUSSIAN_LOGICAL_TAP_COUNT + 1> GAUSSIAN_LOGICAL_WEIGHTS{
+    0.20416369f,
+    0.18017382f,
+    0.12383154f,
+    0.06628225f,
+    0.02763055f
+};
 constexpr double STENCIL_OUTLINE_SCALE = 1.02;
 const ColorRGB SELECTION_OUTLINE_COLOR = ColorRGB::WHITE();
 const ColorRGB ASSEMBLE_VIEW_SELECTION_OUTLINE_COLOR{ 0.76f, 0.76f, 0.16f };
@@ -1548,12 +1559,12 @@ GLCanvas3D::~GLCanvas3D()
         m_selectionHighlightResources.fullResolutionMaskTexture != 0 ||
         m_selectionHighlightResources.maskFramebuffer != 0 ||
         m_selectionHighlightResources.maskTexture != 0 ||
-        m_selectionHighlightResources.edgeTempFramebuffer != 0 ||
-        m_selectionHighlightResources.edgeTempTexture != 0 ||
+        m_selectionHighlightResources.edgeBlurPingPongFramebuffer != 0 ||
+        m_selectionHighlightResources.edgeBlurPingPongTexture != 0 ||
         m_selectionHighlightResources.edgeFramebuffer != 0 ||
         m_selectionHighlightResources.edgeTexture != 0 ||
-        m_selectionHighlightResources.glowTempFramebuffer != 0 ||
-        m_selectionHighlightResources.glowTempTexture != 0 ||
+        m_selectionHighlightResources.glowBlurPingPongFramebuffer != 0 ||
+        m_selectionHighlightResources.glowBlurPingPongTexture != 0 ||
         m_selectionHighlightResources.glowFramebuffer != 0 ||
         m_selectionHighlightResources.glowTexture != 0;
     if (hasSelectionHighlightResources && m_canvas != nullptr && _set_current())
@@ -1685,9 +1696,9 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
     const bool resourcesReady = resources.fullResolutionMaskFramebuffer != 0 &&
                                 resources.fullResolutionMaskTexture != 0 &&
                                 resources.maskFramebuffer != 0 && resources.maskTexture != 0 &&
-                                resources.edgeTempFramebuffer != 0 && resources.edgeTempTexture != 0 &&
+                                resources.edgeBlurPingPongFramebuffer != 0 && resources.edgeBlurPingPongTexture != 0 &&
                                 resources.edgeFramebuffer != 0 && resources.edgeTexture != 0 &&
-                                resources.glowTempFramebuffer != 0 && resources.glowTempTexture != 0 &&
+                                resources.glowBlurPingPongFramebuffer != 0 && resources.glowBlurPingPongTexture != 0 &&
                                 resources.glowFramebuffer != 0 && resources.glowTexture != 0;
     if (resourcesReady && resources.fullResolutionWidth == canvasWidth &&
         resources.fullResolutionHeight == canvasHeight && resources.width == width && resources.height == height)
@@ -1722,14 +1733,14 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
                                             m_selectionHighlightResources.maskFramebuffer,
                                             m_selectionHighlightResources.maskTexture) &&
         CreateSelectionHighlightFramebuffer(framebufferType, width, height,
-                                            m_selectionHighlightResources.edgeTempFramebuffer,
-                                            m_selectionHighlightResources.edgeTempTexture) &&
+                                            m_selectionHighlightResources.edgeBlurPingPongFramebuffer,
+                                            m_selectionHighlightResources.edgeBlurPingPongTexture) &&
         CreateSelectionHighlightFramebuffer(framebufferType, width, height,
                                             m_selectionHighlightResources.edgeFramebuffer,
                                             m_selectionHighlightResources.edgeTexture) &&
         CreateSelectionHighlightFramebuffer(framebufferType, glowWidth, glowHeight,
-                                            m_selectionHighlightResources.glowTempFramebuffer,
-                                            m_selectionHighlightResources.glowTempTexture) &&
+                                            m_selectionHighlightResources.glowBlurPingPongFramebuffer,
+                                            m_selectionHighlightResources.glowBlurPingPongTexture) &&
         CreateSelectionHighlightFramebuffer(framebufferType, glowWidth, glowHeight,
                                             m_selectionHighlightResources.glowFramebuffer,
                                             m_selectionHighlightResources.glowTexture);
@@ -1814,21 +1825,168 @@ bool GLCanvas3D::RenderSelectionHighlightMask()
     }
     shader->stop_using();
 
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.maskFramebuffer);
-    glsafe(::glViewport(0, 0, static_cast<GLsizei>(m_selectionHighlightResources.width),
-                        static_cast<GLsizei>(m_selectionHighlightResources.height)));
+    const Size maskSize(static_cast<int>(m_selectionHighlightResources.width),
+                        static_cast<int>(m_selectionHighlightResources.height));
+    const GaussianSampleKernel downsampleKernel;
+    const Vec2f downsampleStepUv(1.0f / static_cast<float>(m_selectionHighlightResources.fullResolutionWidth), 0.0f);
     downsampleShader->start_using();
-    downsampleShader->set_uniform("source_texture", 0);
-    downsampleShader->set_uniform("inverse_texture_size",
-                                  Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.fullResolutionWidth),
-                                        1.0f / static_cast<float>(m_selectionHighlightResources.fullResolutionHeight)));
-    downsampleShader->set_uniform("blur_radius", 0.0f);
-    downsampleShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.fullResolutionMaskTexture));
-    m_background.render();
+    const bool downsampleRendered =
+        RenderSelectionGaussianPass(m_selectionHighlightResources.maskFramebuffer,
+                                    m_selectionHighlightResources.fullResolutionMaskTexture,
+                                    maskSize, downsampleStepUv, downsampleKernel);
     downsampleShader->stop_using();
 
+    return downsampleRendered;
+}
+
+bool GLCanvas3D::BuildGaussianSampleKernel(float blurRadius, unsigned int sourceExtent,
+                                           unsigned int targetExtent, GaussianSampleKernel& outputKernel)
+{
+    outputKernel = GaussianSampleKernel{};
+    if (!std::isfinite(blurRadius) || blurRadius < 0.0f || sourceExtent == 0 || targetExtent == 0)
+        return false;
+
+    if (blurRadius <= GAUSSIAN_EPSILON)
+        return true;
+
+    const auto buildOriginalKernel = [&outputKernel, blurRadius, sourceExtent, targetExtent]() -> bool
+    {
+        outputKernel = GaussianSampleKernel{};
+        outputKernel.centerWeight = GAUSSIAN_LOGICAL_WEIGHTS[0];
+        const float sourceTexelsPerTargetPixel = static_cast<float>(sourceExtent) / static_cast<float>(targetExtent);
+        for (int tap = 1; tap <= GAUSSIAN_LOGICAL_TAP_COUNT; ++tap)
+        {
+            const size_t index = static_cast<size_t>(tap - 1);
+            const float sampleOffset = blurRadius * static_cast<float>(tap) /
+                                    static_cast<float>(GAUSSIAN_LOGICAL_TAP_COUNT) * sourceTexelsPerTargetPixel;
+            if (!std::isfinite(sampleOffset))
+                return false;
+
+            outputKernel.sampleOffsets[index] = sampleOffset;
+            outputKernel.sampleWeights[index] = GAUSSIAN_LOGICAL_WEIGHTS[static_cast<size_t>(tap)];
+        }
+        outputKernel.symmetricSampleCount = GAUSSIAN_LOGICAL_TAP_COUNT;
+        return true;
+    };
+
+    if (blurRadius > GAUSSIAN_MAX_RADIUS)
+    {
+        static bool radiusFallbackWarningLogged = false;
+        if (!radiusFallbackWarningLogged)
+        {
+            BOOST_LOG_TRIVIAL(warning) << "Gaussian blur radius " << blurRadius
+                                       << " exceeds the optimized radius " << GAUSSIAN_MAX_RADIUS
+                                       << "; using the original nine-fetch kernel";
+            radiusFallbackWarningLogged = true;
+        }
+        return buildOriginalKernel();
+    }
+
+    if (sourceExtent != targetExtent)
+        return buildOriginalKernel();
+
+    std::array<float, GAUSSIAN_LOGICAL_TAP_COUNT + 1> texelWeights{};
+    texelWeights[0] = GAUSSIAN_LOGICAL_WEIGHTS[0];
+    for (int tap = 1; tap <= GAUSSIAN_LOGICAL_TAP_COUNT; ++tap)
+    {
+        const float offset = blurRadius * static_cast<float>(tap) / static_cast<float>(GAUSSIAN_LOGICAL_TAP_COUNT);
+        int baseTexel = static_cast<int>(std::floor(offset));
+        float fraction = offset - static_cast<float>(baseTexel);
+        if (fraction <= GAUSSIAN_EPSILON)
+            fraction = 0.0f;
+        else if (1.0f - fraction <= GAUSSIAN_EPSILON)
+        {
+            ++baseTexel;
+            fraction = 0.0f;
+        }
+
+        const bool exceedsOptimizedRange = baseTexel < 0 || baseTexel > GAUSSIAN_LOGICAL_TAP_COUNT ||
+                                            (fraction > 0.0f && baseTexel + 1 > GAUSSIAN_LOGICAL_TAP_COUNT);
+        if (exceedsOptimizedRange)
+            return buildOriginalKernel();
+
+        const float weight = GAUSSIAN_LOGICAL_WEIGHTS[static_cast<size_t>(tap)];
+        if (baseTexel == 0)
+        {
+            texelWeights[0] += 2.0f * weight * (1.0f - fraction);
+            if (fraction > 0.0f)
+                texelWeights[1] += weight * fraction;
+        }
+        else
+        {
+            texelWeights[static_cast<size_t>(baseTexel)] += weight * (1.0f - fraction);
+            if (fraction > 0.0f)
+                texelWeights[static_cast<size_t>(baseTexel + 1)] += weight * fraction;
+        }
+    }
+
+    outputKernel.centerWeight = texelWeights[0];
+    const auto appendSymmetricSample = [&outputKernel](int firstTexel, float firstWeight,
+                                                       int secondTexel, float secondWeight) -> bool
+    {
+        const float combinedWeight = firstWeight + secondWeight;
+        if (combinedWeight <= GAUSSIAN_EPSILON)
+            return true;
+
+        if (outputKernel.symmetricSampleCount >= static_cast<int>(outputKernel.sampleOffsets.size()))
+            return false;
+
+        const size_t index = static_cast<size_t>(outputKernel.symmetricSampleCount);
+        outputKernel.sampleOffsets[index] = (static_cast<float>(firstTexel) * firstWeight +
+                                            static_cast<float>(secondTexel) * secondWeight) / combinedWeight;
+        outputKernel.sampleWeights[index] = combinedWeight;
+        ++outputKernel.symmetricSampleCount;
+        return true;
+    };
+
+    if (!appendSymmetricSample(1, texelWeights[1], 2, texelWeights[2]) ||
+        !appendSymmetricSample(3, texelWeights[3], 4, texelWeights[4]))
+    {
+        return buildOriginalKernel();
+    }
+
+    return true;
+}
+
+bool GLCanvas3D::RenderSelectionGaussianPass(unsigned int targetFramebuffer, unsigned int sourceTexture,
+                                             const Size& renderSize, const Vec2f& sampleStepUv,
+                                             const GaussianSampleKernel& kernel)
+{
+    if (targetFramebuffer == 0 || sourceTexture == 0 || renderSize.get_width() <= 0 ||
+        renderSize.get_height() <= 0 || !sampleStepUv.allFinite() || kernel.symmetricSampleCount < 0 ||
+        kernel.symmetricSampleCount > static_cast<int>(kernel.sampleOffsets.size()) ||
+        !std::isfinite(kernel.centerWeight) || kernel.centerWeight < 0.0f || !m_background.is_initialized())
+    {
+        return false;
+    }
+
+    for (int index = 0; index < kernel.symmetricSampleCount; ++index)
+    {
+        const size_t sampleIndex = static_cast<size_t>(index);
+        if (!std::isfinite(kernel.sampleOffsets[sampleIndex]) || kernel.sampleOffsets[sampleIndex] < 0.0f ||
+            !std::isfinite(kernel.sampleWeights[sampleIndex]) || kernel.sampleWeights[sampleIndex] < 0.0f)
+        {
+            return false;
+        }
+    }
+
+    const OpenGLManager::EFramebufferType framebufferType = OpenGLManager::get_framebuffers_type();
+    GLShaderProgram* const shader = wxGetApp().get_current_shader();
+    if (framebufferType == OpenGLManager::EFramebufferType::Unknown || shader == nullptr)
+        return false;
+
+    BindSelectionHighlightDrawFramebuffer(framebufferType, targetFramebuffer);
+    glsafe(::glViewport(0, 0, static_cast<GLsizei>(renderSize.get_width()),
+                        static_cast<GLsizei>(renderSize.get_height())));
+    shader->set_uniform("source_texture", 0);
+    shader->set_uniform("sample_step_uv", sampleStepUv);
+    shader->set_uniform("center_weight", kernel.centerWeight);
+    shader->set_uniform("sample_offsets", kernel.sampleOffsets);
+    shader->set_uniform("sample_weights", kernel.sampleWeights);
+    shader->set_uniform("symmetric_sample_count", kernel.symmetricSampleCount);
+    glsafe(::glActiveTexture(GL_TEXTURE0));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, sourceTexture));
+    m_background.render();
     return true;
 }
 
@@ -1838,12 +1996,12 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     GLShaderProgram* const gaussianShader = wxGetApp().get_shader("selection_gaussian");
     if (edgeShader == nullptr || gaussianShader == nullptr ||
         m_selectionHighlightResources.maskTexture == 0 ||
-        m_selectionHighlightResources.edgeTempFramebuffer == 0 ||
-        m_selectionHighlightResources.edgeTempTexture == 0 ||
+        m_selectionHighlightResources.edgeBlurPingPongFramebuffer == 0 ||
+        m_selectionHighlightResources.edgeBlurPingPongTexture == 0 ||
         m_selectionHighlightResources.edgeFramebuffer == 0 ||
         m_selectionHighlightResources.edgeTexture == 0 ||
-        m_selectionHighlightResources.glowTempFramebuffer == 0 ||
-        m_selectionHighlightResources.glowTempTexture == 0 ||
+        m_selectionHighlightResources.glowBlurPingPongFramebuffer == 0 ||
+        m_selectionHighlightResources.glowBlurPingPongTexture == 0 ||
         m_selectionHighlightResources.glowFramebuffer == 0 ||
         m_selectionHighlightResources.glowTexture == 0)
     {
@@ -1889,59 +2047,46 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
     m_background.render();
     edgeShader->stop_using();
 
-    gaussianShader->start_using();
-
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeTempFramebuffer);
-    gaussianShader->set_uniform("source_texture", 0);
-    gaussianShader->set_uniform("inverse_texture_size",
-                                Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
-                                      1.0f / static_cast<float>(m_selectionHighlightResources.height)));
-    gaussianShader->set_uniform("blur_radius", SELECTION_EDGE_THICKNESS);
-    gaussianShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
-    m_background.render();
-
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.edgeFramebuffer);
-    gaussianShader->set_uniform("source_texture", 0);
-    gaussianShader->set_uniform("inverse_texture_size",
-                                Vec2f(1.0f / static_cast<float>(m_selectionHighlightResources.width),
-                                      1.0f / static_cast<float>(m_selectionHighlightResources.height)));
-    gaussianShader->set_uniform("blur_radius", SELECTION_EDGE_THICKNESS);
-    gaussianShader->set_uniform("blur_direction", Vec2f(0.0f, 1.0f));
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTempTexture));
-    m_background.render();
-
+    const Size edgeSize(static_cast<int>(m_selectionHighlightResources.width), static_cast<int>(m_selectionHighlightResources.height));
     const unsigned int glowWidth = std::max(1U, static_cast<unsigned int>(
         std::ceil(m_selectionHighlightResources.width * SELECTION_GLOW_SCALE)));
     const unsigned int glowHeight = std::max(1U, static_cast<unsigned int>(
         std::ceil(m_selectionHighlightResources.height * SELECTION_GLOW_SCALE)));
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowTempFramebuffer);
-    glsafe(::glViewport(0, 0, static_cast<GLsizei>(glowWidth), static_cast<GLsizei>(glowHeight)));
-    gaussianShader->set_uniform("source_texture", 0);
-    gaussianShader->set_uniform("inverse_texture_size",
-                                Vec2f(1.0f / static_cast<float>(glowWidth),
-                                      1.0f / static_cast<float>(glowHeight)));
-    gaussianShader->set_uniform("blur_radius", SELECTION_GLOW_BLUR_RADIUS);
-    gaussianShader->set_uniform("blur_direction", Vec2f(1.0f, 0.0f));
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.edgeTexture));
-    m_background.render();
+    const Size glowSize(static_cast<int>(glowWidth), static_cast<int>(glowHeight));
 
-    BindSelectionHighlightDrawFramebuffer(framebufferType, m_selectionHighlightResources.glowFramebuffer);
-    gaussianShader->set_uniform("source_texture", 0);
-    gaussianShader->set_uniform("inverse_texture_size",
-                                Vec2f(1.0f / static_cast<float>(glowWidth),
-                                      1.0f / static_cast<float>(glowHeight)));
-    gaussianShader->set_uniform("blur_radius", SELECTION_GLOW_BLUR_RADIUS);
-    gaussianShader->set_uniform("blur_direction", Vec2f(0.0f, 1.0f));
-    glsafe(::glActiveTexture(GL_TEXTURE0));
-    glsafe(::glBindTexture(GL_TEXTURE_2D, m_selectionHighlightResources.glowTempTexture));
-    m_background.render();
-    gaussianShader->stop_using();
+    GaussianSampleKernel edgeKernel;
+    GaussianSampleKernel horizontalGlowKernel;
+    GaussianSampleKernel verticalGlowKernel;
+    if (!BuildGaussianSampleKernel(SELECTION_EDGE_THICKNESS, m_selectionHighlightResources.width, m_selectionHighlightResources.width, edgeKernel) ||
+        !BuildGaussianSampleKernel(SELECTION_GLOW_BLUR_RADIUS, m_selectionHighlightResources.width, glowWidth, horizontalGlowKernel) ||
+        !BuildGaussianSampleKernel(SELECTION_GLOW_BLUR_RADIUS, glowHeight, glowHeight, verticalGlowKernel))
+    {
+        return false;
+    }
 
-    return true;
+    const Vec2f edgeHorizontalStepUv(1.0f / static_cast<float>(m_selectionHighlightResources.width), 0.0f);
+    const Vec2f edgeVerticalStepUv(0.0f, 1.0f / static_cast<float>(m_selectionHighlightResources.height));
+    const Vec2f glowHorizontalStepUv(1.0f / static_cast<float>(m_selectionHighlightResources.width), 0.0f);
+    const Vec2f glowVerticalStepUv(0.0f, 1.0f / static_cast<float>(glowHeight));
+
+    gaussianShader->start_using();
+    ScopeGuard gaussianShaderGuard([gaussianShader]()
+    {
+        gaussianShader->stop_using();
+    });
+
+    return RenderSelectionGaussianPass(m_selectionHighlightResources.edgeBlurPingPongFramebuffer,
+                                       m_selectionHighlightResources.edgeTexture, edgeSize,
+                                       edgeHorizontalStepUv, edgeKernel) &&
+           RenderSelectionGaussianPass(m_selectionHighlightResources.edgeFramebuffer,
+                                       m_selectionHighlightResources.edgeBlurPingPongTexture, edgeSize,
+                                       edgeVerticalStepUv, edgeKernel) &&
+           RenderSelectionGaussianPass(m_selectionHighlightResources.glowBlurPingPongFramebuffer,
+                                       m_selectionHighlightResources.edgeTexture, glowSize,
+                                       glowHorizontalStepUv, horizontalGlowKernel) &&
+           RenderSelectionGaussianPass(m_selectionHighlightResources.glowFramebuffer,
+                                       m_selectionHighlightResources.glowBlurPingPongTexture, glowSize,
+                                       glowVerticalStepUv, verticalGlowKernel);
 }
 
 void GLCanvas3D::CompositeSelectionHighlight()
@@ -2085,12 +2230,12 @@ void GLCanvas3D::ReleaseSelectionHighlightResources()
             glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.fullResolutionMaskFramebuffer));
         if (m_selectionHighlightResources.maskFramebuffer != 0)
             glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.maskFramebuffer));
-        if (m_selectionHighlightResources.edgeTempFramebuffer != 0)
-            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.edgeTempFramebuffer));
+        if (m_selectionHighlightResources.edgeBlurPingPongFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.edgeBlurPingPongFramebuffer));
         if (m_selectionHighlightResources.edgeFramebuffer != 0)
             glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.edgeFramebuffer));
-        if (m_selectionHighlightResources.glowTempFramebuffer != 0)
-            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.glowTempFramebuffer));
+        if (m_selectionHighlightResources.glowBlurPingPongFramebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.glowBlurPingPongFramebuffer));
         if (m_selectionHighlightResources.glowFramebuffer != 0)
             glsafe(::glDeleteFramebuffers(1, &m_selectionHighlightResources.glowFramebuffer));
     }
@@ -2100,12 +2245,12 @@ void GLCanvas3D::ReleaseSelectionHighlightResources()
             glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.fullResolutionMaskFramebuffer));
         if (m_selectionHighlightResources.maskFramebuffer != 0)
             glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.maskFramebuffer));
-        if (m_selectionHighlightResources.edgeTempFramebuffer != 0)
-            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.edgeTempFramebuffer));
+        if (m_selectionHighlightResources.edgeBlurPingPongFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.edgeBlurPingPongFramebuffer));
         if (m_selectionHighlightResources.edgeFramebuffer != 0)
             glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.edgeFramebuffer));
-        if (m_selectionHighlightResources.glowTempFramebuffer != 0)
-            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.glowTempFramebuffer));
+        if (m_selectionHighlightResources.glowBlurPingPongFramebuffer != 0)
+            glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.glowBlurPingPongFramebuffer));
         if (m_selectionHighlightResources.glowFramebuffer != 0)
             glsafe(::glDeleteFramebuffersEXT(1, &m_selectionHighlightResources.glowFramebuffer));
     }
@@ -2114,12 +2259,12 @@ void GLCanvas3D::ReleaseSelectionHighlightResources()
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.fullResolutionMaskTexture));
     if (m_selectionHighlightResources.maskTexture != 0)
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.maskTexture));
-    if (m_selectionHighlightResources.edgeTempTexture != 0)
-        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.edgeTempTexture));
+    if (m_selectionHighlightResources.edgeBlurPingPongTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.edgeBlurPingPongTexture));
     if (m_selectionHighlightResources.edgeTexture != 0)
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.edgeTexture));
-    if (m_selectionHighlightResources.glowTempTexture != 0)
-        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowTempTexture));
+    if (m_selectionHighlightResources.glowBlurPingPongTexture != 0)
+        glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowBlurPingPongTexture));
     if (m_selectionHighlightResources.glowTexture != 0)
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowTexture));
 

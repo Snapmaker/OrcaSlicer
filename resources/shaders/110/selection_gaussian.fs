@@ -1,41 +1,32 @@
 #version 110
 
 uniform sampler2D source_texture;
-uniform vec2 inverse_texture_size;
-uniform vec2 blur_direction;
-uniform float blur_radius;
+uniform vec2 sample_step_uv;
+uniform float center_weight;
+uniform vec4 sample_offsets;
+uniform vec4 sample_weights;
+uniform int symmetric_sample_count;
 
 varying vec2 tex_coord;
 
-float gaussianPdf(float x, float sigma)
+float sampleSymmetricPair(float offset)
 {
-    return 0.39894 * exp(-0.5 * x * x / (sigma * sigma)) / sigma;
+    vec2 uvOffset = sample_step_uv * offset;
+    return texture2D(source_texture, tex_coord + uvOffset).a +
+           texture2D(source_texture, tex_coord - uvOffset).a;
 }
 
 void main()
 {
-    if (blur_radius <= 0.0)
-    {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, texture2D(source_texture, tex_coord).a);
-        return;
-    }
+    float blurred = texture2D(source_texture, tex_coord).a * center_weight;
+    if (symmetric_sample_count > 0)
+        blurred += sampleSymmetricPair(sample_offsets.x) * sample_weights.x;
+    if (symmetric_sample_count > 1)
+        blurred += sampleSymmetricPair(sample_offsets.y) * sample_weights.y;
+    if (symmetric_sample_count > 2)
+        blurred += sampleSymmetricPair(sample_offsets.z) * sample_weights.z;
+    if (symmetric_sample_count > 3)
+        blurred += sampleSymmetricPair(sample_offsets.w) * sample_weights.w;
 
-    const int maxBlurRadius = 4;
-    float sigma = max(blur_radius * 0.5, 0.001);
-    float weightSum = gaussianPdf(0.0, sigma);
-    float blurred = texture2D(source_texture, tex_coord).a * weightSum;
-    vec2 stepUv = blur_direction * inverse_texture_size * blur_radius / float(maxBlurRadius);
-    vec2 sampleOffset = stepUv;
-
-    for (int i = 1; i <= maxBlurRadius; ++i)
-    {
-        float offset = blur_radius * float(i) / float(maxBlurRadius);
-        float weight = gaussianPdf(offset, sigma);
-        blurred += (texture2D(source_texture, tex_coord + sampleOffset).a +
-                    texture2D(source_texture, tex_coord - sampleOffset).a) * weight;
-        weightSum += 2.0 * weight;
-        sampleOffset += stepUv;
-    }
-
-    gl_FragColor = vec4(0.0, 0.0, 0.0, blurred / weightSum);
+    gl_FragColor = vec4(0.0, 0.0, 0.0, blurred);
 }

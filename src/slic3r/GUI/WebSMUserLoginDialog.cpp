@@ -323,13 +323,19 @@ void SMUserLogin::OnTitleChanged(wxWebViewEvent &evt)
     if (!title.StartsWith("SMOAUTH:") || m_callback_handled || m_callback_timer == NULL)
         return;
 
-    json response = json::parse(into_u8(title.Mid(wxString("SMOAUTH:").Length())));
-    if (response.contains("data") && response["data"].contains("access_token")) {
-        std::string token = response["data"]["access_token"].get<std::string>();
-        m_callback_handled = true;
-        m_callback_timer->Stop();
-        m_browser->LoadURL(m_hostUrl + "/?token=" + from_u8(token));
-    }
+    // No-throw parsing: the title may carry an empty/partial body while the
+    // callback page is still rendering; a thrown parse_error would escape this
+    // wx event handler and terminate the app (seen crashing on macOS).
+    json response = json::parse(into_u8(title.Mid(wxString("SMOAUTH:").Length())), nullptr, false);
+    if (response.is_discarded() || !response.is_object() || !response.contains("data"))
+        return;
+    json data = response["data"];
+    if (!data.contains("access_token") || !data["access_token"].is_string())
+        return;
+
+    m_callback_handled = true;
+    m_callback_timer->Stop();
+    m_browser->LoadURL(m_hostUrl + "/?token=" + from_u8(data["access_token"].get<std::string>()));
 }
 
 void SMUserLogin::OnFullScreenChanged(wxWebViewEvent &evt)

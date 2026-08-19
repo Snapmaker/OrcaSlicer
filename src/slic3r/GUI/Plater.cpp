@@ -446,9 +446,12 @@ static void collect_filament_slots_from_config(
     static const std::vector<const char*> feature_keys = {
         "support_filament",
         "support_interface_filament",
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament",
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "wipe_tower_filament"
     };
     for (const char* key : feature_keys)
@@ -480,9 +483,12 @@ static void collect_filament_slots_from_model_config(
     static const std::vector<const char*> feature_keys = {
         "support_filament",
         "support_interface_filament",
-        "wall_filament",
-        "sparse_infill_filament",
-        "solid_infill_filament",
+        "outer_wall_filament_id",
+        "inner_wall_filament_id",
+        "sparse_infill_filament_id",
+        "internal_solid_filament_id",
+        "top_surface_filament_id",
+        "bottom_surface_filament_id",
         "wipe_tower_filament"
     };
     for (const char* key : feature_keys)
@@ -550,7 +556,7 @@ static void collect_used_filament_slots_on_plate(
         }
 
         if (uses_default_extruder) {
-            static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+            static const std::vector<const char*> default_keys = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id", "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"};
             for (const char* key : default_keys) {
                 const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(key);
                 if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
@@ -16285,7 +16291,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             // Validate passed, but also check filament temp mixing as a final
             // guard. check_filament_temp_mixing() reads directly from preset
             // configs and catches cases that Print::validate() may miss (e.g.
-            // wall_filament changes that haven't propagated to PrintRegions yet).
+            // outer_wall_filament_id changes that haven't propagated to PrintRegions yet).
             bool filament_ok = q->sync_filament_temp_mixing_notification();
             bool cold_ok    = q->sync_cold_plate_notification();
             if (filament_ok && cold_ok) {
@@ -25311,7 +25317,8 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     sidebar().on_filaments_delete(filament_id);
 
     // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
+    static const char* keys[] = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                 "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id",
                                  "support_filament", "support_interface_filament"};
     for (auto key : keys)
         if (p->config->has(key)) {
@@ -25611,7 +25618,7 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
             // wall / infill extruders apply and must be collected.
             if (uses_default_extruder)
             {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+                static const std::vector<const char*> default_keys = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id", "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"};
                 for (const char* key : default_keys)
                 {
                     const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
@@ -25916,7 +25923,7 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
             }
 
             if (uses_default_extruder) {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+                static const std::vector<const char*> default_keys = {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id", "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"};
                 for (const char* key : default_keys) {
                     const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
                     if (option != nullptr && option->value >= 1 && option->value <= num_filaments)

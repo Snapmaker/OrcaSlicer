@@ -1015,7 +1015,14 @@ public:
     bool is_seam_painted() const { return !this->seam_facets.empty(); }
     bool is_mm_painted() const { return !this->mmu_segmentation_facets.empty(); }
     bool is_fuzzy_skin_painted() const { return !this->fuzzy_skin_facets.empty(); }
-    
+
+    // Id of the source ModelObject this volume was cloned from when objects were
+    // assembled (merged) into a multi-part object. Opaque group label only compared for
+    // equality by ModelObject::split() to re-attach non-solid volumes (e.g. negative
+    // volumes) to the objects they originally belonged to before the assembly.
+    void     set_merged_group_id(ObjectID id) { m_merged_group_id = id; }
+    ObjectID merged_group_id() const { return m_merged_group_id; }
+
     // Orca: Implement prusa's filament shrink compensation approach
     // Returns 0-based indices of extruders painted by multi-material painting gizmo.
      std::vector<size_t> get_extruders_from_multi_material_painting() const;
@@ -1058,6 +1065,9 @@ private:
     //      0   ->   is not splittable
     //      1   ->   is splittable
     mutable int               		m_is_splittable{ -1 };
+    // See set_merged_group_id(). Invalid (0) when the volume did not come
+    // from an "Assemble" merge.
+    ObjectID                        m_merged_group_id{};
 
 	ModelVolume(ModelObject *object, const TriangleMesh &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) : m_mesh(new TriangleMesh(mesh)), m_type(type), object(object)
     {
@@ -1110,7 +1120,8 @@ private:
         name(other.name), source(other.source), m_mesh(other.m_mesh), m_convex_hull(other.m_convex_hull),
         config(other.config), m_type(other.m_type), object(object), m_transformation(other.m_transformation),
         supported_facets(other.supported_facets), seam_facets(other.seam_facets), mmu_segmentation_facets(other.mmu_segmentation_facets),
-        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration),
+        emboss_shape(other.emboss_shape), m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1133,7 +1144,8 @@ private:
     // Providing a new mesh, therefore this volume will get a new unique ID assigned.
     ModelVolume(ModelObject *object, const ModelVolume &other, TriangleMesh &&mesh) :
         name(other.name), source(other.source), config(other.config), object(object), m_mesh(new TriangleMesh(std::move(mesh))), m_type(other.m_type), m_transformation(other.m_transformation),
-        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape),
+        m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1183,7 +1195,8 @@ private:
         // BBS: add backup, check modify
         bool mesh_changed = false;
         auto tr = m_transformation;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         mesh_changed |= !(tr == m_transformation);
         auto t = supported_facets.timestamp();
         cereal::load_by_value(ar, supported_facets);
@@ -1212,7 +1225,8 @@ private:
 	}
 	template<class Archive> void save(Archive &ar) const {
 		bool has_convex_hull = m_convex_hull.get() != nullptr;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         cereal::save_by_value(ar, supported_facets);
         cereal::save_by_value(ar, seam_facets);
         cereal::save_by_value(ar, mmu_segmentation_facets);

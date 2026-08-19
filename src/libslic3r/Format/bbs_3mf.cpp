@@ -336,6 +336,9 @@ static constexpr const char* SOURCE_OFFSET_Y_KEY = "source_offset_y";
 static constexpr const char* SOURCE_OFFSET_Z_KEY = "source_offset_z";
 static constexpr const char* SOURCE_IN_INCHES    = "source_in_inches";
 static constexpr const char* SOURCE_IN_METERS    = "source_in_meters";
+// Merge group id of a volume cloned by "Assemble"; consumed by "Split to objects"
+// to restore non-solid volumes (e.g. negative volumes) to the object they belonged to.
+static constexpr const char* MERGED_GROUP_ID_KEY = "merged_group_id";
 
 static constexpr const char* MESH_SHARED_KEY = "mesh_shared";
 
@@ -4884,6 +4887,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else if ((metadata.key == MATRIX_KEY) || (metadata.key == MESH_SHARED_KEY))
                     continue;
                 else
@@ -5034,6 +5039,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
             }
@@ -7618,6 +7625,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                 else if (volume->source.is_converted_from_meters)
                                     stream << prefix << SOURCE_IN_METERS << "\" " << VALUE_ATTR << "=\"1\"/>\n";
                             }
+
+                            // stores the merge group id (set by "Assemble", consumed by "Split to objects")
+                            if (volume->merged_group_id().valid())
+                                stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << MERGED_GROUP_ID_KEY
+                                       << "\" " << VALUE_ATTR << "=\"" << volume->merged_group_id().id << "\"/>\n";
 
                             // stores volume's config data
                             for (const std::string& key : volume->config.keys()) {

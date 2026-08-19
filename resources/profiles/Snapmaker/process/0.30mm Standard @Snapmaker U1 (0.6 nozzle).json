@@ -1,6 +1,7 @@
 {
     "type": "process",
     "name": "0.30mm Standard @Snapmaker U1 (0.6 nozzle)",
+    "renamed_from": "0.30 Strength @Snapmaker U1 (0.6 nozzle);0.30 Standard @Snapmaker U1 (0.6 nozzle);0.36 Standard @Snapmaker U1 (0.6 nozzle);0.42 Standard @Snapmaker U1 (0.6 nozzle)",
     "inherits": "fdm_process_U1_0.30_nozzle_0.6",
     "from": "system",
     "setting_id": "GP010",

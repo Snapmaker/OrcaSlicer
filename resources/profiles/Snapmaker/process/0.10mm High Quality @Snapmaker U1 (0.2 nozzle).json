@@ -1,6 +1,7 @@
 {
     "type": "process",
     "name": "0.10mm High Quality @Snapmaker U1 (0.2 nozzle)",
+    "renamed_from": "0.10 Standard @Snapmaker U1 (0.2 nozzle);0.10 High Quality @Snapmaker U1 (0.2 nozzle)",
     "inherits": "fdm_process_U1_0.10_nozzle_0.2",
     "from": "system",
     "setting_id": "GP111",

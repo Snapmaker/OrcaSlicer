@@ -4,6 +4,13 @@ Snapmaker Orca is a powerful open source slicer for FFF (FDM) 3D Printers. This 
 
 The Wiki is work in progress so bear with us while we get it up and running!
 
+<a id="prepare"></a>
+<a id="process-settings"></a>
+<a id="material-settings"></a>
+<a id="printer-settings"></a>
+<a id="support-settings"></a>
+<a id="others-settings"></a>
+
 ## Print Settings, Tips and Tricks (Work In Progress)
 The below sections provide a detailed settings explanation as well as tips and tricks in setting these for optimal print results.
 
@@ -28,9 +35,11 @@ The below sections provide a detailed settings explanation as well as tips and t
 - [Pellet Printers (pellet flow coefficient)](pellet-flow-coefficient)
 
 ## Printer Calibration
+<a id="calibrations"></a>
+
 The guide below takes you through the key calibration tests in Orca - flow rate, pressure advance, print temperature, retraction, tolerances and maximum volumetric speed
 - [Calibration Guide](./Calibration)
-- [Adaptive Pressure Advance Guide](adaptive-pressure-advance)
+- [Adaptive Pressure Advance Guide](adaptive-pressure-advance-calib)
 
 ## Developer Section
 - [How to build Orca Slicer](./How-to-build)

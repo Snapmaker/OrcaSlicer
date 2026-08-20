@@ -62,6 +62,12 @@ Jerk for initial layer printing. This is usually set to a lower value than top s
 
 Jerk for travel printing. This is usually set to a higher value than infill to reduce travel time.
 
+<a id="first-layer-travel"></a>
+
+### First layer travel
+
+Jerk for travel moves on the first layer.
+
 ## Junction Deviation
 
 Alternative to Jerk, Junction Deviation is the default method for controlling cornering speed in MarlinFW (Marlin2) printers.  

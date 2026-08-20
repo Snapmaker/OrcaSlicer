@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="max-age=7200" />
+<title>引导_P1</title>
+<link rel="stylesheet" type="text/css" href="../css/common.css" />	
+<link rel="stylesheet" type="text/css" href="3.css" />
+<link rel="stylesheet" type="text/css" href="../css/dark.css" />
+<script type="text/javascript" src="../js/jquery-2.1.1.min.js"></script>
+<script type="text/javascript" src="../js/json2.js"></script>	
+<script type="text/javascript" src="../../data/text.js"></script>	
+<script type="text/javascript" src="../js/globalapi.js"></script>	
+<script type="text/javascript" src="../js/common.js"></script>
+<script type="text/javascript" src="./3.js"></script>	
+</head>
+<body onLoad="OnInit()">
+<div id="Title">
+	<div class="trans" tid="t6">We kindly request your help to improve everyone's printing.<br/>Come and Join our Customer Experience Improvement Program</div>
+</div>
+<div id="Content">
+	<div id="PolicyTxt" class="TextS2 TextArea1 ZScrol">
+<a class="trans" tid="t54"></a><a class="HyperLink trans" tid="t55" onClick="OpenPrivacyPolicy()"></a><a class="trans" tid="t56"></a><a class="HyperLink trans" tid="t_566" onClick="OpenCrossBorderNotice()"></a><a class="trans" tid="t_567"></a>
+	</div>
+	<div id="AgreeArea" style="margin-top:10px;display:flex;flex-direction:column;">
+		<label style="display:flex;align-items:flex-start;cursor:pointer;">
+			<input type="checkbox" id="agreeCheckbox" style="width:13px;min-width:13px;margin-top:3px;margin-right:6px;" onchange="OnCheckboxChange()">
+			<span><a class="trans" tid="t57" style="margin-left:7px;"></a><a class="HyperLink trans" tid="t58" onClick="OpenCrossBorderNotice()"></a></span>
+		</label>
+		<p id="errorTip" class="trans" tid="t115" style="color:red;display:none;margin-top:5px;margin-left:0px;"></p>
+	</div>
+</div>		
+<div id="AcceptArea">
+	<div class="GrayBtn trans" tid="t8" id="PreBtn"  onclick="GotoBackPage()">Back</div>
+	<div class="GrayBtn trans" tid="t52" id="SkipBtn"  onclick="GotoSkipPage()">Skip</div>	
+	<div class="NormalBtn trans" tid="t112" id="AcceptBtn"  onclick="GotoNextPage()">Join the Program</div>
+</div>
+</body>
+</html>

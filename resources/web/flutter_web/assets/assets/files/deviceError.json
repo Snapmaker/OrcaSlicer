@@ -1,0 +1,582 @@
+{
+    "en": [
+        {
+            "ecode": "03004000",
+            "intro": "Homing Z axis failed."
+        },
+        {
+            "ecode": "03004001",
+            "intro": "The printer timed out waiting for the nozzle to cool down before homing."
+        },
+        {
+            "ecode": "03004002",
+            "intro": "Mesh bed leveling failed."
+        },
+        {
+            "ecode": "03004003",
+            "intro": "Nozzle temperature malfunction."
+        },
+        {
+            "ecode": "03004004",
+            "intro": "Heatbed temperature malfunction."
+        },
+        {
+            "ecode": "03004005",
+            "intro": "The heatbreak fan speed is abnormal."
+        },
+        {
+            "ecode": "03004006",
+            "intro": "The nozzle is clogged."
+        },
+        {
+            "ecode": "03004008",
+            "intro": "The AMS failed to change filament."
+        },
+        {
+            "ecode": "03004009",
+            "intro": "Homing XY axis failed."
+        },
+        {
+            "ecode": "0300400A",
+            "intro": "Mechanical resonance mode identification failed."
+        },
+        {
+            "ecode": "0300400B",
+            "intro": "Internal communication exception."
+        },
+        {
+            "ecode": "0300400C",
+            "intro": "Printing was cancelled."
+        },
+        {
+            "ecode": "0300400D",
+            "intro": "Resume failed after power loss."
+        },
+        {
+            "ecode": "03008000",
+            "intro": "Printing was paused for unknown reason. You can click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008001",
+            "intro": "Printing was paused by the user. You can click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008002",
+            "intro": "Obvious defects were detected in the first layer. If the defects are acceptable, click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008003",
+            "intro": "A possible printing failure was detected. If the defects are acceptable, click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008004",
+            "intro": "The filament ran out. Please load new filament in Temperature/Axis and click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008005",
+            "intro": "Printing was paused because the front cover of tool head fell. Please mount it back and click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008006",
+            "intro": "The build plate is not the same as that is in G-code. Please change to other plate and click resume icon to resume the print job."
+        },
+        {
+            "ecode": "05004001",
+            "intro": "Failed to connect to Bambu Cloud. Please check your network connection."
+        },
+        {
+            "ecode": "05004002",
+            "intro": "Unable to parse the received print job. Please update the firmware to the latest version and try again."
+        },
+        {
+            "ecode": "05004003",
+            "intro": "There was a problem parsing gcode.3mf. Please resend the printing job."
+        },
+        {
+            "ecode": "05004004",
+            "intro": "Printing jobs are not allowed to be sent while printing."
+        },
+        {
+            "ecode": "05004005",
+            "intro": "Print jobs are not allowed to be sent while updating firmware."
+        },
+        {
+            "ecode": "05004006",
+            "intro": "There is not enough free storage space for the print job. Restoring to factory settings can release available space."
+        },
+        {
+            "ecode": "05004007",
+            "intro": "Printing jobs are not allowed to be send while force upgrading or repair upgrading is required."
+        },
+        {
+            "ecode": "05004008",
+            "intro": "Starting printing failed. please power cycle the printer and resend the print job."
+        },
+        {
+            "ecode": "07008001",
+            "intro": "Failed to cut the filament. Please check the cutter. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07008002",
+            "intro": "The cutter is stuck. Please pull out the cutter handle and click the retry button."
+        },
+        {
+            "ecode": "07008003",
+            "intro": "Failed to pull out the filament from the extruder. Please check whether the nozzle is clogged or whether the the filament is broken inside extruder. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07008004",
+            "intro": "Failed to pull back the filament to AMS. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07008005",
+            "intro": "Failed to feed the filament outside AMS. Please clean the filament tip and check whether the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07008006",
+            "intro": "Failed to feed the filament into the toolhead. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07008007",
+            "intro": ""
+        },
+        {
+            "ecode": "07008010",
+            "intro": ""
+        },
+        {
+            "ecode": "07008011",
+            "intro": "AMS filament ran out. Please put a new filament into AMS, loosen the PTFE tube connector behind the printer, pull out the old filament, reinstall the PTFE tube connector and click the retry button."
+        },
+        {
+            "ecode": "07018001",
+            "intro": "Failed to cut the filament. Please check the cutter. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07018002",
+            "intro": "The cutter is stuck. Please pull out the cutter handle and click the retry button."
+        },
+        {
+            "ecode": "07018003",
+            "intro": "Failed to pull out the filament from the extruder. Please check whether the nozzle is clogged or whether the the filament is broken inside extruder. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07018004",
+            "intro": "Failed to pull back the filament to AMS. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07018005",
+            "intro": "Failed to feed the filament outside AMS. Please clean the filament tip and check whether the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07018006",
+            "intro": "Failed to feed the filament into the toolhead. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07018007",
+            "intro": ""
+        },
+        {
+            "ecode": "07018010",
+            "intro": ""
+        },
+        {
+            "ecode": "07018011",
+            "intro": "AMS filament ran out. Please put a new filament into AMS, loosen the PTFE tube connector behind the printer, pull out the old filament, reinstall the PTFE tube connector and click the retry button."
+        },
+        {
+            "ecode": "07028001",
+            "intro": "Failed to cut the filament. Please check the cutter. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07028002",
+            "intro": "The cutter is stuck. Please pull out the cutter handle and click the retry button."
+        },
+        {
+            "ecode": "07028003",
+            "intro": "Failed to pull out the filament from the extruder. Please check whether the nozzle is clogged or whether the the filament is broken inside extruder. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07028004",
+            "intro": "Failed to pull back the filament to AMS. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07028005",
+            "intro": "Failed to feed the filament outside AMS. Please clean the filament tip and check whether the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07028006",
+            "intro": "Failed to feed the filament into the toolhead. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07028007",
+            "intro": ""
+        },
+        {
+            "ecode": "07028010",
+            "intro": ""
+        },
+        {
+            "ecode": "07028011",
+            "intro": "AMS filament ran out. Please put a new filament into AMS, loosen the PTFE tube connector behind the printer, pull out the old filament, reinstall the PTFE tube connector and click the retry button."
+        },
+        {
+            "ecode": "07038001",
+            "intro": "Failed to cut the filament. Please check the cutter. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07038002",
+            "intro": "The cutter is stuck. Please pull out the cutter handle and click the retry button."
+        },
+        {
+            "ecode": "07038003",
+            "intro": "Failed to pull out the filament from the extruder. Please check whether the nozzle is clogged or whether the the filament is broken inside extruder. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07038004",
+            "intro": "Failed to pull back the filament to AMS. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07038005",
+            "intro": "Failed to feed the filament outside AMS. Please clean the filament tip and check whether the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07038006",
+            "intro": "Failed to feed the filament into the toolhead. Please check whether the filament or the spool is stuck. After troubleshooting, click the retry button."
+        },
+        {
+            "ecode": "07038007",
+            "intro": ""
+        },
+        {
+            "ecode": "07038010",
+            "intro": ""
+        },
+        {
+            "ecode": "07038011",
+            "intro": "AMS filament ran out. Please put a new filament into AMS, loosen the PTFE tube connector behind the printer, pull out the old filament, reinstall the PTFE tube connector and click the retry button."
+        },
+        {
+            "ecode": "0C008001",
+            "intro": "Obvious defects were detected in the first layer. If the defects are acceptable, click resume icon to resume the print job."
+        },
+        {
+            "ecode": "0C008002",
+            "intro": "Spaghetti failure was detected."
+        },
+        {
+            "ecode": "0C00C003",
+            "intro": "Possible defects were detected in the first layer."
+        },
+        {
+            "ecode": "0C00C004",
+            "intro": "Possible spaghetti failure was detected."
+        },
+        {
+            "ecode": "03008007",
+            "intro": "There is unfinished print job when power off, click resume icon to resume the print job."
+        },
+        {
+            "ecode": "03008008",
+            "intro": "Nozzle temperature malfunction."
+        },
+        {
+            "ecode": "03008009",
+            "intro": "Heatbed temperature malfunction."
+        },
+        {
+            "ecode": "05004009",
+            "intro": "Print jobs are not allowed to be sent while updating logs."
+        }
+    ],
+    "zh-cn": [
+        {
+            "ecode": "03004000",
+            "intro": "Z轴回零失败。"
+        },
+        {
+            "ecode": "03004001",
+            "intro": "工具头降温超时。"
+        },
+        {
+            "ecode": "03004002",
+            "intro": "热床调平失败。"
+        },
+        {
+            "ecode": "03004003",
+            "intro": "喷嘴温度失控"
+        },
+        {
+            "ecode": "03004004",
+            "intro": "热床温度失控"
+        },
+        {
+            "ecode": "03004005",
+            "intro": "热端风扇转速异常。"
+        },
+        {
+            "ecode": "03004006",
+            "intro": "热端堵头。"
+        },
+        {
+            "ecode": "03004008",
+            "intro": "AMS换料失败。"
+        },
+        {
+            "ecode": "03004009",
+            "intro": "XY回零失败。"
+        },
+        {
+            "ecode": "0300400A",
+            "intro": "机械模态识别失败。"
+        },
+        {
+            "ecode": "0300400B",
+            "intro": "内部通讯异常。"
+        },
+        {
+            "ecode": "0300400C",
+            "intro": "打印已取消。"
+        },
+        {
+            "ecode": "0300400D",
+            "intro": "断电续打失败。"
+        },
+        {
+            "ecode": "03008000",
+            "intro": "未知原因暂停。你可以点击恢复图标来恢复打印。"
+        },
+        {
+            "ecode": "03008001",
+            "intro": "用户暂停。你可以点击恢复图标来恢复打印。"
+        },
+        {
+            "ecode": "03008002",
+            "intro": "首层检测器已暂停打印任务。如果可接受当前瑕疵，可点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "03008003",
+            "intro": "打印故障检测器已暂停打印任务。如果可接受当前瑕疵，可点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "03008004",
+            "intro": "打印已暂停。打印材料耗尽。可在“温度/轴移动”中加载新料后，点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "03008005",
+            "intro": "打印已暂停。检测到前盖掉落。可在装上前盖后，点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "03008006",
+            "intro": "检测到热床与G-code配置不一致。请更换其他热床后，点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "05004001",
+            "intro": "无法连接服务器，请检查网络连接。"
+        },
+        {
+            "ecode": "05004002",
+            "intro": "无法解析收到的打印指令，请更新固件到最新版本后重试。"
+        },
+        {
+            "ecode": "05004003",
+            "intro": "解析gcode.3mf遇到问题，请重新发送打印。"
+        },
+        {
+            "ecode": "05004004",
+            "intro": "已经在打印过程，不允许启动新的打印"
+        },
+        {
+            "ecode": "05004005",
+            "intro": "不允许在固件更新过程中发送打印任务。"
+        },
+        {
+            "ecode": "05004006",
+            "intro": "内部存储空间不足，可恢复出厂设置以释放所有可用空间。"
+        },
+        {
+            "ecode": "05004007",
+            "intro": "需要修复升级和强制升级，不允许打印。"
+        },
+        {
+            "ecode": "05004008",
+            "intro": "启动打印失败，请重启机器并重新发送打印。"
+        },
+        {
+            "ecode": "07008001",
+            "intro": "检测到切料失败，请检查切刀，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008002",
+            "intro": "检测到切刀卡住，请拨出刀柄后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008003",
+            "intro": "料线退出挤出机失败，请检查是否发生堵头或者料线是否断在挤出机内部。排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008004",
+            "intro": "料线退回AMS失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008005",
+            "intro": "料线送出AMS失败，请清理料头、检查料盘是否卡住后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008006",
+            "intro": "料线送往挤出机失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07008007",
+            "intro": ""
+        },
+        {
+            "ecode": "07008010",
+            "intro": ""
+        },
+        {
+            "ecode": "07008011",
+            "intro": "检测到AMS材料耗尽。请放新料线，松开打印机背后料管接头，拔出旧料线并装好料管接头后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018001",
+            "intro": "检测到切料失败，请检查切刀，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018002",
+            "intro": "检测到切刀卡住，请拨出刀柄后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018003",
+            "intro": "料线退出挤出机失败，请检查是否发生堵头或者料线是否断在挤出机内部。排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018004",
+            "intro": "料线退回AMS失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018005",
+            "intro": "料线送出AMS失败，请清理料头、检查料盘是否卡住后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018006",
+            "intro": "料线送往挤出机失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07018007",
+            "intro": ""
+        },
+        {
+            "ecode": "07018010",
+            "intro": ""
+        },
+        {
+            "ecode": "07018011",
+            "intro": "检测到AMS材料耗尽。请放新料线，松开打印机背后料管接头，拔出旧料线并装好料管接头后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028001",
+            "intro": "检测到切料失败，请检查切刀，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028002",
+            "intro": "检测到切刀卡住，请拨出刀柄后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028003",
+            "intro": "料线退出挤出机失败，请检查是否发生堵头或者料线是否断在挤出机内部。排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028004",
+            "intro": "料线退回AMS失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028005",
+            "intro": "料线送出AMS失败，请清理料头、检查料盘是否卡住后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028006",
+            "intro": "料线送往挤出机失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07028007",
+            "intro": ""
+        },
+        {
+            "ecode": "07028010",
+            "intro": ""
+        },
+        {
+            "ecode": "07028011",
+            "intro": "检测到AMS材料耗尽。请放新料线，松开打印机背后料管接头，拔出旧料线并装好料管接头后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038001",
+            "intro": "检测到切料失败，请检查切刀，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038002",
+            "intro": "检测到切刀卡住，请拨出刀柄后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038003",
+            "intro": "料线退出挤出机失败，请检查是否发生堵头或者料线是否断在挤出机内部。排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038004",
+            "intro": "料线退回AMS失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038005",
+            "intro": "料线送出AMS失败，请清理料头、检查料盘是否卡住后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038006",
+            "intro": "料线送往挤出机失败，请检查料线或料盘是否卡住，排除异常后点击“重试”按钮。"
+        },
+        {
+            "ecode": "07038007",
+            "intro": ""
+        },
+        {
+            "ecode": "07038010",
+            "intro": ""
+        },
+        {
+            "ecode": "07038011",
+            "intro": "检测到AMS材料耗尽。请放新料线，松开打印机背后料管接头，拔出旧料线并装好料管接头后点击“重试”按钮。"
+        },
+        {
+            "ecode": "0C008001",
+            "intro": "在首层检测到明显的缺陷。如果可以接受此缺陷，可点击恢复图标恢复打印任务。"
+        },
+        {
+            "ecode": "0C008002",
+            "intro": "检测到打印炒面问题。"
+        },
+        {
+            "ecode": "0C00C003",
+            "intro": "检测到首层可能存在打印瑕疵。"
+        },
+        {
+            "ecode": "0C00C004",
+            "intro": "检测到可能发生了打印炒面失败问题。"
+        },
+        {
+            "ecode": "03008007",
+            "intro": "检测到断电时有未完成的打印任务，可点击恢复图标恢复打印。"
+        },
+        {
+            "ecode": "03008008",
+            "intro": "喷嘴温控故障。"
+        },
+        {
+            "ecode": "03008009",
+            "intro": "热床温控故障。"
+        },
+        {
+            "ecode": "05004009",
+            "intro": "不允许在日志上传过程中发送打印任务。"
+        }
+    ]
+}

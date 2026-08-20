@@ -1,0 +1,23 @@
+{
+  "type": "filament",
+  "from": "system",
+  "instantiation": "false",
+  "name": "Snapmaker PLA Metal @J1 base",
+  "filament_id": "4012961186",
+  "inherits": "fdm_filament_pla",
+  "filament_end_gcode": [
+    ""
+  ],
+  "filament_cost": [
+    "90"
+  ],
+  "filament_density": [
+    "1.25"
+  ],
+  "filament_max_volumetric_speed": [
+    "16"
+  ],
+  "nozzle_temperature": [
+    "220"
+  ]
+}

@@ -50,6 +50,10 @@ void reset_nozzle_volume_types_to_standard();
 // Silently ignores mismatches between the vector size and the nozzle count.
 void set_nozzle_volume_types(const std::vector<std::string> &volume_types);
 
+// Restores the flow types saved by the setters above ("nozzle_volume_types"
+// section, keyed by printer preset). No-op without memory; callers rebuild the UI.
+void restore_nozzle_volume_types_from_app_config();
+
 // Grouping mode (FILAMENT_GROUPING_STANDARD / FILAMENT_GROUPING_CUSTOM).
 std::string grouping_mode();
 

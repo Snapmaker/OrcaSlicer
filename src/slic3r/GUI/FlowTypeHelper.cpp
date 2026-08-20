@@ -6,6 +6,8 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
+#include <boost/algorithm/string.hpp>
+
 #include <algorithm>
 
 namespace Slic3r { namespace GUI { namespace FlowType {
@@ -71,6 +73,26 @@ size_t distinct_nozzle_flow_type_count()
     return types.empty() ? 1 : types.size();
 }
 
+// App-level memory of the per-nozzle flow selection, stored a
+// "nozzle_volume_types" section keyed by printer preset name, CSV of
+// "Standard"/"High Flow" per nozzle. The project config itself is volatile
+// (reset on restart), hence this mirror.
+static const char *APP_CONFIG_NOZZLE_FLOW_SECTION = "nozzle_volume_types";
+static const char *FLOW_DISPLAY_HIGH_FLOW         = "High Flow";
+static const char *FLOW_DISPLAY_STANDARD          = "Standard";
+
+static void save_nozzle_volume_types_to_app_config()
+{
+    if (wxGetApp().app_config == nullptr)
+        return;
+    std::vector<std::string> display;
+    for (const std::string &t : nozzle_volume_types())
+        display.push_back(t == FLOW_MODE_HIGH_FLOW ? FLOW_DISPLAY_HIGH_FLOW : FLOW_DISPLAY_STANDARD);
+    wxGetApp().app_config->set(APP_CONFIG_NOZZLE_FLOW_SECTION,
+                               wxGetApp().preset_bundle->printers.get_selected_preset_name(),
+                               boost::algorithm::join(display, ","));
+}
+
 void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type)
 {
     std::vector<std::string> types = nozzle_volume_types();
@@ -81,6 +103,7 @@ void set_nozzle_volume_type(size_t nozzle_idx, const std::string &volume_type)
     opt->values.clear();
     for (const std::string &t : types)
         opt->values.push_back(filament_volume_type_from_string(t));
+    save_nozzle_volume_types_to_app_config();
     notify_plater();
 }
 
@@ -95,7 +118,36 @@ void set_nozzle_volume_types(const std::vector<std::string> &volume_types)
     opt->values.reserve(volume_types.size());
     for (const std::string &type : volume_types)
         opt->values.push_back(type == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard);
+    save_nozzle_volume_types_to_app_config();
     notify_plater();
+}
+
+void restore_nozzle_volume_types_from_app_config()
+{
+    if (wxGetApp().app_config == nullptr)
+        return;
+    const std::string stored = wxGetApp().app_config->get(
+        APP_CONFIG_NOZZLE_FLOW_SECTION, wxGetApp().preset_bundle->printers.get_selected_preset_name());
+    if (stored.empty())
+        return; // no memory for this printer yet, keep whatever the project config holds
+
+    std::vector<std::string> tokens;
+    boost::split(tokens, stored, boost::is_any_of(","));
+    // Normalize like nozzle_volume_types(): unknown values / unsupported printers -> standard.
+    const bool supported = printer_supports_high_flow();
+    std::vector<std::string> types;
+    for (std::string &t : tokens) {
+        boost::algorithm::trim(t);
+        types.push_back(supported && boost::iequals(t, FLOW_DISPLAY_HIGH_FLOW) ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+    }
+    types.resize(nozzle_count(), FLOW_MODE_STANDARD);
+
+    // Write directly without notify_plater(); callers rebuild the nozzle UI right after.
+    auto *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+    opt->values.clear();
+    opt->values.reserve(types.size());
+    for (const std::string &t : types)
+        opt->values.push_back(t == FLOW_MODE_HIGH_FLOW ? fvtHighFlow : fvtStandard);
 }
 
 void reset_nozzle_volume_types_to_standard()

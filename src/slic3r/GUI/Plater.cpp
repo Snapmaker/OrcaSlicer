@@ -11023,6 +11023,11 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             catch (...) {}
             int skip_confirm = e.GetInt();
             this->q->new_project(skip_confirm, true);
+            // Startup blank project: restore the flow types remembered in AppConfig
+            // (new_project just reset them to standard). Must run before the UI
+            // rebuild queued by new_project via CallAfter. User-initiated New Project
+            // does not pass here and keeps standard.
+            GUI::FlowType::restore_nozzle_volume_types_from_app_config();
             });
         //wxPostEvent(this->q, wxCommandEvent{EVT_RESTORE_PROJECT});
     }

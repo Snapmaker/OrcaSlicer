@@ -5,8 +5,11 @@
 #include <memory>
 #include <chrono>
 #include <cstdint>
+#include <array>
+#include <optional>
 
 #include "GLToolbar.hpp"
+#include "GLPickingBuffer.hpp"
 #include "Event.hpp"
 #include "Selection.hpp"
 #include "Gizmos/GLGizmosManager.hpp"
@@ -508,10 +511,51 @@ public:
     int GetHoverId();
 
 private:
+    enum class EPickingQueryStatus : uint8_t
+    {
+        Hit,
+        NoHit,
+        Unavailable
+    };
+
+    struct VolumePickResult
+    {
+        EPickingQueryStatus status{EPickingQueryStatus::Unavailable};
+        SceneRaycaster::HitResult hit;
+        float depth{1.0f};
+    };
+
+    struct PickingBufferSignature
+    {
+        Eigen::Matrix4d viewMatrix{Eigen::Matrix4d::Identity()};
+        Eigen::Matrix4d projectionMatrix{Eigen::Matrix4d::Identity()};
+        std::array<int, 4> viewport{{0, 0, 0, 0}};
+        std::array<float, 2> zRange{{0.0f, 0.0f}};
+        std::array<double, 4> clippingPlane{{0.0, 0.0, 0.0, 0.0}};
+        uint64_t geometryRevision{0};
+        size_t volumeCount{0};
+        bool renderSlaAuxiliaries{false};
+
+        bool Matches(const PickingBufferSignature& other) const
+        {
+            return (viewMatrix.array() == other.viewMatrix.array()).all() &&
+                   (projectionMatrix.array() == other.projectionMatrix.array()).all() &&
+                   viewport == other.viewport && zRange == other.zRange &&
+                   clippingPlane == other.clippingPlane &&
+                   geometryRevision == other.geometryRevision &&
+                   volumeCount == other.volumeCount &&
+                   renderSlaAuxiliaries == other.renderSlaAuxiliaries;
+        }
+    };
+
     bool m_is_dark = false;
     wxGLCanvas* m_canvas;
     wxGLContext* m_context;
     SceneRaycaster m_scene_raycaster;
+    GLPickingBuffer m_pickingBuffer;
+    uint64_t m_pickingGeometryRevision{1};
+    PickingBufferSignature m_pickingBufferSignature;
+    bool m_hasPickingBufferSignature{false};
     Bed3D &m_bed;
     std::map<std::string, wxString> m_assembly_view_desc;
 #if ENABLE_RETINA_GL
@@ -717,7 +761,13 @@ public:
     bool is_initialized() const { return m_initialized; }
 
     void set_context(wxGLContext* context) { m_context = context; }
-    void set_type(ECanvasType type) { m_canvas_type = type; }
+    void set_type(ECanvasType type)
+    {
+        if (m_canvas_type != type) {
+            m_canvas_type = type;
+            InvalidatePickingGeometry();
+        }
+    }
     ECanvasType get_canvas_type() { return m_canvas_type; }
 
     wxGLCanvas* get_wxglcanvas() { return m_canvas; }
@@ -801,10 +851,17 @@ public:
         {
             m_clipping_planes[id] = plane;
             m_sla_caps[id].reset();
+            InvalidatePickingGeometry();
         }
     }
     void reset_clipping_planes_cache() { m_sla_caps[0].triangles.clear(); m_sla_caps[1].triangles.clear(); }
-    void set_use_clipping_planes(bool use) { m_use_clipping_planes = use; }
+    void set_use_clipping_planes(bool use)
+    {
+        if (m_use_clipping_planes != use) {
+            m_use_clipping_planes = use;
+            InvalidatePickingGeometry();
+        }
+    }
 
     bool                                get_use_clipping_planes() const { return m_use_clipping_planes; }
     const std::array<ClippingPlane, 2> &get_clipping_planes() const { return m_clipping_planes; };
@@ -1165,7 +1222,29 @@ private:
 
     void _refresh_if_shown_on_screen();
 
-    void _picking_pass();
+    void InvalidatePickingGeometry();
+    void UpdateVolumeClippingState();
+    PickingBufferSignature BuildPickingBufferSignature(const Camera& camera) const;
+    bool EnsurePickingBuffer(const Camera& camera);
+    bool RenderPickingBuffer(const Camera& camera,
+                             const PickingBufferSignature& signature);
+    VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition,
+                                                  const Camera& camera);
+    SceneRaycaster::HitResult QueryHybridPickingHit(
+        const Vec2d& screenPosition, const Camera& camera,
+        const ClippingPlane& clippingPlane);
+    bool RaycastVolume(int volumeIndex, const Vec2d& screenPosition,
+                       const Camera& camera,
+                       const ClippingPlane* clippingPlane,
+                       SceneRaycaster::HitResult& hit) const;
+    void ResolveSelectedVolumeOverlap(const Vec2d& screenPosition,
+                                      const Camera& camera,
+                                      const ClippingPlane& clippingPlane,
+                                      SceneRaycaster::HitResult& volumeHit) const;
+    void ApplyPickingHit(const SceneRaycaster::HitResult& hit);
+    bool ShouldRenderVolumeForPicking(const GLVolume& volume) const;
+
+    std::optional<SceneRaycaster::HitResult> _picking_pass();
     void _rectangular_selection_picking_pass();
     void _render_background();
     void _render_bed(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool show_axes);
@@ -1185,7 +1264,7 @@ private:
     void _check_and_update_toolbar_icon_scale();
     void _render_overlays();
     void _render_style_editor();
-    void _render_volumes_for_picking(const Camera& camera) const;
+    bool _render_volumes_for_picking(const Camera& camera) const;
     void _render_current_gizmo() const;
     void _render_gizmos_overlay();
     void _render_main_toolbar();

@@ -67,6 +67,7 @@
 #include <wx/textctrl.h>
 #include <wx/splash.h>
 #include <wx/fontutil.h>
+#include <GL/glew.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
 #include <wx/thread.h>

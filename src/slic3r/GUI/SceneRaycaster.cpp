@@ -9,6 +9,16 @@
 namespace Slic3r {
 namespace GUI {
 
+namespace {
+
+bool IsHitMaskEnabled(SceneRaycaster::EHitMask mask,
+                      SceneRaycaster::EHitMask requestedMask)
+{
+    return (static_cast<uint8_t>(mask) & static_cast<uint8_t>(requestedMask)) != 0;
+}
+
+} // namespace
+
 SceneRaycaster::SceneRaycaster() {
 #if ENABLE_RAYCAST_PICKING_DEBUG
     // hit point
@@ -96,7 +106,10 @@ void SceneRaycaster::remove_raycaster(std::shared_ptr<SceneRaycasterItem> item)
     }
 }
 
-SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Camera& camera, const ClippingPlane* clipping_plane) const
+SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos,
+                                              const Camera& camera,
+                                              const ClippingPlane* clipping_plane,
+                                              EHitMask mask) const
 {
     // helper class used to return currently selected volume as hit when overlapping with other volumes
     // to allow the user to click and drag on a selected volume
@@ -107,7 +120,11 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
         bool m_selected_volume_already_found{ false };
 
     public:
-        VolumeKeeper() {
+        explicit VolumeKeeper(bool enabled)
+        {
+            if (!enabled)
+                return;
+
             const Selection& selection = wxGetApp().plater()->get_selection();
             if (selection.is_single_volume() || selection.is_single_modifier()) {
                 const GLVolume* volume = selection.get_first_volume();
@@ -132,7 +149,7 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
         }
     };
 
-    VolumeKeeper volume_keeper;
+    VolumeKeeper volume_keeper(IsHitMaskEnabled(mask, EHitMask::Volume));
 
     double closest_hit_squared_distance = std::numeric_limits<double>::max();
     auto is_closest = [&closest_hit_squared_distance, &volume_keeper](const Camera& camera, const Vec3f& hit) {
@@ -179,16 +196,18 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
         }
     };
 
-    if (!m_gizmos.empty())
+    if (IsHitMaskEnabled(mask, EHitMask::Gizmo) && !m_gizmos.empty())
         test_raycasters(EType::Gizmo, mouse_pos, camera, ret);
 
-    if (!m_fallback_gizmos.empty() && !ret.is_valid())
+    if (IsHitMaskEnabled(mask, EHitMask::FallbackGizmo) &&
+        !m_fallback_gizmos.empty() && !ret.is_valid())
         test_raycasters(EType::FallbackGizmo, mouse_pos, camera, ret);
 
     if (!m_gizmos_on_top || !ret.is_valid()) {
-        if (camera.is_looking_downward() && !m_bed.empty())
+        if (IsHitMaskEnabled(mask, EHitMask::Bed) &&
+            camera.is_looking_downward() && !m_bed.empty())
             test_raycasters(EType::Bed, mouse_pos, camera, ret);
-        if (!m_volumes.empty())
+        if (IsHitMaskEnabled(mask, EHitMask::Volume) && !m_volumes.empty())
             test_raycasters(EType::Volume, mouse_pos, camera, ret);
     }
 
@@ -199,6 +218,28 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Came
     *const_cast<std::optional<HitResult>*>(&m_last_hit) = ret;
 #endif // ENABLE_RAYCAST_PICKING_DEBUG
     return ret;
+}
+
+SceneRaycaster::HitResult SceneRaycaster::ResolveHitCandidates(
+    const HitResult& nonVolumeHit, const HitResult& volumeHit,
+    const Camera& camera) const
+{
+    if (!nonVolumeHit.is_valid())
+        return volumeHit;
+
+    if (!volumeHit.is_valid())
+        return nonVolumeHit;
+
+    const bool gizmoHit = nonVolumeHit.type == EType::Gizmo ||
+                          nonVolumeHit.type == EType::FallbackGizmo;
+    if (m_gizmos_on_top && gizmoHit)
+        return nonVolumeHit;
+
+    const double nonVolumeDistance =
+        (camera.get_position() - nonVolumeHit.position.cast<double>()).squaredNorm();
+    const double volumeDistance =
+        (camera.get_position() - volumeHit.position.cast<double>()).squaredNorm();
+    return nonVolumeDistance <= volumeDistance ? nonVolumeHit : volumeHit;
 }
 
 #if ENABLE_RAYCAST_PICKING_DEBUG

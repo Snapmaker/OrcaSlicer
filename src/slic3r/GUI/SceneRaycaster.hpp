@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include <cstdint>
 
 namespace Slic3r {
 namespace GUI {
@@ -48,6 +49,23 @@ public:
         Gizmo,
         FallbackGizmo // Is used for gizmo grabbers which will be hit after all grabbers of Gizmo type
     };
+
+    enum class EHitMask : uint8_t
+    {
+        None = 0,
+        Bed = 1 << 0,
+        Volume = 1 << 1,
+        Gizmo = 1 << 2,
+        FallbackGizmo = 1 << 3,
+        NonVolume = (1 << 0) | (1 << 2) | (1 << 3),
+        All = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3)
+    };
+
+    friend EHitMask operator|(EHitMask left, EHitMask right)
+    {
+        return static_cast<EHitMask>(static_cast<uint8_t>(left) |
+                                     static_cast<uint8_t>(right));
+    }
 
     enum class EIdBase
     {
@@ -97,7 +115,13 @@ public:
 
     void set_gizmos_on_top(bool value) { m_gizmos_on_top = value; }
 
-    HitResult hit(const Vec2d& mouse_pos, const Camera& camera, const ClippingPlane* clipping_plane = nullptr) const;
+    HitResult hit(const Vec2d& mouse_pos, const Camera& camera,
+                  const ClippingPlane* clipping_plane = nullptr,
+                  EHitMask mask = EHitMask::All) const;
+
+    HitResult ResolveHitCandidates(const HitResult& nonVolumeHit,
+                                   const HitResult& volumeHit,
+                                   const Camera& camera) const;
 
 #if ENABLE_RAYCAST_PICKING_DEBUG
     void render_hit(const Camera& camera);

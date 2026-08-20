@@ -13843,9 +13843,11 @@ msgid "Support wall loops"
 msgstr "Támaszfalak száma"
 
 msgid ""
-"This setting specifies the count of support walls in the range of [0,2]. 0 "
-"means auto."
+"This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
 msgstr ""
+"Ez a beállítás határozza meg a támaszfalak számát a [-1,2] tartományban. "
+"-1 automatikus, 0 pedig csak kitöltést jelent, ha a támasz elég vastag."
 
 msgid "Tree support with infill"
 msgstr "Fa támasz kitöltéssel"

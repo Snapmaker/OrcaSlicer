@@ -14042,9 +14042,11 @@ msgid "Support wall loops"
 msgstr "Steunmuurlussen"
 
 msgid ""
-"This setting specifies the count of support walls in the range of [0,2]. 0 "
-"means auto."
+"This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
 msgstr ""
+"Deze instelling specificeert het aantal ondersteuningswanden in het bereik [-1,2]. "
+"-1 betekent automatisch, 0 betekent alleen vulling wanneer de ondersteuning dik genoeg is."
 
 msgid "Tree support with infill"
 msgstr "Tree support met vulling"

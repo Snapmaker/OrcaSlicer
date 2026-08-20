@@ -13508,9 +13508,9 @@ msgid "Support wall loops"
 msgstr ""
 
 msgid ""
-"This setting specifies the count of support walls in the range of [0,2]. 0 "
-"means auto."
-msgstr ""
+"This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+"and 0 means allowing infill-only mode where support is thick enough."
+msgstr "This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, and 0 means allowing infill-only mode where support is thick enough."
 
 msgid "Tree support with infill"
 msgstr ""

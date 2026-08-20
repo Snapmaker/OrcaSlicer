@@ -5692,11 +5692,12 @@ void PrintConfigDef::init_fff_params()
     def = this->add("tree_support_wall_count", coInt);
     def->label = L("Support wall loops");
     def->category = L("Support");
-    def->tooltip = L("This setting specifies the count of support walls in the range of [0,2]. 0 means auto.");
-    def->min = 0;
+    def->tooltip  = L("This setting specifies the count of support walls in the range of [-1,2]. -1 means auto, "
+                       "and 0 means allowing infill-only mode where support is thick enough.");
+    def->min = -1;
     def->max = 2;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(0));
+    def->set_default_value(new ConfigOptionInt(-1));
 
     def = this->add("tree_support_with_infill", coBool);
     def->label = L("Tree support with infill");

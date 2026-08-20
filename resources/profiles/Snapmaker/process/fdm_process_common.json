@@ -142,7 +142,7 @@
   "tree_support_branch_distance": "5",
   "tree_support_branch_diameter": "5",
   "tree_support_branch_angle": "15",
-  "tree_support_wall_count": "2",
+  "tree_support_wall_count": "-1",
   "tree_support_adaptive_layer_height": "1",
   "tree_support_auto_brim": "1",
   "tree_support_brim_width": "3",

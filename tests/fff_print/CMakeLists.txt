@@ -22,7 +22,9 @@ find_package(PNG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libnoise REQUIRED)
 find_package(Qhull REQUIRED)
-target_link_options(${_TEST_NAME}_tests PRIVATE "-Wl,--no-as-needed")
+if(UNIX AND NOT APPLE)
+    target_link_options(${_TEST_NAME}_tests PRIVATE "-Wl,--no-as-needed")
+endif()
 target_link_libraries(${_TEST_NAME}_tests PRIVATE ${TEST_LINK_LIBS})
 # libslic3r_cgal links CGAL privately, so the GMP/MPFR libraries are needed at link time.
 # They are not propagated to this test target; find them under the deps prefix or the

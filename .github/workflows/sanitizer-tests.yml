@@ -27,11 +27,12 @@ jobs:
     env:
       # detect_leaks=0: LeakSanitizer is disabled. The test binaries set
       # program-lifetime globals (e.g. Slic3r::set_resources_dir() at
-      # src/libslic3r/utils.cpp:222, called from the fff_print TestResources
-      # static initializer) that LSan flags as leaks. Those reports make
-      # catch_discover_tests' build-time test enumeration exit non-zero
-      # (failing the build) AND fail every test process at exit. They are false
-      # positives (intentional program-lifetime state), not real leaks.
+      # src/libslic3r/utils.cpp:222, called from the TestFrameworkBootstrap
+      # Catch2 listener in tests/catch_main.hpp) that LSan flags as leaks.
+      # Those reports make catch_discover_tests' build-time test enumeration
+      # exit non-zero (failing the build) AND fail every test process at exit.
+      # They are false positives (intentional program-lifetime state), not
+      # real leaks.
       # ASan (heap/stack memory errors) and UBSan (undefined behavior) — the
       # critical detections — remain fully active. Leak detection can be
       # re-enabled later with a curated LSAN_OPTIONS suppression file.

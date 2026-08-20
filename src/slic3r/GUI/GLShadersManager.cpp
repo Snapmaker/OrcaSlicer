@@ -61,6 +61,8 @@ std::pair<bool, std::string> GLShadersManager::init()
     appendOptionalShader("selection_composite", { prefix + "background.vs", prefix + "selection_composite.fs" });
     // used to extract the selection edge from the low-resolution selection mask
     appendOptionalShader("selection_edge", { prefix + "background.vs", prefix + "selection_edge.fs" });
+    // used to area-downsample the full-resolution selection mask before edge extraction
+    appendOptionalShader("selection_area_downsample", { prefix + "background.vs", prefix + "selection_area_downsample.fs" });
     // used to apply directional Gaussian blur to selection edge textures
     appendOptionalShader("selection_gaussian", { prefix + "background.vs", prefix + "selection_gaussian.fs" });
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview

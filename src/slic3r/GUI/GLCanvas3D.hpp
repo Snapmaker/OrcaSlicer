@@ -522,8 +522,8 @@ private:
     {
         unsigned int fullResolutionMaskFramebuffer{ 0 };
         unsigned int fullResolutionMaskTexture{ 0 };
-        unsigned int maskFramebuffer{ 0 };
-        unsigned int maskTexture{ 0 };
+        unsigned int fullResolutionEdgeFramebuffer{ 0 };
+        unsigned int fullResolutionEdgeTexture{ 0 };
         unsigned int edgeBlurPingPongFramebuffer{ 0 };
         unsigned int edgeBlurPingPongTexture{ 0 };
         unsigned int edgeFramebuffer{ 0 };
@@ -1195,8 +1195,19 @@ private:
      */
     bool EnsureSelectionHighlightResources(const Size& canvasSize);
 
-    /** @brief Renders selected volumes at full resolution and downscales the selection Mask. */
+    /** @brief Renders selected volumes into the full-resolution selection Mask. */
     bool RenderSelectionHighlightMask();
+
+    /**
+     * @brief Downsamples one alpha texture with an adaptive one-, two- or four-sample area filter.
+     * @param targetFramebuffer Framebuffer that receives the downsampled texture.
+     * @param sourceTexture Full-resolution alpha texture to downsample.
+     * @param sourceSize Physical dimensions of the source texture.
+     * @param targetSize Physical dimensions of the target framebuffer.
+     * @return true when the downsample pass was rendered successfully.
+     */
+    bool RenderSelectionAreaDownsamplePass(unsigned int targetFramebuffer, unsigned int sourceTexture,
+                                           const Size& sourceSize, const Size& targetSize);
 
     /**
      * @brief Builds a normalized Gaussian kernel expressed in source-texture texels.

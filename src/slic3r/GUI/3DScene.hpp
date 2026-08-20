@@ -40,7 +40,6 @@ extern Slic3r::ColorRGBA              adjust_color_for_rendering(const Slic3r::C
 
 namespace Slic3r {
 namespace GUI {
-    class Size;
     class Camera;
 }
 
@@ -328,9 +327,6 @@ public:
 
     virtual void        render();
 
-    //BBS: add outline related logic and add virtual specifier
-    virtual void render_with_outline(const GUI::Size& cnv_size);
-
     //BBS: add simple render function for thumbnail
     void simple_render(GLShaderProgram* shader, ModelObjectPtrs& model_objects, std::vector<ColorRGBA>& extruder_colors, bool ban_light =false);
 
@@ -362,7 +358,6 @@ class GLWipeTowerVolume : public GLVolume {
 public:
     GLWipeTowerVolume(const std::vector<ColorRGBA>& colors);
     void render() override;
-    void render_with_outline(const GUI::Size& cnv_size) override { render(); }
 
     std::vector<GUI::GLModel> model_per_colors;
     bool                              IsTransparent();
@@ -473,13 +468,11 @@ public:
 
     int get_selection_support_threshold_angle(bool&) const;
     // Render the volumes by OpenGL.
-    //BBS: add outline drawing logic
     void render(ERenderType                           type,
-                bool                                  disable_cullface,
-                const GUI::Camera&                    camera,
-                const GUI::Size&                      cnv_size,
-                std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
-                bool                                  partly_inside_enable =true
+                 bool                                  disable_cullface,
+                 const GUI::Camera&                    camera,
+                 std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
+                 bool                                  partly_inside_enable =true
            ) const;
 
     // Clear the geometry

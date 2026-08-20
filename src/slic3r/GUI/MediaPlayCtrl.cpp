@@ -151,6 +151,7 @@ void MediaPlayCtrl::SetMachineObject(MachineObject* obj)
         m_lan_mode       = obj->is_lan_mode_printer();
         m_lan_proto      = obj->liveview_local;
         m_remote_proto   = obj->get_liveview_remote();
+        BOOST_LOG_TRIVIAL(warning) << "CAMERA SetMachine: has_ipcam=" << obj->has_ipcam << " liveview_local=" << m_lan_proto << " liveview_remote=" << m_remote_proto << " is_support_agora=" << obj->is_support_agora << " dev_id=" << machine;
         m_lan_ip         = obj->dev_ip;
         m_lan_passwd     = obj->get_access_code();
         m_device_busy    = obj->is_camera_busy_off();
@@ -309,6 +310,7 @@ void MediaPlayCtrl::Play()
     // !m_lan_mode && !m_remote_proto && m_lan_proto == LVL_Disable (*)
     // !m_lan_mode && !m_remote_proto && m_lan_proto == LVL_None (x)
 
+    BOOST_LOG_TRIVIAL(warning) << "CAMERA MEDIA DEBUG: m_lan_proto=" << m_lan_proto << " m_remote_proto=" << m_remote_proto << " m_lan_mode=" << m_lan_mode << " m_camera_exists=" << m_camera_exists << " m_dev_ver=" << m_dev_ver;
     if (m_lan_proto <= MachineObject::LVL_Disable && (m_lan_mode || !m_remote_proto)) {
         Stop(m_lan_proto == MachineObject::LVL_None 
             ? _L("A problem occurred. Please update the printer firmware and try again.")

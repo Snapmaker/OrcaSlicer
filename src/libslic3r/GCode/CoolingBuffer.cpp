@@ -877,7 +877,7 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START] = true;
                 need_set_fan = true;
             }
-        } else if (line->type & CoolingLine::TYPE_IRONING_FAN_END && fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START]) {
+        } else if (line->type & CoolingLine::TYPE_IRONING_FAN_END) {
             if (ironing_fan_control) {
                 fan_speed_change_requests[CoolingLine::TYPE_IRONING_FAN_START] = false;
             }
@@ -996,8 +996,10 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
             }
-            else
+            else {
+                m_current_fan_speed = m_fan_speed;
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
+            }
             need_set_fan = false;
         }
         pos = line_end;

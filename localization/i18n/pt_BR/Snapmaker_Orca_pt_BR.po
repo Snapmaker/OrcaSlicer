@@ -9531,6 +9531,13 @@ msgstr "Verifique o G-code personalizado ou use o G-code personalizado padrão."
 msgid "Generating G-code: layer %1%"
 msgstr "Gerando G-code: camada %1%"
 
+#, boost-format
+msgid "Generating G-code: layer %1% (support)"
+msgstr ""
+
+msgid "(support)"
+msgstr ""
+
 msgid "Inner wall"
 msgstr "Parede interna"
 

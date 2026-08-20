@@ -40,6 +40,9 @@ void NotificationManager::SlicingProgressNotification::init()
 			m_lines_count = 1;
 			m_multiline = false;
 		}
+			// Force single line - window width adapts to text
+			m_lines_count = 1;
+			m_multiline = false;
 		if (m_state == EState::Shown)
 			m_state = EState::NotFading;
 	}
@@ -118,21 +121,21 @@ void NotificationManager::SlicingProgressNotification::set_status_text(const std
 	case Slic3r::GUI::NotificationManager::SlicingProgressNotification::SlicingProgressState::SP_PROGRESS:
 	{
 		NotificationData data{ NotificationType::SlicingProgress, NotificationLevel::ProgressBarNotificationLevel, 0, text + "." };
-		update(data);
+			float saved_width = m_window_width; update(data); m_window_width = std::max(m_window_width, saved_width);
 		m_state = EState::NotFading;
 	}
 		break;
 	case Slic3r::GUI::NotificationManager::SlicingProgressNotification::SlicingProgressState::SP_CANCELLED:
 	{
 		NotificationData data{ NotificationType::SlicingProgress, NotificationLevel::ProgressBarNotificationLevel, 0, text };
-		update(data);
+			float saved_width = m_window_width; update(data); m_window_width = std::max(m_window_width, saved_width);
 		m_state = EState::Shown;
 	}
 		break;
 	case Slic3r::GUI::NotificationManager::SlicingProgressNotification::SlicingProgressState::SP_COMPLETED:
 	{
 		NotificationData data{ NotificationType::SlicingProgress, NotificationLevel::ProgressBarNotificationLevel, 0,  _u8L("Slice ok.") };
-		update(data);
+			float saved_width = m_window_width; update(data); m_window_width = std::max(m_window_width, saved_width);
 		m_state = EState::Shown;
 	}
 		break;
@@ -214,10 +217,13 @@ void NotificationManager::SlicingProgressNotification::render(GLCanvas3D& canvas
 
 	Size cnv_size = canvas.get_canvas_size();
 
-	//m_window_width = 600.f * scale;
-	//if (m_sp_state == SlicingProgressNotification::SlicingProgressState::SP_COMPLETED || m_sp_state == SlicingProgressNotification::SlicingProgressState::SP_CANCELLED)
-	//	m_window_width = m_line_height * 25;
-	const ImVec2 progress_child_window_padding = ImVec2(15.f, 0.f) * scale;
+		// Fixed width to fit the longest locale string on one line (French ~490px).
+		// Use max() to prevent shrinking on state transitions.
+		if (m_sp_state == SlicingProgressNotification::SlicingProgressState::SP_PROGRESS ||
+		    m_sp_state == SlicingProgressNotification::SlicingProgressState::SP_COMPLETED ||
+		    m_sp_state == SlicingProgressNotification::SlicingProgressState::SP_CANCELLED)
+			m_window_width = std::max(m_window_width, 490.f * scale);
+		const ImVec2 progress_child_window_padding = ImVec2(15.f, 0.f) * scale;
 	const ImVec2 dailytips_child_window_padding = m_dailytips_panel->is_expanded() ? ImVec2(15.f, 10.f) * scale : ImVec2(15.f, 0.f) * scale;
 	const ImVec2 bottom_padding = ImVec2(0.f, 0.f) * scale;
 	const float  progress_panel_width = (m_window_width - 2 * progress_child_window_padding.x);

@@ -589,6 +589,9 @@ void Preview::update_layers_slider(const std::vector<double>& layers_z, bool kee
     m_layers_slider->SetSliderValues(layers_z);
     assert(m_layers_slider->GetMinValue() == 0);
     m_layers_slider->SetMaxValue(layers_z.empty() ? 0 : layers_z.size() - 1);
+    m_layers_slider->SetPreviewToNonSupportLayer(
+        m_canvas->get_gcode_viewer().get_preview_to_non_support_layer(),
+        m_canvas->get_gcode_viewer().get_non_support_layer_count());
 
     int idx_low  = 0;
     int idx_high = m_layers_slider->GetMaxValue();

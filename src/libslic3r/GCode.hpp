@@ -193,6 +193,7 @@ public:
         m_enable_extrusion_role_markers(false),
         m_last_processor_extrusion_role(erNone),
         m_layer_count(0),
+        m_model_only_layer_count(0),
         m_layer_index(-1),
         m_layer(nullptr),
         m_object_layer_over_raft(false),
@@ -550,6 +551,7 @@ private:
     // How many times will change_layer() be called?
     // change_layer() will update the progress bar.
     unsigned int                        m_layer_count;
+    unsigned int                        m_model_only_layer_count;  // excludes support layers for display
     // Progress bar indicator. Increments from -1 up to layer_count.
     int                                 m_layer_index;
     // Current layer processed. In sequential printing mode, only a single copy will be printed.

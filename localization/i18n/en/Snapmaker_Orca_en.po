@@ -8988,6 +8988,32 @@ msgstr ""
 
 msgid "Support interface"
 msgstr ""
+msgid "Support top contact speed"
+msgstr "Support top contact speed"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Enable to set first, middle, and top support top contact layer speeds separately."
+
+msgid "First layer contact speed"
+msgstr "First layer contact speed"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Speed of the bottommost support top contact layer (furthest from the model)."
+
+msgid "Middle layer contact speed"
+msgstr "Middle layer contact speed"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Speed of the middle support top contact layers."
+
+msgid "Top layer contact speed"
+msgstr "Top layer contact speed"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Speed of the topmost support top contact layer (closest to the model)."
+
+msgid "Support transition speed"
+msgstr "Support transition speed"
 
 msgid "Support transition"
 msgstr ""

@@ -53,3 +53,9 @@ Recommended to use a similar value to the [outer wall acceleration](#outer-wall)
 ## Travel
 
 Acceleration of [travel](speed_settings_travel) moves. This is usually set to a higher value than normal printing to reduce travel time.
+
+<a id="first-layer-travel"></a>
+
+## First layer travel
+
+Acceleration of travel moves on the first layer.

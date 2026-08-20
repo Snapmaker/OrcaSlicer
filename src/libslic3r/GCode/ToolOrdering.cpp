@@ -682,7 +682,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         layer_tools.layer_height = support_layer->height;
         ExtrusionRole role = support_layer->support_fills.role();
         bool         has_support        = role == erMixed || role == erSupportMaterial || role == erSupportTransition;
-        bool         has_interface      = role == erMixed || role == erSupportMaterialInterface;
+        bool         has_interface      = role == erMixed || role == erSupportMaterialInterface || role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle || role == erSupportMaterialInterfaceTop;
         unsigned int extruder_support   = resolve_mixed(object.config().support_filament.value,
                                                         layer_tools.layer_index,
                                                         float(support_layer->print_z),
@@ -1432,7 +1432,7 @@ bool WipingExtrusions::is_support_overriddable(const ExtrusionRole role, const P
     else if (role == erSupportMaterial || role == erSupportTransition) {
         return object.config().support_filament == 0;
     }
-    else if (role == erSupportMaterialInterface) {
+    else if (role == erSupportMaterialInterface || role == erSupportMaterialInterfaceFirst || role == erSupportMaterialInterfaceMiddle || role == erSupportMaterialInterfaceTop) {
         return object.config().support_interface_filament == 0;
     }
 
@@ -1564,7 +1564,7 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                     if (support_intf_overriddable && !is_support_interface_overridden(object)) {
                         set_support_interface_extruder_override(object, copy, new_extruder, num_of_copies);
                         for (const ExtrusionEntity* ee : entities) {
-                            if (ee->role() == erSupportMaterialInterface)
+                            if (ee->role() == erSupportMaterialInterface || ee->role() == erSupportMaterialInterfaceFirst || ee->role() == erSupportMaterialInterfaceMiddle || ee->role() == erSupportMaterialInterfaceTop)
                                 volume_to_wipe -= ee->total_volume();
 
                             if (volume_to_wipe <= 0.f)

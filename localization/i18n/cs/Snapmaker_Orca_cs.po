@@ -9273,6 +9273,32 @@ msgstr "Výplň mezery"
 
 msgid "Support interface"
 msgstr "Kontaktní vrstva podpěr"
+msgid "Support top contact speed"
+msgstr "Rychlost horniho kontaktu podpory"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Umoznuje nastavit ruzne rychlosti pro prvni, stredni a horni kontaktni vrstvy podpory."
+
+msgid "First layer contact speed"
+msgstr "Rychlost prvni kontaktni vrstvy"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Rychlost nejspodnejsi kontaktni vrstvy podpory (nejdale od modelu)."
+
+msgid "Middle layer contact speed"
+msgstr "Rychlost stredni kontaktni vrstvy"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Rychlost strednich kontaktnich vrstev podpory."
+
+msgid "Top layer contact speed"
+msgstr "Rychlost horni kontaktni vrstvy"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Rychlost nejhorneji kontaktni vrstvy podpory (nejblize modelu)."
+
+msgid "Support transition speed"
+msgstr "Rychlost prechodu podpory"
 
 msgid "Support transition"
 msgstr "Přechod Podpěr"

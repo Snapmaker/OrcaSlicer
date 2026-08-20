@@ -9594,6 +9594,32 @@ msgstr "Riempimento spazi vuoti"
 
 msgid "Support interface"
 msgstr "Interfaccia di supporto"
+msgid "Support top contact speed"
+msgstr "Velocita di contatto superiore del supporto"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Consente di impostare velocita separate per il primo, intermedio e superiore strato di contatto del supporto."
+
+msgid "First layer contact speed"
+msgstr "Velocita del primo strato di contatto"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Velocita dello strato di contatto inferiore del supporto (piu lontano dal modello)."
+
+msgid "Middle layer contact speed"
+msgstr "Velocita dello strato di contatto intermedio"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Velocita degli strati di contatto intermedi del supporto."
+
+msgid "Top layer contact speed"
+msgstr "Velocita dello strato di contatto superiore"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Velocita dello strato di contatto superiore del supporto (piu vicino al modello)."
+
+msgid "Support transition speed"
+msgstr "Velocita di transizione del supporto"
 
 msgid "Support transition"
 msgstr "Transizione di supporto"

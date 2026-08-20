@@ -22,6 +22,11 @@
 - [Ironing speed](#ironing-speed)
 - [Support](#support)
 - [Support interface](#support-interface)
+  - [Support top contact speed](#support-top-contact-speed-split)
+  - [First layer contact speed](#support-top-contact-speed-first)
+  - [Middle layer contact speed](#support-top-contact-speed-middle)
+  - [Top layer contact speed](#support-top-contact-speed-top)
+  - [Support transition speed](#support-transition)
 
 ## Outer wall
 
@@ -90,3 +95,33 @@ Speed at which [support](support_settings_support) material is printed. Slower s
 ## Support interface
 
 Speed for the support interface layers, which are the layers directly contacting the model. This is usually set even slower than the main [support speed](#support) to maximize surface quality where the support meets the model and to make support removal easier.
+
+<a id="support-top-contact-speed-split"></a>
+
+### Support top contact speed
+
+When enabled, the top support contact area can use separate speeds for the first, middle, and top contact layers. When disabled, all top contact paths use the normal [support interface](#support-interface) speed.
+
+<a id="support-top-contact-speed-first"></a>
+
+### First layer contact speed
+
+Speed for the first layer of the top support contact area, furthest from the model.
+
+<a id="support-top-contact-speed-middle"></a>
+
+### Middle layer contact speed
+
+Speed for middle layers of the top support contact area.
+
+<a id="support-top-contact-speed-top"></a>
+
+### Top layer contact speed
+
+Speed for the topmost layer of the top support contact area, closest to the model.
+
+<a id="support-transition"></a>
+
+### Support transition speed
+
+Speed for support transition paths between normal support and support interface areas.

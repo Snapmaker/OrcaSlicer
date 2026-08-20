@@ -9560,6 +9560,32 @@ msgstr "Preenchimento de vão"
 
 msgid "Support interface"
 msgstr "Interface de suporte"
+msgid "Support top contact speed"
+msgstr "Velocidade de contato superior do suporte"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Permite definir velocidades diferentes para a primeira, intermediaria e superior camada de contato do suporte."
+
+msgid "First layer contact speed"
+msgstr "Velocidade da primeira camada de contato"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Velocidade da camada de contato inferior do suporte (mais distante do modelo)."
+
+msgid "Middle layer contact speed"
+msgstr "Velocidade da camada de contato intermediaria"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Velocidade das camadas de contato intermediarias do suporte."
+
+msgid "Top layer contact speed"
+msgstr "Velocidade da camada de contato superior"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Velocidade da camada de contato superior do suporte (mais proxima do modelo)."
+
+msgid "Support transition speed"
+msgstr "Velocidade de transicao do suporte"
 
 msgid "Support transition"
 msgstr "Transição de suporte"

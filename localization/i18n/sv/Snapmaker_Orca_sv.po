@@ -9159,6 +9159,32 @@ msgstr "Mellanrums ifyllnad"
 
 msgid "Support interface"
 msgstr "Support kontaktyta"
+msgid "Support top contact speed"
+msgstr "Stodets ovre kontakthastighet"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Mojliggor installning av olika hastigheter for forsta, mellersta och ovre stodkontaktlager."
+
+msgid "First layer contact speed"
+msgstr "Hastighet for forsta kontaktlagret"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Hastighet for det understa stodkontaktlagret (langst fran modellen)."
+
+msgid "Middle layer contact speed"
+msgstr "Hastighet for mellersta kontaktlagret"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Hastighet for de mellersta stodkontaktlagren."
+
+msgid "Top layer contact speed"
+msgstr "Hastighet for ovre kontaktlagret"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Hastighet for det oversta stodkontaktlagret (narmast modellen)."
+
+msgid "Support transition speed"
+msgstr "Stodets overgangshastighet"
 
 msgid "Support transition"
 msgstr "Support övergång"

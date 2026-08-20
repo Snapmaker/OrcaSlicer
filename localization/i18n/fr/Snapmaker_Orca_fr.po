@@ -9663,6 +9663,32 @@ msgstr "Remplissage d'espace"
 
 msgid "Support interface"
 msgstr "Interface de support"
+msgid "Support top contact speed"
+msgstr "Vitesse de contact superieur du support"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Permet de definir des vitesses distinctes pour la premiere, intermediaire et superieure couche de contact du support."
+
+msgid "First layer contact speed"
+msgstr "Vitesse de la premiere couche de contact"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Vitesse de la couche de contact inferieure du support (la plus eloignee du modele)."
+
+msgid "Middle layer contact speed"
+msgstr "Vitesse de la couche de contact intermediaire"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Vitesse des couches de contact intermediaires du support."
+
+msgid "Top layer contact speed"
+msgstr "Vitesse de la couche de contact superieure"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Vitesse de la couche de contact superieure du support (la plus proche du modele)."
+
+msgid "Support transition speed"
+msgstr "Vitesse de transition du support"
 
 msgid "Support transition"
 msgstr "Soutenir la transition"

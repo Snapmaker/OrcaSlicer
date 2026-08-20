@@ -8,13 +8,53 @@
 #include "libslic3r/PrintConfig.hpp"
 
 #include <wx/dcbuffer.h>
+#include <wx/region.h>
+
+#include <cmath>
+#include <vector>
 
 namespace Slic3r { namespace GUI {
 
 static const wxColour BRAND_GREEN("#009688");
 
+// Clip the popup window to a rounded rect so the corners outside the rounded
+// border painted in on_paint stay transparent instead of showing the square
+// background fill (same helper as FilamentColorDialog).
+static wxRegion MakeRoundedRegion(const wxSize& size, int radius)
+{
+    const int width  = std::max(1, size.GetWidth());
+    const int height = std::max(1, size.GetHeight());
+    radius = std::max(0, std::min(radius, std::min(width, height) / 2));
+    if (radius == 0)
+        return wxRegion(0, 0, width, height);
+
+    constexpr double pi = 3.14159265358979323846;
+    const int        segments = 8;
+    std::vector<wxPoint> points;
+    points.reserve((segments + 1) * 4);
+
+    auto appendArc = [&points, radius, segments, pi](int centerX, int centerY, double start, double end)
+    {
+        for (int index = 0; index <= segments; ++index) {
+            const double ratio = static_cast<double>(index) / static_cast<double>(segments);
+            const double angle = (start + (end - start) * ratio) * pi / 180.0;
+            const int    x = centerX + static_cast<int>(std::round(std::cos(angle) * radius));
+            const int    y = centerY + static_cast<int>(std::round(std::sin(angle) * radius));
+            points.emplace_back(x, y);
+        }
+    };
+
+    appendArc(width - radius - 1, radius, -90.0, 0.0);
+    appendArc(width - radius - 1, height - radius - 1, 0.0, 90.0);
+    appendArc(radius, height - radius - 1, 90.0, 180.0);
+    appendArc(radius, radius, 180.0, 270.0);
+    return wxRegion(static_cast<int>(points.size()), points.data());
+}
+
 SliceModePopup::SliceModePopup(wxWindow *parent)
-    : PopupWindow(parent, wxBORDER_NONE)
+    // wxFRAME_SHAPED is required for SetShape() to take effect (it silently
+    // returns false otherwise); see the wxCHECK_MSG in wxNonOwnedWindowBase.
+    : PopupWindow(parent, wxBORDER_NONE | wxFRAME_SHAPED)
     , m_timer(this)
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -39,11 +79,17 @@ void SliceModePopup::update_metrics()
     const int pad     = FromDIP(16);
     const int row_h   = FromDIP(46);   // 24px title + 2px gap + 20px description
     const int row_gap = FromDIP(16);
-    const int width   = pad * 2 + std::max(title_w, FromDIP(20) + desc_w);
+    // Figma 27526:61473: fixed 200x140 card; only grow past 200 when the
+    // localized labels would not fit.
+    const int width   = std::max(FromDIP(200), pad * 2 + std::max(title_w, FromDIP(20) + desc_w));
 
     m_std_rect    = wxRect(pad, pad, width - pad * 2, row_h);
     m_custom_rect = wxRect(pad, pad + row_h + row_gap, width - pad * 2, row_h);
-    SetSize(wxSize(width, pad * 2 + row_h * 2 + row_gap));
+    const wxSize size(width, pad * 2 + row_h * 2 + row_gap);
+    SetSize(size);
+    // Match the rounded border painted in on_paint: without the window shape
+    // the square background fill shows through the four corners.
+    SetShape(MakeRoundedRegion(size, FromDIP(8)));
 }
 
 void SliceModePopup::ShowFor(const std::vector<wxWindow*> &anchors, wxWindow *align_to)

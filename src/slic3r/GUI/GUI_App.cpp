@@ -120,6 +120,7 @@
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "Widgets/SideButton.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
 #include "WebDownPluginDlg.hpp"
@@ -3470,6 +3471,16 @@ static bool is_default(wxWindow* win)
 
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
+    // SideButton manages its own per-state colors via StateColor and adapts
+    // them to the theme at paint time (StateColor::colorForStates runs the
+    // dark palette). Its SetBackgroundColour/SetForegroundColour overrides
+    // replace the WHOLE state table with one color, so letting this walker
+    // touch it permanently flattens the enabled/disabled/hover colors —
+    // seen when toggling dark mode off: the slice/print buttons keep a
+    // washed-out single background until the app restarts.
+    if (dynamic_cast<SideButton*>(window))
+        return;
+
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
         if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW)
             return;

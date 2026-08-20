@@ -917,8 +917,16 @@ class CustomNotebook : public wxControl
 {
 public:
     CustomNotebook(wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize)
-        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1), m_tabHeight(24), m_tabPadding(10), m_roundRadius(5)
+        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1)
     {
+        // Figma 27551-61181: each segment is a fixed 70x24 button with 13 px inner
+        // padding, centered text and square corners. The outer radius matches the
+        // parent nozzle card (StaticBox::SetCornerRadius(8), raw pixels).
+        m_tabWidth    = FromDIP(70);
+        m_tabHeight   = FromDIP(24);
+        m_tabPadding  = FromDIP(13);
+        m_roundRadius = 8;
+
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         UpdateColors();
 
@@ -995,14 +1003,16 @@ protected:
         dc.SetBrush(wxBrush(m_bgColor));
         dc.DrawRectangle(GetClientRect());
 
-        // 2. 绘制标签背景区域
+        // 2. 绘制标签背景轨道 (Figma: 扁平直角分段轨道；上外角跟随父卡片圆角，避免直角色块突出卡片)
         dc.SetPen(wxPen(m_dividerColor, 1));
         dc.SetBrush(wxBrush(m_dividerColor));
-        wxRect labelRect(0, 0, GetSize().x, m_tabHeight);
-        dc.DrawRoundedRectangle(labelRect, m_roundRadius);
-        dc.DrawRectangle(0, m_tabHeight - 2, GetSize().x, 4);
+        int trackW = GetSize().x;
+        int rh     = std::min(m_roundRadius, m_tabHeight / 2); // guard very short strips
+        // rounded-top shape: all-corner rounded rect + rectangle patching the bottom half
+        dc.DrawRoundedRectangle(0, 0, trackW, 2 * rh, rh);
+        dc.DrawRectangle(0, rh, trackW, m_tabHeight - rh);
 
-        // 3. 绘制所有标签
+        // 3. 绘制所有标签 (Figma 27551-61181: 固定 70 宽分段，文字居中)
         wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
         font.SetPointSize(m_textSize);
         dc.SetFont(font);
@@ -1019,24 +1029,32 @@ protected:
 
             int textWidth, textHeight;
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            int tabWidth = textWidth + 2 * m_tabPadding;
+            int tabWidth = GetTabWidth(textWidth);
 
             if (isSelected) {
                 // teal background for the selected tab.
                 const wxColour selColor(0x00, 0x96, 0x88); // #009688
                 dc.SetPen(wxPen(selColor, 1));
                 dc.SetBrush(wxBrush(selColor));
-                wxRect selectedRect(xPos, 0, tabWidth, m_tabHeight + 2);
-                dc.DrawRectangle(selectedRect);
-                dc.DrawRoundedRectangle(selectedRect, m_roundRadius);
-
-                dc.SetPen(wxPen(m_bgColor, 1));
-                dc.SetBrush(wxBrush(m_bgColor));
-                dc.DrawRectangle(xPos, m_tabHeight, tabWidth, 4);
+                // Round only the outer top corner(s) that meet the parent card's
+                // rounded corner; inner segment corners stay square (Figma).
+                bool roundLeft  = (i == 0);
+                bool roundRight = (xPos + tabWidth >= trackW - 1);
+                if (roundLeft || roundRight) {
+                    dc.DrawRoundedRectangle(xPos, 0, tabWidth, 2 * rh, rh);
+                    if (!roundLeft)
+                        dc.DrawRectangle(xPos, 0, tabWidth - rh, rh);
+                    if (!roundRight)
+                        dc.DrawRectangle(xPos + rh, 0, tabWidth - rh, rh);
+                    dc.DrawRectangle(xPos, rh, tabWidth, m_tabHeight - rh);
+                } else {
+                    dc.DrawRectangle(xPos, 0, tabWidth, m_tabHeight);
+                }
             }
 
             dc.SetTextForeground(isSelected ? m_selectedTextColor : m_textColor);
-            dc.DrawText(m_tabs[i].text, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
+            int xText = xPos + (tabWidth - textWidth) / 2;
+            dc.DrawText(m_tabs[i].text, xText, (m_tabHeight - textHeight) / 2);
 
             xPos += tabWidth;
         }
@@ -1078,6 +1096,13 @@ private:
         wxWindow* page;
     };
 
+    // Figma 27551-61181: segments are 70 px wide; only grow when the
+    // localized label (e.g. "Left Nozzle") does not fit.
+    int GetTabWidth(int textWidth) const
+    {
+        return std::max(m_tabWidth, textWidth + 2 * m_tabPadding);
+    }
+
     wxRect GetTabRect(size_t index) const
     {
         if (index >= m_tabs.size())
@@ -1090,12 +1115,12 @@ private:
 
         int textWidth, textHeight;
         dc.GetTextExtent(m_tabs[index].text, &textWidth, &textHeight);
-        int tabWidth = textWidth + 2 * m_tabPadding;
+        int tabWidth = GetTabWidth(textWidth);
 
         int x = 0;
         for (size_t i = 0; i < index; ++i) {
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            x += textWidth + 2 * m_tabPadding;
+            x += GetTabWidth(textWidth);
         }
 
         return wxRect(x, 0, tabWidth, m_tabHeight);
@@ -1115,7 +1140,7 @@ private:
         for (size_t i = 0; i < m_tabs.size(); ++i) {
             int textWidth, textHeight;
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            int tabWidth = textWidth + 2 * m_tabPadding;
+            int tabWidth = GetTabWidth(textWidth);
 
             if (pt.x >= xPos && pt.x <= xPos + tabWidth) {
                 return i;
@@ -1168,6 +1193,7 @@ private:
     wxColour m_selectedTextColor;
     wxColour m_dividerColor;
 
+    int m_tabWidth;
     int m_tabHeight;
     int m_tabPadding;
     int m_roundRadius;
@@ -9368,6 +9394,12 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
     size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
 
+    // Rebuild in one visual step: freeze the notebook so the tab strip does not
+    // flash through the empty / partially-rebuilt states — DeleteAllPages() and
+    // each AddPage() refresh, and those intermediate repaints coalesce into a
+    // single paint on thaw.
+    p->m_nozzle_notebook->Freeze();
+
     // Clear existing pages and controls
     p->m_nozzle_notebook->DeleteAllPages();
     p->m_nozzle_diameter_lists.clear();
@@ -9545,6 +9577,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     }
 
     p->m_nozzle_notebook->Layout();
+    p->m_nozzle_notebook->Thaw();
 
     if (switch_machine) {
         p->combo_printer->SetFocus();

@@ -384,8 +384,13 @@ void FilamentGroupDialog::move_filament(size_t filament_idx, bool to_high_flow)
     if (m_mapping[filament_idx] == target)
         return;
     m_mapping[filament_idx] = target;
+    // The rebuild destroys and recreates every chip in both grids; freezing
+    // the dialog keeps those intermediate empty/partial states off screen so
+    // dropping a chip does not flash.
+    Freeze();
     rebuild_chips();
     update_warnings();
+    Thaw();
 }
 
 void FilamentGroupDialog::swap_groups()
@@ -393,8 +398,11 @@ void FilamentGroupDialog::swap_groups()
     for (const FilamentInfo &info : m_filaments)
         m_mapping[info.filament_idx] =
             m_mapping[info.filament_idx] == fvtHighFlow ? fvtStandard : fvtHighFlow;
+    // Same flash concern as move_filament(): rebuild invisibly, repaint once.
+    Freeze();
     rebuild_chips();
     update_warnings();
+    Thaw();
 }
 
 void FilamentGroupDialog::rebuild_chips()
@@ -464,7 +472,9 @@ void FilamentGroupDialog::update_warnings()
         // their light values into dark mode.
         const wxColour background = StateColor::darkModeColorFor(wxColour(is_error ? "#FDE8E8" : "#FFF3EB"));
         const wxColour foreground = StateColor::darkModeColorFor(wxColour(is_error ? "#D32F2F" : "#FF842D"));
-        const char *icon_name = is_error ? "error_icon_red_exclamation" : "icon_warning_triangle";
+        // Non-error ("not recommended") warnings use the orange round exclamation
+        // from Figma 27673-62209 — not the triangle icon.
+        const char *icon_name = is_error ? "error_icon_red_exclamation" : "warning_icon_orange_exclamation";
 
         StaticBox *bar = new StaticBox(this, wxID_ANY);
         bar->SetCornerRadius(FromDIP(4));

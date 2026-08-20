@@ -979,6 +979,7 @@ void MainFrame::update_layout()
 void MainFrame::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "MainFrame::shutdown enter";
+    m_shutting_down = true;
     // BBS: backup
     Slic3r::set_backup_callback(nullptr);
 #ifdef _WIN32
@@ -1722,8 +1723,7 @@ wxBoxSizer* MainFrame::create_side_tools()
     m_slice_mode_popup = new SliceModePopup(this);
     auto try_show_slice_mode_popup = [this](wxMouseEvent &e) {
         e.Skip();
-        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
-            && GUI::FlowType::any_filament_supports_high_flow())
+        if (m_slice_enable && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2)
             m_slice_mode_popup->ShowFor({m_slice_btn, m_slice_option_btn}, m_slice_btn);
     };
     m_slice_btn->Bind(wxEVT_ENTER_WINDOW, try_show_slice_mode_popup);
@@ -1756,8 +1756,7 @@ wxBoxSizer* MainFrame::create_side_tools()
             // button). Otherwise every filament follows the single selected nozzle
             // flow type (all standard -> standard, all high flow -> high flow; standard
             // mode with mixed nozzles falls back to standard), dropping stale mappings.
-            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2
-                && GUI::FlowType::any_filament_supports_high_flow()) {
+            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2) {
                 GUI::FilamentGroupDialog dlg(this);
                 if (dlg.ShowModal() != wxID_OK)
                     return;

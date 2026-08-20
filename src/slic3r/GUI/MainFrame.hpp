@@ -291,6 +291,10 @@ public:
 
     bool        is_loaded() const { return m_loaded; }
     bool        is_last_input_file() const  { return !m_qs_last_input_file.IsEmpty(); }
+    // True once the close/restart path entered MainFrame::shutdown(): children
+    // must stop pumping the event loop (e.g. synchronous webview scripts whose
+    // wxYield would run the pending frame deletion mid-handler and crash).
+    bool        is_shutting_down() const { return m_shutting_down; }
     //BBS GUI refactor: remove unused layout new/dlg
     //bool        is_dlg_layout() const { return m_layout == ESettingsLayout::Dlg; }
 
@@ -410,6 +414,7 @@ public:
     SliceModePopup* m_slice_mode_popup{ nullptr };
     mutable bool          m_slice_enable{ true };
     mutable bool          m_print_enable{ true };
+    bool                  m_shutting_down{ false };
     bool get_enable_slice_status();
     bool get_enable_print_status();
     //BBS

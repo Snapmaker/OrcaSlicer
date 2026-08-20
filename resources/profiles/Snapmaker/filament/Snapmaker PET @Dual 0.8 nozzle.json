@@ -7,5 +7,6 @@
   "inherits": "Snapmaker PET @Dual base",
   "compatible_printers": [
     "Snapmaker A250 Dual (0.8 nozzle)"
-  ]
+  ],
+  "filament_type": ["PET"]
 }

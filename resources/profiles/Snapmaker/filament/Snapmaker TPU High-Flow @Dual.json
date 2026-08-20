@@ -51,5 +51,6 @@
   ],
   "filament_notes": [
     "!! It needs to be dried before use.\nSnapmaker TPU 95A High-Flow\n"
-  ]
+  ],
+  "filament_type": ["TPU"]
 }

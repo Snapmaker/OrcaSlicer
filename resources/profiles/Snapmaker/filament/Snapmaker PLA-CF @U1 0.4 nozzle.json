@@ -85,5 +85,8 @@
         "0.01"
     ],
   "graphic_effect_plate_temp": ["65"],
-  "graphic_effect_plate_temp_initial_layer": ["65"]
+  "graphic_effect_plate_temp_initial_layer": ["65"],
+  "supertack_plate_temp": ["40"],
+  "supertack_plate_temp_initial_layer": ["40"],
+  "filament_type": ["PLA-CF"]
 }

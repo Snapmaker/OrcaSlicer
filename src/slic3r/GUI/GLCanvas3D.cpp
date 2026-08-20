@@ -1812,6 +1812,25 @@ void GLCanvas3D::zoom_to_plate(int plate_idx)
     }
 }
 
+void GLCanvas3D::ZoomToFit()
+{
+    select_view("plate");
+
+    if (!m_selection.is_empty())
+    {
+        zoom_to_selection();
+        return;
+    }
+
+    if (m_canvas_type == ECanvasType::CanvasAssembleView)
+    {
+        zoom_to_volumes();
+        return;
+    }
+
+    zoom_to_bed();
+}
+
 void GLCanvas3D::select_view(const std::string& direction)
 {
     wxGetApp().plater()->get_camera().select_view(direction);
@@ -1931,7 +1950,7 @@ void GLCanvas3D::render(bool only_init)
     }
 
     camera.apply_projection(_max_bounding_box(true, true, true));
-
+    camera.UpdateFrustum();
     wxGetApp().imgui()->new_frame();
 
     if (m_picking_enabled) {
@@ -2149,27 +2168,77 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
                                   bool                      for_picking,
                                   bool                      ban_light)
 {
+    std::vector<ColorRGBA> colors = ::get_extruders_colors();
+    render_thumbnail(thumbnail_data, w, h, thumbnail_params, volumes, colors, camera_type, use_top_view, for_picking, ban_light);
+}
+
+void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                  const GLVolumeCollection &volumes,
+                                  std::vector<ColorRGBA>&   extruder_colors,
+                                  Camera::EType             camera_type,
+                                  bool                      use_top_view,
+                                  bool                      for_picking,
+                                  bool                      ban_light)
+{
     GLShaderProgram* shader = nullptr;
     if (for_picking)
         shader = wxGetApp().get_shader("flat");
     else
         shader = wxGetApp().get_shader("thumbnail");
     ModelObjectPtrs& model_objects = GUI::wxGetApp().model().objects;
-    std::vector<ColorRGBA> colors = ::get_extruders_colors();
     switch (OpenGLManager::get_framebuffers_type())
     {
     case OpenGLManager::EFramebufferType::Arb:
-        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, colors, shader, camera_type,
+        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                      use_top_view, for_picking, ban_light);
         break;
     }
     case OpenGLManager::EFramebufferType::Ext:
-        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, colors, shader, camera_type,
+        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
                                          use_top_view, for_picking, ban_light);
         break;
     }
     default:
-        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, colors, shader, camera_type);
+        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
+        break;
+    }
+    }
+}
+
+// New named-viewpoint overload (pure addition). Mirrors the overload above but threads a
+// ThumbnailView through to the framebuffer helpers instead of the bool use_top_view.
+// use_top_view is forced false here; render_thumbnail_internal maps view==Iso back to the
+// legacy iso branch, so the only behavioral difference from the overload above is the
+// ability to select TopFront/Left/Right/Top/Bottom/Front/Rear. Legacy GL path ignores view
+// (consistent with legacy ignoring use_top_view today).
+void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
+                                  const GLVolumeCollection &volumes,
+                                  std::vector<ColorRGBA>&   extruder_colors,
+                                  Camera::EType             camera_type,
+                                  ThumbnailView             view,
+                                  bool                      for_picking,
+                                  bool                      ban_light)
+{
+    GLShaderProgram* shader = nullptr;
+    if (for_picking)
+        shader = wxGetApp().get_shader("flat");
+    else
+        shader = wxGetApp().get_shader("thumbnail");
+    ModelObjectPtrs& model_objects = GUI::wxGetApp().model().objects;
+    switch (OpenGLManager::get_framebuffers_type())
+    {
+    case OpenGLManager::EFramebufferType::Arb:
+        { render_thumbnail_framebuffer(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+                                     /*use_top_view=*/false, for_picking, ban_light, view);
+        break;
+    }
+    case OpenGLManager::EFramebufferType::Ext:
+        { render_thumbnail_framebuffer_ext(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type,
+                                         /*use_top_view=*/false, for_picking, ban_light, view);
+        break;
+    }
+    default:
+        { render_thumbnail_legacy(thumbnail_data, w, h, thumbnail_params, wxGetApp().plater()->get_partplate_list(), model_objects, volumes, extruder_colors, shader, camera_type);
         break;
     }
     }
@@ -2924,7 +2993,7 @@ void GLCanvas3D::set_shell_transparence(float alpha){
 
 }
 //BBS: add only gcode mode
-void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode)
+void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, const std::vector<std::string>& str_tool_colors, bool only_gcode, bool skip_toolpaths)
 {
     PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
     PartPlate* plate = partplate_list.get_curr_plate();
@@ -2934,7 +3003,7 @@ void GLCanvas3D::load_gcode_preview(const GCodeProcessorResult& gcode_result, co
     //when load gcode directly, it is too late
     m_gcode_viewer.init(wxGetApp().get_mode(), wxGetApp().preset_bundle);
     m_gcode_viewer.load(gcode_result, *this->fff_print(), wxGetApp().plater()->build_volume(), exclude_bounding_box,
-        wxGetApp().get_mode(), only_gcode);
+        wxGetApp().get_mode(), only_gcode, skip_toolpaths);
     m_gcode_viewer.get_moves_slider()->SetHigherValue(m_gcode_viewer.get_moves_slider()->GetMaxValue());
 
     if (wxGetApp().is_editor()) {
@@ -5901,6 +5970,63 @@ void GLCanvas3D::_render_3d_navigator()
 
         request_extra_frame();
     }
+
+    const float fitButtonSize = ImGui::GetFontSize() * 2.5f;
+    const float fitButtonGap = 8.0f * sc;
+    const float fitButtonLeft = viewManipulateLeft + size + fitButtonGap;
+    const float fitButtonTop = viewManipulateTop - fitButtonSize - 20.0f * sc;
+    RenderFitCameraButton(fitButtonLeft, fitButtonTop, fitButtonSize);
+}
+
+void GLCanvas3D::RenderFitCameraButton(float left, float top, float buttonSize)
+{
+    if (buttonSize <= 0.0f)
+    {
+        return;
+    }
+
+    const GLGizmosManager::MENU_ICON_NAME normalIcon = m_is_dark ?
+        GLGizmosManager::IC_FIT_CAMERA_DARK : GLGizmosManager::IC_FIT_CAMERA;
+    const GLGizmosManager::MENU_ICON_NAME hoverIcon = m_is_dark ?
+        GLGizmosManager::IC_FIT_CAMERA_DARK_HOVER : GLGizmosManager::IC_FIT_CAMERA_HOVER;
+
+    if (!m_gizmos.init_icon_textures())
+    {
+        return;
+    }
+
+    const ImTextureID normalId = m_gizmos.get_icon_texture_id(normalIcon);
+    const ImTextureID hoverId = m_gizmos.get_icon_texture_id(hoverIcon);
+    if (normalId == nullptr || hoverId == nullptr)
+    {
+        return;
+    }
+
+    ImGuiWrapper& imgui = *wxGetApp().imgui();
+    imgui.set_next_window_pos(left, top, ImGuiCond_Always, 0.0f, 0.0f);
+    imgui.set_next_window_size(buttonSize, buttonSize, ImGuiCond_Always);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    imgui.begin(std::string("FitCameraButtonWindow"), ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground |
+                                                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove |
+                                                      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                                                      ImGuiWindowFlags_NoSavedSettings);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    if (ImGui::ImageButton3(normalId, hoverId, ImVec2(buttonSize, buttonSize)))
+    {
+        ZoomToFit();
+    }
+
+    if (ImGui::IsItemHovered())
+    {
+        imgui.tooltip(_L("Fit in all view"), ImGui::GetFontSize() * 20.0f);
+    }
+
+    ImGui::PopStyleVar(2);
+    imgui.end();
+    ImGui::PopStyleVar();
 }
 
 #define ENABLE_THUMBNAIL_GENERATOR_DEBUG_OUTPUT 0
@@ -5928,7 +6054,7 @@ static void debug_output_thumbnail(const ThumbnailData& thumbnail_data)
 
 void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const ThumbnailsParams& thumbnail_params,
     PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light)
+    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light, ThumbnailView view)
 {
     //BBS modify visible calc function
     int plate_idx = thumbnail_params.plate_id;
@@ -6022,6 +6148,33 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
         camera.look_at(center + distance_z * Vec3d::UnitZ(), center, Vec3d::UnitY());
         camera.set_zoom(zoom_ratio);
         //camera.select_view("top");
+    }
+    else if (view != ThumbnailView::Iso) {
+        // New named viewpoints (TopFront/Left/Right/Top/Bottom/Front/Rear). Reuses
+        // Camera::select_view for orientation, then zoom_to_box recenters on the volumes
+        // bbox (it calls set_target(box.center())) and computes the ortho zoom.
+        // set_type re-locks the caller's projection (Ortho): select_view("topfront") would
+        // otherwise try to flip to Perspective via auto_type, but the fresh camera's
+        // m_prevent_auto_type guard plus this explicit set_type guarantee Ortho stays.
+        //
+        // Note on view==Top: it routes HERE, not to the use_top_view branch above. The
+        // two algorithms differ — this one centers on volumes_box and uses zoom_to_box;
+        // the legacy branch above centers on plate_build_volume and uses a pixel/mm
+        // scale ratio. The new render_thumbnail overload forces use_top_view=false, so
+        // only callers of that overload reach this branch with view==Top; existing
+        // use_top_view=true callers (e.g. Plater's top_thumbnail_data) still hit the
+        // branch above unchanged.
+        static constexpr const char* kViewDir[] = {
+            /*Iso*/nullptr, /*TopFront*/"topfront", /*Left*/"left", /*Right*/"right",
+            /*Top*/"top", /*Bottom*/"bottom", /*Front*/"front", /*Rear*/"rear"
+        };
+        const size_t vi = static_cast<size_t>(view);
+        const char* dir = (vi < sizeof(kViewDir) / sizeof(kViewDir[0])) ? kViewDir[vi] : nullptr;
+        if (dir) {
+            camera.select_view(dir);
+            camera.zoom_to_box(volumes_box);
+            camera.set_type(camera_type);
+        }
     }
     else {
         camera.select_view("iso");
@@ -6146,7 +6299,7 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
 
 void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
     PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light)
+    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light, ThumbnailView view)
 {
     thumbnail_data.set(w, h);
     if (!thumbnail_data.is_valid())
@@ -6200,7 +6353,7 @@ void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, uns
 
     if (::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
         render_thumbnail_internal(thumbnail_data, thumbnail_params, partplate_list, model_objects, volumes, extruder_colors, shader,
-                                  camera_type, use_top_view, for_picking,ban_light);
+                                  camera_type, use_top_view, for_picking,ban_light, view);
 
         if (multisample) {
             GLuint resolve_fbo;
@@ -6255,7 +6408,7 @@ void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, uns
 
 void GLCanvas3D::render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
     PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
-    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light)
+    GLShaderProgram* shader, Camera::EType camera_type, bool use_top_view, bool for_picking, bool ban_light, ThumbnailView view)
 {
     thumbnail_data.set(w, h);
     if (!thumbnail_data.is_valid())
@@ -6308,7 +6461,7 @@ void GLCanvas3D::render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data,
 
     if (::glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT) == GL_FRAMEBUFFER_COMPLETE_EXT) {
         render_thumbnail_internal(thumbnail_data, thumbnail_params, partplate_list, model_objects, volumes, extruder_colors, shader, camera_type, use_top_view, for_picking,
-                                  ban_light);
+                                  ban_light, view);
 
         if (multisample) {
             GLuint resolve_fbo;
@@ -7272,15 +7425,15 @@ void GLCanvas3D::_render_background()
         m_background.reset();
 
         GLModel::Geometry init_data;
-        init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P2T2 };
+        init_data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P2 };
         init_data.reserve_vertices(4);
         init_data.reserve_indices(6);
 
         // vertices
-        init_data.add_vertex(Vec2f(-1.0f, -1.0f), Vec2f(0.0f, 0.0f));
-        init_data.add_vertex(Vec2f(1.0f, -1.0f),  Vec2f(1.0f, 0.0f));
-        init_data.add_vertex(Vec2f(1.0f, 1.0f),   Vec2f(1.0f, 1.0f));
-        init_data.add_vertex(Vec2f(-1.0f, 1.0f),  Vec2f(0.0f, 1.0f));
+        init_data.add_vertex(Vec2f(-1.0f, -1.0f));
+        init_data.add_vertex(Vec2f(1.0f, -1.0f));
+        init_data.add_vertex(Vec2f(1.0f, 1.0f));
+        init_data.add_vertex(Vec2f(-1.0f, 1.0f));
 
         // indices
         init_data.add_triangle(0, 1, 2);
@@ -7421,7 +7574,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 if (m_picking_enabled && m_layers_editing.is_enabled() && (m_layers_editing.last_object_id != -1) && (m_layers_editing.object_max_z() > 0.0f)) {
                     int object_id = m_layers_editing.last_object_id;
                 const Camera& camera = wxGetApp().plater()->get_camera();
-                m_volumes.render(type, false, camera.get_view_matrix(), camera.get_projection_matrix(), cvn_size, [object_id](const GLVolume& volume) {
+                m_volumes.render(type, false, camera, cvn_size, [object_id](const GLVolume& volume) {
                     // Which volume to paint without the layer height profile shader?
                     return volume.is_active && (volume.is_modifier || volume.composite_id.object_id != object_id);
                     });
@@ -7437,7 +7590,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                     //BBS:add assemble view related logic
                     // do not cull backfaces to show broken geometry, if any
                 const Camera& camera = wxGetApp().plater()->get_camera();
-                    m_volumes.render(type, m_picking_enabled, camera.get_view_matrix(), camera.get_projection_matrix(), cvn_size, [this, canvas_type](const GLVolume& volume) {
+                    m_volumes.render(type, m_picking_enabled, camera, cvn_size, [this, canvas_type](const GLVolume& volume) {
                         if (canvas_type == ECanvasType::CanvasAssembleView) {
                             return !volume.is_modifier && !volume.is_wipe_tower;
                         }
@@ -7472,7 +7625,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
             }*/
             const Camera& camera = wxGetApp().plater()->get_camera();
             //BBS:add assemble view related logic
-            m_volumes.render(type, false, camera.get_view_matrix(), camera.get_projection_matrix(), cvn_size, [canvas_type](const GLVolume& volume) {
+            m_volumes.render(type, false, camera, cvn_size, [canvas_type](const GLVolume& volume) {
                 if (canvas_type == ECanvasType::CanvasAssembleView) {
                     return !volume.is_modifier;
                 }
@@ -7922,7 +8075,7 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
                     m_sel_plate_toolbar.m_items[i]->slice_state = IMToolbarItem::SliceState::SLICE_FAILED;
             }
             else {
-                if (!plate_list.get_plate(i)->can_slice())
+                if (!wxGetApp().plater()->is_plate_sliceable(i))
                     m_sel_plate_toolbar.m_items[i]->slice_state = IMToolbarItem::SliceState::SLICE_FAILED;
                 else {
                     if (plate_list.get_plate(i)->get_slicing_percent() < 0.0f)

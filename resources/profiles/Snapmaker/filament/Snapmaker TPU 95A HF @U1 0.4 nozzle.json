@@ -1,6 +1,6 @@
 {
     "type": "filament",
-    "name": "Snapmaker TPU 95A HF @U1",
+    "name": "Snapmaker TPU 95A HF @U1 0.4 nozzle",
     "inherits": "fdm_filament_tpu_generic",
     "from": "system",
     "filament_id": "GFU99",
@@ -18,9 +18,7 @@
     "filament_multitool_ramming": [
         "1"
     ],
-    "filament_multitool_ramming_volume": [
-        "0.1"
-    ],
+    "filament_multitool_ramming_volume": ["5"],
     "graphic_effect_plate_temp": [
         "35"
     ],
@@ -39,27 +37,17 @@
     "fan_min_speed": [
         "10"
     ],
-    "filament_deretraction_speed": [
-        "nil"
-    ],
+    "filament_deretraction_speed": ["40"],
     "filament_flow_ratio": [
         "1.067"
     ],
     "filament_max_volumetric_speed": [
         "9"
     ],
-    "filament_multitool_ramming_flow": [
-        "10"
-    ],
-    "filament_retract_length_toolchange": [
-        "6"
-    ],
-    "filament_retraction_length": [
-        "1"
-    ],
-    "filament_retraction_speed": [
-        "nil"
-    ],
+    "filament_multitool_ramming_flow": ["15"],
+    "filament_retract_length_toolchange": ["3.6"],
+    "filament_retraction_length": ["1.5"],
+    "filament_retraction_speed": ["40"],
     "filament_settings_id": [
         "TPU 95A HF"
     ],
@@ -80,5 +68,9 @@
     ],
     "slow_down_layer_time": [
         "10"
-    ]
+    ],
+    "filament_z_hop_types": ["Slope Lift"],
+    "supertack_plate_temp": ["40"],
+    "supertack_plate_temp_initial_layer": ["40"],
+    "filament_type": ["TPU"]
 }

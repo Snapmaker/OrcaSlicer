@@ -68,5 +68,6 @@
   "filament_density": ["1.22"],
   "graphic_effect_plate_temp": ["65"],
   "graphic_effect_plate_temp_initial_layer": ["65"],
-  "slow_down_layer_time": ["8"]
+  "slow_down_layer_time": ["8"],
+  "filament_type": ["PLA-CF"]
 }

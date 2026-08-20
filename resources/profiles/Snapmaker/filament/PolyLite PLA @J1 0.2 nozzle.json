@@ -7,5 +7,6 @@
   "inherits": "PolyLite PLA @0.2 nozzle",
   "compatible_printers": [
     "Snapmaker J1 (0.2 nozzle)"
-  ]
+  ],
+  "filament_type": ["PLA"]
 }

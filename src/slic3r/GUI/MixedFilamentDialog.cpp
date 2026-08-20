@@ -108,7 +108,7 @@ private:
 
     void on_left_down(wxMouseEvent& e) {
         m_dragging = true;
-        CaptureMouse();
+        if (!HasCapture()) CaptureMouse();
         int v = value_from_x(e.GetX());
         v = std::clamp(v, m_min, m_max);
         if (v != m_value) { m_value = v; Refresh(); fire_event(); }
@@ -1883,7 +1883,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         TriPt p = {(double)e.GetX(), (double)e.GetY()};
         if (is_down) {
             m_tri_dragging = true;
-            m_tri_picker->CaptureMouse();
+            if (!m_tri_picker->HasCapture()) m_tri_picker->CaptureMouse();
         }
         if (!m_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
@@ -2004,7 +2004,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
     auto handle_mouse = [this, get_verts](wxMouseEvent& e, bool is_down) {
         auto [v0, v1, v2] = get_verts();
         TriPt p = {(double)e.GetX(), (double)e.GetY()};
-        if (is_down) { m_match_tri_dragging = true; m_match_tri_picker->CaptureMouse(); }
+        if (is_down) { m_match_tri_dragging = true; if (!m_match_tri_picker->HasCapture()) m_match_tri_picker->CaptureMouse(); }
         if (!m_match_tri_dragging) return;
         TriPt clamped = tri_clamp_pt(p, v0, v1, v2);
         tri_bary(clamped, v0, v1, v2, m_match_tri_wx, m_match_tri_wy, m_match_tri_wz);
@@ -2929,76 +2929,89 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
     if ((int)m_filament_rows.size() > max_f)
         resize_gradient_ids(max_f);
     if (mode_index == MODE_MATCH) {
-        // Init match filament data with default 2:1:1 ratio
         int num_physical = (int)m_filament_colours.size();
-        m_match_tri_indices.clear();
-        m_match_tri_weights.clear();
-        // Restore saved data if editing, otherwise use default 2:1:1
-        auto saved_ids = MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids);
-        if (saved_ids.size() >= 3) {
-            // Restore from saved match data
-            for (unsigned int id : saved_ids) {
-                int idx = int(id - 1);
-                if (idx >= 0 && idx < num_physical)
-                    m_match_tri_indices.push_back(idx);
-            }
-            if (m_match_tri_indices.size() >= 3) {
-                auto w = decode_color_match_gradient_weights(m_result.gradient_component_weights, (int)m_match_tri_indices.size());
-                double total = 0;
-                for (int v : w) total += v;
-                if (total > 0) {
-                    m_match_tri_wx = w[0] / total; m_match_tri_wy = w[1] / total; m_match_tri_wz = w[2] / total;
+        if (m_match_state_persisted) {
+            // Re-entering Match mode in the same session: the match member state
+            // (m_match_tri_indices/weights/wx/wy/wz), the gradient/tri widgets, the
+            // target color, and m_match_min_pct all survive mode switches on their
+            // own — sync_rows_to_result() only touches filament-row data, never the
+            // match members. Re-initializing from m_result here would reset the
+            // user's adjustments to the 2:1:1 default (the original bug), so we only
+            // refresh the legend from the retained state.
+            rebuild_match_legend();
+        } else {
+            // First entry this session: initialize from m_result (Edit dialog) or
+            // fall back to the default 2:1:1 ratio (Add dialog).
+            m_match_tri_indices.clear();
+            m_match_tri_weights.clear();
+            // Restore saved data if editing, otherwise use default 2:1:1
+            auto saved_ids = MixedFilamentManager::decode_gradient_component_ids(m_result.gradient_component_ids);
+            if (saved_ids.size() >= 3) {
+                // Restore from saved match data
+                for (unsigned int id : saved_ids) {
+                    int idx = int(id - 1);
+                    if (idx >= 0 && idx < num_physical)
+                        m_match_tri_indices.push_back(idx);
                 }
-                m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy, m_match_tri_wz};
+                if (m_match_tri_indices.size() >= 3) {
+                    auto w = decode_color_match_gradient_weights(m_result.gradient_component_weights, (int)m_match_tri_indices.size());
+                    double total = 0;
+                    for (int v : w) total += v;
+                    if (total > 0) {
+                        m_match_tri_wx = w[0] / total; m_match_tri_wy = w[1] / total; m_match_tri_wz = w[2] / total;
+                    }
+                    m_match_tri_weights = {m_match_tri_wx, m_match_tri_wy, m_match_tri_wz};
+                }
+            } else if (saved_ids.size() == 2) {
+                // 2-color saved match
+                for (unsigned int id : saved_ids) {
+                    int idx = int(id - 1);
+                    if (idx >= 0 && idx < num_physical)
+                        m_match_tri_indices.push_back(idx);
+                }
+                m_match_tri_weights = {(double)(100 - m_result.mix_b_percent) / 100.0, (double)m_result.mix_b_percent / 100.0};
+                m_match_tri_wx = m_match_tri_weights[0]; m_match_tri_wy = m_match_tri_weights[1];
+            } else if (m_result.custom && m_result.component_a > 0 && m_result.component_b > 0 && num_physical >= 2) {
+                // Edit dialog: 2-color match restored from component_a/b (no gradient_component_ids stored)
+                m_match_tri_indices = {(int)m_result.component_a - 1, (int)m_result.component_b - 1};
+                m_match_tri_weights = {(double)(100 - m_result.mix_b_percent) / 100.0, (double)m_result.mix_b_percent / 100.0};
+                m_match_tri_wx = m_match_tri_weights[0]; m_match_tri_wy = m_match_tri_weights[1];
+            } else if (num_physical >= 3) {
+                m_match_tri_indices = {0, 1, 2};
+                m_match_tri_weights = {2.0/4.0, 1.0/4.0, 1.0/4.0};
+                m_match_tri_wx = 2.0/4.0; m_match_tri_wy = 1.0/4.0; m_match_tri_wz = 1.0/4.0;
+            } else if (num_physical == 2) {
+                m_match_tri_indices = {0, 1};
+                m_match_tri_weights = {0.5, 0.5};
             }
-        } else if (saved_ids.size() == 2) {
-            // 2-color saved match
-            for (unsigned int id : saved_ids) {
-                int idx = int(id - 1);
-                if (idx >= 0 && idx < num_physical)
-                    m_match_tri_indices.push_back(idx);
+            // Set gradient_selector colors
+            if (m_match_gradient_selector && m_match_tri_indices.size() >= 2) {
+                int ia = std::clamp(m_match_tri_indices[0], 0, num_physical - 1);
+                int ib = std::clamp(m_match_tri_indices[1], 0, num_physical - 1);
+                m_match_gradient_selector->set_colors(
+                    parse_mixed_color(m_filament_colours[ia]),
+                    parse_mixed_color(m_filament_colours[ib]));
+                if (m_match_tri_indices.size() == 2)
+                    m_match_gradient_selector->set_value((int)(m_match_tri_weights[1] * 100 + 0.5));
             }
-            m_match_tri_weights = {(double)(100 - m_result.mix_b_percent) / 100.0, (double)m_result.mix_b_percent / 100.0};
-            m_match_tri_wx = m_match_tri_weights[0]; m_match_tri_wy = m_match_tri_weights[1];
-        } else if (m_result.custom && m_result.component_a > 0 && m_result.component_b > 0 && num_physical >= 2) {
-            // Edit dialog: 2-color match restored from component_a/b (no gradient_component_ids stored)
-            m_match_tri_indices = {(int)m_result.component_a - 1, (int)m_result.component_b - 1};
-            m_match_tri_weights = {(double)(100 - m_result.mix_b_percent) / 100.0, (double)m_result.mix_b_percent / 100.0};
-            m_match_tri_wx = m_match_tri_weights[0]; m_match_tri_wy = m_match_tri_weights[1];
-        } else if (num_physical >= 3) {
-            m_match_tri_indices = {0, 1, 2};
-            m_match_tri_weights = {2.0/4.0, 1.0/4.0, 1.0/4.0};
-            m_match_tri_wx = 2.0/4.0; m_match_tri_wy = 1.0/4.0; m_match_tri_wz = 1.0/4.0;
-        } else if (num_physical == 2) {
-            m_match_tri_indices = {0, 1};
-            m_match_tri_weights = {0.5, 0.5};
+            // Default target color using K-M blend (same method as recipe search)
+            wxColour default_target("#26A69A");
+            std::vector<wxColour> palette;
+            palette.reserve(num_physical);
+            for (const auto& s : m_filament_colours)
+                palette.push_back(parse_mixed_color(s));
+            if (num_physical >= 3) {
+                auto recipe = build_multi_color_match_candidate(palette, {1u, 2u, 3u}, {50, 25, 25}, m_match_min_pct);
+                if (recipe.valid) default_target = recipe.preview_color;
+            } else if (num_physical == 2) {
+                auto recipe = build_pair_color_match_candidate(palette, 1u, 2u, 50, m_match_min_pct);
+                if (recipe.valid) default_target = recipe.preview_color;
+            }
+            if (m_match_target_picker) m_match_target_picker->SetBackgroundColour(default_target);
+            if (m_match_hex_input) m_match_hex_input->ChangeValue(default_target.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
+            m_match_state_persisted = true;
+            rebuild_match_legend();
         }
-        // Set gradient_selector colors
-        if (m_match_gradient_selector && m_match_tri_indices.size() >= 2) {
-            int ia = std::clamp(m_match_tri_indices[0], 0, num_physical - 1);
-            int ib = std::clamp(m_match_tri_indices[1], 0, num_physical - 1);
-            m_match_gradient_selector->set_colors(
-                parse_mixed_color(m_filament_colours[ia]),
-                parse_mixed_color(m_filament_colours[ib]));
-            if (m_match_tri_indices.size() == 2)
-                m_match_gradient_selector->set_value((int)(m_match_tri_weights[1] * 100 + 0.5));
-        }
-        // Default target color using K-M blend (same method as recipe search)
-        wxColour default_target("#26A69A");
-        std::vector<wxColour> palette;
-        palette.reserve(num_physical);
-        for (const auto& s : m_filament_colours)
-            palette.push_back(parse_mixed_color(s));
-        if (num_physical >= 3) {
-            auto recipe = build_multi_color_match_candidate(palette, {1u, 2u, 3u}, {50, 25, 25}, m_match_min_pct);
-            if (recipe.valid) default_target = recipe.preview_color;
-        } else if (num_physical == 2) {
-            auto recipe = build_pair_color_match_candidate(palette, 1u, 2u, 50, m_match_min_pct);
-            if (recipe.valid) default_target = recipe.preview_color;
-        }
-        if (m_match_target_picker) m_match_target_picker->SetBackgroundColour(default_target);
-        if (m_match_hex_input) m_match_hex_input->ChangeValue(default_target.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
-        rebuild_match_legend();
     } else if (mode_index == MODE_CYCLE && m_pattern_ctrl) {
         const std::string norm = MixedFilamentManager::normalize_manual_pattern(m_result.manual_pattern);
         m_pattern_ctrl->SetValue(from_u8(norm.empty() ? "12" : norm));

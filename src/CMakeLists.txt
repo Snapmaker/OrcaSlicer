@@ -9,8 +9,12 @@ add_subdirectory(dev-utils)
 # add_subdirectory(avrdude)
 # Note: semver and hints are now included from deps_src/CMakeLists.txt
 
-# Add MQTT library
+# Add MQTT library (statically linked). Skip its install() so headers/libs are
+# not copied into the application prefix; BUILD_INTERFACE includes still work.
+set(_orca_mqtt_skip_install "${CMAKE_SKIP_INSTALL_RULES}")
+set(CMAKE_SKIP_INSTALL_RULES ON)
 add_subdirectory(mqtt)
+set(CMAKE_SKIP_INSTALL_RULES "${_orca_mqtt_skip_install}")
 
 # Set MQTT paths for use in slic3r GUI
 set(PAHO_MQTT_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt" CACHE PATH "Paho MQTT C++ path")

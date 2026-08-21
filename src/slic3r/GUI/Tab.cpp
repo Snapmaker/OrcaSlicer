@@ -4099,9 +4099,9 @@ void TabFilament::toggle_options()
             supertack_line->label_tooltip = _L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.");
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
-            // U1 default show 4 plates
-            toggle_line("supertack_plate_temp_initial_layer", true);
-            toggle_line("supertack_plate_temp", true);
+            // U1 default show 3 plates; Cool Steel Plate only appears with support_multi_bed_types
+            toggle_line("supertack_plate_temp_initial_layer", false);
+            toggle_line("supertack_plate_temp", false);
             toggle_line("cool_plate_temp_initial_layer", false);
             toggle_line("cool_plate_temp", false);
             toggle_line("textured_cool_plate_temp_initial_layer", false);

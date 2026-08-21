@@ -3134,6 +3134,12 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
             }
 
             if (!key_field_only) {
+                // Debug: log all support_* keys in MQTT data
+                for (auto& [key, val] : jj.items()) {
+                    if (key.find("support_") == 0) {
+                        BOOST_LOG_TRIVIAL(warning) << "SUPPORT FIELD: " << key << "=" << val.dump();
+                    }
+                }
                 if (!DeviceManager::EnableMultiMachine && !is_support_agora) {
                     if (jj.contains("support_tunnel_mqtt")) {
                         if (jj["support_tunnel_mqtt"].is_boolean()) {
@@ -3955,6 +3961,9 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                                     if (is_support_agora || (mode_bits & 0x4)) liveview_remote = LVR_Agora;
                                     else if (mode_bits & 0x2) liveview_remote = LVR_Agora;
                                     BOOST_LOG_TRIVIAL(warning) << "CAMERA DEBUG: fallback liveview_local=" << liveview_local << " liveview_remote=" << liveview_remote << " mode_bits=" << mode_bits;
+                                    // Also set file protocols from mode_bits
+                                    if (mode_bits & 0x2) file_local = FL_Local;
+                                    if (mode_bits & 0x4 || is_support_agora) file_remote = FR_Agora;
                                 }
                                 if (ipcam.contains("file")) {
                                     char const *local_protos[] = {"none", "local"};
@@ -3962,6 +3971,10 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                                     char const *remote_protos[] = {"none", "tutk", "agora", "tutk_agaro"};
                                     file_remote = enum_index_of(ipcam["file"].value<std::string>("remote", "none").c_str(), remote_protos, 4, FileRemote::FR_None);
                                     file_model_download = ipcam["file"].value<std::string>("model_download", "disabled") == "enabled";
+                                } else {
+                                    // Fallback for printers without file section (e.g. China Bambu)
+                                    file_local = liveview_local > 0 ? FL_Local : FL_None;
+                                    file_remote = liveview_remote > 0 ? FR_Agora : FR_None;
                                 }
                                 virtual_camera = ipcam.value<std::string>("virtual_camera", "disabled") == "enabled";
                                 if (ipcam.contains("rtsp_url")) {

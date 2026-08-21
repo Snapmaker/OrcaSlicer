@@ -894,19 +894,29 @@ wxWindow *SelectMachineDialog::create_item_checkbox(wxString title, wxWindow *pa
 
 void SelectMachineDialog::update_select_layout(MachineObject *obj)
 {
-    if (obj && obj->is_support_auto_flow_calibration) {
+    // Check if this is a Bambu Lab printer by model_id (N2S=A1, N1A=A1 mini, etc.)
+    static const std::set<std::string> bambu_model_ids = {
+        "N1A", "N1B",  // A1 mini variants
+        "N2S",         // A1
+        "N2H", "N2J", "N2K",  // P1P/P1S variants
+        "C11", "C12", "C13",   // X1/X1C/X1E variants
+        "C14"          // X1E
+    };
+    bool is_bambu = obj && bambu_model_ids.count(obj->printer_type) > 0;
+
+    if (obj && (obj->is_support_auto_flow_calibration || is_bambu)) {
         select_flow->Show();
     } else {
         select_flow->Hide();
     }
 
-    if (obj && obj->is_support_auto_leveling) {
+    if (obj && (obj->is_support_auto_leveling || is_bambu)) {
         select_bed->Show();
     } else {
         select_bed->Hide();
     }
 
-    if (obj && obj->is_support_timelapse && is_show_timelapse()) {
+    if (obj && (obj->is_support_timelapse || is_bambu) && is_show_timelapse()) {
         select_timelapse->Show();
         update_timelapse_enable_status();
     } else {

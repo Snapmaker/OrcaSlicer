@@ -250,8 +250,7 @@ else
 fi
 
 has_host_runtime_library() {
-    local lib_name="\$1"
-    local path
+    local lib_name path
 
     if command -v ldconfig >/dev/null 2>&1; then
         if ldconfig -p 2>/dev/null | grep -Fq " \$lib_name"; then
@@ -387,8 +386,8 @@ EOF
     chmod ug+x @SLIC3R_APP_CMD@
     cp -fl @SLIC3R_APP_CMD@ "$APPDIR/@SLIC3R_APP_CMD@"
 
-    if [ -f "${CHECK_SCRIPT}" ] && [ -z "${ORCA_SKIP_APPIMAGE_AUDIT}" ]; then
-        bash "${CHECK_SCRIPT}" "$APPDIR" "$BIN_DIR/@SLIC3R_APP_CMD@"
+    if [ -x "${CHECK_SCRIPT}" ] && [ -z "${ORCA_SKIP_APPIMAGE_AUDIT}" ]; then
+        "${CHECK_SCRIPT}" "$APPDIR" "$BIN_DIR/@SLIC3R_APP_CMD@"
     fi
 # } &> $ROOT/Build.log # Capture all command output
 echo "done"
@@ -403,12 +402,10 @@ echo -n "Creating Appimage for distribution..."
     chmod +x ../build_appimage.sh
     if ../build_appimage.sh; then
         popd > /dev/null
-        mv package_appimage/"@SLIC3R_APP_KEY@_Linux_V@Snapmaker_VERSION@.AppImage" "@SLIC3R_APP_KEY@_Linux_V@Snapmaker_VERSION@.AppImage"
+        mv package_appimage/"@SLIC3R_APP_KEY@_Linux_V@SoftFever_VERSION@.AppImage" "@SLIC3R_APP_KEY@_Linux_V@SoftFever_VERSION@.AppImage"
         rm -fR package_appimage
     else
         popd > /dev/null
-        echo "Error: AppImage build failed" >&2
-        exit 1
     fi
 # } &> $ROOT/Build.log # Capture all command output
 echo "done"

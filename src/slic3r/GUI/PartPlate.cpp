@@ -1348,6 +1348,9 @@ int PartPlate::picking_id_component(int idx) const
 
 static void expand_plate_extruders(std::vector<int>& ids)
 {
+    // CLI mode: no wx app / preset bundle exists, filaments_cnt() would dereference null.
+    if (wxTheApp == nullptr || wxGetApp().preset_bundle == nullptr)
+        return;
 	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
 	if (num_physical > 0) {
 		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);
@@ -1913,6 +1916,9 @@ Vec3d PartPlate::get_center_origin()
 
 void PartPlate::generate_plate_name_texture()
 {
+    // CLI mode: no wx app / GL context exists, texture generation crashes.
+    if (wxTheApp == nullptr)
+        return;
     m_plate_name_icon.reset();
 
 	// generate m_name_texture texture from m_name with generate_from_text_string

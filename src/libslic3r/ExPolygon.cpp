@@ -12,6 +12,9 @@
 
 namespace Slic3r {
 
+// From Brim.cpp — used by map_moment_to_expansion.
+extern bool compSecondMoment(const ExPolygons& expolys, double& smExpolysX, double& smExpolysY);
+
 void ExPolygon::scale(double factor)
 {
     contour.scale(factor);
@@ -595,6 +598,27 @@ ExPolygons ExPolygon::split_expoly_with_holes(coord_t gap_width, const ExPolygon
         append(sub_overhangs, intersection_ex(ExPolygon(BoundingBox(q4_min, q4_max).polygon()), *this));
     }
     return sub_overhangs;
+}
+
+double ExPolygon::map_moment_to_expansion(double speed, double height) const
+{
+    if (height <= 0 || speed <= 0) return 0;
+    double Ixx = 0, Iyy = 0;
+    ExPolygons self = {*this};
+    compSecondMoment(self, Ixx, Iyy);
+    Ixx = Ixx * pow(SCALING_FACTOR, 4);
+    Iyy = Iyy * pow(SCALING_FACTOR, 4);
+
+    auto bbox = get_extents(*this);
+    const double &bboxX = bbox.size()(0);
+    const double &bboxY = bbox.size()(1);
+    double height_to_area = std::max(
+        height / Ixx * (bboxY * SCALING_FACTOR),
+        height / Iyy * (bboxX * SCALING_FACTOR)
+    ) * height / 1920;
+
+    double brim_width = height_to_area * speed;
+    return std::max(std::min(brim_width, 10.), 1.);
 }
 
 } // namespace Slic3r

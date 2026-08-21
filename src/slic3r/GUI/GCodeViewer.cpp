@@ -2572,7 +2572,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 
         // update progress dialog
         ++progress_count;
-        if (progress_dialog != nullptr && progress_count % progress_threshold == 0) {
+        if (progress_dialog != nullptr && progress_count % progress_threshold == 0 && wxGetApp().mainframe != nullptr) {
             progress_dialog->Update(int(100.0f * float(i) / (2.0f * float(m_moves_count))),
                 _L("Generating geometry vertex data") + ": " + wxNumberFormatter::ToString(100.0 * double(i) / double(m_moves_count), 0, wxNumberFormatter::Style_None) + "%");
             progress_dialog->Fit();
@@ -3079,7 +3079,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
         }
     }
 
-    if (progress_dialog != nullptr) {
+    if (progress_dialog != nullptr && wxGetApp().mainframe != nullptr) {
         progress_dialog->Update(100, "");
         progress_dialog->Fit();
     }

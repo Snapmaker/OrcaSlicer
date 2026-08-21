@@ -924,7 +924,7 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 if (layer->lower_layer == nullptr) {
                     for (auto& slice : layer->lslices_extrudable) {
                         auto bbox_size = get_extents(slice).size();
-                        if (!((bbox_size.x() > length_thresh_well_supported && bbox_size.y() > length_thresh_well_supported))
+                        if (!(bbox_size.x() > length_thresh_well_supported || bbox_size.y() > length_thresh_well_supported)
                             && g_config_support_sharp_tails) {
                             layer->sharp_tails.push_back(slice);
                             layer->sharp_tails_height.push_back(layer->height);
@@ -974,8 +974,7 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                     for (const ExPolygon& expoly : curr) {
                         bool  is_sharp_tail = false;
                         // 1. nothing below. Rescue thin-but-wide rings (small area + large bbox, or
-                        // erodes to nothing) as sharp tails so they aren't dropped later. Port of
-                        // Bambu ed3e5e93a + c03e13340.
+                        // erodes to nothing) as sharp tails so they aren't dropped later.
                         if (!overlaps(offset_ex(expoly, 0.1 * extrusion_width_scaled), lower_polys) &&
                             area(expoly) < SQ(m_support_params.thresh_big_overhang) &&
                             (get_extents(expoly).area() < SQ(m_support_params.thresh_big_overhang) ||
@@ -984,6 +983,11 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                         }
                         if (is_sharp_tail && lower_layer->lower_layer) {
                             if (overlaps(offset_ex(expoly, 0.1 * extrusion_width_scaled), lower_layer->lower_layer->lslices_extrudable)) is_sharp_tail = false;
+                        }
+
+                        if (is_sharp_tail && lower_layer->lower_layer) {
+                            if (overlaps(offset_ex(expoly, 0.1 * extrusion_width_scaled), lower_layer->lower_layer->lslices_extrudable))
+                                is_sharp_tail = false;
                         }
 
                         if (is_sharp_tail) {
@@ -1004,33 +1008,31 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 // lower_layer_offset may be very small, so we need to do max and then add 0.1
                 lower_layer_offseted = offset_ex(lower_layer_offseted, scale_(std::max(extrusion_width - lower_layer_offset, 0.) + 0.1));
                 for (ExPolygon& poly : overhangs_all_layers[layer_nr]) {
-                    // Check whether any contour is totally floating (no point supported by the layer below).
-                    // A fully-floating contour marks the overhang as Cantilever, which exempts it from
-                    // small-overhang removal. Port of Bambu 976b5062c. Without this, small fully-floating
-                    // top overhangs were classified Small and deleted -> missing support.
+                    // check if there is some contour that is totally floating
                     bool   is_cantilever = false;
-                    double dist_max      = 0;
+                    double dist_max = 0;
                     for (size_t i = 0; i < poly.num_contours(); i++) {
-                        Polygon contour      = poly.contour_or_hole(i);
-                        bool    is_floating  = true;
+                        Polygon contour = poly.contour_or_hole(i);
+                        bool is_floating  = true;
                         double  tmp_dist_max = 0;
                         for (const auto& pt : contour.points) {
                             if (is_inside_ex(lower_layer_support_thresh, pt)) {
                                 is_floating = false;
                                 break;
-                            } else
+                            } else {
                                 tmp_dist_max = std::max(tmp_dist_max, (projection_onto(lower_layer_support_thresh, pt) - pt).cast<double>().norm());
+                            }
                         }
                         if (is_floating) {
                             is_cantilever = true;
-                            dist_max      = tmp_dist_max;
+                            dist_max = tmp_dist_max;
                             break;
                         }
                     }
                     if (!is_cantilever) {
                         dist_max = 0;
-                        auto     cluster_boundary_ex = intersection_ex(poly, lower_layer_offseted);
-                        Polygons cluster_boundary    = to_polygons(cluster_boundary_ex);
+                        auto cluster_boundary_ex = intersection_ex(poly, lower_layer_offseted);
+                        Polygons cluster_boundary = to_polygons(cluster_boundary_ex);
                         if (cluster_boundary.empty()) continue;
                         for (auto& pt : poly.contour.points) {
                             double dist_pt = std::numeric_limits<double>::max();
@@ -1293,10 +1295,7 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             add_overhang(layer, area, OverhangType::SharpTail);
         }
 
-        // Note: enforcer overhangs are now merged into overhangs_all_layers inside the
-        // parallel loop above, so they go through OverhangCluster like normal overhangs and
-        // already reach loverhangs_with_type via add_overhang(..., cluster.type). The old
-        // post-cluster enforcer append (STUDIO-3692) is removed. Port of c03e13340.
+        }
 
         // rebuild loverhangs from loverhangs_with_type (for bridge removal + debug SVG + export)
         layer->loverhangs.clear();

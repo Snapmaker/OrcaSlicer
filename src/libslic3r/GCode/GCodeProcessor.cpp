@@ -2659,7 +2659,7 @@ void GCodeProcessor::process_G1(const GCodeReader::GCodeLine& line, const std::o
         float volume_extruded_filament = area_filament_cross_section * delta_pos[E];
         float area_toolpath_cross_section = volume_extruded_filament / delta_xyz;
 
-        if(m_extrusion_role == ExtrusionRole::erSupportMaterial || m_extrusion_role == ExtrusionRole::erSupportMaterialInterface || m_extrusion_role ==ExtrusionRole::erSupportTransition)
+        if(m_extrusion_role == ExtrusionRole::erSupportMaterial || m_extrusion_role == ExtrusionRole::erSupportMaterialInterface || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceFirst || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceMiddle || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceTop || m_extrusion_role ==ExtrusionRole::erSupportTransition)
             m_used_filaments.increase_support_caches(volume_extruded_filament);
         else if (m_extrusion_role==ExtrusionRole::erWipeTower) {
             m_used_filaments.increase_wipe_tower_caches(volume_extruded_filament);
@@ -3138,7 +3138,7 @@ void  GCodeProcessor::process_G2_G3(const GCodeReader::GCodeLine& line)
         float volume_extruded_filament = area_filament_cross_section * delta_pos[E];
         float area_toolpath_cross_section = volume_extruded_filament / delta_xyz;
 
-        if(m_extrusion_role == ExtrusionRole::erSupportMaterial || m_extrusion_role == ExtrusionRole::erSupportMaterialInterface || m_extrusion_role ==ExtrusionRole::erSupportTransition)
+        if(m_extrusion_role == ExtrusionRole::erSupportMaterial || m_extrusion_role == ExtrusionRole::erSupportMaterialInterface || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceFirst || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceMiddle || m_extrusion_role == ExtrusionRole::erSupportMaterialInterfaceTop || m_extrusion_role ==ExtrusionRole::erSupportTransition)
             m_used_filaments.increase_support_caches(volume_extruded_filament);
         else if (m_extrusion_role == ExtrusionRole::erWipeTower) {
             //BBS: save wipe tower volume to the cache

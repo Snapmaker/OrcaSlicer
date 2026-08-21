@@ -9323,6 +9323,32 @@ msgstr "Gat opvulling"
 
 msgid "Support interface"
 msgstr "Support interface"
+msgid "Support top contact speed"
+msgstr "Snelheid van het bovenste supportcontact"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Maakt het mogelijk om verschillende snelheden in te stellen voor de eerste, middelste en bovenste supportcontactlaag."
+
+msgid "First layer contact speed"
+msgstr "Snelheid van de eerste contactlaag"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Snelheid van de onderste supportcontactlaag (het verst van het model)."
+
+msgid "Middle layer contact speed"
+msgstr "Snelheid van de middelste contactlaag"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Snelheid van de middelste supportcontactlagen."
+
+msgid "Top layer contact speed"
+msgstr "Snelheid van de bovenste contactlaag"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Snelheid van de bovenste supportcontactlaag (het dichtst bij het model)."
+
+msgid "Support transition speed"
+msgstr "Snelheid van de supportovergang"
 
 msgid "Support transition"
 msgstr "Onderteuning (support) overgang"

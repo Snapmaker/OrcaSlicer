@@ -9685,6 +9685,32 @@ msgstr "Lückenfüllung"
 
 msgid "Support interface"
 msgstr "Stützstruktur-Schnittstelle"
+msgid "Support top contact speed"
+msgstr "Stutz-Oberkontaktgeschwindigkeit"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Ermoglicht das Festlegen unterschiedlicher Geschwindigkeiten fur die erste, mittlere und obere Stutzkontaktschicht."
+
+msgid "First layer contact speed"
+msgstr "Geschwindigkeit der ersten Kontaktschicht"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "Geschwindigkeit der untersten Stutzkontaktschicht (am weitesten vom Modell entfernt)."
+
+msgid "Middle layer contact speed"
+msgstr "Geschwindigkeit der mittleren Kontaktschicht"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Geschwindigkeit der mittleren Stutzkontaktschichten."
+
+msgid "Top layer contact speed"
+msgstr "Geschwindigkeit der oberen Kontaktschicht"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "Geschwindigkeit der obersten Stutzkontaktschicht (dem Modell am nachsten)."
+
+msgid "Support transition speed"
+msgstr "Stutz-Ubergangsgeschwindigkeit"
 
 msgid "Support transition"
 msgstr "Stützenübergang"

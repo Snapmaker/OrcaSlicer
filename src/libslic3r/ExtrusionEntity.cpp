@@ -578,6 +578,10 @@ std::string ExtrusionEntity::role_to_string(ExtrusionRole role)
         case erBrim                         : return L("Brim");
         case erSupportMaterial              : return L("Support");
         case erSupportMaterialInterface     : return L("Support interface");
+        // Internal roles for speed split — displayed as generic "Support interface"
+        case erSupportMaterialInterfaceFirst :
+        case erSupportMaterialInterfaceMiddle :
+        case erSupportMaterialInterfaceTop : return L("Support interface");
         case erSupportTransition            : return L("Support transition");
         case erWipeTower                    : return L("Prime tower");
         case erCustom                       : return L("Custom");

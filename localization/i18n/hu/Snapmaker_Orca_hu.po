@@ -9182,6 +9182,32 @@ msgstr "Réskitöltés"
 
 msgid "Support interface"
 msgstr "Támasz érintkező felület"
+msgid "Support top contact speed"
+msgstr "Tamasztek felso erintkezesi sebesseg"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Lehetove teszi kulonbozo sebessegek beallitasat az elso, kozepso es felso tamaszto erintkezo retegekhez."
+
+msgid "First layer contact speed"
+msgstr "Elso erintkezo reteg sebessege"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "A legalso tamaszto erintkezo reteg sebessege (a modelltol legtavolabb)."
+
+msgid "Middle layer contact speed"
+msgstr "Kozepso erintkezo reteg sebessege"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "A kozepso tamaszto erintkezo retegek sebessege."
+
+msgid "Top layer contact speed"
+msgstr "Felso erintkezo reteg sebessege"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "A legfelso tamaszto erintkezo reteg sebessege (a modellhez legkozelebb)."
+
+msgid "Support transition speed"
+msgstr "Tamasztek atmeneti sebesseg"
 
 msgid "Support transition"
 msgstr "Támasz átmenet"

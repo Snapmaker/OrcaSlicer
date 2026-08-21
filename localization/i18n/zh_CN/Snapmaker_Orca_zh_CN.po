@@ -8587,7 +8587,32 @@ msgstr "填缝"
 
 msgid "Support interface"
 msgstr "支撑面"
+msgid "Support top contact speed"
+msgstr "支撑顶部接触面速度"
 
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "开启后可为支撑顶部接触面的第一层、中间层和顶层分别设置不同速度。"
+
+msgid "First layer contact speed"
+msgstr "第一层接触面速度"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "支撑顶部接触面最底层（离模型最远）的速度。"
+
+msgid "Middle layer contact speed"
+msgstr "中间层接触面速度"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "支撑顶部接触面中间层的速度。"
+
+msgid "Top layer contact speed"
+msgstr "顶层接触面速度"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "支撑顶部接触面最顶层（靠近模型）的速度。"
+
+msgid "Support transition speed"
+msgstr "支撑过渡层速度"
 msgid "Support transition"
 msgstr "支撑转换层"
 

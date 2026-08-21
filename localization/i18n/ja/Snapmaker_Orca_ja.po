@@ -8958,6 +8958,32 @@ msgstr "隙間インフィル"
 
 msgid "Support interface"
 msgstr "サポート接触面"
+msgid "Support top contact speed"
+msgstr "サポート上部接触速度"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "サポート上部接触層の最初、中間、上部の各層に異なる速度を設定できます。"
+
+msgid "First layer contact speed"
+msgstr "最初の接触層の速度"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "サポート最下部接触層の速度（モデルから最も遠い）。"
+
+msgid "Middle layer contact speed"
+msgstr "中間接触層の速度"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "サポート中間接触層の速度。"
+
+msgid "Top layer contact speed"
+msgstr "上部接触層の速度"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "サポート最上部接触層の速度（モデルに最も近い）。"
+
+msgid "Support transition speed"
+msgstr "サポート遷移速度"
 
 msgid "Support transition"
 msgstr "サポート変換層"

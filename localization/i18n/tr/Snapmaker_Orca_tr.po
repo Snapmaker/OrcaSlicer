@@ -9466,6 +9466,32 @@ msgstr "Boşluk doldurma"
 
 msgid "Support interface"
 msgstr "Destek arayüzü"
+msgid "Support top contact speed"
+msgstr "Destek ust temas hizi"
+
+msgid "Enable to set first, middle, and top support top contact layer speeds separately."
+msgstr "Destek ust temas katmanlarinin ilk, orta ve ust hizlarinin ayri ayri ayarlanmasini saglar."
+
+msgid "First layer contact speed"
+msgstr "Ilk temas katmani hizi"
+
+msgid "Speed of the bottommost support top contact layer (furthest from the model)."
+msgstr "En alttaki destek temas katmaninin hizi (modelden en uzak)."
+
+msgid "Middle layer contact speed"
+msgstr "Orta temas katmani hizi"
+
+msgid "Speed of the middle support top contact layers."
+msgstr "Orta destek temas katmanlarinin hizi."
+
+msgid "Top layer contact speed"
+msgstr "Ust temas katmani hizi"
+
+msgid "Speed of the topmost support top contact layer (closest to the model)."
+msgstr "En ustteki destek temas katmaninin hizi (modele en yakin)."
+
+msgid "Support transition speed"
+msgstr "Destek gecis hizi"
 
 msgid "Support transition"
 msgstr "Destek geçişi"

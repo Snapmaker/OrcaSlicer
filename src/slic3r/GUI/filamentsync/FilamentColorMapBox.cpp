@@ -179,13 +179,13 @@ void FilamentColorMapBox::onPaint(wxPaintEvent&)
     gdc.SetBrush(g_cardBg);
     gdc.DrawRoundedRectangle(0, 0, w, totalH, radius);
 
-    // ---- 2. Top bar (above filament colour bitmap, clipped to top half) ----
+    // ---- 2. Top bar with the complete filament color range ----
     {
         std::vector<wxColour> aboveColors = getAllColors(m_aboveFilament.m_color);
         const FilamentColorMode aboveMode = m_aboveFilament.m_color.NormalizedMode();
         const int barR = radius;
         CornerRadius topCorners = {barR, barR, 0, 0};
-        wxBitmap* aboveBmp = get_color_block_bitmap_cached(aboveColors, aboveMode, w, totalH, wxEmptyString,
+        wxBitmap* aboveBmp = get_color_block_bitmap_cached(aboveColors, aboveMode, w, splitY, wxEmptyString,
                                                            wxColour(), topCorners);
         wxDCClipper clip(gdc, wxRect(0, 0, w, splitY));
         if (aboveBmp && aboveBmp->IsOk())

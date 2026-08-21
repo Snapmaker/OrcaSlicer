@@ -1295,8 +1295,6 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             add_overhang(layer, area, OverhangType::SharpTail);
         }
 
-        }
-
         // rebuild loverhangs from loverhangs_with_type (for bridge removal + debug SVG + export)
         layer->loverhangs.clear();
         for (const auto& wt : layer->loverhangs_with_type) {

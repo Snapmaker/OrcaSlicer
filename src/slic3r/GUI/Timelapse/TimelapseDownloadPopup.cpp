@@ -405,6 +405,9 @@ TimelapseDownloadPopup::TimelapseDownloadPopup(wxWindow* parent)
     });
 #endif
 
+    // Flicker-free for the whole popup subtree (title bar, scrolled list, rows).
+    SetDoubleBuffered(true);
+
     // ---- Title bar (375×40) ----
     m_title_bar = new wxPanel(m_content_panel, wxID_ANY);
     m_title_bar->SetBackgroundColour(bg_color());

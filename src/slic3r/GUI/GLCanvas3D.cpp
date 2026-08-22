@@ -34,7 +34,11 @@
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
+#include "slic3r/Utils/CpuMemory.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
+#ifdef __APPLE__
+#include "libslic3r/MacUtils.hpp"
+#endif
 
 #include <slic3r/GUI/GUI_Utils.hpp>
 
@@ -2371,22 +2375,22 @@ void GLCanvas3D::set_volumes_z_range(const std::array<double, 2>& range)
     m_volumes.set_range(range[0] - 1e-6, range[1] + 1e-6);
 }
 
-std::vector<int> GLCanvas3D::load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs)
+std::vector<int> GLCanvas3D::load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs, bool lodEnabled)
 {
     if (instance_idxs.empty()) {
         for (unsigned int i = 0; i < model_object.instances.size(); ++i) {
             instance_idxs.emplace_back(i);
         }
     }
-    return m_volumes.load_object(&model_object, obj_idx, instance_idxs, m_color_by, m_initialized);
+    return m_volumes.load_object(&model_object, obj_idx, instance_idxs, m_color_by, m_initialized, true, lodEnabled);
 }
 
-std::vector<int> GLCanvas3D::load_object(const Model& model, int obj_idx)
+std::vector<int> GLCanvas3D::load_object(const Model& model, int obj_idx, bool lodEnabled)
 {
     if (0 <= obj_idx && obj_idx < (int)model.objects.size()) {
         const ModelObject* model_object = model.objects[obj_idx];
         if (model_object != nullptr)
-            return load_object(*model_object, obj_idx, std::vector<int>());
+            return load_object(*model_object, obj_idx, std::vector<int>(), lodEnabled);
     }
 
     return std::vector<int>();
@@ -2577,6 +2581,9 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 // BBS
                 if (volume->is_wipe_tower)
                     deleted_wipe_towers.emplace_back(volume, volume_id);
+                // Unregister from the LOD sharing map before the pointer
+                // becomes dangling (P0-2).
+                m_volumes.release_volume(volume);
                 delete volume;
             }
         }
@@ -2665,6 +2672,23 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         }
     }
     m_volumes.volumes = std::move(glvolumes_new);
+
+    // LOD rendering optimization is always enabled
+    bool enableLod = true;
+
+    // Disable LOD if free memory is less than 5GB
+    if (enableLod && CpuMemory::CurFreeMemoryLessThanSpecifySizeGb(LOD_FREE_MEMORY_SIZE)) 
+    {
+        enableLod = false;
+    }
+
+#ifdef __APPLE__
+    // Disable LOD on macOS 15 due to known rendering compatibility issues
+    if (Slic3r::IsMacVersion15()) {
+        enableLod = false;
+    }
+#endif
+
     for (unsigned int obj_idx = 0; obj_idx < (unsigned int)m_model->objects.size(); ++ obj_idx) {
         const ModelObject &model_object = *m_model->objects[obj_idx];
         for (int volume_idx = 0; volume_idx < (int)model_object.volumes.size(); ++ volume_idx) {
@@ -2685,7 +2709,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                     // Note the index of the loaded volume, so that we can reload the main model GLVolume with the hollowed mesh
                     // later in this function.
                     it->volume_idx = m_volumes.volumes.size();
-                    m_volumes.load_object_volume(&model_object, obj_idx, volume_idx, instance_idx, m_color_by, m_initialized, m_canvas_type == ECanvasType::CanvasAssembleView);
+                    m_volumes.load_object_volume(&model_object, obj_idx, volume_idx, instance_idx, m_color_by, m_initialized, m_canvas_type == ECanvasType::CanvasAssembleView, false, true, enableLod);
                     m_volumes.volumes.back()->geometry_id = key.geometry_id;
                     update_object_list = true;
                 } else {

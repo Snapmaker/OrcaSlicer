@@ -1266,6 +1266,7 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
     wxGetApp().m_user_login_subscribers.clear();
     wxGetApp().m_cache_subscribers.clear();
     wxGetApp().m_user_update_privacy_subscribers.clear();
+    wxGetApp().m_foreground_change_subscribers.clear();
 
     send_to_js();
     finish_job();
@@ -1312,6 +1313,15 @@ void SSWCP_Instance::sw_Webview_Unsubscribe() {
     for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
         if (iter->first == m_webview) {
             iter = privacy_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == m_webview) {
+            iter = foreground_map.erase(iter);
         } else {
             iter++;
         }
@@ -4116,6 +4126,13 @@ void SSWCP_MachineOption_Instance::sw_exception_query()
 
 // SSWCP_MachineConnect_Instance
 void SSWCP_MachineConnect_Instance::process() {
+    if (m_cmd == "sw_SubscribeForegroundChange") {
+        if (m_event_id != "") {
+            m_header["event_id"] = m_event_id;
+            sw_SubscribeForegroundChange();
+        }
+        return;
+    }
     if (m_event_id != "") {
         json header;
         send_to_js();
@@ -4204,6 +4221,12 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineConnect_Instance::sw_SubscribeForegroundChange()
+{
+    auto self = shared_from_this();
+    wxGetApp().m_foreground_change_subscribers[m_webview] = self;
 }
 
 
@@ -7460,7 +7483,8 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Disconnect",
     "sw_GetConnectedMachine",
     "sw_ConnectOtherMachine",
-    "sw_GetPincode"
+    "sw_GetPincode",
+    "sw_SubscribeForegroundChange"
 };
 
 std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
@@ -7725,6 +7749,15 @@ void SSWCP::on_webview_delete(wxWebView* view)
     for (auto iter = page_state_map.begin(); iter != page_state_map.end();) {
         if (iter->first == view) {
             iter = page_state_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == view) {
+            iter = foreground_map.erase(iter);
         } else {
             iter++;
         }

@@ -5780,6 +5780,21 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
 
         // Trigger the on_presets_changed event to apply cached config for dependent tabs
         on_presets_changed();
+
+        // Refresh the sidebar nozzle UI after a preset switch. Non-sidebar entries (Machine
+        // Settings combo, preset deletion, UnsavedChangesDialog transfer, physical printer
+        // linkage) only reach Tab::select_preset. FFF only: SLA has no nozzle_diameter.
+        if (m_type == Preset::TYPE_PRINTER && m_presets->get_edited_preset().printer_technology() == ptFFF) {
+            // Guard: plater_ dangles during recreate_GUI teardown (it is never re-nulled on MainFrame destruction).
+            if (Plater* plater = wxGetApp().plater()) {
+                // Weak ref: a destroyed Sidebar (shutdown or GUI recreation) yields null.
+                wxWeakRef<Sidebar> weak_sidebar = &plater->sidebar();
+                wxTheApp->CallAfter([weak_sidebar]() {
+                    if (Sidebar* sidebar = weak_sidebar.get())
+                        sidebar->update_nozzle_settings();
+                });
+            }
+        }
     }
 
     if (technology_changed)

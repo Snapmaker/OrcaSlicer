@@ -958,7 +958,7 @@ void GCodeViewer::extract_layer_metadata(const GCodeProcessorResult& gcode_resul
             if (i > 0)
                 m_roles.emplace_back(move.extrusion_role);
         } else if (move.type == EMoveType::Travel) {
-            if (move_id - last_travel_s_id > 1 && !m_layers.empty())
+            if (move_id - last_travel_s_id > 0 && !m_layers.empty())
                 m_layers.get_endpoints().back().last = move_id;
             last_travel_s_id = move_id;
         }
@@ -3335,7 +3335,7 @@ void GCodeViewer::refresh_render_paths(bool keep_sequential_current_first, bool 
         const size_t min_s_id = m_layers.get_endpoints_at(min_id).first;
         const size_t max_s_id = m_layers.get_endpoints_at(max_id).last;
 
-        return (min_s_id <= path.sub_paths.front().first.s_id && path.sub_paths.front().first.s_id <= max_s_id) ||
+        return (min_s_id <= path.sub_paths.front().first.s_id && path.sub_paths.front().first.s_id <= max_s_id) &&
             (min_s_id <= path.sub_paths.back().last.s_id && path.sub_paths.back().last.s_id <= max_s_id);
     };
 

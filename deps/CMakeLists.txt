@@ -28,7 +28,8 @@ if (APPLE)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum OS X deployment version" FORCE)
     endif ()
     message(STATUS "CMAKE_OSX_DEPLOYMENT_TARGET: ${CMAKE_OSX_DEPLOYMENT_TARGET}")
-
+    # AGL was removed from the macOS 26 SDK. CMake 3.28 FindOpenGL still looks for it as GLU.
+    set(OPENGL_glu_LIBRARY "" CACHE FILEPATH "Do not link AGL (removed in macOS 26 SDK)")
 endif ()
 
 if(POLICY CMP0135) # DOWNLOAD_EXTRACT_TIMESTAMP

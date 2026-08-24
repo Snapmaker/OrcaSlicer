@@ -99,7 +99,7 @@ void GLCanvas3D::load_render_colors()
 static constexpr const size_t MAX_VERTEX_BUFFER_SIZE     = 131072 * 6; // 3.15MB
 
 #ifndef ENABLE_GPU_VOLUME_PICKING
-#define ENABLE_GPU_VOLUME_PICKING 0
+#define ENABLE_GPU_VOLUME_PICKING 1
 #endif
 
 namespace Slic3r {
@@ -1373,7 +1373,6 @@ void GLCanvas3D::reset_volumes(ResetVolumesMode mode)
 
     if (mode == ResetVolumesMode::Normal)
         m_selection.clear();
-    InvalidatePickingGeometry();
     m_volumes.clear();
     m_dirty = true;
 
@@ -1456,8 +1455,6 @@ void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
             }
         }
     }
-
-    InvalidatePickingGeometry();
 }
 
 void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObject *mo, int instance_idx)
@@ -1482,8 +1479,6 @@ void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObje
                 (*it)->set_active(vol->is_active);
         }
     }
-
-    InvalidatePickingGeometry();
 }
 
 void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject* mo, int instance_idx, const ModelVolume* mv)
@@ -1978,6 +1973,14 @@ void GLCanvas3D::render(bool only_init)
     camera.apply_projection(_max_bounding_box(true, true, true));
     camera.UpdateFrustum();
     UpdateVolumeClippingState();
+
+    // Keep the picking buffer in the same scene state as the main framebuffer.
+    if (m_picking_enabled && !RenderPickingBuffer(camera) &&
+        m_pickingBuffer.IsReady())
+    {
+        m_pickingBuffer.Reset();
+    }
+
     wxGetApp().imgui()->new_frame();
 
     std::optional<SceneRaycaster::HitResult> currentMouseHit;
@@ -2406,7 +2409,6 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
     _set_current();
 
     m_hover_volume_idxs.clear();
-    InvalidatePickingGeometry();
 
     struct ModelVolumeState {
         ModelVolumeState(const GLVolume* volume) :
@@ -5369,7 +5371,6 @@ void GLCanvas3D::export_toolpaths_to_obj(const char* filename) const
 
 void GLCanvas3D::mouse_up_cleanup()
 {
-    const bool movedVolume = m_moving;
     m_moving = false;
     m_camera_movement = false;
     m_mouse.drag.move_volume_idx = -1;
@@ -5379,9 +5380,6 @@ void GLCanvas3D::mouse_up_cleanup()
     m_mouse.ignore_left_up = false;
     m_mouse.ignore_right_up = false;
     m_dirty = true;
-
-    if (movedVolume)
-        InvalidatePickingGeometry();
 
     if (m_canvas->HasCapture())
         m_canvas->ReleaseMouse();
@@ -7003,15 +7001,6 @@ void GLCanvas3D::_refresh_if_shown_on_screen()
     }
 }
 
-void GLCanvas3D::InvalidatePickingGeometry()
-{
-    ++m_pickingGeometryRevision;
-    if (m_pickingGeometryRevision == 0)
-        ++m_pickingGeometryRevision;
-
-    m_hasPickingBufferSignature = false;
-}
-
 void GLCanvas3D::UpdateVolumeClippingState()
 {
     m_camera_clipping_plane = m_gizmos.get_clipping_plane();
@@ -7034,40 +7023,13 @@ void GLCanvas3D::UpdateVolumeClippingState()
     }
 }
 
-GLCanvas3D::PickingBufferSignature GLCanvas3D::BuildPickingBufferSignature(
-    const Camera& camera) const
-{
-    PickingBufferSignature signature;
-    signature.viewMatrix = camera.get_view_matrix().matrix();
-    signature.projectionMatrix = camera.get_projection_matrix().matrix();
-    signature.viewport = camera.get_viewport();
-    signature.zRange = m_volumes.get_z_range();
-    signature.clippingPlane = m_volumes.get_clipping_plane();
-    signature.geometryRevision = m_pickingGeometryRevision;
-    signature.volumeCount = m_volumes.volumes.size();
-    signature.renderSlaAuxiliaries = m_render_sla_auxiliaries;
-    return signature;
-}
-
-bool GLCanvas3D::EnsurePickingBuffer(const Camera& camera)
+bool GLCanvas3D::RenderPickingBuffer(const Camera& camera)
 {
     if (!OpenGLManager::are_framebuffers_supported() ||
         m_volumes.volumes.size() > 0x1000000u) {
         return false;
     }
 
-    UpdateVolumeClippingState();
-    const PickingBufferSignature signature = BuildPickingBufferSignature(camera);
-
-    // Buffer content reuse stays disabled until all geometry mutation sites have
-    // been audited. The persistent FBO avoids allocation churn without risking
-    // stale volume indices after a reorder.
-    return RenderPickingBuffer(camera, signature);
-}
-
-bool GLCanvas3D::RenderPickingBuffer(const Camera& camera,
-                                     const PickingBufferSignature& signature)
-{
     const std::array<int, 4>& viewport = camera.get_viewport();
     if (viewport[2] <= 0 || viewport[3] <= 0 ||
         !m_pickingBuffer.EnsureSize(viewport[2], viewport[3]) ||
@@ -7140,8 +7102,6 @@ bool GLCanvas3D::RenderPickingBuffer(const Camera& camera,
     if (!_render_volumes_for_picking(camera))
         return false;
 
-    m_pickingBufferSignature = signature;
-    m_hasPickingBufferSignature = true;
     return true;
 }
 
@@ -7171,7 +7131,9 @@ GLCanvas3D::VolumePickResult GLCanvas3D::QueryVolumeFromPickingBuffer(
         return result;
     }
 
-    if (!EnsurePickingBuffer(camera))
+    if (!m_pickingBuffer.IsReady() ||
+        m_pickingBuffer.GetWidth() != viewport[2] ||
+        m_pickingBuffer.GetHeight() != viewport[3])
         return result;
 
     const int readY = m_pickingBuffer.GetHeight() - 1 - pixelYFromTop;
@@ -7539,7 +7501,10 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
 
     if (m_picking_enabled) {
         const Camera& camera = wxGetApp().plater()->get_camera();
-        if (EnsurePickingBuffer(camera)) {
+        const std::array<int, 4>& viewport = camera.get_viewport();
+        if (m_pickingBuffer.IsReady() &&
+            m_pickingBuffer.GetWidth() == viewport[2] &&
+            m_pickingBuffer.GetHeight() == viewport[3]) {
             const int bufferWidth = m_pickingBuffer.GetWidth();
             const int bufferHeight = m_pickingBuffer.GetHeight();
             const int left = std::max(

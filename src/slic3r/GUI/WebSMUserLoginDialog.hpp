@@ -55,6 +55,7 @@ public:
 
     void OnScriptResponseMessage(wxCommandEvent &evt);
     void RunScript(const wxString &javascript);
+    void try_complete_oauth_callback();
 
     bool m_networkOk;
     bool ShowErrorPage();
@@ -65,6 +66,11 @@ public:
 private:
     wxTimer *m_timer { nullptr };
     void     OnTimer(wxTimerEvent &event);
+    void     OnCallbackPollTimer(wxTimerEvent &event);
+
+    wxTimer *m_callback_timer { nullptr };
+    bool     m_callback_handled = false;
+    int      m_callback_attempts = 0;
 
 private:
 

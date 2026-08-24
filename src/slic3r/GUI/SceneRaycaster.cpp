@@ -11,8 +11,7 @@ namespace GUI {
 
 namespace {
 
-bool IsHitMaskEnabled(SceneRaycaster::EHitMask mask,
-                      SceneRaycaster::EHitMask requestedMask)
+bool IsHitMaskEnabled(SceneRaycaster::EHitMask mask, SceneRaycaster::EHitMask requestedMask)
 {
     return (static_cast<uint8_t>(mask) & static_cast<uint8_t>(requestedMask)) != 0;
 }
@@ -106,10 +105,8 @@ void SceneRaycaster::remove_raycaster(std::shared_ptr<SceneRaycasterItem> item)
     }
 }
 
-SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos,
-                                              const Camera& camera,
-                                              const ClippingPlane* clipping_plane,
-                                              EHitMask mask) const
+SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos, const Camera& camera,
+                                              const ClippingPlane* clipping_plane, EHitMask mask) const
 {
     // helper class used to return currently selected volume as hit when overlapping with other volumes
     // to allow the user to click and drag on a selected volume
@@ -199,13 +196,11 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos,
     if (IsHitMaskEnabled(mask, EHitMask::Gizmo) && !m_gizmos.empty())
         test_raycasters(EType::Gizmo, mouse_pos, camera, ret);
 
-    if (IsHitMaskEnabled(mask, EHitMask::FallbackGizmo) &&
-        !m_fallback_gizmos.empty() && !ret.is_valid())
+    if (IsHitMaskEnabled(mask, EHitMask::FallbackGizmo) && !m_fallback_gizmos.empty() && !ret.is_valid())
         test_raycasters(EType::FallbackGizmo, mouse_pos, camera, ret);
 
     if (!m_gizmos_on_top || !ret.is_valid()) {
-        if (IsHitMaskEnabled(mask, EHitMask::Bed) &&
-            camera.is_looking_downward() && !m_bed.empty())
+        if (IsHitMaskEnabled(mask, EHitMask::Bed) && camera.is_looking_downward() && !m_bed.empty())
             test_raycasters(EType::Bed, mouse_pos, camera, ret);
         if (IsHitMaskEnabled(mask, EHitMask::Volume) && !m_volumes.empty())
             test_raycasters(EType::Volume, mouse_pos, camera, ret);
@@ -220,9 +215,8 @@ SceneRaycaster::HitResult SceneRaycaster::hit(const Vec2d& mouse_pos,
     return ret;
 }
 
-SceneRaycaster::HitResult SceneRaycaster::ResolveHitCandidates(
-    const HitResult& nonVolumeHit, const HitResult& volumeHit,
-    const Camera& camera) const
+SceneRaycaster::HitResult SceneRaycaster::ResolveHitCandidates(const HitResult& nonVolumeHit, const HitResult& volumeHit,
+                                                               const Camera& camera) const
 {
     if (!nonVolumeHit.is_valid())
         return volumeHit;
@@ -230,15 +224,12 @@ SceneRaycaster::HitResult SceneRaycaster::ResolveHitCandidates(
     if (!volumeHit.is_valid())
         return nonVolumeHit;
 
-    const bool gizmoHit = nonVolumeHit.type == EType::Gizmo ||
-                          nonVolumeHit.type == EType::FallbackGizmo;
+    const bool gizmoHit = nonVolumeHit.type == EType::Gizmo || nonVolumeHit.type == EType::FallbackGizmo;
     if (m_gizmos_on_top && gizmoHit)
         return nonVolumeHit;
 
-    const double nonVolumeDistance =
-        (camera.get_position() - nonVolumeHit.position.cast<double>()).squaredNorm();
-    const double volumeDistance =
-        (camera.get_position() - volumeHit.position.cast<double>()).squaredNorm();
+    const double nonVolumeDistance = (camera.get_position() - nonVolumeHit.position.cast<double>()).squaredNorm();
+    const double volumeDistance = (camera.get_position() - volumeHit.position.cast<double>()).squaredNorm();
     return nonVolumeDistance <= volumeDistance ? nonVolumeHit : volumeHit;
 }
 

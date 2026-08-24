@@ -735,10 +735,7 @@ public:
     bool is_initialized() const { return m_initialized; }
 
     void set_context(wxGLContext* context) { m_context = context; }
-    void set_type(ECanvasType type)
-    {
-        m_canvas_type = type;
-    }
+    void set_type(ECanvasType type) { m_canvas_type = type; }
     ECanvasType get_canvas_type() { return m_canvas_type; }
 
     wxGLCanvas* get_wxglcanvas() { return m_canvas; }
@@ -825,10 +822,7 @@ public:
         }
     }
     void reset_clipping_planes_cache() { m_sla_caps[0].triangles.clear(); m_sla_caps[1].triangles.clear(); }
-    void set_use_clipping_planes(bool use)
-    {
-        m_use_clipping_planes = use;
-    }
+    void set_use_clipping_planes(bool use) { m_use_clipping_planes = use; }
 
     bool                                get_use_clipping_planes() const { return m_use_clipping_planes; }
     const std::array<ClippingPlane, 2> &get_clipping_planes() const { return m_clipping_planes; };
@@ -1191,19 +1185,13 @@ private:
 
     void UpdateVolumeClippingState();
     bool RenderPickingBuffer(const Camera& camera);
-    VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition,
-                                                  const Camera& camera);
-    SceneRaycaster::HitResult QueryHybridPickingHit(
-        const Vec2d& screenPosition, const Camera& camera,
-        const ClippingPlane& clippingPlane);
-    bool RaycastVolume(int volumeIndex, const Vec2d& screenPosition,
-                       const Camera& camera,
-                       const ClippingPlane* clippingPlane,
-                       SceneRaycaster::HitResult& hit) const;
-    void ResolveSelectedVolumeOverlap(const Vec2d& screenPosition,
-                                      const Camera& camera,
-                                      const ClippingPlane& clippingPlane,
-                                      SceneRaycaster::HitResult& volumeHit) const;
+    VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera);
+    SceneRaycaster::HitResult QueryHybridPickingHit(const Vec2d& screenPosition, const Camera& camera,
+                                                    const ClippingPlane& clippingPlane);
+    bool RaycastVolume(int volumeIndex, const Vec2d& screenPosition, const Camera& camera,
+                       const ClippingPlane* clippingPlane, SceneRaycaster::HitResult& hit) const;
+    void ResolveSelectedVolumeOverlap(const Vec2d& screenPosition, const Camera& camera,
+                                      const ClippingPlane& clippingPlane, SceneRaycaster::HitResult& volumeHit) const;
     void ApplyPickingHit(const SceneRaycaster::HitResult& hit);
     bool ShouldRenderVolumeForPicking(const GLVolume& volume) const;
 

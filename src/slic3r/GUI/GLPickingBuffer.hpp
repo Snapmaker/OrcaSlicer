@@ -68,15 +68,13 @@ public:
     void EndRender();
 
     bool ReadPoint(int x, int y, PointSample& sample) const;
-    bool ReadColorRect(int x, int y, int width, int height,
-                       std::vector<ColorPixel>& pixels) const;
+    bool ReadColorRect(int x, int y, int width, int height, std::vector<ColorPixel>& pixels) const;
 
 private:
     bool CreateResources(int width, int height);
     void DestroyResources();
     void BindFramebuffer(GLenum target, GLuint framebuffer) const;
-    void GetFramebufferBindings(GLint& drawFramebuffer,
-                                GLint& readFramebuffer) const;
+    void GetFramebufferBindings(GLint& drawFramebuffer, GLint& readFramebuffer) const;
     bool CheckFramebufferComplete() const;
     bool ValidateRect(int x, int y, int width, int height) const;
 
@@ -95,9 +93,7 @@ private:
     int _failedWidth{0};
     int _failedHeight{0};
 
-    OpenGLManager::EFramebufferType _framebufferType{
-        OpenGLManager::EFramebufferType::Unknown
-    };
+    OpenGLManager::EFramebufferType _framebufferType{OpenGLManager::EFramebufferType::Unknown};
 };
 
 } // namespace GUI

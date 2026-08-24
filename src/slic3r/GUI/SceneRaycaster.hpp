@@ -63,8 +63,7 @@ public:
 
     friend EHitMask operator|(EHitMask left, EHitMask right)
     {
-        return static_cast<EHitMask>(static_cast<uint8_t>(left) |
-                                     static_cast<uint8_t>(right));
+        return static_cast<EHitMask>(static_cast<uint8_t>(left) | static_cast<uint8_t>(right));
     }
 
     enum class EIdBase
@@ -115,13 +114,10 @@ public:
 
     void set_gizmos_on_top(bool value) { m_gizmos_on_top = value; }
 
-    HitResult hit(const Vec2d& mouse_pos, const Camera& camera,
-                  const ClippingPlane* clipping_plane = nullptr,
+    HitResult hit(const Vec2d& mouse_pos, const Camera& camera, const ClippingPlane* clipping_plane = nullptr,
                   EHitMask mask = EHitMask::All) const;
 
-    HitResult ResolveHitCandidates(const HitResult& nonVolumeHit,
-                                   const HitResult& volumeHit,
-                                   const Camera& camera) const;
+    HitResult ResolveHitCandidates(const HitResult& nonVolumeHit, const HitResult& volumeHit, const Camera& camera) const;
 
 #if ENABLE_RAYCAST_PICKING_DEBUG
     void render_hit(const Camera& camera);

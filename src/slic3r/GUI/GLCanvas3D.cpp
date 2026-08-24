@@ -8703,7 +8703,8 @@ void GLCanvas3D::_render_selection()
     scale_factor = m_retina_helper->get_scale_factor();
 #endif // ENABLE_RETINA_GL
 
-    m_selection.render(scale_factor);
+    if (!m_gizmos.is_running())
+        m_selection.render(scale_factor);
 }
 
 void GLCanvas3D::_render_sequential_clearance()

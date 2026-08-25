@@ -1363,7 +1363,7 @@ void GCodeViewer::render(int canvas_width, int canvas_height, int right_margin)
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
 
     glsafe(::glEnable(GL_DEPTH_TEST));
-    render_shells(canvas_width, canvas_height);
+    render_shells();
 
     if (m_roles.empty())
         return;
@@ -4083,7 +4083,7 @@ void GCodeViewer::render_toolpaths()
     }
 }
 
-void GCodeViewer::render_shells(int canvas_width, int canvas_height)
+void GCodeViewer::render_shells()
 {
     //BBS: add shell previewing logic
     if ((!m_shells.previewing && !m_shells.visible) || m_shells.volumes.empty())
@@ -4099,9 +4099,7 @@ void GCodeViewer::render_shells(int canvas_width, int canvas_height)
     shader->start_using();
     shader->set_uniform("emission_factor", 0.1f);
     const Camera& camera = wxGetApp().plater()->get_camera();
-    shader->set_uniform("z_far", camera.get_far_z());
-    shader->set_uniform("z_near", camera.get_near_z());
-    m_shells.volumes.render(GLVolumeCollection::ERenderType::Transparent, false, camera, {canvas_width, canvas_height});
+    m_shells.volumes.render(GLVolumeCollection::ERenderType::Transparent, false, camera);
     shader->set_uniform("emission_factor", 0.0f);
     shader->stop_using();
 

@@ -9351,7 +9351,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(printer_config.option("nozzle_diameter"));
     size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
 
-    std::string diam_str;
+    std::string diam_str = "";
     if (const auto* pv = printer_config.option<ConfigOptionString>("printer_variant")) // absent in bare configs
         diam_str = pv->value;
 

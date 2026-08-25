@@ -1391,6 +1391,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionEnum<SkirtType>,    skirt_type))
     ((ConfigOptionFloat,              skirt_speed))
     ((ConfigOptionBool,               single_loop_draft_shield))
+    ((ConfigOptionBool,               nozzle_wipe_shield))
+    ((ConfigOptionInt,                nozzle_wipe_shield_filament))
     ((ConfigOptionFloat,              min_skirt_length))
     ((ConfigOptionFloats,             slow_down_layer_time))
     ((ConfigOptionBool,               spiral_mode))

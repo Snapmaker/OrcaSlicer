@@ -576,7 +576,8 @@ private:
 #endif // ENABLE_GCODE_VIEWER_DATA_CHECKING
 
     // Always check gcode placeholders when building in debug mode.
-#if !defined(NDEBUG)
+// SPIKE-TEMP(disabled for local Debug demo run)
+#if 0
 #define ORCA_CHECK_GCODE_PLACEHOLDERS 1
 #endif
     
@@ -600,6 +601,8 @@ private:
     
     // Heights (print_z) at which the skirt has already been extruded.
     std::vector<coordf_t>               m_skirt_done;
+    // Spike: innermost skirt loop used as nozzle wipe shield (empty when the feature is off).
+    Polygon                             m_wipe_shield_contour;
     // Has the brim been extruded already? Brim is being extruded only for the first object of a multi-object print.
     bool                                m_brim_done;
     // Flag indicating whether the nozzle temperature changes from 1st to 2nd layer were performed.

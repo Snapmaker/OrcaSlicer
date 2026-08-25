@@ -4876,6 +4876,28 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<DraftShield>(dsDisabled));
 
+    // Spike: TPU nozzle wipe shield. Reuses the skirt loop as a surrounding wall,
+    // and the nozzle drags along it when traveling from outside into the object area.
+    def = this->add("nozzle_wipe_shield", coBool);
+    def->label = L("Nozzle wipe shield");
+    def->tooltip = L("Experimental: print the skirt as a wall surrounding the object on every layer (like a draft shield). "
+                     "When the nozzle travels from outside into the object area, it first drags along this wall to wipe off oozed "
+                     "filament. Useful for flexible filaments with poor retraction. Requires skirt loops > 0.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    // Spike: which filament (1-based) extrudes the wipe shield wall. 0 = first extruder of the layer.
+    def = this->add("nozzle_wipe_shield_filament", coInt);
+    def->label = L("Wipe shield filament");
+    def->tooltip = L("Experimental: filament (1-based) used to print the nozzle wipe shield wall. "
+                     "0 means the first extruder printing each layer. If the selected filament is not scheduled "
+                     "on a layer, the first available extruder is used so the wall stays continuous.");
+    def->min = 0;
+    def->max = 32;
+    def->sidetext = L("filament");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("skirt_type", coEnum);
     def->label = L("Skirt type");
     def->full_label = L("Skirt type");
@@ -6437,10 +6459,12 @@ void PrintConfigDef::init_extruder_option_keys()
         "deretraction_speed",
         "long_retractions_when_cut",
         "retract_before_wipe",
+        "retract_length_toolchange",
         "retract_lift_above",
         "retract_lift_below",
         "retract_lift_enforce",
         "retract_restart_extra",
+        "retract_restart_extra_toolchange",
         "retract_when_changing_layer",
         "retraction_distances_when_cut",
         "retraction_length",
@@ -6451,9 +6475,7 @@ void PrintConfigDef::init_extruder_option_keys()
         "wipe_distance",
         "z_hop",
         "z_hop_types",
-        "z_hop_when_prime",
-        "retract_length_toolchange",
-        "retract_restart_extra_toolchange"
+        "z_hop_when_prime"
     };
     assert(std::is_sorted(m_extruder_retract_keys.begin(), m_extruder_retract_keys.end()));
 }

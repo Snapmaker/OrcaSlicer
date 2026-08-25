@@ -1,0 +1,1 @@
+{"from": "user", "type": "process", "name": "wipe_shield_spike", "nozzle_wipe_shield": "1", "skirt_loops": "2", "skirt_distance": "3", "filament_type": ["TPU"]}

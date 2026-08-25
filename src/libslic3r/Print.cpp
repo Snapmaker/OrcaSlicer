@@ -1015,7 +1015,9 @@ bool Print::has_infinite_skirt() const
     // Orca: unclear why (m_config.ooze_prevention && this->extruders().size() > 1) logic is here, removed.
     // return (m_config.draft_shield == dsEnabled && m_config.skirt_loops > 0) || (m_config.ooze_prevention && this->extruders().size() > 1);
 
-    return (m_config.draft_shield == dsEnabled && m_config.skirt_loops > 0);
+    return (m_config.draft_shield == dsEnabled && m_config.skirt_loops > 0) ||
+           // Spike: nozzle wipe shield also needs an infinite (full height) skirt wall.
+           (m_config.nozzle_wipe_shield && m_config.skirt_loops > 0);
 }
 
 bool Print::has_skirt() const
@@ -2573,7 +2575,7 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         m_skirt.clear();
         m_skirt_convex_hull.clear();
         m_first_layer_convex_hull.points.clear();
-        const bool draft_shield = config().draft_shield != dsDisabled;
+        const bool draft_shield = config().draft_shield != dsDisabled || config().nozzle_wipe_shield;
 
         if (this->has_skirt() && draft_shield) {
             // In case that draft shield is active, generate skirt first so brim
@@ -2784,7 +2786,9 @@ void Print::_make_skirt()
     }
 
     // Include the wipe tower.
-    append(points, this->first_layer_wipe_tower_corners());
+    // Spike: nozzle wipe shield should surround the objects only, not the wipe tower.
+    if (!m_config.nozzle_wipe_shield)
+        append(points, this->first_layer_wipe_tower_corners());
 
     // Unless draft shield is enabled, include all brims as well.
     if (config().draft_shield == dsDisabled)

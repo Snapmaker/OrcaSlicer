@@ -4476,7 +4476,17 @@ static void skirt_loops_per_extruder_all_printing(const Print&                  
     // is left as a placeholder for when a multiextruder support is implemented. Then we will need to extrude the skirt loops for each extruder.
     // const PrintConfig &config = print.config();
     // if (config.min_skirt_length.value < EPSILON) {
-    skirt_loops_per_extruder_out[layer_tools.extruders.front()] = std::pair<size_t, size_t>(0, n_loops);
+    // Spike: nozzle wipe shield — allow printing the wall with a dedicated filament (1-based). 0 = auto.
+    unsigned int shield_extruder = layer_tools.extruders.front();
+    if (print.config().nozzle_wipe_shield) {
+        int wanted = print.config().nozzle_wipe_shield_filament;
+        if (wanted > 0) {
+            auto it = std::find(layer_tools.extruders.begin(), layer_tools.extruders.end(), unsigned(wanted));
+            // Fall back to the first extruder of the layer so the wall stays continuous.
+            shield_extruder = (it != layer_tools.extruders.end()) ? unsigned(wanted) : shield_extruder;
+        }
+    }
+    skirt_loops_per_extruder_out[shield_extruder] = std::pair<size_t, size_t>(0, n_loops);
     //} else {
     //    for (size_t i = 0; i < n_loops; i += lines_per_extruder)
     //        skirt_loops_per_extruder_out[layer_tools.extruders[i / lines_per_extruder]] = std::pair<size_t, size_t>(i, std::min(i +
@@ -4675,6 +4685,11 @@ LayerResult GCode::process_layer(const Print& print,
     assert(!layers.empty());
     // Either printing all copies of all objects, or just a single copy of a single object.
     assert(single_object_instance_idx == size_t(-1) || layers.size() == 1);
+
+    // Spike: nozzle wipe shield — cache the innermost skirt loop (closest to the object) as the wipe wall.
+    if (m_wipe_shield_contour.points.empty() && m_config.nozzle_wipe_shield && !print.skirt().entities.empty())
+        if (const ExtrusionLoop *loop = dynamic_cast<const ExtrusionLoop *>(print.skirt().entities.front()))
+            m_wipe_shield_contour = loop->polygon();
 
     // First object, support and raft layer, if available.
     const Layer*        object_layer  = nullptr;
@@ -8123,6 +8138,50 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     } else {
         gcode += m_writer.set_travel_acceleration(acceleration_to_set);
         gcode += m_writer.set_jerk_xy(jerk_to_set);
+    }
+
+    // Spike: nozzle wipe shield — when traveling from outside the shield wall into the object area,
+    // first drag the nozzle along the wall for a few mm to wipe off oozed filament (no extrusion,
+    // the oozed material is deposited onto the wall). Emitted before retraction on purpose.
+    if (m_config.nozzle_wipe_shield && m_wipe_shield_contour.points.size() >= 3 && Slic3r::contains(m_wipe_shield_contour, point, false) &&
+        !Slic3r::contains(m_wipe_shield_contour, this->last_pos(), false)) {
+        const Polygon &contour   = m_wipe_shield_contour;
+        const Point    from      = this->last_pos();
+        const Vec2d    from_d    = from.cast<double>();
+        // Find the closest point on the wall (project onto each segment).
+        double best_d2  = std::numeric_limits<double>::max();
+        size_t best_idx = 0;
+        Point  best_pt(0, 0);
+        for (size_t i = 0; i < contour.points.size(); ++i) {
+            const Point &a = contour.points[i];
+            const Point &b = contour.points[(i + 1) % contour.points.size()];
+            const Vec2d  ab = (b - a).cast<double>();
+            if (ab.squaredNorm() < SCALED_EPSILON * SCALED_EPSILON)
+                continue;
+            const Vec2d ap = (from - a).cast<double>();
+            const double t = std::clamp(ab.dot(ap) / ab.squaredNorm(), 0., 1.);
+            const Vec2d  p = a.cast<double>() + t * ab;
+            const double d2 = (p - from_d).squaredNorm();
+            if (d2 < best_d2) {
+                best_d2  = d2;
+                best_idx = i;
+                best_pt  = Point(coord_t(p.x()), coord_t(p.y()));
+            }
+        }
+        if (best_d2 < std::numeric_limits<double>::max()) {
+            // Walk along the wall from the closest point for a few mm.
+            const double drag_length = scale_(4.); // 4 mm drag
+            Points       drag{best_pt};
+            double       accumulated = 0.;
+            for (size_t k = 1; accumulated < drag_length && k <= contour.points.size(); ++k) {
+                const Point &next = contour.points[(best_idx + k) % contour.points.size()];
+                accumulated += drag.back().distance_to(next);
+                drag.push_back(next);
+            }
+            for (const Point &p : drag)
+                gcode += m_writer.travel_to_xy(this->point_to_gcode(p), "wipe shield");
+            this->set_last_pos(drag.back());
+        }
     }
 
     // if a retraction would be needed, try to use reduce_crossing_wall to plan a

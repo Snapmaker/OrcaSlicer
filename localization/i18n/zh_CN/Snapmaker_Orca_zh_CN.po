@@ -15409,7 +15409,7 @@ msgid "Custom Filament Grouping"
 msgstr "自定义耗材分组"
 
 msgid "Slicing will follow the nozzle assignment below:"
-msgstr "我们将基于当前分配方案切片："
+msgstr "将基于下列喷嘴分配方案进行切片："
 
 msgid "Standard Nozzle"
 msgstr "标准喷嘴"
@@ -15417,17 +15417,17 @@ msgstr "标准喷嘴"
 msgid "High Flow Nozzle"
 msgstr "高流量喷嘴"
 
-msgid "Tip: Drag and drop filaments to assign them to a different nozzle"
-msgstr "提示：您可以拖动耗材将其分配到不同的喷嘴"
+msgid "Tip: Drag and drop filaments to assign them to a different nozzle."
+msgstr "提示：拖拽耗材图标以分配至不同喷嘴。"
 
-msgid "It is not recommended to print these filaments with the %1%mm high flow nozzle: %2%"
-msgstr "不推荐使用%1%mm 高流量喷嘴打印材料：%2%"
+msgid "Warning:%1%mm High Flow nozzles are not recommended for %2%"
+msgstr "不建议使用%1%mm 高流量喷嘴打印%2%"
 
 msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
-msgstr "不可以使用%1%mm 高流量喷嘴打印材料：%2%"
+msgstr "不可以使用%1%mm 高流量喷嘴打印%2%"
 
-msgid "CF or GF based filaments"
-msgstr "CF或GF材料"
+msgid "CF/GF filaments"
+msgstr "CF/GF耗材"
 
 msgid "Swap the two groups"
 msgstr "交换两组耗材"

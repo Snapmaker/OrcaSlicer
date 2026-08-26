@@ -98,7 +98,7 @@ CompatibilityResult check(const std::string &filament_type, const std::string &p
 
     if (has_material_token(type, "cf") || has_material_token(name, "cf") ||
         has_material_token(type, "gf") || has_material_token(name, "gf"))
-        return { CompatibilityLevel::NotRecommended, "CF or GF based filaments" };
+        return { CompatibilityLevel::NotRecommended, "CF/GF filaments" };
 
     const AllowlistManager::StringList not_recommended_filaments = manager.get_list("high_flow", "not_recommended_filaments");
     if (is_listed(name, not_recommended_filaments))

@@ -308,7 +308,7 @@ FilamentGroupDialog::FilamentGroupDialog(wxWindow *parent)
     groups_sizer->Add(m_high_box, 0, wxALIGN_TOP);
     v_sizer->Add(groups_sizer, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
 
-    auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: Drag and drop filaments to assign them to a different nozzle"));
+    auto *tip = new wxStaticText(this, wxID_ANY, _L("Tip: Drag and drop filaments to assign them to a different nozzle."));
     tip->SetBackgroundColour(dlg_bg);
     tip->SetForegroundColour(is_dark ? wxColour("#FFFFFF") : wxColour("#4A4A4A"));
     v_sizer->Add(tip, 0, wxLEFT | wxRIGHT | wxTOP, FromDIP(16));
@@ -453,8 +453,8 @@ void FilamentGroupDialog::update_warnings()
     for (const HighFlowCompat::CompatibilityResult &warning : warnings)
     {
         wxString material;
-        if (warning.material == "CF or GF based filaments")
-            material = _L("CF or GF based filaments");
+        if (warning.material == "CF/GF filaments")
+            material = _L("CF/GF filaments");
         else
             material = from_u8(warning.material);
 
@@ -499,7 +499,7 @@ void FilamentGroupDialog::update_warnings()
 
     if (!not_recommended_materials.empty())
     {
-        add_warning(format_wxstr(_L("It is not recommended to print these filaments with the %1%mm high flow nozzle: %2%"),
+        add_warning(format_wxstr(_L("Warning:%1%mm High Flow nozzles are not recommended for %2%"),
                                  from_u8(diameter), not_recommended_materials),
                     false);
     }

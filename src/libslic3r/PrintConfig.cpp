@@ -7395,6 +7395,18 @@ bool is_process_flow_variant_option(const std::string &key)
     return std::find(options.begin(), options.end(), key) != options.end();
 }
 
+const std::vector<std::string>& machine_flow_variant_options()
+{
+    static const std::vector<std::string> options {};
+    return options;
+}
+
+bool is_machine_flow_variant_option(const std::string &key)
+{
+    const auto &options = machine_flow_variant_options();
+    return std::find(options.begin(), options.end(), key) != options.end();
+}
+
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id)
 {
     const ConfigOptionEnumsGeneric* volume_types = enums_option(config, "filament_volume_type");

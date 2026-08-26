@@ -394,6 +394,10 @@ bool is_filament_flow_variant_option(const std::string &key);
 const std::vector<std::string>& process_flow_variant_options();
 bool is_process_flow_variant_option(const std::string &key);
 
+// Machine / print options whose vector values are stored per declared flow variant.
+const std::vector<std::string>& machine_flow_variant_options();
+bool is_machine_flow_variant_option(const std::string &key);
+
 size_t get_config_idx(const ConfigBase &config, ConfigFlowDomain domain, unsigned int filament_id = 0);
 
 template<typename VectorOption>

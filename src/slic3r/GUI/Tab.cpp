@@ -4985,15 +4985,13 @@ void TabPrinter::build_unregular_pages(bool from_initial_build/* = false*/)
             page->clear();
         else {
             m_pages.insert(m_pages.begin() + n_before_extruders, page);
-            // UI-only flow-variant selector on the Motion ability page: shows the
-            // 标准/高流量 header for visual consistency but binds no fields (there is
-            // no printer-domain flow-variant backend). Modes come from
-            // printer_flow_support via flow_support_key(Printer).
-            register_flow_variant_view(
-                ConfigFlowDomain::Printer,
-                page,
-                []() -> const std::vector<std::string>& { static const std::vector<std::string> none; return none; },
-                [](const std::string&) { return false; });
+
+            if (!machine_flow_variant_options().empty())
+                register_flow_variant_view(
+                    ConfigFlowDomain::Printer,
+                    page,
+                    []() -> const std::vector<std::string>& { return machine_flow_variant_options(); },
+                    [](const std::string& key) { return is_machine_flow_variant_option(key); });
         }
     }
 

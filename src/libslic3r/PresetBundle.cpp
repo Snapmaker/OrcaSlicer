@@ -72,10 +72,15 @@ std::vector<FilamentColorMode> LoadFilamentColourModes(const AppConfig &config, 
     std::vector<FilamentColorMode> modes;
     const std::vector<std::string> modeValues = SplitPrinterSetting(config, printerName, "filament_colour_mode");
     modes.reserve(modeValues.size());
-    for (const std::string &modeValue : modeValues)
+    for (size_t i = 0; i < modeValues.size(); ++i)
     {
-        const bool isGradient = modeValue == std::to_string(FilamentColorModeToConfig(FilamentColorMode::Gradient));
-        modes.emplace_back(isGradient ? FilamentColorMode::Gradient : FilamentColorMode::Segment);
+        const char* begin = modeValues[i].c_str();
+        char* end = nullptr;
+        const long parsedMode = std::strtol(begin, &end, 10);
+        int modeValue = 0;
+        if (end != begin && *end == '\0')
+            modeValue = parsedMode == 0 ? 0 : 1;
+        modes.emplace_back(FilamentColorModeFromConfig(modeValue));
     }
     return modes;
 }

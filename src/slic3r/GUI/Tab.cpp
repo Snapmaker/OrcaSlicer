@@ -5717,7 +5717,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                         oldFilamentColors[i] = "#26A69A";
                     if (oldFilamentMultiColors[i].empty())
                         oldFilamentMultiColors[i] = oldFilamentColors[i];
-                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                    const FilamentColorMode mode = FilamentColorModeFromConfig(oldFilamentColourModes[i]);
+                    oldFilamentColourModes[i] = FilamentColorModeToConfig(mode);
                 }
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
@@ -5730,8 +5731,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
 
                 std::vector<std::string> filamentColourModeStrings;
                 filamentColourModeStrings.reserve(oldFilamentColourModes.size());
-                for (int mode : oldFilamentColourModes)
-                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                for (const int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(std::to_string(mode));
                 const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
                 const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
                 const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");

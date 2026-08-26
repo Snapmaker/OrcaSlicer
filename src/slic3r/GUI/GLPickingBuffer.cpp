@@ -135,7 +135,6 @@ bool GLPickingBuffer::ReadColorRect(int x, int y, int width, int height, std::ve
     GLint previousDrawFramebuffer = 0;
     GLint previousReadFramebuffer = 0;
     GetFramebufferBindings(previousDrawFramebuffer, previousReadFramebuffer);
-    (void)previousDrawFramebuffer;
     BindFramebuffer(GL_READ_FRAMEBUFFER, _framebuffer);
     Slic3r::ScopeGuard restoreFramebuffer([this, previousReadFramebuffer]() {
         BindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
@@ -161,8 +160,7 @@ bool GLPickingBuffer::CreateResources(int width, int height)
         _framebufferType == OpenGLManager::EFramebufferType::Arb ? GL_RENDERBUFFER_BINDING : GL_RENDERBUFFER_BINDING_EXT;
     glsafe(::glGetIntegerv(renderbufferBinding, &previousRenderbuffer));
 
-    Slic3r::ScopeGuard restoreBindings([this, previousDrawFramebuffer, previousReadFramebuffer, previousTexture,
-                                         previousRenderbuffer]() {
+    Slic3r::ScopeGuard restoreBindings([this, previousDrawFramebuffer, previousReadFramebuffer, previousTexture, previousRenderbuffer]() {
         if (_framebufferType == OpenGLManager::EFramebufferType::Arb)
             glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, static_cast<GLuint>(previousRenderbuffer)));
         else if (_framebufferType == OpenGLManager::EFramebufferType::Ext)

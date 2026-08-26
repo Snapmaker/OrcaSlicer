@@ -2073,9 +2073,8 @@ void GLCanvas3D::render(bool only_init)
     // this position is used later into on_mouse() to drag the objects
     if (m_picking_enabled) {
         if (currentMouseHit.has_value()) {
-            m_mouse.scene_position = currentMouseHit->is_valid()
-                ? currentMouseHit->position.cast<double>()
-                : _mouse_to_bed_3d(m_mouse.position.cast<coord_t>());
+            m_mouse.scene_position = currentMouseHit->is_valid()? currentMouseHit->position.cast<double>()
+                                                                : _mouse_to_bed_3d(m_mouse.position.cast<coord_t>());
         } else {
             m_mouse.scene_position = _mouse_to_3d(m_mouse.position.cast<coord_t>());
         }
@@ -7280,8 +7279,7 @@ void GLCanvas3D::ApplyPickingHit(const SceneRaycaster::HitResult& hit)
 
         const GLVolume* volume = m_volumes.volumes[hit.raycaster_id];
         if (volume != nullptr && ShouldRenderVolumeForPicking(*volume)) {
-            const bool allowVolumeHover = m_gizmos.get_current_type() == GLGizmosManager::EType::Undefined ||
-                                          !wxGetKeyState(WXK_CONTROL);
+            const bool allowVolumeHover = m_gizmos.get_current_type() == GLGizmosManager::EType::Undefined || !wxGetKeyState(WXK_CONTROL);
             if (allowVolumeHover)
                 m_hover_volume_idxs.emplace_back(hit.raycaster_id);
 
@@ -7340,8 +7338,7 @@ std::optional<SceneRaycaster::HitResult> GLCanvas3D::_picking_pass()
     const ClippingPlane clipping_plane = ((!current_gizmo || current_gizmo->apply_clipping_plane()) ? m_gizmos.get_clipping_plane() :
                                                                                                       ClippingPlane::ClipsNothing())
                                              .inverted_normal();
-    const SceneRaycaster::HitResult hit =
-        QueryHybridPickingHit(m_mouse.position, wxGetApp().plater()->get_camera(), clipping_plane);
+    const SceneRaycaster::HitResult hit = QueryHybridPickingHit(m_mouse.position, wxGetApp().plater()->get_camera(), clipping_plane);
     ApplyPickingHit(hit);
 
     _update_volumes_hover_state();
@@ -7464,8 +7461,7 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
             const int left = std::max(0, static_cast<int>(std::floor(m_rectangle_selection.get_left())));
             const int right = std::min(bufferWidth, static_cast<int>(std::ceil(m_rectangle_selection.get_right())));
             const int bottom = std::max(0, bufferHeight - static_cast<int>(std::ceil(m_rectangle_selection.get_top())));
-            const int top =
-                std::min(bufferHeight, bufferHeight - static_cast<int>(std::floor(m_rectangle_selection.get_bottom())));
+            const int top = std::min(bufferHeight, bufferHeight - static_cast<int>(std::floor(m_rectangle_selection.get_bottom())));
             const int width = right - left;
             const int height = top - bottom;
 
@@ -8220,7 +8216,8 @@ bool GLCanvas3D::_render_volumes_for_picking(const Camera& camera) const
 
     // do not cull backfaces to show broken geometry, if any
     const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-    Slic3r::ScopeGuard restoreCullFace([cullFaceEnabled]() {
+    Slic3r::ScopeGuard restoreCullFace([cullFaceEnabled]() 
+    {
         RestoreCapability(GL_CULL_FACE, cullFaceEnabled);
     });
     glsafe(::glDisable(GL_CULL_FACE));
@@ -8232,27 +8229,31 @@ bool GLCanvas3D::_render_volumes_for_picking(const Camera& camera) const
     shader->set_uniform("z_range", m_volumes.get_z_range());
     shader->set_uniform("clipping_plane", m_volumes.get_clipping_plane());
 
-    for (size_t type = 0; type < 2; ++ type) {
+    for (size_t type = 0; type < 2; ++ type) 
+    {
         GLVolumeWithIdAndZList to_render = volumes_to_render(m_volumes.volumes, (type == 0) ? GLVolumeCollection::ERenderType::Opaque : GLVolumeCollection::ERenderType::Transparent, view_matrix);
         for (const GLVolumeWithIdAndZ& volume : to_render)
-	        if (volume.first != nullptr && ShouldRenderVolumeForPicking(*volume.first)) {
+	        if (volume.first != nullptr && ShouldRenderVolumeForPicking(*volume.first)) 
+            {
                 const ColorRGBA previousColor = volume.first->model.get_color();
                 const bool previousPicking = volume.first->picking;
                 GLWipeTowerVolume* wipeTower = dynamic_cast<GLWipeTowerVolume*>(volume.first);
                 std::vector<ColorRGBA> previousWipeTowerColors;
-                if (wipeTower != nullptr) {
+                if (wipeTower != nullptr) 
+                {
                     previousWipeTowerColors.reserve(wipeTower->model_per_colors.size());
                     for (const GLModel& model : wipeTower->model_per_colors)
                         previousWipeTowerColors.emplace_back(model.get_color());
                 }
 
-                Slic3r::ScopeGuard restoreVolumeState([volume, previousColor, previousPicking, wipeTower,
-                                                       previousWipeTowerColors]() {
+                Slic3r::ScopeGuard restoreVolumeState([volume, previousColor, previousPicking, wipeTower, previousWipeTowerColors]()
+                {
                     volume.first->model.set_color(previousColor);
                     volume.first->picking = previousPicking;
-                    if (wipeTower != nullptr) {
-                        for (size_t index = 0; index < wipeTower->model_per_colors.size() &&
-                             index < previousWipeTowerColors.size(); ++index) {
+                    if (wipeTower != nullptr)
+                    {
+                        for (size_t index = 0; index < wipeTower->model_per_colors.size() && index < previousWipeTowerColors.size(); ++index)
+                        {
                             wipeTower->model_per_colors[index].set_color(previousWipeTowerColors[index]);
                         }
                     }

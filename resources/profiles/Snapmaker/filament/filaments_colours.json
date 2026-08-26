@@ -578,6 +578,7 @@
 			"filament_color": [
 				{
 					"sku": "34262",
+					"TD": 5.5,
 					"mode": 0,
 					"filament_color": [
 						"#08ABFB"
@@ -590,6 +591,7 @@
 				},
 				{
 					"sku": "34263",
+					"TD": 5.5,
 					"mode": 0,
 					"filament_color": [
 						"#D93B90"
@@ -602,6 +604,7 @@
 				},
 				{
 					"sku": "34264",
+					"TD": 9.5,
 					"mode": 0,
 					"filament_color": [
 						"#F9ED3D"
@@ -614,6 +617,7 @@
 				},
 				{
 					"sku": "34265",
+					"TD": 8.8,
 					"mode": 0,
 					"filament_color": [
 						"#9199A4"

@@ -3195,6 +3195,10 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_volume_type"] = SSWCPProtocol::build_filament_volume_types(fvt_values, fvt_count);
         }
 
+        // nozzle flow type (per-nozzle Standard/High Flow selection from the
+        // project config "nozzle_volume_types", mirrored in AppConfig "nozzle_volume_types")
+        response["nozzle_volume_types"] = GUI::FlowType::nozzle_volume_types();
+
         if (full_config.has("nozzle_diameter")) {
             const auto *opt_nozzle_diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter");
             if (opt_nozzle_diameters != nullptr) {

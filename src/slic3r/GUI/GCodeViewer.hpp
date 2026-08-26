@@ -2,6 +2,8 @@
 #define slic3r_GCodeViewer_hpp_
 
 #include "3DScene.hpp"
+#include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/Polygon.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "IMSlider.hpp"
@@ -709,6 +711,54 @@ public:
         std::vector<bool>  m_tool_visibles;
     };
 
+    // Per-object center of gravity markers shown in the preview.
+    // One marker is placed at the center of gravity of the material actually deposited
+    // inside each printable object instance of the plate. Skirt, brim, support material
+    // and the wipe tower are left out, so a marker matches the part the user takes off
+    // the plate. When no print objects are available (a standalone G-code file loaded in
+    // the viewer) a single marker is computed for the whole plate instead.
+    class ObjectsCoG
+    {
+    public:
+        struct Marker
+        {
+            std::string name;
+            Vec3d       position{ Vec3d::Zero() }; // world coordinates, mm
+            double      mass{ 0.0 };               // g
+        };
+
+        void reset();
+        void load(const GCodeProcessorResult& gcode_result, const Print& print);
+        void render();
+
+        bool is_visible() const { return m_visible; }
+        void set_visible(bool visible) { m_visible = visible; }
+        const std::vector<Marker>& get_markers() const { return m_markers; }
+
+    private:
+        struct Region
+        {
+            std::string name;
+            Polygon     hull;      // scaled world coordinates
+            BoundingBox hull_bbox; // scaled world coordinates, slightly inflated
+            Vec3d       sum{ Vec3d::Zero() };
+            double      mass{ 0.0 };
+        };
+
+        // extrusions belonging to the object itself (not skirt / brim / support / wipe tower)
+        static bool is_object_extrusion(ExtrusionRole role);
+        // index of the region the given world position falls into, -1 when none or ambiguous.
+        // hint is the region matched by the previous move, tested first.
+        int region_at(const Vec3f& position, int hint) const;
+
+        std::vector<Region> m_regions;
+        std::vector<Marker> m_markers;
+        // the two interleaved octant sets of the center of gravity symbol
+        GLModel             m_model_dark;
+        GLModel             m_model_light;
+        bool                m_visible{ false };
+    };
+
     enum class EViewType : unsigned char
     {
         FeatureType = 0,
@@ -762,6 +812,8 @@ private:
     std::vector<float> m_filament_densities;
     Extrusions m_extrusions;
     SequentialView m_sequential_view;
+    // per-object center of gravity markers
+    ObjectsCoG m_objects_cog;
     IMSlider* m_moves_slider;
     IMSlider* m_layers_slider;
     Shells m_shells;
@@ -839,6 +891,10 @@ public:
 
     const SequentialView& get_sequential_view() const { return m_sequential_view; }
     void update_sequential_view_current(unsigned int first, unsigned int last);
+
+    // per-object center of gravity markers
+    bool is_objects_cog_visible() const { return m_objects_cog.is_visible(); }
+    void set_objects_cog_visible(bool visible) { m_objects_cog.set_visible(visible); }
 
     /* BBS IMSlider */
     IMSlider *get_moves_slider() { return m_moves_slider; }

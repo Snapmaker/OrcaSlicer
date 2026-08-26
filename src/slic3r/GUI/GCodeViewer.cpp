@@ -694,6 +694,272 @@ void GCodeViewer::SequentialView::render(const bool has_render_path, float legen
         gcode_window.render(legend_height + 2, std::max(10.f, (float)canvas_height - 40), (float)canvas_width - (float)right_margin, static_cast<uint64_t>(gcode_ids[current.last]));
 }
 
+// the two tones of the standard center of gravity symbol
+static const ColorRGBA Objects_CoG_Dark  = { 0.08f, 0.08f, 0.09f, 1.0f };
+static const ColorRGBA Objects_CoG_Light = { 0.96f, 0.96f, 0.97f, 1.0f };
+// radius of a marker, in pixels, kept constant while zooming
+static const double Objects_CoG_Screen_Radius = 9.0;
+// world radius is clamped to this range, in mm
+static const double Objects_CoG_Min_Radius = 0.6;
+static const double Objects_CoG_Max_Radius = 5.0;
+// default filament density, g/cm3, used when the G-code carries none
+static const double Objects_CoG_Default_Density = 1.24;
+
+// Parts of the standard center of gravity symbol: a flat disc in the local XY plane,
+// facing +Z. Passing a quadrant mask of 0b1111 gives the whole disc, 0b0101 gives one
+// pair of opposite quadrants. Drawing the full disc in black and then the inset pair
+// in white produces the familiar quartered circle with a thin rim.
+static GLModel::Geometry cog_symbol_disc(unsigned int resolution, float radius, unsigned int quadrant_mask)
+{
+    // a multiple of 4, so that no triangle straddles a quadrant boundary
+    const unsigned int sector_count = std::max<unsigned int>(8, (resolution / 4) * 4);
+    const double sector_step = 2.0 * M_PI / double(sector_count);
+    const Vec3f normal(0.0f, 0.0f, 1.0f);
+
+    GLModel::Geometry data;
+    data.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3N3 };
+    data.reserve_vertices(3 * sector_count);
+    data.reserve_indices(3 * sector_count);
+
+    for (unsigned int i = 0; i < sector_count; ++i) {
+        const unsigned int quadrant = (i * 4) / sector_count;
+        if ((quadrant_mask & (1u << quadrant)) == 0)
+            continue;
+
+        const double angle = sector_step * double(i);
+        const double angle_next = sector_step * double(i + 1);
+
+        const unsigned int base = unsigned(data.vertices_count());
+        data.add_vertex(Vec3f(0.0f, 0.0f, 0.0f), normal);
+        data.add_vertex(Vec3f(float(double(radius) * std::cos(angle)), float(double(radius) * std::sin(angle)), 0.0f), normal);
+        data.add_vertex(Vec3f(float(double(radius) * std::cos(angle_next)), float(double(radius) * std::sin(angle_next)), 0.0f), normal);
+        data.add_triangle(base + 0, base + 1, base + 2);
+    }
+
+    return data;
+}
+
+void GCodeViewer::ObjectsCoG::reset()
+{
+    m_regions.clear();
+    m_regions.shrink_to_fit();
+    m_markers.clear();
+    m_markers.shrink_to_fit();
+}
+
+bool GCodeViewer::ObjectsCoG::is_object_extrusion(ExtrusionRole role)
+{
+    switch (role)
+    {
+    // everything which is removed from the part before it is used, plus the
+    // extrusions which do not belong to any object at all
+    case erNone:
+    case erSkirt:
+    case erBrim:
+    case erSupportMaterial:
+    case erSupportMaterialInterface:
+    case erSupportTransition:
+    case erWipeTower:
+    case erCustom:
+    case erMixed:
+    case erCount:
+        return false;
+    default:
+        return true;
+    }
+}
+
+int GCodeViewer::ObjectsCoG::region_at(const Vec3f& position, int hint) const
+{
+    const Point pt = Point::new_scale(double(position.x()), double(position.y()));
+
+    // consecutive moves almost always belong to the same object, so check the previous match first
+    if (hint >= 0 && hint < int(m_regions.size())) {
+        const Region& region = m_regions[hint];
+        if (region.hull_bbox.contains(pt) && region.hull.contains(pt))
+            return hint;
+    }
+
+    int  bbox_match = -1;
+    int  bbox_matches = 0;
+    for (size_t i = 0; i < m_regions.size(); ++i) {
+        const Region& region = m_regions[i];
+        if (!region.hull_bbox.contains(pt))
+            continue;
+        ++bbox_matches;
+        bbox_match = int(i);
+        if (region.hull.contains(pt))
+            return int(i);
+    }
+
+    // the point sits outside every convex hull (this happens for extrusions which
+    // stick out a little, e.g. the object's own brim-like first layer expansion):
+    // accept it only when a single object can claim it
+    return (bbox_matches == 1) ? bbox_match : -1;
+}
+
+void GCodeViewer::ObjectsCoG::load(const GCodeProcessorResult& gcode_result, const Print& print)
+{
+    reset();
+
+    if (gcode_result.moves.size() < 2)
+        return;
+
+    // one region per printable instance on the plate
+    std::set<const ModelInstance*> processed_instances;
+    for (const PrintObject* print_object : print.objects()) {
+        if (print_object == nullptr)
+            continue;
+        const ModelObject* model_object = print_object->model_object();
+        if (model_object == nullptr)
+            continue;
+        for (const PrintInstance& print_instance : print_object->instances()) {
+            const ModelInstance* model_instance = print_instance.model_instance;
+            if (model_instance == nullptr || !processed_instances.insert(model_instance).second)
+                continue;
+
+            Region region;
+            region.hull = model_object->convex_hull_2d(model_instance->get_matrix());
+            if (region.hull.size() < 3)
+                continue;
+            // the hull is only used for point-in-object tests, a coarse one is enough
+            region.hull.douglas_peucker(scale_(0.5));
+            region.hull_bbox = get_extents(region.hull);
+            // small tolerance, the hull is built from the mesh while the toolpath is
+            // half an extrusion width outside of it
+            region.hull_bbox.offset(scale_(1.0));
+
+            region.name = model_object->name;
+            if (model_object->instances.size() > 1) {
+                const auto it = std::find(model_object->instances.begin(), model_object->instances.end(), model_instance);
+                if (it != model_object->instances.end())
+                    region.name += " #" + std::to_string(std::distance(model_object->instances.begin(), it) + 1);
+            }
+            m_regions.emplace_back(std::move(region));
+        }
+    }
+
+    // no print objects (standalone G-code file): fall back to a single marker for the whole plate
+    const bool whole_plate = m_regions.empty();
+    if (whole_plate) {
+        Region region;
+        region.name = _u8L("Whole plate");
+        m_regions.emplace_back(std::move(region));
+    }
+
+    const std::vector<float>& densities = gcode_result.filament_densities;
+    auto density_of = [&densities](size_t extruder_id) {
+        return (extruder_id < densities.size() && densities[extruder_id] > 0.0f) ?
+            double(densities[extruder_id]) : Objects_CoG_Default_Density;
+    };
+
+    int hint = 0;
+    for (size_t i = 1; i < gcode_result.moves.size(); ++i) {
+        const GCodeProcessorResult::MoveVertex& curr = gcode_result.moves[i];
+        if (curr.type != EMoveType::Extrude || curr.width == 0.0f || curr.height == 0.0f ||
+            curr.mm3_per_mm <= 0.0f || !is_object_extrusion(curr.extrusion_role))
+            continue;
+
+        const GCodeProcessorResult::MoveVertex& prev = gcode_result.moves[i - 1];
+        const Vec3f mid = 0.5f * (prev.position + curr.position);
+        const double length = (curr.position - prev.position).cast<double>().norm();
+        if (length <= 0.0)
+            continue;
+
+        // mm3 -> cm3 -> g
+        const double mass = 0.001 * double(curr.mm3_per_mm) * length * density_of(size_t(curr.extruder_id));
+        if (mass <= 0.0)
+            continue;
+
+        const int idx = whole_plate ? 0 : region_at(mid, hint);
+        if (idx < 0)
+            continue;
+        hint = idx;
+
+        Vec3d position = mid.cast<double>();
+        // move.position is the nozzle position, the deposited material sits half a layer below it
+        position.z() -= 0.5 * double(curr.height);
+
+        m_regions[idx].sum += mass * position;
+        m_regions[idx].mass += mass;
+    }
+
+    for (const Region& region : m_regions) {
+        if (region.mass <= 0.0)
+            continue;
+        Marker marker;
+        marker.name = region.name;
+        marker.position = region.sum / region.mass;
+        marker.mass = region.mass;
+        m_markers.emplace_back(std::move(marker));
+    }
+
+    // the hulls are not needed once the markers are computed
+    m_regions.clear();
+    m_regions.shrink_to_fit();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": computed %1% per-object center of gravity markers") % m_markers.size();
+}
+
+void GCodeViewer::ObjectsCoG::render()
+{
+    if (!m_visible || m_markers.empty())
+        return;
+
+    if (!m_model_dark.is_initialized()) {
+        // full disc in black, then two opposite quadrants in white, inset so a rim of the
+        // black disc stays visible as an outline against light toolpaths
+        m_model_dark.init_from(cog_symbol_disc(64, 1.0f, 0b1111));
+        m_model_dark.set_color(Objects_CoG_Dark);
+        m_model_light.init_from(cog_symbol_disc(64, 0.90f, 0b0101));
+        m_model_light.set_color(Objects_CoG_Light);
+    }
+
+    GLShaderProgram* shader = wxGetApp().get_shader("gouraud_light");
+    if (shader == nullptr)
+        return;
+
+    const Camera& camera = wxGetApp().plater()->get_camera();
+    const Transform3d& view_matrix = camera.get_view_matrix();
+    const double zoom = camera.get_zoom();
+    const double radius = (zoom > 0.0) ?
+        std::clamp(Objects_CoG_Screen_Radius / zoom, Objects_CoG_Min_Radius, Objects_CoG_Max_Radius) :
+        Objects_CoG_Min_Radius;
+
+    // turn the disc to face the camera, so the symbol reads the same from every angle
+    Transform3d billboard = Transform3d::Identity();
+    {
+        Matrix3d rotation = view_matrix.matrix().block(0, 0, 3, 3);
+        const double scale = rotation.col(0).norm();
+        if (scale > 0.0)
+            rotation /= scale;
+        billboard.linear() = rotation.transpose();
+    }
+
+    // the center of gravity lies inside the object, so the markers are drawn on top of the toolpaths
+    glsafe(::glDisable(GL_DEPTH_TEST));
+
+    shader->start_using();
+    // the disc faces the camera, so lighting is constant across it: this tops the diffuse
+    // term up to 1, which keeps the two tones at their nominal black and white
+    shader->set_uniform("emission_factor", 0.25f);
+    shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+
+    for (const Marker& marker : m_markers) {
+        const Transform3d model_matrix = Geometry::translation_transform(marker.position) * billboard * Geometry::scale_transform(radius);
+        shader->set_uniform("view_model_matrix", view_matrix * model_matrix);
+        const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) * model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
+        shader->set_uniform("view_normal_matrix", view_normal_matrix);
+        // the white quadrants must land on top of the black disc
+        m_model_dark.render();
+        m_model_light.render();
+    }
+
+    shader->stop_using();
+
+    glsafe(::glEnable(GL_DEPTH_TEST));
+}
+
 const std::vector<ColorRGBA> GCodeViewer::Extrusion_Role_Colors{ {
     { 0.90f, 0.70f, 0.70f, 1.0f },   // erNone
     { 1.00f, 0.90f, 0.30f, 1.0f },   // erPerimeter
@@ -863,6 +1129,10 @@ void GCodeViewer::init(ConfigOptionMode mode, PresetBundle* preset_bundle)
     update_by_mode(m_user_mode);
 
     m_layers_slider->init_texture();
+
+    // per-object center of gravity markers, off by default
+    if (wxGetApp().app_config != nullptr)
+        m_objects_cog.set_visible(wxGetApp().app_config->get_bool("show_objects_cog"));
 
     m_gl_data_initialized = true;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished");
@@ -1089,6 +1359,9 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
     m_filament_diameters = gcode_result.filament_diameters;
     m_filament_densities = gcode_result.filament_densities;
     m_sequential_view.m_show_marker = false;
+
+    // per-object center of gravity markers
+    m_objects_cog.load(gcode_result, print);
 
     //BBS: always load shell at preview
     /*if (wxGetApp().is_editor())
@@ -1347,6 +1620,8 @@ void GCodeViewer::reset()
     m_print_statistics.reset();
     m_custom_gcode_per_print_z = std::vector<CustomGCode::Item>();
     m_sequential_view.gcode_window.reset();
+    // per-object center of gravity markers
+    m_objects_cog.reset();
 #if ENABLE_GCODE_VIEWER_STATISTICS
     m_statistics.reset_all();
 #endif // ENABLE_GCODE_VIEWER_STATISTICS
@@ -1369,6 +1644,8 @@ void GCodeViewer::render(int canvas_width, int canvas_height, int right_margin)
         return;
 
     render_toolpaths();
+    // per-object center of gravity markers, drawn on top of the toolpaths
+    m_objects_cog.render();
     float legend_height = 0.0f;
     render_legend(legend_height, canvas_width, canvas_height, right_margin);
 
@@ -4789,6 +5066,22 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
         ImGui::PopStyleColor(6);
         ImGui::PopStyleVar(2);
         return;
+    }
+
+    // per-object center of gravity markers: toggle + count
+    {
+        ImGui::Dummy({ window_padding * 3, 0.0f });
+        ImGui::SameLine(0.0f, 0.0f);
+        bool cog_visible = m_objects_cog.is_visible();
+        if (imgui.bbl_checkbox(_L("Object center of gravity"), cog_visible)) {
+            m_objects_cog.set_visible(cog_visible);
+            if (wxGetApp().app_config != nullptr)
+                wxGetApp().app_config->set_bool("show_objects_cog", cog_visible);
+            wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
+        }
+        ImGui::Dummy({ window_padding, window_padding });
+        ImGui::Separator();
+        ImGui::Dummy({ window_padding, window_padding });
     }
 
     // data used to properly align items in columns when showing time

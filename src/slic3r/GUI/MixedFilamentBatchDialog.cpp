@@ -2785,9 +2785,9 @@ void MixedFilamentBatchDialog::update_mapping_legend()
                             const int mode_val    = (phy_id >= 1 && phy_id <= m_physical_color_modes.size()) ?
                                                         m_physical_color_modes[phy_id - 1] :
                                                         0;
-                            bool      is_gradient = (FilamentColorModeFromConfig(mode_val) == FilamentColorMode::Gradient);
-                            src_bmp = get_color_block_bitmap_cached(dual_colors, is_gradient, FromDIP(20), FromDIP(20), wxEmptyString,
-                                                                    wxNullColour);
+                            const FilamentColorMode colorMode = FilamentColorModeFromConfig(mode_val);
+                            src_bmp = get_color_block_bitmap_cached(dual_colors, colorMode, FromDIP(20), FromDIP(20),
+                                                                    wxEmptyString, wxNullColour);
                         }
                     }
                     if (!src_bmp) {

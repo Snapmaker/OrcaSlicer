@@ -9459,7 +9459,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
         });
         
-        diameter_combo->SetValue(diam_str.empty() ? wxEmptyString : wxString(diam_str) + "mm");
+        diameter_combo->SetValue(diam_str.empty() ? wxString() : wxString(diam_str) + "mm");
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 

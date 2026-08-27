@@ -54,7 +54,7 @@ static wxRegion MakeRoundedRegion(const wxSize& size, int radius)
 SliceModePopup::SliceModePopup(wxWindow *parent)
     // wxFRAME_SHAPED is required for SetShape() to take effect (it silently
     // returns false otherwise); see the wxCHECK_MSG in wxNonOwnedWindowBase.
-    : PopupWindow(parent, wxBORDER_NONE | wxFRAME_SHAPED)
+    : wxPopupWindow(parent, wxBORDER_NONE | wxFRAME_SHAPED)
     , m_timer(this)
 {
     SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -62,8 +62,27 @@ SliceModePopup::SliceModePopup(wxWindow *parent)
     Bind(wxEVT_MOTION, &SliceModePopup::on_mouse_move, this);
     Bind(wxEVT_LEFT_UP, &SliceModePopup::on_left_up, this);
     Bind(wxEVT_TIMER, &SliceModePopup::on_timer, this);
+#ifdef __WXGTK__
+    wxGetTopLevelParent(parent)->Bind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
+#endif
     update_metrics();
 }
+
+SliceModePopup::~SliceModePopup()
+{
+#ifdef __WXGTK__
+    wxGetTopLevelParent(GetParent())->Unbind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
+#endif
+}
+
+#ifdef __WXGTK__
+void SliceModePopup::on_top_window_activate(wxActivateEvent &evt)
+{
+    evt.Skip();
+    if (!evt.GetActive() && IsShown())
+        HidePopup();
+}
+#endif
 
 void SliceModePopup::update_metrics()
 {

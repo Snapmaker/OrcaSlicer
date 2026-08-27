@@ -2597,8 +2597,8 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->SetToolTip(_L("Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\n"
                                         "Note:\n"
-                                        "1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n"
-                                        "2.The order of the Color Mapping list may differ from that of the Color Mixing list."));
+                                        "1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n"
+                                        "2. The order of the Color Mapping list may differ from that of the Color Mixing list."));
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
         // No loaded model → batch match has nothing to map. Surface as a confirmation
@@ -2676,9 +2676,9 @@ Sidebar::Sidebar(Plater *parent)
         // NOTE: deliberately NO take_snapshot() here. The UndoRedo stack only
         // captures the Model (object painting), not the preset_bundle palette
         // or mixed_filaments. Snapshotting batch match would make Ctrl+Z revert
-        // painting while leaving the expanded CMYG palette in place → silent
+        // painting while leaving the expanded recommended palette in place → silent
         // wrong colors. Re-enable only after UndoRedo covers preset_bundle.
-        // For recommended mode, apply CMYG to the first 4 physical slots.
+        // For recommended mode, apply the matched palette colors to the first 4 physical slots.
         // < 4 filaments: expand to 4.  >= 4 filaments: keep every slot THROUGH
         // this stage (virtual ids / add_batch compute over the full slot
         // space).  The batch match is a project-wide re-plan of the filament
@@ -2694,7 +2694,7 @@ Sidebar::Sidebar(Plater *parent)
             const size_t current_count = pb->filament_presets.size();
             const size_t target_count  = std::max<size_t>(4, current_count);
 
-            // Build full palette: CMYG in slots 1-4, original in 5+.
+            // Build full palette: matched colors in slots 1-4, original in 5+.
             colors_vec = fc ? fc->values : std::vector<std::string>{};
             colors_vec.resize(target_count);
 
@@ -2718,7 +2718,7 @@ Sidebar::Sidebar(Plater *parent)
                     color_modes->values[i] = 0;
             }
 
-            // Write before set_num_filaments so auto_generate sees CMYG palette.
+            // Write before set_num_filaments so auto_generate sees the matched palette.
             if (fc) fc->values = colors_vec;
 
             // Snapshot the old mixed list BEFORE set_num_filaments clears
@@ -2810,14 +2810,30 @@ Sidebar::Sidebar(Plater *parent)
                 }
             }
 
-            // Write Full Spectrum to slots 1-4 only when the preset is
-            // selectable under the current printer (present + visible +
-            // compatible, matching the filament combobox filter).
-            const std::string full_spectrum_preset = full_spectrum_preset_name();
-            const Preset*     fs_preset = pb->filaments.find_preset(full_spectrum_preset);
-            if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible) {
-                for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
-                    pb->set_filament_preset(i, full_spectrum_preset);
+            // Write a Full Spectrum preset into each of slots 1-4, per the FAMILY the
+            // user selected in that slot's palette dropdown (phase 2 multi-family:
+            // e.g. PLA in slots 1-2, PETG in 3-4). When a slot's family has no
+            // selectable preset, the slot KEEPS its current preset — per spec §5.1
+            // ("Configured filaments will be used instead", the same promise the
+            // Confirm-time note in MixedFilamentBatchDialog makes). The
+            // default-family single preset is only used for legacy results that
+            // carry no per-slot family info (pre-phase-2 behavior).
+            for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i) {
+                std::string preset_name;
+                if (i < result.recommended_physical_family_names.size()) {
+                    preset_name = find_selectable_full_spectrum_family_preset(result.recommended_physical_family_names[i]);
+                    // Family not selectable: leave empty on purpose — the slot keeps
+                    // the user's configured preset (§5.1). Do NOT substitute the
+                    // default family here: the user explicitly chose this family.
+                } else {
+                    // Legacy result without per-slot family info: the pre-phase-2
+                    // single default-family preset, all-or-nothing per slot.
+                    const Preset* fs_preset = pb->filaments.find_preset(full_spectrum_preset_name());
+                    if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible)
+                        preset_name = fs_preset->name;
+                }
+                if (!preset_name.empty())
+                    pb->set_filament_preset(i, preset_name);
             }
 
             wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
@@ -3010,6 +3026,9 @@ Sidebar::Sidebar(Plater *parent)
         for (size_t i = 0; i < fcombos.size(); ++i) {
             if (fcombos[i]) fcombos[i]->update();
         }
+        // No undo snapshot in this apply path: mark dirty so close-without-save prompts
+        // instead of silently dropping the match result.
+        wxGetApp().plater()->update_project_dirty_from_presets();
         // §70: wxPD_AUTO_HIDE only fires at 100%, so reach 100 here for a clean
         // dismiss (otherwise the bar visibly aborts when the dialog leaves scope).
         set_progress(100);

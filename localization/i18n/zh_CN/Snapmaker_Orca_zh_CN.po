@@ -15487,8 +15487,8 @@ msgstr "耗材管理列表仅存在单条耗材时，无法启用混色匹配功
 msgid "Color mapping list limit reached (max 64 colors). Excess colors will be removed."
 msgstr "颜色映射列表已达上限（64 色），超出颜色将被移除。"
 
-msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n2.The order of the Color Mapping list may differ from that of the Color Mixing list."
-msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜色映射。\n提示：\n1.混色匹配基于官方推荐的 CMYG 耗材进行计算，匹配结果可能与模型原始颜色存在差异。\n2.颜色映射列表中的顺序可能与耗材混色列表的顺序不同。"
+msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n2. The order of the Color Mapping list may differ from that of the Color Mixing list."
+msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜色映射。\n提示：\n1. 混色匹配基于官方推荐的耗材进行计算，匹配结果可能与模型原始颜色存在差异。\n2. 颜色映射列表中的顺序可能与耗材混色列表的顺序不同。"
 
 msgid "No model detected. Import a multi-color model to continue."
 msgstr "未检测到模型，请先导入多色模型。"
@@ -15541,8 +15541,11 @@ msgstr "开始匹配"
 msgid "Rematch"
 msgstr "重新匹配"
 
-msgid "Automatically uses official CMYG filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."
-msgstr "自动选择官方 CMYG 耗材进行混色匹配。单色混色比例范围：%d%%–%d%%。"
+msgid "Automatically select an official filament set for color mixing match. Mix ratio for each color: 0%–70%."
+msgstr "自动选择官方混色耗材套装进行混色匹配。单色混色比例范围：0%–70%。"
 
 msgid "Manually select filaments from the current list for color mixing."
 msgstr "手动选择当前列表中的耗材进行混色匹配。"
+
+msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
+msgstr "未配置官方 Full Spectrum 全光谱耗材，将自动使用已配置的耗材。完成官方耗材配置后，可在耗材列表中进行替换，不影响混色匹配结果。"

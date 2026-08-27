@@ -1,17 +1,327 @@
 #include "HttpServer.hpp"
 #include <boost/log/trivial.hpp>
+#include <boost/algorithm/string.hpp>
+#include <boost/system/errc.hpp>
+#include <algorithm>
+#include <fstream>
+#include <limits>
+#include <vector>
 #include <condition_variable>
 #include "GUI_App.hpp"
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include  "sentry_wrapper/SentryWrapper.hpp"
 #include <boost/beast/core/detail/base64.hpp>
+#include <boost/filesystem.hpp>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
 #endif
 
 namespace Slic3r { namespace GUI {
+
+std::string utf8_to_filesystem_encoding(const std::string& utf8_str);
+
+std::string http_headers::get_header(const std::string& name) const
+{
+    for (const auto& header : headers) {
+        if (boost::iequals(header.first, name))
+            return boost::trim_copy(header.second);
+    }
+    return "";
+}
+
+namespace {
+
+constexpr std::size_t file_stream_chunk_size = 64 * 1024;
+
+class FileStreamWriter : public std::enable_shared_from_this<FileStreamWriter>
+{
+public:
+    FileStreamWriter(boost::asio::ip::tcp::socket& socket, std::ifstream file, std::string header, std::uintmax_t total_bytes,
+                     HttpServer::FileProgressCallback progress_callback, HttpServer::StreamCompletion completion)
+        : socket_(socket), file_(std::move(file)), header_(std::move(header)), total_bytes_(total_bytes),
+          progress_callback_(std::move(progress_callback)), completion_(std::move(completion))
+    {}
+
+    void start()
+    {
+        auto self = shared_from_this();
+        boost::asio::async_write(socket_, boost::asio::buffer(header_),
+                                 [this, self](const boost::beast::error_code& error, std::size_t bytes_transferred) {
+                                     handle_header_written(error, bytes_transferred);
+                                 });
+    }
+
+private:
+    void handle_header_written(const boost::beast::error_code& error, std::size_t bytes_transferred)
+    {
+        if (error) {
+            finish(error, bytes_transferred);
+            return;
+        }
+
+        if (total_bytes_ == 0) {
+            report_progress(false);
+            finish({}, 0);
+            return;
+        }
+
+        report_progress(false);
+        write_next_chunk();
+    }
+
+    void write_next_chunk()
+    {
+        const std::uintmax_t remaining_bytes = total_bytes_ - bytes_sent_;
+        const std::uintmax_t bytes_to_read   = std::min<std::uintmax_t>(remaining_bytes, file_stream_chunk_size);
+        if (bytes_to_read > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) {
+            finish(boost::system::errc::make_error_code(boost::system::errc::file_too_large), 0);
+            return;
+        }
+
+        buffer_.resize(static_cast<std::size_t>(bytes_to_read));
+        file_.read(buffer_.data(), static_cast<std::streamsize>(bytes_to_read));
+        if (static_cast<std::uintmax_t>(file_.gcount()) != bytes_to_read) {
+            finish(boost::system::errc::make_error_code(boost::system::errc::io_error), 0);
+            return;
+        }
+
+        auto self = shared_from_this();
+        boost::asio::async_write(socket_, boost::asio::buffer(buffer_),
+                                 [this, self](const boost::beast::error_code& error, std::size_t bytes_transferred) {
+                                     handle_chunk_written(error, bytes_transferred);
+                                 });
+    }
+
+    void handle_chunk_written(const boost::beast::error_code& error, std::size_t bytes_transferred)
+    {
+        if (error) {
+            finish(error, bytes_transferred);
+            return;
+        }
+
+        bytes_sent_ += bytes_transferred;
+        if (progress_callback_) {
+            report_progress(false);
+        }
+
+        if (bytes_sent_ == total_bytes_) {
+            finish({}, bytes_transferred);
+            return;
+        }
+
+        write_next_chunk();
+    }
+
+    void finish(const boost::beast::error_code& error, std::size_t bytes_transferred)
+    {
+        if (finished_) return;
+        finished_ = true;
+        if (error && progress_callback_) report_progress(true);
+        completion_(error, bytes_transferred);
+    }
+
+    void report_progress(bool failed)
+    {
+        if (!progress_callback_) return;
+        FileProgress progress;
+        progress.bytes_sent  = bytes_sent_;
+        progress.total_bytes = total_bytes_;
+        progress.failed      = failed;
+        progress_callback_(progress);
+    }
+
+    boost::asio::ip::tcp::socket& socket_;
+    std::ifstream                 file_;
+    std::string                   header_;
+    std::vector<char>             buffer_;
+    std::uintmax_t                total_bytes_;
+    std::uintmax_t                bytes_sent_{0};
+    HttpServer::FileProgressCallback progress_callback_;
+    HttpServer::StreamCompletion     completion_;
+    bool                             finished_{false};
+};
+
+std::ifstream open_response_file(const std::string& file_path, bool native_path)
+{
+    std::ifstream file;
+    if (native_path) {
+        file.open(file_path, std::ios::binary);
+    } else {
+        std::string system_file_path = utf8_to_filesystem_encoding(file_path);
+        file.open(system_file_path, std::ios::binary);
+        if (!file) file.open(file_path, std::ios::binary);
+    }
+    return file;
+}
+
+// Locale-independent month/weekday names (HTTP dates are always English).
+static const char* k_http_month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+static const char* k_http_day_names[]   = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+
+// Resolve the on-disk path used to serve a file, mirroring open_response_file.
+boost::filesystem::path resolve_response_file_path(const std::string& file_path, bool native_path)
+{
+    if (native_path)
+        return boost::filesystem::path(file_path);
+
+    const std::string system_file_path = utf8_to_filesystem_encoding(file_path);
+    boost::filesystem::path p(system_file_path);
+    if (boost::filesystem::exists(p))
+        return p;
+    return boost::filesystem::path(file_path);
+}
+
+std::time_t get_file_last_write_time(const std::string& file_path, bool native_path)
+{
+    boost::system::error_code ec;
+    const std::time_t t = boost::filesystem::last_write_time(resolve_response_file_path(file_path, native_path), ec);
+    return ec ? static_cast<std::time_t>(-1) : t;
+}
+
+// Portable UTC std::tm -> time_t (equivalent to timegm / _mkgmtime).
+std::time_t tm_to_time_t_utc(const std::tm& tm)
+{
+    int y = tm.tm_year + 1900;
+    int m = tm.tm_mon + 1;
+    int d = tm.tm_mday;
+    y -= (m <= 2);
+    const int      era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153u * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long long days = static_cast<long long>(era) * 146097 + static_cast<long long>(doe) - 719468;
+    return static_cast<std::time_t>(days * 86400 + tm.tm_hour * 3600 + tm.tm_min * 60 + tm.tm_sec);
+}
+
+// Format std::time_t as an IMF-fixdate HTTP date (locale-independent).
+std::string format_http_date(std::time_t t)
+{
+    std::tm tm = {};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s, %02d %s %04d %02d:%02d:%02d GMT",
+                  k_http_day_names[tm.tm_wday], tm.tm_mday, k_http_month_names[tm.tm_mon],
+                  tm.tm_year + 1900, tm.tm_hour, tm.tm_min, tm.tm_sec);
+    return std::string(buf);
+}
+
+// Parse an IMF-fixdate HTTP date ("Sun, 06 Nov 1994 08:49:37 GMT"). Returns -1 on failure.
+std::time_t parse_http_date(const std::string& value)
+{
+    char wday[4] = {};
+    char mon[4]  = {};
+    int  day = 0, year = 0, hour = 0, minute = 0, second = 0;
+    if (std::sscanf(value.c_str(), "%3s, %d %3s %d %d:%d:%d", wday, &day, mon, &year, &hour, &minute, &second) != 7)
+        return static_cast<std::time_t>(-1);
+
+    int month = -1;
+    for (int i = 0; i < 12; ++i) {
+        if (std::strcmp(mon, k_http_month_names[i]) == 0) {
+            month = i;
+            break;
+        }
+    }
+    if (month < 0)
+        return static_cast<std::time_t>(-1);
+
+    std::tm tm = {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min  = minute;
+    tm.tm_sec  = second;
+    return tm_to_time_t_utc(tm);
+}
+
+// ETag derived from mtime + size (the same scheme nginx uses), quoted per RFC 7232.
+std::string make_etag(std::time_t mtime, std::uintmax_t size)
+{
+    return "\"" + std::to_string(static_cast<long long>(mtime)) + "-" +
+           std::to_string(static_cast<unsigned long long>(size)) + "\"";
+}
+
+// True when the request's conditional headers prove the client's cached copy is still current.
+bool is_not_modified(const std::string& if_modified_since, const std::string& if_none_match,
+                     const std::string& etag, std::time_t mtime)
+{
+    if (!if_none_match.empty())
+        return if_none_match == etag || if_none_match == "*";
+
+    if (!if_modified_since.empty()) {
+        const std::time_t since = parse_http_date(if_modified_since);
+        if (since != static_cast<std::time_t>(-1))
+            return mtime <= since;
+    }
+    return false;
+}
+
+std::string get_file_content_type(const std::string& file_path)
+{
+    std::string lower_path = boost::to_lower_copy(file_path);
+    if (boost::ends_with(lower_path, ".html")) return "text/html";
+    if (boost::ends_with(lower_path, ".css")) return "text/css";
+    if (boost::ends_with(lower_path, ".js")) return "text/javascript";
+    if (boost::ends_with(lower_path, ".png")) return "image/png";
+    if (boost::ends_with(lower_path, ".jpg")) return "image/jpeg";
+    if (boost::ends_with(lower_path, ".gif")) return "image/gif";
+    if (boost::ends_with(lower_path, ".svg")) return "image/svg+xml";
+    if (boost::ends_with(lower_path, ".ttf")) return "application/x-font-ttf";
+    if (boost::ends_with(lower_path, ".json")) return "application/json";
+    if (boost::ends_with(lower_path, ".webp")) return "image/webp";
+    if (boost::ends_with(lower_path, ".woff")) return "font/woff";
+    if (boost::ends_with(lower_path, ".woff2")) return "font/woff2";
+    return "application/octet-stream";
+}
+
+// Return a Cache-Control value for a served file.
+// - main.<hash>.js / flutter_bootstrap.<hash>.js are content-hashed, so their URL
+//   changes whenever the content changes → safe to serve immutable.
+// - index.html / version.json / manifest.json must always be fresh.
+// - canvaskit/** / fonts / images / other assets keep fixed names, so they are
+//   revalidated via Last-Modified + ETag (304 when unchanged — the 304 logic is in
+//   ResponseFile::write_response).
+std::string get_cache_control_header(const std::string& file_path)
+{
+    std::string lower = boost::to_lower_copy(file_path);
+
+    std::string basename = lower;
+    std::size_t slash    = lower.find_last_of("/\\");
+    if (slash != std::string::npos)
+        basename = lower.substr(slash + 1);
+
+    // Content-hashed JS: main.<hash>.js and flutter_bootstrap.<hash>.js
+    if ((boost::starts_with(basename, "main.") || boost::starts_with(basename, "flutter_bootstrap.")) &&
+        boost::ends_with(basename, ".js"))
+        return "public, max-age=31536000, immutable";
+
+    // App shell + version probe: always fresh (tiny, re-downloaded each boot)
+    if (boost::ends_with(basename, "index.html") ||
+        boost::ends_with(basename, "version.json") ||
+        boost::ends_with(basename, "version.changelog") ||
+        boost::ends_with(basename, "manifest.json"))
+        return "no-cache, no-store";
+
+    // canvaskit / fonts / images / svgs / other assets: fixed names, so revalidate
+    // via Last-Modified + ETag (304 when unchanged).
+    return "no-cache";
+}
+
+bool should_report_file_progress(const std::string& url)
+{
+    return url.rfind("/localfile/", 0) == 0 || url.rfind(WCP_DOWNLOAD_PREFIX, 0) == 0;
+}
+
+} // namespace
 
 // 检测Windows系统是否支持UTF-8模式
 bool is_windows_utf8_mode()
@@ -171,6 +481,23 @@ void session::read_next_line()
 
                     const std::string url_str = Http::url_decode(headers.get_url());
                     const auto        resp    = server.server.m_request_handler(url_str);
+                    resp->set_conditional_headers(headers.get_header("if-modified-since"), headers.get_header("if-none-match"));
+
+                    HttpServer::FileProgressCallback progress_callback;
+                    if (should_report_file_progress(url_str)) {
+                        progress_callback = [this, self, url_str](const FileProgress& progress) {
+                            FileProgress reported_progress = progress;
+                            reported_progress.url           = url_str;
+                            server.server.notify_file_progress(reported_progress);
+                        };
+                    }
+
+                    auto completion = [this, self](const boost::beast::error_code& e, std::size_t s) {
+                        if (e != boost::asio::error::operation_aborted) std::cout << "done" << std::endl;
+                        server.stop(self);
+                    };
+                    if (resp->write_response(socket, progress_callback, completion)) return;
+
                     std::stringstream ssOut;
                     resp->write_response(ssOut);
                     std::shared_ptr<std::string> str = std::make_shared<std::string>(ssOut.str());
@@ -645,6 +972,23 @@ void HttpServer::set_request_handler(const std::function<std::shared_ptr<Respons
     this->m_request_handler = request_handler;
 }
 
+void HttpServer::set_file_progress_callback(FileProgressCallback callback)
+{
+    std::lock_guard<std::mutex> lock(m_file_progress_mutex);
+    m_file_progress_callback = std::move(callback);
+}
+
+void HttpServer::notify_file_progress(const FileProgress& progress) const
+{
+    FileProgressCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(m_file_progress_mutex);
+        callback = m_file_progress_callback;
+    }
+
+    if (callback) callback(progress);
+}
+
 std::shared_ptr<HttpServer::Response> HttpServer::bbl_auth_handle_request(const std::string& url)
 {
     BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_response";
@@ -847,6 +1191,24 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     std::string fileContent    = fileStream.str();
     size_t      content_length = fileContent.size(); // 字节长度，非字符数
 
+    const std::time_t last_write_time = get_file_last_write_time(file_path, m_native_path);
+    const bool        can_revalidate  = last_write_time >= 0;
+    std::string       last_modified   = can_revalidate ? format_http_date(last_write_time) : "";
+    std::string       etag            = can_revalidate ? make_etag(last_write_time, content_length) : "";
+
+    if (can_revalidate && is_not_modified(m_if_modified_since, m_if_none_match, etag, last_write_time)) {
+        // Client's cached copy is still current: no body.
+        ssOut << "HTTP/1.1 304 Not Modified\r\n";
+        ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+        ssOut << "ETag: " << etag << "\r\n";
+        ssOut << "Last-Modified: " << last_modified << "\r\n";
+        ssOut << "Access-Control-Allow-Origin: *\r\n";
+        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+        ssOut << "\r\n";
+        return;
+    }
+
     // 确定Content-Type（保持原有逻辑）
     std::string content_type = "application/octet-stream";
     if (ends_with(file_path, ".html"))
@@ -882,11 +1244,96 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
     ssOut << "HTTP/1.1 200 OK\r\n";
     ssOut << "Content-Type: " << content_type << "\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 必须与实际内容长度一致
+    ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+    if (can_revalidate) {
+        ssOut << "ETag: " << etag << "\r\n";
+        ssOut << "Last-Modified: " << last_modified << "\r\n";
+    }
     ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
     ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
     ssOut << "\r\n";      // 头和主体之间的空行（必须）
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
+}
+
+bool HttpServer::Response::write_response(boost::asio::ip::tcp::socket&, const FileProgressCallback&, StreamCompletion) { return false; }
+
+bool HttpServer::ResponseFile::write_response(boost::asio::ip::tcp::socket& socket, const FileProgressCallback& progress_callback,
+                                              StreamCompletion completion)
+{
+    std::ifstream file = open_response_file(file_path, m_native_path);
+    std::uintmax_t content_length  = 0;
+    std::time_t    last_write_time = 0;
+    bool           file_ok         = false;
+
+    if (file) {
+        file.seekg(0, std::ios::end);
+        const std::streamoff end_offset = static_cast<std::streamoff>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        if (end_offset < 0 || !file) {
+            file.clear();
+            file.close();
+        } else {
+            content_length  = static_cast<std::uintmax_t>(end_offset);
+            last_write_time = get_file_last_write_time(file_path, m_native_path);
+            file_ok         = true;
+        }
+    }
+
+    const bool  can_revalidate = file_ok && last_write_time >= 0;
+    std::string last_modified;
+    std::string etag;
+    if (can_revalidate) {
+        last_modified = format_http_date(last_write_time);
+        etag          = make_etag(last_write_time, content_length);
+    }
+
+    std::stringstream header_stream;
+    if (!file_ok) {
+        ResponseNotFound not_found_response;
+        not_found_response.write_response(header_stream);
+        if (progress_callback) {
+            FileProgress progress;
+            progress.bytes_sent  = 0;
+            progress.total_bytes = 0;
+            progress.failed      = true;
+            progress_callback(progress);
+        }
+    } else if (can_revalidate && is_not_modified(m_if_modified_since, m_if_none_match, etag, last_write_time)) {
+        // Client's cached copy is still current: no body, so no FileStreamWriter.
+        header_stream << "HTTP/1.1 304 Not Modified\r\n";
+        header_stream << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+        header_stream << "ETag: " << etag << "\r\n";
+        header_stream << "Last-Modified: " << last_modified << "\r\n";
+        header_stream << "Access-Control-Allow-Origin: *\r\n";
+        header_stream << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+        header_stream << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+        header_stream << "\r\n";
+        file.close();
+
+        auto str = std::make_shared<std::string>(header_stream.str());
+        boost::asio::async_write(socket, boost::asio::buffer(*str),
+                                 [completion, str](const boost::beast::error_code& ec, std::size_t s) { completion(ec, s); });
+        return true;
+    } else {
+        header_stream << "HTTP/1.1 200 OK\r\n";
+        header_stream << "Content-Type: " << get_file_content_type(file_path) << "\r\n";
+        header_stream << "Content-Length: " << content_length << "\r\n";
+        header_stream << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
+        if (can_revalidate) {
+            header_stream << "ETag: " << etag << "\r\n";
+            header_stream << "Last-Modified: " << last_modified << "\r\n";
+        }
+        header_stream << "Access-Control-Allow-Origin: *\r\n";
+        header_stream << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+        header_stream << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+        header_stream << "\r\n";
+    }
+
+    auto writer = std::make_shared<FileStreamWriter>(socket, std::move(file), header_stream.str(), content_length, progress_callback,
+                                                     std::move(completion));
+    writer->start();
+    return true;
 }
 
 }} // namespace Slic3r::GUI

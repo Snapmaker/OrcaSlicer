@@ -2,8 +2,12 @@
 #define slic3r_Http_App_hpp_
 
 #include <iostream>
+#include <functional>
 #include <mutex>
 #include <stack>
+#include <cstdint>
+#include <map>
+#include <sstream>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -23,6 +27,14 @@ namespace Slic3r { namespace GUI {
 
 class session;
 
+struct FileProgress
+{
+    std::string    url;
+    std::uintmax_t bytes_sent;
+    std::uintmax_t total_bytes;
+    bool           failed;
+};
+
 class http_headers
 {
     std::string method;
@@ -34,6 +46,9 @@ class http_headers
     friend class session;
 public:
     std::string get_url() { return url; }
+
+    // Case-insensitive lookup with surrounding whitespace trimmed.
+    std::string get_header(const std::string& name) const;
 
     int content_length()
     {
@@ -80,11 +95,28 @@ class HttpServer
     boost::asio::ip::port_type find_available_port(boost::asio::ip::port_type start_port);
 
 public:
+    using FileProgressCallback = std::function<void(const FileProgress&)>;
+    using StreamCompletion     = std::function<void(const boost::beast::error_code&, std::size_t)>;
+
     class Response
     {
     public:
         virtual ~Response()                                   = default;
         virtual void write_response(std::stringstream& ssOut) = 0;
+        virtual bool write_response(boost::asio::ip::tcp::socket& socket, const FileProgressCallback& progress_callback,
+                                    StreamCompletion completion);
+
+        // Forwarded conditional request headers, used by ResponseFile to implement
+        // 304 Not Modified revalidation (If-Modified-Since / If-None-Match).
+        void set_conditional_headers(const std::string& if_modified_since, const std::string& if_none_match)
+        {
+            m_if_modified_since = if_modified_since;
+            m_if_none_match     = if_none_match;
+        }
+
+    protected:
+        std::string m_if_modified_since;
+        std::string m_if_none_match;
     };
 
     class ResponseNotFound : public Response
@@ -114,6 +146,8 @@ public:
         ~ResponseFile() override = default;
 
         void write_response(std::stringstream& ssOut) override;
+        bool write_response(boost::asio::ip::tcp::socket& socket, const FileProgressCallback& progress_callback,
+                            StreamCompletion completion) override;
 
         bool ends_with(const std::string& str, const std::string& suffix)
         {
@@ -157,6 +191,7 @@ public:
     void stop_restart_check();   // 停止重启检查
     void simulate_crash();       // 模拟服务器崩溃，用于测试重启机制
     void set_request_handler(const std::function<std::shared_ptr<Response>(const std::string&)>& m_request_handler);
+    void set_file_progress_callback(FileProgressCallback callback);
     void setPort(boost::asio::ip::port_type new_port) { 
         if (!start_http_server) {  // 只有在服务器未启动时才允许修改端口
             port = new_port; 
@@ -193,6 +228,10 @@ private:
     std::unique_ptr<IOServer> server_{nullptr};
 
     std::function<std::shared_ptr<Response>(const std::string&)> m_request_handler{&HttpServer::bbl_auth_handle_request};
+    FileProgressCallback m_file_progress_callback;
+    mutable std::mutex  m_file_progress_mutex;
+
+    void notify_file_progress(const FileProgress& progress) const;
 };
 
 class session : public std::enable_shared_from_this<session>

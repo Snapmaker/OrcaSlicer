@@ -645,6 +645,9 @@ public:
     bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
+    /// True when switching to Preview would auto-start slicing the current plate
+    /// (mirrors the slice branch of Plater::priv::set_current_panel's do_reslice).
+    bool preview_switch_triggers_slice() const;
     /// Check and guard filament temp mixing before slicing all plates.
     bool guard_before_slice_all();
     /// @brief Show confirmation dialog for allowed high/low temperature mixing before slice.

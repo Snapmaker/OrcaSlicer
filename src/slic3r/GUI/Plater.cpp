@@ -339,7 +339,11 @@ static std::string flow_ratio_zero_error_text(const Plater::FlowRatioZeroDetail&
 // its own High/Low grouping. Plates without conflicts are not shown.
 static std::string filament_temp_mixing_warning_text_slice_all(const std::vector<Plater::PlateMixingInfo>& plates)
 {
-    std::string out = tr_u8("The following plates contain mixed high and low temperature materials:");
+    std::string out = tr_u8("Detected both high and low temperature materials. "
+                            "Mixed printing may result in extruder clogging, "
+                            "nozzle damage, or layer adhesion issues.");
+    out += "\n\n";
+    out += tr_u8("The following plates contain mixed high and low temperature materials:");
     out += "\n\n";
     for (const Plater::PlateMixingInfo& info : plates)
     {
@@ -10844,6 +10848,14 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
                     q->sync_flow_ratio_zero_notification();
                     q->sync_cold_plate_notification();
                     q->select_view_3D("Preview", true);
+                    return;
+                }
+                if (q->preview_switch_triggers_slice() && !q->guard_before_slice_plate()) {
+                    // Stay on the Prepare page (as in 2.3.5): the user declined
+                    // the mixed-filament confirmation, so neither switch to
+                    // Preview nor start slicing. The MainFrame tab is already
+                    // on tpPreview at this point, switch it back first.
+                    wxGetApp().mainframe->select_tab(size_t(MainFrame::tp3DEditor));
                     return;
                 }
             }
@@ -22660,6 +22672,23 @@ bool Plater::guard_before_slice_plate()
     sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
     return confirm_filament_temp_mixing_before_slice();
+}
+
+bool Plater::preview_switch_triggers_slice() const
+{
+    if (p->background_process.is_export_scheduled())
+        return false;
+    if (p->view3D->get_canvas3d()->check_volumes_outside_state() == ModelInstancePVS_Partly_Outside)
+        return false;
+    if (p->background_process.running() || p->m_is_slicing)
+        return false;
+
+    PartPlate* current_plate = p->partplate_list.get_curr_plate();
+    if (current_plate == nullptr)
+        return false;
+    return !p->model.objects.empty()
+        && current_plate->has_printable_instances()
+        && !current_plate->is_slice_result_valid();
 }
 
 bool Plater::guard_before_slice_all()

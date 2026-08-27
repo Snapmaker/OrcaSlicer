@@ -2431,7 +2431,10 @@ void TreeSupport::drop_nodes()
     const size_t top_interface_layers = config.support_interface_top_layers.value;
     const size_t bottom_interface_layers = config.support_interface_bottom_layers.value < 0 ? top_interface_layers : config.support_interface_bottom_layers.value;
     SupportNode::diameter_angle_scale_factor = diameter_angle_scale_factor;
-    float        DO_NOT_MOVER_UNDER_MM       = is_slim ? 0 : 5;                     // do not move contact points under 5mm
+    // Ported from BambuStudio d61ebefa2: bottom expansion grows branch radius in the first
+    // DO_NOT_MOVER_UNDER_MM above the bed so tree bases fill cavities/grooves instead of spilling
+    // out of them. Enabled only when the wall count is auto (<0) or dual-wall (>1) is requested.
+    const bool bottom_expand_enabled = config.tree_support_wall_count > 1 || config.tree_support_wall_count < 0;
 
     auto get_max_move_dist = [this, &config, tan_angle, wall_count, support_extrusion_width](const SupportNode *node, int power = 1) {
         if (node->max_move_dist == 0) {
@@ -2865,7 +2868,11 @@ void TreeSupport::drop_nodes()
                 to_outside             = projection_onto(next_collision, next_node->position);
                 direction_to_outer     = to_outside - node.position;
                 double dist_to_outer   = unscale_(direction_to_outer.cast<double>().norm());
-                next_node->radius      = std::max(node.radius, std::min(next_node->radius, dist_to_outer));
+                // Near the bed the branch keeps the full radius lineage and grows by half an extrusion
+                // width per layer (bottom expansion), which widens the base instead of dodging outward.
+                next_node->radius      = (bottom_expand_enabled && next_node->print_z < DO_NOT_MOVER_UNDER_MM && node.dist_mm_to_top > DO_NOT_MOVER_UNDER_MM) ?
+                                             node.radius + support_extrusion_width / 2. :
+                                             std::max(node.radius, std::min(next_node->radius, dist_to_outer));
                 get_max_move_dist(next_node);
                 m_ts_data->m_mutex.lock();
                 contact_nodes[layer_nr_next].push_back(next_node);

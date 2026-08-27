@@ -126,7 +126,12 @@ PrintBase::ApplyStatus PrintObject::set_instances(PrintInstances &&instances)
     	[](const PrintInstance& lhs, const PrintInstance& rhs) { return lhs.model_instance == rhs.model_instance && lhs.shift == rhs.shift; });
     if (! equal) {
         status = PrintBase::APPLY_STATUS_CHANGED;
-        if (m_print->invalidate_steps({ psSkirtBrim, psGCodeExport }) ||
+        // Tree support branches are routed against the machine border (bed bounds) anchored to the
+        // instance shift, so a pure XY translation makes the cached tree support layers stale and they
+        // have to be regenerated. Regular supports are computed in object coordinates and stay valid
+        // when the instance is translated, so the cheap skirt/gcode-only invalidation is kept for them.
+        if ((is_tree(m_config.support_type.value) && this->invalidate_step(posSupportMaterial)) ||
+            m_print->invalidate_steps({ psSkirtBrim, psGCodeExport }) ||
             (! equal_length && m_print->invalidate_step(psWipeTower)))
             status = PrintBase::APPLY_STATUS_INVALIDATED;
         m_instances = std::move(instances);

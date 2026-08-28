@@ -63,9 +63,15 @@
     "0.4157"
   ],
   "supertack_plate_temp": [
-    "35"
+    "40"
   ],
   "supertack_plate_temp_initial_layer": [
-    "35"
+    "40"
+  ],
+  "graphic_effect_plate_temp": [
+    "70"
+  ],
+  "graphic_effect_plate_temp_initial_layer": [
+    "70"
   ]
 }

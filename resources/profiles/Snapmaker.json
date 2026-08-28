@@ -597,6 +597,26 @@
       "sub_path": "filament/fdm_filament_petg_category.json"
     },
     {
+      "name": "fdm_filament_peba_category",
+      "sub_path": "filament/fdm_filament_peba_category.json"
+    },
+    {
+      "name": "Snapmaker PEBA 90A @U1 base",
+      "sub_path": "filament/Snapmaker PEBA 90A @U1 base.json"
+    },
+    {
+      "name": "Snapmaker PEBA 90A @U1 0.4 nozzle",
+      "sub_path": "filament/Snapmaker PEBA 90A @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PEBA 90A @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PEBA 90A @U1 0.6 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PEBA 90A @U1 0.8 nozzle",
+      "sub_path": "filament/Snapmaker PEBA 90A @U1 0.8 nozzle.json"
+    },
+    {
       "name": "fdm_filament_tpu_unspecified_category",
       "sub_path": "filament/fdm_filament_tpu_unspecified_category.json"
     },
@@ -1229,6 +1249,26 @@
       "sub_path": "filament/Generic PLA @U1 0.8 nozzle.json"
     },
     {
+      "name": "Snapmaker PLA Rainbow @U1 base",
+      "sub_path": "filament/Snapmaker PLA Rainbow @U1 base.json"
+    },
+    {
+      "name": "Snapmaker PLA Rainbow @U1 0.4 nozzle",
+      "sub_path": "filament/Snapmaker PLA Rainbow @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Rainbow @U1 0.2 nozzle",
+      "sub_path": "filament/Snapmaker PLA Rainbow @U1 0.2 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Rainbow @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PLA Rainbow @U1 0.6 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Rainbow @U1 0.8 nozzle",
+      "sub_path": "filament/Snapmaker PLA Rainbow @U1 0.8 nozzle.json"
+    },
+    {
       "name": "Generic PLA Silk @U1 base",
       "sub_path": "filament/Generic PLA Silk @U1 base.json"
     },
@@ -1371,6 +1411,10 @@
     {
       "name": "Generic TPU @U1 0.8 nozzle",
       "sub_path": "filament/Generic TPU @U1 0.8 nozzle.json"
+    },
+    {
+      "name": "Snapmaker TPU @U1 base",
+      "sub_path": "filament/Snapmaker TPU @U1 base.json"
     },
     {
       "name": "Generic TPU 95A HF @U1 base",
@@ -1561,6 +1605,14 @@
       "sub_path": "filament/Snapmaker PLA Glow @U1 0.4 nozzle.json"
     },
     {
+      "name": "Snapmaker PLA Glow @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PLA Glow @U1 0.6 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PLA Glow @U1 0.8 nozzle",
+      "sub_path": "filament/Snapmaker PLA Glow @U1 0.8 nozzle.json"
+    },
+    {
       "name": "Snapmaker PLA Translucent @U1 base",
       "sub_path": "filament/Snapmaker PLA Translucent @U1 base.json"
     },
@@ -1677,6 +1729,14 @@
       "sub_path": "filament/Snapmaker PETG-CF @U1 0.4 nozzle.json"
     },
     {
+      "name": "Snapmaker PETG-CF @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker PETG-CF @U1 0.6 nozzle.json"
+    },
+    {
+      "name": "Snapmaker PETG-CF @U1 0.8 nozzle",
+      "sub_path": "filament/Snapmaker PETG-CF @U1 0.8 nozzle.json"
+    },
+    {
       "name": "Snapmaker Support For PLA @U1 base",
       "sub_path": "filament/Snapmaker Support For PLA @U1 base.json"
     },
@@ -1707,6 +1767,18 @@
     {
       "name": "Generic ASA @U1 0.8 nozzle",
       "sub_path": "filament/Generic ASA @U1 0.8 nozzle.json"
+    },
+    {
+      "name": "Snapmaker TPU @U1 0.4 nozzle",
+      "sub_path": "filament/Snapmaker TPU @U1 0.4 nozzle.json"
+    },
+    {
+      "name": "Snapmaker TPU @U1 0.6 nozzle",
+      "sub_path": "filament/Snapmaker TPU @U1 0.6 nozzle.json"
+    },
+    {
+      "name": "Snapmaker TPU @U1 0.8 nozzle",
+      "sub_path": "filament/Snapmaker TPU @U1 0.8 nozzle.json"
     }
   ],
   "machine_list": [

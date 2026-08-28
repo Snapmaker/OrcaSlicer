@@ -1654,8 +1654,15 @@ boost::any& Choice::get_value()
                     m_opt_id == "ironing_pattern" || m_opt_id == "support_ironing_pattern" ||
                     m_opt_id == "support_style" || m_opt_id == "curr_bed_type")
         {
-            const std::string &key = m_opt.enum_values[field->GetSelection()];
-            m_value = int(m_opt.enum_keys_map->at(key));
+            // Selection can be invalid when the current value is not present in the rebuilt
+            // enum list (e.g. stale support_style vs support_type); fall back to the first
+            // entry instead of indexing out of bounds.
+            const int selection = field->GetSelection();
+            if (! m_opt.enum_values.empty()) {
+                const int index = (selection >= 0 && selection < static_cast<int>(m_opt.enum_values.size())) ? selection : 0;
+                const std::string &key = m_opt.enum_values[index];
+                m_value = static_cast<int>(m_opt.enum_keys_map->at(key));
+            }
         }
         // Support ThirdPartyPrinter
         else if (m_opt_id.compare("host_type") == 0 && m_opt.enum_values.size() > field->GetCount())

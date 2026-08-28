@@ -891,16 +891,24 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         has_detour_bbox = true;
 
         // safe_x = tower-edge park (right-pref, 3mm, bed-clamped); gcode coord — don't re-add plate_origin to X below.
+        // wt_min/wt_max are world coords (include plate origin), so the bed window must be shifted to the current plate too.
         BoundingBoxf bed_bbx(gcodegen.config().printable_area.values);
+        bed_bbx.translate(plate_origin_2d.cast<double>());
         const Vec2f wt_min = transform_wt_pt(m_wipe_tower_bbx.min.cast<float>()) + plate_origin_2d;
         const Vec2f wt_max = transform_wt_pt(m_wipe_tower_bbx.max.cast<float>()) + plate_origin_2d;
         const float safe_x = get_wipe_avoid_pos_x(wt_min, wt_max, 3.0f,
             float(bed_bbx.min.x()), float(bed_bbx.max.x()));
-        Point tower_obj = wipe_tower_point_to_object_point(
-            gcodegen, start_pos + plate_origin_2d);
-        Point safe_obj = wipe_tower_point_to_object_point(
-            gcodegen, Vec2f(safe_x, tool_change_start_pos.y() + plate_origin_2d.y()));
-
+        Point safe_obj;
+        if(!tcr.is_contact){
+            safe_obj = wipe_tower_point_to_object_point(
+                gcodegen, Vec2f(safe_x, tool_change_start_pos.y() + plate_origin_2d.y()));
+        }
+        else{
+            safe_obj = wipe_tower_point_to_object_point(
+                gcodegen, tool_change_start_pos + plate_origin_2d);
+        }
+        /*safe_obj = wipe_tower_point_to_object_point(
+            gcodegen, Vec2f(safe_x, tool_change_start_pos.y() + plate_origin_2d.y()));*/
         toolchange_gcode_str += gcodegen.writer().travel_to_xy(gcodegen.point_to_gcode(safe_obj));
         gcodegen.set_last_pos(safe_obj);
     }
@@ -920,7 +928,9 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         Polyline detour = detour_around_wipe_tower(start_obj, target_obj, tower_bbx);
 
         bool use_avoid = true;
+        // Detour points are in gcode/world coords (include plate origin), so shift the bed window to the current plate.
         BoundingBoxf bed_bbx(gcodegen.config().printable_area.values);
+        bed_bbx.translate(plate_origin_2d.cast<double>());
         for (size_t i = 0; i < detour.points.size(); ++i) {
             Vec2d pt = gcodegen.point_to_gcode(detour.points[i]);
             if (!bed_bbx.contains(pt)) {
@@ -976,12 +986,11 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcode += gcodegen.writer().travel_to_z(current_z, "Travel back up to the topmost object layer.");
         gcode += gcodegen.writer().unretract();
     }
-
     else {
         // Prepare a future wipe.
         gcodegen.m_wipe.reset_path();
         for (const Vec2f& wipe_pt : tcr.wipe_path)
-            gcodegen.m_wipe.path.points.emplace_back(wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt)));
+            gcodegen.m_wipe.path.points.emplace_back(wipe_tower_point_to_object_point(gcodegen, transform_wt_pt(wipe_pt) + plate_origin_2d));
         gcode += gcodegen.retract(false, false);
     }
 

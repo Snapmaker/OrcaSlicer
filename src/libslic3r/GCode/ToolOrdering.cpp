@@ -1138,7 +1138,6 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
             wipe_volumes.push_back(std::vector<float>(number_of_extruders, print_config->prime_volume));
     }
 
-    using uint128_t = boost::multiprecision::uint128_t;
     auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
         std::optional<unsigned int> initial_extruder_id) -> uint128_t {
             uint128_t hash_key = 0;

@@ -1811,7 +1811,7 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
         }
 
         // the target service queries once every 2 seconds
-        {
+        try {
             auto kick = Bonjour("snapmaker")
                             .set_retries(1)
                             .set_timeout(2)

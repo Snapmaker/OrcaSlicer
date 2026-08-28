@@ -30,5 +30,5 @@
     "slowdown_for_curled_perimeters": "0",
     "standby_temperature_delta": "-150",
     "support_type": "tree(auto)",
-    "initial_layer_print_height": 0.32
+    "initial_layer_print_height": "0.32"
 }

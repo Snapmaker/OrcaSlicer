@@ -29,6 +29,6 @@
     "wipe_tower_extra_rib_length": "8",
     "wipe_tower_extra_spacing": "120%",
     "wipe_tower_wall_type": "rib",
-    "initial_layer_infill_speed": 60,
-    "initial_layer_speed": 30
+    "initial_layer_infill_speed": "60",
+    "initial_layer_speed": "30"
 }

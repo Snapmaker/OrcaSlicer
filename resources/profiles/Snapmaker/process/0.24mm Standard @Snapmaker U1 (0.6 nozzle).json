@@ -30,5 +30,5 @@
     "standby_temperature_delta": "-150",
     "support_threshold_angle": "35",
     "support_type": "tree(auto)",
-    "sparse_infill_speed": 150
+    "sparse_infill_speed": "150"
 }

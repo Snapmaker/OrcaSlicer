@@ -25,6 +25,6 @@
     "wipe_tower_extra_rib_length": "8",
     "wipe_tower_extra_spacing": "120%",
     "wipe_tower_wall_type": "rib",
-    "initial_layer_print_height": 0.14,
+    "initial_layer_print_height": "0.14",
     "sparse_infill_pattern": "gyroid"
 }

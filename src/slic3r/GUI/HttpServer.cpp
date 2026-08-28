@@ -283,9 +283,36 @@ std::string get_file_content_type(const std::string& file_path)
     return "application/octet-stream";
 }
 
+// True if basename matches Flutter web's content-hashed naming (name.<hex-hash>.ext),
+// where <hex-hash> is at least 16 hex characters (Flutter emits 16-char truncated
+// digests). The hash is a content digest, so the URL changes whenever the content
+// changes and the file is safe to serve immutable. Expects a lowercased basename.
+bool is_content_hashed(const std::string& basename)
+{
+    const std::size_t last_dot = basename.find_last_of('.');
+    if (last_dot == std::string::npos || last_dot == 0)
+        return false;
+
+    const std::size_t hash_dot = basename.find_last_of('.', last_dot - 1);
+    if (hash_dot == std::string::npos)
+        return false;
+
+    const std::size_t hash_len = last_dot - hash_dot - 1;
+    if (hash_len < 16)
+        return false;
+
+    for (std::size_t i = hash_dot + 1; i < last_dot; ++i) {
+        const char c = basename[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+            return false;
+    }
+    return true;
+}
+
 // Return a Cache-Control value for a served file.
-// - main.<hash>.js / flutter_bootstrap.<hash>.js are content-hashed, so their URL
-//   changes whenever the content changes → safe to serve immutable.
+// - content-hashed files (name.<hex-hash>.ext, e.g. main.983d3eca8f92f614.js) are
+//   content-addressed, so their URL changes whenever the content changes → safe to
+//   serve immutable.
 // - index.html / version.json / manifest.json must always be fresh.
 // - canvaskit/** / fonts / images / other assets keep fixed names, so they are
 //   revalidated via Last-Modified + ETag (304 when unchanged — the 304 logic is in
@@ -299,9 +326,8 @@ std::string get_cache_control_header(const std::string& file_path)
     if (slash != std::string::npos)
         basename = lower.substr(slash + 1);
 
-    // Content-hashed JS: main.<hash>.js and flutter_bootstrap.<hash>.js
-    if ((boost::starts_with(basename, "main.") || boost::starts_with(basename, "flutter_bootstrap.")) &&
-        boost::ends_with(basename, ".js"))
+    // Content-hashed files (name.<hex-hash>.ext): immutable, the URL is content-addressed.
+    if (is_content_hashed(basename))
         return "public, max-age=31536000, immutable";
 
     // App shell + version probe: always fresh (tiny, re-downloaded each boot)
@@ -314,6 +340,19 @@ std::string get_cache_control_header(const std::string& file_path)
     // canvaskit / fonts / images / svgs / other assets: fixed names, so revalidate
     // via Last-Modified + ETag (304 when unchanged).
     return "no-cache";
+}
+
+// Writes the header lines shared by every response: the status line, the CORS
+// headers, and Connection: close. The server never reuses a connection, so the
+// explicit Connection: close stops clients from assuming HTTP/1.1 keep-alive and
+// racing against our socket close.
+void write_common_headers(std::stringstream& out, int status_code, const std::string& reason_phrase)
+{
+    out << "HTTP/1.1 " << status_code << " " << reason_phrase << "\r\n";
+    out << "Access-Control-Allow-Origin: *\r\n";
+    out << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
+    out << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
+    out << "Connection: close\r\n";
 }
 
 bool should_report_file_progress(const std::string& url)
@@ -447,12 +486,9 @@ void session::read_next_line()
     if (headers.method == "OPTIONS") {
         // 构造OPTIONS响应（允许跨域）
         std::stringstream ssOut;
-        ssOut << "HTTP/1.1 200 OK\r\n";
-        ssOut << "Access-Control-Allow-Origin: *\r\n";                            // 允许所有源
-        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";          // 允许的方法
-        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"; // 允许的请求头
-        ssOut << "Content-Length: 0\r\n";                                         // 无响应体
-        ssOut << "\r\n";                                                          // 头和主体之间的空行（必须）
+        write_common_headers(ssOut, 200, "OK");
+        ssOut << "Content-Length: 0\r\n"; // 无响应体
+        ssOut << "\r\n";                  // 头和主体之间的空行（必须）
 
         // 异步发送响应
         async_write(socket, boost::asio::buffer(ssOut.str()), [this, self](const boost::beast::error_code& e, std::size_t s) {
@@ -1145,11 +1181,10 @@ void HttpServer::ResponseRedirect::write_response(std::stringstream& ssOut)
     const std::string sHTML          = "<html><body><p>redirect to url </p></body></html>";
     size_t            content_length = sHTML.size(); // 字节长度（与字符数相同，因无多字节字符）
 
-    ssOut << "HTTP/1.1 302 Found\r\n";
+    write_common_headers(ssOut, 302, "Found");
     ssOut << "Location: " << location_str << "\r\n";
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -1159,10 +1194,9 @@ void HttpServer::ResponseNotFound::write_response(std::stringstream& ssOut)
     const std::string sHTML          = "<html><body><h1>404 Not Found</h1><p>There's nothing here.</p></body></html>";
     size_t            content_length = sHTML.size(); // 字节长度
 
-    ssOut << "HTTP/1.1 404 Not Found\r\n";
+    write_common_headers(ssOut, 404, "Not Found");
     ssOut << "Content-Type: text/html\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 正确计算长度
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
     ssOut << "\r\n";                                         // 头和主体之间的空行（必须）
     ssOut << sHTML;                                          // 响应体（长度必须匹配）
 }
@@ -1198,13 +1232,10 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
 
     if (can_revalidate && is_not_modified(m_if_modified_since, m_if_none_match, etag, last_write_time)) {
         // Client's cached copy is still current: no body.
-        ssOut << "HTTP/1.1 304 Not Modified\r\n";
+        write_common_headers(ssOut, 304, "Not Modified");
         ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
         ssOut << "ETag: " << etag << "\r\n";
         ssOut << "Last-Modified: " << last_modified << "\r\n";
-        ssOut << "Access-Control-Allow-Origin: *\r\n";
-        ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-        ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
         ssOut << "\r\n";
         return;
     }
@@ -1241,7 +1272,7 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         content_type = "font/woff2";
 
     // 构造响应头（严格使用\r\n，头结束后空行）
-    ssOut << "HTTP/1.1 200 OK\r\n";
+    write_common_headers(ssOut, 200, "OK");
     ssOut << "Content-Type: " << content_type << "\r\n";
     ssOut << "Content-Length: " << content_length << "\r\n"; // 必须与实际内容长度一致
     ssOut << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
@@ -1249,10 +1280,7 @@ void HttpServer::ResponseFile::write_response(std::stringstream& ssOut)
         ssOut << "ETag: " << etag << "\r\n";
         ssOut << "Last-Modified: " << last_modified << "\r\n";
     }
-    ssOut << "Access-Control-Allow-Origin: *\r\n";           // CORS头
-    ssOut << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-    ssOut << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
-    ssOut << "\r\n";      // 头和主体之间的空行（必须）
+    ssOut << "\r\n";
     ssOut << fileContent; // 响应体（长度必须与Content-Length一致）
 }
 
@@ -1301,13 +1329,10 @@ bool HttpServer::ResponseFile::write_response(boost::asio::ip::tcp::socket& sock
         }
     } else if (can_revalidate && is_not_modified(m_if_modified_since, m_if_none_match, etag, last_write_time)) {
         // Client's cached copy is still current: no body, so no FileStreamWriter.
-        header_stream << "HTTP/1.1 304 Not Modified\r\n";
+        write_common_headers(header_stream, 304, "Not Modified");
         header_stream << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
         header_stream << "ETag: " << etag << "\r\n";
         header_stream << "Last-Modified: " << last_modified << "\r\n";
-        header_stream << "Access-Control-Allow-Origin: *\r\n";
-        header_stream << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-        header_stream << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
         header_stream << "\r\n";
         file.close();
 
@@ -1316,7 +1341,7 @@ bool HttpServer::ResponseFile::write_response(boost::asio::ip::tcp::socket& sock
                                  [completion, str](const boost::beast::error_code& ec, std::size_t s) { completion(ec, s); });
         return true;
     } else {
-        header_stream << "HTTP/1.1 200 OK\r\n";
+        write_common_headers(header_stream, 200, "OK");
         header_stream << "Content-Type: " << get_file_content_type(file_path) << "\r\n";
         header_stream << "Content-Length: " << content_length << "\r\n";
         header_stream << "Cache-Control: " << get_cache_control_header(file_path) << "\r\n";
@@ -1324,9 +1349,6 @@ bool HttpServer::ResponseFile::write_response(boost::asio::ip::tcp::socket& sock
             header_stream << "ETag: " << etag << "\r\n";
             header_stream << "Last-Modified: " << last_modified << "\r\n";
         }
-        header_stream << "Access-Control-Allow-Origin: *\r\n";
-        header_stream << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n";
-        header_stream << "Access-Control-Allow-Headers: Content-Type, Authorization\r\n";
         header_stream << "\r\n";
     }
 

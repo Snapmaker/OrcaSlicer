@@ -9345,10 +9345,25 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     if (!p->m_nozzle_notebook)
         return;
 
+    const DynamicPrintConfig& printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+
     // Get new nozzle count
-    auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(
-        wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+    auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(printer_config.option("nozzle_diameter"));
     size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
+
+    std::string diam_str = "";
+    if (const auto* pv = printer_config.option<ConfigOptionString>("printer_variant")) // absent in bare configs
+        diam_str = pv->value;
+
+    // Visible presets for this printer_model (system + user).
+    auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
+
+    // Record focus before DeleteAllPages destroys the focused control.
+    bool focus_was_in_notebook = false;
+    if (wxWindow* focus = wxWindow::FindFocus())
+        focus_was_in_notebook = p->m_nozzle_notebook->IsDescendant(focus);
+
+    wxWindowUpdateLocker noUpdates(p->m_nozzle_notebook);
 
     // Clear existing pages and controls
     p->m_nozzle_notebook->DeleteAllPages();
@@ -9381,16 +9396,11 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                                                 nullptr, wxCB_READONLY);
         
 
-        // Visible presets for this printer_model (system + user). Imported multi-nozzle variants are
-        // usually non-system; diameters_for_same_printer_model() only counted system and kept the combo disabled.
-        auto diameters = wxGetApp().preset_bundle->printers.diameters_of_selected_printer();
         for (auto& diameter : diameters) {
             diameter_combo->AppendString(wxString(diameter) + "mm");
         }
-        if (diameter_combo->GetCount() == 0) {
-            const auto *pv = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant");
-            if (pv)
-                diameter_combo->AppendString(wxString(pv->value) + "mm");
+        if (diameter_combo->GetCount() == 0 && !diam_str.empty()) {
+            diameter_combo->AppendString(wxString(diam_str) + "mm");
         }
         if (diameters.size() < 2) {
             diameter_combo->Enable(false);
@@ -9439,7 +9449,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
                 return;
             }
             preset->is_visible = true; // force visible
-            
+
             for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
                 //set all nozzle use the diameter
                 p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
@@ -9449,9 +9459,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
         });
         
-        auto diam_str = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_variant")->value;
-        
-        diameter_combo->SetValue(diam_str + "mm");
+        diameter_combo->SetValue(diam_str.empty() ? wxString() : wxString(diam_str) + "mm");
 
         p->m_nozzle_diameter_lists.push_back(diameter_combo);
 
@@ -9497,7 +9505,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     if (switch_machine) {
         p->combo_printer->SetFocus();
-    } else {
+    } else if (focus_was_in_notebook) {
+        // The focused control was destroyed by the rebuild.
         p->combo_printer->GetParent()->SetFocus();
     }
 }

@@ -461,7 +461,7 @@ bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI
             int endFaceCount = (*itsPtr).indices.size();
             if (initFaceCount < INIT_FACE_LOW_COUNT || (initFaceCount < FINAL_FACE_LOW_COUNT && endFaceCount < initFaceCount * QEM_FACE_RATIO)) 
             {
-                BOOST_LOG_TRIVIAL(warning) << "LOD simplify: rejected (too few faces) init=" << initFaceCount << " end=" << endFaceCount;
+                BOOST_LOG_TRIVIAL(info) << "LOD simplify: rejected (too few faces) init=" << initFaceCount << " end=" << endFaceCount;
                 return;
             }
 
@@ -481,15 +481,15 @@ bool GLVolume::SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI
                     // readyFlag (GLModel.hpp threading contract), so this
                     // write is exclusive to this thread.
                     model->init_from(simplifiedMesh);
-                    BOOST_LOG_TRIVIAL(warning) << "LOD simplify: completed successfully, faces=" << initFaceCount
+                    BOOST_LOG_TRIVIAL(info) << "LOD simplify: completed successfully, faces=" << initFaceCount
                                             << " -> " << endFaceCount
                                             << " (use_count=" << model.use_count() << ")";
                 } else {
-                    BOOST_LOG_TRIVIAL(warning) << "LOD simplify: skipped init (use_count="
+                    BOOST_LOG_TRIVIAL(info) << "LOD simplify: skipped init (use_count="
                                                 << (model ? model.use_count() : 0) << ")";
                 }
             } else {
-                BOOST_LOG_TRIVIAL(warning) << "LOD simplify: rejected (out of AABB bounds)";
+                BOOST_LOG_TRIVIAL(info) << "LOD simplify: rejected (out of AABB bounds)";
             }
 
             // Last touch of the model: hand it over to the main thread. The
@@ -855,19 +855,19 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
             // GREEN = HIGH (original), BLUE = MIDDLE, RED = SMALL
             if (m_curLodLevel == LODLevel::Small && m_modelSmall && !m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
-                    BOOST_LOG_TRIVIAL(warning) << "LOD: SMALL '" << name << "'";
+                    BOOST_LOG_TRIVIAL(debug) << "LOD: SMALL '" << name << "'";
                 m_modelSmall->set_color(render_color);
                 //m_modelSmall->set_color(ColorRGBA::GREEN());
                 m_modelSmall->render();
             } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
-                    BOOST_LOG_TRIVIAL(warning) << "LOD: MID '" << name << "'";
+                    BOOST_LOG_TRIVIAL(debug) << "LOD: MID '" << name << "'";
                 m_modelMiddle->set_color(render_color);
                 //m_modelMiddle->set_color(ColorRGBA::BLUE());
                 m_modelMiddle->render();
             } else {
                 if (lodRenderLogCounter % 180 == 0) {
-                    BOOST_LOG_TRIVIAL(warning) << "LOD: HIGH fallback '" << name
+                    BOOST_LOG_TRIVIAL(debug) << "LOD: HIGH fallback '" << name
                                               << "' lv=" << static_cast<int>(m_curLodLevel)
                                               << " s=" << (m_modelSmall ? (int)(!m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) : -1)
                                               << " m=" << (m_modelMiddle ? (int)(!m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) : -1);
@@ -1021,7 +1021,7 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
 
     // Generate LOD simplified models only once (shared via shared_ptr)
     if (lodEnabled && !v.m_modelMiddle && !v.m_modelSmall) {
-        BOOST_LOG_TRIVIAL(warning) << "LOD: Creating simplified models for '" << v.name
+        BOOST_LOG_TRIVIAL(info) << "LOD: Creating simplified models for '" << v.name
                                 << "' faces=" << mesh.its.indices.size();
         v.m_modelMiddle = std::make_shared<GUI::GLModel>();
         // Keep rendering disabled until the background thread finishes
@@ -1037,7 +1037,7 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
         v.m_lodSmallReady = std::make_shared<std::atomic<bool>>(false);
         v.SimplifyMesh(mesh, v.m_modelSmall, v.m_lodSmallReady, LODLevel::Small);
     } else if (!lodEnabled) {
-        BOOST_LOG_TRIVIAL(warning) << "LOD: Disabled for '" << v.name << "'";
+        BOOST_LOG_TRIVIAL(info) << "LOD: Disabled for '" << v.name << "'";
     }
 
     if (need_raycaster) {
@@ -1287,7 +1287,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                 v->transformed_bounding_box(), GLVolume::s_curViewProjMatrix,
                 GLVolume::s_curViewport[2], GLVolume::s_curViewport[3]);
             if (prevLod != v->m_curLodLevel) {
-                BOOST_LOG_TRIVIAL(warning) << "LOD level changed: " << static_cast<int>(prevLod)
+                BOOST_LOG_TRIVIAL(debug) << "LOD level changed: " << static_cast<int>(prevLod)
                                            << " -> " << static_cast<int>(v->m_curLodLevel)
                                            << " (zoom=" << curZoom << ", name=" << v->name << ")";
             }

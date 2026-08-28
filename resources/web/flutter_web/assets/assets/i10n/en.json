@@ -285,7 +285,8 @@
     "print_preparation": "Print Configuration",
     "show_original": "Show original",
     "show_translation": "Show translation",
-    "auto_translated_hint": "Content has been automatically translated."
+    "auto_translated_hint": "Content has been automatically translated.",
+    "original_displayed_hint": "The original content has been displayed."
   },
   "model_search": {
     "reset": "Reset",
@@ -378,6 +379,7 @@
   "Finding new devices": "Finding new devices",
   "More Nearby Devices": "More Nearby Devices",
   "Bound successfully": "Bound successfully",
+  "Print Started": "Print Started",
   "Bound rejected": "Bound rejected",
   "Device not available/device offline": "Device not available/device offline",
   "Got it": "Got it",

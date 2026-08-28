@@ -2228,7 +2228,7 @@ Sidebar::Sidebar(Plater *parent)
                 {
                     std::vector<std::string> diameters_raw = nozzle_diameters;
                     //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
-                    wxTheApp->CallAfter([this, diameters_raw]() {
+                    wxTheApp->CallAfter([this, diameters_raw, nozzle_volume_types = machine_info.nozzle_volume_types]() {
                         NozzleDiameterSelectDialog dlg(
                             wxGetApp().mainframe,
                             _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
@@ -2245,20 +2245,24 @@ Sidebar::Sidebar(Plater *parent)
                                     auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
                                     if (preset == nullptr) {
                                         BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                                        return;
-                                    }
-                                    preset->is_visible = true; // force visible
+                                    } else {
+                                        preset->is_visible = true; // force visible
 
-                                    for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                                        p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-                                    }
+                                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+                                        }
 
-                                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                                    wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                                    }
                                 }
                             }
                         }
+
+                        if (!nozzle_volume_types.empty())
+                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
+
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
                     });
                     return;
                 }

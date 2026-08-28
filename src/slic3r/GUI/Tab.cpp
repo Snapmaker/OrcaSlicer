@@ -4025,15 +4025,16 @@ void TabFilament::build()
         optgroup->append_single_option_line("pressure_advance", "pressure-advance-calib");
 
         // Orca: adaptive pressure advance and calibration model
-        optgroup->append_single_option_line("adaptive_pressure_advance", "adaptive-pressure-advance-calib");
-        optgroup->append_single_option_line("adaptive_pressure_advance_overhangs", "adaptive-pressure-advance-calib");
-        optgroup->append_single_option_line("adaptive_pressure_advance_bridges", "adaptive-pressure-advance-calib");
-
-        Option option = optgroup->get_option("adaptive_pressure_advance_model");
-        option.opt.full_width = true;
-        option.opt.is_code = true;
-        option.opt.height = 15;
-        optgroup->append_single_option_line(option);
+        // Snapmaker: hidden from UI per product requirement; config and slicing logic are kept
+        // optgroup->append_single_option_line("adaptive_pressure_advance", "adaptive-pressure-advance-calib");
+        // optgroup->append_single_option_line("adaptive_pressure_advance_overhangs", "adaptive-pressure-advance-calib");
+        // optgroup->append_single_option_line("adaptive_pressure_advance_bridges", "adaptive-pressure-advance-calib");
+        //
+        // Option option = optgroup->get_option("adaptive_pressure_advance_model");
+        // option.opt.full_width = true;
+        // option.opt.is_code = true;
+        // option.opt.height = 15;
+        // optgroup->append_single_option_line(option);
         //
 
         optgroup = page->new_optgroup(L("Print chamber temperature"), L"param_chamber_temp");
@@ -4207,7 +4208,7 @@ void TabFilament::build()
             validate_custom_gcode_cb(this, optgroup_title, opt_key, value);
         };
         optgroup->edit_custom_gcode = edit_custom_gcode_fn;
-        option = optgroup->get_option("filament_start_gcode");
+        Option option = optgroup->get_option("filament_start_gcode");
         option.opt.full_width = true;
         option.opt.is_code = true;
         option.opt.height = gcode_field_height;// 150;
@@ -4439,12 +4440,13 @@ void TabFilament::toggle_options()
         // Orca: adaptive pressure advance and calibration model
         // If PA is not enabled, disable adaptive pressure advance and hide the model section
         // If adaptive PA is not enabled, hide the adaptive PA model section
-        toggle_option("adaptive_pressure_advance", pa);
-        toggle_option("adaptive_pressure_advance_overhangs", pa);
-        bool has_adaptive_pa = m_config->opt_bool("adaptive_pressure_advance", 0);
-        toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa && pa);
-        toggle_line("adaptive_pressure_advance_model", has_adaptive_pa && pa);
-        toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa && pa);
+        // Snapmaker: hidden from UI per product requirement; toggle logic disabled along with the UI lines
+        // toggle_option("adaptive_pressure_advance", pa);
+        // toggle_option("adaptive_pressure_advance_overhangs", pa);
+        // bool has_adaptive_pa = m_config->opt_bool("adaptive_pressure_advance", 0);
+        // toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa && pa);
+        // toggle_line("adaptive_pressure_advance_model", has_adaptive_pa && pa);
+        // toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa && pa);
 
         bool is_pellet_printer = cfg.opt_bool("pellet_modded_printer");
         toggle_line("pellet_flow_coefficient", is_pellet_printer);

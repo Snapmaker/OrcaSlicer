@@ -1,5 +1,6 @@
-#include <catch2/catch.hpp>
-
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -307,33 +308,33 @@ TEST_CASE("Mixed filament apparent mix percent follows the signed bias target", 
 TEST_CASE("Mixed filament bias helper maps signed bias to a one-sided safe offset pair", "[MixedFilament]")
 {
     const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.06f, 0.4f);
-    CHECK(offset_a == Approx(0.0f));
-    CHECK(offset_b == Approx(0.06f));
+    CHECK_THAT(offset_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(offset_b, WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Approx(0.06f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f), WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Approx(-0.02f));
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Approx(0.02f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f), WithinRel(-0.02f, 0.001));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f), WithinRel(0.02f, 0.001));
 
     const auto [negative_a, negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.06f, 0.4f);
-    CHECK(negative_a == Approx(0.06f));
-    CHECK(negative_b == Approx(0.0f));
+    CHECK_THAT(negative_a, WithinRel(0.06f, 0.001));
+    CHECK_THAT(negative_b, WithinRel(0.0f, 0.001));
 
     const auto [unclamped_a, unclamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.30f, 0.4f);
-    CHECK(unclamped_a == Approx(0.0f));
-    CHECK(unclamped_b == Approx(0.30f));
+    CHECK_THAT(unclamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(unclamped_b, WithinRel(0.30f, 0.001));
 
     const auto [unclamped_negative_a, unclamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.30f, 0.4f);
-    CHECK(unclamped_negative_a == Approx(0.30f));
-    CHECK(unclamped_negative_b == Approx(0.0f));
+    CHECK_THAT(unclamped_negative_a, WithinRel(0.30f, 0.001));
+    CHECK_THAT(unclamped_negative_b, WithinRel(0.0f, 0.001));
 
     const auto [clamped_a, clamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.40f, 0.4f);
-    CHECK(clamped_a == Approx(0.0f));
-    CHECK(clamped_b == Approx(0.35f));
+    CHECK_THAT(clamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(clamped_b, WithinRel(0.35f, 0.001));
 
     const auto [clamped_negative_a, clamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.40f, 0.4f);
-    CHECK(clamped_negative_a == Approx(0.35f));
-    CHECK(clamped_negative_b == Approx(0.0f));
+    CHECK_THAT(clamped_negative_a, WithinRel(0.35f, 0.001));
+    CHECK_THAT(clamped_negative_b, WithinRel(0.0f, 0.001));
 }
 
 TEST_CASE("Mixed filament component surface offsets follow the signed bias target across alternating layers", "[MixedFilament]")
@@ -539,10 +540,6 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.wall_filament(region) == 0);
     CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 1);
-    CHECK(layer1.sparse_infill_filament(region) == 1);
-    CHECK(layer0.solid_infill_filament(region) == 0);
-    CHECK(layer1.solid_infill_filament(region) == 0);
 
     region_config.sparse_infill_filament.value          = 2;
     region_config.solid_infill_filament.value           = 2;

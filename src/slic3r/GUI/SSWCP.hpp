@@ -260,6 +260,9 @@ private:
 
     void sw_get_pin_code();
 
+    // Subscribe to foreground/background change events (event_id=205890)
+    void sw_SubscribeForegroundChange();
+
 };
 
 // mqtt-agent
@@ -506,6 +509,8 @@ private:
     void sw_SwitchModel();
 
     void sw_DeleteDevices();
+
+    void sw_UpdateDeviceInfo();
 };
 
 // Instance class for page state change subscription

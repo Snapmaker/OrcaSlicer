@@ -3019,6 +3019,11 @@ void TabPrint::toggle_options()
             cb->Append(_(def->enum_labels[i]));
         }
         cb->SetValue(n);
+        // The stale label (e.g. a tree style left over after support_type changed while support
+        // is disabled) may not exist in the rebuilt list; GetValue()/SetValue() then leaves the
+        // selection invalid, and Choice::get_value would index enum_values out of bounds.
+        if (cb->GetSelection() == wxNOT_FOUND && cb->GetCount() > 0)
+            cb->SetSelection(0);
     }
 
     // Keep plate bed-type list in sync with currently selected printer.
@@ -6015,7 +6020,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                         oldFilamentColors[i] = "#26A69A";
                     if (oldFilamentMultiColors[i].empty())
                         oldFilamentMultiColors[i] = oldFilamentColors[i];
-                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                    const FilamentColorMode mode = FilamentColorModeFromConfig(oldFilamentColourModes[i]);
+                    oldFilamentColourModes[i] = FilamentColorModeToConfig(mode);
                 }
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
@@ -6028,8 +6034,8 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
 
                 std::vector<std::string> filamentColourModeStrings;
                 filamentColourModeStrings.reserve(oldFilamentColourModes.size());
-                for (int mode : oldFilamentColourModes)
-                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                for (const int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(std::to_string(mode));
                 const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
                 const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
                 const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");

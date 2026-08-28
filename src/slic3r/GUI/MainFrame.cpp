@@ -76,6 +76,9 @@
 #include <dbt.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <wtsapi32.h>
+#include <powersetting.h>
+#pragma comment(lib, "Wtsapi32.lib")
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
 #include "sentry_wrapper/SentryWrapper.hpp"
@@ -553,6 +556,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& event) {
         if (m_plater != nullptr && event.GetActive())
             m_plater->on_activate();
+        NotifyActivateChange(event.GetActive());
         event.Skip();
     });
 
@@ -837,6 +841,33 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
         HandleGetMinMaxInfo(mmi);
         AdjustWorkingAreaForAutoHide(hWnd, mmi);
         return 0;
+    }
+    case WM_WTSSESSION_CHANGE: {
+        switch (wParam) {
+        case WTS_SESSION_LOCK:
+            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session locked";
+            wxGetApp().notify_foreground_change(false);
+            break;
+        case WTS_SESSION_UNLOCK:
+            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session unlocked";
+            wxGetApp().notify_foreground_change(true);
+            break;
+        }
+        break;
+    }
+    case WM_POWERBROADCAST: {
+        if (wParam == PBT_POWERSETTINGCHANGE) {
+            auto* power_settings = reinterpret_cast<POWERBROADCAST_SETTING*>(lParam);
+            if (IsEqualGUID(power_settings->PowerSetting, GUID_CONSOLE_DISPLAY_STATE)) {
+                // GUID_CONSOLE_DISPLAY_STATE Data: 0x0=off, 0x1=on, 0x2=dimmed
+                DWORD display_state = power_settings->Data[0];
+                bool is_screen_on = (display_state == 0x1);
+                BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Console display state changed: "
+                                           << (is_screen_on ? "on" : (display_state == 0x2 ? "dimmed" : "off"));
+                wxGetApp().notify_foreground_change(is_screen_on);
+            }
+        }
+        break;
     }
     }
     return wxFrame::MSWWindowProc(nMsg, wParam, lParam);
@@ -1424,6 +1455,14 @@ void MainFrame::register_win32_callbacks()
         if (! RegisterRawInputDevices(devices, device_count, sizeof(RAWINPUTDEVICE)))
             BOOST_LOG_TRIVIAL(error) << "RegisterRawInputDevices failed";
     }
+
+    // Register for Windows session change notifications (lock/unlock)
+    if (!::WTSRegisterSessionNotification(this->GetHWND(), NOTIFY_FOR_THIS_SESSION))
+        BOOST_LOG_TRIVIAL(error) << "WTSRegisterSessionNotification failed";
+
+    // Register for console display state notifications (screen on/off/dimmed)
+    if (!::RegisterPowerSettingNotification(this->GetHWND(), &GUID_CONSOLE_DISPLAY_STATE, DEVICE_NOTIFY_WINDOW_HANDLE))
+        BOOST_LOG_TRIVIAL(error) << "RegisterPowerSettingNotification failed";
 }
 #endif // _WIN32
 
@@ -2918,15 +2957,6 @@ void MainFrame::init_menubar_as_editor()
             },
             this, [this]() { return m_plater->is_view3D_shown(); }, [this]() { return m_plater->is_view3D_overhang_shown(); }, this);
 
-        append_menu_check_item(
-            viewMenu, wxID_ANY, _L("Show Selected Outline (beta)"), _L("Show outline around selected object in 3D scene."),
-            [this](wxCommandEvent&) {
-                wxGetApp().toggle_show_outline();
-                m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT));
-            },
-            this, [this]() { return m_tabpanel->GetSelection() == TabPosition::tp3DEditor; },
-            [this]() { return wxGetApp().show_outline(); }, this);
-
         /*viewMenu->AppendSeparator();
         append_menu_check_item(viewMenu, wxID_ANY, _L("Show &Wireframe") + "\t" + ctrl + shift + _L("Enter"), _L("Show wireframes in 3D scene."),
             [this](wxCommandEvent&) { m_plater->toggle_show_wireframe(); m_plater->get_current_canvas3D()->post_event(SimpleEvent(wxEVT_PAINT)); }, this,
@@ -4054,6 +4084,12 @@ void MainFrame::RunScript(wxString js)
 {
     if (m_webview != nullptr)
         m_webview->RunScript(js);
+}
+
+void MainFrame::NotifyActivateChange(bool active)
+{
+    BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] OrcaSlicer switched to " << (active ? "foreground" : "background");
+    wxGetApp().notify_foreground_change(active);
 }
 
 void MainFrame::downloadOpenProject(const std::string& fileUrl, const std::string& fileName, std::string completeFilePath)

@@ -7132,6 +7132,20 @@ void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& s
     }
 }
 
+void GUI_App::notify_foreground_change(const bool active)
+{
+    json data;
+    data["state"] = active;
+
+    for (const auto& instance : m_foreground_change_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = data;
+            ptr->send_to_js();
+        }
+    }
+}
+
 void GUI_App::cache_notify(const std::string& key, const json& res)
 {
     for (const auto& instance : m_cache_subscribers) {

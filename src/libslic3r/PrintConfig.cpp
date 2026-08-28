@@ -2080,7 +2080,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("filament_colour_mode", coInts);
     def->label = L("Filament color display mode");
-    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for gradient.");
+    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for vertical gradient.");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
     def->min = 0;

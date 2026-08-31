@@ -11,6 +11,7 @@ namespace {
 
 bool is_valid_flow_type(const std::string &value)
 {
+    // Only the standard and high-flow nozzle modes are recognized flow types.
     return value == FLOW_MODE_STANDARD || value == FLOW_MODE_HIGH_FLOW;
 }
 

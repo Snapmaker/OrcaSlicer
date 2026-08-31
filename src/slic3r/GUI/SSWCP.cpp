@@ -7929,23 +7929,26 @@ SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHo
     std::condition_variable cv;
     std::shared_ptr<std::mutex> mutex(new std::mutex);
     std::weak_ptr<std::mutex>   cb_mutex = mutex;
+    std::shared_ptr<bool>       done(new bool(false));
     int                         received_count = 0;
     const int                   expected_count = 2;
     json                        system_info;
     json                        objects_query;
 
-    auto on_system_info = [&, cb_mutex](const json& response) {
+    auto on_system_info = [&, cb_mutex, done](const json& response) {
         auto locked = cb_mutex.lock();
         if (!locked) return;
         std::lock_guard<std::mutex> lock(*locked);
+        if (*done) return;
         if (!response.is_null() && !response.count("error"))
             system_info = response;
         if (++received_count >= expected_count) cv.notify_one();
     };
-    auto on_objects_query = [&, cb_mutex](const json& response) {
+    auto on_objects_query = [&, cb_mutex, done](const json& response) {
         auto locked = cb_mutex.lock();
         if (!locked) return;
         std::lock_guard<std::mutex> lock(*locked);
+        if (*done) return;
         if (!response.is_null() && !response.count("error"))
             objects_query = response;
         if (++received_count >= expected_count) cv.notify_one();
@@ -7965,6 +7968,7 @@ SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHo
         std::unique_lock<std::mutex> lock(*mutex);
         cv.wait_for(lock, std::chrono::seconds(timeout_second),
                     [&received_count, expected_count]() { return received_count >= expected_count; });
+        *done = true;
     }
     // --- Merge by field priority ---
     MachineInfo& mi = result.info;

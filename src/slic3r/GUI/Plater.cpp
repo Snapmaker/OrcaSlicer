@@ -998,12 +998,10 @@ protected:
 
         wxPaintDC dc(this);
 
-        // 1. 绘制背景
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_bgColor));
         dc.DrawRectangle(GetClientRect());
 
-        // 2. 绘制标签背景轨道 (Figma: 扁平直角分段轨道；上外角跟随父卡片圆角，避免直角色块突出卡片)
         dc.SetPen(wxPen(m_dividerColor, 1));
         dc.SetBrush(wxBrush(m_dividerColor));
         int trackW = GetSize().x;
@@ -1012,7 +1010,6 @@ protected:
         dc.DrawRoundedRectangle(0, 0, trackW, 2 * rh, rh);
         dc.DrawRectangle(0, rh, trackW, m_tabHeight - rh);
 
-        // 3. 绘制所有标签 (Figma 27551-61181: 固定 70 宽分段，文字居中)
         wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
         font.SetPointSize(m_textSize);
         dc.SetFont(font);

@@ -136,7 +136,6 @@ private:
     bool InstallNetplugin;
     bool network_plugin_ready {false};
 
-    json m_ProfileJson;
     json m_OrcaFilaList;
     std::string m_OrcaFilaLibPath;
 

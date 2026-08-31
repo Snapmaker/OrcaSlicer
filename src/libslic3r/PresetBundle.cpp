@@ -5900,7 +5900,7 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
     }
 
     if (vendor_name == ORCA_FILAMENT_LIBRARY && filament_subfiles.empty()) {
-        const fs::path vendor_dir   = fs::path(path) / vendor_name;
+        const fs::path vendor_dir   = fs::path(dir) / vendor_name;
         const fs::path filament_dir = vendor_dir / "filament";
 
         // OrcaFilamentLibrary keeps its profiles on disk but ships an empty manifest. Load the shared
@@ -6245,6 +6245,11 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     // Verify and select the filament presets.
     size_t num_filaments = this->filament_presets.size();
 
+    // The nozzle-count top-up below grows filament_presets on its own; the per-filament arrays
+    // (filament_colour and friends) stay at the real slot count, so any colour alignment further
+    // down has to use this pre-top-up count, not the topped-up num_filaments.
+    const size_t num_filament_slots = num_filaments;
+
     auto* nozzle_diameter = static_cast<const ConfigOptionFloats*>(printers.get_edited_preset().config.option("nozzle_diameter"));
     size_t num_extruders  = nozzle_diameter->values.size();
     if (num_extruders > num_filaments) { // Verify validity of the current filament presets.
@@ -6382,7 +6387,11 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
                     this->project_config.set_key_value(key, new ConfigOptionString(value));
             };
 
-            color_opt->values.resize(num_filaments, "#26A69A");
+            // Grow-only, and to the pre-top-up slot count: the filament_presets top-up above is
+            // not a new slot, so padding colours to the topped-up num_filaments would hand the
+            // extruder-count handler a colour for a slot no per-filament array has yet.
+            if (color_opt->values.size() < num_filament_slots)
+                color_opt->values.resize(num_filament_slots, "#26A69A");
             this->mixed_filaments.auto_generate(color_opt->values);
 
             int   gradient_mode = get_mixed_mode(false) ? 1 : 0;

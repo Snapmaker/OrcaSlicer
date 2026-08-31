@@ -8,6 +8,8 @@
 #include "MixedFilament.hpp"
 
 #include <memory>
+#include <map>
+#include <set>
 #include <unordered_map>
 #include <array>
 #include <vector>
@@ -462,6 +464,66 @@ private:
     int m_errors = 0;
     std::vector<unsigned int> m_last_filament_id_remap;
 
+};
+
+// Read-only resolver used by non-GUI callers which need the flattened system
+// presets shipped under resources/profiles. A printer-derived vendor hint is
+// preferred; an unambiguous global owner is used when the hint cannot satisfy
+// the request. Ambiguous logical names (for example, "Generic PLA") still
+// require the printer vendor context.
+class ResourceProfileResolver
+{
+public:
+    struct ResolvedPreset {
+        DynamicPrintConfig config;
+        std::string        name;
+        std::string        vendor_id;
+        std::string        filament_id;
+    };
+
+    struct ResolvedPrinterModel {
+        std::string name;
+        std::string id;
+        std::string model_id;
+        std::string vendor_id;
+    };
+
+    explicit ResourceProfileResolver(boost::filesystem::path profiles_dir);
+
+    // Return an empty string when the model / machine is unknown or resolves
+    // to conflicting vendors.
+    std::string vendor_for_printer(const std::string &printer_preset_name,
+                                   const std::string &printer_model_name) const;
+
+    bool resolve_preset(Preset::Type type, const std::string &name,
+                        const std::string &vendor_hint, ResolvedPreset &out);
+    bool resolve_printer_model(const std::string &name, const std::string &vendor_hint,
+                               ResolvedPrinterModel &out);
+
+    // Auxiliary files (such as cli_config.json) are vendor scoped and optional.
+    boost::filesystem::path vendor_resource(const std::string &vendor_id,
+                                            const boost::filesystem::path &relative_path) const;
+
+private:
+    struct ManifestIndex {
+        std::set<std::string> machine_models;
+        std::set<std::string> machines;
+        std::set<std::string> processes;
+        std::set<std::string> filaments;
+    };
+
+    const std::set<std::string> *names_for_type(const ManifestIndex &index, Preset::Type type) const;
+    std::string unique_vendor_for_name(const std::string &name, Preset::Type type) const;
+    std::string unique_vendor_for_model(const std::string &name) const;
+    PresetBundle *load_base_bundle();
+    PresetBundle *load_vendor(const std::string &vendor_id);
+
+    boost::filesystem::path                              m_profiles_dir;
+    std::map<std::string, ManifestIndex>                 m_manifests;
+    std::unique_ptr<PresetBundle>                        m_base_bundle;
+    bool                                                 m_base_bundle_failed {false};
+    std::map<std::string, std::unique_ptr<PresetBundle>> m_loaded_vendors;
+    std::set<std::string>                                m_failed_vendors;
 };
 
 ENABLE_ENUM_BITMASK_OPERATORS(PresetBundle::LoadConfigBundleAttribute)

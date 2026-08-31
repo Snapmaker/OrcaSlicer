@@ -312,6 +312,238 @@ PresetBundle& PresetBundle::operator=(const PresetBundle &rhs)
     return *this;
 }
 
+ResourceProfileResolver::ResourceProfileResolver(boost::filesystem::path profiles_dir)
+    : m_profiles_dir(std::move(profiles_dir))
+{
+    if (!boost::filesystem::is_directory(m_profiles_dir))
+        return;
+
+    auto index_names = [](const json &root, const char *key, std::set<std::string> &names) {
+        auto list = root.find(key);
+        if (list == root.end() || !list->is_array())
+            return;
+        for (const json &entry : *list) {
+            if (!entry.is_object())
+                continue;
+            auto name = entry.find(BBL_JSON_KEY_NAME);
+            if (name != entry.end() && name->is_string())
+                names.emplace(name->get<std::string>());
+        }
+    };
+
+    for (const boost::filesystem::directory_entry &entry : boost::filesystem::directory_iterator(m_profiles_dir)) {
+        if (!boost::filesystem::is_regular_file(entry.path()) || !is_json_file(entry.path().string()))
+            continue;
+        try {
+            boost::nowide::ifstream stream(entry.path().string());
+            json root;
+            stream >> root;
+            if (!root.is_object() || !root.contains(BBL_JSON_KEY_NAME))
+                continue;
+
+            ManifestIndex index;
+            index_names(root, BBL_JSON_KEY_MACHINE_MODEL_LIST, index.machine_models);
+            index_names(root, BBL_JSON_KEY_MACHINE_LIST, index.machines);
+            index_names(root, BBL_JSON_KEY_PROCESS_LIST, index.processes);
+            index_names(root, BBL_JSON_KEY_FILAMENT_LIST, index.filaments);
+            m_manifests.emplace(entry.path().stem().string(), std::move(index));
+        } catch (const std::exception &error) {
+            BOOST_LOG_TRIVIAL(warning) << "Skipping invalid profile manifest " << entry.path().string()
+                                       << ": " << error.what();
+        }
+    }
+}
+
+const std::set<std::string> *ResourceProfileResolver::names_for_type(const ManifestIndex &index, Preset::Type type) const
+{
+    switch (type) {
+    case Preset::TYPE_PRINTER:  return &index.machines;
+    case Preset::TYPE_PRINT:    return &index.processes;
+    case Preset::TYPE_FILAMENT: return &index.filaments;
+    default:                    return nullptr;
+    }
+}
+
+std::string ResourceProfileResolver::unique_vendor_for_name(const std::string &name, Preset::Type type) const
+{
+    std::string match;
+    for (const auto &[vendor_id, index] : m_manifests) {
+        const std::set<std::string> *names = names_for_type(index, type);
+        if (names == nullptr || names->find(name) == names->end())
+            continue;
+        if (!match.empty())
+            return {};
+        match = vendor_id;
+    }
+    return match;
+}
+
+std::string ResourceProfileResolver::unique_vendor_for_model(const std::string &name) const
+{
+    std::string match;
+    for (const auto &[vendor_id, index] : m_manifests) {
+        if (index.machine_models.find(name) == index.machine_models.end())
+            continue;
+        if (!match.empty())
+            return {};
+        match = vendor_id;
+    }
+    return match;
+}
+
+std::string ResourceProfileResolver::vendor_for_printer(const std::string &printer_preset_name,
+                                                         const std::string &printer_model_name) const
+{
+    const std::string model_vendor   = printer_model_name.empty() ? std::string() : unique_vendor_for_model(printer_model_name);
+    const std::string printer_vendor = printer_preset_name.empty() ? std::string() : unique_vendor_for_name(printer_preset_name, Preset::TYPE_PRINTER);
+    if (!model_vendor.empty() && !printer_vendor.empty() && model_vendor != printer_vendor)
+        return {};
+    return !model_vendor.empty() ? model_vendor : printer_vendor;
+}
+
+PresetBundle *ResourceProfileResolver::load_base_bundle()
+{
+    if (m_base_bundle != nullptr)
+        return m_base_bundle.get();
+    if (m_base_bundle_failed || m_manifests.find(PresetBundle::ORCA_FILAMENT_LIBRARY) == m_manifests.end())
+        return nullptr;
+
+    try {
+        auto bundle = std::make_unique<PresetBundle>();
+        bundle->load_vendor_configs_from_json(m_profiles_dir.string(), PresetBundle::ORCA_FILAMENT_LIBRARY,
+                                              PresetBundle::LoadSystem,
+                                              ForwardCompatibilitySubstitutionRule::EnableSilent);
+        m_base_bundle = std::move(bundle);
+        return m_base_bundle.get();
+    } catch (const std::exception &error) {
+        m_base_bundle_failed = true;
+        BOOST_LOG_TRIVIAL(warning) << "Unable to load shared system filament profiles: " << error.what();
+        return nullptr;
+    }
+}
+
+PresetBundle *ResourceProfileResolver::load_vendor(const std::string &vendor_id)
+{
+    if (vendor_id == PresetBundle::ORCA_FILAMENT_LIBRARY)
+        return load_base_bundle();
+
+    auto loaded = m_loaded_vendors.find(vendor_id);
+    if (loaded != m_loaded_vendors.end())
+        return loaded->second.get();
+    if (m_manifests.find(vendor_id) == m_manifests.end() || m_failed_vendors.find(vendor_id) != m_failed_vendors.end())
+        return nullptr;
+
+    try {
+        auto bundle = std::make_unique<PresetBundle>();
+        bundle->load_vendor_configs_from_json(m_profiles_dir.string(), vendor_id, PresetBundle::LoadSystem,
+                                              ForwardCompatibilitySubstitutionRule::EnableSilent,
+                                              load_base_bundle());
+        PresetBundle *result = bundle.get();
+        m_loaded_vendors.emplace(vendor_id, std::move(bundle));
+        return result;
+    } catch (const std::exception &error) {
+        m_failed_vendors.emplace(vendor_id);
+        BOOST_LOG_TRIVIAL(warning) << "Unable to load system profile vendor " << vendor_id << ": " << error.what();
+        return nullptr;
+    }
+}
+
+bool ResourceProfileResolver::resolve_preset(Preset::Type type, const std::string &name,
+                                             const std::string &vendor_hint, ResolvedPreset &out)
+{
+    std::string vendor_id;
+    if (!vendor_hint.empty()) {
+        auto manifest = m_manifests.find(vendor_hint);
+        if (manifest != m_manifests.end()) {
+            const std::set<std::string> *names = names_for_type(manifest->second, type);
+            if (names != nullptr && names->find(name) != names->end())
+                vendor_id = vendor_hint;
+        }
+    }
+    if (vendor_id.empty()) {
+        vendor_id = unique_vendor_for_name(name, type);
+        if (vendor_id.empty() && type == Preset::TYPE_FILAMENT) {
+            // OrcaFilamentLibrary intentionally ships an empty manifest, so its
+            // directly selectable @System presets can only be discovered after
+            // the canonical shared bundle has been loaded.
+            PresetBundle *base_bundle = load_base_bundle();
+            const Preset *base_preset = base_bundle == nullptr ? nullptr : base_bundle->filaments.find_preset(name, false);
+            if (base_preset != nullptr && !base_preset->is_default) {
+                out.config      = base_preset->config;
+                out.name        = base_preset->name;
+                out.vendor_id   = PresetBundle::ORCA_FILAMENT_LIBRARY;
+                out.filament_id = base_preset->filament_id;
+                return true;
+            }
+        }
+        if (vendor_id.empty())
+            return false;
+    }
+
+    PresetBundle *bundle = load_vendor(vendor_id);
+    if (bundle == nullptr)
+        return false;
+
+    const Preset *preset = nullptr;
+    switch (type) {
+    case Preset::TYPE_PRINTER:  preset = bundle->printers.find_preset(name, false); break;
+    case Preset::TYPE_PRINT:    preset = bundle->prints.find_preset(name, false); break;
+    case Preset::TYPE_FILAMENT: preset = bundle->filaments.find_preset(name, false); break;
+    default:                    return false;
+    }
+    if (preset == nullptr || preset->is_default)
+        return false;
+
+    out.config      = preset->config;
+    out.name        = preset->name;
+    out.vendor_id   = vendor_id;
+    out.filament_id = preset->filament_id;
+    return true;
+}
+
+bool ResourceProfileResolver::resolve_printer_model(const std::string &name, const std::string &vendor_hint,
+                                                    ResolvedPrinterModel &out)
+{
+    std::string vendor_id;
+    if (!vendor_hint.empty()) {
+        auto manifest = m_manifests.find(vendor_hint);
+        if (manifest != m_manifests.end() && manifest->second.machine_models.find(name) != manifest->second.machine_models.end())
+            vendor_id = vendor_hint;
+    }
+    if (vendor_id.empty()) {
+        vendor_id = unique_vendor_for_model(name);
+        if (vendor_id.empty())
+            return false;
+    }
+
+    PresetBundle *bundle = load_vendor(vendor_id);
+    if (bundle == nullptr)
+        return false;
+    auto vendor = bundle->vendors.find(vendor_id);
+    if (vendor == bundle->vendors.end())
+        return false;
+
+    auto model = std::find_if(vendor->second.models.begin(), vendor->second.models.end(), [&name](const VendorProfile::PrinterModel &candidate) {
+        return candidate.id == name || candidate.name == name || candidate.model_id == name;
+    });
+    if (model == vendor->second.models.end())
+        return false;
+
+    out.name      = model->name;
+    out.id        = model->id;
+    out.model_id  = model->model_id;
+    out.vendor_id = vendor_id;
+    return true;
+}
+
+boost::filesystem::path ResourceProfileResolver::vendor_resource(const std::string &vendor_id,
+                                                                 const boost::filesystem::path &relative_path) const
+{
+    if (vendor_id.empty() || relative_path.empty() || relative_path.is_absolute() || m_manifests.find(vendor_id) == m_manifests.end())
+        return {};
+    return (m_profiles_dir / vendor_id / relative_path).lexically_normal();
+}
+
 void PresetBundle::reset(bool delete_files)
 {
     // Clear the existing presets, delete their respective files.

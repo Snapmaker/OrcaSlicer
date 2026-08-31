@@ -29606,6 +29606,9 @@ msgstr ""
 "程重叠。仅适用于使用 2 型擦拭塔的多挤出机（多工具头）打印机。固件或换工具头宏"
 "本身不得等待温度。禁用时，等待温度的指令将在换工具头命令之后立即发出。"
 
+msgid "Release"
+msgstr "版本"
+
 #~ msgid ""
 #~ "Decrease this value slightly (for example 0.9) to reduce the amount of "
 #~ "material for bridge, to improve sag.\n"

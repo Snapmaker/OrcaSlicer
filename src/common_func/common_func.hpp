@@ -8,7 +8,7 @@
 // header generated out of version.inc — the single source of truth.
 #include "libslic3r_version.h"
 #define Snapmaker_VERSION "2.5.0"
-#define MIN_FIRM_VER "1.5.0"
+#define MIN_FIRM_VER "1.6.0"
 #define BBL_RELEASE_TO_PUBLIC 1
 
 namespace common 

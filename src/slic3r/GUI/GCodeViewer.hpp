@@ -190,6 +190,8 @@ private:
     std::array<float, static_cast<size_t>(EMoveType::Count)> m_move_type_distances{};
     //BBS: add only gcode mode
     bool m_only_gcode_in_preview {false};
+    // Re-entrancy guard for load(): reset() is ignored while armed (2.3.6 fix).
+    bool m_loading{ false };
 
     //BBS: extruder dispensing filament
     std::vector<ExtruderFilament> m_left_extruder_filament;

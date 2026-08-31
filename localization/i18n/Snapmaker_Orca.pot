@@ -11255,6 +11255,9 @@ msgstr ""
 msgid "Beta version"
 msgstr ""
 
+msgid "Release"
+msgstr ""
+
 msgid "Updating"
 msgstr ""
 

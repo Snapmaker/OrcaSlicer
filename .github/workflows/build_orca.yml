@@ -175,7 +175,9 @@ jobs:
       - name: Pack unit tests mac
         if: runner.os == 'macOS' && !inputs.macos-combine-only && inputs.arch == 'arm64'
         working-directory: ${{ github.workspace }}
-        run: tar -cvf build_tests.tar build/arm64/tests
+        # The test binaries load libsentry.dylib through an rpath into the deps
+        # prefix; ship it at that path so the unit-test runner can resolve it.
+        run: tar -cvf build_tests.tar build/arm64/tests deps/build/arm64/OrcaSlicer_dep/usr/local/lib/libsentry.dylib
 
       - name: Upload Test Artifact mac
         if: runner.os == 'macOS' && !inputs.macos-combine-only && inputs.arch == 'arm64'

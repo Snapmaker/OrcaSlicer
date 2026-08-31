@@ -90,7 +90,8 @@ jobs:
   upload_symbols_macos:
     name: Upload macOS Debug Symbols to Sentry
     needs: build_macos_universal
-    if: ${{ !cancelled() && needs.build_macos_universal.result == 'success' && !vars.SELF_HOSTED }}
+    # Needs the Sentry org secrets; forks without them skip instead of failing.
+    if: ${{ !cancelled() && needs.build_macos_universal.result == 'success' && !vars.SELF_HOSTED && (github.repository_owner == 'Snapmaker' || vars.SENTRY_UPLOAD == '1') }}
     uses: ./.github/workflows/sentry_cli.yml
     with:
       os: macos-14

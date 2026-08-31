@@ -181,7 +181,7 @@ SlicingParameters SlicingParameters::create_from_config(
         params.gap_raft_object = 0.0;
     } else {
         params.gap_raft_object = raft_z_gap;
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_raft_object =
                 std::round(params.gap_raft_object / object_config.layer_height + EPSILON)
                 * object_config.layer_height;
@@ -194,7 +194,7 @@ SlicingParameters SlicingParameters::create_from_config(
     } else {
         params.gap_object_support = support_bottom_z_gap;
 
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_object_support =
                 std::round(params.gap_object_support / object_config.layer_height + EPSILON)
                 * object_config.layer_height;
@@ -207,7 +207,7 @@ SlicingParameters SlicingParameters::create_from_config(
     } else {
         params.gap_support_object = support_top_z_gap;
 
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_support_object =
                 std::round(params.gap_support_object / object_config.layer_height + EPSILON)
                 * object_config.layer_height;

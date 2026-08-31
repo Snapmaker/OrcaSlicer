@@ -3259,6 +3259,36 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
             z_heights[m_object->get_layer(layer_nr)->print_z] = m_object->get_layer(layer_nr)->height;
             layer_heights[layer_nr] = {m_object->get_layer(layer_nr)->print_z, m_object->get_layer(layer_nr)->height, size_t(layer_nr)};
         }
+    } else if (m_support_params.grid_aligned_layer_height) {
+        // Grid-aligned independent heights: group whole object layers into runs whose summed
+        // height still fits through the support nozzle. Every print_z lands on an object
+        // layer, so with the prime tower enabled each toolchange still has a tower layer to
+        // wipe on - the reason free-form heights are not allowed together with the tower.
+        const coordf_t max_layer_height = std::max(m_slicing_params.max_suport_layer_height, m_object->config().layer_height.value);
+        const size_t   n = m_object->layer_count();
+        // A run must end exactly at a top-contact layer so the support tops keep their
+        // contact Z (mirrors the boundaries the free-form planner inserts), and the contact
+        // layer itself prints at the object layer height for interface quality.
+        std::vector<char> boundary(n + 1, 0);
+        for (size_t layer_nr = 1; layer_nr < contact_nodes.size() && layer_nr < n; ++layer_nr)
+            if (!contact_nodes[layer_nr].empty()) {
+                boundary[layer_nr]     = 1;
+                boundary[layer_nr + 1] = 1;
+            }
+        layer_heights.reserve(n);
+        layer_heights.push_back({m_object->get_layer(0)->print_z, m_object->get_layer(0)->height, 0});
+        size_t i = 1;
+        while (i < n) {
+            coordf_t height = m_object->get_layer(i)->height;
+            size_t   j      = i + 1;
+            while (j < n && !boundary[j] &&
+                   height + m_object->get_layer(j)->height <= max_layer_height + EPSILON) {
+                height += m_object->get_layer(j)->height;
+                ++j;
+            }
+            layer_heights.push_back({m_object->get_layer(j - 1)->print_z, height, j - 1});
+            i = j;
+        }
     } else {
         const coordf_t               max_layer_height = m_slicing_params.max_suport_layer_height;
         const coordf_t               min_layer_height = m_slicing_params.min_layer_height;

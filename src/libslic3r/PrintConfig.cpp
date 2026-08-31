@@ -10103,12 +10103,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             ept_opt->value = false;
         }
 
-        if (ept_opt->value) {
-            if (islh_opt)
-                islh_opt->value = false;
-            //if (alh_opt)
-            //    alh_opt->value = false;
-        }
+        // With the prime tower enabled, independent support layer heights are no longer
+        // forced off: tree supports plan grid-aligned thick layers (whole multiples of
+        // object layers) so every toolchange still lands on a tower layer, and the
+        // classic support generator falls back to synchronized layers on its own.
+        (void) islh_opt;
         /* BBS: MusangKing - not sure if this is still valid, just comment it out cause "Independent support layer height" is re-opened.
         else {
             if (islh_opt)
@@ -10205,13 +10204,9 @@ t_config_option_keys DynamicPrintConfig::normalize_fdm_2(int num_objects, int us
         }
 
         if (ept_opt->value) {
-            if (islh_opt) {
-                if (islh_opt->value) {
-                    islh_opt->value = false;
-                    changed_keys.push_back("independent_support_layer_height");
-                }
-                //islh_opt->value = false;
-            }
+            // Independent support layer heights stay enabled with the prime tower (see
+            // normalize_fdm()); supports print grid-aligned thick layers instead.
+            (void) islh_opt;
             //if (alh_opt) {
             //    if (alh_opt->value) {
             //        alh_opt->value = false;

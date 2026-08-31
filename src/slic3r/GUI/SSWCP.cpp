@@ -717,7 +717,7 @@ void SSWCP_Instance::sw_GetActiveFile()
                 self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
                 std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
                 std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
-                self->m_res_data["url"] = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_zip_path);
+                self->m_res_data["url"] = wxGetApp().gateway_localfile_url(url_zip_path);
                 SSWCP::m_file_size_mutex.unlock();
 
                 // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
@@ -748,7 +748,7 @@ void SSWCP_Instance::sw_GetActiveFile()
 
         // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
         m_res_data["checksum"] = calc_sha256_base64(file_path);
-        m_res_data["url"]      = LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/localfile/" + Http::url_encode(url_path);
+        m_res_data["url"]      = wxGetApp().gateway_localfile_url(url_path);
 
         send_to_js();
         finish_job();
@@ -7210,14 +7210,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
 
                                     if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                               "/web/flutter_web/index.html?path=2");
+                                        wxString url      = wxGetApp().gateway_web_url("device_control");
                                         auto     real_url = wxGetApp().get_international_url(url);
                                         wxGetApp().mainframe->load_printer_url(real_url); 
                                     } else {
                                         if (reload_device_view) {
-                                            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                                   "/web/flutter_web/index.html?path=2");
+                                            wxString url      = wxGetApp().gateway_web_url("device_control");
                                             auto     real_url = wxGetApp().get_international_url(url);
 
                                             wxGetApp().mainframe->load_printer_url(real_url);

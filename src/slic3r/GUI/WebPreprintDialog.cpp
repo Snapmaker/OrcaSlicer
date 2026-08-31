@@ -17,11 +17,9 @@ END_EVENT_TABLE()
 WebPreprintDialog::WebPreprintDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Print preset"))
 {
-    m_prePrint_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                     "/web/flutter_web/index.html?path=4");
+    m_prePrint_url = wxGetApp().gateway_web_url("pre_paint_page");
 
-    m_preSend_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                     "/web/flutter_web/index.html?path=5");
+    m_preSend_url = wxGetApp().gateway_web_url("pre_paint_upload_page");
     SetBackgroundColour(*wxWHITE);
 
     // Create the webview with about:blank; the actual page will be loaded by run()
@@ -214,4 +212,4 @@ void WebPreprintDialog::OnClose(wxCloseEvent& evt)
     }
 }
 
-}} // namespace Slic3r::GUI 
+}} // namespace Slic3r::GUI

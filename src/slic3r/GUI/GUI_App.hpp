@@ -77,6 +77,10 @@ class DeviceManager;
 class NetworkAgent;
 class TaskManager;
 
+namespace Gateway {
+class GatewayService;
+}
+
 namespace GUI{
 
 class RemovableDriveManager;
@@ -347,6 +351,7 @@ private:
 
 public:
     HttpServer       m_page_http_server;
+    mutable std::unique_ptr<Gateway::GatewayService> m_gateway_service;
     
 private:
     bool             m_show_gcode_window{true};
@@ -641,6 +646,12 @@ private:
     /// Actual listen port (may differ from PAGE_HTTP_PORT if the default was in use).
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
 
+    bool            start_gateway_service(bool restart = false);
+    void            stop_gateway_service();
+    wxString        gateway_web_url(const wxString& page_key) const;
+    std::string     gateway_localfile_url(const std::string& file_path) const;
+    bool            is_gateway_url(const wxString& url) const;
+
     enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };
     /// Copy bundled flutter_web into the user data directory. On failure, records status for deferred user notification.
     bool            copy_bundled_flutter_web(bool upgrade);
@@ -658,6 +669,7 @@ private:
 
     bool            switch_language();
     bool            load_language(wxString language, bool initial);
+    std::string     gateway_locale() const;
 
     Tab*            get_tab(Preset::Type type);
     Tab*            get_plate_tab();

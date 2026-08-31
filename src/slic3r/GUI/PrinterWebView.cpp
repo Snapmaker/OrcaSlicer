@@ -28,7 +28,7 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=2");
+    wxString url      = wxGetApp().gateway_web_url("device_control");
     auto     real_url = wxGetApp().get_international_url(url);
       // Create the webview
     m_browser = WebView::CreateWebView(this, real_url);
@@ -73,7 +73,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
         return;
     m_apikey = apikey;
 
-    if (url.find("path=2") != std::string::npos) {
+    if (wxGetApp().is_gateway_url(url)) {
         wxGetApp().fltviews().add_printer_view(this, url, apikey);
     } else {
         wxGetApp().fltviews().remove_printer_view(this);
@@ -95,7 +95,7 @@ bool PrinterWebView::isSnapmakerPage()
     if (m_browser == nullptr)
         return false;
     auto url = m_browser->GetCurrentURL();
-    return (url.find("flutter_web") != std::string::npos);
+    return wxGetApp().is_gateway_url(url);
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {

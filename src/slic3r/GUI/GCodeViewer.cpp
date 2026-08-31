@@ -1190,18 +1190,29 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     //BBS: add logs
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": gcode result %1%, new id %2%, gcode file %3% ") % (&gcode_result) % m_last_result_id % gcode_result.filename;
 
-    // release gpu memory, if used
+    // release gpu memory, if used.
+    // NOTE: this MUST run before m_loading is armed below. reset() early-returns
+    // when m_loading is set, so arming first would silently skip this cleanup and
+    // the previous gcode's buffers would leak / be appended to by the load below.
     reset();
+
+    // Loading below can pump the event loop; a dispatched event can re-enter
+    // reset() (via reset_gcode_toolpaths) and tear down state mid-flight.
+    // Arm the guard so any re-entrant reset() is ignored. ScopeGuard clears the
+    // flag on every exit, including exceptions.
+    m_loading = true;
+    ScopeGuard loading_guard([this]() { m_loading = false; });
 
     //BBS: add mutex for protection of gcode result
     wxGetApp().plater()->suppress_background_process(true);
+    ScopeGuard resume_guard([]() { wxGetApp().plater()->schedule_background_process(); });
     gcode_result.lock();
+    ScopeGuard unlock_guard([&gcode_result]() { gcode_result.unlock(); });
     //BBS: add safe check
     if (gcode_result.moves.size() == 0) {
         //result cleaned before slicing ,should return here
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": gcode result reset before, return directly!");
-        gcode_result.unlock();
-        wxGetApp().plater()->schedule_background_process();
+        // gcode_result.unlock() and schedule_background_process() run via the ScopeGuards above.
         return;
     }
 
@@ -1535,9 +1546,9 @@ void GCodeViewer::load_as_gcode(const GCodeProcessorResult& gcode_result, const 
     m_gcode_check_result = gcode_result.gcode_check_result;
 
     filament_printable_reuslt = gcode_result.filament_printable_reuslt;
-    //BBS: add mutex for protection of gcode result
-    gcode_result.unlock();
-    wxGetApp().plater()->schedule_background_process();
+    // gcode_result.unlock(), schedule_background_process() and m_loading = false
+    // run here via the ScopeGuards above.
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": finished");
 }
 
 void GCodeViewer::load_as_preview(libvgcode::GCodeInputData&& data)
@@ -1599,6 +1610,8 @@ void GCodeViewer::reset_shell()
 
 void GCodeViewer::reset()
 {
+    if (m_loading)
+        return;
     //BBS: should also reset the result id
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current result id %1% ")%m_last_result_id;
     m_last_result_id = -1;

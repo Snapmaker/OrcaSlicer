@@ -5693,6 +5693,11 @@ void Sidebar::msw_rescale()
     p->m_bpButton_ams_filament->msw_rescale();
     p->m_bpButton_set_filament->msw_rescale();
     p->m_flushing_volume_btn->Rescale();
+    // Batch-match button caches its text extent (messureSize) at creation DPI; without
+    // Rescale() the cached size goes stale after a per-monitor DPI change (e.g. moving
+    // the window to a 150% 4K screen), so render() centers the auto-rescaled font with
+    // the old-DPI metrics and the label drifts/clips.
+    p->m_btn_batch_match->Rescale();
     //BBS
     m_bed_type_list->Rescale();
     m_bed_type_list->SetMinSize({-1, 3 * wxGetApp().em_unit()});
@@ -5766,6 +5771,8 @@ void Sidebar::sys_color_changed()
     p->m_bpButton_ams_filament->msw_rescale();
     p->m_bpButton_set_filament->msw_rescale();
     p->m_flushing_volume_btn->Rescale();
+    // Keep the cached text extent in sync with the new DPI, same as above.
+    p->m_btn_batch_match->Rescale();
 
     // BBS
 #if 0
@@ -11056,10 +11063,19 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     if (!p->m_nozzle_notebook)
         return;
 
+    const DynamicPrintConfig& printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+
     // Get new nozzle count
-    auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(
-        wxGetApp().preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+    auto* nozzle_diameter = dynamic_cast<const ConfigOptionFloats*>(printer_config.option("nozzle_diameter"));
     size_t new_nozzle_count = nozzle_diameter ? nozzle_diameter->values.size() : 1;
+
+    // Avoid flicker while the notebook is torn down and rebuilt (2.3.6).
+    wxWindowUpdateLocker noUpdates(p->m_nozzle_notebook);
+
+    // Record focus before DeleteAllPages destroys the focused control (2.3.6).
+    bool focus_was_in_notebook = false;
+    if (wxWindow* focus = wxWindow::FindFocus())
+        focus_was_in_notebook = p->m_nozzle_notebook->IsDescendant(focus);
 
     // Clear existing pages and controls, keeping the selected tab across the rebuild.
     const int prev_page = p->m_nozzle_notebook->GetSelection();
@@ -11294,7 +11310,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     if (switch_machine) {
         p->combo_printer->SetFocus();
-    } else {
+    } else if (focus_was_in_notebook) {
+        // The focused control was destroyed by the rebuild.
         p->combo_printer->GetParent()->SetFocus();
     }
 }
@@ -16424,6 +16441,7 @@ void Plater::priv::reset(bool apply_presets_change)
     Plater::TakeSnapshot snapshot(q, _u8L("Reset Project"), UndoRedo::SnapshotType::ProjectSeparator);
 
     clear_warnings();
+    first_enter_assemble = true;
 
     set_project_filename("");
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " call set_project_filename: empty";

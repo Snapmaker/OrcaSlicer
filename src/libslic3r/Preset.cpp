@@ -4009,17 +4009,17 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection &&othe
             }
             m_presets.emplace(it, std::move(preset));
         } else {
+            // Take the name first: the Snapmaker-wins branch moves the preset away.
+            std::string preset_name = preset.name;
             std::string default_vendor = std::string(PresetBundle::SM_BUNDLE);
-            if (preset.vendor->name == default_vendor) {
-                if (preset.vendor != nullptr) {
-                    // Re-assign a pointer to the vendor structure in the new PresetBundle.
-                    auto it = new_vendors.find(preset.vendor->id);
-                    assert(it != new_vendors.end());
-                    preset.vendor = &it->second;
-                }
+            if (preset.vendor != nullptr && preset.vendor->name == default_vendor) {
+                // Re-assign a pointer to the vendor structure in the new PresetBundle.
+                auto it_vendor = new_vendors.find(preset.vendor->id);
+                assert(it_vendor != new_vendors.end());
+                preset.vendor = &it_vendor->second;
                 m_presets.emplace(it, std::move(preset));
             }
-            duplicates.emplace_back(std::move(preset.name));
+            duplicates.emplace_back(std::move(preset_name));
         }
             
     }

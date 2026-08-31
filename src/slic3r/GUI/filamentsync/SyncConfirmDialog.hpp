@@ -21,7 +21,7 @@ public:
     SyncRichConfirmDialog(wxWindow* parent, const wxString& message, long style = wxOK);
     ~SyncRichConfirmDialog() override = default;
 
-    void navigateToTab(MainFrame::TabPosition pos);
+    void navigateToTab(const wxString& tab_id);
 };
 
 } // namespace GUI

@@ -66,41 +66,41 @@ using Config::SnapshotDB;
 
 // Configuration data structures extensions needed for the wizard
 // SM_FEATURE: set sm machine as default
-bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_sm_bundle)
+bool Bundle::load(fs::path dir, const std::string &vendor_name, bool ais_in_resources, bool ais_sm_bundle)
 {
     this->preset_bundle = std::make_unique<PresetBundle>();
     this->is_in_resources = ais_in_resources;
     this->is_sm_bundle = ais_sm_bundle;
 
-    std::string path_string = source_path.string();
-    std::string parent_path = source_path.parent_path().string();
     //BBS: add json logic for vendor bundles
-    std::string vendor_name = source_path.filename().string();
-    if (Slic3r::is_json_file(path_string)) {
-        // Remove the .json suffix.
-        vendor_name.erase(vendor_name.size() - 5);
-    }
-    else
+    // Orca: served from the vendor's preset cache where one covers it — which is
+    // how a shipped build carries its vendors — and parsed from the JSONs otherwise.
+    // A vendor that can be neither read nor parsed — a cache the build cannot use
+    // with the preset JSONs behind it pruned, say — is one the wizard cannot offer.
+    // Every other vendor still can be, so it is left out rather than thrown over.
+    size_t presets_loaded = 0;
+    try {
+        auto [config_substitutions, loaded] = preset_bundle->load_vendor_configs_from_json(
+            dir.string(), vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
+        UNUSED(config_substitutions);
+        // No substitutions shall be reported when loading a system config bundle, no substitutions are allowed.
+        assert(config_substitutions.empty());
+        presets_loaded = loaded;
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(fatal) << boost::format("Vendor bundle: `%1%`: cannot be loaded, leaving it out: %2%") % vendor_name % e.what();
         return false;
-
-    // Throw when parsing invalid configuration. Only valid configuration is supposed to be provided over the air.
-    //BBS: add json logic for vendor bundles
-    auto [config_substitutions, presets_loaded] = preset_bundle->load_vendor_configs_from_json(
-        parent_path, vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
-    UNUSED(config_substitutions);
-    // No substitutions shall be reported when loading a system config bundle, no substitutions are allowed.
-    assert(config_substitutions.empty());
+    }
     auto first_vendor = preset_bundle->vendors.begin();
     if (first_vendor == preset_bundle->vendors.end()) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No vendor information defined, cannot install.") % path_string;
+        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No vendor information defined, cannot install.") % vendor_name;
         return false;
     }
     if (presets_loaded == 0) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No profile loaded.") % path_string;
+        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No profile loaded.") % vendor_name;
         return false;
-    } 
+    }
 
-    BOOST_LOG_TRIVIAL(trace) << boost::format("Vendor bundle: `%1%`: %2% profiles loaded.") % path_string % presets_loaded;
+    BOOST_LOG_TRIVIAL(trace) << boost::format("Vendor bundle: `%1%`: %2% profiles loaded.") % vendor_name % presets_loaded;
     this->vendor_profile = &first_vendor->second;
     return true;
 }
@@ -123,17 +123,12 @@ BundleMap BundleMap::load()
     const auto vendor_dir = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
     const auto rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
 
-    // SM_FEATURE
-    auto sm_bundle_path = (vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
-    auto sm_bundle_rsrc = false;
-
-    if (!boost::filesystem::exists(sm_bundle_path)) {
-        sm_bundle_path = (rsrc_vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
-        sm_bundle_rsrc = true;
-    }
+    // SM_FEATURE: the Snapmaker bundle is this fork's default vendor
+    //Orca: add json logic for vendor bundle
     {
+        const bool from_rsrc = ! is_vendor_installed(PresetBundle::SM_BUNDLE);
         Bundle sm_bundle;
-        if (sm_bundle.load(std::move(sm_bundle_path), sm_bundle_rsrc, true))
+        if (sm_bundle.load(from_rsrc ? rsrc_vendor_dir : vendor_dir, PresetBundle::SM_BUNDLE, from_rsrc, true))
             res.emplace(PresetBundle::SM_BUNDLE, std::move(sm_bundle));
     }
 
@@ -141,18 +136,13 @@ BundleMap BundleMap::load()
     // and then additionally from resources/profiles.
     bool is_in_resources = false;
     for (auto dir : { &vendor_dir, &rsrc_vendor_dir }) {
-        for (const auto &dir_entry : boost::filesystem::directory_iterator(*dir)) {
-            //BBS: add json logic for vendor bundle
-            if (Slic3r::is_json_file(dir_entry.path().string())) {
-                std::string id = dir_entry.path().stem().string();  // stem() = filename() without the trailing ".json" part
+        for (const std::string &id : vendor_names_in(*dir)) {
+            // Don't load this bundle if we've already loaded it.
+            if (res.find(id) != res.end()) { continue; }
 
-                // Don't load this bundle if we've already loaded it.
-                if (res.find(id) != res.end()) { continue; }
-
-                Bundle bundle;
-                if (bundle.load(dir_entry.path(), is_in_resources))
-                    res.emplace(std::move(id), std::move(bundle));
-            }
+            Bundle bundle;
+            if (bundle.load(*dir, id, is_in_resources))
+                res.emplace(id, std::move(bundle));
         }
 
         is_in_resources = true;
@@ -912,20 +902,7 @@ void PageMaterials::update_lists(int sel_type, int sel_vendor, int last_selected
 	wxArrayInt sel_printers;
 	int sel_printers_count = list_printer->GetSelections(sel_printers);
 
-    // Does our wxWidgets version support operator== for wxArrayInt ?
-#if wxCHECK_VERSION(3, 1, 1)
     if (sel_printers != sel_printers_prev) {
-#else
-    auto are_equal = [](const wxArrayInt& arr_first, const wxArrayInt& arr_second) {
-        if (arr_first.GetCount() != arr_second.GetCount())
-            return false;
-        for (size_t i = 0; i < arr_first.GetCount(); i++)
-            if (arr_first[i] != arr_second[i])
-                return false;
-        return true;
-    };
-    if (!are_equal(sel_printers, sel_printers_prev)) {
-#endif
 
         // Refresh type list
 		list_type->Clear();
@@ -1276,9 +1253,19 @@ PageFirmware::PageFirmware(ConfigWizard *parent)
 void PageFirmware::apply_custom_config(DynamicPrintConfig &config)
 {
     auto sel = gcode_picker->GetSelection();
-    if (sel >= 0 && (size_t)sel < gcode_opt.enum_labels.size()) {
-        auto *opt = new ConfigOptionEnum<GCodeFlavor>(static_cast<GCodeFlavor>(sel));
-        config.set_key_value("gcode_flavor", opt);
+
+    // Safety check: ensure selection index is within bounds
+    if (sel >= 0 && (size_t) sel < gcode_opt.enum_values.size()) {
+        std::string selected_flavor_str = gcode_opt.enum_values[sel];
+        // Ensure the default value exists to prevent null pointer crashes
+        if (gcode_opt.default_value) {
+            //Clone the fully initialized option (preserves the dictionary map)
+            ConfigOption* opt = gcode_opt.default_value->clone();
+            // Deserialize the string safely
+            opt->deserialize(selected_flavor_str);
+            // Save it to the printer configuration
+            config.set_key_value("gcode_flavor", opt);
+        }
     }
 }
 
@@ -1363,7 +1350,7 @@ PageDiameters::PageDiameters(ConfigWizard *parent)
 
     auto *sizer_nozzle = new wxFlexGridSizer(3, 5, 5);
     auto *text_nozzle = new wxStaticText(this, wxID_ANY, _L("Nozzle Diameter:"));
-    auto *unit_nozzle = new wxStaticText(this, wxID_ANY, "mm");
+    auto *unit_nozzle = new wxStaticText(this, wxID_ANY, _L("mm"));
     sizer_nozzle->AddGrowableCol(0, 1);
     sizer_nozzle->Add(text_nozzle, 0, wxALIGN_CENTRE_VERTICAL);
     sizer_nozzle->Add(diam_nozzle);
@@ -1377,7 +1364,7 @@ PageDiameters::PageDiameters(ConfigWizard *parent)
 
     auto *sizer_filam = new wxFlexGridSizer(3, 5, 5);
     auto *text_filam = new wxStaticText(this, wxID_ANY, _L("Filament Diameter:"));
-    auto *unit_filam = new wxStaticText(this, wxID_ANY, "mm");
+    auto *unit_filam = new wxStaticText(this, wxID_ANY, _L("mm"));
     sizer_filam->AddGrowableCol(0, 1);
     sizer_filam->Add(text_filam, 0, wxALIGN_CENTRE_VERTICAL);
     sizer_filam->Add(diam_filam);
@@ -1453,12 +1440,12 @@ PageTemperatures::PageTemperatures(ConfigWizard *parent)
     spin_bed->SetValue(default_bed != nullptr && default_bed->size() > 0 ? default_bed->get_at(0) : 0);
 
     append_text(_L("Enter the nozzle_temperature needed for extruding your filament."));
-    append_text(_L("A rule of thumb is 160 to 230 °C for PLA, and 215 to 250 °C for ABS."));
+    append_text(_L("A rule of thumb is 160 to 230℃ for PLA, and 215 to 250℃ for ABS."));
 #endif
 
     auto *sizer_extr = new wxFlexGridSizer(3, 5, 5);
     auto *text_extr = new wxStaticText(this, wxID_ANY, _L("Extrusion Temperature:"));
-    auto *unit_extr = new wxStaticText(this, wxID_ANY, wxString::FromUTF8("\u2103") /* °C */);
+    auto *unit_extr = new wxStaticText(this, wxID_ANY, _L("\u2103" /* °C */));
     sizer_extr->AddGrowableCol(0, 1);
     sizer_extr->Add(text_extr, 0, wxALIGN_CENTRE_VERTICAL);
     sizer_extr->Add(spin_extr);
@@ -1468,11 +1455,11 @@ PageTemperatures::PageTemperatures(ConfigWizard *parent)
     append_spacer(VERTICAL_SPACING);
 
     append_text(_L("Enter the bed temperature needed for getting your filament to stick to your heated bed."));
-    append_text(_L("A rule of thumb is 60 °C for PLA and 110 °C for ABS. Leave zero if you have no heated bed."));
+    append_text(_L("A rule of thumb is 60℃ for PLA and 110℃ for ABS. Leave zero if you have no heated bed."));
 
     auto *sizer_bed = new wxFlexGridSizer(3, 5, 5);
     auto *text_bed = new wxStaticText(this, wxID_ANY, _L("Bed Temperature:"));
-    auto *unit_bed = new wxStaticText(this, wxID_ANY, wxString::FromUTF8("\u2103") /* °C */);
+    auto *unit_bed = new wxStaticText(this, wxID_ANY, _L("\u2103" /* °C */));
     sizer_bed->AddGrowableCol(0, 1);
     sizer_bed->Add(text_bed, 0, wxALIGN_CENTRE_VERTICAL);
     sizer_bed->Add(spin_bed);
@@ -1889,12 +1876,6 @@ void ConfigWizard::priv::load_vendors()
 				    for (auto &bundle : bundles) {
 				    	const PresetCollection &materials = bundle.second.preset_bundle->materials(technology);
 				    	const Preset           *preset    = materials.find_preset(material_name);
-				    	if (preset == nullptr) {
-				    		// Not found. Maybe the material preset is there, bu it was was renamed?
-							const std::string *new_name = materials.get_preset_name_renamed(material_name);
-							if (new_name != nullptr)
-								preset = materials.find_preset(*new_name);
-				    	}
                         if (preset != nullptr) {
                             // Materal preset was found, mark it as installed.
                             section_new[preset->name] = "true";
@@ -2609,7 +2590,7 @@ bool ConfigWizard::priv::apply_config(AppConfig *app_config, PresetBundle *prese
         custom_config->set_key_value("filament_colour", wxGetApp().preset_bundle->project_config.option("filament_colour"));
         const std::string profile_name = page_custom->profile_name();
         Semver semver(SLIC3R_VERSION);
-        preset_bundle->load_config_from_wizard(profile_name, *custom_config, semver, true);
+        preset_bundle->load_config_from_wizard(profile_name, *custom_config, semver);
 
         wxGetApp().plater()->sidebar().update_presets(Slic3r::Preset::Type::TYPE_PRINTER);
         wxGetApp().plater()->sidebar().update_presets(Slic3r::Preset::Type::TYPE_FILAMENT);

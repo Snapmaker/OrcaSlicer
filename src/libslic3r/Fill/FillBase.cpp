@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include "../ClipperUtils.hpp"
+#include "../Clipper2Utils.hpp"
 #include "../EdgeGrid.hpp"
 #include "../Geometry.hpp"
 #include "../Geometry/Circle.hpp"
@@ -164,7 +165,11 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
         // ORCA: special flag for flow rate calibration
         auto is_flow_calib = params.extrusion_role == erTopSolidInfill && this->print_object_config->has("calib_flowrate_topinfill_special_order") &&
                              this->print_object_config->option("calib_flowrate_topinfill_special_order")->getBool();
-        if (is_flow_calib) {
+        // Orca: a forced surface fill order must survive the G-code path planner, which would
+        // otherwise re-chain and possibly reverse the paths. The same applies to the flow rate
+        // calibration's special toolpath order.
+        const bool keep_fill_order = params.fill_order != SurfaceFillOrder::Default;
+        if (is_flow_calib || keep_fill_order) {
             eec->no_sort = true;
         }
         size_t idx   = eec->entities.size();
@@ -179,7 +184,7 @@ void Fill::fill_surface_extrusion(const Surface* surface, const FillParams& para
                 params.extrusion_role,
                 flow_mm3_per_mm, float(flow_width), params.flow.height());
         }
-        if (!params.can_reverse || is_flow_calib) {
+        if (!params.can_reverse || is_flow_calib || keep_fill_order) {
             for (size_t i = idx; i < eec->entities.size(); i++)
                 eec->entities[i]->set_reverse();
         }
@@ -304,11 +309,12 @@ std::pair<float, Point> Fill::_infill_direction(const Surface *surface) const
         printf("Filling bridge with angle %f\n", surface->bridge_angle);
 #endif /* SLIC3R_DEBUG */
         out_angle = float(surface->bridge_angle);
-    } else if (this->layer_id != size_t(-1)) {
+    } else if (this->layer_id != size_t(-1) && !fixed_angle) {
         // alternate fill direction
-        //Orca: if template angle is not empty, don't apply layer angle
-        if(!is_using_template_angle) 
+        //Orca: Do not alternate direction if Fill.fixed_angle is true
+        if (!this->dont_alternate_fill_direction) {
             out_angle += this->_layer_angle(this->layer_id / surface->thickness_layers);
+        }
     } else {
 //    	printf("Layer_ID undefined!\n");
     }
@@ -1023,7 +1029,7 @@ void mark_boundary_segments_touching_infill(
 #endif // INFILL_DEBUG_OUTPUT
 
 	EdgeGrid::Grid grid;
-    // Make sure that the the grid is big enough for queries against the thick segment.
+    // Make sure that the grid is big enough for queries against the thick segment.
 	grid.set_bbox(boundary_bbox.inflated(distance_colliding * 1.43));
 	// Inflate the bounding box by a thick line width.
 	grid.create(boundary, coord_t(std::max(clip_distance, distance_colliding) + scale_(10.)));
@@ -1707,6 +1713,12 @@ void Fill::connect_infill(Polylines &&infill_ordered, const std::vector<const Po
             size_t                    polyline_idx1  = get_and_update_merged_with(((cp1 - graph.map_infill_end_point_to_boundary.data()) / 2));
             size_t                    polyline_idx2  = get_and_update_merged_with(((cp2 - graph.map_infill_end_point_to_boundary.data()) / 2));
             const Points             &contour        = graph.boundary[cp1->contour_idx];
+
+            // Orca: If multiline infill is requested, skip connections that are too short.
+            if (params.multiline > 1 && arc.arc_length < scale_(spacing) * params.multiline) {
+                continue;
+            }
+
             const std::vector<double> &contour_params = graph.boundary_params[cp1->contour_idx];
             if (polyline_idx1 != polyline_idx2) {
                 Polyline &polyline1 = infill_ordered[polyline_idx1];
@@ -1845,12 +1857,12 @@ static inline void base_support_extend_infill_lines(Polylines &infill, BoundaryI
         const bool                   first           = graph.first(cp);
         int                          extend_next_idx = -1;
         int                          extend_prev_idx = -1;
-        coord_t                      dist_y_prev;
-        coord_t                      dist_y_next;
-        double                       arc_len_prev;
-        double                       arc_len_next;
+        coord_t                      dist_y_prev     = 0;
+        coord_t                      dist_y_next     = 0;
+        double                       arc_len_prev    = 0;
+        double                       arc_len_next    = 0;
 
-        if (! graph.next_vertical(cp)){
+        if (! graph.next_vertical(cp)) {
             size_t i = cp.point_idx;
             size_t j = next_idx_modulo(i, contour);
             while (j != cp.next_on_contour->point_idx) {
@@ -2700,55 +2712,77 @@ void Fill::connect_base_support(Polylines &&infill_ordered, const Polygons &boun
     connect_base_support(std::move(infill_ordered), polygons_src, bbox, polylines_out, spacing, params);
 }
 
-//Fill  Multiline
+// Fill Multiline -Clipper2 version
 void multiline_fill(Polylines& polylines, const FillParams& params, float spacing)
 {
-    if (params.multiline > 1) {
-        const int n_lines = params.multiline;
-        const int n_polylines = static_cast<int>(polylines.size());
-        Polylines all_polylines;
-        all_polylines.reserve(n_lines * n_polylines);
+    if (params.multiline <= 1)
+        return;
 
-        const float center = (n_lines - 1) / 2.0f;
+    const int n_lines     = params.multiline;
+    const int n_polylines = static_cast<int>(polylines.size());
+    Polylines all_polylines;
+    all_polylines.reserve(n_lines * n_polylines);
 
-        for (int line = 0; line < n_lines; ++line) {
-            float offset = (static_cast<float>(line) - center) * spacing;
+    // Remove invalid polylines
+    polylines.erase(std::remove_if(polylines.begin(), polylines.end(),
+                              [](const Polyline& p) { return p.size() < 2; }),
+               polylines.end());
 
-            for (const Polyline& pl : polylines) {
-                const size_t n = pl.points.size();
-                if (n < 2) {
-                    all_polylines.emplace_back(pl);
-                    continue;
-                }
+    if (polylines.empty())
+    return;
+    // Convert source polylines to Clipper2 paths
+    Clipper2Lib::Paths64 subject_paths = Slic3rPolylines_to_Paths64(polylines);
 
-                Points new_points;
-                new_points.reserve(n);
-                for (size_t i = 0; i < n; ++i) {
-                    Vec2f tangent;
-                    if (i == 0)
-                        tangent = Vec2f(pl.points[1].x() - pl.points[0].x(), pl.points[1].y() - pl.points[0].y());
-                    else if (i == n - 1)
-                        tangent = Vec2f(pl.points[n - 1].x() - pl.points[n - 2].x(), pl.points[n - 1].y() - pl.points[n - 2].y());
-                    else
-                        tangent = Vec2f(pl.points[i + 1].x() - pl.points[i - 1].x(), pl.points[i + 1].y() - pl.points[i - 1].y());
+    const double miter_limit = 2.0;
+    const int    rings       = n_lines / 2;
 
-                    float len = std::hypot(tangent.x(), tangent.y());
-                    if (len == 0)
-                        len = 1.0f;
-                    tangent /= len;
-                    Vec2f normal(-tangent.y(), tangent.x());
+    // Compute offsets (in units of spacing)
+    std::vector<double> offsets;
+    offsets.reserve(n_lines);
 
-                    Point p = pl.points[i];
-                    p.x() += scale_(normal.x() * offset);
-                    p.y() += scale_(normal.y() * offset);
-                    new_points.push_back(p);
-                }
+    if (n_lines % 2 != 0) {
+        // Odd: center line at offset = 0
+        offsets.push_back(0.0);
 
-                all_polylines.emplace_back(std::move(new_points));
-            }
-        }
-        polylines = std::move(all_polylines);
+        for (int i = 1; i <= rings; ++i)
+            offsets.push_back(i * spacing);
+    } else {
+        // Even: no center, start at 0.5 * spacing
+        double start = 0.5 * spacing;
+        for (int i = 0; i < rings; ++i)
+            offsets.push_back(start + i * spacing);
     }
+
+    // Process each offset 
+    Clipper2Lib::ClipperOffset offsetter(miter_limit);
+    offsetter.AddPaths(subject_paths, Clipper2Lib::JoinType::Round, Clipper2Lib::EndType::Round);
+
+    for (double t : offsets) {
+        if (t == 0.0) {
+            // Center line (only applies when n_lines is odd)
+            all_polylines.insert(all_polylines.end(), polylines.begin(), polylines.end());
+            continue;
+        }
+
+        // ClipperOffset with current offset distance (union is not needed here)
+        Clipper2Lib::Paths64 offset_paths;
+        offsetter.Execute(scale_(t), offset_paths);
+        if (offset_paths.empty())
+            continue;
+
+        // Convert back to polylines
+        Polylines new_polylines = Paths64_to_polylines(offset_paths);
+
+        for (Polyline& pl : new_polylines) {
+            if (pl.points.size() < 3)
+                continue;
+            if (pl.points.front() != pl.points.back())
+                pl.points.push_back(pl.points.front());
+            all_polylines.emplace_back(std::move(pl));
+        }
+    }
+
+    polylines = std::move(all_polylines);
 }
 
 } // namespace Slic3r

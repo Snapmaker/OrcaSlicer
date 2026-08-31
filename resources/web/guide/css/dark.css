@@ -42,7 +42,7 @@ input[type=checkbox]:checked{
 {
 	background-color:#3E3E45;
 	/* border: 1px solid #B9B9BC; */
-	color: #FFFFFF;	
+	color: #FFFFFF;
 }
 
 .GrayBtn:hover, .SmallBtn:hover /* ORCA match button style GrayBtn & SmallBtn */

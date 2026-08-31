@@ -14,6 +14,7 @@
 #include "Widgets/Button.hpp"
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/TextInput.hpp"
+#include "Widgets/HyperLink.hpp"
 #include "BBLStatusBar.hpp"
 #include "BBLStatusBarSend.hpp"
 #include "libslic3r/Semver.hpp"
@@ -66,11 +67,15 @@ struct MsgDialog : DPIDialog
 	bool get_checkbox_state();
 	virtual void on_dpi_changed(const wxRect& suggested_rect);
 	void SetButtonLabel(wxWindowID btn_id, const wxString& label, bool set_focus = false);
+	// Public wrapper around add_button — lets callers append custom-labelled choice buttons to an
+	// already-constructed dialog (used by the H2C rack hotend "Jump to the upgrade page" prompt).
+	// Purely additive; existing dialogs are unaffected.
+	void AddButton(wxWindowID btn_id, const wxString& label, bool set_focus = false) { add_button(btn_id, set_focus, label); }
 
 protected:
 	enum {
 		BORDER = 20,
-		LOGO_SPACING = 35,
+		LOGO_SPACING = 25,
 		LOGO_GAP = 20,
 		CONTENT_WIDTH = 242,
 		CONTENT_MAX_HEIGHT = 60,//TO
@@ -78,7 +83,7 @@ protected:
 		VERT_SPACING = 15,//TO
 	};
 
-	MsgDialog(wxWindow *parent, const wxString &title, const wxString &headline, long style = wxOK, wxBitmap bitmap = wxNullBitmap);
+	MsgDialog(wxWindow *parent, const wxString &title, const wxString &headline, long style = wxOK, wxBitmap bitmap = wxNullBitmap, const wxString &forward_str = "");
 	// returns pointer to created button
 	Button* add_button(wxWindowID btn_id, bool set_focus = false, const wxString& label = wxString());
 	// returns pointer to found button or NULL
@@ -93,6 +98,7 @@ protected:
 	wxStaticBitmap *logo;
     MsgButtonsHash  m_buttons;
 	CheckBox* m_checkbox_dsa{nullptr};
+    wxString  m_forward_str;
 };
 
 
@@ -100,9 +106,9 @@ protected:
 class ErrorDialog : public MsgDialog
 {
 public:
-	// If monospaced_font is true, the error message is displayed using html <code><pre></pre></code> tags,
-	// so that the code formatting will be preserved. This is useful for reporting errors from the placeholder parser.
-	ErrorDialog(wxWindow *parent, const wxString &msg, bool courier_font);
+	// If has_code_excerpts is true, code excerpts (a source line and the caret line below it) render
+	// monospaced so the caret aligns. Used for placeholder-parser errors.
+	ErrorDialog(wxWindow *parent, const wxString &temp_msg, bool has_code_excerpts);
 	ErrorDialog(ErrorDialog &&) = delete;
 	ErrorDialog(const ErrorDialog &) = delete;
 	ErrorDialog &operator=(ErrorDialog &&) = delete;
@@ -154,10 +160,13 @@ class MessageDialog : public MsgDialog
 {
 public:
 	// NOTE! Don't change a signature of contsrucor. It have to  be tha same as for wxMessageDialog
-	MessageDialog(	wxWindow *parent,
-		            const wxString& message,
-		            const wxString& caption = wxEmptyString,
-		            long style = wxOK);
+    MessageDialog(wxWindow       *parent,
+                  const wxString &message,
+                  const wxString &caption     = wxEmptyString,
+                  long            style       = wxOK,
+                  const wxString &forward_str = "",
+                  const wxString &link_text   = "",
+                  std::function<void(const wxString &)> link_callback = nullptr);
 	MessageDialog(MessageDialog&&) = delete;
 	MessageDialog(const MessageDialog&) = delete;
 	MessageDialog &operator=(MessageDialog&&) = delete;
@@ -420,13 +429,39 @@ public:
 
 private:
     Label* m_text_basic;
-    wxHyperlinkCtrl* m_link_server_state;
+    HyperLink* m_link_server_state; // ORCA
     Label* m_text_proposal;
-    wxHyperlinkCtrl* m_text_wiki;
+    HyperLink* m_text_wiki; // ORCA
     Button *         m_button_confirm;
 
 public:
     bool m_show_again{false};
+};
+
+// Multi-item filament-blacklist warning dialog with per-item wiki links. Replaces the plain
+// MessageDialog used for warnings so stacked accumulate-all warnings render with their own
+// optional Wiki link.
+struct FilamentWarningInfo
+{
+   wxString info_msg;
+   wxString wiki_url;
+};
+
+class FilamentWarningDialog : public MsgDialog
+{
+public:
+    FilamentWarningDialog(wxWindow *parent, const wxString &title, std::vector<FilamentWarningInfo> infos);
+    FilamentWarningDialog(FilamentWarningDialog &&)                 = delete;
+    FilamentWarningDialog(const FilamentWarningDialog &)            = delete;
+    FilamentWarningDialog &operator=(FilamentWarningDialog &&)      = delete;
+    FilamentWarningDialog &operator=(const FilamentWarningDialog &) = delete;
+    virtual ~FilamentWarningDialog()                                = default;
+
+private:
+    void BuildContent();
+
+private:
+    std::vector<FilamentWarningInfo> m_messages;
 };
 
 }

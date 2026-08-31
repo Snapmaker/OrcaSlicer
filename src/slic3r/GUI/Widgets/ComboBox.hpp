@@ -9,15 +9,16 @@
 
 class ComboBox : public wxWindowWithItems<TextInput, wxItemContainer>
 {
-    std::vector<wxString>         texts;
-    std::vector<wxString>         tips;
-    std::vector<wxBitmap>         icons;
-    std::vector<void *>           datas;
-    std::vector<wxClientDataType> types;
+    typedef DropDown::Item Item;
+    std::vector<Item>      items;
 
     DropDown               drop;
     bool     drop_down = false;
     bool     text_off = false;
+    bool     is_replace_text_to_image = false;
+    bool     m_keep_drop_arrow = false;  // When true, item icon goes to icon_1, keeping drop_down arrow
+    wxString replace_text;
+    wxString image_for_text;
 
 public:
     ComboBox(wxWindow *      parent,
@@ -31,13 +32,27 @@ public:
 
     DropDown & GetDropDown() { return drop; }
 
+    // When true, item icon is shown as icon_1 (secondary), preserving drop_down arrow.
+    // Note: item bitmaps are set via raw wxBitmap (not ScalableBitmap), so they won't
+    // auto-rescale on DPI change. Caller should recreate items after DPI change.
+    void SetKeepDropArrow(bool keep) { m_keep_drop_arrow = keep; }
+
     virtual bool SetFont(wxFont const & font) override;
 
 public:
-    int Append(const wxString &item, const wxBitmap &bitmap = wxNullBitmap);
+    int Append(const wxString &item, const wxBitmap &bitmap = wxNullBitmap, int item_style = 0);
+    int Append(const wxString &item, const wxBitmap &bitmap, void *clientData, int item_style = 0);
+    int Append(const wxString &item, const wxBitmap &bitmap, const wxString &group, void *clientData = nullptr, int item_style = 0);
+    int Append(const wxString& item,
+               const wxBitmap& bitmap,
+               const wxString& group_key,
+               const wxString& group_label,
+               void* clientData = nullptr,
+               int item_style   = 0);
 
-    int Append(const wxString &item, const wxBitmap &bitmap, void *clientData);
+    int SetItems(const std::vector<DropDown::Item>& the_items);
 
+    void set_replace_text(wxString text, wxString image_name);
     unsigned int GetCount() const override;
 
     int  GetSelection() const override;
@@ -54,6 +69,9 @@ public:
     void SetLabel(const wxString &label) override;
     wxString GetLabel() const override;
 
+    int GetFlag(unsigned int n);
+    void SetFlag(unsigned int n, int value);
+
     void SetTextLabel(const wxString &label);
     wxString GetTextLabel() const;
 
@@ -63,10 +81,16 @@ public:
     wxString GetItemTooltip(unsigned int n) const;
     void     SetItemTooltip(unsigned int n, wxString const &value);
 
+    wxString GetItemAlias(unsigned int n) const;
+    void     SetItemAlias(unsigned int n, wxString const &value);
+
     wxBitmap GetItemBitmap(unsigned int n);
     void     SetItemBitmap(unsigned int n, wxBitmap const &bitmap);
     bool     is_drop_down(){return drop_down;}
     void     DeleteOneItem(unsigned int pos) { DoDeleteOneItem(pos); }
+
+    void ForceDropdownOpen();
+
 protected:
     virtual int  DoInsertItems(const wxArrayStringsAdapter &items,
                                unsigned int                 pos,
@@ -78,7 +102,7 @@ protected:
 
     void *DoGetItemClientData(unsigned int n) const override;
     void  DoSetItemClientData(unsigned int n, void *data) override;
-    
+
     void OnEdit() override;
 
     void sendComboBoxEvent();

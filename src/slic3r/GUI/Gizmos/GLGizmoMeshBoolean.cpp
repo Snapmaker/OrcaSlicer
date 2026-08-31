@@ -34,9 +34,7 @@ bool GLGizmoMeshBoolean::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
         const ModelInstance* mi = mo->instances[m_parent.get_selection().get_instance_idx()];
         std::vector<Transform3d> trafo_matrices;
         for (const ModelVolume* mv : mo->volumes) {
-            //if (mv->is_model_part()) { 
-                trafo_matrices.emplace_back(mi->get_transformation().get_matrix() * mv->get_matrix()); 
-            //}
+            trafo_matrices.emplace_back(mi->get_transformation().get_matrix() * mv->get_matrix());
         }
 
         const Camera& camera = wxGetApp().plater()->get_camera();
@@ -50,8 +48,7 @@ bool GLGizmoMeshBoolean::gizmo_event(SLAGizmoEventType action, const Vec2d& mous
 
         // Cast a ray on all meshes, pick the closest hit and save it for the respective mesh
         for (int mesh_id = 0; mesh_id < int(trafo_matrices.size()); ++mesh_id) {
-            MeshRaycaster mesh_raycaster = MeshRaycaster(mo->volumes[mesh_id]->mesh_ptr());
-            if (mesh_raycaster.unproject_on_mesh(mouse_position, trafo_matrices[mesh_id], camera, hit, normal,
+            if (m_c->raycaster()->raycasters()[mesh_id] ->unproject_on_mesh(mouse_position, trafo_matrices[mesh_id], camera, hit, normal,
                 m_c->object_clipper()->get_clipping_plane(), &facet)) {
                 // Is this hit the closest to the camera so far?
                 double hit_squared_distance = (camera.get_position() - trafo_matrices[mesh_id] * hit.cast<double>()).squaredNorm();
@@ -181,11 +178,27 @@ void GLGizmoMeshBoolean::on_set_state()
 
 CommonGizmosDataID GLGizmoMeshBoolean::on_get_requirements() const
 {
+    if (m_c && m_c->raycaster_ptr()) {
+        m_c->raycaster_ptr()->set_only_support_model_part_flag(false);
+    }
     return CommonGizmosDataID(
         int(CommonGizmosDataID::SelectionInfo)
         | int(CommonGizmosDataID::InstancesHider)
         | int(CommonGizmosDataID::Raycaster)
         | int(CommonGizmosDataID::ObjectClipper));
+}
+
+std::optional<TriangleSelector::SavedPainting> VolumeInfo::save_painting() const
+{
+    if (wxGetApp().app_config->get_bool("keep_painting")) {
+        std::optional<TriangleSelector::SavedPainting> saved_painting = mv->save_painting();
+        if (saved_painting) {
+            saved_painting->mesh.transform(trafo);
+        }
+        return saved_painting;
+    }
+
+    return {};
 }
 
 void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_limit)
@@ -346,7 +359,9 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             std::vector<TriangleMesh> temp_mesh_resuls;
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "UNION");
             if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(true, *temp_mesh_resuls.begin());
+                // For union, we want to keep paint from both meshes
+                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting(), m_tool.save_painting()};
+                generate_new_volume(true, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
             else {
@@ -364,7 +379,9 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             std::vector<TriangleMesh> temp_mesh_resuls;
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "A_NOT_B");
             if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(m_diff_delete_input, *temp_mesh_resuls.begin());
+                // For diff, we only need paint from src
+                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting()};
+                generate_new_volume(m_diff_delete_input, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
             else {
@@ -382,7 +399,9 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             std::vector<TriangleMesh> temp_mesh_resuls;
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "INTERSECTION");
             if (temp_mesh_resuls.size() != 0) {
-                generate_new_volume(m_inter_delete_input, *temp_mesh_resuls.begin());
+                // For intersection, we want to keep paint from both meshes
+                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting(), m_tool.save_painting()};
+                generate_new_volume(m_inter_delete_input, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
             else {
@@ -420,7 +439,7 @@ void GLGizmoMeshBoolean::on_save(cereal::BinaryOutputArchive &ar) const
     ar(m_enable, m_operation_mode, m_selecting_state, m_diff_delete_input, m_inter_delete_input, m_src, m_tool);
 }
 
-void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMesh& mesh_result) {
+void GLGizmoMeshBoolean::generate_new_volume(const bool delete_input, TriangleMesh& mesh_result, const std::vector<std::optional<TriangleSelector::SavedPainting>>& saved_paintings) {
 
     wxGetApp().plater()->take_snapshot("Mesh Boolean");
 
@@ -428,6 +447,11 @@ void GLGizmoMeshBoolean::generate_new_volume(bool delete_input, const TriangleMe
 
     // generate new volume
     ModelVolume* new_volume = curr_model_object->add_volume(std::move(mesh_result));
+
+    // Remap paintings
+    for (const auto& saved_painting : saved_paintings) {
+        new_volume->restore_painting(saved_painting, true);
+    }
 
     // assign to new_volume from old_volume
     ModelVolume* old_volume = m_src.mv;

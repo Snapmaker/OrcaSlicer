@@ -144,12 +144,15 @@ private:
 
     //When there are more than 9 colors, shortcut key coloring
     wxTimer m_timer_set_color;
+    // Leading digit of a two-digit color shortcut still waiting for its second digit.
+    int m_pending_color_shortcut_tens = 0;
     void on_set_color_timer(wxTimerEvent& evt);
 
     // key MENU_ICON_NAME, value = ImtextureID
-    std::map<int, void*> icon_list;
+    static std::map<int, void*> icon_list;
 
     bool m_is_dark = false;
+    bool m_restore_realistic_view_after_paint = false;
 
     /// <summary>
     /// Process mouse event on gizmo toolbar
@@ -174,6 +177,14 @@ public:
         IC_FIT_CAMERA_DARK,
         IC_FIT_CAMERA_DARK_HOVER,
         IC_NAME_COUNT,
+        IC_CANVAS_MENU,
+        IC_CANVAS_MENU_HOVER,
+        IC_CANVAS_MENU_DARK,
+        IC_CANVAS_MENU_DARK_HOVER,
+        IC_CANVAS_ZOOM,
+        IC_CANVAS_ZOOM_HOVER,
+        IC_CANVAS_ZOOM_DARK,
+        IC_CANVAS_ZOOM_DARK_HOVER,
     };
 
     explicit GLGizmosManager(GLCanvas3D& parent);

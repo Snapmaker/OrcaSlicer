@@ -17,6 +17,7 @@ class LayerRegion;
 using LayerRegionPtrs = std::vector<LayerRegion*>;
 class PrintRegion;
 class PrintObject;
+class Print;
 
 namespace FillAdaptive {
     struct Octree;
@@ -24,6 +25,10 @@ namespace FillAdaptive {
 
 namespace FillLightning {
     class Generator;
+};
+
+namespace sla {
+    class IndexedMesh;
 };
 
 class LayerRegion
@@ -154,6 +159,10 @@ public:
     ExPolygons 				 lslices;
     ExPolygons 				 lslices_extrudable;  // BBS: the extrudable part of lslices used for tree support
     std::vector<BoundingBox> lslices_bboxes;
+    // Orca: for separated infills / per-model centering. Aligned with lslices: for each island, the
+    // full bounding box of the 3D connected body (across all layers) it belongs to. Populated by
+    // PrintObject::infill() only when the feature is used; empty otherwise.
+    std::vector<BoundingBox> lslices_separated_component_bboxes;
 
     // BBS
     ExPolygons              loverhangs;
@@ -184,7 +193,7 @@ public:
     }
 
     // Whether two regions can be printed in a continues perimeter
-    static bool             is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b);
+    static bool             is_perimeter_compatible(const Print& print, const PrintRegion& a, const PrintRegion& b);
     void                    make_perimeters();
     // Phony version of make_fills() without parameters for Perl integration only.
     void                    make_fills() { this->make_fills(nullptr, nullptr); }
@@ -193,6 +202,7 @@ public:
                                                                            FillAdaptive::Octree *support_fill_octree,
                                                                            FillLightning::Generator* lightning_generator) const;
     void 					make_ironing();
+    void                    make_contour_z(const sla::IndexedMesh &mesh);
 
     void                    export_region_slices_to_svg(const char *path) const;
     void                    export_region_fill_surfaces_to_svg(const char *path) const;
@@ -242,6 +252,8 @@ public:
             }
         return idx;
     }
+
+    size_t get_extruder_id(unsigned int filament_id) const;
 
 protected:
     friend class PrintObject;
@@ -317,6 +329,7 @@ protected:
         ExPolygon *area;
         int        type;
         int interface_id = 0;
+        bool interface_as_base = false;
         coordf_t   dist_to_top; // mm dist to top
         bool need_infill = false;
         bool need_extra_wall = false;

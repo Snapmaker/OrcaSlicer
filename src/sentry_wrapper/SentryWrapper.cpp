@@ -449,6 +449,9 @@ void sentryReportLogEx(SENTRY_LOG_LEVEL   logLevel,
 
 void initSentry()
 {
+    // Diagnostic/e2e escape hatch: SM_NO_SENTRY=1 disables crash reporting entirely.
+    if (const char* no_sentry = getenv("SM_NO_SENTRY"); no_sentry && no_sentry[0] == '1')
+        return;
 #ifdef SLIC3R_SENTRY
     initSentryEx();
 #endif

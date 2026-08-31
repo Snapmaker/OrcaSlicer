@@ -44,7 +44,7 @@ void AboutDialogLogo::onRepaint(wxEvent &event)
 CopyrightsDialog::CopyrightsDialog()
     : DPIDialog(static_cast<wxWindow*>(wxGetApp().mainframe), wxID_ANY, from_u8((boost::format("%1% - %2%")
         % (wxGetApp().is_editor() ? SLIC3R_APP_FULL_NAME : GCODEVIEWER_APP_NAME)
-        % _utf8(L("Portions copyright"))).str()),
+        % _utf8(L("License Info"))).str()),
         wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
     this->SetFont(wxGetApp().normal_font());
@@ -93,10 +93,11 @@ void CopyrightsDialog::fill_entries()
         { "CGAL",                                           "",      "https://www.cgal.org" },
         { "Clipper",                                        "",      "http://www.angusj.co" },
         { "libcurl",                                        "",      "https://curl.se/libcurl" },
+        { "Draco",                                          "",      "https://google.github.io/draco/" },
         { "Eigen3",                                         "",      "http://eigen.tuxfamily.org" },
         { "Expat",                                          "",      "http://www.libexpat.org" },
         { "fast_float",                                     "",      "https://github.com/fastfloat/fast_float" },
-        { "GLEW (The OpenGL Extension Wrangler Library)",   "",      "http://glew.sourceforge.net" },
+        { "GLAD (Multi-Language GL Loader-Generator)",       "",      "https://github.com/Dav1dde/glad" },
         { "GLFW",                                           "",      "https://www.glfw.org" },
         { "GNU gettext",                                    "",      "https://www.gnu.org/software/gettext" },
         { "ImGUI",                                          "",      "https://github.com/ocornut/imgui" },
@@ -311,7 +312,8 @@ AboutDialog::AboutDialog()
                     find_txt += text_list[i][o];
                     count_txt += text_list[i][o];
                 } else {
-                    find_txt += std::string("\n") + text_list[i][o];
+                    find_txt += "\n";
+                    find_txt += text_list[i][o];
                     count_txt = text_list[i][o];
                 }
             }
@@ -346,10 +348,12 @@ AboutDialog::AboutDialog()
           m_html->SetFonts(font.GetFaceName(), font.GetFaceName(), size);
           m_html->SetMinSize(wxSize(FromDIP(-1), FromDIP(16)));
           m_html->SetBorders(2);
+          wxColour   bgr_clr = GetBackgroundColour();
+          const auto bgr_clr_str = encode_color(ColorRGB(bgr_clr.Red(), bgr_clr.Green(), bgr_clr.Blue()));
           const auto text = from_u8(
               (boost::format(
               "<html>"
-              "<body>"
+              "<body bgcolor= \"" + bgr_clr_str + "\" >"
               "<p style=\"text-align:left\"><a style=\"color:#009789\" href=\"www.snapmaker.com\">www.snapmaker.com</ a></p>"
               "</body>"
               "</html>")
@@ -359,7 +363,9 @@ AboutDialog::AboutDialog()
           m_html->Bind(wxEVT_HTML_LINK_CLICKED, &AboutDialog::onLinkClicked, this);
       }
     //Add "Portions copyright" button
-    Button* button_portions = new Button(this,_L("Portions copyright"));
+    // Orca renamed the label to "License Info" (matches the CopyrightsDialog title);
+    // Snapmaker keeps its explicit light-theme button styling.
+    Button* button_portions = new Button(this,_L("License Info"));
     StateColor report_bg(std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Disabled), std::pair<wxColour, int>(wxColour(206, 206, 206), StateColor::Pressed),
                          std::pair<wxColour, int>(wxColour(238, 238, 238), StateColor::Hovered), std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Enabled),
                          std::pair<wxColour, int>(wxColour(255, 255, 255), StateColor::Normal));

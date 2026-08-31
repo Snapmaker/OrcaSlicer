@@ -166,7 +166,7 @@ void SimplyPrint::save_oauth_credential(const GUI::OAuthResult& cred) const
     
     boost::nowide::ofstream c;
     c.open(cred_file, std::ios::out | std::ios::trunc);
-    c << std::setw(4) << j << std::endl;
+    c << j.dump(1, '\t') << std::endl;
     c.close();
 }
 
@@ -325,7 +325,7 @@ bool SimplyPrint::do_temp_upload(const boost::filesystem::path& file_path,
                 wxLaunchDefaultBrowser(url);
             } else {
                 const auto mainframe = GUI::wxGetApp().mainframe;
-                mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+                mainframe->request_select_tab(TAB_ID_MONITOR);
                 mainframe->load_printer_url(url);
             }
 

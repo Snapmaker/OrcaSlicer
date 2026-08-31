@@ -28,7 +28,6 @@
 #include "PrintHostDialogs.hpp"
 #include "../Utils/ASCIIFolding.hpp"
 #include "../Utils/PrintHost.hpp"
-#include "../Utils/FixModelByWin10.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "RemovableDriveManager.hpp"
 #include "BitmapCache.hpp"
@@ -57,7 +56,7 @@ SMPhysicalPrinterDialog::SMPhysicalPrinterDialog(wxWindow* parent) :
     Tab *tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
     m_presets = tab->get_presets();
     const Preset &sel_preset  = m_presets->get_selected_preset();
-    std::string suffix = _CTX_utf8(L_CONTEXT("Copy", "PresetName"), "PresetName");
+    std::string suffix = _u8L_CONTEXT(L_CONTEXT("Copy", "PresetName"), "PresetName");
     std::string   preset_name = sel_preset.is_default ? "Untitled" : sel_preset.is_system ? (boost::format(("%1% - %2%")) % sel_preset.name % suffix).str() : sel_preset.name;
 
     auto input_sizer = new wxBoxSizer(wxVERTICAL);
@@ -348,7 +347,7 @@ void SMPhysicalPrinterDialog::build_printhost_settings(ConfigOptionsGroup* m_opt
     // Always fill in the "printhost_port" combo box from the config and select it.
     {
         Choice* choice = dynamic_cast<Choice*>(m_optgroup->get_field("printhost_port"));
-        choice->set_values({ m_config->opt_string("printhost_port") });
+        choice->set_values(std::vector<std::string>{ m_config->opt_string("printhost_port") });
         choice->set_selection();
     }
 

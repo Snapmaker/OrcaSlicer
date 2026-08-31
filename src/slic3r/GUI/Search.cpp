@@ -22,6 +22,10 @@
 
 #include "imgui/imconfig.h"
 
+#if defined(__WXGTK__)
+#include "LinuxDisplayBackend.hpp"
+#endif
+
 using boost::optional;
 
 namespace Slic3r {
@@ -32,6 +36,17 @@ wxDEFINE_EVENT(wxCUSTOMEVT_JUMP_TO_OBJECT, wxCommandEvent);
 
 using GUI::from_u8;
 using GUI::into_u8;
+
+namespace {
+
+bool focus_left_popup(wxWindow* popup, wxWindow* focus_window, wxWindow* related_window_1 = nullptr,
+    wxWindow* related_window_2 = nullptr, wxWindow* related_window_3 = nullptr)
+{
+    return focus_window != popup && !popup->IsDescendant(focus_window) && focus_window != related_window_1 &&
+        focus_window != related_window_2 && focus_window != related_window_3;
+}
+
+} // namespace
 
 namespace Search {
 
@@ -94,7 +109,7 @@ void OptionsSearcher::append_options(DynamicPrintConfig *config, Preset::Type ty
 
         int cnt = 0;
 
-        if ((type == Preset::TYPE_SLA_MATERIAL || type == Preset::TYPE_PRINTER) && opt_key != "printable_area")
+        if ((type == Preset::TYPE_SLA_MATERIAL || type == Preset::TYPE_PRINTER || type == Preset::TYPE_PRINT) && opt_key != "printable_area")
             switch (config->option(opt_key)->type()) {
             case coInts: change_opt_key<ConfigOptionInts>(opt_key, config, cnt); break;
             case coBools: change_opt_key<ConfigOptionBools>(opt_key, config, cnt); break;
@@ -107,6 +122,9 @@ void OptionsSearcher::append_options(DynamicPrintConfig *config, Preset::Type ty
             default: break;
             }
 
+        if (type == Preset::TYPE_FILAMENT && filament_options_with_variant.find(opt_key) != filament_options_with_variant.end())
+            opt_key += "#0";
+
         wxString label = opt.full_label.empty() ? opt.label : opt.full_label;
 
         std::string key = get_key(opt_key, type);
@@ -116,6 +134,19 @@ void OptionsSearcher::append_options(DynamicPrintConfig *config, Preset::Type ty
             for (int i = 0; i < cnt; ++i)
                 // ! It's very important to use "#". opt_key#n is a real option key used in GroupAndCategory
                 emplace(key + "#" + std::to_string(i), label);
+    }
+}
+
+inline void OptionsSearcher::sort_options()
+{
+    std::sort(options.begin(), options.end(), [](const Option &o1, const Option &o2) { return o1.label < o2.label; });
+    Option * last = nullptr;
+    for (auto& opt : options) {
+        if (last && last->label == opt.label && last->group == opt.group && last->type == opt.type && last->category != opt.category) {
+            last->multi_category = true;
+            opt.multi_category = true;
+        }
+        last = &opt;
     }
 }
 
@@ -171,13 +202,13 @@ bool OptionsSearcher::search(const std::string &search, bool force /* = false*/,
     found.clear();
 
     bool         full_list = search.empty();
-    std::wstring sep       = L" : ";
+    wxString sep       = L" : ";
 
     auto get_label = [this, &sep](const Option &opt, bool marked = true) {
         std::wstring out;
         if (marked) out += marker_by_type(opt.type, printer_technology);
         const std::wstring *prev = nullptr;
-        for (const std::wstring *const s : {view_params.category ? &opt.category_local : nullptr, &opt.group_local, &opt.label_local})
+        for (const std::wstring *const s : {view_params.category || opt.multi_category ? &opt.category_local : nullptr, &opt.group_local, &opt.label_local})
             if (s != nullptr && (prev == nullptr || *prev != *s)) {
                 if (out.size() > 2) out += sep;
                 out += *s;
@@ -190,7 +221,7 @@ bool OptionsSearcher::search(const std::string &search, bool force /* = false*/,
         std::wstring out;
         if (marked) out += marker_by_type(opt.type, printer_technology);
         const std::wstring *prev = nullptr;
-        for (const std::wstring *const s : {view_params.category ? &opt.category : nullptr, &opt.group, &opt.label})
+        for (const std::wstring *const s : {view_params.category || opt.multi_category ? &opt.category : nullptr, &opt.group, &opt.label})
             if (s != nullptr && (prev == nullptr || *prev != *s)) {
                 if (out.size() > 2) out += sep;
                 out += *s;
@@ -200,7 +231,7 @@ bool OptionsSearcher::search(const std::string &search, bool force /* = false*/,
     };
 
     auto get_tooltip = [this, &sep](const Option &opt) {
-        return marker_by_type(opt.type, printer_technology) + opt.category_local + sep + opt.group_local + sep + opt.label_local;
+        return wxString(marker_by_type(opt.type, printer_technology)) + opt.category_local + sep + opt.group_local + sep + opt.label_local;
     };
 
     std::vector<uint16_t> matches, matches2;
@@ -301,12 +332,32 @@ const Option &OptionsSearcher::get_option(size_t pos_in_filter) const
     return options[found[pos_in_filter].option_idx];
 }
 
-const Option &OptionsSearcher::get_option(const std::string &opt_key, Preset::Type type) const
+const Option &OptionsSearcher::get_option(const std::string &opt_key, Preset::Type type, int &variant_index) const
 {
-    auto it = std::lower_bound(options.begin(), options.end(), Option({boost::nowide::widen(get_key(opt_key, type))}));
+    std::string opt_key2 = opt_key;
+    if (auto n = opt_key.find('#'); n != std::string::npos) {
+        variant_index = std::atoi(opt_key.c_str() + n + 1);
+        opt_key2 = opt_key.substr(0, n);
+    }
+    auto it = std::lower_bound(options.begin(), options.end(), Option({boost::nowide::widen(get_key(opt_key2, type))}));
     // BBS: return the 0th option when not found in searcher caused by mode difference
     // assert(it != options.end());
-    if (it == options.end()) return options[0];
+    if (it == options.end()) { variant_index = -2 ; return options[0]; }
+    if (it->opt_key() == opt_key2) {
+        variant_index = -1;
+    } else {
+        const std::string opt_key3 = opt_key2 + "#";
+        it = std::lower_bound(it, options.end(), Option({boost::nowide::widen(get_key(opt_key3, type))}));
+        if (it == options.end() || it->opt_key().compare(0, opt_key3.length(), opt_key3) != 0) {
+            variant_index = -2; // Not found
+            return options[0];
+        }
+        auto it2 = it;
+        ++it2;
+        if (it2 != options.end() && it2->opt_key().compare(0, opt_key3.length(), opt_key3) == 0
+                && printer_options_with_variant_1.find(opt_key2) == printer_options_with_variant_1.end())
+            variant_index = -2;
+    }
 
     return options[it - options.begin()];
 }
@@ -630,7 +681,7 @@ SearchDialog::SearchDialog(OptionsSearcher *searcher, Preset::Type type, wxWindo
 
 SearchDialog::~SearchDialog() {}
 
-void SearchDialog::Popup(wxPoint position /*= wxDefaultPosition*/)
+void SearchDialog::Popup(wxWindow *focus /*= nullptr*/)
 {
     /* const std::string& line = searcher->search_string();
      search_line->SetValue(line.empty() ? default_string : from_u8(line));
@@ -645,27 +696,42 @@ void SearchDialog::Popup(wxPoint position /*= wxDefaultPosition*/)
     search_line2->SetValue(wxString(""));
     //const std::string &line = searcher->search_string();
     //searcher->search(into_u8(line), true);
-    PopupWindow::Popup();
+    PopupWindow::Popup(focus);
     search_line2->SetFocus();
     update_list();
 }
 
 
+#ifdef __WXMSW__
 void SearchDialog::MSWDismissUnfocusedPopup()
 {
     Dismiss();
     OnDismiss();
 }
+#endif // __WXMSW__
 
 void SearchDialog::OnDismiss() { }
 
 void SearchDialog::Dismiss()
 {
-    auto pos = wxGetMousePosition();
     auto focus_window = wxWindow::FindFocus();
-    if (!focus_window)
+    if (!focus_window) {
         Die();
-    else if (!m_event_tag->GetScreenRect().Contains(pos) && !this->GetScreenRect().Contains(pos) && !m_search_item_tag->GetScreenRect().Contains(pos)) {
+        return;
+    }
+#if defined(__WXGTK__)
+    // On Wayland, wxGetMousePosition() returns unreliable global coords.
+    // Rely on focus tracking instead: if focus moved to a window outside
+    // this dialog and its related controls, dismiss.
+    if (Slic3r::GUI::is_running_on_wayland()) {
+        if (focus_left_popup(this, focus_window, m_event_tag, m_search_item_tag, search_line)) {
+            Die();
+        }
+        return;
+    }
+#endif
+    auto pos = wxGetMousePosition();
+    if (!m_event_tag->GetScreenRect().Contains(pos) && !this->GetScreenRect().Contains(pos) && !m_search_item_tag->GetScreenRect().Contains(pos)) {
         Die();
     }
 }
@@ -862,7 +928,7 @@ SearchObjectDialog::SearchObjectDialog(GUI::ObjectList* object_list, wxWindow* p
 
 SearchObjectDialog::~SearchObjectDialog() {}
 
-void SearchObjectDialog::Popup(wxPoint position /*= wxDefaultPosition*/)
+void SearchObjectDialog::Popup(wxWindow *focus /*= nullptr*/)
 {
     if (m_is_dismissing || this->IsShown()) {
         return;
@@ -873,7 +939,7 @@ void SearchObjectDialog::Popup(wxPoint position /*= wxDefaultPosition*/)
     // dropdown list, otherwise the text input won't be usable
     m_object_list->SetFocus();
 #endif
-    PopupWindow::Popup();
+    PopupWindow::Popup(focus);
     search_line2->SetFocus();
 
     m_object_list->assembly_plate_object_name();
@@ -881,21 +947,36 @@ void SearchObjectDialog::Popup(wxPoint position /*= wxDefaultPosition*/)
     update_list();
 }
 
+#ifdef __WXMSW__
 void SearchObjectDialog::MSWDismissUnfocusedPopup()
 {
     Dismiss();
     OnDismiss();
 }
+#endif // __WXMSW__
 
 void SearchObjectDialog::OnDismiss() {}
 
 void SearchObjectDialog::Dismiss()
 {
-    auto pos = wxGetMousePosition();
     auto focus_window = wxWindow::FindFocus();
-    if (!focus_window)
+    if (!focus_window) {
         Die();
-    else if (!search_line->GetScreenRect().Contains(pos) && !this->GetScreenRect().Contains(pos)) {
+        return;
+    }
+#if defined(__WXGTK__)
+    // On Wayland, wxGetMousePosition() returns unreliable global coords.
+    // Rely on focus tracking instead: if focus moved to a window outside
+    // this dialog and its related controls, dismiss.
+    if (Slic3r::GUI::is_running_on_wayland()) {
+        if (focus_left_popup(this, focus_window, search_line)) {
+            Die();
+        }
+        return;
+    }
+#endif
+    auto pos = wxGetMousePosition();
+    if (!search_line->GetScreenRect().Contains(pos) && !this->GetScreenRect().Contains(pos)) {
         Die();
     }
 }

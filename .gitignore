@@ -2,6 +2,7 @@ Build
 Build.bat
 /build*/
 CMakeLists.txt.user
+CMakeUserPresets.json
 **/CMakeLists.txt.autosave
 deps/build*
 MYMETA.json
@@ -36,9 +37,21 @@ src/Snapmaker_Orca-doc/
 /deps/DL_CACHE/
 /deps/DL_CACHE
 **/.flatpak-builder/
+*.no-debug.yml
 resources/profiles/user/default
 *.code-workspace
 deps_src/build/
+test.js
+/.cache/
+.clangd
+internal_docs/
+*.flatpak
+/flatpak-repo/
+# Python bytecode
+__pycache__/
+*.pyc
+# Cached system presets
+*.opc
 .claude/
 .hermes/
 CLAUDE.md

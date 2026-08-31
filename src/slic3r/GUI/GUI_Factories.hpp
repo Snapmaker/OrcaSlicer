@@ -137,12 +137,15 @@ private:
     wxMenuItem* append_menu_item_change_type(wxMenu* menu);
     wxMenuItem* append_menu_item_instance_to_object(wxMenu* menu);
     wxMenuItem* append_menu_item_printable(wxMenu* menu);
+    wxMenuItem* append_menu_item_auto_drop(wxMenu* menu);
     void        append_menu_item_rename(wxMenu* menu);
-    wxMenuItem* append_menu_item_fix_through_netfabb(wxMenu* menu);
+    wxMenuItem* append_menu_item_fix_through_cgal(wxMenu* menu);
     //wxMenuItem* append_menu_item_simplify(wxMenu* menu);
     void        append_menu_item_export_stl(wxMenu* menu, bool is_mulity_menu = false);
+    void        append_menu_item_export_drc(wxMenu* menu, bool is_mulity_menu = false);
     void        append_menu_item_reload_from_disk(wxMenu* menu);
     void        append_menu_item_replace_with_stl(wxMenu* menu);
+    void        append_menu_item_replace_all_with_stl(wxMenu* menu);
     void        append_menu_item_change_extruder(wxMenu* menu);
     void        append_menu_item_set_visible(wxMenu* menu);
     void        append_menu_item_delete(wxMenu* menu);
@@ -157,17 +160,19 @@ private:
     void        append_menu_item_edit_text(wxMenu *menu);
     void        append_menu_item_edit_svg(wxMenu *menu);
 
-    //void        append_menu_items_instance_manipulation(wxMenu *menu);
+    void        append_menu_items_instance_manipulation(wxMenu *menu);
     //void        update_menu_items_instance_manipulation(MenuType type);
     //BBS add bbl menu item
     void        append_menu_item_clone(wxMenu* menu);
     void        append_menu_item_simplify(wxMenu* menu);
+    void        append_menu_item_smooth_mesh(wxMenu *menu);
     void        append_menu_item_center(wxMenu* menu);
     void        append_menu_item_drop(wxMenu* menu);
     void        append_menu_item_per_object_process(wxMenu* menu);
     void        append_menu_item_per_object_settings(wxMenu* menu);
     void        append_menu_item_change_filament(wxMenu* menu);
     void        append_menu_item_set_printable(wxMenu* menu);
+    void        append_menu_item_set_auto_drop(wxMenu* menu);
     void        append_menu_item_locked(wxMenu* menu);
     void        append_menu_item_fill_bed(wxMenu *menu);
     void        append_menu_item_plate_name(wxMenu *menu);

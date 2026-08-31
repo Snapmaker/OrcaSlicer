@@ -3,19 +3,13 @@
 #include <iostream>
 
 
-#define SLIC3R_APP_NAME "Snapmaker Orca"
-#define SLIC3R_APP_KEY "Snapmaker_Orca"
-#define SLIC3R_VERSION "01.10.01.50"
-#define Snapmaker_VERSION "2.3.6"
+// App identity and version macros (SLIC3R_APP_NAME/KEY, SLIC3R_VERSION,
+// SoftFever_VERSION, SLIC3R_BUILD_ID, BBL_INTERNAL_TESTING, ...) come from the
+// header generated out of version.inc — the single source of truth.
+#include "libslic3r_version.h"
+#define Snapmaker_VERSION "2.5.0"
 #define MIN_FIRM_VER "1.6.0"
-#ifndef GIT_COMMIT_HASH
-#define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized
-#endif
-#define SLIC3R_BUILD_ID "2.3.6"
-// #define SLIC3R_RC_VERSION "01.10.01.50"
 #define BBL_RELEASE_TO_PUBLIC 1
-#define BBL_INTERNAL_TESTING 0
-#define ORCA_CHECK_GCODE_PLACEHOLDERS 0
 
 namespace common 
 {

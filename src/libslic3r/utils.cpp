@@ -1716,7 +1716,15 @@ size_t get_available_physical_memory()
 	mach_msg_type_number_t count = sizeof(vm_stats) / sizeof(natural_t);
 	if (host_statistics64(host_port, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&vm_stats), &count) != KERN_SUCCESS)
 		return 0;
-	return static_cast<size_t>(vm_stats.free_count) * static_cast<size_t>(page_size);
+	// free_count alone is misleading on macOS: the kernel keeps almost all RAM
+	// in inactive/cache/purgeable states and reclaims those pages on demand, so
+	// "free" is routinely a few hundred MB even on an otherwise idle machine.
+	// Count reclaimable pages as available, the way Activity Monitor does;
+	// under genuine memory pressure these pools are drained as well.
+	uint64_t avail_pages = static_cast<uint64_t>(vm_stats.free_count)
+	                     + static_cast<uint64_t>(vm_stats.inactive_count)
+	                     + static_cast<uint64_t>(vm_stats.purgeable_count);
+	return static_cast<size_t>(avail_pages * page_size);
 #else
 	return 0;
 #endif

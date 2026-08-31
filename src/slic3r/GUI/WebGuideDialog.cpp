@@ -1411,7 +1411,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
 
                 int nRet = GetFilamentInfo(vendor_dir.string(), tFilaList_ro, sub_file, sV, sT);
                 if (nRet != 0) {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "Load Filament:" << s1 << ",GetFilamentInfo Failed, Vendor:" << sV << ",Type:"<< sT;
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "Load Filament:" << s1 << ",GetFilamentInfo Failed, Vendor:" << sV << ",Type:"<< sT;
                     return;
                 }
 

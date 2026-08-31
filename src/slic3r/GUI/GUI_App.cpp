@@ -495,15 +495,6 @@ public:
                        startX + brandExt.GetWidth() + gap,
                        tagY);
 
-        // Beta text below brand, centered
-        int betaY = scaleY(279);
-        memDc.SetFont(m_constant_text.versionFont);
-        memDc.SetTextForeground(wxColour(143, 143, 143));
-        wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
-        wxRect betaRect(wxPoint(0, betaY),
-                        wxPoint(width, betaY + betaExt.GetHeight()));
-        memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
-
         // Dynamic text y position (for SetText)
         m_action_line_y_position = scaleY(384);
     }
@@ -580,7 +571,6 @@ private:
     {
         wxString title;
         wxString version;
-        wxString betaText;
 
         wxFont   titleFont;
         wxFont   versionFont;
@@ -589,8 +579,7 @@ private:
         void init()
         {
             title    = "Snapmaker Orca";
-            version  = std::string("V") + Snapmaker_VERSION;
-            betaText = _L("Beta version");
+            version  = wxString::Format("V%s %s", Snapmaker_VERSION, _L("Release"));
 
             titleFont   = Label::sysFont(20, false);
             versionFont = Label::Body_13;

@@ -51,12 +51,14 @@ using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
 
-// m_ProfileJson itself is a GuideFrame member (see the header); this guards it.
-// Snapmaker: the profile JSON is filled by the background loading thread while
-// the GUI thread serves the wizard's web page from it, so every access is taken
-// under this mutex. The loading path (LoadProfileData and everything it calls)
-// holds it for the whole load, because the TBB workers in LoadProfileFamily read
-// the JSON through const references without locking.
+// Snapmaker: the profile JSON stays a namespace-scope global (not a GuideFrame
+// member) because SSWCP and the preset web dialog access it via extern. It is
+// filled by the background loading thread while the GUI thread serves the
+// wizard's web page from it, so every access is taken under this mutex. The
+// loading path (LoadProfileData and everything it calls) holds it for the whole
+// load, because the TBB workers in LoadProfileFamily read the JSON through
+// const references without locking.
+json m_ProfileJson;
 std::mutex m_ProfileJson_mutex;
 
 static wxString update_custom_filaments()

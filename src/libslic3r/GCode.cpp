@@ -8001,6 +8001,13 @@ LayerResult GCode::process_layer(
 
     std::vector<unsigned int> layer_extruders = layer_tools.extruders;
     for (const auto& by_extruder_entry : by_extruder) {
+        // A mixed-color sublayer slot keys its geometry under the virtual slot id in by_extruder
+        // on purpose: the sublayer emitter below prints it at sub-Z with the component extruders.
+        // The slot is not a real tool (GCodeWriter registers no Extruder for it), so it must not
+        // enter the per-layer tool loop — set_extruder()/toolchange() would look up a filament
+        // that does not exist. Only genuine Local-Z extra buckets belong here.
+        if (layer_tools.is_mixed_slot(by_extruder_entry.first))
+            continue;
         if (std::find(layer_extruders.begin(), layer_extruders.end(), by_extruder_entry.first) == layer_extruders.end())
             layer_extruders.emplace_back(by_extruder_entry.first);
     }

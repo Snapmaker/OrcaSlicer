@@ -28,6 +28,11 @@
 #include <wx/tbarbase.h>
 #include "wx/textctrl.h"
 
+#include <functional>
+#include <memory>
+
+#include "GUI_Utils.hpp"
+
 namespace Slic3r { namespace GUI {
 
 class SMUserLogin : public wxDialog
@@ -96,6 +101,22 @@ private:
     wxString m_sm_user_agent;
 
     DECLARE_EVENT_TABLE()
+};
+
+class SMAskUserLoginDialog : public DPIDialog
+{
+public:
+    SMAskUserLoginDialog(wxWindow *parent);
+    ~SMAskUserLoginDialog();
+
+    void SetKeepAliveCallback(std::function<void()> fn);
+
+protected:
+    void on_dpi_changed(const wxRect &suggested_rect) override {}
+
+private:
+    std::unique_ptr<wxTimer> m_keepalive_timer;
+    std::function<void()> m_keepalive_fn;
 };
 
 }} // namespace Slic3r::GUI

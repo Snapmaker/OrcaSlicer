@@ -131,7 +131,7 @@ SlicingParameters SlicingParameters::create_from_config(
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
-        auto support_layer_height_limit = [&print_config, &object_config, &restricted_default](int configured, bool min_limit) -> coordf_t {
+        auto support_layer_height_limit = [&print_config, &object_config, &object_extruders, &restricted_default](int configured, bool min_limit) -> coordf_t {
             auto from_nozzle = [&print_config, min_limit](int filament) {
                 return min_limit ? min_layer_height_from_nozzle(print_config, filament) : max_layer_height_from_nozzle(print_config, filament);
             };
@@ -147,6 +147,18 @@ SlicingParameters SlicingParameters::create_from_config(
                     }
                 if (found)
                     return limit;
+            }
+            if (configured == 0 && !object_extruders.empty()) {
+                // Unrestricted "default" support filament: supports print with the object's own
+                // extruder(s), so combine those limits. from_nozzle(0) would read the FIRST
+                // extruder's limits instead, capping support heights by an unrelated fine nozzle
+                // on mixed-diameter machines.
+                coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
+                for (unsigned int extruder_id : object_extruders) {
+                    coordf_t l = from_nozzle(int(extruder_id + 1));
+                    limit = min_limit ? std::max(limit, l) : std::min(limit, l);
+                }
+                return limit;
             }
             return from_nozzle(configured);
         };
@@ -164,8 +176,9 @@ SlicingParameters SlicingParameters::create_from_config(
         params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, 0));
     } else {
         for (unsigned int extruder_id : object_extruders) {
-            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, extruder_id));
-            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, extruder_id));
+            // object_extruders holds zero based extruder indices, from_nozzle indices are one based.
+            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
+            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
         }
     }
 

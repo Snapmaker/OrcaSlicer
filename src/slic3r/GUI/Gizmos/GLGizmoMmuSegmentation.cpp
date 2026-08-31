@@ -33,40 +33,6 @@ static inline void show_notification_extruders_limit_exceeded()
                                            "first %1% filaments will be available in painting tool."), GLGizmoMmuSegmentation::EXTRUDERS_LIMIT));
 }
 
-// --- Gradient rendering helpers (ported from MixedFilamentBadge) ---
-
-static ImU32 interpolate_ImU32(ImU32 c0, ImU32 c1, double t)
-{
-    t = std::max(0.0, std::min(1.0, t));
-    int r = int(((c0 >> IM_COL32_R_SHIFT) & 0xFF) * (1.0 - t) + ((c1 >> IM_COL32_R_SHIFT) & 0xFF) * t);
-    int g = int(((c0 >> IM_COL32_G_SHIFT) & 0xFF) * (1.0 - t) + ((c1 >> IM_COL32_G_SHIFT) & 0xFF) * t);
-    int b = int(((c0 >> IM_COL32_B_SHIFT) & 0xFF) * (1.0 - t) + ((c1 >> IM_COL32_B_SHIFT) & 0xFF) * t);
-    return IM_COL32(r, g, b, 255);
-}
-
-static float bT601_luminance(ImU32 c)
-{
-    float r = ((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f;
-    float g = ((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f;
-    float b = ((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f;
-    return 0.299f * r + 0.587f * g + 0.114f * b;
-}
-
-static bool very_light(ImU32 c)
-{
-    return ((c >> IM_COL32_R_SHIFT) & 0xFF) > 224
-        && ((c >> IM_COL32_G_SHIFT) & 0xFF) > 224
-        && ((c >> IM_COL32_B_SHIFT) & 0xFF) > 224;
-}
-
-static ImU32 physical_color_to_ImU32(const std::string& hex)
-{
-    unsigned char rgba[4] = {};
-    Slic3r::GUI::BitmapCache::parse_color4(hex, rgba);
-    ColorRGBA col(float(rgba[0]) / 255.f, float(rgba[1]) / 255.f, float(rgba[2]) / 255.f, float(rgba[3]) / 255.f);
-    return ImGuiWrapper::to_ImU32(col);
-}
-
 void GLGizmoMmuSegmentation::on_opening()
 {
     if (wxGetApp().plater()->get_extruders_colors().size() > GLGizmoMmuSegmentation::EXTRUDERS_LIMIT)
@@ -150,15 +116,21 @@ void GLGizmoMmuSegmentation::init_extruders_data(const std::vector<ColorRGBA> &e
             m_selected_extruder_idx = size_t(std::distance(m_display_filament_ids.begin(), selected_it));
     }
 
+    // Mirror Plater's gradient ramps so the swatches draw the same fade the editor previews.
+    // Plater keys them by filament id, while every draw_color_button() call below labels its
+    // swatch with the display slot, so store them in the sidebar's logical order instead.
+    const std::vector<std::vector<wxColour>> &filament_gradient_ramps = wxGetApp().plater()->get_filament_gradient_ramps();
+    m_gradient_ramps.assign(m_display_filament_ids.size(), std::vector<wxColour>());
+    for (size_t display_idx = 0; display_idx < m_display_filament_ids.size(); ++display_idx) {
+        const unsigned int filament_id = m_display_filament_ids[display_idx];
+        if (filament_id >= 1 && filament_id <= filament_gradient_ramps.size())
+            m_gradient_ramps[display_idx] = filament_gradient_ramps[filament_id - 1];
+    }
+
     // keep remap table consistent with current extruder count
     m_extruder_remap.resize(m_display_filament_ids.size());
     for (size_t i = 0; i < m_extruder_remap.size(); ++i)
         m_extruder_remap[i] = i;
-
-    // Build minimal display context for gradient rendering
-    std::vector<std::string> physical_hex = wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
-    // Only physical_colors is used for gradient rendering; other fields intentionally at defaults
-    m_mixed_display_context = MixedFilamentDisplayContext{physical_hex.size(), std::move(physical_hex), {}, {}, false};
 }
 
 void GLGizmoMmuSegmentation::init_extruders_data()
@@ -394,15 +366,32 @@ void GLGizmoMmuSegmentation::render_tooltip_button(float x, float y)
 }
 
 // ORCA
-bool GLGizmoMmuSegmentation::draw_color_button(int idx, std::string id_str, const ColorRGBA& color, ColorRGBA& map_color, bool active, float scale)
+bool GLGizmoMmuSegmentation::draw_color_button(int idx, const char* id_str, const ColorRGBA& color, ColorRGBA& map_color, bool active, float scale)
 {
+    // Inset of the frame stroked below, which is what trims the swatch down to its visible shape.
+    const float frame_inset = 1.5f;
+
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
     std::string label_id  = std::to_string(idx) + id_str + std::to_string(idx);
     ImVec2      pos       = ImGui::GetCursorScreenPos();
     ImVec2      size      = ImVec2(27.f * scale, 27.f * scale);
     ImVec4      color_vec = ImGuiWrapper::to_ImVec4(color);
     ImU32       br_color  = ImGui::ColorConvertFloat4ToU32(active ? ImGuiWrapper::COL_ORCA : m_is_dark_mode ? ImVec4(.35f, .35f, .35f, 1) : ImVec4(.85f, .85f, .85f, 1));
-    bool        dark_tone = (0.299f * color.r() + 0.587f * color.g() + 0.114f * color.b()) < 0.51f; // matching values used by wxWidgets with clr.GetLuminance() < 0.51
+    // Every caller labels the button with the 1 based slot number, so idx - 1 picks out the slot's fade.
+    const std::vector<wxColour>* gradient = gradient_of(idx - 1);
+    // The centered slot number sits at the swatch's mid height, so take its contrast from the colour
+    // printed there rather than from the slot's blended color.
+    bool dark_tone = gradient ? (*gradient)[gradient->size() / 2].GetLuminance() < 0.51 :
+                                (0.299f * color.r() + 0.587f * color.g() + 0.114f * color.b()) < 0.51f; // matching values used by wxWidgets with clr.GetLuminance() < 0.51
+
+    // Paint a gradient mixed filament's fade before the button and keep the button transparent, so
+    // the slot number and the frame below stay on top of it. The bands cannot round their corners,
+    // so the fade is inset to the frame, which masks it into the shape a plain color slot gets.
+    if (gradient) {
+        ImGuiWrapper::draw_gradient_ramp(draw_list, {pos.x + frame_inset * scale, pos.y + frame_inset * scale},
+                                         {pos.x + size.x - frame_inset * scale, pos.y + size.y - frame_inset * scale}, *gradient);
+        color_vec.w = 0.f; // let the fade show through
+    }
 
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding  , 7.f * scale);
@@ -418,7 +407,7 @@ bool GLGizmoMmuSegmentation::draw_color_button(int idx, std::string id_str, cons
     auto drawBorder = [&](float d, float r, float t, ImU32 col) {
         draw_list->AddRect({pos.x + d * scale, pos.y + d * scale}, {pos.x + size.x - d * scale , pos.y + size.y - d * scale}, col, r * scale, 0, t * scale);
     };
-    drawBorder(1.5f, 3.f, 4.f, ImGui::ColorConvertFloat4ToU32(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg)));
+    drawBorder(frame_inset, 3.f, 4.f, ImGui::ColorConvertFloat4ToU32(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg)));
     if(active)
         drawBorder(.5f, 4.f , 2.f, br_color);
     else
@@ -506,8 +495,6 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
 
     m_imgui->text(m_desc.at("filaments"));
 
-    ImDrawList *draw_list = ImGui::GetWindowDrawList();
-
     // Snapmaker: iterate over the sidebar's logical filament order (mixed-filament rows included)
     // rather than over raw extruder indices.
     size_t n_extruder_colors = std::min(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT, m_display_filament_ids.size());
@@ -517,37 +504,9 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         const unsigned int actual_filament_id = m_display_filament_ids[extruder_idx];
         if (actual_filament_id == 0 || actual_filament_id > m_extruders_colors.size())
             continue;
-        ColorRGBA         extruder_color = m_extruders_colors[actual_filament_id - 1];
-        const std::string item_text      = std::to_string(extruder_idx + 1);
-
-        // --- Mixed filament (Local-Z dithering) gradient eligibility check ---
-        const MixedFilament *mf_data = nullptr;
-        if (const auto *pb = wxGetApp().preset_bundle) {
-            size_t num_phys = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
-            mf_data = pb->mixed_filaments.mixed_filament_from_id(actual_filament_id, num_phys);
-        }
-        const bool is_gradient = mf_data != nullptr && is_simple_gradient(*mf_data);
-
-        ImU32 bottom_col = 0;
-        ImU32 top_col    = 0;
-        if (is_gradient) {
-            // Resolve gradient endpoint colors first
-            ImU32 phys_a = IM_COL32(0x26, 0xA6, 0x9A, 255);
-            ImU32 phys_b = IM_COL32(0x26, 0xA6, 0x9A, 255);
-            if (mf_data->component_a > 0 && mf_data->component_a <= m_mixed_display_context.physical_colors.size())
-                phys_a = physical_color_to_ImU32(m_mixed_display_context.physical_colors[mf_data->component_a - 1]);
-            if (mf_data->component_b > 0 && mf_data->component_b <= m_mixed_display_context.physical_colors.size())
-                phys_b = physical_color_to_ImU32(m_mixed_display_context.physical_colors[mf_data->component_b - 1]);
-            const bool a_to_b = mf_data->gradient_start >= mf_data->gradient_end;
-            bottom_col = a_to_b ? phys_a : phys_b;
-            top_col    = a_to_b ? phys_b : phys_a;
-
-            // Average color drives the button frame / label contrast; the gradient is painted on top.
-            extruder_color = ColorRGBA((((bottom_col >> IM_COL32_R_SHIFT) & 0xFF) + ((top_col >> IM_COL32_R_SHIFT) & 0xFF)) / 510.f,
-                                       (((bottom_col >> IM_COL32_G_SHIFT) & 0xFF) + ((top_col >> IM_COL32_G_SHIFT) & 0xFF)) / 510.f,
-                                       (((bottom_col >> IM_COL32_B_SHIFT) & 0xFF) + ((top_col >> IM_COL32_B_SHIFT) & 0xFF)) / 510.f,
-                                       1.f);
-        }
+        // A gradient mixed filament's fade is painted by draw_color_button() from m_gradient_ramps;
+        // the blended colour below is what a plain slot (and the button frame) uses.
+        ColorRGBA extruder_color = m_extruders_colors[actual_filament_id - 1];
 
         if (extruder_idx % max_filament_items_per_line != 0)
             ImGui::SameLine();
@@ -563,39 +522,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             m_selected_extruder_idx = extruder_idx;
         }
 
-        if (is_gradient) {
-            // Paint the gradient inside the button, leaving Orca's border ring visible.
-            const ImVec2 btn_min = ImGui::GetItemRectMin();
-            const ImVec2 btn_max = ImGui::GetItemRectMax();
-            const float  inset   = 4.f * scale;
-            const ImVec2 fill_min(btn_min.x + inset, btn_min.y + inset);
-            const ImVec2 fill_max(btn_max.x - inset, btn_max.y - inset);
-            const float  fill_h = fill_max.y - fill_min.y;
-
-            // Per-scanline gradient fill (pos=0 bottom, pos=1 top)
-            if (fill_h > 0.0f) {
-                for (int y_i = 0; y_i < int(std::round(fill_h)); ++y_i) {
-                    const double pos_t = 1.0 - double(y_i) / double(fill_h);
-                    draw_list->AddRectFilled(ImVec2(fill_min.x, fill_min.y + float(y_i)),
-                                             ImVec2(fill_max.x, fill_min.y + float(y_i + 1)),
-                                             interpolate_ImU32(bottom_col, top_col, pos_t));
-                }
-            }
-
-            // Very-light gradient border
-            if (very_light(bottom_col) && very_light(top_col))
-                draw_list->AddRect(fill_min, fill_max, IM_COL32(128, 128, 128, 255), ImGui::GetStyle().FrameRounding, 0, 1.0f);
-
-            // The gradient covers the button label - redraw the filament number on top.
-            const float lum_avg  = (bT601_luminance(bottom_col) + bT601_luminance(top_col)) * 0.5f;
-            const ImU32 text_col = (lum_avg < 0.51f) ? IM_COL32(255, 255, 255, 255) : IM_COL32(0, 0, 0, 255);
-            const float text_w   = ImGui::CalcTextSize(item_text.c_str()).x;
-            draw_list->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-                ImVec2(btn_min.x + (btn_max.x - btn_min.x - text_w) / 2.f,
-                       btn_min.y + (btn_max.y - btn_min.y - ImGui::GetFontSize()) / 2.f),
-                text_col, item_text.c_str());
-        }
-
+        // The loop is already capped at EXTRUDERS_LIMIT, but only slots 1..9 have a number-key
+        // shortcut, so the rest are named instead of promising a key that does not exist.
         if (ImGui::IsItemHovered()) {
             if (extruder_idx < 9)
                 m_imgui->tooltip(_L("Shortcut Key ") + std::to_string(extruder_idx + 1), max_tooltip_width);
@@ -939,7 +867,10 @@ void GLGizmoMmuSegmentation::init_model_triangle_selectors()
             continue;
 
         int extruder_idx = (mv->extruder_id() > 0) ? mv->extruder_id() - 1 : 0;
-        extruder_idx = std::min(extruder_idx, int(m_extruders_colors.size()) - 1);
+        // A volume may be assigned to a mixed-color slot, whose index can sit past the
+        // physical colour list; fall back to the first colour rather than reading OOB.
+        if (extruder_idx >= (int)m_extruders_colors.size())
+            extruder_idx = 0;
         std::vector<ColorRGBA> ebt_colors;
         ebt_colors.push_back(m_extruders_colors[size_t(extruder_idx)]);
         ebt_colors.insert(ebt_colors.end(), m_extruders_colors.begin(), m_extruders_colors.end());
@@ -965,7 +896,9 @@ void GLGizmoMmuSegmentation::update_triangle_selectors_colors()
         if (!selector) continue;
         int extruder_idx = m_volumes_extruder_idxs[i];
         int extruder_color_idx = std::max(0, extruder_idx - 1);
-        extruder_color_idx = std::min(extruder_color_idx, int(m_extruders_colors.size()) - 1);
+        // A mixed-color slot can index past the physical colour list; fall back to the first colour.
+        if (extruder_color_idx >= (int)m_extruders_colors.size())
+            extruder_color_idx = 0;
         std::vector<ColorRGBA> ebt_colors;
         ebt_colors.push_back(m_extruders_colors[extruder_color_idx]);
         ebt_colors.insert(ebt_colors.end(), m_extruders_colors.begin(), m_extruders_colors.end());

@@ -31149,6 +31149,175 @@ msgstr ""
 "면 압출기/핫엔드가 막힐 가능성을 줄일 수 있다는 것을 알고 계섰나요? 이에 대"
 "한 자세한 내용은 Wiki에서 확인하세요."
 
+# AI Translated
+#, c-format, boost-format
+msgid "Layer height is too small. It will be set to the minimum (%g mm)."
+msgstr "레이어 높이가 너무 작습니다. 최솟값(%g mm)으로 설정됩니다."
+
+# AI Translated
+msgid ""
+"Layer height is outside the limits set in Printer Settings -> Extruder -> "
+"Layer height limits, this may cause printing quality issues."
+msgstr ""
+"레이어 높이가 프린터 설정 -> 압출기 -> 레이어 높이 한도에서 설정한 범위를 벗"
+"어났습니다. 출력 품질 문제가 발생할 수 있습니다."
+
+# AI Translated
+#, c-format, boost-format
+msgid "Adjust it to the limit (%g mm) automatically?"
+msgstr "한도(%g mm)에 맞게 자동으로 조정할까요?"
+
+# AI Translated
+msgid "Brim ear radius"
+msgstr "브림 귀 반경"
+
+# AI Translated
+msgid "This printer is not configured with the hardware this control needs."
+msgstr "이 프린터에는 이 컨트롤에 필요한 하드웨어가 구성되어 있지 않습니다."
+
+# AI Translated
+msgid "This control is not supported on this printer."
+msgstr "이 컨트롤은 이 프린터에서 지원되지 않습니다."
+
+# AI Translated
+msgid "Device (Web)"
+msgstr "장치 (웹)"
+
+# AI Translated
+msgid "Visible plugin pages"
+msgstr "표시할 플러그인 페이지"
+
+# AI Translated
+msgid "pages"
+msgstr "페이지"
+
+# AI Translated
+msgid ""
+"Number of plugin pages shown as fixed tabs before the remaining pages "
+"collapse into a dropdown on the last tab."
+msgstr ""
+"고정 탭으로 표시되는 플러그인 페이지 수입니다. 나머지 페이지는 마지막 탭의 드"
+"롭다운으로 묶입니다."
+
+# AI Translated
+msgid "(Experimental) Use printer agents instead of print hosts"
+msgstr "(실험적) 출력 호스트 대신 프린터 에이전트 사용"
+
+# AI Translated
+msgid ""
+"Route print jobs for non-Bambu printers through printer plug-in agents "
+"instead of the classic print-host upload flow.\n"
+"When disabled, OrcaSlicer uses the legacy print-host behavior."
+msgstr ""
+"Bambu 이외의 프린터 출력 작업을 기존 출력 호스트 업로드 방식 대신 프린터 플러"
+"그인 에이전트를 통해 전달합니다.\n"
+"비활성화하면 OrcaSlicer는 기존 출력 호스트 동작을 사용합니다."
+
+# AI Translated
+msgid ""
+"Copies all inherited values from the parent into this preset and removes the "
+"parent relationship. Presets compatible only with the parent may become "
+"unsupported."
+msgstr ""
+"상위 사전 설정에서 상속한 모든 값을 이 사전 설정으로 복사하고 상속 관계를 제"
+"거합니다. 상위 사전 설정에서만 호환되는 사전 설정은 지원되지 않을 수 있습니"
+"다."
+
+# AI Translated
+msgid "Unique preset"
+msgstr "독립 사전 설정"
+
+# AI Translated
+msgid "Parent preset"
+msgstr "상위 사전 설정"
+
+# AI Translated
+msgid "This preset does not inherit from another preset."
+msgstr "이 사전 설정은 다른 사전 설정을 상속하지 않습니다."
+
+# AI Translated
+msgid " is partially outside the printable area, and it cannot be printed.\n"
+msgstr " 이(가) 출력 가능 영역을 일부 벗어나 출력할 수 없습니다.\n"
+
+# AI Translated
+msgid "Brim ears outer only"
+msgstr "브림 귀를 바깥쪽에만"
+
+# AI Translated
+msgid ""
+"Generate mouse ears only on the outer contour of the model, excluding holes "
+"and enclosed sections."
+msgstr ""
+"구멍과 닫힌 영역을 제외하고 모델의 바깥쪽 윤곽에만 생쥐 귀를 생성합니다."
+
+# AI Translated
+msgid "Sparse infill smooth factor"
+msgstr "드문 채우기 부드러움 계수"
+
+# AI Translated
+msgid ""
+"Controls how strongly sparse infill corners are rounded. 0% keeps the "
+"original sharp path, while 100% produces the largest possible curves between "
+"adjacent infill lines."
+msgstr ""
+"드문 채우기의 모서리를 얼마나 둥글게 할지 조절합니다. 0%는 원래의 날카로운 경"
+"로를 유지하고, 100%는 인접한 채우기 선 사이에 가능한 가장 큰 곡선을 만듭니다."
+
+# AI Translated
+msgid "Skip G-code config block"
+msgstr "G-code 설정 블록 생략"
+
+# AI Translated
+msgid ""
+"Do not write the CONFIG_BLOCK (slicer configuration key/value pairs) into "
+"the G-code file. This can help with printers whose firmware crashes when "
+"parsing these comment lines (e.g. Anycubic go-klipper). Note: the G-code "
+"file will no longer contain slicer settings, so importing it back into "
+"OrcaSlicer will not restore the configuration."
+msgstr ""
+"CONFIG_BLOCK(슬라이서 설정의 키/값 쌍)을 G-code 파일에 기록하지 않습니다. 이 "
+"주석 줄을 해석할 때 펌웨어가 중단되는 프린터(예: Anycubic go-klipper)에 도움"
+"이 될 수 있습니다. 참고: G-code 파일에 슬라이서 설정이 더 이상 포함되지 않으"
+"므로, 이 파일을 OrcaSlicer로 다시 가져와도 설정이 복원되지 않습니다."
+
+# AI Translated
+msgid "Retraction Length (Toolchange)"
+msgstr "후퇴 길이 (툴 체인지)"
+
+# AI Translated
+msgid ""
+"When retraction is triggered before changing tool, filament is pulled back "
+"by the specified amount (the length is measured on raw filament, before it "
+"enters the extruder)."
+msgstr ""
+"툴 체인지 전에 후퇴가 실행되면 지정한 양만큼 필라멘트가 뒤로 당겨집니다 (길이"
+"는 압출기에 들어가기 전의 원래 필라멘트를 기준으로 측정됩니다)."
+
+# AI Translated
+msgid "Extra length on restart (Toolchange)"
+msgstr "재 시작 시 추가 길이 (툴 체인지)"
+
+# AI Translated
+msgid "Wait for temperature on wipe tower"
+msgstr "프라임 타워에서 온도 대기"
+
+# AI Translated
+msgid ""
+"Pick up the new tool without waiting for it to reach printing temperature, "
+"travel to the wipe tower, and wait for the temperature there, right before "
+"purging. Ooze from the heat-up lands on the tower instead of the model, and "
+"the travel overlaps with the heating. Only relevant for multi-extruder "
+"(multi-toolhead) printers using a Type 2 wipe tower. The firmware or tool "
+"change macro must not wait for the temperature itself. When disabled, the "
+"temperature wait is issued right after the tool change command."
+msgstr ""
+"출력 온도에 도달할 때까지 기다리지 않고 새 툴을 집은 뒤 프라임 타워로 이동하"
+"여, 퍼지 직전에 그곳에서 온도를 기다립니다. 가열 중 흘러나온 재료는 모델이 아"
+"닌 타워에 떨어지고, 이동 시간이 가열 시간과 겹칩니다. 타입 2 프라임 타워를 사"
+"용하는 다중 압출기(다중 툴헤드) 프린터에만 해당합니다. 펌웨어나 툴 체인지 매"
+"크로가 직접 온도를 기다려서는 안 됩니다. 비활성화하면 툴 체인지 명령 직후에 "
+"온도 대기가 실행됩니다."
+
 #~ msgid "Rotate (absolute)"
 #~ msgstr "회전 (절대)"
 

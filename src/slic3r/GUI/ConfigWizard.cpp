@@ -66,41 +66,41 @@ using Config::SnapshotDB;
 
 // Configuration data structures extensions needed for the wizard
 // SM_FEATURE: set sm machine as default
-bool Bundle::load(fs::path source_path, bool ais_in_resources, bool ais_sm_bundle)
+bool Bundle::load(fs::path dir, const std::string &vendor_name, bool ais_in_resources, bool ais_sm_bundle)
 {
     this->preset_bundle = std::make_unique<PresetBundle>();
     this->is_in_resources = ais_in_resources;
     this->is_sm_bundle = ais_sm_bundle;
 
-    std::string path_string = source_path.string();
-    std::string parent_path = source_path.parent_path().string();
     //BBS: add json logic for vendor bundles
-    std::string vendor_name = source_path.filename().string();
-    if (Slic3r::is_json_file(path_string)) {
-        // Remove the .json suffix.
-        vendor_name.erase(vendor_name.size() - 5);
-    }
-    else
+    // Orca: served from the vendor's preset cache where one covers it — which is
+    // how a shipped build carries its vendors — and parsed from the JSONs otherwise.
+    // A vendor that can be neither read nor parsed — a cache the build cannot use
+    // with the preset JSONs behind it pruned, say — is one the wizard cannot offer.
+    // Every other vendor still can be, so it is left out rather than thrown over.
+    size_t presets_loaded = 0;
+    try {
+        auto [config_substitutions, loaded] = preset_bundle->load_vendor_configs_from_json(
+            dir.string(), vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
+        UNUSED(config_substitutions);
+        // No substitutions shall be reported when loading a system config bundle, no substitutions are allowed.
+        assert(config_substitutions.empty());
+        presets_loaded = loaded;
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(fatal) << boost::format("Vendor bundle: `%1%`: cannot be loaded, leaving it out: %2%") % vendor_name % e.what();
         return false;
-
-    // Throw when parsing invalid configuration. Only valid configuration is supposed to be provided over the air.
-    //BBS: add json logic for vendor bundles
-    auto [config_substitutions, presets_loaded] = preset_bundle->load_vendor_configs_from_json(
-        parent_path, vendor_name, PresetBundle::LoadConfigBundleAttribute::LoadSystem, ForwardCompatibilitySubstitutionRule::Disable);
-    UNUSED(config_substitutions);
-    // No substitutions shall be reported when loading a system config bundle, no substitutions are allowed.
-    assert(config_substitutions.empty());
+    }
     auto first_vendor = preset_bundle->vendors.begin();
     if (first_vendor == preset_bundle->vendors.end()) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No vendor information defined, cannot install.") % path_string;
+        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No vendor information defined, cannot install.") % vendor_name;
         return false;
     }
     if (presets_loaded == 0) {
-        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No profile loaded.") % path_string;
+        BOOST_LOG_TRIVIAL(error) << boost::format("Vendor bundle: `%1%`: No profile loaded.") % vendor_name;
         return false;
-    } 
+    }
 
-    BOOST_LOG_TRIVIAL(trace) << boost::format("Vendor bundle: `%1%`: %2% profiles loaded.") % path_string % presets_loaded;
+    BOOST_LOG_TRIVIAL(trace) << boost::format("Vendor bundle: `%1%`: %2% profiles loaded.") % vendor_name % presets_loaded;
     this->vendor_profile = &first_vendor->second;
     return true;
 }
@@ -123,17 +123,12 @@ BundleMap BundleMap::load()
     const auto vendor_dir = (boost::filesystem::path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR).make_preferred();
     const auto rsrc_vendor_dir = (boost::filesystem::path(resources_dir()) / "profiles").make_preferred();
 
-    // SM_FEATURE
-    auto sm_bundle_path = (vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
-    auto sm_bundle_rsrc = false;
-
-    if (!boost::filesystem::exists(sm_bundle_path)) {
-        sm_bundle_path = (rsrc_vendor_dir / PresetBundle::SM_BUNDLE).replace_extension(".json");
-        sm_bundle_rsrc = true;
-    }
+    // SM_FEATURE: the Snapmaker bundle is this fork's default vendor
+    //Orca: add json logic for vendor bundle
     {
+        const bool from_rsrc = ! is_vendor_installed(PresetBundle::SM_BUNDLE);
         Bundle sm_bundle;
-        if (sm_bundle.load(std::move(sm_bundle_path), sm_bundle_rsrc, true))
+        if (sm_bundle.load(from_rsrc ? rsrc_vendor_dir : vendor_dir, PresetBundle::SM_BUNDLE, from_rsrc, true))
             res.emplace(PresetBundle::SM_BUNDLE, std::move(sm_bundle));
     }
 
@@ -141,18 +136,13 @@ BundleMap BundleMap::load()
     // and then additionally from resources/profiles.
     bool is_in_resources = false;
     for (auto dir : { &vendor_dir, &rsrc_vendor_dir }) {
-        for (const auto &dir_entry : boost::filesystem::directory_iterator(*dir)) {
-            //BBS: add json logic for vendor bundle
-            if (Slic3r::is_json_file(dir_entry.path().string())) {
-                std::string id = dir_entry.path().stem().string();  // stem() = filename() without the trailing ".json" part
+        for (const std::string &id : vendor_names_in(*dir)) {
+            // Don't load this bundle if we've already loaded it.
+            if (res.find(id) != res.end()) { continue; }
 
-                // Don't load this bundle if we've already loaded it.
-                if (res.find(id) != res.end()) { continue; }
-
-                Bundle bundle;
-                if (bundle.load(dir_entry.path(), is_in_resources))
-                    res.emplace(std::move(id), std::move(bundle));
-            }
+            Bundle bundle;
+            if (bundle.load(*dir, id, is_in_resources))
+                res.emplace(id, std::move(bundle));
         }
 
         is_in_resources = true;

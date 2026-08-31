@@ -664,7 +664,7 @@ public:
     static long long m_active_file_size;
 
 
-    static std::unordered_map<std::string, int> m_tab_map; // for switching tab
+    static std::unordered_map<std::string, wxString> m_tab_map; // for switching tab (TAB_ID_* names)
 
     // WebSocket Debug Server methods
     static void enable_debug_mode(bool enable = true, unsigned short port = 8766);

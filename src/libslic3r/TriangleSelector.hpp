@@ -17,8 +17,12 @@ enum class EnforcerBlockerType : int16_t {
     BLOCKER   = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
-    // Extruder states are serialized using a 2-bit prefix plus one or more 4-bit nibbles.
-    // This allows more than 16 painted states while keeping backward compatibility.
+    // Extruder states are serialized using a 2 bit prefix code plus one or more 4-bit nibbles
+    // (see TriangleSelector::serialize). States 3..17 fit into the first nibble; states 18 and
+    // above set that nibble to 0b1111 and continue in further nibbles, so the encoding stays
+    // byte-for-byte compatible with the 32 states covered by CONST_FILAMENTS in Model.cpp while
+    // allowing the fork's larger paintable range. Only the first 32 states are named below; any
+    // value up to ExtruderMax is a valid painted state.
     Extruder1 = ENFORCER,
     Extruder2 = BLOCKER,
     Extruder3,
@@ -35,6 +39,25 @@ enum class EnforcerBlockerType : int16_t {
     Extruder14,
     Extruder15,
     Extruder16,
+    Extruder17,
+    Extruder18,
+    Extruder19,
+    Extruder20,
+    Extruder21,
+    Extruder22,
+    Extruder23,
+    Extruder24,
+    Extruder25,
+    Extruder26,
+    Extruder27,
+    Extruder28,
+    Extruder29,
+    Extruder30,
+    Extruder31,
+    Extruder32,
+    // Snapmaker Orca: the paintable range is not capped at the last named extruder. The chained
+    // nibble encoding above and the int16_t underlying type allow states up to 255, which the
+    // fork needs for combined physical + mixed filaments (see MAXIMUM_FILAMENT_NUMBER).
     ExtruderMax = 255
 };
 
@@ -370,6 +393,9 @@ public:
 
     // For all triangles, remove the flag indicating that the triangle was selected by seed fill.
     void seed_fill_unselect_all_triangles();
+
+    // Shift all triangle states >= threshold by delta (used when inserting filaments)
+    void shift_states_above(EnforcerBlockerType threshold, int delta);
 
     // For all triangles selected by seed fill, set new EnforcerBlockerType and remove flag indicating that triangle was selected by seed fill.
     // The operation may merge split triangles if they are being assigned the same color.

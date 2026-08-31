@@ -6,6 +6,7 @@ add_executable(${_TEST_NAME}_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/bury_cfg/bury_point.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common_func/common_func.cpp
     test_dev_mapping.cpp
+    test_filament_bitmap_utils.cpp
     test_network_versions.cpp
     test_action_source.cpp
     test_plugin_host_api.cpp

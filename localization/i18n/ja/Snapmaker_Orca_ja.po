@@ -31499,6 +31499,177 @@ msgstr ""
 "ンターのドアを開けると、エクストルーダーやホットエンドが詰まる確率が下がるこ"
 "とをご存知ですか？これについてはWikiに詳しい情報があります。"
 
+# AI Translated
+#, c-format, boost-format
+msgid "Layer height is too small. It will be set to the minimum (%g mm)."
+msgstr "積層ピッチが小さすぎます。最小値 (%g mm) に設定されます。"
+
+# AI Translated
+msgid ""
+"Layer height is outside the limits set in Printer Settings -> Extruder -> "
+"Layer height limits, this may cause printing quality issues."
+msgstr ""
+"積層ピッチが、プリンター設定 -> 押出機 -> 積層ピッチの制限 で設定された範囲を"
+"外れています。印刷品質の問題が発生する可能性があります。"
+
+# AI Translated
+#, c-format, boost-format
+msgid "Adjust it to the limit (%g mm) automatically?"
+msgstr "自動的に制限値 (%g mm) に調整しますか？"
+
+# AI Translated
+msgid "Brim ear radius"
+msgstr "ブリムイヤー半径"
+
+# AI Translated
+msgid "This printer is not configured with the hardware this control needs."
+msgstr ""
+"このプリンターには、このコントロールに必要なハードウェアが設定されていませ"
+"ん。"
+
+# AI Translated
+msgid "This control is not supported on this printer."
+msgstr "このコントロールはこのプリンターではサポートされていません。"
+
+# AI Translated
+msgid "Device (Web)"
+msgstr "デバイス (Web)"
+
+# AI Translated
+msgid "Visible plugin pages"
+msgstr "表示するプラグインページ数"
+
+# AI Translated
+msgid "pages"
+msgstr "ページ"
+
+# AI Translated
+msgid ""
+"Number of plugin pages shown as fixed tabs before the remaining pages "
+"collapse into a dropdown on the last tab."
+msgstr ""
+"固定タブとして表示するプラグインページの数です。残りのページは最後のタブのド"
+"ロップダウンにまとめられます。"
+
+# AI Translated
+msgid "(Experimental) Use printer agents instead of print hosts"
+msgstr "(実験的) プリントホストの代わりにプリンターエージェントを使用"
+
+# AI Translated
+msgid ""
+"Route print jobs for non-Bambu printers through printer plug-in agents "
+"instead of the classic print-host upload flow.\n"
+"When disabled, OrcaSlicer uses the legacy print-host behavior."
+msgstr ""
+"Bambu 以外のプリンターの印刷ジョブを、従来のプリントホストへのアップロードで"
+"はなく、プリンターのプラグインエージェント経由で送信します。\n"
+"無効の場合、OrcaSlicer は従来のプリントホストの動作を使用します。"
+
+# AI Translated
+msgid ""
+"Copies all inherited values from the parent into this preset and removes the "
+"parent relationship. Presets compatible only with the parent may become "
+"unsupported."
+msgstr ""
+"親プリセットから継承したすべての値をこのプリセットにコピーし、親との継承関係"
+"を解除します。親プリセットとのみ互換性のあるプリセットは、サポートされなくな"
+"る場合があります。"
+
+# AI Translated
+msgid "Unique preset"
+msgstr "独立したプリセット"
+
+# AI Translated
+msgid "Parent preset"
+msgstr "親プリセット"
+
+# AI Translated
+msgid "This preset does not inherit from another preset."
+msgstr "このプリセットは他のプリセットを継承していません。"
+
+# AI Translated
+msgid " is partially outside the printable area, and it cannot be printed.\n"
+msgstr " は造形可能領域から一部はみ出しているため、印刷できません。\n"
+
+# AI Translated
+msgid "Brim ears outer only"
+msgstr "ブリムイヤーを外側の輪郭のみ"
+
+# AI Translated
+msgid ""
+"Generate mouse ears only on the outer contour of the model, excluding holes "
+"and enclosed sections."
+msgstr ""
+"穴や閉じた部分を除き、モデルの外側の輪郭にのみマウスイヤーを生成します。"
+
+# AI Translated
+msgid "Sparse infill smooth factor"
+msgstr "スパース インフィルの平滑化係数"
+
+# AI Translated
+msgid ""
+"Controls how strongly sparse infill corners are rounded. 0% keeps the "
+"original sharp path, while 100% produces the largest possible curves between "
+"adjacent infill lines."
+msgstr ""
+"スパース インフィルの角をどの程度丸めるかを設定します。0% では元の鋭い経路の"
+"まま、100% では隣接するインフィル線の間で可能な限り大きな曲線になります。"
+
+# AI Translated
+msgid "Skip G-code config block"
+msgstr "G-code の設定ブロックを省略"
+
+# AI Translated
+msgid ""
+"Do not write the CONFIG_BLOCK (slicer configuration key/value pairs) into "
+"the G-code file. This can help with printers whose firmware crashes when "
+"parsing these comment lines (e.g. Anycubic go-klipper). Note: the G-code "
+"file will no longer contain slicer settings, so importing it back into "
+"OrcaSlicer will not restore the configuration."
+msgstr ""
+"CONFIG_BLOCK (スライサー設定のキーと値のペア) を G-code ファイルに書き込みま"
+"せん。これらのコメント行の解析でファームウェアがクラッシュするプリンター "
+"(例: Anycubic go-klipper) で役立ちます。注意: G-code ファイルにスライサー設定"
+"が含まれなくなるため、OrcaSlicer に読み込み直しても設定は復元されません。"
+
+# AI Translated
+msgid "Retraction Length (Toolchange)"
+msgstr "リトラクション量 (ツール交換)"
+
+# AI Translated
+msgid ""
+"When retraction is triggered before changing tool, filament is pulled back "
+"by the specified amount (the length is measured on raw filament, before it "
+"enters the extruder)."
+msgstr ""
+"ツール交換の前にリトラクションが行われるとき、指定した量だけフィラメントが引"
+"き戻されます (長さは押出機に入る前の未加工のフィラメントで測定されます)。"
+
+# AI Translated
+msgid "Extra length on restart (Toolchange)"
+msgstr "再開時の追加長さ (ツール交換)"
+
+# AI Translated
+msgid "Wait for temperature on wipe tower"
+msgstr "ワイプタワーで温度待機"
+
+# AI Translated
+msgid ""
+"Pick up the new tool without waiting for it to reach printing temperature, "
+"travel to the wipe tower, and wait for the temperature there, right before "
+"purging. Ooze from the heat-up lands on the tower instead of the model, and "
+"the travel overlaps with the heating. Only relevant for multi-extruder "
+"(multi-toolhead) printers using a Type 2 wipe tower. The firmware or tool "
+"change macro must not wait for the temperature itself. When disabled, the "
+"temperature wait is issued right after the tool change command."
+msgstr ""
+"印刷温度に達するのを待たずに新しいツールを取り付け、ワイプタワーへ移動し、"
+"パージ直前にそこで温度を待ちます。加熱中の垂れ出しはモデルではなくタワーに落"
+"ち、移動時間が加熱と重なります。タイプ 2 のワイプタワーを使用するマルチ押出"
+"機 (マルチツールヘッド) プリンターでのみ有効です。ファームウェアやツール交換"
+"マクロ側で温度待機を行わないようにしてください。無効の場合、温度待機はツール"
+"交換コマンドの直後に出力されます。"
+
 #~ msgid "Rotate (absolute)"
 #~ msgstr "回転（絶対）"
 

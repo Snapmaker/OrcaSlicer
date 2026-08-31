@@ -32828,6 +32828,188 @@ msgstr ""
 "Temperatur und höherer Gehäusetemperatur verringern kann? Weitere "
 "Informationen dazu finden Sie im Wiki."
 
+# AI Translated
+#, c-format, boost-format
+msgid "Layer height is too small. It will be set to the minimum (%g mm)."
+msgstr ""
+"Die Schichthöhe ist zu klein. Sie wird auf den Mindestwert (%g mm) gesetzt."
+
+# AI Translated
+msgid ""
+"Layer height is outside the limits set in Printer Settings -> Extruder -> "
+"Layer height limits, this may cause printing quality issues."
+msgstr ""
+"Die Schichthöhe liegt außerhalb der in Druckereinstellungen -> Extruder -> "
+"Schichthöhenlimits festgelegten Grenzen. Dies kann zu Problemen mit der "
+"Druckqualität führen."
+
+# AI Translated
+#, c-format, boost-format
+msgid "Adjust it to the limit (%g mm) automatically?"
+msgstr "Automatisch an den Grenzwert (%g mm) anpassen?"
+
+# AI Translated
+msgid "Brim ear radius"
+msgstr "Radius der Brim-Ohren"
+
+# AI Translated
+msgid "This printer is not configured with the hardware this control needs."
+msgstr ""
+"Dieser Drucker ist nicht mit der Hardware ausgestattet, die dieses "
+"Bedienelement benötigt."
+
+# AI Translated
+msgid "This control is not supported on this printer."
+msgstr "Dieses Bedienelement wird von diesem Drucker nicht unterstützt."
+
+# AI Translated
+msgid "Device (Web)"
+msgstr "Gerät (Web)"
+
+# AI Translated
+msgid "Visible plugin pages"
+msgstr "Sichtbare Plugin-Seiten"
+
+# AI Translated
+msgid "pages"
+msgstr "Seiten"
+
+# AI Translated
+msgid ""
+"Number of plugin pages shown as fixed tabs before the remaining pages "
+"collapse into a dropdown on the last tab."
+msgstr ""
+"Anzahl der Plugin-Seiten, die als feste Tabs angezeigt werden, bevor die "
+"übrigen Seiten im letzten Tab zu einem Dropdown zusammengefasst werden."
+
+# AI Translated
+msgid "(Experimental) Use printer agents instead of print hosts"
+msgstr "(Experimentell) Drucker-Agenten anstelle von Druck-Hosts verwenden"
+
+# AI Translated
+msgid ""
+"Route print jobs for non-Bambu printers through printer plug-in agents "
+"instead of the classic print-host upload flow.\n"
+"When disabled, OrcaSlicer uses the legacy print-host behavior."
+msgstr ""
+"Leitet Druckaufträge für Nicht-Bambu-Drucker über Drucker-Plugin-Agenten "
+"statt über den klassischen Druck-Host-Upload.\n"
+"Wenn deaktiviert, verwendet OrcaSlicer das bisherige Druck-Host-Verhalten."
+
+# AI Translated
+msgid ""
+"Copies all inherited values from the parent into this preset and removes the "
+"parent relationship. Presets compatible only with the parent may become "
+"unsupported."
+msgstr ""
+"Kopiert alle vom übergeordneten Profil geerbten Werte in dieses Profil und "
+"entfernt die Vererbungsbeziehung. Profile, die nur mit dem übergeordneten "
+"Profil kompatibel sind, können dadurch nicht mehr unterstützt werden."
+
+# AI Translated
+msgid "Unique preset"
+msgstr "Eigenständiges Profil"
+
+# AI Translated
+msgid "Parent preset"
+msgstr "Übergeordnetes Profil"
+
+# AI Translated
+msgid "This preset does not inherit from another preset."
+msgstr "Dieses Profil erbt nicht von einem anderen Profil."
+
+# AI Translated
+msgid " is partially outside the printable area, and it cannot be printed.\n"
+msgstr ""
+" liegt teilweise außerhalb des druckbaren Bereichs und kann nicht gedruckt "
+"werden.\n"
+
+# AI Translated
+msgid "Brim ears outer only"
+msgstr "Brim-Ohren nur außen"
+
+# AI Translated
+msgid ""
+"Generate mouse ears only on the outer contour of the model, excluding holes "
+"and enclosed sections."
+msgstr ""
+"Erzeugt Mausohren nur an der Außenkontur des Modells, ohne Löcher und "
+"geschlossene Bereiche."
+
+# AI Translated
+msgid "Sparse infill smooth factor"
+msgstr "Glättungsfaktor der Füllung"
+
+# AI Translated
+msgid ""
+"Controls how strongly sparse infill corners are rounded. 0% keeps the "
+"original sharp path, while 100% produces the largest possible curves between "
+"adjacent infill lines."
+msgstr ""
+"Legt fest, wie stark die Ecken der Füllung abgerundet werden. 0% behält den "
+"ursprünglichen scharfkantigen Pfad bei, während 100% die größtmöglichen "
+"Kurven zwischen benachbarten Fülllinien erzeugt."
+
+# AI Translated
+msgid "Skip G-code config block"
+msgstr "G-code-Konfigurationsblock auslassen"
+
+# AI Translated
+msgid ""
+"Do not write the CONFIG_BLOCK (slicer configuration key/value pairs) into "
+"the G-code file. This can help with printers whose firmware crashes when "
+"parsing these comment lines (e.g. Anycubic go-klipper). Note: the G-code "
+"file will no longer contain slicer settings, so importing it back into "
+"OrcaSlicer will not restore the configuration."
+msgstr ""
+"Schreibt den CONFIG_BLOCK (die Schlüssel-Wert-Paare der Slicer-"
+"Konfiguration) nicht in die G-code-Datei. Das kann bei Druckern helfen, "
+"deren Firmware beim Verarbeiten dieser Kommentarzeilen abstürzt (z. B. "
+"Anycubic go-klipper). Hinweis: Die G-code-Datei enthält dann keine Slicer-"
+"Einstellungen mehr, sodass beim erneuten Importieren in OrcaSlicer die "
+"Konfiguration nicht wiederhergestellt wird."
+
+# AI Translated
+msgid "Retraction Length (Toolchange)"
+msgstr "Rückzugslänge (Werkzeugwechsel)"
+
+# AI Translated
+msgid ""
+"When retraction is triggered before changing tool, filament is pulled back "
+"by the specified amount (the length is measured on raw filament, before it "
+"enters the extruder)."
+msgstr ""
+"Wenn vor einem Werkzeugwechsel ein Rückzug ausgelöst wird, wird das Filament "
+"um den angegebenen Betrag zurückgezogen (die Länge wird am rohen Filament "
+"gemessen, bevor es in den Extruder gelangt)."
+
+# AI Translated
+msgid "Extra length on restart (Toolchange)"
+msgstr "Zusätzliche Länge beim Neustart (Werkzeugwechsel)"
+
+# AI Translated
+msgid "Wait for temperature on wipe tower"
+msgstr "Auf Temperatur am Reinigungsturm warten"
+
+# AI Translated
+msgid ""
+"Pick up the new tool without waiting for it to reach printing temperature, "
+"travel to the wipe tower, and wait for the temperature there, right before "
+"purging. Ooze from the heat-up lands on the tower instead of the model, and "
+"the travel overlaps with the heating. Only relevant for multi-extruder "
+"(multi-toolhead) printers using a Type 2 wipe tower. The firmware or tool "
+"change macro must not wait for the temperature itself. When disabled, the "
+"temperature wait is issued right after the tool change command."
+msgstr ""
+"Nimmt das neue Werkzeug auf, ohne auf das Erreichen der Drucktemperatur zu "
+"warten, fährt zum Reinigungsturm und wartet dort unmittelbar vor dem Spülen "
+"auf die Temperatur. Das beim Aufheizen austretende Material landet auf dem "
+"Turm statt auf dem Modell, und die Fahrt überlappt sich mit dem Aufheizen. "
+"Nur relevant für Multi-Extruder-Drucker (mehrere Werkzeugköpfe) mit einem "
+"Reinigungsturm vom Typ 2. Die Firmware bzw. das Werkzeugwechsel-Makro darf "
+"nicht selbst auf die Temperatur warten. Wenn deaktiviert, wird das Warten "
+"auf die Temperatur direkt nach dem Werkzeugwechselbefehl ausgegeben."
+
 # TODO: Review, changed by lang refactor. PR 14254
 #, no-c-format, no-boost-format
 #~ msgid ""

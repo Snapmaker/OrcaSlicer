@@ -74,7 +74,9 @@ public:
 
     void data_changed(bool is_serializing) override;
 
-    // Keep this in sync with the shared triangle-selector state range.
+    // The paint material limit follows EnforcerBlockerType::ExtruderMax: TriangleSelector
+    // serialization covers the extended (17..32) range through an escape nibble. Mixed-color
+    // filaments occupy ordinary slots, so they draw from the same budget as physical ones.
     static const constexpr size_t EXTRUDERS_LIMIT = static_cast<size_t>(EnforcerBlockerType::ExtruderMax);
 
     const float get_cursor_radius_min() const override { return CursorRadiusMin; }
@@ -120,6 +122,10 @@ protected:
     
     // Filament remap feature
     std::vector<size_t>               m_extruder_remap;      // index → target extruder index
+    // Colours each gradient mixed filament actually prints, bottom of the model first, mirrored
+    // from Plater so the extruder swatches draw the same fade the editor previews. Plain
+    // filament slots keep an empty ramp.
+    std::vector<std::vector<wxColour>> m_gradient_ramps;
     // ORCA: Cache used filaments to filter UI
     std::set<size_t>                  m_used_filaments;      // Set of used filament indices (cached)
 
@@ -144,7 +150,13 @@ private:
     void init_model_triangle_selectors();
 
     // ORCA
-    bool draw_color_button(int idx, std::string id_str, const ColorRGBA& color, ColorRGBA& map_color, bool active, float scale);
+    bool draw_color_button(int idx, const char* id_str, const ColorRGBA& color, ColorRGBA& map_color, bool active, float scale);
+    // Gradient ramp of a filament slot, or nullptr when the slot is a plain single color
+    // filament. A non-null result is never empty.
+    const std::vector<wxColour>* gradient_of(int idx) const
+    {
+        return idx >= 0 && idx < (int) m_gradient_ramps.size() && !m_gradient_ramps[idx].empty() ? &m_gradient_ramps[idx] : nullptr;
+    }
 
     // BBS
     void update_triangle_selectors_colors();

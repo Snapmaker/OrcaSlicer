@@ -2,6 +2,7 @@ Build
 Build.bat
 /build*/
 CMakeLists.txt.user
+CMakeUserPresets.json
 **/CMakeLists.txt.autosave
 deps/build*
 MYMETA.json
@@ -49,6 +50,8 @@ internal_docs/
 # Python bytecode
 __pycache__/
 *.pyc
+# Cached system presets
+*.opc
 .claude/
 .hermes/
 CLAUDE.md

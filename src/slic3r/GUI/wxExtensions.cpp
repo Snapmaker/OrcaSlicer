@@ -576,6 +576,12 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
     if (has_render_info)
         readable_color_info = read_color_pack(filaments_color_info);
 
+    // ORCA: a gradient mixed filament fades over the model's height, so it gets the same
+    // curve-sampled ramp the editor previews instead of a fade between two endpoints.
+    // Indexed by physical filament slot; every other slot's ramp is empty.
+    const std::vector<std::vector<wxColour>> &gradient_ramps =
+        Slic3r::GUI::wxGetApp().plater()->get_filament_gradient_ramps();
+
     // Snapmaker: project-level multi-colour keys ("filament_multi_colors" + "filament_colour_mode").
     const Slic3r::DynamicPrintConfig* config = Slic3r::GUI::wxGetApp().preset_bundle != nullptr ?
                                                &Slic3r::GUI::wxGetApp().preset_bundle->project_config : nullptr;
@@ -592,13 +598,16 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
 
         if (color_idx < num_physical) {
             // ORCA: preset-provided colour pack wins when it is available for this filament.
-            if (has_render_info && color_idx < readable_color_info.size() && !readable_color_info[color_idx].empty()) {
+            const std::vector<wxColour> *ramp = color_idx < gradient_ramps.size() && !gradient_ramps[color_idx].empty() ?
+                                                    &gradient_ramps[color_idx] : nullptr;
+            if (has_render_info && color_idx < readable_color_info.size() &&
+                (!readable_color_info[color_idx].empty() || ramp != nullptr)) {
                 const std::vector<std::string> &pack        = readable_color_info[color_idx];
                 const bool                      is_gradient = ctype[color_idx] == "0";
-                if (pack.size() == 1)
+                if (ramp == nullptr && pack.size() == 1)
                     bmps.push_back(get_extruder_color_icon(pack[0], label, icon_width, icon_height));
                 else
-                    bmps.push_back(get_extruder_color_icon(pack, is_gradient, label, icon_width, icon_height));
+                    bmps.push_back(get_extruder_color_icon(pack, is_gradient, label, icon_width, icon_height, ramp));
                 continue;
             }
 
@@ -706,14 +715,27 @@ wxColourData show_sys_picker_dialog(wxWindow *parent, const wxColourData &clr_da
     return data;
 }
 
-wxBitmap *get_extruder_color_icon(std::vector<std::string> colors, bool is_gradient, std::string label, int icon_width, int icon_height){
+wxBitmap *get_extruder_color_icon(std::vector<std::string> colors, bool is_gradient, std::string label, int icon_width, int icon_height,
+                                  const std::vector<wxColour> *ramp){
 
     static Slic3r::GUI::BitmapCache bmp_cache;
 
-    // build cache key, include all color info
+    // build cache key, include all color info. A ramp already encodes its slot's components,
+    // colours and curve, so keying on it rebuilds the icon whenever any of them change.
     std::string bitmap_key = "";
-    for (const auto& color : colors) {
-        bitmap_key += color + "_";
+    if (ramp != nullptr) {
+        static const char hex_digits[] = "0123456789ABCDEF";
+        bitmap_key = "grad_";
+        for (const wxColour &c : *ramp)
+            for (unsigned char v : {c.Red(), c.Green(), c.Blue()}) {
+                bitmap_key += hex_digits[v >> 4];
+                bitmap_key += hex_digits[v & 0x0F];
+            }
+        bitmap_key += "_";
+    } else {
+        for (const auto& color : colors) {
+            bitmap_key += color + "_";
+        }
     }
     bitmap_key += "h" + std::to_string(icon_height) + "-w" + std::to_string(icon_width) + "-i" + label;
 
@@ -723,16 +745,21 @@ wxBitmap *get_extruder_color_icon(std::vector<std::string> colors, bool is_gradi
     #endif
     if (bitmap == nullptr) {
 
-        std::vector<wxColour> wx_colors;
-        for (const auto& color_str : colors) {
-            wx_colors.push_back(wxColour(color_str));
-        }
-        if (wx_colors.empty()) {
-            wx_colors.push_back(wxColour("#636363")); // default color if no colors provided
-        }
+        wxBitmap base_bitmap;
+        if (ramp != nullptr) {
+            base_bitmap = Slic3r::GUI::create_gradient_ramp_bitmap(*ramp, wxSize(icon_width, icon_height));
+        } else {
+            std::vector<wxColour> wx_colors;
+            for (const auto& color_str : colors) {
+                wx_colors.push_back(wxColour(color_str));
+            }
+            if (wx_colors.empty()) {
+                wx_colors.push_back(wxColour("#636363")); // default color if no colors provided
+            }
 
-        // create filament bitmap in multi color
-        wxBitmap base_bitmap = Slic3r::GUI::create_filament_bitmap(wx_colors, wxSize(icon_width, icon_height), is_gradient);
+            // create filament bitmap in multi color
+            base_bitmap = Slic3r::GUI::create_filament_bitmap(wx_colors, wxSize(icon_width, icon_height), is_gradient);
+        }
 
         if (!base_bitmap.IsOk()) {
             // if create failed, return nullptr

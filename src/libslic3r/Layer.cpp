@@ -289,6 +289,12 @@ void Layer::make_perimeters()
 	            if (! (*it)->slices.empty()) {
 		            LayerRegion* other_layerm = *it;
 		            const PrintRegion &other_region = other_layerm->region();
+                    // Per-part gradient tags a region with its owning ModelVolume; merging two
+                    // differently-tagged regions would collapse volumes that need independent
+                    // gradient runs. Both tags are invalid unless per-part gradient is on, so
+                    // this is a no-op for every other configuration.
+                    if (this_region.gradient_volume_id() != other_region.gradient_volume_id())
+                        continue;
                     // Regions combined to different extruder layer heights (whole-region groups or
                     // walls-only runs) extrude with different heights and must not share a make_perimeters() call.
                     if ((*layerm)->combined_layer_count() == other_layerm->combined_layer_count() &&

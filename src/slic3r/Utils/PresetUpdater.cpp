@@ -1679,45 +1679,42 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
     std::set<std::string> bundles;
     // Orca: always install filament library
     bundles.insert(PresetBundle::ORCA_FILAMENT_LIBRARY);
-    for (auto &dir_entry : boost::filesystem::directory_iterator(rsrc_path)) {
-        const auto &path = dir_entry.path();
-        std::string file_path = path.string();
-        if (is_json_file(file_path)) {
-            const auto path_in_vendor = vendor_path / path.filename();
-            std::string vendor_name = path.filename().string();
-            // Remove the .json suffix.
-            vendor_name.erase(vendor_name.size() - 5);
-            if (bundles.find(vendor_name) != bundles.end())continue;
+    // A vendor is named by its profile or, where the build ships preset caches
+    // instead of the raw profile JSONs, by its cache alone.
+    for (const std::string &vendor_name : vendor_names_in(rsrc_path)) {
+        if (bundles.find(vendor_name) != bundles.end())continue;
 
-            const auto is_vendor_enabled = (vendor_name == PresetBundle::SM_BUNDLE) // always update configs from resource to vendor for ORCA_DEFAULT_BUNDLE
-                                           || (enabled_vendors.find(vendor_name) != enabled_vendors.end());
-            if (enabled_config_update) {
-                if ( fs::exists(path_in_vendor)) {
-                    if (is_vendor_enabled) {
-                        Semver resource_ver = get_version_from_json(file_path);
-                        Semver vendor_ver = get_version_from_json(path_in_vendor.string());
+        // Snapmaker Orca: the fork's own bundle is the one always refreshed from resources.
+        const auto is_vendor_enabled = (vendor_name == PresetBundle::SM_BUNDLE)
+                                       || (enabled_vendors.find(vendor_name) != enabled_vendors.end());
+        if (enabled_config_update) {
+            if (is_vendor_installed(vendor_name)) {
+                if (is_vendor_enabled) {
+                    // Orca: whichever form of the vendor resources ships at the newer
+                    // version is the one installing lays down, and the one to judge
+                    // what is installed against.
+                    Semver resource_ver = resource_vendor_version(vendor_name);
+                    // Orca: a vendor installed as a preset cache has no profile
+                    // beside it; the version it was installed at is in the cache.
+                    Semver vendor_ver = installed_vendor_version(vendor_name);
 
-                        if (vendor_ver < resource_ver) {
-                            BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:found vendor " << vendor_name << " newer version "
-                                                    << resource_ver.to_string() << " from resource, old version " << vendor_ver.to_string();
-                            bundles.insert(vendor_name);
-                        }
-                    }
-                    else {
-                        //need to be removed because not installed
-                        fs::remove(path_in_vendor);
-                        const auto path_of_vendor = vendor_path / vendor_name;
-                        if (fs::exists(path_of_vendor))
-                            fs::remove_all(path_of_vendor);
+                    if (vendor_ver < resource_ver) {
+                        BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:found vendor " << vendor_name << " newer version "
+                                                << resource_ver.to_string() << " from resource, old version " << vendor_ver.to_string();
+                        bundles.insert(vendor_name);
                     }
                 }
-                else if (is_vendor_enabled) {
-                    bundles.insert(vendor_name);
+                else {
+                    //need to be removed because not installed
+                    remove_installed_vendor(vendor_name);
                 }
             }
             else if (is_vendor_enabled) {
                 bundles.insert(vendor_name);
             }
+        }
+        else if (is_vendor_enabled) {
+            bundles.insert(vendor_name);
         }
     }
 
@@ -1816,14 +1813,16 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
             auto filament_in_cache = (cache_profile_path / vendor_name / PRESET_FILAMENT_NAME);
             auto machine_in_cache = (cache_profile_path / vendor_name / PRESET_PRINTER_NAME);
 
-            if (( fs::exists(path_in_vendor))
+            if (is_vendor_installed(vendor_name)
                 || fs::exists(print_in_cache)
                 || fs::exists(filament_in_cache)
                 || fs::exists(machine_in_cache)) {
-                // OTA may ship a new vendor before any system vendor JSON exists; avoid reading a missing path.
-                Semver vendor_ver;
-                if (fs::exists(path_in_vendor))
-                    vendor_ver = get_version_from_json(path_in_vendor.string());
+                // Orca: a vendor installed as a preset cache carries its version there.
+                // This also covers the Snapmaker OTA case that used to need a guard here:
+                // OTA may ship a new vendor before any system vendor JSON exists, and
+                // installed_vendor_version() checks for the file instead of reading a
+                // missing path, yielding 0.0.0 so the cached bundle still counts as newer.
+                Semver vendor_ver = installed_vendor_version(vendor_name);
 
                 std::map<std::string, std::string> key_values;
                 std::vector<std::string> keys(3);

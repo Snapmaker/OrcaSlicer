@@ -149,7 +149,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
             if [ -z "${{ vars.SELF_HOSTED }}" ]; then
-              brew install automake texinfo libtool
+              brew install automake texinfo libtool pkgconf yasm nasm
             fi
             # No -t here on purpose: the deployment target comes from
             # build_release_macos.sh / CMakeLists.txt (12.0), and the deps must be

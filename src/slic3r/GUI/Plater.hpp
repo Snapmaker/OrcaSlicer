@@ -8,6 +8,7 @@
 #include <vector>
 #include <boost/filesystem/path.hpp>
 
+#include <wx/colour.h>
 #include <wx/panel.h>
 // BBS
 #include <wx/notebook.h>
@@ -89,6 +90,10 @@ using t_optgroups = std::vector <std::shared_ptr<ConfigOptionsGroup>>;
 
 class Plater;
 enum class ActionButtonType : int;
+
+// Sentinel filament id meaning "use the slot the sidebar context menu was opened on"
+// (Sidebar::priv::m_menu_filament_id) rather than an explicit index.
+inline constexpr int kSidebarContextMenuFilamentId = -2;
 
 #define EVT_PUBLISHING_START        1
 #define EVT_PUBLISHING_STOP         2
@@ -203,7 +208,7 @@ public:
     // many-second) deletion loop. Default-empty: existing callers see no change.
     void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result,
                                                     std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
-    void add_custom_filament(wxColour new_col);
+    void add_custom_filament(wxColour new_col, const std::string& preset_name = std::string(), bool skip_preset_validation = false);
     void edit_filament();
     bool is_new_project_in_gcode3mf();
 
@@ -289,6 +294,18 @@ public:
     std::vector<PlaterPresetComboBox*>&   combos_filament();
     void                                 clear_combos_filament_badge();
     void                                 udpate_combos_filament_badge();
+
+    // Mixed-color filament sidebar section
+    void delete_mixed_filament_at(size_t idx);
+    void decompose_filament_color(int filament_idx);
+    void recalc_filament_scroll_sizes();
+    void update_mixed_filament_list();
+    bool has_broken_mixed_filament() const;
+    bool has_broken_mixed_filament(const PartPlate* plate) const;
+    void collect_physical_filament_info(std::vector<std::string>& color_strs,
+                                        std::vector<std::string>& names,
+                                        std::vector<std::string>& types,
+                                        std::vector<size_t>* config_indices = nullptr);
     Search::OptionsSearcher&        get_searcher();
     std::string&                    get_search_line();
     void                            update_printer_thumbnail();
@@ -372,7 +389,7 @@ public:
     Plater(const Plater &) = delete;
     Plater &operator=(Plater &&) = delete;
     Plater &operator=(const Plater &) = delete;
-    ~Plater() = default;
+    ~Plater();
 
     bool Show(bool show = true);
 
@@ -394,6 +411,11 @@ public:
     Print& fff_print();
     const SLAPrint& sla_print() const;
     SLAPrint& sla_print();
+
+    // Helper: returns config indices where filament_is_mixed == true
+    std::vector<size_t> mixed_filament_config_indices() const;
+    // Helper: returns config indices where filament_is_mixed == false
+    std::vector<size_t> physical_filament_config_indices() const;
 
     int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString());
     // BBS: save & backup
@@ -654,7 +676,7 @@ public:
     // Orca-named alias for on_filaments_change(); kept so upstream call sites compile.
     void on_filament_count_change(size_t extruders_count) { on_filaments_change(extruders_count); }
     void on_filament_change(size_t filament_idx);
-    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_snapshot = {});
+    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_before_delete = {});
     std::vector<Slic3r::ColorRGBA> get_extruders_colors();
     bool confirm_auto_generated_gradients(size_t num_physical);
     void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
@@ -756,6 +778,12 @@ public:
     std::vector<std::string> get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result = nullptr, bool include_mixed = true) const;
     std::vector<std::string> get_filament_colors_render_info() const;
     std::vector<std::string> get_filament_color_render_type() const;
+
+    // Per slot, the colours a gradient mixed filament actually prints, sampled bottom (index 0)
+    // to top, so the sidebar, the paint gizmo and the extruder icons draw the same fade the
+    // editor previews rather than a straight blend of two endpoints. A slot that is not a
+    // gradient mixed filament gets an empty ramp. Cached; recomputed when the config changes.
+    const std::vector<std::vector<wxColour>>& get_filament_gradient_ramps() const;
     std::vector<std::string> get_colors_for_color_print(const GCodeProcessorResult* const result = nullptr) const;
 
     void set_global_filament_map_mode(FilamentMapMode mode);

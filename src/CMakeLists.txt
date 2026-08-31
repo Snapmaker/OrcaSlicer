@@ -82,7 +82,7 @@ if (SLIC3R_GUI)
         list(FILTER wxWidgets_LIBRARIES EXCLUDE REGEX expat)
         list(APPEND wxWidgets_LIBRARIES ${EXPAT_LIBRARIES})
     endif ()
-    
+
     # This is an issue in the new wxWidgets cmake build, doesn't deal with librt
     find_library(LIBRT rt)
     if(LIBRT)
@@ -280,20 +280,6 @@ if (WIN32)
                 VERBATIM
             )
         endforeach ()
-
-        # For multi-config generators (Visual Studio), copy DLLs for all configurations
-        foreach (CONF ${CMAKE_CONFIGURATION_TYPES})
-            if ("${CONF}" STREQUAL "Debug")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "d" output_dlls_Debug)
-            elseif ("${CONF}" STREQUAL "Release")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_Release)
-            elseif ("${CONF}" STREQUAL "RelWithDebInfo")
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" output_dlls_RelWithDebInfo)
-            else()
-                # MinSizeRel or other configs
-                Snapmaker_Orca_copy_dlls(COPY_DLLS "${CONF}" "" _unused_dlls)
-            endif()
-        endforeach ()
     else ()
         # Single-config generators (Ninja, Makefiles)
         file(TO_NATIVE_PATH "${CMAKE_CURRENT_BINARY_DIR}/resources" WIN_RESOURCES_SYMLINK)
@@ -302,12 +288,6 @@ if (WIN32)
             COMMENT "Symlinking the resources directory into the build tree"
             VERBATIM
         )
-        # Copy DLLs for single-config generators
-        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
-        else()
-            Snapmaker_Orca_copy_dlls(COPY_DLLS "${CMAKE_BUILD_TYPE}" "" output_dlls_Release)
-        endif()
     endif ()
     # copy libpython to the bin folder for Windows
     add_custom_command(TARGET Snapmaker_Orca POST_BUILD
@@ -316,8 +296,43 @@ if (WIN32)
         COMMENT "Copying Python runtime into the build tree"
         VERBATIM)
 
+    if (CMAKE_CONFIGURATION_TYPES)
+        # Multi-config generators (Visual Studio, Ninja Multi-Config): copy per config.
+        foreach (cfg ${CMAKE_CONFIGURATION_TYPES})
+            if ("${cfg}" STREQUAL "Debug")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+            elseif("${cfg}" STREQUAL "RelWithDebInfo")
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_RelWithDebInfo)
+            else()
+                Snapmaker_Orca_copy_dlls(COPY_DLLS "${cfg}" "" output_dlls_${cfg})
+            endif()
+        endforeach()
+    else()
+        # Single-config generators (Ninja): use CMAKE_BUILD_TYPE.
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Debug" "d" output_dlls_Debug)
+        elseif("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "RelWithDebInfo" "" output_dlls_RelWithDebInfo)
+        else()
+            Snapmaker_Orca_copy_dlls(COPY_DLLS "Release" "" output_dlls_Release)
+        endif()
+    endif()
 
 else ()
+    if (NOT APPLE)
+        # FFmpeg shared libs used by the media player, staged next to the binary.
+        set(output_sos_Release "")
+        set(output_sos_Debug "")
+        set(output_sos_RelWithDebInfo "")
+        add_custom_target(Snapmaker_OrcaSosCopy ALL DEPENDS Snapmaker_Orca)
+        if ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "Debug" "d" output_sos_Debug)
+        elseif ("${CMAKE_BUILD_TYPE}" STREQUAL "RelWithDebInfo")
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "RelWithDebInfo" "" output_sos_RelWithDebInfo)
+        else()
+            orcaslicer_copy_sos(Snapmaker_OrcaSosCopy "Release" "" output_sos_Release)
+        endif()
+    endif()
     if (APPLE AND NOT CMAKE_MACOSX_BUNDLE)
         # On OSX, the name of the binary matches the name of the Application.
         add_custom_command(TARGET Snapmaker_Orca POST_BUILD
@@ -445,5 +460,8 @@ if (WIN32)
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
     install(DIRECTORY "${CMAKE_PREFIX_PATH}/libpython/" DESTINATION "python")
 else ()
+    if (NOT APPLE AND output_sos_${build_type})
+        install(FILES ${output_sos_${build_type}} DESTINATION "${CMAKE_INSTALL_PREFIX}")
+    endif()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()

@@ -1029,7 +1029,7 @@ void SSWCP_Instance::sw_SwitchTab() {
         if (m_param_data.count("target")) {
             std::string target_tab = m_param_data["target"].get<std::string>();
             if (SSWCP::m_tab_map.count(target_tab)) {
-                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(SSWCP::m_tab_map[target_tab]));
+                wxGetApp().mainframe->request_select_tab(SSWCP::m_tab_map[target_tab]);
                 send_to_js();
                 finish_job();
                 return;
@@ -7092,16 +7092,18 @@ std::unique_ptr<WebSocketDebugServer> SSWCP::m_debug_server = nullptr;
 std::mutex SSWCP::m_debug_server_mutex;
 bool SSWCP::m_debug_mode_enabled = false;
 
-std::unordered_map<std::string, int> SSWCP::m_tab_map = {
-    {"Home", MainFrame::TabPosition::tpHome},
-    {"3DEditor", MainFrame::TabPosition::tp3DEditor},
-    {"Preview", MainFrame::TabPosition::tpPreview},
-    {"Monitor", MainFrame::TabPosition::tpMonitor},
-    {"MultiDevice", MainFrame::TabPosition::tpMultiDevice},
-    {"Project", MainFrame::TabPosition::tpProject},
-    {"Calibration", MainFrame::TabPosition::tpCalibration},
-    {"Auxiliary", MainFrame::TabPosition::tpAuxiliary},
-    {"DebugTool", MainFrame::TabPosition::toDebugTool}
+// Tab pages are addressed by stable name ids (see TAB_ID_* in MainFrame.hpp);
+// ids without a registered page make the switch request a no-op.
+std::unordered_map<std::string, wxString> SSWCP::m_tab_map = {
+    {"Home", TAB_ID_HOME},
+    {"3DEditor", TAB_ID_PREPARE},
+    {"Preview", TAB_ID_PREVIEW},
+    {"Monitor", TAB_ID_MONITOR},
+    {"MultiDevice", TAB_ID_MULTI_DEVICE},
+    {"Project", TAB_ID_PROJECT},
+    {"Calibration", TAB_ID_CALIBRATION},
+    {"Auxiliary", "auxiliary"},
+    {"DebugTool", "debug_tool"}
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {

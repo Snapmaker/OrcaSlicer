@@ -29828,6 +29828,169 @@ msgstr ""
 "您知道吗，在较高封闭仓温度下打印较低温度的耗材时，打开打印机门可以减少挤出机/"
 "热端堵塞的概率。更多信息请参阅Wiki。"
 
+# AI Translated
+#, c-format, boost-format
+msgid "Layer height is too small. It will be set to the minimum (%g mm)."
+msgstr "层高太小，将设置为最小值（%g mm）。"
+
+# AI Translated
+msgid ""
+"Layer height is outside the limits set in Printer Settings -> Extruder -> "
+"Layer height limits, this may cause printing quality issues."
+msgstr ""
+"层高超出了打印机设置 -> 挤出机 -> 层高限制中设置的范围，这可能导致打印质量问"
+"题。"
+
+# AI Translated
+#, c-format, boost-format
+msgid "Adjust it to the limit (%g mm) automatically?"
+msgstr "是否自动调整到限制值（%g mm）？"
+
+# AI Translated
+msgid "Brim ear radius"
+msgstr "圆盘半径"
+
+# AI Translated
+msgid "This printer is not configured with the hardware this control needs."
+msgstr "此打印机未配置该控件所需的硬件。"
+
+# AI Translated
+msgid "This control is not supported on this printer."
+msgstr "此打印机不支持该控件。"
+
+# AI Translated
+msgid "Device (Web)"
+msgstr "设备（网页）"
+
+# AI Translated
+msgid "Visible plugin pages"
+msgstr "可见插件页数"
+
+# AI Translated
+msgid "pages"
+msgstr "页"
+
+# AI Translated
+msgid ""
+"Number of plugin pages shown as fixed tabs before the remaining pages "
+"collapse into a dropdown on the last tab."
+msgstr ""
+"作为固定标签显示的插件页数量，其余页面将折叠到最后一个标签的下拉菜单中。"
+
+# AI Translated
+msgid "(Experimental) Use printer agents instead of print hosts"
+msgstr "（实验性）使用打印机代理替代打印主机"
+
+# AI Translated
+msgid ""
+"Route print jobs for non-Bambu printers through printer plug-in agents "
+"instead of the classic print-host upload flow.\n"
+"When disabled, OrcaSlicer uses the legacy print-host behavior."
+msgstr ""
+"非 Bambu 打印机的打印任务将通过打印机插件代理发送，而不是经典的打印主机上传流"
+"程。\n"
+"禁用时，OrcaSlicer 使用旧的打印主机行为。"
+
+# AI Translated
+msgid ""
+"Copies all inherited values from the parent into this preset and removes the "
+"parent relationship. Presets compatible only with the parent may become "
+"unsupported."
+msgstr ""
+"将父预设继承的所有数值复制到当前预设，并解除继承关系。仅与父预设兼容的预设可"
+"能会变为不受支持。"
+
+# AI Translated
+msgid "Unique preset"
+msgstr "独立预设"
+
+# AI Translated
+msgid "Parent preset"
+msgstr "父预设"
+
+# AI Translated
+msgid "This preset does not inherit from another preset."
+msgstr "此预设未继承自其它预设。"
+
+# AI Translated
+msgid " is partially outside the printable area, and it cannot be printed.\n"
+msgstr "有部分超出可打印区域，无法打印。\n"
+
+# AI Translated
+msgid "Brim ears outer only"
+msgstr "仅外轮廓生成圆盘"
+
+# AI Translated
+msgid ""
+"Generate mouse ears only on the outer contour of the model, excluding holes "
+"and enclosed sections."
+msgstr "仅在模型的外轮廓上生成圆盘，不包括孔洞和封闭区域。"
+
+# AI Translated
+msgid "Sparse infill smooth factor"
+msgstr "稀疏填充平滑系数"
+
+# AI Translated
+msgid ""
+"Controls how strongly sparse infill corners are rounded. 0% keeps the "
+"original sharp path, while 100% produces the largest possible curves between "
+"adjacent infill lines."
+msgstr ""
+"控制稀疏填充拐角的圆滑程度。0% 保持原有的尖锐路径，100% 则在相邻填充线之间生"
+"成尽可能大的圆弧。"
+
+# AI Translated
+msgid "Skip G-code config block"
+msgstr "跳过 G-code 配置块"
+
+# AI Translated
+msgid ""
+"Do not write the CONFIG_BLOCK (slicer configuration key/value pairs) into "
+"the G-code file. This can help with printers whose firmware crashes when "
+"parsing these comment lines (e.g. Anycubic go-klipper). Note: the G-code "
+"file will no longer contain slicer settings, so importing it back into "
+"OrcaSlicer will not restore the configuration."
+msgstr ""
+"不将 CONFIG_BLOCK（切片软件配置的键值对）写入 G-code 文件。这对固件在解析这些"
+"注释行时会崩溃的打印机（例如 Anycubic go-klipper）有帮助。注意：G-code 文件将"
+"不再包含切片设置，因此重新导入到 OrcaSlicer 时无法恢复配置。"
+
+# AI Translated
+msgid "Retraction Length (Toolchange)"
+msgstr "回抽长度（换工具头）"
+
+# AI Translated
+msgid ""
+"When retraction is triggered before changing tool, filament is pulled back "
+"by the specified amount (the length is measured on raw filament, before it "
+"enters the extruder)."
+msgstr ""
+"在换工具头之前触发回抽时，耗材丝会按指定的长度回抽（长度是在耗材丝进入挤出机"
+"之前，以原始耗材丝测量的）。"
+
+# AI Translated
+msgid "Extra length on restart (Toolchange)"
+msgstr "额外回填长度（换工具头）"
+
+# AI Translated
+msgid "Wait for temperature on wipe tower"
+msgstr "在擦拭塔上等待温度"
+
+# AI Translated
+msgid ""
+"Pick up the new tool without waiting for it to reach printing temperature, "
+"travel to the wipe tower, and wait for the temperature there, right before "
+"purging. Ooze from the heat-up lands on the tower instead of the model, and "
+"the travel overlaps with the heating. Only relevant for multi-extruder "
+"(multi-toolhead) printers using a Type 2 wipe tower. The firmware or tool "
+"change macro must not wait for the temperature itself. When disabled, the "
+"temperature wait is issued right after the tool change command."
+msgstr ""
+"拾取新工具头后不等待其达到打印温度，直接移动到擦拭塔，并在冲刷前于擦拭塔上等"
+"待温度。升温过程中渗出的耗材丝会落在擦拭塔上而不是模型上，且移动时间与加热过"
+"程重叠。仅适用于使用 2 型擦拭塔的多挤出机（多工具头）打印机。固件或换工具头宏"
+"本身不得等待温度。禁用时，等待温度的指令将在换工具头命令之后立即发出。"
+
 #~ msgid ""
 #~ "Decrease this value slightly (for example 0.9) to reduce the amount of "
 #~ "material for bridge, to improve sag.\n"

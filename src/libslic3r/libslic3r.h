@@ -67,6 +67,11 @@ static constexpr size_t MAXIMUM_EXTRUDER_NUMBER = 64;
 // Combined upper limit for physical + mixed filaments.
 static constexpr size_t MAXIMUM_FILAMENT_NUMBER = 64;
 
+// Orca: how many filament slots syncing an AMS setup may create. This was derived from
+// EnforcerBlockerType::ExtruderMax, but that cap now covers 32 paintable filaments, so the AMS
+// limit is pinned here to keep sync behaving as it does for projects without mixed-color filaments.
+static constexpr size_t MAXIMUM_AMS_SYNC_FILAMENT_NUMBER = 16;
+
 // Orca: maximum line width is 5 times the nozzle diameter
 static constexpr float MAX_LINE_WIDTH_MULTIPLIER = 5;
 

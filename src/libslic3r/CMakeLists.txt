@@ -153,6 +153,8 @@ set(lisbslic3r_sources
     Fill/FillConcentric.hpp
     Fill/FillConcentricInternal.cpp
     Fill/FillConcentricInternal.hpp
+    Fill/FillCornerSmoothing.cpp
+    Fill/FillCornerSmoothing.hpp
     Fill/Fill.cpp
     Fill/FillCrossHatch.cpp
     Fill/FillCrossHatch.hpp
@@ -181,6 +183,17 @@ set(lisbslic3r_sources
     Fill/Lightning/Layer.hpp
     Fill/Lightning/TreeNode.cpp
     Fill/Lightning/TreeNode.hpp
+    FilamentMixer.cpp
+    FilamentMixer.hpp
+    FilamentMixerModel.hpp
+    ColorDecomposeRecipe.cpp
+    ColorDecomposeRecipe.hpp
+    TexturePainting.hpp
+    TexturePainting.cpp
+    TextureToColor/TextureToColor.hpp
+    TextureToColor/TextureToColor.cpp
+    TextureToColor/ColorUtils.hpp
+    TextureToColor/ColorUtils.cpp
     Flow.cpp
     Flow.hpp
     FlushVolCalc.cpp
@@ -196,6 +209,9 @@ set(lisbslic3r_sources
     format.hpp
     Format/OBJ.cpp
     Format/OBJ.hpp
+    Format/AssimpImport.hpp
+    Format/AssimpImport.cpp
+    Format/ResourcePathUtils.hpp
     Format/objparser.cpp
     Format/objparser.hpp
     Format/SL1.cpp
@@ -303,9 +319,12 @@ set(lisbslic3r_sources
     MinimumSpanningTree.hpp
     MixedFilament.cpp
     MixedFilament.hpp
-    filament_mixer.cpp
+    # SM Orca: filament_mixer.cpp / filament_mixer_model.h were upstreamed as
+    # FilamentMixer.cpp / FilamentMixerModel.hpp (listed above), which define the
+    # identical Slic3r::filament_mixer_lerp* symbols. Only the declaration header
+    # stays listed here because fork code (MixedFilament.cpp, MixedGradientSelector,
+    # MixedFilamentColorMapPanel, Plater) still includes it by its old name.
     filament_mixer.h
-    filament_mixer_model.h
     miniz_extension.cpp
     miniz_extension.hpp
     ModelArrange.cpp
@@ -355,6 +374,8 @@ set(lisbslic3r_sources
     Polyline.hpp
     PresetBundle.cpp
     PresetBundle.hpp
+    PresetCacheFormat.cpp
+    PresetCacheFormat.hpp
     Preset.cpp
     Preset.hpp
     PrincipalComponents2D.cpp
@@ -514,6 +535,7 @@ cmake_policy(SET CMP0011 NEW)
 set(CMAKE_POLICY_DEFAULT_CMP0167 NEW)
 find_package(CGAL REQUIRED)
 find_package(OpenCV REQUIRED core)
+find_package(assimp REQUIRED)
 unset(CMAKE_POLICY_DEFAULT_CMP0167)
 cmake_policy(POP)
 
@@ -556,7 +578,7 @@ if (USE_SLIC3R_CONSOLE_LOG)
 endif()
 # SM Orca: source directory stays PUBLIC so other modules (like libslic3r_gui) can
 # include headers such as SentryWrapper.hpp.
-target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(libslic3r PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/TextureToColor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
@@ -604,6 +626,7 @@ target_link_libraries(libslic3r
         libnest2d
         miniz
         opencv_world
+        assimp::assimp
     PRIVATE
         ${CMAKE_DL_LIBS}
         ${EXPAT_LIBRARIES}

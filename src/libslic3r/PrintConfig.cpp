@@ -7361,7 +7361,11 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. "
                      "This option will be invalid when the prime tower is enabled.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    // Mainline default. The Snapmaker process profiles either set this to 1
+    // explicitly or (U1) leave it unset; with the old false default, loading a
+    // project made the base-config sync snap the saved value back to 0 and
+    // supports lost their independent layer heights.
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("support_threshold_angle", coInt);
     def->label = L("Threshold angle");

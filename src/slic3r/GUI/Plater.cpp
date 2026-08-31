@@ -3640,7 +3640,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    url = wxGetApp().build_flutter_web_url("3");
+                    url = wxGetApp().gateway_web_url("device_control");
                 }
             }
             
@@ -3667,7 +3667,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                wxString url = wxGetApp().build_flutter_web_url("2");
+                wxString url = wxGetApp().gateway_web_url("device_control");
                 auto real_url = wxGetApp().get_international_url(url);
                 
                 if (!is_sm_page && reload_printer_view) {

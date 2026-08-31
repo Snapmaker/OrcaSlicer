@@ -583,6 +583,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/CalibUtils.hpp
     Utils/ColorSpaceConvert.cpp
     Utils/ColorSpaceConvert.hpp
+    Utils/ConnectionProcessManager.cpp
+    Utils/ConnectionProcessManager.hpp
     Utils/CrealityPrint.cpp
     Utils/CrealityPrint.hpp
     Utils/Duet.cpp
@@ -607,6 +609,10 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/Frustum.cpp
     Utils/Frustum.hpp
+    Utils/GatewayProtocol.cpp
+    Utils/GatewayProtocol.hpp
+    Utils/GatewayService.cpp
+    Utils/GatewayService.hpp
     Utils/HexFile.cpp
     Utils/HexFile.hpp
     Utils/Http.cpp

@@ -43,6 +43,7 @@
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
+#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/FilamentGroupDialog.hpp"
 #include "slic3r/GUI/FlowTypeHelper.hpp"
 
@@ -4614,6 +4615,8 @@ void SSWCP_UserLogin_Instance::process()
     }
     if (m_cmd == "sw_UserLogin") {
         sw_UserLogin();
+    } else if (m_cmd == "sw_AskUserLogin") {
+        sw_AskUserLogin();
     } else if (m_cmd == "sw_UserLogout") {
         sw_UserLogout();
     } else if (m_cmd == "sw_GetUserLoginState") {
@@ -4657,12 +4660,78 @@ void SSWCP_UserLogin_Instance::sw_UserLogin()
 
         wxGetApp().CallAfter([show]() {
             wxGetApp().sm_request_login(show);
-        });               
+        });
     }
     catch (std::exception& e) {
         handle_general_fail();
     }
 }
+
+void SSWCP_UserLogin_Instance::sw_AskUserLogin()
+{
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    wxGetApp().CallAfter([weak_self]() {
+        auto self = weak_self.lock();
+        if (!self)
+            return;
+
+        if (s_ask_dialog_showing) {
+            auto already_queued = [&self](const std::weak_ptr<SSWCP_Instance>& waiter) {
+                auto locked = waiter.lock();
+                return locked && locked.get() == self.get();
+            };
+            if (!std::any_of(s_ask_waiters.begin(), s_ask_waiters.end(), already_queued))
+                s_ask_waiters.push_back(self);
+            return;
+        }
+
+        struct AskLoginDialogStateGuard
+        {
+            bool active = true;
+
+            ~AskLoginDialogStateGuard()
+            {
+                if (active) {
+                    s_ask_dialog_showing = false;
+                    s_ask_waiters.clear();
+                }
+            }
+        };
+
+        bool                     login = false;
+        AskLoginDialogStateGuard state_guard;
+        s_ask_dialog_showing = true;
+        s_ask_waiters.push_back(self);
+
+        SMAskUserLoginDialog dlg(wxGetApp().mainframe);
+        dlg.SetKeepAliveCallback([]() {
+            for (auto& weak : s_ask_waiters)
+                if (auto alive = weak.lock())
+                    SSWCP::renew_instance_timeout(alive.get());
+        });
+        login = (dlg.ShowModal() == wxID_OK);
+
+        s_ask_dialog_showing = false;
+        json data;
+        data["result"] = login ? "login" : "cancel";
+        for (auto& weak : s_ask_waiters) {
+            auto waiter = weak.lock();
+            if (!waiter)
+                continue;
+            waiter->m_res_data = data;
+            waiter->send_to_js();
+            waiter->finish_job();
+        }
+        s_ask_waiters.clear();
+        state_guard.active = false;
+
+        if (login)
+            wxGetApp().sm_request_login(true);
+    });
+}
+
+bool SSWCP_UserLogin_Instance::s_ask_dialog_showing = false;
+std::vector<std::weak_ptr<SSWCP_Instance>> SSWCP_UserLogin_Instance::s_ask_waiters;
 
 void SSWCP_UserLogin_Instance::sw_UserLogout()
 {
@@ -7316,14 +7385,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
 
                                     if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
-                                        wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                               "/web/flutter_web/index.html?path=2");
+                                        wxString url      = wxGetApp().build_flutter_web_url("2");
                                         auto     real_url = wxGetApp().get_international_url(url);
-                                        wxGetApp().mainframe->load_printer_url(real_url); 
+                                        wxGetApp().mainframe->load_printer_url(real_url);
                                     } else {
                                         if (reload_device_view) {
-                                            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                                                   "/web/flutter_web/index.html?path=2");
+                                            wxString url      = wxGetApp().build_flutter_web_url("2");
                                             auto     real_url = wxGetApp().get_international_url(url);
 
                                             wxGetApp().mainframe->load_printer_url(real_url);
@@ -7573,7 +7640,7 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
     "sw_NewProject", "sw_OpenProject", "sw_GetRecentProjects", "sw_OpenRecentFile", "sw_DeleteRecentFiles", "sw_SubscribeRecentFiles",
 };
 
-std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
+std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_AskUserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
                                                            UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
                                                            FILE_VIEW, OPEN_TIMELAPSE_FOLDER, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
@@ -7710,6 +7777,11 @@ void SSWCP::delete_target(SSWCP_Instance* target) {
     wxGetApp().CallAfter([target]() {
         m_instance_list.remove(target);
     });
+}
+
+// Extend a one-shot instance's timeout by the default timeout
+void SSWCP::renew_instance_timeout(SSWCP_Instance* instance) {
+    m_instance_list.update_timeout(instance, DEFAULT_INSTANCE_TIMEOUT);
 }
 
 // Stop all machine subscriptions

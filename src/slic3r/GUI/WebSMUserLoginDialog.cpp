@@ -3,9 +3,14 @@
 #include <string.h>
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "common_func/common_func.hpp"
+#include "slic3r/GUI/Widgets/StateColor.hpp"
+#include "Widgets/Button.hpp"
+
+#include <boost/format.hpp>
 
 #include <wx/sizer.h>
 #include <wx/toolbar.h>
@@ -226,29 +231,45 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
             token = tmpUrl.substr(start).ToStdString();
         }
 
-        this->EndModal(wxID_OK);
+        if (this->IsModal())
+            this->EndModal(wxID_OK);
 
-        wxGetApp().CallAfter([token, this]() {
-            std::string url  = m_userInfoUrl.ToStdString();
+        std::string info_url = m_userInfoUrl.ToStdString();
+        std::size_t refresh_generation = wxGetApp().sm_token_refresh_generation();
+        wxGetApp().CallAfter([token, info_url, refresh_generation]() {
+            if (!wxGetApp().sm_is_token_refresh_current(refresh_generation))
+                return;
+
+            std::string url  = info_url;
             auto http = Http::get(url);
             http.header("Authorization",token);
             http.on_complete([&](std::string body, unsigned status) {
+                    if (!wxGetApp().sm_is_token_refresh_current(refresh_generation))
+                        return;
+
                     if (status == 200) {
                         std::string user_id = "";
-                        json response = json::parse(body);
-                        if (response.count("data")) {
-                            json data = response["data"];
-                            if (data.count("id")) {
+                        json response = json::parse(body, nullptr, false);
+                        if (response.is_discarded() || !response.is_object() || !response.contains("data")) {
+                            BOOST_LOG_TRIVIAL(error) << "login userinfo response format is invalid"
+                                                     << ", body_size=" << body.size();
+                            string parse_fail = BP_LOGIN_HTTP_CODE + string(":200 invalid response format");
+                            sentryReportLog(SENTRY_LOG_TRACE, parse_fail, BP_LOGIN);
+                            return;
+                        }
+                        json data = response["data"];
+                        if (data.is_object()) {
+                            if (data.contains("id") && data["id"].is_number_integer()) {
                                 wxGetApp().sm_get_userinfo()->set_user_id(std::to_string(data["id"].get<int>()));
                                 user_id = std::to_string(data["id"].get<int>());
                             }
-                            if (data.count("nickname")) {
+                            if (data.contains("nickname") && data["nickname"].is_string()) {
                                 wxGetApp().sm_get_userinfo()->set_user_name(data["nickname"].get<std::string>());
                             }
-                            if (data.count("icon")) {
+                            if (data.contains("icon") && data["icon"].is_string()) {
                                 wxGetApp().sm_get_userinfo()->set_user_icon_url(data["icon"].get<std::string>());
                             }
-                            if (data.count("account")) {
+                            if (data.contains("account") && data["account"].is_string()) {
                                 wxGetApp().sm_get_userinfo()->set_user_account(data["account"].get<std::string>());
                             }
                         }
@@ -256,13 +277,18 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+                        wxGetApp().sm_on_token_captured(refresh_generation);
                     }
                 })
-                .on_error([&](std::string body, std::string error, unsigned status) {
-                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) + "\n" + error + "\n" + body;
+                .on_error([&](std::string body, std::string, unsigned status) {
+                    if (!wxGetApp().sm_is_token_refresh_current(refresh_generation))
+                        return;
+
+                    std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) +
+                                            ", body_size=" + std::to_string(body.size());
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
                 })
-                .perform_sync(); 
+                .perform_sync();
         });
     }
     UpdateState();
@@ -476,6 +502,80 @@ bool  SMUserLogin::ShowErrorPage()
     load_url(ErrorUrl);
 
     return true;
+}
+
+SMAskUserLoginDialog::SMAskUserLoginDialog(wxWindow* parent)
+    : DPIDialog(parent, wxID_ANY, _L("Log in"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
+{
+    const auto background_colour = StateColor::darkModeColorFor(*wxWHITE);
+    SetBackgroundColour(background_colour);
+    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+
+    auto msg_text = new wxStaticText(this, wxID_ANY, _L("Are you sure you want to log in?"));
+    msg_text->SetForegroundColour(StateColor::darkModeColorFor(wxColour(0x18, 0x18, 0x1b)));
+    msg_text->SetBackgroundColour(background_colour);
+    msg_text->SetFont(Label::Body_14);
+
+    auto style_btn = [](Button *b) {
+        b->SetPaddingSize(b->FromDIP(wxSize(8, 3)));
+        b->SetMinSize(b->FromDIP(wxSize(96, 30)));
+        b->SetSize(b->FromDIP(wxSize(96, 30)));
+    };
+
+    auto login_btn = new Button(this, _L("Log in"));
+    login_btn->SetStyle(ButtonStyle::Confirm, ButtonType::Choice);
+    style_btn(login_btn);
+
+    auto cancel_btn = new Button(this, _L("Cancel"));
+    cancel_btn->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
+    style_btn(cancel_btn);
+
+    wxBoxSizer *btn_sizer = new wxBoxSizer(wxHORIZONTAL);
+    btn_sizer->AddStretchSpacer(1);
+    btn_sizer->Add(login_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
+    btn_sizer->Add(cancel_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 0);
+
+    wxBoxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
+    main_sizer->AddSpacer(FromDIP(16));
+    main_sizer->Add(msg_text, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(30));
+    main_sizer->AddSpacer(FromDIP(16));
+    main_sizer->Add(btn_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(30));
+
+    login_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_OK); });
+    cancel_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_CANCEL); });
+
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
+        if (e.GetKeyCode() == WXK_RETURN)
+            EndModal(wxID_OK);
+        else
+            e.Skip();
+    });
+
+    SetSizer(main_sizer);
+    Layout();
+    Fit();
+    SetSize(wxSize(FromDIP(580), GetSize().y));
+    SetMinSize(GetSize());
+    Centre();
+    wxGetApp().UpdateDlgDarkUI(this);
+
+    m_keepalive_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent &) {
+        if (m_keepalive_fn) m_keepalive_fn();
+    });
+    m_keepalive_timer->Start(30000);
+}
+
+SMAskUserLoginDialog::~SMAskUserLoginDialog()
+{
+    if (m_keepalive_timer)
+        m_keepalive_timer->Stop();
+}
+
+void SMAskUserLoginDialog::SetKeepAliveCallback(std::function<void()> fn)
+{
+    m_keepalive_fn = std::move(fn);
 }
 
 }} // namespace Slic3r::GUI

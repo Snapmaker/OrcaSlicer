@@ -2043,6 +2043,15 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
+    if (m_token_check_timer) {
+        m_token_check_timer->Stop();
+        m_token_check_timer.reset();
+    }
+    if (m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer->Stop();
+        m_silent_refresh_timeout_timer.reset();
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");
@@ -2408,6 +2417,7 @@ void GUI_App::on_start_subscribe_again(std::string dev_id)
 {
     auto start_subscribe_timer = new wxTimer(this, wxID_ANY);
     Bind(wxEVT_TIMER, [this, start_subscribe_timer, dev_id](auto& e) {
+        if (e.GetId() != start_subscribe_timer->GetId()) return;
         start_subscribe_timer->Stop();
         Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
         if (!dev) return;
@@ -3915,7 +3925,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) + "/web/flutter_web/index.html?path=2");
+            wxString url      = build_flutter_web_url("2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {
@@ -4255,6 +4265,9 @@ void GUI_App::sm_request_login(bool show_user_info)
 
 void GUI_App::sm_ShowUserLogin(bool show)
 {
+    if (show)
+        sm_stop_silent_token_refresh();
+
     // BBS: User Login Dialog
     if (show) {
         try {
@@ -4264,8 +4277,11 @@ void GUI_App::sm_ShowUserLogin(bool show)
                 delete sm_login_dlg;
                 sm_login_dlg = new SMUserLogin();
             }
+            m_sm_login_dialog_showing = true;
             sm_login_dlg->ShowModal();
+            m_sm_login_dialog_showing = false;
         } catch (std::exception&) {
+            m_sm_login_dialog_showing = false;
             ;
         }
     } else {
@@ -4285,6 +4301,10 @@ void GUI_App::sm_ShowUserLogin(bool show)
 
 void GUI_App::sm_request_user_logout()
 {
+    sm_stop_silent_token_refresh();
+    if (m_token_check_timer)
+        m_token_check_timer->Stop();
+
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
@@ -4301,6 +4321,94 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::sm_maybe_refresh_login_token()
+{
+    if (!m_login_userinfo.is_user_login())
+        return;
+    if (m_sm_login_dialog_showing || m_sm_silent_refresh_in_progress)
+        return;
+
+    auto now = std::chrono::system_clock::now();
+    if (now - m_token_last_refresh_success < std::chrono::hours(SM_TOKEN_REFRESH_INTERVAL_H))
+        return;
+    if (now - m_token_last_refresh_attempt < std::chrono::minutes(SM_TOKEN_REFRESH_RETRY_MIN))
+        return;
+
+    m_token_last_refresh_attempt   = now;
+    m_sm_silent_refresh_in_progress = true;
+    ++m_silent_refresh_generation;
+    BOOST_LOG_TRIVIAL(info) << "sm: start silent login-token refresh";
+
+    if (!m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, static_cast<int>(TokenRefreshTimerId::SilentRefreshTimeout));
+        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, static_cast<int>(TokenRefreshTimerId::SilentRefreshTimeout));
+    }
+    m_silent_refresh_timeout_timer->Start(std::chrono::seconds(SM_TOKEN_REFRESH_TIMEOUT_S).count() * 1000, wxTIMER_ONE_SHOT);
+
+    auto refresh_generation = m_silent_refresh_generation;
+    CallAfter([refresh_generation]() {
+        if (refresh_generation == wxGetApp().sm_token_refresh_generation())
+            wxGetApp().sm_ShowUserLogin(false);
+    });
+}
+
+void GUI_App::on_silent_refresh_timeout(wxTimerEvent &event)
+{
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        BOOST_LOG_TRIVIAL(warning) << "sm: silent login-token refresh timed out, keep old token and retry later";
+    }
+}
+
+void GUI_App::sm_on_token_captured(std::size_t refresh_generation)
+{
+    if (refresh_generation != m_silent_refresh_generation) {
+        BOOST_LOG_TRIVIAL(warning) << "sm: ignore stale login-token capture";
+        return;
+    }
+
+    m_token_last_refresh_success = std::chrono::system_clock::now();
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        if (m_silent_refresh_timeout_timer)
+            m_silent_refresh_timeout_timer->Stop();
+        BOOST_LOG_TRIVIAL(info) << "sm: silent login-token refresh succeeded";
+    }
+
+    if (!m_token_check_timer) {
+        m_token_check_timer = std::make_unique<wxTimer>(this, static_cast<int>(TokenRefreshTimerId::Check));
+        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, static_cast<int>(TokenRefreshTimerId::Check));
+    }
+    m_token_check_timer->Start(SM_TOKEN_CHECK_INTERVAL_MS);
+
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
+    }
+}
+
+bool GUI_App::sm_is_token_refresh_current(std::size_t refresh_generation) const
+{ return refresh_generation == m_silent_refresh_generation; }
+
+void GUI_App::on_token_check_timer(wxTimerEvent &event)
+{
+    sm_maybe_refresh_login_token();
+}
+
+void GUI_App::sm_stop_silent_token_refresh()
+{
+    ++m_silent_refresh_generation;
+    m_sm_silent_refresh_in_progress = false;
+    if (m_silent_refresh_timeout_timer)
+        m_silent_refresh_timeout_timer->Stop();
+
+    // Drop the hidden login dialog so a late redirect cannot re-login the user.
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
     }
 }
 
@@ -5239,6 +5347,19 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
+wxString GUI_App::flutter_web_base_url(const wxString& path)
+{
+    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()));
+}
+
+// Full launch url: base plus &version= of the embedding desktop client, so the
+// flutter side can identify which app build it is talking to.
+wxString GUI_App::build_flutter_web_url(const wxString& path)
+{
+    return flutter_web_base_url(path) + wxString::Format("&version=%s", Snapmaker_VERSION);
+}
+
 std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
@@ -7123,6 +7244,9 @@ void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& s
 
 void GUI_App::notify_foreground_change(const bool active)
 {
+    if (active)
+        sm_maybe_refresh_login_token();
+
     json data;
     data["state"] = active;
 

@@ -221,6 +221,14 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+
+                        // SM: persist the session so it survives app restarts.
+                        wxGetApp().app_config->set("sm_user", "token", token);
+                        wxGetApp().app_config->set("sm_user", "id", wxGetApp().sm_get_userinfo()->get_user_id());
+                        wxGetApp().app_config->set("sm_user", "nickname", wxGetApp().sm_get_userinfo()->get_user_name());
+                        wxGetApp().app_config->set("sm_user", "icon", wxGetApp().sm_get_userinfo()->get_user_icon_url());
+                        wxGetApp().app_config->set("sm_user", "account", wxGetApp().sm_get_userinfo()->get_user_account());
+                        wxGetApp().app_config->save();
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {

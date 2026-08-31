@@ -102,14 +102,88 @@ body
 
 #AcceptArea
 {
-	height:var(--dialog-button-sizer-height); /*----ORCA Use fixed size to prevent position change----*/
-	max-height:var(--dialog-button-sizer-height);
-	min-height:var(--dialog-button-sizer-height);
-	padding: 0 var(--dialog-button-gap);
+	/*----ORCA Use fixed size to prevent position change----*/
+	/*----Snapmaker: fallback values keep legacy pages without include/global.css working----*/
+	height:var(--dialog-button-sizer-height, 12%);
+	max-height:var(--dialog-button-sizer-height, none);
+	min-height:var(--dialog-button-sizer-height, 0);
+	padding: 0 var(--dialog-button-gap, 10mm);
 	text-align: left;
 	display: flex;
 	justify-content:flex-end;
-	align-items: center;	
+	align-items: center;
+}
+
+
+/*--Btn--*/
+.NormalBtn
+{
+	padding: 3mm 9mm;
+	font-size: 14px;
+	text-align: center;
+	background-color: #009688;
+	border-radius: 16px;
+	color: #fff;
+	cursor: pointer;
+	margin-left: 10px;
+}
+
+.NormalBtn:hover
+{
+	background-color:#4db6ac;
+}
+
+.GrayBtn
+{
+	padding: 3mm 9mm;
+	font-size: 14px;
+	text-align: center;
+	/* border: 1px solid #575757; */ /* ORCA match button style */
+	border-radius: 18px;
+	background-color: #D9D9D9;
+	color: #000;					/* ORCA match button style */
+	cursor: pointer;
+	margin-left: 10px;
+}
+
+.GrayBtn:hover
+{
+	background-color:#CCCCCC;		/* ORCA match button style */
+}
+
+.SmallBtn
+{
+	padding: 2px 4mm;
+	font-size: 14px;
+	text-align: center;
+	background-color: #D9D9D9;
+	border-radius: 6px;
+	color: #000;
+	cursor: pointer;
+	display: inline-block;
+}
+
+.SmallBtn:hover
+{
+	background-color: #CCCCCC;
+}
+
+
+.SmallBtn_Green
+{
+	padding: 2px 4mm;
+	font-size: 14px;
+	text-align: center;
+	background-color: #009688;
+	border-radius: 6px;
+	color: #fff;
+	cursor: pointer;
+	display: inline-block;
+}
+
+.SmallBtn_Green:hover
+{
+	background-color: #4db6ac;
 }
 
 /*---HyperLink---*/
@@ -141,11 +215,14 @@ input[type="checkbox"] {
 	margin-right: 6px;
 	width: 1em;
 	height: 1em;
-	border: 0.1em solid var(--border-color);;
+	border: 0.1em solid var(--border-color, #DBDBDB);
 	border-radius: 0.15em;
-	display: inline-flex;
+	/* inline-grid + place-content centers the ::before mark on both axes
+	   (inline-flex only centered it horizontally, leaving the check high). */
+	display: inline-grid;
 	place-content: center;
-	background-color: var(--bg-color);;
+	vertical-align: middle;
+	background-color: var(--bg-color, #FFFFFF);
 }
 
 input[type="checkbox"]::before {
@@ -157,13 +234,13 @@ input[type="checkbox"]::before {
 }
 
 input[type="checkbox"]:is(:checked, :indeterminate) {
-	border-color:    var(--main-color);
-	background-color:var(--main-color);
+	border-color:    var(--main-color, #009688);
+	background-color:var(--main-color, #009688);
 }
 
 input[type="checkbox"]:is(:checked, :indeterminate):hover {
-	border-color:    var(--main-color-hover);
-	background-color:var(--main-color-hover);
+	border-color:    var(--main-color-hover, #26A69A);
+	background-color:var(--main-color-hover, #26A69A);
 }
 
 input[type="checkbox"]:checked::before {

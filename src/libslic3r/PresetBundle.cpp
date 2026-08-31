@@ -5209,11 +5209,18 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     bool process_multi_extruder = false;
     std::vector<int> filament_variant_index;
     size_t extruder_variant_count;
-    if (!config.option<ConfigOptionInts>("filament_self_index")) {
-        std::vector<int>& filament_self_indice = config.option<ConfigOptionInts>("filament_self_index", true)->values;
-        filament_self_indice.resize(num_filaments);
-        for (int index = 0; index < num_filaments; index++)
-            filament_self_indice[index] = index + 1;
+    // Old project files (and configs carrying only the size-1 default) predate the
+    // per-extruder variant machinery: rebuild the identity mapping whenever the
+    // stored index list is shorter than the filament count, exactly like the
+    // filament_extruder_variant backfill below.
+    {
+        ConfigOptionInts* filament_self_index_opt = config.option<ConfigOptionInts>("filament_self_index");
+        if (!filament_self_index_opt || filament_self_index_opt->size() < num_filaments) {
+            std::vector<int>& filament_self_indice = config.option<ConfigOptionInts>("filament_self_index", true)->values;
+            filament_self_indice.resize(num_filaments);
+            for (int index = 0; index < num_filaments; index++)
+                filament_self_indice[index] = index + 1;
+        }
     }
     std::vector<int> filament_self_indice = std::move(config.option<ConfigOptionInts>("filament_self_index")->values);
     // ORCA: Initialize filament_extruder_variant for backward compatibility with old 3mf files

@@ -27,6 +27,8 @@ public:
 
     void set_send_page(bool flag);
 
+    void set_store_id(const std::string& id) { m_store_id = id; }
+
     bool need_switch_to_device() { return m_switch_to_device; }
 
     void set_swtich_to_device(bool flag);
@@ -54,6 +56,7 @@ private:
     std::string m_display_file_name = "";
     bool        m_send_page         = false;
     bool        m_switch_to_device  = false;
+    std::string m_store_id;
 
     bool  m_finish = false;
     bool  m_modal_ended = false;  // BBS: Flag to prevent duplicate EndModal calls
@@ -62,4 +65,4 @@ private:
 
 }} // namespace Slic3r::GUI
 
-#endif 
+#endif

@@ -33,9 +33,11 @@ using namespace nlohmann;
 namespace Slic3r { namespace GUI {
 
 #define NETWORK_OFFLINE_TIMER_ID 10001
+#define CALLBACK_POLL_TIMER_ID   10002
 
 BEGIN_EVENT_TABLE(SMUserLogin, wxDialog)
 EVT_TIMER(NETWORK_OFFLINE_TIMER_ID, SMUserLogin::OnTimer)
+EVT_TIMER(CALLBACK_POLL_TIMER_ID, SMUserLogin::OnCallbackPollTimer)
 END_EVENT_TABLE()
 
 int SMUserLogin::web_sequence_id = 20000;
@@ -97,6 +99,12 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     // Bind(wxEVT_IDLE, &SMUserLogin::OnIdle, this);
     // Bind(wxEVT_CLOSE_WINDOW, &SMUserLogin::OnClose, this);
 
+    // The oauth callback page must be found by polling: WebView2 does not
+    // reliably deliver navigation events for that hop, and GUI_App shows this
+    // dialog via ShowModal() directly, run() is not used.
+    m_callback_timer = new wxTimer(this, CALLBACK_POLL_TIMER_ID);
+    m_callback_timer->Start(500);
+
     // UI
     SetTitle(isLogout ? _L("Log out") : _L("Login"));
     // Set a more sensible size for web browsing
@@ -112,11 +120,38 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
 }
 
 SMUserLogin::~SMUserLogin() {
+    if (m_callback_timer != NULL) {
+        m_callback_timer->Stop();
+        delete m_callback_timer;
+        m_callback_timer = NULL;
+    }
     if (m_timer != NULL) {
         m_timer->Stop();
         delete m_timer;
         m_timer = NULL;
     }
+}
+
+void SMUserLogin::OnCallbackPollTimer(wxTimerEvent &event) {
+    try_complete_oauth_callback();
+}
+
+// The third-party oauth callback endpoint may answer 200 with the raw token
+// json as the page body instead of redirecting to a url containing "token=",
+// the only format OnNavigationRequest understands. Detect that page, then
+// have a fire-and-forget script smuggle the body out through document.title;
+// wxWebView::RunScript is avoided because it busy-pumps the event loop on
+// every backend and freezes the app when the web process is dead.
+void SMUserLogin::try_complete_oauth_callback() {
+    if (m_callback_handled || m_browser == NULL)
+        return;
+    if (!m_browser->GetCurrentURL().Contains("/api/oauth2/callback/"))
+        return;
+    if (++m_callback_attempts > 60) { // ~30s at 500ms
+        m_callback_timer->Stop();
+        return;
+    }
+    RunScript("document.title='SMOAUTH:'+(document.body?document.body.innerText:'')");
 }
 
 void SMUserLogin::OnTimer(wxTimerEvent &event) {
@@ -184,7 +219,7 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
         std::string token;
         
         start += std::string("token=").size(); // 跳过"token="的长度
-        size_t end = tmpUrl.find("?", start);
+        size_t end = tmpUrl.find_first_of("?&#", start);
         if (end != std::string::npos) {
             token = tmpUrl.substr(start, end - start).ToStdString();
         } else {
@@ -258,6 +293,7 @@ void SMUserLogin::OnDocumentLoaded(wxWebViewEvent &evt)
         // wxLogMessage("%s", "Document loaded; url='" + evt.GetURL() + "'");
     }
 
+    try_complete_oauth_callback();
     UpdateState();
 }
 
@@ -281,8 +317,25 @@ void SMUserLogin::OnNewWindow(wxWebViewEvent &evt)
 
 void SMUserLogin::OnTitleChanged(wxWebViewEvent &evt)
 {
-    // SetTitle(evt.GetString());
-    // wxLogMessage("%s", "Title changed; title='" + evt.GetString() + "'");
+    // Body smuggled out by try_complete_oauth_callback(); feed the token to
+    // the existing "token=" capture path in OnNavigationRequest.
+    const wxString title = evt.GetString();
+    if (!title.StartsWith("SMOAUTH:") || m_callback_handled || m_callback_timer == NULL)
+        return;
+
+    // No-throw parsing: the title may carry an empty/partial body while the
+    // callback page is still rendering; a thrown parse_error would escape this
+    // wx event handler and terminate the app (seen crashing on macOS).
+    json response = json::parse(into_u8(title.Mid(wxString("SMOAUTH:").Length())), nullptr, false);
+    if (response.is_discarded() || !response.is_object() || !response.contains("data"))
+        return;
+    json data = response["data"];
+    if (!data.contains("access_token") || !data["access_token"].is_string())
+        return;
+
+    m_callback_handled = true;
+    m_callback_timer->Stop();
+    m_browser->LoadURL(m_hostUrl + "/?token=" + from_u8(data["access_token"].get<std::string>()));
 }
 
 void SMUserLogin::OnFullScreenChanged(wxWebViewEvent &evt)

@@ -92,9 +92,12 @@
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/ProjectSchemaVersion.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetFlowVariant.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 
@@ -104,6 +107,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FlowTypeHelper.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Utils.hpp"
 #include "GUI_Factories.hpp"
@@ -209,6 +213,22 @@ static const std::pair<unsigned int, unsigned int> THUMBNAIL_SIZE_3MF = { 512, 5
 
 namespace Slic3r {
 namespace GUI {
+
+static void handle_newer_3mf_schema(wxWindow* parent,
+                                    const DynamicPrintConfig& config)
+{
+    const ProjectSchemaDefinition& definition = ProjectSchemaRegistry::definition();
+    const int file_schema = ProjectSchemaRegistry::version_from(config);
+    if (!ProjectSchemaRegistry::is_newer(config))
+        return;
+
+    BOOST_LOG_TRIVIAL(info) << "3MF project schema is newer than supported"
+                            << ": file_version=" << file_schema
+                            << ", supported_version=" << definition.current_version;
+    show_info(parent,
+              _L("The current version of Snapmaker Orca cannot fully load this 3MF file. Please update to the latest version and try again."),
+              _L("Loading 3MF"));
+}
 
 // Defensive UTF-8 translation helper.
 //
@@ -897,8 +917,16 @@ class CustomNotebook : public wxControl
 {
 public:
     CustomNotebook(wxWindow* parent, wxWindowID id = wxID_ANY, const wxPoint& pos = wxDefaultPosition, const wxSize& size = wxDefaultSize)
-        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1), m_tabHeight(24), m_tabPadding(10), m_roundRadius(5)
+        : wxControl(parent, id, pos, size, wxBORDER_NONE), m_selectedIndex(-1)
     {
+        // Figma 27551-61181: each segment is a fixed 70x24 button with 13 px inner
+        // padding, centered text and square corners. The outer radius matches the
+        // parent nozzle card (StaticBox::SetCornerRadius(8), raw pixels).
+        m_tabWidth    = FromDIP(70);
+        m_tabHeight   = FromDIP(24);
+        m_tabPadding  = FromDIP(13);
+        m_roundRadius = 8;
+
         SetBackgroundStyle(wxBG_STYLE_PAINT);
         UpdateColors();
 
@@ -970,19 +998,18 @@ protected:
 
         wxPaintDC dc(this);
 
-        // 1. 绘制背景
         dc.SetPen(*wxTRANSPARENT_PEN);
         dc.SetBrush(wxBrush(m_bgColor));
         dc.DrawRectangle(GetClientRect());
 
-        // 2. 绘制标签背景区域
         dc.SetPen(wxPen(m_dividerColor, 1));
         dc.SetBrush(wxBrush(m_dividerColor));
-        wxRect labelRect(0, 0, GetSize().x, m_tabHeight);
-        dc.DrawRoundedRectangle(labelRect, m_roundRadius);
-        dc.DrawRectangle(0, m_tabHeight - 2, GetSize().x, 4);
+        int trackW = GetSize().x;
+        int rh     = std::min(m_roundRadius, m_tabHeight / 2); // guard very short strips
+        // rounded-top shape: all-corner rounded rect + rectangle patching the bottom half
+        dc.DrawRoundedRectangle(0, 0, trackW, 2 * rh, rh);
+        dc.DrawRectangle(0, rh, trackW, m_tabHeight - rh);
 
-        // 3. 绘制所有标签
         wxFont font = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
         font.SetPointSize(m_textSize);
         dc.SetFont(font);
@@ -999,22 +1026,32 @@ protected:
 
             int textWidth, textHeight;
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            int tabWidth = textWidth + 2 * m_tabPadding;
+            int tabWidth = GetTabWidth(textWidth);
 
             if (isSelected) {
-                dc.SetPen(wxPen(m_dividerColor, 1));
-                dc.SetBrush(wxBrush(m_bgColor));
-                wxRect selectedRect(xPos, 0, tabWidth, m_tabHeight + 2);
-                dc.DrawRectangle(selectedRect);
-                dc.DrawRoundedRectangle(selectedRect, m_roundRadius);
-
-                dc.SetPen(wxPen(m_bgColor, 1));
-                dc.SetBrush(wxBrush(m_bgColor));
-                dc.DrawRectangle(xPos, m_tabHeight, tabWidth, 4);
+                // teal background for the selected tab.
+                const wxColour selColor(0x00, 0x96, 0x88); // #009688
+                dc.SetPen(wxPen(selColor, 1));
+                dc.SetBrush(wxBrush(selColor));
+                // Round only the outer top corner(s) that meet the parent card's
+                // rounded corner; inner segment corners stay square (Figma).
+                bool roundLeft  = (i == 0);
+                bool roundRight = (xPos + tabWidth >= trackW - 1);
+                if (roundLeft || roundRight) {
+                    dc.DrawRoundedRectangle(xPos, 0, tabWidth, 2 * rh, rh);
+                    if (!roundLeft)
+                        dc.DrawRectangle(xPos, 0, tabWidth - rh, rh);
+                    if (!roundRight)
+                        dc.DrawRectangle(xPos + rh, 0, tabWidth - rh, rh);
+                    dc.DrawRectangle(xPos, rh, tabWidth, m_tabHeight - rh);
+                } else {
+                    dc.DrawRectangle(xPos, 0, tabWidth, m_tabHeight);
+                }
             }
 
             dc.SetTextForeground(isSelected ? m_selectedTextColor : m_textColor);
-            dc.DrawText(m_tabs[i].text, xPos + m_tabPadding, (m_tabHeight - textHeight) / 2);
+            int xText = xPos + (tabWidth - textWidth) / 2;
+            dc.DrawText(m_tabs[i].text, xText, (m_tabHeight - textHeight) / 2);
 
             xPos += tabWidth;
         }
@@ -1056,6 +1093,13 @@ private:
         wxWindow* page;
     };
 
+    // Figma 27551-61181: segments are 70 px wide; only grow when the
+    // localized label (e.g. "Left Nozzle") does not fit.
+    int GetTabWidth(int textWidth) const
+    {
+        return std::max(m_tabWidth, textWidth + 2 * m_tabPadding);
+    }
+
     wxRect GetTabRect(size_t index) const
     {
         if (index >= m_tabs.size())
@@ -1068,12 +1112,12 @@ private:
 
         int textWidth, textHeight;
         dc.GetTextExtent(m_tabs[index].text, &textWidth, &textHeight);
-        int tabWidth = textWidth + 2 * m_tabPadding;
+        int tabWidth = GetTabWidth(textWidth);
 
         int x = 0;
         for (size_t i = 0; i < index; ++i) {
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            x += textWidth + 2 * m_tabPadding;
+            x += GetTabWidth(textWidth);
         }
 
         return wxRect(x, 0, tabWidth, m_tabHeight);
@@ -1093,7 +1137,7 @@ private:
         for (size_t i = 0; i < m_tabs.size(); ++i) {
             int textWidth, textHeight;
             dc.GetTextExtent(m_tabs[i].text, &textWidth, &textHeight);
-            int tabWidth = textWidth + 2 * m_tabPadding;
+            int tabWidth = GetTabWidth(textWidth);
 
             if (pt.x >= xPos && pt.x <= xPos + tabWidth) {
                 return i;
@@ -1113,14 +1157,14 @@ private:
             m_bgColor           = wxColour(255, 255, 255);
             m_borderColor       = wxColour(240, 240, 240);
             m_selectedTabColor  = wxColour(255, 255, 255);
-            m_textColor         = wxColour(194, 194, 193);
+            m_textColor         = wxColour(107, 107, 107); // #6B6B6B: match the process flow toggle's unselected grey
             m_dividerColor      = wxColour(240, 240, 240);
-            m_selectedTextColor = wxColour(0, 0, 0);
+            m_selectedTextColor = wxColour(255, 255, 255); // white text on the teal selected tab
         } else {
             m_bgColor           = wxColour(45, 45, 49);
             m_borderColor       = wxColour(76, 76, 85);
             m_selectedTabColor  = wxColour(45, 45, 49);
-            m_textColor         = wxColour(104, 105, 107);
+            m_textColor         = wxColour(107, 107, 107); // #6B6B6B: match the process flow toggle's unselected grey
             m_dividerColor      = wxColour(51, 51, 55);
             m_selectedTextColor = wxColour(255, 255, 255);
         }
@@ -1146,6 +1190,7 @@ private:
     wxColour m_selectedTextColor;
     wxColour m_dividerColor;
 
+    int m_tabWidth;
     int m_tabHeight;
     int m_tabPadding;
     int m_roundRadius;
@@ -1246,6 +1291,7 @@ struct Sidebar::priv
     // nozzle notebook  and related controls
     CustomNotebook*                  m_nozzle_notebook{nullptr};
     std::vector<ComboBox*>       m_nozzle_diameter_lists;
+    std::vector<ComboBox*>       m_nozzle_flow_lists;
     std::vector<ScalableButton*> m_nozzle_edit_btns;
 
     ObjectList          *m_object_list{ nullptr };
@@ -2137,28 +2183,20 @@ Sidebar::Sidebar(Plater *parent)
                 return;        
             }
 
-            std::string                machine_type = "";
-            std::vector<std::string>   nozzle_diameters;
-            std::string                device_name = "";
             std::shared_ptr<PrintHost> host = nullptr;
             wxGetApp().get_connect_host(host);
-            const bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
+            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
+            MachineInfo&              machine_info      = resolve_result.info;
+            std::vector<std::string>  nozzle_diameters  = machine_info.nozzle_diameters;
 
             const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
             if (!sync_nozzle_slots.empty()) {
-                nozzle_diameters.clear();
-                for (const auto& slot : sync_nozzle_slots) {
-                    std::string nd = slot.nozzle_info;
-                    boost::algorithm::trim(nd);
-                    if (nd.size() > 2 && boost::iends_with(nd, "mm")) {
-                        nd.resize(nd.size() - 2);
-                        boost::algorithm::trim(nd);
-                    }
-                    if (!nd.empty())
-                        nozzle_diameters.push_back(nd);
-                }
+                std::vector<std::pair<std::string, std::string>> cached_slots;
+                for (const auto& slot : sync_nozzle_slots)
+                    cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
+                SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
             }
-            if (got_machine_info && machine_type == "Snapmaker U1")
+            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse && machine_info.model == "Snapmaker U1")
             {
                 if (nozzle_diameters.size() <= 0)
                 {
@@ -2187,7 +2225,7 @@ Sidebar::Sidebar(Plater *parent)
                 {
                     std::vector<std::string> diameters_raw = nozzle_diameters;
                     //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
-                    wxTheApp->CallAfter([this, diameters_raw]() {
+                    wxTheApp->CallAfter([this, diameters_raw, nozzle_volume_types = machine_info.nozzle_volume_types]() {
                         NozzleDiameterSelectDialog dlg(
                             wxGetApp().mainframe,
                             _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
@@ -2204,20 +2242,24 @@ Sidebar::Sidebar(Plater *parent)
                                     auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
                                     if (preset == nullptr) {
                                         BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                                        return;
-                                    }
-                                    preset->is_visible = true; // force visible
+                                    } else {
+                                        preset->is_visible = true; // force visible
 
-                                    for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                                        p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-                                    }
+                                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
+                                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+                                        }
 
-                                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                                    wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+                                    }
                                 }
                             }
                         }
+
+                        if (!nozzle_volume_types.empty())
+                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
+
+                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
                     });
                     return;
                 }
@@ -2229,7 +2271,7 @@ Sidebar::Sidebar(Plater *parent)
                         diameter.resize(diameter.size() - 2);
                         boost::algorithm::trim(diameter);
                     }
-                    wxTheApp->CallAfter([this, diameter]() {
+                    wxTheApp->CallAfter([this, diameter, nozzle_volume_types = machine_info.nozzle_volume_types]() {
                         auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
                         if (preset == nullptr) {
                             BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
@@ -2242,6 +2284,14 @@ Sidebar::Sidebar(Plater *parent)
 
                         wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
                         wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+
+                        // Apply synchronized nozzle flow types BEFORE rebuilding the nozzle
+                        // UI: update_nozzle_settings rebuilds the per-nozzle flow combos by
+                        // reading nozzle_volume_type from config, so the write must land first
+                        // or the combos show stale values.
+                        if (!nozzle_volume_types.empty())
+                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
+
                         wxGetApp().plater()->sidebar().update_nozzle_settings(true);
 
                         wxTheApp->CallAfter([this]() {
@@ -9161,25 +9211,27 @@ void Sidebar::show_sync_filament_dialog()
         static const std::set<std::string> white_list_machine_types = {
             "Snapmaker U1"
         };
-        std::string machine_type;
-        std::string device_name;
-        std::vector<std::string> nozzle_diameters;
+        MachineInfo machine_info;
         bool got_machine_info = false;
 
         if (host) {
-            got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
-        }
-
-        if (!got_machine_info || machine_type.empty()) {
-            if (device_machine) {
-                machine_type = device_machine->printer_type;
-                got_machine_info = !machine_type.empty();
+            SSWCPProtocol::ResolveResult resolve_result = SSWCP::resolve_machine_info(host);
+            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse) {
+                machine_info     = resolve_result.info;
+                got_machine_info = true;
             }
         }
 
-        bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
+        if (!got_machine_info || machine_info.model.empty()) {
+            if (device_machine) {
+                machine_info.model = SSWCPProtocol::normalize_machine_model(device_machine->printer_type);
+                got_machine_info = !machine_info.model.empty();
+            }
+        }
 
-        if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
+        bool is_white_listed_type = white_list_machine_types.find(machine_info.model) != white_list_machine_types.end();
+
+        if (got_machine_info && !machine_info.model.empty() && !is_white_listed_type) {
             SyncRichConfirmDialog dlg(this,
                 _L("The connected printer is not U1. Unable to sync filament information. Please switch to U1 and try again."),
                 wxYES_NO);
@@ -9249,6 +9301,10 @@ void Sidebar::show_sync_filament_dialog()
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 
         size_t effective_size = syncedData.size();
+        // The number of filaments cannot be reduced to zero.
+        if (effective_size == 0)
+            return;
+
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
             if (effective_size > combo_Size &&
@@ -9365,10 +9421,17 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     wxWindowUpdateLocker noUpdates(p->m_nozzle_notebook);
 
+    // Rebuild in one visual step: freeze the notebook so the tab strip does not
+    // flash through the empty / partially-rebuilt states — DeleteAllPages() and
+    // each AddPage() refresh, and those intermediate repaints coalesce into a
+    // single paint on thaw.
+    p->m_nozzle_notebook->Freeze();
+
     // Clear existing pages and controls
     p->m_nozzle_notebook->DeleteAllPages();
     p->m_nozzle_diameter_lists.clear();
     p->m_nozzle_edit_btns.clear();
+    p->m_nozzle_flow_lists.clear();
 
     // Recreate pages for new nozzle count
     // Create tabs for each nozzle
@@ -9456,7 +9519,14 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             }
 
             wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-            // Do not event.Skip(): select_preset rebuilds nozzle UI and can destroy this combo; skipping would let sidebar treat this as bed-type combo and use-after-free.
+            // Tab::select_preset does NOT rebuild the nozzle notebook (only load_current_presets and
+            // the device-sync paths do), so rebuild it explicitly. Deferred with CallAfter because a
+            // synchronous rebuild would destroy this combo while its event is still being processed.
+            wxTheApp->CallAfter([]() {
+                if (wxGetApp().plater() != nullptr)
+                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+            });
+            // Do not event.Skip(): the sidebar-level handler would treat this combo as the bed-type combo.
         });
         
         diameter_combo->SetValue(diam_str.empty() ? wxString() : wxString(diam_str) + "mm");
@@ -9468,7 +9538,32 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         diameter_sizer->AddSpacer(10);
         diameter_sizer->Add(diameter_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
-        // 删除Flow相关控件
+        // Snapmaker: per-nozzle flow type (standard / high flow), requirement 7.1
+        wxStaticText* flow_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Flow"));
+        flow_label->SetForegroundColour(is_dark ? wxColor(194, 194, 194) : wxColor(0, 0, 0));
+        flow_label->SetFont(Label::Body_14);
+
+        ComboBox* flow_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
+                                            nullptr, wxCB_READONLY);
+        const bool supports_high_flow = GUI::FlowType::printer_supports_high_flow();
+        flow_combo->AppendString(_L("Standard"));
+        if (supports_high_flow)
+            flow_combo->AppendString(_L("High Flow"));
+        else
+            flow_combo->Enable(false);
+        const std::vector<std::string> nozzle_flows = GUI::FlowType::nozzle_volume_types();
+        flow_combo->SetSelection(i < nozzle_flows.size() && nozzle_flows[i] == FLOW_MODE_HIGH_FLOW ? 1 : 0);
+        flow_combo->Bind(wxEVT_COMBOBOX, [flow_combo, i](wxCommandEvent&) {
+            GUI::FlowType::set_nozzle_volume_type(i, flow_combo->GetSelection() == 1 ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD);
+            // Do not event.Skip(): the sidebar-level wxEVT_COMBOBOX handler would treat this
+            // combo as the bed-type combo (same reason as the diameter combo above).
+        });
+        p->m_nozzle_flow_lists.push_back(flow_combo);
+
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(flow_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(5));
+        diameter_sizer->AddSpacer(10);
+        diameter_sizer->Add(flow_combo, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(15));
 
         tab_sizer->Add(diameter_sizer, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
 
@@ -9502,6 +9597,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     }
 
     p->m_nozzle_notebook->Layout();
+    p->m_nozzle_notebook->Thaw();
 
     if (switch_machine) {
         p->combo_printer->SetFocus();
@@ -9748,6 +9844,14 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
 
         single_filament.push_back(wxColour(extruder_colours[i]));
         multi_colours.push_back(single_filament);
+    }
+
+    const size_t expectedMatrixSize = multi_colours.size() * multi_colours.size();
+    if (matrix.size() != expectedMatrixSize) {
+        BOOST_LOG_TRIVIAL(error) << "Invalid flushing volume matrix: modify_id=" << modify_id
+                                 << ", filament_count=" << multi_colours.size()
+                                 << ", matrix_size=" << matrix.size()
+                                 << ", expected_size=" << expectedMatrixSize;
     }
 
     if (modify_id >= 0 && modify_id < multi_colours.size()) {
@@ -10469,9 +10573,16 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
 #endif // WIN32
 
     m_mainframe.Raise();
-    m_mainframe.select_tab(size_t(MainFrame::tp3DEditor));
-    if (wxGetApp().is_editor())
-        m_plater.select_view_3D("3D");
+    // Do not force the 3D editor before we even know what was dropped. When a
+    // G-code is already loaded (only-gcode mode) the user is on the Preview
+    // tab: load_gcode()'s same-file guard switches straight back to Preview
+    // on a repeat drop, and the other load paths select their own final view,
+    // so switching here would only flash the (empty) 3D editor.
+    if (!m_plater.only_gcode_mode()) {
+        m_mainframe.select_tab(size_t(MainFrame::tp3DEditor));
+        if (wxGetApp().is_editor())
+            m_plater.select_view_3D("3D");
+    }
 
     // When only one .svg file is dropped on scene
     if (filenames.size() == 1) {
@@ -10981,6 +11092,11 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
             catch (...) {}
             int skip_confirm = e.GetInt();
             this->q->new_project(skip_confirm, true);
+            // Startup blank project: restore the flow types remembered in AppConfig
+            // (new_project just reset them to standard). Must run before the UI
+            // rebuild queued by new_project via CallAfter. User-initiated New Project
+            // does not pass here and keeps standard.
+            GUI::FlowType::restore_nozzle_volume_types_from_app_config();
             });
         //wxPostEvent(this->q, wxCommandEvent{EVT_RESTORE_PROJECT});
     }
@@ -11515,6 +11631,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                             << boost::format(", plate_data.size %1%, project_preset.size %2%, is_bbs_3mf %3%, file_version %4% \n") % plate_data.size() %
                                                    project_presets.size() % (en_3mf_file_type == En3mfType::From_BBS) % file_version.to_string();
 
+                    handle_newer_3mf_schema(q, config_loaded);
+
                     auto imported_string_count = [&config_loaded](const char *key) -> size_t {
                         if (const auto *opt = config_loaded.option<ConfigOptionStrings>(key))
                             return opt->values.size();
@@ -11631,7 +11749,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     else
                         load_type  = static_cast<LoadType>(std::stoi(import_project_action));
 
-                    // BBS: version check
                     Semver app_version = *(Semver::parse(Snapmaker_VERSION));
                     if (en_3mf_file_type == En3mfType::From_Prusa) {
                         // do not reset the model config
@@ -14968,6 +15085,10 @@ void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
 void Plater::priv::on_slicing_completed(wxCommandEvent & evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": event_type %1%, string %2%") % evt.GetEventType() % evt.GetString();
+
+    if (GUI::wxGetApp().is_recreating_gui())
+        return;
+
     //BBS: add slice project logic
     if (m_slice_all && (m_cur_slice_plate < (partplate_list.get_plate_count() - 1))) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format("slicing all, finished plate %1%, will continue next.")%m_cur_slice_plate;
@@ -17365,6 +17486,21 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
 
     up_to_date(true, false);
     up_to_date(true, true);
+
+    // Snapmaker: the printer preset carries no per-nozzle flow-type field, so a new
+    // project must start every nozzle at standard flow rather than inheriting the
+    // previous project's nozzle_volume_type (which lives in the shared project config).
+    GUI::FlowType::reset_nozzle_volume_types_to_standard();
+    // Rebuild the nozzle panel so the flow combos reflect the reset. Entry points that
+    // select a preset first (e.g. the home-page device card -> sw_NewProject) already
+    // rebuilt the panel via on_select_preset BEFORE this reset ran, so without an
+    // explicit rebuild here the combos would keep showing the pre-reset flow types.
+    // Deferred with CallAfter to avoid destroying a combo mid-event on the select path.
+    wxTheApp->CallAfter([]() {
+        if (wxGetApp().plater() != nullptr)
+            wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+    });
+
     return wxID_YES;
 }
 
@@ -17915,11 +18051,11 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
 
     //Orca: find acceleration to use in the test
-    auto accel = print_config.option<ConfigOptionFloat>("outer_wall_acceleration")->value; // get the outer wall acceleration
+    auto accel = print_config.option<ConfigOptionFloats>("outer_wall_acceleration")->values.front(); // get the outer wall acceleration
     if (accel == 0) // if outer wall accel isnt defined, fall back to inner wall accel
-        accel = print_config.option<ConfigOptionFloat>("inner_wall_acceleration")->value;
+        accel = print_config.option<ConfigOptionFloats>("inner_wall_acceleration")->values.front();
     if (accel == 0) // if inner wall accel is not defined fall back to default accel
-        accel = print_config.option<ConfigOptionFloat>("default_acceleration")->value;
+        accel = print_config.option<ConfigOptionFloats>("default_acceleration")->values.front();
     // Orca: Set all accelerations except first layer, as the first layer accel doesnt affect the PA test since accel
     // is set to the travel accel before printing the pattern.
     if (accels.empty()) {
@@ -17931,25 +18067,25 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
         // set max acceleration in case of batch mode to get correct test pattern size
         accel = *std::max_element(accels.begin(), accels.end());
     }
-    print_config.set_key_value( "outer_wall_acceleration", new ConfigOptionFloat(accel));
+    print_config.set_key_value( "outer_wall_acceleration", new ConfigOptionFloats { accel });
     print_config.set_key_value( "print_sequence", new ConfigOptionEnum(PrintSequence::ByLayer));
     
     //Orca: find jerk value to use in the test
-    if(print_config.option<ConfigOptionFloat>("default_jerk")->value > 0){ // we have set a jerk value
-        auto jerk = print_config.option<ConfigOptionFloat>("outer_wall_jerk")->value; // get outer wall jerk
+    if(print_config.option<ConfigOptionFloats>("default_jerk")->values.front() > 0){ // we have set a jerk value
+        auto jerk = print_config.option<ConfigOptionFloats>("outer_wall_jerk")->values.front(); // get outer wall jerk
         if (jerk == 0) // if outer wall jerk is not defined, get inner wall jerk
-            jerk = print_config.option<ConfigOptionFloat>("inner_wall_jerk")->value;
+            jerk = print_config.option<ConfigOptionFloats>("inner_wall_jerk")->values.front();
         if (jerk == 0) // if inner wall jerk is not defined, get the default jerk
-            jerk = print_config.option<ConfigOptionFloat>("default_jerk")->value;
-        
+            jerk = print_config.option<ConfigOptionFloats>("default_jerk")->values.front();
+
         //Orca: Set jerk values. Again first layer jerk should not matter as it is reset to the travel jerk before the
         // first PA pattern is printed.
-        print_config.set_key_value( "default_jerk", new ConfigOptionFloat(jerk));
-        print_config.set_key_value( "outer_wall_jerk", new ConfigOptionFloat(jerk));
-        print_config.set_key_value( "inner_wall_jerk", new ConfigOptionFloat(jerk));
-        print_config.set_key_value( "top_surface_jerk", new ConfigOptionFloat(jerk));
-        print_config.set_key_value( "infill_jerk", new ConfigOptionFloat(jerk));
-        print_config.set_key_value( "travel_jerk", new ConfigOptionFloat(jerk));
+        print_config.set_key_value( "default_jerk", new ConfigOptionFloats { jerk });
+        print_config.set_key_value( "outer_wall_jerk", new ConfigOptionFloats { jerk });
+        print_config.set_key_value( "inner_wall_jerk", new ConfigOptionFloats { jerk });
+        print_config.set_key_value( "top_surface_jerk", new ConfigOptionFloats { jerk });
+        print_config.set_key_value( "infill_jerk", new ConfigOptionFloats { jerk });
+        print_config.set_key_value( "travel_jerk", new ConfigOptionFloats { jerk });
     }
     
     for (const auto& opt : SuggestedConfigCalibPAPattern().float_pairs) {
@@ -17984,7 +18120,7 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
             wxGetApp().preset_bundle->full_config(),
             print_config.get_abs_value("line_width", nozzle_diameter),
             print_config.get_abs_value("layer_height"), 0);
-        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(speed));
+        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { speed });
 
         speeds.assign({speed});
         const auto msg{_L("INFO:") + "\n" +
@@ -17993,7 +18129,7 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
     } else if (speeds.size() == 1) {
         // If we have single value provided, set speed using global configuration.
         // per-object config is not set in this case
-        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(speeds.front()));
+        print_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { speeds.front() });
     }
 
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -18068,9 +18204,9 @@ void Plater::_calib_pa_pattern(const Calib_Params& params)
 
         auto &obj_config = obj->config;
         if (speeds.size() > 1)
-            obj_config.set_key_value("outer_wall_speed", new ConfigOptionFloat(tspd));
+            obj_config.set_key_value("outer_wall_speed", new ConfigOptionFloats { tspd });
         if (accels.size() > 1)
-            obj_config.set_key_value("outer_wall_acceleration", new ConfigOptionFloat(tacc));
+            obj_config.set_key_value("outer_wall_acceleration", new ConfigOptionFloats { tacc });
 
         auto cur_plate = get_partplate_list().get_plate(plate_idx);
         if (!cur_plate) {
@@ -18173,8 +18309,8 @@ void Plater::_calib_pa_tower(const Calib_Params& params) {
     auto wall_speed = CalibPressureAdvance::find_optimal_PA_speed(
         full_config, full_config.get_abs_value("line_width", nozzle_diameter),
         full_config.get_abs_value("layer_height"), 0);
-    obj_cfg.set_key_value("outer_wall_speed", new ConfigOptionFloat(wall_speed));
-    obj_cfg.set_key_value("inner_wall_speed", new ConfigOptionFloat(wall_speed));
+    obj_cfg.set_key_value("outer_wall_speed", new ConfigOptionFloats { wall_speed });
+    obj_cfg.set_key_value("inner_wall_speed", new ConfigOptionFloats { wall_speed });
     obj_cfg.set_key_value("seam_position", new ConfigOptionEnum<SeamPosition>(spRear));
     obj_cfg.set_key_value("wall_loops", new ConfigOptionInt(2));
     obj_cfg.set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -18185,7 +18321,7 @@ void Plater::_calib_pa_tower(const Calib_Params& params) {
     obj_cfg.set_key_value("brim_ears_max_angle", new ConfigOptionFloat(135.f));
     obj_cfg.set_key_value("brim_width", new ConfigOptionFloat(6.f));
     obj_cfg.set_key_value("seam_slope_type", new ConfigOptionEnum<SeamScarfType>(SeamScarfType::None));
-    print_config.set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0));
+    print_config.set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloats { 0. });
 
     changed_objects({ 0 });
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -18257,15 +18393,19 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
 
     auto cur_flowrate = filament_config->option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
     Flow infill_flow = Flow(nozzle_diameter * 1.2f, layer_height, nozzle_diameter);
-    double filament_max_volumetric_speed = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    const auto *max_volumetric_speed_opt = filament_config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    const FilamentVolumeType volume_type = get_nozzle_volume_type(wxGetApp().preset_bundle->printers.get_edited_preset().config, 0);
+    double filament_max_volumetric_speed = get_preset_value_at(*filament_config, *max_volumetric_speed_opt,
+                                                               ConfigFlowDomain::Filament, volume_type);
     double max_infill_speed;
     if (linear)
         max_infill_speed = filament_max_volumetric_speed /
                            (infill_flow.mm3_per_mm() * (cur_flowrate + (pass == 2 ? 0.035 : 0.05)) / cur_flowrate);
     else
         max_infill_speed = filament_max_volumetric_speed / (infill_flow.mm3_per_mm() * (pass == 1 ? 1.2 : 1));
-    double internal_solid_speed = std::floor(std::min(print_config->opt_float("internal_solid_infill_speed"), max_infill_speed));
-    double top_surface_speed = std::floor(std::min(print_config->opt_float("top_surface_speed"), max_infill_speed));
+
+    double internal_solid_speed = std::floor(std::min(print_config->opt_float("internal_solid_infill_speed", 0), max_infill_speed));
+    double top_surface_speed = std::floor(std::min(print_config->opt_float("top_surface_speed", 0), max_infill_speed));
 
     // adjust parameters
     for (auto _obj : objects) {
@@ -18292,11 +18432,11 @@ void adjust_settings_for_flowrate_calib(ModelObjectPtrs& objects, bool linear, i
         _obj->config.set_key_value("solid_infill_direction", new ConfigOptionFloat(135));
         _obj->config.set_key_value("align_infill_direction_to_model", new ConfigOptionBool(true));
         _obj->config.set_key_value("ironing_type", new ConfigOptionEnum<IroningType>(IroningType::NoIroning));
-        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloat(internal_solid_speed));
-        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloat(top_surface_speed));
+        _obj->config.set_key_value("internal_solid_infill_speed", new ConfigOptionFloats { internal_solid_speed });
+        _obj->config.set_key_value("top_surface_speed", new ConfigOptionFloats { top_surface_speed });
         _obj->config.set_key_value("seam_slope_type", new ConfigOptionEnum<SeamScarfType>(SeamScarfType::None));
         _obj->config.set_key_value("gap_fill_target", new ConfigOptionEnum<GapFillTarget>(GapFillTarget::gftNowhere));
-        print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0));
+        print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloats { 0. });
         _obj->config.set_key_value("calib_flowrate_topinfill_special_order", new ConfigOptionBool(true));
 
         // extract flowrate from name, filename format: flowrate_xxx
@@ -18462,7 +18602,11 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     if (max_lh->values[0] < layer_height)
         max_lh->values[0] = { layer_height };
 
-    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats { 200 });
+    size_t max_speed_variants = 1;
+    if (const auto *flow_support = filament_config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        max_speed_variants = flow_support->values.size();
+    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
     obj_cfg.set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
@@ -18479,7 +18623,7 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     obj_cfg.set_key_value("brim_object_gap", new ConfigOptionFloat(0.0));
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
-    print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloat(0));
+    print_config->set_key_value("max_volumetric_extrusion_rate_slope", new ConfigOptionFloats { 0. });
 
     changed_objects({ 0 });
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update_dirty();
@@ -18625,9 +18769,9 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
@@ -18673,9 +18817,9 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
@@ -18707,7 +18851,11 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("slow_down_min_speed", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("slow_down_for_layer_cooling", new ConfigOptionBools{false});
-    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{200});
+    size_t max_speed_variants = 1;
+    if (const auto *flow_support = filament_config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        max_speed_variants = flow_support->values.size();
+    filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config->set_key_value("enable_pressure_advance", new ConfigOptionBools {true});
     filament_config->set_key_value("pressure_advance", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("adaptive_pressure_advance", new ConfigOptionBools{false});
@@ -18722,9 +18870,9 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     print_config->set_key_value("spiral_mode", new ConfigOptionBool(true));
     print_config->set_key_value("spiral_mode_smooth", new ConfigOptionBool(false));
     print_config->set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloat(200));
-    print_config->set_key_value("default_acceleration", new ConfigOptionFloat(2000));
-    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloat(2000));
+    print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
+    print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
+    print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.0));
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
@@ -18785,10 +18933,21 @@ void Plater::load_gcode(const wxString& filename)
 {
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << __LINE__ << " entry and filename: " << filename;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__;
-    if (! is_gcode_file(into_u8(filename))
-        || (m_last_loaded_gcode == filename && m_only_gcode)
-        )
+    if (! is_gcode_file(into_u8(filename)))
         return;
+
+    if (m_last_loaded_gcode == filename && m_only_gcode) {
+        // The same G-code is already loaded: reloading would be a no-op, so
+        // just make sure the user is looking at its preview — callers may
+        // have left the UI on another view (e.g. the 3D editor after a
+        // drag & drop).
+        wxGetApp().mainframe->select_tab(MainFrame::tpPreview);
+        p->set_current_panel(p->preview, true);
+        GLCanvas3D* canvas = p->get_current_canvas3D();
+        if (canvas)
+            canvas->render();
+        return;
+    }
 
     // Reject a missing / inaccessible file up front. Without this check the
     // code below would walk through process_file -> parse_file_raw_internal,

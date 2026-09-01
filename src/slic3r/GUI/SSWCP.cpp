@@ -8,6 +8,7 @@
 #include "nlohmann/json.hpp"
 #include "slic3r/GUI/Tab.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include <algorithm>
 #include <iterator>
@@ -42,6 +43,8 @@
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
+#include "slic3r/GUI/FilamentGroupDialog.hpp"
+#include "slic3r/GUI/FlowTypeHelper.hpp"
 
 #include "miniz/miniz.h"
 #include "slic3r/Utils/MQTT.hpp"
@@ -1266,6 +1269,7 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
     wxGetApp().m_user_login_subscribers.clear();
     wxGetApp().m_cache_subscribers.clear();
     wxGetApp().m_user_update_privacy_subscribers.clear();
+    wxGetApp().m_foreground_change_subscribers.clear();
 
     send_to_js();
     finish_job();
@@ -1312,6 +1316,15 @@ void SSWCP_Instance::sw_Webview_Unsubscribe() {
     for (auto iter = privacy_map.begin(); iter != privacy_map.end();) {
         if (iter->first == m_webview) {
             iter = privacy_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == m_webview) {
+            iter = foreground_map.erase(iter);
         } else {
             iter++;
         }
@@ -1590,6 +1603,17 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 return;
             }
 
+            // Validate optional nozzle_volume_types
+            std::vector<std::string> nozzle_volume_types;
+            const auto flow_status = SSWCPProtocol::parse_optional_flow_types(
+                j_value, "nozzle_volume_types", j_value["filament_official"].size(), nozzle_volume_types);
+            if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Invalid) {
+                // Degrade: treat malformed flow data as absent rather than aborting the
+                // entire filament update, which would discard otherwise-valid entries.
+                nozzle_volume_types.clear();
+            }
+
+
             // save filament and update the gui filament
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
             auto& machine_nozzles = wxGetApp().preset_bundle->m_connect_machine_info_list;
@@ -1682,6 +1706,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                         machineData.colorMode = FilamentColorMode::Segment;
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
                         machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
+                    if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Valid && i < nozzle_volume_types.size())
+                        machineData.nozzle_volume_type = nozzle_volume_types[i];
                     machine_nozzles.push_back(machineData);
                 }
             }
@@ -3160,11 +3186,44 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
                 }else{
                     dialog->SafeEndModal(wxID_CANCEL);
                 }
+
+                // Dispatch the post-close action selected by params.event.
+                // Handlers run via CallAfter so the webview modal finishes
+                // tearing down first. Add new cases alongside new enum values.
+                int event_int = 0;
+                if (m_param_data.count("event") && !m_param_data["event"].is_null()) {
+                    event_int = m_param_data["event"].get<int>();
+                }
+                const auto event = static_cast<SSWCPProtocol::FinishFilamentMappingEvent>(event_int);
+                switch (event) {
+                case SSWCPProtocol::FinishFilamentMappingEvent::CustomFlowRegroup:
+                    on_finish_filament_mapping_custom_flow_regroup();
+                    break;
+                case SSWCPProtocol::FinishFilamentMappingEvent::None:
+                    break;
+                }
             }
         }
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regroup()
+{
+    // event 1: open the "custom filament flow regrouping" dialog once the
+    // preprint webview has finished closing. Only meaningful for printers that
+    // declare a high-flow nozzle. Scheduled via CallAfter to avoid running a
+    // modal dialog nested inside the webview's own modal event loop.
+    if (!GUI::FlowType::printer_supports_high_flow())
+        return;
+    wxGetApp().CallAfter([]() {
+        wxWindow *parent = static_cast<wxWindow *>(wxGetApp().mainframe);
+        GUI::FilamentGroupDialog dlg(parent);
+        // Confirming the custom flow regrouping proceeds straight to slicing (the
+        // same action as the slice button); cancelling changes nothing.
+        if (dlg.ShowModal() == wxID_OK && wxGetApp().mainframe)
+            wxGetApp().mainframe->start_slice();
+    });
 }
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
@@ -3274,7 +3333,24 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             response["filament_type"] = filament_types;
         }
 
-        // file nozzle diameters
+        // filament volume type (flow type per filament)
+        {
+            size_t fvt_count = 0;
+            if (const auto* ftype_opt = full_config.option<ConfigOptionStrings>("filament_type"))
+                fvt_count = std::max(fvt_count, ftype_opt->values.size());
+            if (const auto* fcolour_opt = full_config.option<ConfigOptionStrings>("filament_colour"))
+                fvt_count = std::max(fvt_count, fcolour_opt->values.size());
+            if (fvt_count == 0) fvt_count = 1;
+
+            const auto* volume_types = full_config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+            const std::vector<int>* fvt_values = volume_types ? &volume_types->values : nullptr;
+            response["filament_volume_type"] = SSWCPProtocol::build_filament_volume_types(fvt_values, fvt_count);
+        }
+
+        // nozzle flow type (per-nozzle Standard/High Flow selection from the
+        // project config "nozzle_volume_types", mirrored in AppConfig "nozzle_volume_types")
+        response["nozzle_volume_types"] = GUI::FlowType::nozzle_volume_types();
+
         if (full_config.has("nozzle_diameter")) {
             const auto *opt_nozzle_diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter");
             if (opt_nozzle_diameters != nullptr) {
@@ -4116,6 +4192,13 @@ void SSWCP_MachineOption_Instance::sw_exception_query()
 
 // SSWCP_MachineConnect_Instance
 void SSWCP_MachineConnect_Instance::process() {
+    if (m_cmd == "sw_SubscribeForegroundChange") {
+        if (m_event_id != "") {
+            m_header["event_id"] = m_event_id;
+            sw_SubscribeForegroundChange();
+        }
+        return;
+    }
     if (m_event_id != "") {
         json header;
         send_to_js();
@@ -4204,6 +4287,12 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineConnect_Instance::sw_SubscribeForegroundChange()
+{
+    auto self = shared_from_this();
+    wxGetApp().m_foreground_change_subscribers[m_webview] = self;
 }
 
 
@@ -6029,6 +6118,8 @@ void SSWCP_MachineManage_Instance::process()
         sw_SwitchModel();
     } else if (m_cmd == "sw_DeleteDevices") {
         sw_DeleteDevices();
+    } else if (m_cmd == "sw_UpdateDeviceInfo") {
+        sw_UpdateDeviceInfo();
     } else {
         handle_general_fail();
     }
@@ -6239,6 +6330,224 @@ void SSWCP_MachineManage_Instance::sw_SwitchModel()
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+void SSWCP_MachineManage_Instance::sw_UpdateDeviceInfo()
+{
+    // Expect "devices": [ { dev_id, ... }, ... ] — batch merge update
+    if (!m_param_data.count("devices") || !m_param_data["devices"].is_array()) {
+        handle_general_fail(-1, "param [devices] is required (array)");
+        return;
+    }
+
+    std::string new_preset_model;
+    std::string new_preset_nozzle;
+    bool        any_changed = false;
+
+    wxGetApp().CallAfter([devices_json = m_param_data["devices"], new_preset_model, new_preset_nozzle, any_changed]() mutable {
+        for (const auto& item : devices_json) {
+            if (!item.is_object())
+                continue;
+            if (!item.count("dev_id") || !item["dev_id"].is_string())
+                continue;
+
+            std::string dev_id = item["dev_id"].get<std::string>();
+
+            // Load existing or start fresh
+            DeviceInfo info;
+            bool       exist = wxGetApp().app_config->get_device_info(dev_id, info);
+            if (!exist) {
+                info.dev_id    = dev_id;
+                info.connected = false;
+                info.protocol  = 0;
+                info.port      = 0;
+            }
+
+            // Snapshot before merge for diff
+            DeviceInfo before = info;
+
+            // —— Merge: only overwrite fields that are present ——
+
+            if (item.count("ip") && item["ip"].is_string())
+                info.ip = item["ip"].get<std::string>();
+
+            if (item.count("dev_name") && item["dev_name"].is_string())
+                info.dev_name = item["dev_name"].get<std::string>();
+
+            if (item.count("model_name") && item["model_name"].is_string()) {
+                info.model_name  = item["model_name"].get<std::string>();
+                new_preset_model = info.model_name;
+
+                // Machine cover image
+                size_t vendor_pos = info.model_name.find_first_of(" ");
+                if (vendor_pos != std::string::npos) {
+                    std::string vendor = info.model_name.substr(0, vendor_pos);
+                    info.img = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
+                               info.model_name + "_cover.png";
+                }
+            }
+
+            if (item.count("connected") && item["connected"].is_boolean())
+                info.connected = item["connected"].get<bool>();
+
+            if (item.count("sn") && item["sn"].is_string())
+                info.sn = item["sn"].get<std::string>();
+
+            if (item.count("link_mode") && item["link_mode"].is_string())
+                info.link_mode = item["link_mode"].get<std::string>();
+
+            if (item.count("id") && item["id"].is_string())
+                info.id = item["id"].get<std::string>();
+
+            if (item.count("userid") && item["userid"].is_string())
+                info.userid = item["userid"].get<std::string>();
+
+            if (item.count("protocol") && item["protocol"].is_number())
+                info.protocol = item["protocol"].get<int>();
+
+            if (item.count("port") && item["port"].is_number())
+                info.port = item["port"].get<int>();
+
+            if (item.count("user") && item["user"].is_string())
+                info.user = item["user"].get<std::string>();
+
+            if (item.count("password") && item["password"].is_string())
+                info.password = item["password"].get<std::string>();
+
+            if (item.count("ca") && item["ca"].is_string())
+                info.ca = item["ca"].get<std::string>();
+
+            if (item.count("cert") && item["cert"].is_string())
+                info.cert = item["cert"].get<std::string>();
+
+            if (item.count("key") && item["key"].is_string())
+                info.key = item["key"].get<std::string>();
+
+            if (item.count("clientId") && item["clientId"].is_string())
+                info.clientId = item["clientId"].get<std::string>();
+
+            if (item.count("api_key") && item["api_key"].is_string())
+                info.api_key = item["api_key"].get<std::string>();
+
+            if (item.count("img") && item["img"].is_string())
+                info.img = item["img"].get<std::string>();
+
+            if (item.count("nozzle_sizes") && item["nozzle_sizes"].is_array()) {
+                info.nozzle_sizes.clear();
+                for (const auto& n : item["nozzle_sizes"]) {
+                    if (n.is_string()) {
+                        std::string v = n.get<std::string>();
+                        if (v == "0.2" || v == "0.4" || v == "0.6" || v == "0.8")
+                            info.nozzle_sizes.push_back(v);
+                    } else if (n.is_number()) {
+                        double d = n.get<double>();
+                        if (fabs(d - 0.2) < 1e-6)
+                            info.nozzle_sizes.push_back("0.2");
+                        else if (fabs(d - 0.4) < 1e-6)
+                            info.nozzle_sizes.push_back("0.4");
+                        else if (fabs(d - 0.6) < 1e-6)
+                            info.nozzle_sizes.push_back("0.6");
+                        else if (fabs(d - 0.8) < 1e-6)
+                            info.nozzle_sizes.push_back("0.8");
+                    }
+                }
+                if (!info.nozzle_sizes.empty())
+                    new_preset_nozzle = info.nozzle_sizes[0];
+            }
+
+            if (item.count("nozzle_volume_type") && item["nozzle_volume_type"].is_array()) {
+                info.nozzle_volume_type.clear();
+                for (const auto& volume_type : item["nozzle_volume_type"]) {
+                    if (!volume_type.is_string())
+                        continue;
+
+                    const std::string type = volume_type.get<std::string>();
+                    if (type == "standard" || type == "high_flow")
+                        info.nozzle_volume_type.push_back(type);
+                }
+            }
+
+            if (item.count("preset_name") && item["preset_name"].is_string())
+                info.preset_name = item["preset_name"].get<std::string>();
+
+            // Build preset name if it wasn't explicitly set but we have model + nozzle
+            if (info.preset_name.empty() && !info.model_name.empty() && !info.nozzle_sizes.empty())
+                info.preset_name = info.model_name + " (" + info.nozzle_sizes[0] + " nozzle)";
+
+            // —— Diff: skip save if nothing changed ——
+            if (exist && before.ip == info.ip && before.dev_name == info.dev_name && before.model_name == info.model_name &&
+                before.preset_name == info.preset_name && before.connected == info.connected && before.img == info.img &&
+                before.nozzle_sizes == info.nozzle_sizes && before.nozzle_volume_type == info.nozzle_volume_type && before.sn == info.sn &&
+                before.protocol == info.protocol && before.api_key == info.api_key && before.user == info.user &&
+                before.password == info.password && before.ca == info.ca && before.cert == info.cert && before.key == info.key &&
+                before.clientId == info.clientId && before.port == info.port && before.link_mode == info.link_mode &&
+                before.userid == info.userid && before.id == info.id) {
+                continue;
+            }
+
+            wxGetApp().app_config->save_device_info(info);
+            any_changed = true;
+        }
+
+        if (!any_changed)
+            return;
+
+        // Update ProfileJson for any newly-seen model/nozzle combination
+        if (!new_preset_model.empty() && !new_preset_nozzle.empty()) {
+            std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
+            int                         nModel = m_ProfileJson["model"].size();
+            bool                        isFind = false;
+            for (int m = 0; m < nModel; m++) {
+                if (m_ProfileJson["model"][m]["model"].get<std::string>() == new_preset_model) {
+                    isFind                      = true;
+                    std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"].get<std::string>();
+                    if (nozzle_selected.find(new_preset_nozzle) == std::string::npos) {
+                        nozzle_selected += ";" + new_preset_nozzle;
+                        m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
+                    }
+                    break;
+                }
+            }
+
+            if (!isFind) {
+                json new_item;
+                new_item["vendor"]          = "Snapmaker";
+                new_item["model"]           = new_preset_model;
+                new_item["nozzle_selected"] = new_preset_nozzle;
+                new_item["nozzle_diameter"] = new_preset_nozzle;
+                m_ProfileJson["model"].push_back(new_item);
+            }
+        }
+
+        // Update UI
+        auto devices = wxGetApp().app_config->get_devices();
+
+        json param;
+        param["command"]       = "local_devices_arrived";
+        param["sequece_id"]    = "10001";
+        param["data"]          = devices;
+        std::string logout_cmd = param.dump();
+        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
+        GUI::wxGetApp().run_script(strJS);
+
+        json data = devices;
+        wxGetApp().device_card_notify(data);
+
+        wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
+
+        if (SSWCP_MqttAgent_Instance::m_dialog) {
+            SSWCP_MqttAgent_Instance::m_dialog->SaveProfile();
+            bool flag = false;
+            SSWCP_MqttAgent_Instance::m_dialog->apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
+                                                             flag);
+            wxGetApp().update_mode();
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "sw_UpdateDeviceInfo: preset dialog not available, skip preset install";
+        }
+    });
+
+    send_to_js();
+    finish_job();
 }
 
 // SSWCP_MqttAgent_Instance
@@ -6922,14 +7231,17 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                             bool res = true;
 
                             std::string ip_port = host->get_host();
-                            if (res) {
-                                int         pos = ip_port.find(':');
-                                std::string ip  = ip_port;
-                                if (pos != std::string::npos) {
-                                    ip = ip_port.substr(0, pos);
-                                }
+                            std::string ip;
+                            {
+                                int pos = ip_port.find(':');
+                                ip      = (pos != std::string::npos) ? ip_port.substr(0, pos) : ip_port;
+                            }
 
-                                // update the other machine status to dis connect
+                            // Defer all AppConfig writes to the UI thread to avoid data races
+                            // with sw_UpdateDeviceInfo and other MachineManage handlers that
+                            // also read/write DeviceInfo on the UI thread via CallAfter.
+                            wxGetApp().CallAfter([weak_self, reload_device_view, ip, host, connect_params, link_mode, id, userid]() {
+                                // Mark other devices as disconnected
                                 auto devices = wxGetApp().app_config->get_devices();
                                 for (size_t i = 0; i < devices.size(); ++i) {
                                     if (devices[i].connected) {
@@ -6939,250 +7251,44 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     }
                                 }
 
-                                // get the mahine type and iameters info
-                                std::string              machine_type = "";
-                                std::vector<std::string> nozzle_diameters;
-                                std::string              device_name = "";
-
-                                std::shared_ptr<PrintHost> host = nullptr;
-                                wxGetApp().get_connect_host(host);
-
-                                // set sn
-                                if (SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name) && machine_type != "") {
-                                    wxGetApp().CallAfter([ip, host, link_mode, machine_type, connect_params, nozzle_diameters, device_name,
-                                                          id, userid, reload_device_view]() {
-                                        
-                                        DeviceInfo info;
-                                        info.ip        = ip;
-                                        info.dev_id    = host->get_sn() != "" ? host->get_sn() : ip;
-                                        info.dev_name  = ip;
-                                        info.connected = true;
-                                        info.link_mode = link_mode;
-                                        info.id        = id;
-                                        info.userid    = userid;
-
-                                        info.model_name = machine_type;
-                                        info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
-                                        if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                            std::string sn = host->get_sn();
-                                            info.sn        = connect_params["sn"].get<std::string>();
-                                            if (sn != "" && sn != info.sn) {
-                                                info.sn = sn;
-                                            }
-                                            info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                            info.dev_id   = info.sn != "" ? info.sn : info.ip;
-                                        }
-
-                                        if (device_name != "") {
-                                            info.dev_name = device_name;
-                                        }
-
-                                        size_t vendor_pos = machine_type.find_first_of(" ");
-                                        if (vendor_pos != std::string::npos) {
-                                            std::string vendor        = machine_type.substr(0, vendor_pos);
-                                            std::string machine_cover = LOCALHOST_URL +
-                                                                        std::to_string(wxGetApp().m_page_http_server.get_port()) +
-                                                                        "/profiles/" + vendor + "/" + machine_type + "_cover.png";
-                                            info.img = machine_cover;
-                                        }
-
-                                        auto auth_info = host->get_auth_info();
-                                        {
-                                            info.ca       = /* auth_info["ca"]*/ "";
-                                            info.cert     = /* auth_info["cert"]*/ "";
-                                            info.key      = /* auth_info["key"]*/ "";
-                                            info.user     = auth_info["user"];
-                                            info.password = auth_info["password"];
-                                            info.port     = auth_info["port"];
-                                            info.clientId = auth_info["clientId"];
-                                        }
-
-                                        DeviceInfo query_info;
-                                        bool       exist = wxGetApp().app_config->get_device_info(info.dev_id, query_info);
-                                        if (nozzle_diameters.empty()) {
-                                            if (exist) {
-                                                query_info.connected = true;
-                                                wxGetApp().app_config->save_device_info(query_info);
-                                            } else {
-                                                wxGetApp().app_config->save_device_info(info);
-                                                MessageDialog msg_window(nullptr,
-                                                                         ip + " " + _L("The target machine model has been detected as") +
-                                                                             "" + machine_type + "\n" +
-                                                                             _L("Please bind the nozzle information") + "\n",
-                                                                         _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
-                                                msg_window.ShowModal();
-
-                                                m_dialog->m_bind_nozzle = true;
-                                                m_dialog->m_device_id  = ip;
-                                                m_dialog->run();
-                                            }
-
-                                        } else {
-
-                                            info.nozzle_sizes = nozzle_diameters;
-                                            info.preset_name  = machine_type + " (" + nozzle_diameters[0] + " nozzle)";
-                                            wxGetApp().app_config->save_device_info(info);
-
-                                            m_dialog->m_device_id = ip;
-                                            
-                                            {
-                                                std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
-                                                int  nModel = m_ProfileJson["model"].size();
-                                                bool isFind = false;
-                                                for (int m = 0; m < nModel; m++) {
-                                                    if (m_ProfileJson["model"][m]["model"].get<std::string>() == info.model_name) {
-                                            
-                                                        isFind                      = true;
-                                                        std::string nozzle_selected = m_ProfileJson["model"][m]["nozzle_selected"]
-                                                                                              .get<std::string>();
-                                                        std::string se_nozz_selected = nozzle_diameters[0];
-                                                        if (nozzle_selected.find(se_nozz_selected) == std::string::npos) {
-                                                            nozzle_selected += ";" + se_nozz_selected;
-                                                            m_ProfileJson["model"][m]["nozzle_selected"] = nozzle_selected;
-                                                        }
-
-                                                        break;
-                                                    }
-                                                }
-
-                                                if (!isFind) {
-                                                    json new_item;
-                                                    new_item["vendor"]          = "Snapmaker";
-                                                    new_item["model"]           = info.model_name;
-                                                    new_item["nozzle_selected"] = nozzle_diameters[0];
-                                                    m_ProfileJson["model"].push_back(new_item);
-                                                }
-                                            }
-
-                                            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
-
-                                            m_dialog->SaveProfile();
-                                            bool flag = false;
-                                            m_dialog->apply_config(wxGetApp().app_config, wxGetApp().preset_bundle, wxGetApp().preset_updater,
-                                                                flag);
-                                            wxGetApp().update_mode();
-                                        }
-                                    });
-                                } else {
-                                    wxGetApp().CallAfter([connect_params, ip, host, link_mode, id, userid]() {
-                                        // is haved connected the device
-                                        DeviceInfo  query_info;
-                                        std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
-                                        if (wxGetApp().app_config->get_device_info(dev_id, query_info)) {
-                                            query_info.connected = true;
-                                            wxGetApp().app_config->save_device_info(query_info);
-                                        } else {
-                                            auto machine_ip_type = MachineIPType::getInstance();
-                                            if (machine_ip_type) {
-                                                std::string machine_type = "";
-                                                if (machine_ip_type->get_machine_type(ip, machine_type)) {
-
-                                                if (machine_type == "lava" || machine_type == "Snapmaker test") {
-                                                    machine_type = "Snapmaker U1";
-                                                }
-
-                                                    DeviceInfo info;
-                                                    host->get_auth_info();
-                                                    auto auth_info = host->get_auth_info();
-                                                    {
-                                                        info.ca       = auth_info["ca"];
-                                                        info.cert     = auth_info["cert"];
-                                                        info.key      = auth_info["key"];
-                                                        info.user     = auth_info["user"];
-                                                        info.password = auth_info["password"];
-                                                        info.port     = auth_info["port"];
-                                                        info.clientId = auth_info["clientId"];
-                                                    }
-                                                    info.ip         = ip;
-                                                    info.dev_id     = dev_id;
-                                                    info.dev_name   = ip;
-                                                    info.connected  = true;
-                                                    info.model_name = machine_type;
-                                                    info.protocol   = int(PrintHostType::htMoonRaker_mqtt);
-                                                    info.link_mode  = link_mode;
-                                                    info.id         = id;
-                                                    info.userid     = userid;
-                                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                                        info.sn       = connect_params["sn"].get<std::string>();
-                                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
-                                                    }
-
-                                                    size_t vendor_pos = machine_type.find_first_of(" ");
-                                                    if (vendor_pos != std::string::npos) {
-                                                        std::string vendor        = machine_type.substr(0, vendor_pos);
-                                                        std::string machine_cover = LOCALHOST_URL +
-                                                                                    std::to_string(
-                                                                                        wxGetApp().m_page_http_server.get_port()) +
-                                                                                    "/profiles/" + vendor + "/" + machine_type +
-                                                                                    "_cover.png";
-                                                        info.img = machine_cover;
-                                                    }
-
-                                                    wxGetApp().app_config->save_device_info(info);
-                                                    // todo connect nozzle
-
-                                                    MessageDialog msg_window(nullptr,
-                                                                             ip + " " + _L("The target machine model has been detected as") +
-                                                                                 " " + machine_type + "\n" +
-                                                                                 _L("Please bind the nozzle information") + "\n",
-                                                                             _L("Nozzle Bind"), wxICON_QUESTION | wxOK);
-                                                    msg_window.ShowModal();
-
-                                                    m_dialog->m_bind_nozzle = true;
-                                                    m_dialog->m_device_id   = ip;
-                                                    m_dialog->run();
-
-                                                    if (info.nozzle_sizes.empty())
-                                                        info.nozzle_sizes.push_back("0.4");
-
-                                                    info.preset_name = machine_type + " (" + info.nozzle_sizes[0] + " nozzle)";
-
-                                                    wxGetApp().app_config->save_device_info(info);
-                                                } else {
-                                                    DeviceInfo info;
-                                                    auto       auth_info = host->get_auth_info();
-                                                    {
-                                                        info.ca       = auth_info["ca"];
-                                                        info.cert     = auth_info["cert"];
-                                                        info.key      = auth_info["key"];
-                                                        info.user     = auth_info["user"];
-                                                        info.password = auth_info["password"];
-                                                        info.port     = auth_info["port"];
-                                                        info.clientId = auth_info["clientId"];
-                                                    }
-                                                    info.ip        = ip;
-                                                    info.dev_id    = dev_id;
-                                                    info.dev_name  = ip;
-                                                    info.connected = true;
-                                                    info.link_mode = link_mode;
-                                                    info.id        = id;
-                                                    info.userid    = id;
-                                                    info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
-                                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
-                                                        info.sn       = connect_params["sn"].get<std::string>();
-                                                        info.dev_name = info.sn != "" ? info.sn : info.dev_name;
-                                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_name;
-                                                    }
-                                                    wxGetApp().app_config->save_device_info(info);
-                                                    MessageDialog msg_window(
-                                                        nullptr,
-                                                        ip + " " +
-                                                            _L("The target machine model has not been detected. Please bind manually."),
-                                                        _L("Machine Bind"), wxICON_QUESTION | wxOK);
-                                                    msg_window.ShowModal();
-
-                                                    m_dialog->m_device_id = info.dev_id;
-                                                    m_dialog->run();
-                                                }
-                                            }
-                                        }
-                                    });
+                                // Save a minimal DeviceInfo from the connection params.
+                                // Full device details (machine_type, nozzle_sizes, device_name)
+                                // are pushed later by Flutter via sw_UpdateDeviceInfo.
+                                std::string dev_id = connect_params.count("sn") ? connect_params["sn"].get<std::string>() : ip;
+                                {
+                                    DeviceInfo info;
+                                    bool exist = wxGetApp().app_config->get_device_info(dev_id, info);
+                                    if (!exist) {
+                                        info.dev_id    = dev_id;
+                                        info.connected = false;
+                                        info.protocol  = 0;
+                                        info.port      = 0;
+                                    }
+                                    info.ip        = ip;
+                                    info.connected = true;
+                                    info.link_mode = link_mode;
+                                    info.protocol  = int(PrintHostType::htMoonRaker_mqtt);
+                                    info.id        = id;
+                                    info.userid    = userid;
+                                    info.dev_name  = ip; // fallback device name
+                                    if (connect_params.count("sn") && connect_params["sn"].is_string()) {
+                                        info.sn       = connect_params["sn"].get<std::string>();
+                                        info.dev_name = info.sn != "" ? info.sn : ip;
+                                        info.dev_id   = info.sn != "" ? info.sn : info.dev_id;
+                                    }
+                                    // Carry over auth info from host
+                                    auto auth_info = host->get_auth_info();
+                                    info.ca       = "";
+                                    info.cert     = "";
+                                    info.key      = "";
+                                    info.user     = auth_info["user"];
+                                    info.password = auth_info["password"];
+                                    info.port     = auth_info["port"];
+                                    info.clientId = auth_info["clientId"];
+                                    wxGetApp().app_config->save_device_info(info);
                                 }
 
-                                wxGetApp().CallAfter([weak_self, reload_device_view]() {
-                                    // update home card info
-                                    auto devices = wxGetApp().app_config->get_devices();
+                                devices = wxGetApp().app_config->get_devices();
 
                                     json param;
                                     param["command"]       = "local_devices_arrived";
@@ -7265,7 +7371,6 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     self->finish_job();
                                 });
 
-                            }
                         });
                     }
 
@@ -7460,7 +7565,8 @@ std::unordered_set<std::string> SSWCP::m_machine_connect_cmd_list = {
     "sw_Disconnect",
     "sw_GetConnectedMachine",
     "sw_ConnectOtherMachine",
-    "sw_GetPincode"
+    "sw_GetPincode",
+    "sw_SubscribeForegroundChange"
 };
 
 std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
@@ -7472,7 +7578,8 @@ std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_U
                                                            FILE_VIEW, OPEN_TIMELAPSE_FOLDER, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
 std::unordered_set<std::string> SSWCP::m_machine_manage_cmd_list = {
-    "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices"
+    "sw_GetLocalDevices", "sw_AddDevice", "sw_SubscribeLocalDevices", "sw_RenameDevice", "sw_SwitchModel", "sw_DeleteDevices",
+    "sw_UpdateDeviceInfo"
 };
 
 std::unordered_set<std::string> SSWCP::m_page_state_cmd_list = {
@@ -7730,6 +7837,15 @@ void SSWCP::on_webview_delete(wxWebView* view)
         }
     }
 
+    auto& foreground_map = wxGetApp().m_foreground_change_subscribers;
+    for (auto iter = foreground_map.begin(); iter != foreground_map.end();) {
+        if (iter->first == view) {
+            iter = foreground_map.erase(iter);
+        } else {
+            iter++;
+        }
+    }
+
     // Clean up timelapse download subscriptions referencing this webview.
     // Without this, push_timelapse_state posts CallAfter lambdas with dangling
     // pointers after the user switches machines during a download.
@@ -7767,11 +7883,10 @@ void SSWCP::update_active_filename(const std::string& filename)
 }
 
 // query the info of the machine
-bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second)
+bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second)
 {
     if (!host) return false;
 
-    // Create condition variables and mutexes for synchronized waiting.
     std::condition_variable cv;
     std::shared_ptr<std::mutex> mutex(new std::mutex);
     std::weak_ptr<std::mutex>   cb_mutex = mutex;
@@ -7779,7 +7894,6 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
     bool timeout = false;
     json system_info;
 
-    // send to check request
     host->async_get_system_info(
         [&, cb_mutex](const json& response) {
             if (cb_mutex.expired()) {
@@ -7794,90 +7908,108 @@ bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& ou
         }
     );
 
-    // wait response
     {
         std::unique_lock<std::mutex> lock(*mutex);
         auto predicate = [&received]() { return received; };
         timeout = !cv.wait_for(lock, std::chrono::seconds(timeout_second), predicate);
     }
 
-    if (!timeout && !system_info.is_null()) {
-        // success to get data
-        if (system_info.count("data")) {
-            system_info = system_info["data"];
-        }
-        if (system_info.contains("system_info")) {
-            auto& system_data = system_info["system_info"];
-
-            if(system_data.contains("product_info")){
-                auto& product_info = system_data["product_info"];
-
-                // get the type for machine
-                if(product_info.contains("machine_type")){
-                    out_model = product_info["machine_type"].get<std::string>();
-                }
-
-                // get diameter
-                if(product_info.contains("nozzle_diameter")){
-                    try {
-                        if (product_info["nozzle_diameter"].is_array()) {
-                            for (const auto& nozzle : product_info["nozzle_diameter"]) {
-                                // todo not sure is string
-                                if (nozzle.is_number()) {
-                                    double temp = nozzle.get<double>();
-                                    if (fabs(temp - 0.2) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.2");
-                                    } else if (fabs(temp - 0.4) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.4");
-                                    } else if (fabs(temp - 0.6) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.6");
-                                    } else if (fabs(temp - 0.8) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.8");
-                                    }
-
-                                } else {
-                                    std::string temp = nozzle.get<std::string>();
-                                    if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
-                                        out_nozzle_diameters.push_back(temp);
-                                    }
-                                }
-
-                            }
-                        } else {                            
-                            if (product_info["nozzle_diameter"].is_number()) {
-                                double temp = product_info["nozzle_diameter"].get<double>();
-                                if (fabs(temp - 0.2) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.4) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.6) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.8) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                }
-
-                            } else {
-                                std::string temp = product_info["nozzle_diameter"].get<std::string>();
-                                if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
-                                    out_nozzle_diameters.push_back(temp);
-                                }
-                            }
-                        }
-                    }
-                    catch (std::exception& e) {
-                        return false;
-                    }
-                }
-                if (product_info.contains("device_name")) {
-                    device_name = product_info["device_name"].get<std::string>();
-                }
-            }
-            return true;
-        }
-    }
-
+    if (!timeout && !system_info.is_null())
+        return SSWCPProtocol::parse_machine_info_response(system_info, out);
     return false;
 }
+
+
+SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second)
+{
+    SSWCPProtocol::ResolveResult result;
+    if (!host) return result;
+
+    std::condition_variable cv;
+    std::shared_ptr<std::mutex> mutex(new std::mutex);
+    std::weak_ptr<std::mutex>   cb_mutex = mutex;
+    std::shared_ptr<bool>       done(new bool(false));
+    int                         received_count = 0;
+    const int                   expected_count = 2;
+    json                        system_info;
+    json                        objects_query;
+
+    auto on_system_info = [&, cb_mutex, done](const json& response) {
+        auto locked = cb_mutex.lock();
+        if (!locked) return;
+        std::lock_guard<std::mutex> lock(*locked);
+        if (*done) return;
+        if (!response.is_null() && !response.count("error"))
+            system_info = response;
+        if (++received_count >= expected_count) cv.notify_one();
+    };
+    auto on_objects_query = [&, cb_mutex, done](const json& response) {
+        auto locked = cb_mutex.lock();
+        if (!locked) return;
+        std::lock_guard<std::mutex> lock(*locked);
+        if (*done) return;
+        if (!response.is_null() && !response.count("error"))
+            objects_query = response;
+        if (++received_count >= expected_count) cv.notify_one();
+    };
+
+    // Send both requests in parallel; seq_ids are distinct so they never collide.
+    // Query up to 8 extruder objects. Moonraker ignores keys that don't exist on the printer,
+    // so extra entries are harmless. The parser dynamically discovers whatever is returned.
+    std::vector<std::pair<std::string, std::vector<std::string>>> extruder_targets;
+    extruder_targets.emplace_back("extruder", std::vector<std::string>{});
+    for (int i = 1; i <= 7; ++i)
+        extruder_targets.emplace_back("extruder" + std::to_string(i), std::vector<std::string>{});
+    host->async_get_system_info(on_system_info);
+    host->async_get_machine_info(extruder_targets, on_objects_query);
+
+    {
+        std::unique_lock<std::mutex> lock(*mutex);
+        cv.wait_for(lock, std::chrono::seconds(timeout_second),
+                    [&received_count, expected_count]() { return received_count >= expected_count; });
+        *done = true;
+    }
+    // --- Merge by field priority ---
+    MachineInfo& mi = result.info;
+    // model / device_name: system_info is authoritative, normalized for whitelist safety.
+    MachineInfo sys_mi;
+    bool        got_system = !system_info.is_null() && SSWCPProtocol::parse_machine_info_response(system_info, sys_mi);
+    if (got_system) {
+        mi.model       = SSWCPProtocol::normalize_machine_model(sys_mi.model);
+        mi.device_name = sys_mi.device_name;
+        // system_info nozzle data as fallback
+        mi.nozzle_diameters    = sys_mi.nozzle_diameters;
+        mi.nozzle_volume_types = sys_mi.nozzle_volume_types;
+    }
+    // nozzle: objects.query is preferred (real-time), overrides system_info.
+    std::vector<std::string> obj_diameters, obj_flows;
+    if (!objects_query.is_null() && SSWCPProtocol::parse_extruder_nozzle_info(objects_query, obj_diameters, obj_flows)) {
+        mi.nozzle_diameters    = std::move(obj_diameters);
+        // Only overwrite flows when objects.query actually reported them; otherwise keep
+        // whatever system_info provided so we never silently clear the user's flow config.
+        if (!obj_flows.empty())
+            mi.nozzle_volume_types = std::move(obj_flows);
+    }
+
+    // If the machine reported nozzle diameters but no flow types (neither system_info
+    // nor objects.query carried them), default to standard -- one per nozzle. This
+    // matches the read-side semantics (FlowType::nozzle_volume_types() pads missing
+    // entries with standard) and lets sync always write a complete, usable vector
+    // instead of silently skipping the update.
+    if (!mi.nozzle_diameters.empty() && mi.nozzle_volume_types.empty())
+        mi.nozzle_volume_types.assign(mi.nozzle_diameters.size(), FLOW_MODE_STANDARD);
+
+    // Determine status
+    if (mi.model.empty())
+        result.status = SSWCPProtocol::ResolveStatus::NoResponse;
+    else if (mi.nozzle_diameters.empty())
+        result.status = SSWCPProtocol::ResolveStatus::GotIdentity;
+    else
+        result.status = SSWCPProtocol::ResolveStatus::Complete;
+
+    return result;
+}
+
 
 MachineIPType* MachineIPType::getInstance()
 {

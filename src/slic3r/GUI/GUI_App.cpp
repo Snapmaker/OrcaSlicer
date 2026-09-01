@@ -4343,8 +4343,8 @@ void GUI_App::sm_maybe_refresh_login_token()
     BOOST_LOG_TRIVIAL(info) << "sm: start silent login-token refresh";
 
     if (!m_silent_refresh_timeout_timer) {
-        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, static_cast<int>(TokenRefreshTimerId::SilentRefreshTimeout));
-        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, static_cast<int>(TokenRefreshTimerId::SilentRefreshTimeout));
+        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, m_silent_refresh_timeout_timer->GetId());
     }
     m_silent_refresh_timeout_timer->Start(std::chrono::seconds(SM_TOKEN_REFRESH_TIMEOUT_S).count() * 1000, wxTIMER_ONE_SHOT);
 
@@ -4379,8 +4379,8 @@ void GUI_App::sm_on_token_captured(std::size_t refresh_generation)
     }
 
     if (!m_token_check_timer) {
-        m_token_check_timer = std::make_unique<wxTimer>(this, static_cast<int>(TokenRefreshTimerId::Check));
-        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, static_cast<int>(TokenRefreshTimerId::Check));
+        m_token_check_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, m_token_check_timer->GetId());
     }
     m_token_check_timer->Start(SM_TOKEN_CHECK_INTERVAL_MS);
 

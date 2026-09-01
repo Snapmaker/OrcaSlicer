@@ -879,11 +879,6 @@ private:
     static constexpr int SM_TOKEN_REFRESH_TIMEOUT_S  = 120;          // give up on a single silent attempt
     static constexpr int SM_TOKEN_CHECK_INTERVAL_MS  = 5 * 60 * 1000; // periodic due-check tick
 
-    enum class TokenRefreshTimerId {
-        Check                = 20001,
-        SilentRefreshTimeout = 20002,
-    };
-
     std::chrono::system_clock::time_point m_token_last_refresh_success{};
     std::chrono::system_clock::time_point m_token_last_refresh_attempt{};
     std::size_t                           m_silent_refresh_generation     = 0;

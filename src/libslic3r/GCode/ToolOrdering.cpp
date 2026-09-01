@@ -1382,9 +1382,24 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
         lt.has_wipe_tower = config.enable_wrapping_detection;
     }
 
+    // Fractional independent support heights place support-only layers between the object
+    // grid Zs. Those layers get no tower layer of their own: the tower would have to print
+    // a sub-minimum slab there, and the toolchange they carry switches TO the support
+    // filament, which tolerates an unpurged nozzle (the residue lands in the support).
+    // The switch back to an object filament happens on an object-grid layer with a full
+    // tower slab. Smooth timelapse needs a tower layer on every print layer, so it keeps
+    // the old behavior.
+    auto support_only_off_grid = [&config](const LayerTools &lt) {
+        return lt.has_support && !lt.has_object &&
+               config.independent_support_layer_height &&
+               config.support_layer_height_step != slhsWholeLayer &&
+               config.timelapse_type != TimelapseType::tlSmooth;
+    };
+
     //FIXME this is a hack to get the ball rolling.
     for (LayerTools &lt : m_layer_tools)
-        lt.has_wipe_tower |= ((lt.has_object || lt.has_support) && (config.timelapse_type == TimelapseType::tlSmooth || lt.wipe_tower_partitions > 0))
+        lt.has_wipe_tower |= ((lt.has_object || lt.has_support) && !support_only_off_grid(lt) &&
+                              (config.timelapse_type == TimelapseType::tlSmooth || lt.wipe_tower_partitions > 0))
             || lt.print_z < object_bottom_z + EPSILON;
 
     // Test for a raft, insert additional wipe tower layer to fill in the raft separation gap.
@@ -1453,6 +1468,8 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             }
         for (int i = first_wt_idx + 1; i < last_wt_idx; ++i) {
             LayerTools &lt = m_layer_tools[i];
+            if (support_only_off_grid(lt))
+                continue; // no tower slab on fractional support-only layers
             lt.has_wipe_tower = true;
             // GCode::process_layer emits wipe-tower G-code inside `for (extruder_id : layer_tools.extruders)`.
             // An empty extruders vector here would silently skip wipe tower output, leaving the tower
@@ -1531,7 +1548,7 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
         double last_wipe_tower_print_z = lt_next.print_z;
         while (++j < m_layer_tools.size()-1 && !m_layer_tools[j].has_wipe_tower)
             if (m_layer_tools[j+1].print_z - last_wipe_tower_print_z > max_layer_height + EPSILON) {
-                if (!config.enable_wrapping_detection)
+                if (!config.enable_wrapping_detection && !support_only_off_grid(m_layer_tools[j]))
                     m_layer_tools[j].has_wipe_tower = true;
                 last_wipe_tower_print_z = m_layer_tools[j].print_z;
             }

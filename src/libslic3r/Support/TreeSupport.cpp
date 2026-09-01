@@ -3281,15 +3281,18 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
             }
         layer_heights.reserve(n);
         layer_heights.push_back({m_object->get_layer(0)->print_z, m_object->get_layer(0)->height, 0});
-        // The prime tower prints a slab between every pair of adjacent print Zs, so a
-        // fractional boundary splits an object layer into two tower slabs. Both slabs
-        // must stay printable by every filament in the print: gate sub-positions on the
-        // strictest configured minimum layer height (0 = the 0.07 mm slicing default).
+        // Fractional support-only layers normally get no prime tower layer (their
+        // toolchange goes straight to the support filament), so they impose nothing on
+        // the tower. Smooth timelapse is the exception: it needs a tower layer on every
+        // print layer, so there a fractional boundary splits an object layer into two
+        // tower slabs and both must stay printable by every filament - gate sub-positions
+        // on the strictest configured minimum layer height (0 = the 0.07 mm default).
         coordf_t tower_min_slab = 0.;
-        for (unsigned int extruder_id : m_object->print()->extruders()) {
-            coordf_t min_h = m_object->print()->config().min_layer_height.get_at(extruder_id);
-            tower_min_slab = std::max(tower_min_slab, min_h == 0. ? 0.07 : min_h);
-        }
+        if (m_object->print()->config().timelapse_type.value == TimelapseType::tlSmooth)
+            for (unsigned int extruder_id : m_object->print()->extruders()) {
+                coordf_t min_h = m_object->print()->config().min_layer_height.get_at(extruder_id);
+                tower_min_slab = std::max(tower_min_slab, min_h == 0. ? 0.07 : min_h);
+            }
         // A candidate boundary: a sub-position of an object layer.
         struct SubPos { coordf_t z; size_t obj_layer_nr; };
         std::vector<SubPos> subs;

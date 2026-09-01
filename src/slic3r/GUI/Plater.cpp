@@ -11039,7 +11039,21 @@ static void fill_nozzle_layer_height_combo(ComboBox *combo, size_t extruder_idx)
         std::max(0., preferred->get_at(extruder_idx)) : 0.;
 
     wxString current_label;
-    if (base_height > EPSILON)
+    if (base_height > EPSILON) {
+        // Fractions of the object layer height for finer nozzles: selecting one lowers the
+        // object layer height to it and pins the other extruders to their current effective
+        // height, so the printed result is unchanged and the configuration stays valid.
+        for (int d = 4; d >= 2; d /= 2) {
+            const double height = base_height / d;
+            if (height + EPSILON < floor_lh || height > cap + EPSILON)
+                continue;
+            if (std::abs(height * 1000. - std::round(height * 1000.)) > 1e-6)
+                continue; // only cleanly representable heights
+            const wxString label = nozzle_combo_label(height);
+            combo->AppendString(label);
+            if (current > 0. && std::abs(height - current) < EPSILON)
+                current_label = label;
+        }
         for (int n = 1; n * base_height <= cap + EPSILON; ++n) {
             const double height = n * base_height;
             if (height + EPSILON < floor_lh)
@@ -11049,6 +11063,7 @@ static void fill_nozzle_layer_height_combo(ComboBox *combo, size_t extruder_idx)
             if (current > 0. && std::abs(height - current) < EPSILON)
                 current_label = label;
         }
+    }
     if (current_label.empty() && current > 0.) {
         // An explicit preference no longer among the valid values (the object layer height or
         // the limits changed after it was set) is still displayed truthfully; slicing warns.
@@ -11233,9 +11248,10 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         ComboBox* lh_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(32)}, 0,
                                           nullptr, wxCB_READONLY);
-        lh_combo->SetToolTip(_L("Layer height this extruder should print with: an integer multiple of the object "
-                                "layer height within this extruder's layer height limits. Default keeps the object "
-                                "layer height."));
+        lh_combo->SetToolTip(_L("Layer height this extruder should print with: a multiple of the object layer "
+                                "height within this extruder's layer height limits. Default keeps the object layer "
+                                "height. Selecting a fraction of the object layer height lowers the object layer "
+                                "height to it and keeps the other extruders at their current effective height."));
         fill_nozzle_layer_height_combo(lh_combo, i);
 
         lh_combo->Bind(wxEVT_COMBOBOX, [lh_combo, i](wxCommandEvent& event) {
@@ -11257,6 +11273,22 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
             if (i >= heights.size() || std::abs(heights[i] - new_height) < EPSILON)
                 return;
             heights[i] = new_height;
+            const auto*  base_opt    = wxGetApp().preset_bundle->prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height");
+            const double base_height = base_opt != nullptr ? base_opt->value : 0.;
+            if (new_height > EPSILON && base_height > EPSILON && new_height < base_height - EPSILON) {
+                // A preference below the object layer height: the engine slices the object on
+                // the finest preferred height, so lower the object layer height to it and pin
+                // every extruder that followed the old value - the printed result is identical
+                // and the configuration stays valid.
+                for (size_t j = 0; j < heights.size(); ++j)
+                    if (j != i && heights[j] <= EPSILON)
+                        heights[j] = base_height;
+                if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT); print_tab != nullptr) {
+                    DynamicPrintConfig print_conf = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+                    print_conf.set_key_value("layer_height", new ConfigOptionFloat(new_height));
+                    print_tab->load_config(print_conf);
+                }
+            }
             new_conf.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
             // As with the diameter combo: marks the printer preset modified and propagates the
             // change without switching presets. Do not event.Skip() (plain ComboBox, see above).

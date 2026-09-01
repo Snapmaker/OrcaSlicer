@@ -5886,6 +5886,12 @@ msgstr "该项目由 Snapmaker Orca 2.3.1-alpha 创建，并使用了填充旋�
 msgid "Would you like Snapmaker Orca to automatically fix this by clearing the rotation template settings?"
 msgstr "您是否希望 Snapmaker Orca 清除旋转模板设置以自动修复此问题？"
 
+msgid "The current version of Snapmaker Orca cannot fully load this 3MF file. Please update to the latest version and try again."
+msgstr "当前 Snapmaker Orca 版本过低，无法完整加载此 3MF 文件。请更新至最新版本后重试。"
+
+msgid "Loading 3MF"
+msgstr "加载 3MF"
+
 #, c-format, boost-format
 msgid "The 3mf's version %s is newer than %s's version %s, found following unrecognized keys:"
 msgstr "该3mf的版本%s比%s的版本%s新，发现以下参数键值无法识别:"
@@ -15376,6 +15382,55 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+# Snapmaker requirement 7.1: high-flow filament grouping UI
+
+msgid "High Flow"
+msgstr "高流量"
+
+msgid "[Standard flow]"
+msgstr "【标准流量】"
+
+msgid "[High flow]"
+msgstr "【高流量】"
+
+msgid "Standard Mode"
+msgstr "标准模式"
+
+msgid "Custom Mode"
+msgstr "自定义模式"
+
+msgid "Prioritize print quality"
+msgstr "优先保证打印质量"
+
+msgid "Manually assign filaments to nozzles"
+msgstr "手动分配耗材给喷嘴"
+
+msgid "Custom Filament Grouping"
+msgstr "自定义耗材分组"
+
+msgid "Slicing will follow the nozzle assignment below:"
+msgstr "将基于下列喷嘴分配方案进行切片："
+
+msgid "Standard Nozzle"
+msgstr "标准喷嘴"
+
+msgid "High Flow Nozzle"
+msgstr "高流量喷嘴"
+
+msgid "Tip: Drag and drop filaments to assign them to a different nozzle."
+msgstr "提示：拖拽耗材图标以分配至不同喷嘴。"
+
+msgid "Warning:%1%mm High Flow nozzles are not recommended for %2%"
+msgstr "不建议使用%1%mm 高流量喷嘴打印%2%"
+
+msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
+msgstr "不可以使用%1%mm 高流量喷嘴打印%2%"
+
+msgid "CF/GF filaments"
+msgstr "CF/GF耗材"
+
+msgid "Swap the two groups"
+msgstr "交换两组耗材"
 
 msgid "High temperature:"
 msgstr "高温耗材："

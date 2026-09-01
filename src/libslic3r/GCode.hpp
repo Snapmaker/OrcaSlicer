@@ -377,6 +377,13 @@ private:
     //BBS
     void check_placeholder_parser_failed();
 
+    /*
+     * Build scalar process options for custom G-code evaluation.
+     * Flow-variant vectors are resolved for current_extruder_id, and explicit overrides take precedence.
+    */
+    DynamicConfig build_placeholder_process_config(unsigned int current_extruder_id,
+                                                   const DynamicConfig *config_override) const;
+
     void            set_last_pos(const Point &pos) { m_last_pos = pos; m_last_pos_defined = true; }
     bool            last_pos_defined() const { return m_last_pos_defined; }
     void            set_extruders(const std::vector<unsigned int> &extruder_ids);
@@ -634,6 +641,15 @@ private:
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
+
+    // Snapmaker: flow variant — read a process-domain vector option
+    template<typename VectorOption>
+    auto process_flow_value(const VectorOption &opt) const -> decltype(opt.get_at(0))
+    {
+        return get_value_at(m_config, opt, ConfigFlowDomain::Process,
+                            m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0);
+    }
+
     void print_machine_envelope(GCodeOutputStream &file, Print &print);
     void _print_first_layer_bed_temperature(GCodeOutputStream &file, Print &print, const std::string &gcode, bool wait);
     void _print_first_layer_extruder_temperatures(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);

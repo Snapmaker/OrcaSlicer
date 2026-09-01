@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
@@ -119,6 +120,7 @@
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "Widgets/SideButton.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
 #include "WebDownPluginDlg.hpp"
@@ -2068,6 +2070,8 @@ GUI_App::~GUI_App()
         delete preset_updater;
     }
 
+    AllowlistManager::uninit();
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
 
     stop_page_http_server();
@@ -3467,6 +3471,16 @@ static bool is_default(wxWindow* win)
 
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
+    // SideButton manages its own per-state colors via StateColor and adapts
+    // them to the theme at paint time (StateColor::colorForStates runs the
+    // dark palette). Its SetBackgroundColour/SetForegroundColour overrides
+    // replace the WHOLE state table with one color, so letting this walker
+    // touch it permanently flattens the enabled/disabled/hover colors —
+    // seen when toggling dark mode off: the slice/print buttons keep a
+    // washed-out single background until the app restarts.
+    if (dynamic_cast<SideButton*>(window))
+        return;
+
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
         if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW)
             return;
@@ -6334,12 +6348,7 @@ bool GUI_App::check_and_keep_current_preset_changes(const wxString& caption, con
                             static_cast<TabPrinter*>(tab)->cache_extruder_cnt();
                         }
                     }
-                    std::vector<std::string> selected_options2;
-                    std::transform(selected_options.begin(), selected_options.end(), std::back_inserter(selected_options2), [](auto & o) {
-                        auto i = o.find('#');
-                        return i != std::string::npos ? o.substr(0, i) : o;
-                    });
-                    tab->cache_config_diff(selected_options2);
+                    tab->cache_config_diff(selected_options);
                     if (!is_called_from_configwizard)
                         tab->m_presets->discard_current_changes();
                 }

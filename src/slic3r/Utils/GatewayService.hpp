@@ -97,6 +97,7 @@ public:
         std::string                     websocket_path{"/ws"};
         std::string                     device_path{"/api/device"};
         std::string                     account_path{"/api/account"};
+        std::string                     store_path{"/api/store"};
         std::chrono::milliseconds       health_poll_interval{std::chrono::milliseconds{100}};
         std::chrono::milliseconds       health_timeout{std::chrono::milliseconds{5000}};
         detail::ReconnectPolicy::Config reconnect;
@@ -140,6 +141,7 @@ public:
     std::int64_t watch_device(const nlohmann::json& params, RpcCallback callback);
     ApiResult    get_device(const std::optional<std::string>& serial_number = std::nullopt);
     ApiResult    get_account();
+    PreprintStoreResult store_preprint_context(const std::string& id, const nlohmann::json& payload, int ttl_seconds = 1800);
     std::string  web_url(const std::string& page_key) const;
     std::string  localfile_url(const std::string& file_path) const;
 
@@ -160,6 +162,7 @@ private:
     void         fail_pending(const GatewayError& error);
     void         set_websocket_open(bool opened);
     ApiResult    get_json(const std::string& path);
+    ApiResult    post_json(const std::string& path, const nlohmann::json& body);
     std::int64_t next_request_id();
     std::int64_t send_request(const std::string& method, const nlohmann::json& params, RpcCallback callback);
 

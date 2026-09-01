@@ -152,7 +152,7 @@ private:
     int            m_last_result_selections[4] = {0, 1, 2, 3};
     int            m_last_result_manual_count  = 0;
     // Recommended-mode arm of the same snapshot: the palette indices that produced m_result.
-    int            m_last_result_recommended_selections[4] = {-1, -1, -1, -1};
+    int            m_last_result_recommended_selections[kFullSpectrumSlotCount] = {-1, -1, -1, -1};
     bool                               m_match_completed = false;
     bool                               m_match_running   = false; // UI-thread-only; do not access from worker
     std::shared_ptr<std::atomic<bool>> m_destroyed{std::make_shared<std::atomic<bool>>(false)};
@@ -265,9 +265,9 @@ private:
     // single-color SKUs, alphabetical); combo row j shows palette entry j, so combo row
     // == palette index and no row→index map is needed. m_recommended_selections[i] is
     // the palette index selected in slot i (-1 = none, e.g. degenerate short palette).
-    ComboBox* m_recommended_combo[4]          = {nullptr};
+    ComboBox* m_recommended_combo[kFullSpectrumSlotCount]          = {nullptr};
     std::vector<FullSpectrumPaletteEntry>     m_recommended_palette;
-    int m_recommended_selections[4]           = {-1, -1, -1, -1};
+    int m_recommended_selections[kFullSpectrumSlotCount]           = {-1, -1, -1, -1};
     wxWindow*       m_manual_row_panels[4]    = {nullptr};
     int             m_manual_filament_count   = 0; // computed in ctor based on physical filaments
     // Add/remove buttons (mirrors MixedFilamentDialog: hidden at min/max count)

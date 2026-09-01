@@ -6,6 +6,7 @@
 #include "MixedFilamentBadge.hpp"
 #include "MixedFilamentColorMapPanel.hpp"
 #include "MixedColorMatchHelpers.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp" // kFullSpectrumSlotCount (recommended slot write-back)
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
@@ -2818,7 +2819,7 @@ Sidebar::Sidebar(Plater *parent)
             // Confirm-time note in MixedFilamentBatchDialog makes). The
             // default-family single preset is only used for legacy results that
             // carry no per-slot family info (pre-phase-2 behavior).
-            for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i) {
+            for (size_t i = 0; i < std::min<size_t>(static_cast<size_t>(kFullSpectrumSlotCount), target_count); ++i) {
                 std::string preset_name;
                 if (i < result.recommended_physical_family_names.size()) {
                     preset_name = find_selectable_full_spectrum_family_preset(result.recommended_physical_family_names[i]);

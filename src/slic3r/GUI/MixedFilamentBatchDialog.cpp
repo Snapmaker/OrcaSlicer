@@ -326,7 +326,7 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
     m_recommended_palette = load_recommended_palette();
     {
         const auto defaults = DefaultFullSpectrumSelections(m_recommended_palette, default_full_spectrum_family_name());
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < kFullSpectrumSlotCount; ++i)
             m_recommended_selections[i] = i < static_cast<int>(defaults.size()) ? defaults[i] : -1;
     }
     // Match targets = the project's FULL palette (physical filament_colour + enabled mixed
@@ -343,7 +343,7 @@ MixedFilamentBatchDialog::MixedFilamentBatchDialog(wxWindow* parent)
         // Re-apply the combo icons now that the card is visible: SetIcon on a hidden
         // window may not render (the same reason on_method_changed re-applies them on
         // every mode switch). The card was built hidden (card->Hide()).
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < kFullSpectrumSlotCount; ++i)
             if (m_recommended_combo[i])
                 set_recommended_combo_icon(i);
         m_recommended_card->Layout();
@@ -970,10 +970,10 @@ static std::vector<FullSpectrumPaletteEntry> load_recommended_palette()
         }
     }
 
-    if (palette.size() < 4) {
-        static const char* fallback_names[4] = {"Cyan", "Magenta", "Yellow", "Gray"};
+    if (palette.size() < static_cast<size_t>(kFullSpectrumSlotCount)) {
+        static const char* fallback_names[kFullSpectrumSlotCount] = {"Cyan", "Magenta", "Yellow", "Gray"};
         palette.clear();
-        for (size_t i = 0; i < FULL_SPECTRUM_FALLBACK_COLORS.size() && i < 4; ++i) {
+        for (size_t i = 0; i < FULL_SPECTRUM_FALLBACK_COLORS.size() && i < static_cast<size_t>(kFullSpectrumSlotCount); ++i) {
             FullSpectrumPaletteEntry entry;
             entry.hex         = FULL_SPECTRUM_FALLBACK_COLORS[i];
             entry.en_name     = fallback_names[i];
@@ -1463,7 +1463,7 @@ void MixedFilamentBatchDialog::build_recommended_card(wxBoxSizer& parent)
     auto* grid = new wxFlexGridSizer(2, FromDIP(12), FromDIP(12));
     grid->AddGrowableCol(0, 1);
     grid->AddGrowableCol(1, 1);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < kFullSpectrumSlotCount; ++i) {
         auto* panel = new wxPanel(card, wxID_ANY);
         // wxPanel doesn't inherit the card's bg — set white explicitly so the row doesn't
         // show the dialog's #F8F7F7 through (same as build_manual_card rows).
@@ -1820,7 +1820,7 @@ void MixedFilamentBatchDialog::build_footer()
         // the currently configured filaments. Non-blocking — OK proceeds to EndModal.
         if (m_result.is_recommended_mode) {
             bool any_family_missing = false;
-            for (int i = 0; i < 4 && !any_family_missing; ++i) {
+            for (int i = 0; i < kFullSpectrumSlotCount && !any_family_missing; ++i) {
                 const int sel = m_recommended_selections[i];
                 if (sel < 0 || sel >= static_cast<int>(m_recommended_palette.size())) continue;
                 if (!full_spectrum_family_preset_selectable(m_recommended_palette[sel].family_name))
@@ -2007,7 +2007,7 @@ void MixedFilamentBatchDialog::on_method_changed(wxCommandEvent&)
             if (m_filament_combo[i])
                 set_manual_combo_icon(i, m_filament_combo[i]->GetSelection());
     } else {
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < kFullSpectrumSlotCount; ++i)
             if (m_recommended_combo[i])
                 set_recommended_combo_icon(i);
     }
@@ -2192,7 +2192,7 @@ void MixedFilamentBatchDialog::set_recommended_combo_icon(int row)
     // Same arrow+badge composition as set_manual_combo_icon, with two differences: the badge
     // label is the SLOT number (1-4 — the fixed dropdown index per spec §4, not a palette
     // index), and the swatch color is the palette entry currently selected in this slot.
-    if (row < 0 || row >= 4) return;
+    if (row < 0 || row >= kFullSpectrumSlotCount) return;
     ComboBox* cb = m_recommended_combo[row];
     if (!cb) return;
     const int sel = m_recommended_selections[row];
@@ -2428,14 +2428,14 @@ void MixedFilamentBatchDialog::launch_background_match()
     // worker never touches FilamentColorLibrary for this either.
     std::vector<std::string> preset_family_names;
     if (m_matching_method == RECOMMENDED) {
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < kFullSpectrumSlotCount; ++i) {
             const int sel = m_recommended_selections[i];
             if (sel >= 0 && sel < static_cast<int>(m_recommended_palette.size())) {
                 preset_colors.push_back(m_recommended_palette[sel].hex);
                 preset_family_names.push_back(m_recommended_palette[sel].family_name);
             }
         }
-        if (preset_colors.size() < 4) {
+        if (preset_colors.size() < static_cast<size_t>(kFullSpectrumSlotCount)) {
             preset_colors = FULL_SPECTRUM_FALLBACK_COLORS;
             // Preserve the parallel-array invariant: synthesized canonical entries
             // belong to the default family (same as load_recommended_palette's
@@ -2467,7 +2467,7 @@ void MixedFilamentBatchDialog::launch_background_match()
             // No combo search anymore — the mixing algorithm and the 0–70% cap are unchanged
             // (the cap is enforced in the Pass-2 batch_match_model_colors call below via
             // match_max = kMaxComponentPercent).
-            if (preset_colors.size() >= 4) {
+            if (preset_colors.size() >= static_cast<size_t>(kFullSpectrumSlotCount)) {
                 physical_colors = preset_colors;
             } else {
                 // Defensive only — see the preset_colors block above.
@@ -2700,7 +2700,7 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
                                   m_filament_selections + m_manual_filament_count,
                                   m_last_result_selections))
                 : std::equal(m_recommended_selections,
-                             m_recommended_selections + 4,
+                             m_recommended_selections + kFullSpectrumSlotCount,
                              m_last_result_recommended_selections)));
         if (m_result.success && input_intact) {
             // rebuild_match_thumb_cache is needed because reset_match_preview already
@@ -2722,7 +2722,7 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
     m_last_result_manual_count = m_manual_filament_count;
     for (int i = 0; i < m_manual_filament_count; ++i)
         m_last_result_selections[i] = m_filament_selections[i];
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < kFullSpectrumSlotCount; ++i)
         m_last_result_recommended_selections[i] = m_recommended_selections[i];
     m_match_completed = true;
     update_mapping_legend();

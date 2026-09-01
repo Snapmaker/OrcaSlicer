@@ -396,9 +396,9 @@ std::vector<FullSpectrumPaletteEntry> BuildFullSpectrumPalette(const std::vector
 
 std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPaletteEntry>& palette, const std::string& default_family)
 {
-    static const char* slot_color_families[] = {"cyan", "magenta", "yellow", "white"};
+    static const char* slot_color_families[kFullSpectrumSlotCount] = {"cyan", "magenta", "yellow", "white"};
 
-    std::vector<int> selection(std::min<size_t>(4, palette.size()), -1);
+    std::vector<int> selection(std::min<size_t>(static_cast<size_t>(kFullSpectrumSlotCount), palette.size()), -1);
     std::vector<bool> used(palette.size(), false);
 
     // Pass 1: named slots (cyan / magenta / yellow / white). Scanning in palette

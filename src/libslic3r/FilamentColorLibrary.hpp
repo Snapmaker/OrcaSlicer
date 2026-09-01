@@ -56,6 +56,10 @@ struct FilamentColorInfo
     std::vector<FilamentColorItem> colors;
 };
 
+// Number of color slots in the recommended-mode (Full Spectrum) palette card —
+// product spec constant (2x2 slot grid); also the C/M/Y/W default-selection count.
+constexpr int kFullSpectrumSlotCount = 4;
+
 // One selectable color in the recommended-mode (Full Spectrum) color-mix palette.
 // Built by BuildFullSpectrumPalette from the hot-updated filaments_colours.json.
 struct FullSpectrumPaletteEntry

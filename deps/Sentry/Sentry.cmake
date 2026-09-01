@@ -60,6 +60,8 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     ${_sentry_platform_flags}
     -DSENTRY_TRANSPORT_CURL=ON
     -DSENTRY_BUILD_SHARED_LIBS=OFF
+    # breakpad backend: in-process, needs no crashpad_handler shipped in the AppImage
+    -DSENTRY_BACKEND=breakpad
     -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo
   )
   set(_sentry_cmake_generator -G "Unix Makefiles")

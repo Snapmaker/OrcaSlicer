@@ -1,8 +1,8 @@
 name: Upload Debug Symbols to Sentry
 
 # One upload for every platform: sentry-cli's upload-dif is format-agnostic, so
-# a single Linux runner ships the Windows PDBs and the macOS dSYMs together
-# (Linux builds produce no symbol artifact). Artifact downloads are tolerant -
+# a single runner ships the Windows PDBs, the macOS dSYMs and the unstripped
+# Linux ELF binaries together. Artifact downloads are tolerant -
 # whatever symbol artifacts this run produced get uploaded, the rest are
 # reported as warnings instead of failing the run.
 on:
@@ -20,6 +20,10 @@ on:
         required: false
         type: string
         description: "Artifact name for the macOS dSYM archive (e.g. 'dSYM_Mac_V1.0.0'); empty skips it"
+      linux-symbols-pattern:
+        required: false
+        type: string
+        description: "Artifact name pattern for Linux ELF symbols (e.g. 'Linux_symbols_*'); empty skips it"
       release:
         required: false
         type: string
@@ -66,8 +70,18 @@ jobs:
           name: ${{ inputs.dsym-artifact-name }}
           path: ./symbols/macos
 
+      - name: Download Linux symbols artifacts
+        id: dl_linux
+        if: inputs.linux-symbols-pattern != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ inputs.linux-symbols-pattern }}
+          merge-multiple: true
+          path: ./symbols/linux
+
       - name: Extract archives
-        if: steps.dl_pdb.outcome == 'success' || steps.dl_dsym.outcome == 'success'
+        if: steps.dl_pdb.outcome == 'success' || steps.dl_dsym.outcome == 'success' || steps.dl_linux.outcome == 'success'
         shell: bash
         run: |
           # The Windows PDBs ship as a .7z inside the artifact.
@@ -84,7 +98,7 @@ jobs:
           done
 
       - name: Upload debug symbols to Sentry
-        if: steps.dl_pdb.outcome == 'success' || steps.dl_dsym.outcome == 'success'
+        if: steps.dl_pdb.outcome == 'success' || steps.dl_dsym.outcome == 'success' || steps.dl_linux.outcome == 'success'
         shell: bash
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -96,12 +110,16 @@ jobs:
           if [ "${{ steps.dl_dsym.outcome }}" = "failure" ]; then
             echo "::warning::dSYM artifact '${{ inputs.dsym-artifact-name }}' could not be downloaded; uploading without macOS symbols"
           fi
+          if [ "${{ steps.dl_linux.outcome }}" = "failure" ]; then
+            echo "::warning::Linux symbol artifacts '${{ inputs.linux-symbols-pattern }}' could not be downloaded; uploading without Linux symbols"
+          fi
           pdb_count=$(find ./symbols -name "*.pdb" -type f | wc -l | tr -d ' ')
           dsym_count=$(find ./symbols -name "*.dSYM" -type d | wc -l | tr -d ' ')
-          echo "Found $pdb_count PDB file(s) and $dsym_count dSYM bundle(s):"
-          find ./symbols -name "*.pdb" -type f -o -name "*.dSYM" -type d
-          if [ "$pdb_count" -eq 0 ] && [ "$dsym_count" -eq 0 ]; then
-            echo "::error::Symbol artifacts downloaded but contained no PDB or dSYM files"
+          elf_count=$(find ./symbols/linux -type f 2>/dev/null | wc -l | tr -d ' ')
+          echo "Found $pdb_count PDB file(s), $dsym_count dSYM bundle(s), $elf_count Linux binary/binaries:"
+          find ./symbols -name "*.pdb" -type f -o -name "*.dSYM" -type d -o -path "./symbols/linux/*" -type f
+          if [ "$pdb_count" -eq 0 ] && [ "$dsym_count" -eq 0 ] && [ "$elf_count" -eq 0 ]; then
+            echo "::error::Symbol artifacts downloaded but contained no PDB, dSYM or ELF files"
             find ./symbols | head -40
             exit 1
           fi
@@ -110,6 +128,6 @@ jobs:
             --org "${{ secrets.SENTRY_ORG }}" --project "${{ secrets.SENTRY_PROJECT }}" ./symbols
 
       - name: Nothing to upload
-        if: steps.dl_pdb.outcome != 'success' && steps.dl_dsym.outcome != 'success'
+        if: steps.dl_pdb.outcome != 'success' && steps.dl_dsym.outcome != 'success' && steps.dl_linux.outcome != 'success'
         shell: bash
         run: echo "::warning::No symbol artifacts were available in this run; nothing uploaded to Sentry"

@@ -48,6 +48,9 @@ modules:
         sha256: e305b9f07f52743ca481da0a4e0c76c35efd60adaf1b0694eb3bb021e2137e39
 
   - name: glu
+    build-options:
+      # clang treats C++17 'register' as an error where GCC only warns
+      cxxflags: -Wno-register
     config-opts:
       - --disable-static
     sources:

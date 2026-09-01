@@ -20,6 +20,8 @@ namespace {
 struct FakeHttp final : public HttpTransport
 {
     std::vector<std::string> urls;
+    std::vector<std::string> posts;
+    std::string              store_response{R"({"ok":true,"data":{"file_exists":true}})"};
 
     HttpResponse get(const std::string& url) override
     {
@@ -39,8 +41,8 @@ struct FakeHttp final : public HttpTransport
 
     HttpResponse post_json(const std::string& url, const std::string& body) override
     {
-        urls.push_back(url);
-        return {200, R"({"stored":true,"echo":)" + body + "}", {}};
+        posts.push_back(url + "\n" + body);
+        return {200, store_response, {}};
     }
 };
 
@@ -164,6 +166,31 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     const auto account = service.get_account();
     REQUIRE(!account.error);
     REQUIRE(account.value.at("user") == "u");
+
+    const auto store = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/a.gcode"}}, 900);
+    REQUIRE(!store.error);
+    REQUIRE(store.ok);
+    REQUIRE(store.file_exists);
+    REQUIRE(http->posts.size() == 1);
+    const auto posted = nlohmann::json::parse(http->posts[0].substr(http->posts[0].find('\n') + 1));
+    REQUIRE(http->posts[0].substr(0, http->posts[0].find('\n')) == "http://127.0.0.1:8080/api/store");
+    REQUIRE(posted.at("id") == "store-id");
+    REQUIRE(posted.at("ttl_seconds") == 900);
+    REQUIRE(posted.at("payload").at("file_path") == "C:/tmp/a.gcode");
+
+    http->store_response = R"({"ok":true,"data":{"file_exists":false}})";
+    const auto missing_file = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/missing.gcode"}}, 900);
+    REQUIRE(missing_file.ok);
+    REQUIRE_FALSE(missing_file.file_exists);
+
+    http->store_response = R"({"ok":false})";
+    const auto failed_store = service.store_preprint_context("store-id", {{"file_path", "C:/tmp/a.gcode"}}, 900);
+    REQUIRE_FALSE(failed_store.ok);
+    REQUIRE(failed_store.error.code == GatewayErrorCode::InvalidResponse);
+
+    const auto invalid_request = service.store_preprint_context("", nlohmann::json::object(), 900);
+    REQUIRE(invalid_request.error.code == GatewayErrorCode::InvalidRequest);
+    REQUIRE(http->posts.size() == 3);
 
     websocket->notify("notify.account.changed", {{"reason", "login"}});
     REQUIRE(account_changes.load() == 1);

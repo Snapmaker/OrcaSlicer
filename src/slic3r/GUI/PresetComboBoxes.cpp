@@ -1424,39 +1424,65 @@ void PlaterPresetComboBox::update()
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
+            // TEMP (2026-08-31): name-matching filter disabled for testing — it was silently
+            // dropping machine filaments whose reported name didn't exactly match a local preset
+            // name, hiding entries from "Machine Filament" with no feedback. Entries with no
+            // matching preset are now shown greyed out / non-selectable instead of being hidden.
+            // auto item_iter = std::find_if(filaments.begin(), filaments.end(),
+            // [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
+            //     if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name + " @U1 " + machine_nozzles)
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name + " @U1")
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name)
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     return false;
+            // });
             auto item_iter = std::find_if(filaments.begin(), filaments.end(),
             [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
                 if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
+                    return true;
+
                 if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
+                    return true;
 
                 if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
+                    return true;
 
                 if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
+                    return true;
 
                 return false;
             });
 
+            const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+            std::vector<std::string> colors = machineInfo.multiColors;
+            if (colors.empty() && !machineInfo.color_info.empty())
+                colors.emplace_back(machineInfo.color_info);
+            const std::string name = std::to_string(i + 1);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+            if (icon == nullptr)
+                icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+            wxBitmap bmp(*icon);
+
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
-                std::vector<std::string> colors = machineInfo.multiColors;
-                if (colors.empty() && !machineInfo.color_info.empty())
-                    colors.emplace_back(machineInfo.color_info);
-                const std::string name = std::to_string(i + 1);
-                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
-                if (icon == nullptr)
-                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
-                wxBitmap bmp(*icon);
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            } else {
+                // No local preset matched by name (filter disabled) — show it anyway, greyed out
+                // and non-selectable, so it's visible instead of silently missing.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage());
+                set_label_marker(item_id, LABEL_ITEM_DISABLED);
             }
         }
         m_last_ams_filament = GetCount();
@@ -1995,39 +2021,65 @@ void TabPresetComboBox::update()
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
+            // TEMP (2026-08-31): name-matching filter disabled for testing — it was silently
+            // dropping machine filaments whose reported name didn't exactly match a local preset
+            // name, hiding entries from "Machine Filament" with no feedback. Entries with no
+            // matching preset are now shown greyed out / non-selectable instead of being hidden.
+            // auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
+            //
+            //     if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name + " @U1 " + machine_nozzles)
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name + " @U1")
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     if (f.name == filament_name)
+            //         if (f.is_compatible)
+            //             return true;
+            //
+            //     return false;
+            //     });
+            auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
 
                 if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
+                    return true;
+
                 if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
-                
+                    return true;
+
                 if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
+                    return true;
 
                 if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
+                    return true;
 
-                return false;                
+                return false;
                 });
+
+            const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+            std::vector<std::string> colors = machineInfo.multiColors;
+            if (colors.empty() && !machineInfo.color_info.empty())
+                colors.emplace_back(machineInfo.color_info);
+            const std::string name = std::to_string(i + 1);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+            if (icon == nullptr)
+                icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+            wxBitmap bmp(*icon);
 
             if (item_iter != filaments.end()) {
                 const_cast<Preset&>(*item_iter).is_visible = true;
-                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
-                std::vector<std::string> colors = machineInfo.multiColors;
-                if (colors.empty() && !machineInfo.color_info.empty())
-                    colors.emplace_back(machineInfo.color_info);
-                const std::string name = std::to_string(i + 1);
-                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
-                if (icon == nullptr)
-                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
-                wxBitmap bmp(*icon);
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            } else {
+                // No local preset matched by name (filter disabled) — show it anyway, greyed out
+                // and non-selectable, so it's visible instead of silently missing.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage());
+                set_label_marker(item_id, LABEL_ITEM_DISABLED);
             }
         }
 

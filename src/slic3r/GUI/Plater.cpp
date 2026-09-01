@@ -143,6 +143,7 @@
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/Process.hpp"
+#include "../Utils/GatewayProtocol.hpp"
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #include "NotificationManager.hpp"
@@ -21441,6 +21442,37 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_send_page(dlg.post_action() == PrintHostPostUploadAction::None);
         dialog->set_gcode_file_name(upload_job.upload_data.source_path.string());
         dialog->set_display_file_name(upload_job.upload_data.upload_path.string());
+
+        const std::string source_path = upload_job.upload_data.source_path.string();
+        const std::string display_name = upload_job.upload_data.upload_path.string();
+        const std::string active_filename = SSWCP::get_active_filename();
+
+        nlohmann::json payload;
+        payload["file_path"] = source_path;
+        payload["filename"] = display_name;
+        payload["active_file"] = SSWCP::build_active_file_json(source_path, display_name, false);
+        payload["filament_mapping"] = SSWCP::build_filament_mapping_json(active_filename);
+
+        std::string store_id = boost::uuids::to_string(boost::uuids::random_generator()());
+        const auto store_result = wxGetApp().gateway_store_preprint_context(store_id, payload);
+        if (!store_result.ok) {
+            BOOST_LOG_TRIVIAL(error) << "preprint store failed: " << store_result.error.message;
+            MessageDialog confirm_dialog(this, _L("Failed to upload pre-print context. Open anyway?"), _L("Note"), wxYES_NO | wxICON_WARNING);
+            if (confirm_dialog.ShowModal() != wxID_YES) {
+                delete dialog;
+                return;
+            }
+            store_id.clear();
+        } else if (!store_result.file_exists) {
+            BOOST_LOG_TRIVIAL(warning) << "preprint store reported that the G-code path does not exist";
+            MessageDialog confirm_dialog(this, _L("The G-code path is invalid. Continue anyway?"), _L("Note"), wxYES_NO | wxICON_WARNING);
+            if (confirm_dialog.ShowModal() != wxID_YES) {
+                delete dialog;
+                return;
+            }
+        }
+
+        dialog->set_store_id(store_id);
         bool res = dialog->run();
 
         if (dialog->is_finish()) {

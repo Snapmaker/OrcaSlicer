@@ -79,6 +79,7 @@ class TaskManager;
 
 namespace Gateway {
 class GatewayService;
+struct PreprintStoreResult;
 }
 
 namespace GUI{
@@ -650,6 +651,8 @@ private:
     void            stop_gateway_service();
     wxString        gateway_web_url(const wxString& page_key) const;
     std::string     gateway_localfile_url(const std::string& file_path) const;
+    Gateway::PreprintStoreResult gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload,
+                                                                int ttl_seconds = 1800) const;
     bool            is_gateway_url(const wxString& url) const;
 
     enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };

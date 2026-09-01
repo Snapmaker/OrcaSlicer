@@ -502,6 +502,37 @@ GatewayService::ApiResult GatewayService::get_device(const std::optional<std::st
 
 GatewayService::ApiResult GatewayService::get_account() { return get_json(config_.account_path); }
 
+PreprintStoreResult GatewayService::store_preprint_context(const std::string& id, const nlohmann::json& payload, int ttl_seconds)
+{
+    PreprintStoreResult result;
+    if (id.empty() || ttl_seconds <= 0 || !payload.is_object()) {
+        result.error = {GatewayErrorCode::InvalidRequest, "preprint store id, payload, or ttl is invalid"};
+        return result;
+    }
+
+    const nlohmann::json request{{"id", id}, {"payload", payload}, {"ttl_seconds", ttl_seconds}};
+    const ApiResult       api_result = post_json(config_.store_path, request);
+    if (api_result.error) {
+        result.error = api_result.error;
+        return result;
+    }
+
+    const auto ok = api_result.value.find("ok");
+    if (ok == api_result.value.end() || !ok->is_boolean() || !ok->get<bool>()) {
+        result.error = {GatewayErrorCode::InvalidResponse, "store endpoint did not report ok=true"};
+        return result;
+    }
+
+    result.ok = true;
+    const auto data = api_result.value.find("data");
+    if (data != api_result.value.end() && data->is_object()) {
+        const auto file_exists = data->find("file_exists");
+        if (file_exists != data->end() && file_exists->is_boolean())
+            result.file_exists = file_exists->get<bool>();
+    }
+    return result;
+}
+
 void GatewayService::run(const std::string locale)
 {
     while (true) {
@@ -725,6 +756,36 @@ GatewayService::ApiResult GatewayService::get_json(const std::string& path)
         port = port_;
     }
     const HttpResponse response = dependencies_.http->get(make_url(config_.host, port, path));
+    if (!response.error.empty() || response.status < 200 || response.status >= 300) {
+        result.error = {GatewayErrorCode::HttpError,
+                        response.error.empty() ? "request failed with HTTP status " + std::to_string(response.status) : response.error};
+        return result;
+    }
+    const auto parsed = parse_json_object(response.body);
+    if (!parsed.has_value()) {
+        result.error = {GatewayErrorCode::InvalidResponse, "response is not a JSON object"};
+        return result;
+    }
+    result.value = *parsed;
+    return result;
+}
+
+GatewayService::ApiResult GatewayService::post_json(const std::string& path, const nlohmann::json& body)
+{
+    ApiResult   result;
+    std::string base_url;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (state_ != ConnectionState::Connected) {
+            result.error = {GatewayErrorCode::NotConnected, "gateway is not connected"};
+            return result;
+        }
+        base_url = health_.base_url;
+    }
+    if (base_url.empty())
+        return {{GatewayErrorCode::HealthNotReady, "gateway web base URL is not available"}, {}};
+
+    const HttpResponse response = dependencies_.http->post_json(join_url(base_url, path), body.dump());
     if (!response.error.empty() || response.status < 200 || response.status >= 300) {
         result.error = {GatewayErrorCode::HttpError,
                         response.error.empty() ? "request failed with HTTP status " + std::to_string(response.status) : response.error};

@@ -123,7 +123,10 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    auto real_url = m_send_page ? wxGetApp().get_international_url(m_preSend_url) : wxGetApp().get_international_url(m_prePrint_url);
+    auto base_url = m_send_page ? m_preSend_url : m_prePrint_url;
+    auto real_url = wxGetApp().get_international_url(base_url);
+    if (!m_store_id.empty())
+        real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
     if(m_send_page){
         this->SetTitle(_L("Pretreat the uploaded content"));
     }else{

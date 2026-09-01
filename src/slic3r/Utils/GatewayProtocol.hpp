@@ -19,6 +19,7 @@ enum class GatewayErrorCode {
     NotConnected,
     TransportError,
     HttpError,
+    InvalidRequest,
     InvalidResponse,
     HealthNotReady,
     RpcError,
@@ -46,6 +47,13 @@ struct HttpResponse
     unsigned    status{0};
     std::string body;
     std::string error;
+};
+
+struct PreprintStoreResult
+{
+    GatewayError error;
+    bool        ok{false};
+    bool        file_exists{true};
 };
 
 enum class RpcFrameType { Unknown, Result, Error, Notification };

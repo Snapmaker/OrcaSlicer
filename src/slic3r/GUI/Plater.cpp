@@ -9846,6 +9846,14 @@ void Sidebar::auto_calc_flushing_volumes(const int modify_id)
         multi_colours.push_back(single_filament);
     }
 
+    const size_t expectedMatrixSize = multi_colours.size() * multi_colours.size();
+    if (matrix.size() != expectedMatrixSize) {
+        BOOST_LOG_TRIVIAL(error) << "Invalid flushing volume matrix: modify_id=" << modify_id
+                                 << ", filament_count=" << multi_colours.size()
+                                 << ", matrix_size=" << matrix.size()
+                                 << ", expected_size=" << expectedMatrixSize;
+    }
+
     if (modify_id >= 0 && modify_id < multi_colours.size()) {
         for (int i = 0; i < multi_colours.size(); ++i) {
             // from to modify

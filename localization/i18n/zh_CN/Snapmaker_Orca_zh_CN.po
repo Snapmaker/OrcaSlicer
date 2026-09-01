@@ -7137,6 +7137,12 @@ msgstr "请在打印机屏幕上确认。"
 msgid "Log in failed. Please check the Pin Code."
 msgstr "登录失败，请检查Pin码。"
 
+msgid "Log in"
+msgstr "登录"
+
+msgid "Are you sure you want to log in?"
+msgstr "确定要登录吗？"
+
 msgid "Log in printer"
 msgstr "登录打印机"
 

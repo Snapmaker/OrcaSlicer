@@ -709,11 +709,20 @@ std::string find_selectable_full_spectrum_family_preset(const std::string& famil
     // suffix), never by name composition: composing "family + nozzle + nozzle" would
     // re-encode the naming convention and inherit its case-sensitivity pitfalls
     // (see #742, the U1 preset filename case mismatch).
+    // Normalize BOTH sides: FullSpectrumPaletteEntry::family_name comes verbatim from
+    // filaments_colours.json ("... @U1"), which GetFilamentMatchName would strip from the
+    // preset side ("... @U1 0.4 nozzle" -> "..."). Without this the raw-vs-normalized
+    // comparison never matches and every family is reported as not configured (the
+    // Confirm-time note in MixedFilamentBatchDialog fired unconditionally).
+    const std::string family_match_name = GetFilamentMatchName(family_name);
+    if (family_match_name.empty())
+        return std::string();
+
     const double nozzle = current_nozzle_diameter();
     std::string fallback_sku;   // 0.4 SKU of the family, if present (selectable or not)
     std::string first_match;    // first visible+compatible match, lowest preference
     for (const Preset& preset : pb->filaments) {
-        if (GetFilamentMatchName(preset.name) != family_name)
+        if (GetFilamentMatchName(preset.name) != family_match_name)
             continue;
         const bool selectable = preset.is_visible && preset.is_compatible;
         if (!selectable)

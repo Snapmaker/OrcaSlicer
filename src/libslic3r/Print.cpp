@@ -5224,7 +5224,16 @@ void Print::_make_wipe_tower()
         for (auto& layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
             ++layer_idx;
 
-            if (!layer_tools.has_wipe_tower) continue;
+            if (!layer_tools.has_wipe_tower) {
+                // A layer without a tower slab (fractional support-only layer) still switches
+                // filaments through the plain toolchange path. Keep the plan's tool chain and
+                // filament bookkeeping in sync, so the next tower layer plans the switch back.
+                if (!layer_tools.extruders.empty()) {
+                    used_filament_ids.insert(layer_tools.extruders.begin(), layer_tools.extruders.end());
+                    current_filament_id = layer_tools.extruders.back();
+                }
+                continue;
+            }
             bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
             wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, current_filament_id);
 
@@ -5277,7 +5286,7 @@ void Print::_make_wipe_tower()
                     wipe_volume_nc = 15.f;
                 }
 
-                wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, filament_id,
+            wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, filament_id,
                     wipe_volume_ec, wipe_volume_nc, volume_to_purge);
                 current_filament_id = filament_id;
             }
@@ -5382,8 +5391,13 @@ void Print::_make_wipe_tower()
         {
             unsigned int current_extruder_id = m_wipe_tower_data.tool_ordering.all_extruders().back();
             for (auto &layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
-                if (!layer_tools.has_wipe_tower)
+                if (!layer_tools.has_wipe_tower) {
+                    // Keep the tool chain in sync across layers that switch filament without
+                    // a tower slab (fractional support-only layers).
+                    if (!layer_tools.extruders.empty())
+                        current_extruder_id = layer_tools.extruders.back();
                     continue;
+                }
                 while (layers_to_print_idx + 1 < layers_to_print.size() &&
                        layers_to_print[layers_to_print_idx].first + EPSILON < layer_tools.print_z) {
                     ++layers_to_print_idx;
@@ -5424,8 +5438,12 @@ void Print::_make_wipe_tower()
                         current_extruder_id = local_z_toolchanges.back().new_tool;
                 }
 
-                const std::vector<unsigned int> nominal_layer_extruders =
-                    rotate_extruders_to_start_with(layer_tools.extruders, current_extruder_id);
+                // Plan in the same order G-code emission walks the layer's extruders. The
+                // flush-volume reorder starts each layer with the incumbent, so this used to
+                // equal the rotated order - but a layer that deliberately ENDS with a tool
+                // (bridging for fractional support layers) needs the raw order or the plan
+                // misses the trailing toolchange.
+                const std::vector<unsigned int> &nominal_layer_extruders = layer_tools.extruders;
 
                 wipe_tower.plan_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height, current_extruder_id,
                                            current_extruder_id, false);

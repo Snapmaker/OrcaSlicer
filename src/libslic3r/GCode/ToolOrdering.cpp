@@ -659,13 +659,15 @@ void ToolOrdering::sort_and_build_data(const Print& print, unsigned int first_ex
 
     max_layer_height = calc_max_layer_height(print.config(), max_layer_height);
 
+    this->bridge_fractional_support_layers(print.config());
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         // Orca reorders a second time here (BBS has no such path); re-enforce so the
         // mixed sub-layer component order survives the extra pass.
         this->enforce_mixed_component_order();
-        this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
+        this->bridge_fractional_support_layers(print.config());
+    this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
     }
 
     this->collect_extruder_statistics(prime_multi_material);
@@ -683,13 +685,15 @@ void ToolOrdering::sort_and_build_data(const PrintObject& object , unsigned int 
 
     double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
 
+    this->bridge_fractional_support_layers(object.print()->config());
     this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         // Orca reorders a second time here (BBS has no such path); re-enforce so the
         // mixed sub-layer component order survives the extra pass.
         this->enforce_mixed_component_order();
-        this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
+        this->bridge_fractional_support_layers(object.print()->config());
+    this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
     }
 
     this->collect_extruder_statistics(prime_multi_material);
@@ -1352,6 +1356,34 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 }
 
 
+// Fractional independent support heights place support-only layers between object grid Zs.
+// Give each such layer its tool as the incumbent: the layer below ends with that tool, so
+// the toolchange (if one is needed) happens there and purges on a full-height tower slab,
+// and the fractional layer itself changes no tools - it then needs no tower layer at all.
+void ToolOrdering::bridge_fractional_support_layers(const PrintConfig &config)
+{
+    if (!config.independent_support_layer_height || config.support_layer_height_step == slhsWholeLayer ||
+        config.timelapse_type == TimelapseType::tlSmooth)
+        return;
+    for (size_t i = 1; i < m_layer_tools.size(); ++i) {
+        LayerTools &lt = m_layer_tools[i];
+        if (!(lt.has_support && !lt.has_object) || lt.extruders.size() != 1)
+            continue;
+        const unsigned int tool = lt.extruders.front();
+        // Per-extruder layer height combining leaves many LayerTools without extrusions;
+        // the incumbent comes from the last layer that actually prints something.
+        LayerTools *below = nullptr;
+        for (size_t j = i; j-- > 0; )
+            if (!m_layer_tools[j].extruders.empty()) { below = &m_layer_tools[j]; break; }
+        if (below == nullptr || below->extruders.back() == tool)
+            continue;
+        auto it = std::find(below->extruders.begin(), below->extruders.end(), tool);
+        if (it != below->extruders.end())
+            below->extruders.erase(it);
+        below->extruders.emplace_back(tool);
+    }
+}
+
 void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_t object_bottom_z, coordf_t max_layer_height)
 {
     if (m_layer_tools.empty())
@@ -1468,8 +1500,22 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             }
         for (int i = first_wt_idx + 1; i < last_wt_idx; ++i) {
             LayerTools &lt = m_layer_tools[i];
-            if (support_only_off_grid(lt))
-                continue; // no tower slab on fractional support-only layers
+            if (support_only_off_grid(lt)) {
+                // Prefer no tower slab on a fractional support-only layer, but only when
+                // the slab bridging over it stays within the maximum layer height -
+                // otherwise this layer keeps its (thin) tower slab.
+                coordf_t prev_z = m_layer_tools[first_wt_idx].print_z;
+                for (int j = i - 1; j >= first_wt_idx; --j)
+                    if (m_layer_tools[j].has_wipe_tower) { prev_z = m_layer_tools[j].print_z; break; }
+                coordf_t next_z = m_layer_tools[last_wt_idx].print_z;
+                for (int j = i + 1; j <= last_wt_idx; ++j)
+                    if (m_layer_tools[j].has_wipe_tower || !support_only_off_grid(m_layer_tools[j])) {
+                        next_z = m_layer_tools[j].print_z;
+                        break;
+                    }
+                if (next_z - prev_z <= max_layer_height + EPSILON)
+                    continue;
+            }
             lt.has_wipe_tower = true;
             // GCode::process_layer emits wipe-tower G-code inside `for (extruder_id : layer_tools.extruders)`.
             // An empty extruders vector here would silently skip wipe tower output, leaving the tower
@@ -1541,18 +1587,20 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             if (lt_last_printing == nullptr || lt_next.extruders.empty())
                 continue;
         }
-        if (!lt_next.has_wipe_tower && (lt_next.extruders.front() != lt_last_printing->extruders.back() || lt_next.extruders.size() > 1))
+        if (!lt_next.has_wipe_tower && !support_only_off_grid(lt_next) &&
+            (lt_next.extruders.front() != lt_last_printing->extruders.back() || lt_next.extruders.size() > 1))
             lt_next.has_wipe_tower = true;
         // We should also check that the next wipe tower layer is no further than max_layer_height:
         unsigned int j = i+1;
         double last_wipe_tower_print_z = lt_next.print_z;
         while (++j < m_layer_tools.size()-1 && !m_layer_tools[j].has_wipe_tower)
             if (m_layer_tools[j+1].print_z - last_wipe_tower_print_z > max_layer_height + EPSILON) {
-                if (!config.enable_wrapping_detection && !support_only_off_grid(m_layer_tools[j]))
+                if (!config.enable_wrapping_detection)
                     m_layer_tools[j].has_wipe_tower = true;
                 last_wipe_tower_print_z = m_layer_tools[j].print_z;
             }
     }
+
 
     // Calculate the wipe_tower_layer_height values.
     coordf_t wipe_tower_print_z_last = 0.;

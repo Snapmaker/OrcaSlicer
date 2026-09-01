@@ -1479,10 +1479,11 @@ void PlaterPresetComboBox::update()
                 const_cast<Preset&>(*item_iter).is_visible = true;
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             } else {
-                // No local preset matched by name (filter disabled) — show it anyway, greyed out
-                // and non-selectable, so it's visible instead of silently missing.
-                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage());
-                set_label_marker(item_id, LABEL_ITEM_DISABLED);
+                // No local preset matched by name (filter disabled) — show it anyway, using the
+                // machine's own filament name. Stays fully clickable (same indexed clientData as
+                // matched entries), just rendered muted/light-grey to flag it as unconfirmed.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                SetItemMuted(item_id, true);
             }
         }
         m_last_ams_filament = GetCount();
@@ -2076,10 +2077,11 @@ void TabPresetComboBox::update()
                 const_cast<Preset&>(*item_iter).is_visible = true;
                 Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
             } else {
-                // No local preset matched by name (filter disabled) — show it anyway, greyed out
-                // and non-selectable, so it's visible instead of silently missing.
-                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage());
-                set_label_marker(item_id, LABEL_ITEM_DISABLED);
+                // No local preset matched by name (filter disabled) — show it anyway, using the
+                // machine's own filament name. Stays fully clickable (same indexed clientData as
+                // matched entries), just rendered muted/light-grey to flag it as unconfirmed.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                SetItemMuted(item_id, true);
             }
         }
 

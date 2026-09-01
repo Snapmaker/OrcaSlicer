@@ -10,6 +10,7 @@
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
 #include "common_func/common_func.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -15182,6 +15183,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
         has_error = true;
         is_finished = true;
+        SNAP_LOG_BATCH(Error, "slice failed", {"eventName","slice_failed"}, {"reason", evt.format_error_message().first});
     }
     if (evt.cancelled()) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", cancel event, status: %1%") % evt.status();
@@ -15286,6 +15288,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     if (is_finished)
     {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":finished, reload print soon");
+        // success (not when is_finished was forced true by error/cancel above).
+        if (!has_error && !evt.cancelled() && evt.success()) {
+            SNAP_LOG_BATCH(Info, "slice completed", {"eventName","slice_completed"});
+        }
         m_is_slicing = false;
         this->preview->reload_print(false);
         /* BBS if in publishing progress */

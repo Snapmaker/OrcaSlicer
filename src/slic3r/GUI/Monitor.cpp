@@ -28,6 +28,7 @@
 #include "MediaFilePanel.h"
 #include "Plater.hpp"
 #include "BindDialog.hpp"
+#include "../Utils/SnapLogClient.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -370,6 +371,13 @@ void MonitorPanel::update_all()
             last_conn_type = obj->connection_type();
         }
     }
+
+    // Plan B Task 8: sample batch-channel instrumentation (non-urgent periodic
+    // monitor panel refresh). Fires on the 1s timer tick; rate-limiter caps it.
+    SNAP_LOG_BATCH(Info, "monitor panel periodic refresh", {
+        {"eventName", "monitor_panel_refresh"},
+        {"hasObj", obj ? "true" : "false"},
+    });
 
     m_status_info_panel->obj = obj;
     m_upgrade_panel->update(obj);

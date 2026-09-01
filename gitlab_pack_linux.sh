@@ -579,7 +579,7 @@ pack_flatpak() {
     if grep -q "gitlab_vendor" "$MANIFEST" 2>/dev/null; then
         if [[ ! -d "$REPO_DIR/gitlab_vendor" ]]; then
             echo -e "${YELLOW}Cloning gitlab vendor for Flatpak deps...${NC}"
-            git clone --depth 1 http://gitlab.s.com/snapmaker_orca/snapmaker_orca_vendor.git "$REPO_DIR/gitlab_vendor" || {
+            git clone --depth 1 "http://${GITLAB_BASE_URL}/${GITLAB_GROUP}/snapmaker_orca_vendor.git" "$REPO_DIR/gitlab_vendor" || {
                 echo -e "${RED}Failed to clone gitlab vendor${NC}"
                 exit 1
             }

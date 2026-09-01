@@ -149,10 +149,27 @@ function sync_gitlab_repos() {
     # Use git global url.insteadOf to redirect ALL HTTP URLs to SSH.
     # This handles nested submodules (crashpad has 3 sub-submodules)
     # that also use HTTP in their own .gitmodules files.
+    # Keep --global (git -c does not reach nested submodule git processes).
+    # Always unset on the way out so a failed submodule update cannot leak
+    # the redirect into the user's global git config. Restore a pre-existing
+    # value if the machine already had the same insteadOf key.
+    INSTEADOF_OLD="$(git config --global --get "url.git@${GITLAB_BASE_URL}:.insteadOf" 2>/dev/null || true)"
+    restore_insteadOf() {
+        if [ -n "${INSTEADOF_OLD}" ]; then
+            git config --global "url.git@${GITLAB_BASE_URL}:.insteadOf" "${INSTEADOF_OLD}"
+        else
+            git config --global --unset "url.git@${GITLAB_BASE_URL}:.insteadOf" 2>/dev/null || true
+        fi
+    }
     git config --global url."git@${GITLAB_BASE_URL}:".insteadOf "http://${GITLAB_BASE_URL}/"
-    git submodule update --init --recursive --depth 1
-    # Remove the global redirect so it doesn't affect other git operations
-    git config --global --unset url."git@${GITLAB_BASE_URL}:".insteadOf
+    submodule_failed=0
+    git submodule update --init --recursive --depth 1 || submodule_failed=1
+    restore_insteadOf
+    if [ "${submodule_failed}" -ne 0 ]; then
+        popd > /dev/null
+        echo "  sentry: submodule update failed"
+        exit 1
+    fi
     popd > /dev/null
 
     echo "  All repos synced successfully."

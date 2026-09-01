@@ -39,6 +39,8 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <cstdio>
+#include <random>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -97,6 +99,7 @@
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
+#include "../Utils/SnapLogClient.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
@@ -2471,6 +2474,8 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
+
     stop_sync_user_preset();
 
     if (m_device_manager) {
@@ -3087,6 +3092,68 @@ bool GUI_App::on_init_inner()
     } else {
         Slic3r::GUI::SSWCP::enable_debug_mode(false);
     }
+
+    namespace snap = ::Slic3r::SnapLog::v1;
+    snap::SnapLogConfig snap_cfg;
+    std::string snap_cc   = app_config ? app_config->get_country_code() : "";
+    snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
+                                "https://pre.api.snapmaker.cn"
+                                :
+                                "https://pre.id.snapmaker.com";
+    snap_cfg.environment  = "pre";
+    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
+    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
+    std::string machine_id;
+    if (app_config) {
+        machine_id = ::Slic3r::instance_id::ensure(*app_config);
+    }
+
+    snap::SnapLogDeps deps;
+    deps.do_request            = snap::make_production_do_request(snap_cfg);
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
+    deps.user_token            = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_user_token(); };
+    deps.user_id               = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_user_id(); };
+    deps.device_id             = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_device_id(); };
+    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
+    deps.now_ms                = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    snap_cfg.event_rate_cap_per_sec["device_status_refresh"] = 2;
+    snap_cfg.event_rate_cap_per_sec["monitor_panel_refresh"] = 1;
+
+    snap_cfg.app_version = SLIC3R_BUILD_ID;
+    snap_cfg.app_build   = GIT_COMMIT_HASH;
+#if defined(_WIN32)
+    snap_cfg.platform = "Windows";
+#elif defined(__APPLE__)
+    snap_cfg.platform = "macOS";
+#elif defined(__linux__)
+    snap_cfg.platform = "Linux";
+#else
+    snap_cfg.platform = "Unknown";
+#endif
+    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
+    snap_cfg.environment = "pre";
+    {
+        std::random_device                          rd;
+        std::uniform_int_distribution<unsigned int> dist(0, 255);
+        char                                        hex[33];
+        for (int i = 0; i < 16; ++i) {
+            std::snprintf(hex + i * 2, 3, "%02x", dist(rd));
+        }
+        snap_cfg.session_id.assign(hex, 32);
+    }
+    snap_cfg.process_id = std::to_string(get_current_pid());
+    if (app_config) {
+        snap_cfg.region = app_config->get_country_code();
+    }
+    snap_cfg.home_for_redact = data_dir();
+
+    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+    BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
 
     profiler.mark("on_init_inner return");
 
@@ -4308,6 +4375,14 @@ void GUI_App::sm_request_user_logout()
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    SNAP_LOG_BATCH(Info, "user logout",
+        {"eventName", "user_logout"}, {"source", "cpp"});
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
+    ::Slic3r::SnapLog::v1::snaplog_identity_set_user_token("");
+    ::Slic3r::SnapLog::v1::snaplog_identity_set_user_id("");
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";
@@ -7279,6 +7354,7 @@ void GUI_App::cache_notify(const std::string& key, const json& res)
 void GUI_App::user_update_privacy_notify(const bool& res)
 {
     set_privacy_policy(res);
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(res);
 
     json data;
 

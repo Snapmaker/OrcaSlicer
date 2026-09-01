@@ -5,6 +5,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include "common_func/common_func.hpp"
 
 #include <wx/sizer.h>
@@ -256,11 +257,28 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         sentryReportLog(SENTRY_LOG_TRACE, userInfo, BP_LOGIN);
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
+                        // Mirror-push login identity into SnapLogClient (Task 12).
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(token);
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(user_id);
+                        ::Slic3r::SnapLog::v1::snaplog_identity_set_user_token(token);
+                        ::Slic3r::SnapLog::v1::snaplog_identity_set_user_id(user_id);
+                        auto* ac = wxGetApp().app_config;
+                        if (ac) {
+                            bool consent = ac->get("app", PRIVACY_POLICY_FLAGS) == "true";
+                            ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(consent);
+                        }
+
+                        SNAP_LOG_BATCH(Info, "user login success",
+                            {"eventName", "user_login_result"}, {"source", "cpp"},
+                            {"success", "true"}, {"userId", user_id});
                     }
                 })
                 .on_error([&](std::string body, std::string error, unsigned status) {
                     std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) + "\n" + error + "\n" + body;
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
+                    SNAP_LOG_BATCH(Error, "user login failed",
+                        {"eventName", "user_login_result"}, {"source", "cpp"},
+                        {"success", "false"}, {"httpStatus", std::to_string(status)});
                 })
                 .perform_sync(); 
         });

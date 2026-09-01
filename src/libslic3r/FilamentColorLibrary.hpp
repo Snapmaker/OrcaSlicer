@@ -87,10 +87,12 @@ std::vector<FullSpectrumPaletteEntry> BuildFullSpectrumPalette(const std::vector
 // slots 1..4 prefer cyan / magenta / yellow / white, matched case-insensitively against the
 // EN color name; entries of default_family win over other families (palette order breaks
 // remaining ties). Slots with no name match fall back to the next unused entry —
-// default_family entries first, then the rest, both in palette order. default_family is a
-// library filament name, i.e. pass GetFilamentMatchName(full_spectrum_preset_name()) from
-// the GUI, not the raw preset name with the nozzle suffix. Always returns distinct
-// indices; returns fewer than 4 only when the palette itself has fewer than 4 entries.
+// default_family entries first, then the rest, both in palette order. default_family is
+// compared in the GetFilamentMatchName space on both sides (same convention as
+// FindFilamentByName), so any of the three family-name forms is accepted: the raw library
+// name ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the stripped match
+// name. Always returns distinct indices; returns fewer than 4 only when the palette itself
+// has fewer than 4 entries.
 std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPaletteEntry>& palette, const std::string& default_family);
 
 class FilamentColorLibrary

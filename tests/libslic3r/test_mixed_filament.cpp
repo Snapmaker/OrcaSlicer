@@ -5416,3 +5416,39 @@ TEST_CASE("Full Spectrum palette leaves en_name empty without an en entry (no ar
     CHECK(palette[0].en_name.empty());
     CHECK(palette[0].hex == "#123456");
 }
+
+TEST_CASE("Full Spectrum default selections normalize the default family argument", "[MixedFilament][FilamentColor]")
+{
+    // Callers may pass any of the three family-name forms — the raw library name
+    // ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the already-stripped
+    // match name — and all must anchor the default C/M/Y/W slots on that family.
+    // Regression: the GUI passes the stripped form, which silently never matched the raw
+    // family names the palette carries, so the default-family preference never fired
+    // (invisible with the single-family bundled config, wrong defaults after a
+    // multi-family hot update).
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    REQUIRE(palette.size() == 7);
+
+    const std::string default_family_forms[] = {
+        "Snapmaker PLA Full Spectrum @U1",             // raw library name
+        "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",  // full preset name
+        "Snapmaker PLA Full Spectrum",                 // stripped match name (GUI form)
+    };
+    for (const std::string& default_family : default_family_forms)
+    {
+        SECTION(default_family)
+        {
+            const auto sel = DefaultFullSpectrumSelections(palette, default_family);
+            REQUIRE(sel.size() == 4);
+            // Every slot must land on the DEFAULT family (never the PETG entries that
+            // sort first alphabetically), cyan/magenta/yellow/white in slot order.
+            CHECK(palette[sel[0]].family_name == "Snapmaker PLA Full Spectrum @U1");
+            CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+            CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+            CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+            CHECK(palette[sel[3]].en_name == "Semi-Translucent White");
+            std::set<int> distinct(sel.begin(), sel.end());
+            CHECK(distinct.size() == 4);
+        }
+    }
+}

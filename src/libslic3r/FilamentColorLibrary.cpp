@@ -398,6 +398,16 @@ std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPal
 {
     static const char* slot_color_families[kFullSpectrumSlotCount] = {"cyan", "magenta", "yellow", "white"};
 
+    // Family identity is compared in the GetFilamentMatchName space, normalized on BOTH
+    // sides (same convention as FindFilamentByName): callers may pass the raw library
+    // name ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the already
+    // stripped match name, while palette entries always carry raw library names. Without
+    // this the default-family preference silently never fires for the non-raw forms.
+    const std::string default_match = GetFilamentMatchName(default_family);
+    const auto is_default_family = [&default_match](const FullSpectrumPaletteEntry& entry) {
+        return GetFilamentMatchName(entry.family_name) == default_match;
+    };
+
     std::vector<int> selection(std::min<size_t>(static_cast<size_t>(kFullSpectrumSlotCount), palette.size()), -1);
     std::vector<bool> used(palette.size(), false);
 
@@ -411,7 +421,7 @@ std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPal
         {
             if (used[i] || !ContainsAsciiCaseInsensitive(palette[i].en_name, slot_color_families[slot]))
                 continue;
-            if (palette[i].family_name == default_family)
+            if (is_default_family(palette[i]))
             {
                 candidate = static_cast<int>(i);
                 break;
@@ -431,10 +441,10 @@ std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPal
     std::vector<size_t> fill_order;
     fill_order.reserve(palette.size());
     for (size_t i = 0; i < palette.size(); ++i)
-        if (!used[i] && palette[i].family_name == default_family)
+        if (!used[i] && is_default_family(palette[i]))
             fill_order.push_back(i);
     for (size_t i = 0; i < palette.size(); ++i)
-        if (!used[i] && palette[i].family_name != default_family)
+        if (!used[i] && !is_default_family(palette[i]))
             fill_order.push_back(i);
 
     size_t next = 0;

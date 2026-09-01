@@ -94,7 +94,7 @@ jobs:
         repository-url: https://flathub.org/repo/flathub.flatpakrepo
         repository-name: flathub
         # GNOME 49 upgrade: disable cache until green, then re-enable cache: true
-        cache: false
+        cache: true
         arch: ${{ matrix.variant.arch }}
         upload-artifact: false
     - name: Find Flatpak bundle file

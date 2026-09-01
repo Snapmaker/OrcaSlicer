@@ -127,11 +127,10 @@ prepare_git_repo() {
     echo -e "${BLUE}========================================${NC}"
 
     mkdir -p "$work_dir"
-    cd "$work_dir"
 
-    if [[ -d "OrcaSlicer/.git" ]]; then
+    if [[ -d "$repo_dir/.git" ]]; then
         echo -e "${YELLOW}>> Repository exists, fetching and checking out branch...${NC}"
-        cd OrcaSlicer
+        cd "$repo_dir"
         git fetch origin
         git checkout "$branch" 2>/dev/null || git checkout -b "$branch" "origin/$branch" 2>/dev/null || {
             echo -e "${RED}Cannot checkout branch $branch; ensure it exists on remote${NC}"
@@ -139,13 +138,13 @@ prepare_git_repo() {
         }
         git pull origin "$branch" || true
     else
-        if [[ -d "OrcaSlicer" ]]; then
+        if [[ -d "$repo_dir" ]]; then
             echo -e "${RED}OrcaSlicer directory exists but is not a valid git repo; remove it and retry${NC}"
             exit 1
         fi
         echo -e "${YELLOW}>> Cloning repository...${NC}"
-        git clone "$REPO_URL" OrcaSlicer
-        cd OrcaSlicer
+        git clone "$REPO_URL" "$repo_dir"
+        cd "$repo_dir"
         git fetch origin
         git checkout "$branch" 2>/dev/null || git checkout -b "$branch" "origin/$branch" 2>/dev/null || {
             echo -e "${RED}Cannot checkout branch $branch; ensure it exists on remote${NC}"

@@ -110,9 +110,6 @@ modules:
       - -DwxUSE_LIBWEBP=sys
       - -DwxUSE_EXPAT=sys
       - -DwxUSE_NANOSVG=OFF
-      - -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
-      - -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
-      - -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
     sources:
       # Use git instead of archive: wxWidgets 3.3 relies on multiple git
       # submodules (PCRE2, etc.) that are not included in GitHub tarballs.

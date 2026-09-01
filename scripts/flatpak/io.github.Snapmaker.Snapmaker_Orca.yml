@@ -2,6 +2,8 @@ app-id: io.github.Snapmaker.Snapmaker_Orca
 runtime: org.gnome.Platform
 runtime-version: "49"
 sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm21
 command: entrypoint
 separate-locales: true
 rename-icon: Snapmaker_Orca 
@@ -21,7 +23,12 @@ finish-args:
   - --env=SPNAV_SOCKET=/run/spnav.sock
 
 build-options:
+  append-path: /usr/lib/sdk/llvm21/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm21/lib
   env:
+    CC: clang
+    CXX: clang++
+    LDFLAGS: "-fuse-ld=lld"
     CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
 modules:
@@ -110,6 +117,9 @@ modules:
       - -DwxUSE_LIBWEBP=sys
       - -DwxUSE_EXPAT=sys
       - -DwxUSE_NANOSVG=OFF
+      - -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
+      - -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
+      - -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld
     sources:
       # Use git instead of archive: wxWidgets 3.3 relies on multiple git
       # submodules (PCRE2, etc.) that are not included in GitHub tarballs.

@@ -242,6 +242,10 @@ std::string GetFilamentMatchName(const std::string& name)
             matchName = matchName.substr(0, nozzlePos);
     }
 
+    const size_t atPos = matchName.find('@');
+    if (atPos != std::string::npos)
+        matchName = TrimCopy(matchName.substr(0, atPos));
+
     return TrimCopy(matchName);
 }
 

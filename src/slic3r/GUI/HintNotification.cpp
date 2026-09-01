@@ -317,12 +317,14 @@ void HintDatabase::init()
 }
 void HintDatabase::init_random_hint_id()
 {
-    if (m_loaded_hints.empty()) {
-        m_hint_id = 0;
-        return;
-    }
-    srand(time(NULL));
-    m_hint_id = rand() % m_loaded_hints.size();
+	if (m_loaded_hints.empty()) {
+		BOOST_LOG_TRIVIAL(error) << "There were no hints loaded from hints.ini file.";
+		m_hint_id = 0;
+		return;
+	}
+
+	srand(time(NULL));
+	m_hint_id = rand() % m_loaded_hints.size();
 }
 void HintDatabase::load_hints_from_file(const boost::filesystem::path& path)
 {

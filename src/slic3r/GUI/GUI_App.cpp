@@ -3097,10 +3097,9 @@ bool GUI_App::on_init_inner()
     snap::SnapLogConfig snap_cfg;
     std::string snap_cc   = app_config ? app_config->get_country_code() : "";
     snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
-                                "https://pre.api.snapmaker.cn"
+                                "https://api.snapmaker.cn"
                                 :
-                                "https://pre.id.snapmaker.com";
-    snap_cfg.environment  = "pre";
+                                "https://api.snapmaker.com";
     snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
     snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
     std::string machine_id;
@@ -3136,7 +3135,6 @@ bool GUI_App::on_init_inner()
     snap_cfg.platform = "Unknown";
 #endif
     snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
-    snap_cfg.environment = "pre";
     {
         std::random_device                          rd;
         std::uniform_int_distribution<unsigned int> dist(0, 255);

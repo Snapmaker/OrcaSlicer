@@ -98,7 +98,7 @@ else()
         endif()
 endif()
 
-set(SNAP_LOG_HMAC_SECRET "c25hcG1ha2VyLWFwcA" CACHE STRING
+set(SNAP_LOG_HMAC_SECRET "c25hcG1ha2VyLU9yY2E" CACHE STRING
     "Public SnapLog gateway signing key (not a user credential)")
 add_definitions("-DSNAP_LOG_HMAC_SECRET=\"${SNAP_LOG_HMAC_SECRET}\"")
 

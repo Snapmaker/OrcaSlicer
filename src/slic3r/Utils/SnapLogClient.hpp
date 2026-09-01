@@ -18,7 +18,7 @@
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
 
 using SnapLogExt                           = std::vector<std::pair<std::string, std::string>>;
-inline constexpr char kSnapLogClientType[] = "App";
+inline constexpr char kSnapLogClientType[] = "Orca";
 
 std::string hmac_sha256_hex(std::string_view key, std::string_view msg);
 
@@ -62,7 +62,7 @@ std::string mask_secret_in_value(std::string v);
 std::string hash_pii(const std::string& clientId, const std::string& serial);
 
 // Build the realtime event JSON body (enforcement point):
-//   {"clientType":"App","clientId":"desktop","level":"INFO|WARN|ERROR",
+//   {"clientType":"Orca","clientId":"desktop","level":"INFO|WARN|ERROR",
 //    "message":"...","ext":{...}}
 // Policy: hard-reject ext keys whose name starts with "raw" (rawGcode, raw3mf,
 // etc.); allow every other key; pass every string value through
@@ -116,7 +116,6 @@ struct BatchLineContext
     std::string appBuild;
     std::string platform;
     std::string osVersion;
-    std::string environment;
     std::string sessionId;
     std::string region;
     std::string batchId;
@@ -338,9 +337,8 @@ struct SnapLogDeps
 
 struct SnapLogConfig
 {
-    std::string gateway_base = "https://pre.id.snapmaker.com";
+    std::string gateway_base = "https://api.snapmaker.com";
     std::string spool_dir; // Plan B; empty ok in Plan A
-    std::string environment = "pre";
     bool        enabled     = true;
     std::string hmac_secret; // injected at build time
 

@@ -134,7 +134,7 @@ RealtimeRequest build_realtime_request(
 
     if (!token.empty()) {
         // Logged-in path: Bearer + the print upload endpoint.
-        // The log gateway (pre.id.snapmaker.com) requires the "Bearer " prefix
+        // The log gateway requires the "Bearer " prefix
         // a bare token is rejected as 110002 "Missing
         // authorization" and, since the realtime worker is fire-and-forget, the
         // event would be silently dropped. Note the app's stored token is bare
@@ -2436,7 +2436,6 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 c.appBuild               = in->cfg.app_build;
                 c.platform               = in->cfg.platform;
                 c.osVersion              = in->cfg.os_version;
-                c.environment            = in->cfg.environment;
                 c.sessionId              = in->cfg.session_id;
                 c.region                 = in->cfg.region;
                 c.batchId                = in->current_batch_id;

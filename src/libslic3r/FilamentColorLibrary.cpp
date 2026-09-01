@@ -368,8 +368,12 @@ std::vector<FullSpectrumPaletteEntry> BuildFullSpectrumPalette(const std::vector
             auto englishIt = item.colorNames.find("en");
             if (englishIt != item.colorNames.end())
                 entry.en_name = englishIt->second;
-            else if (!item.colorNames.empty())
-                entry.en_name = item.colorNames.begin()->second;
+            // No arbitrary-locale fallback when "en" is missing (the display-only
+            // fallback in english_color_name is a different context): en_name feeds the
+            // sort key and slot-name matching, so an unordered_map::begin() pick would
+            // make palette order and default slot anchoring depend on the hash layout
+            // and on which non-English translations the config carries. Leave it empty
+            // — same contract as GetColorNameForSort in FilamentColorDialog.
             palette.emplace_back(std::move(entry));
         }
     }

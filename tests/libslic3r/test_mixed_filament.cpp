@@ -5396,3 +5396,23 @@ TEST_CASE("Full Spectrum palette passes config td values through as-read (no fal
     CHECK(palette[2].en_name == "Semi-Translucent White");
     CHECK(palette[2].td_value == 0.0);
 }
+
+TEST_CASE("Full Spectrum palette leaves en_name empty without an en entry (no arbitrary pick)", "[MixedFilament][FilamentColor]")
+{
+    // A SKU carrying only zh_CN must NOT get its en_name from an arbitrary
+    // unordered_map::begin() pick: en_name feeds the sort key and slot-name matching,
+    // so an arbitrary locale's name there would make palette order and default slot
+    // anchoring depend on the hash layout and on which non-English translations the
+    // config happens to carry. Leave it empty instead (GetColorNameForSort contract).
+    FilamentColorItem no_en;
+    no_en.colorData.colors = {"#123456"};
+    no_en.colorNames       = {{"zh_CN", "半透青色"}};
+
+    const std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", {no_en}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 1);
+    CHECK(palette[0].en_name.empty());
+    CHECK(palette[0].hex == "#123456");
+}

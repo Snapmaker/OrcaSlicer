@@ -61,7 +61,9 @@ struct FilamentColorInfo
 struct FullSpectrumPaletteEntry
 {
     std::string hex;         // normalized "#RRGGBB"
-    std::string en_name;     // canonical English color name (sort key, never empty for entries built by BuildFullSpectrumPalette)
+    std::string en_name;     // canonical English color name (sort key). Empty when the SKU has no "en"
+                             // entry — deliberately no arbitrary-locale fallback: this feeds sorting and
+                             // slot-name matching, not display (slot matching simply skips empty names)
     std::string family_name; // owning filament name, e.g. "Snapmaker PLA Full Spectrum @U1"
     double td_value = 0.0;   // transmittance density from FilamentColorItem::tdValue; 0 = no value
     std::unordered_map<std::string, std::string> color_names; // locale -> display name (copied from the SKU entry)

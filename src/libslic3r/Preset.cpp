@@ -1195,7 +1195,7 @@ static std::vector<std::string> s_Preset_print_options{
     // BBS
     "print_extruder_id",
     "print_extruder_variant",
-    "independent_support_layer_height",
+    "independent_support_layer_height", "support_layer_height_step",
     "support_angle",
     "support_interface_top_layers",
     "support_interface_bottom_layers",

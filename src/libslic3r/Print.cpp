@@ -875,7 +875,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
                 || opt_key == "filament_is_support"
                 || opt_key == "filament_printable"
                 || opt_key == "filament_change_length"
-                || opt_key == "independent_support_layer_height") {
+                || opt_key == "independent_support_layer_height"
+                || opt_key == "support_layer_height_step") {
             steps.emplace_back(psWipeTower);
             // Soluble support interface / non-soluble base interface produces non-soluble interface layers below soluble interface layers.
             // Thus switching between soluble / non-soluble interface layer material may require recalculation of supports.

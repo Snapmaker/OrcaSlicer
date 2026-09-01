@@ -197,6 +197,15 @@ struct SupportParameters {
         // grid Zs: independent support heights stay enabled but snap to whole multiples
         // of object layers (tree supports; the classic generator synchronizes instead).
         grid_aligned_layer_height = independent_layer_height && print_config.enable_prime_tower;
+        // Sub-layer step for grid-aligned heights: 1 = whole object layers, 2/4 allow
+        // boundaries on half/quarter subdivisions (thin tower layers appear there).
+        grid_height_step = 1;
+        if (grid_aligned_layer_height) {
+            if (print_config.support_layer_height_step.value == slhsHalfLayer)
+                grid_height_step = 2;
+            else if (print_config.support_layer_height_step.value == slhsQuarterLayer)
+                grid_height_step = 4;
+        }
 
         // force double walls everywhere if wall count is larger than 1        
         tree_branch_diameter_double_wall_area_scaled = object_config.tree_support_wall_count.value > 1  ? 0.1 :
@@ -328,6 +337,8 @@ struct SupportParameters {
 		
     bool independent_layer_height = false;
     bool grid_aligned_layer_height = false;
+    // 1 = whole object layers; 2/4 = half/quarter sub-layer boundaries allowed.
+    int  grid_height_step = 1;
     const double thresh_big_overhang = Slic3r::sqr(scale_(10));
 
 	bool          ironing;

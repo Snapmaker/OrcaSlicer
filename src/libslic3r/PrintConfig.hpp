@@ -387,6 +387,15 @@ enum TimelapseType : int {
     tlSmooth
 };
 
+// Step granularity for grid-aligned independent support layer heights (prime
+// tower enabled): support boundaries may land on whole object layers or on
+// half / quarter subdivisions of them.
+enum SupportLayerHeightStep : int {
+    slhsWholeLayer = 0,
+    slhsHalfLayer,
+    slhsQuarterLayer,
+};
+
 enum SkirtType {
     stCombined, stPerObject
 };
@@ -712,6 +721,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLADisplayOrientation)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SLAPillarConnectionMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BrimType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(TimelapseType)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SupportLayerHeightStep)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(InputShaperType)
@@ -1981,6 +1991,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionString,             thumbnails))
     // BBS: move from PrintObjectConfig
     ((ConfigOptionBool, independent_support_layer_height))
+    ((ConfigOptionEnum<SupportLayerHeightStep>, support_layer_height_step))
     ((ConfigOptionBool,               combine_brims))
     // SoftFever
     ((ConfigOptionPercents,            filament_shrink))

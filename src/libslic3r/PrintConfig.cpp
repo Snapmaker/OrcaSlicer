@@ -492,6 +492,13 @@ static const t_config_enum_values s_keys_map_TimelapseType = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(TimelapseType)
 
+static const t_config_enum_values s_keys_map_SupportLayerHeightStep = {
+    {"whole",   slhsWholeLayer},
+    {"half",    slhsHalfLayer},
+    {"quarter", slhsQuarterLayer}
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SupportLayerHeightStep)
+
 static const t_config_enum_values s_keys_map_SkirtType = {
     { "combined", stCombined },
     { "perobject", stPerObject }
@@ -7517,6 +7524,25 @@ void PrintConfigDef::init_fff_params()
 
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SupportMaterialStyle>(smsDefault));
+
+    def = this->add("support_layer_height_step", coEnum);
+    def->label = L("Support layer height step");
+    def->category = L("Support");
+    def->tooltip = L("Step granularity for independent support layer heights while the prime tower is enabled. "
+                     "With whole layers, support layer heights are multiples of the object layer height. "
+                     "Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support "
+                     "nozzle's maximum layer height sits between two whole multiples. The finer steps place "
+                     "support boundaries between object layers, which adds thin prime tower layers there and "
+                     "increases the purged volume on those toolchanges.");
+    def->enum_keys_map = &ConfigOptionEnum<SupportLayerHeightStep>::get_enum_values();
+    def->enum_values.emplace_back("whole");
+    def->enum_values.emplace_back("half");
+    def->enum_values.emplace_back("quarter");
+    def->enum_labels.emplace_back(L("100% (whole layers)"));
+    def->enum_labels.emplace_back(L("50%"));
+    def->enum_labels.emplace_back(L("25%"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<SupportLayerHeightStep>(slhsWholeLayer));
 
     def = this->add("independent_support_layer_height", coBool);
     def->label = L("Independent support layer height");

@@ -515,7 +515,7 @@ jobs:
           name: Snapmaker_Orca_Windows_${{ env.ver }}${{ env.ARCH_SUFFIX }}
           path: ${{ github.workspace }}/${{ env.BUILD_DIR }}/Snapmaker_Orca*.exe
 
-      # sentry_cli.yml consumes this artifact name (via build_deps.yml).
+      # sentry_cli.yml consumes this artifact name (via build_all.yml).
       - name: Upload artifacts Win PDB
         if: runner.os == 'Windows' && inputs.arch != 'arm64'
         uses: actions/upload-artifact@v7

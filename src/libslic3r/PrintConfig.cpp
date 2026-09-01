@@ -3406,9 +3406,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print internal sparse infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("sparse_infill_line_width", coFloatOrPercent);
     def->label = L("Sparse infill");
@@ -4145,9 +4145,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Walls");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print walls.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -4443,7 +4443,7 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Support");
     def->tooltip = L("Expand the first raft or support layer to improve bed plate adhesion.");
     def->sidetext = "mm";	// milimeters, don't need translation
-    def->min = 0;
+    def->min = -1;
     def->mode = comAdvanced;
     //BBS: change from 3.0 to 2.0
     def->set_default_value(new ConfigOptionFloat(2.0));
@@ -4942,9 +4942,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Solid infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print solid infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
     def->label = L("Internal solid infill");
@@ -5675,8 +5675,8 @@ void PrintConfigDef::init_fff_params()
     def = this->add("tree_support_wall_count", coInt);
     def->label = L("Support wall loops");
     def->category = L("Support");
-    def->tooltip = L("This setting specifies the count of support walls in the range of [0,2]. 0 means auto.");
-    def->min = 0;
+    def->tooltip = L("This setting specifies the count of support walls in the range of [-1,2]. -1 means default, 0 means auto.");
+    def->min = -1;
     def->max = 2;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));

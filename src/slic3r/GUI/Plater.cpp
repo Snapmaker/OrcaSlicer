@@ -9159,7 +9159,16 @@ void Sidebar::show_sync_filament_dialog()
 
     {
         static const std::set<std::string> white_list_machine_types = {
-            "Snapmaker U1"
+            "Snapmaker U1",
+            "Bambu Lab A1",
+            "Bambu Lab A1 mini",
+            "Bambu Lab P1P",
+            "Bambu Lab P1S",
+            "Bambu Lab X1",
+            "Bambu Lab X1 Carbon",
+            "Bambu Lab X1E",
+            "N1A", "N1B", "N2S", "N2H", "N2J", "N2K",
+            "C11", "C12", "C13", "C14"
         };
         std::string machine_type;
         std::string device_name;
@@ -9178,6 +9187,7 @@ void Sidebar::show_sync_filament_dialog()
         }
 
         bool is_white_listed_type = white_list_machine_types.find(machine_type) != white_list_machine_types.end();
+        BOOST_LOG_TRIVIAL(warning) << "FILAMENT_SYNC DEBUG: got_machine_info=" << got_machine_info << " machine_type='" << machine_type << "' printer_type='" << (device_machine ? device_machine->printer_type : "null") << "' is_white_listed=" << is_white_listed_type;
 
         if (got_machine_info && !machine_type.empty() && !is_white_listed_type) {
             SyncRichConfirmDialog dlg(this,

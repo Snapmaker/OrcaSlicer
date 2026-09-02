@@ -372,13 +372,6 @@ void MonitorPanel::update_all()
         }
     }
 
-    // Plan B Task 8: sample batch-channel instrumentation (non-urgent periodic
-    // monitor panel refresh). Fires on the 1s timer tick; rate-limiter caps it.
-    SNAP_LOG_BATCH(Info, "monitor panel periodic refresh", {
-        {"eventName", "monitor_panel_refresh"},
-        {"hasObj", obj ? "true" : "false"},
-    });
-
     m_status_info_panel->obj = obj;
     m_upgrade_panel->update(obj);
     m_status_info_panel->m_media_play_ctrl->SetMachineObject(obj);

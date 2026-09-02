@@ -2845,6 +2845,41 @@ TEST_CASE("batch lifecycle: init recovery seals non-empty active + uploads seale
     f.shutdown();
 }
 
+TEST_CASE("batch lifecycle: init consent OFF purges recovery without worker", "[snaplog][batch]")
+{
+    BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
+
+    {
+        fs::ofstream ofs((f.spool / "active.log").string(), std::ios::binary);
+        ofs << "{\"level\":\"INFO\",\"message\":\"do-not-recover\"}\n";
+    }
+    auto prior_sealed = f.spool / "batch.1699999999000.prior0000.sealed";
+    {
+        fs::ofstream ofs(prior_sealed.string(), std::ios::binary);
+        ofs << "{\"level\":\"WARN\",\"message\":\"prior-sealed\"}\n";
+    }
+    const auto empty_sealed = f.spool / "batch.1699999999001.empty0000.sealed";
+    {
+        fs::ofstream ofs(empty_sealed.string(), std::ios::binary);
+    }
+
+    f.deps.consent_ok = []() { return false; };
+    f.init();
+
+    REQUIRE(f.wait_until(
+        [&]() {
+            boost::system::error_code ec;
+            return list_sealed(f.spool).empty() && !fs::exists(f.spool / "active.log", ec);
+        },
+        3000));
+    REQUIRE(fs::exists(f.spool / ".lock"));
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+    REQUIRE(f.create_count.load() == 0);
+
+    f.shutdown();
+}
+
 TEST_CASE("batch lifecycle: shutdown drain flushes bt_queue to sealed and uploads", "[snaplog][batch]")
 {
     BatchLifecycleFixture f;
@@ -2873,6 +2908,7 @@ TEST_CASE("batch lifecycle: shutdown drain flushes bt_queue to sealed and upload
 TEST_CASE("batch lifecycle: consent OFF purges spool + no create after", "[snaplog][batch]")
 {
     BatchLifecycleFixture f;
+    namespace fs = boost::filesystem;
 
     f.init();
 
@@ -2890,12 +2926,12 @@ TEST_CASE("batch lifecycle: consent OFF purges spool + no create after", "[snapl
     // Spool should be purged: no sealed files, no active.log.
     REQUIRE(f.wait_until(
         [&]() {
-            namespace fs = boost::filesystem;
             boost::system::error_code ec;
             bool                      no_active = !fs::exists(f.spool / "active.log", ec);
             return list_sealed(f.spool).empty() && no_active;
         },
         3000));
+    REQUIRE(fs::exists(f.spool / ".lock"));
 
     // Give a brief moment to ensure no new create calls fire after consent OFF.
     int creates_after_consent_off = f.create_count.load();
@@ -2953,8 +2989,9 @@ TEST_CASE("batch lifecycle: periodic flush rotates+uploads after batch_flush_sec
 }
 
 // ---------------------------------------------------------------------------
-// Task B6 fix: consent-OFF join-timeout must leave bt_worker non-joinable so
-// OFF->ON can restart it (and no join/detach race on the same thread object).
+// Task B6 fix: consent-OFF must return without waiting for a stuck worker. The
+// worker is moved out immediately; OFF->ON defers the replacement until that
+// worker has exited and the privacy purge has completed.
 //
 // We force a REAL join timeout by making the FIRST create call BLOCK inside
 // do_request until the test releases a gate. Because bt_worker_loop only checks
@@ -3071,21 +3108,46 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     };
     REQUIRE(wait_flag(first_create_entered, 3000));
 
-    // Consent OFF: bounded join must TIME OUT (worker stuck in create). The fix
-    // makes bt_worker non-joinable immediately (moved out to the joiner).
+    // Consent OFF must not wait for the blocked create. The fix makes
+    // bt_worker non-joinable immediately (moved out to the joiner).
+    const auto consent_off_start = std::chrono::steady_clock::now();
     SnapLogClient::instance().set_consent(false);
+    REQUIRE(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - consent_off_start).count() < 500);
 
     // INVARIANT: after a timed-out consent-OFF, bt_worker is non-joinable.
     REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
 
-    // OFF -> ON must restart the worker (guard is !bt_worker.joinable()).
-    SnapLogClient::instance().set_consent(true);
-    REQUIRE(SnapLogClient::instance().batch_worker_joinable_for_test());
+    // Re-init while the retired worker still owns the spool. The replacement
+    // must also wait for the old privacy purge; it cannot steal the lock.
+    {
+        SnapLogDeps   reinit_deps = deps;
+        SnapLogConfig reinit_cfg  = cfg;
+        SnapLogClient::instance().init(std::move(reinit_deps), std::move(reinit_cfg));
+    }
+    SnapLogClient::instance().set_user_token("tok");
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
 
-    // The replacement generation must be operational while the original worker
-    // is still blocked: enqueue a new event and require a full upload cycle.
+    // OFF -> ON records consent as true, but the replacement waits for the
+    // retired worker so two batch owners never touch the spool concurrently.
+    SnapLogClient::instance().set_consent(true);
+    REQUIRE_FALSE(SnapLogClient::instance().batch_worker_joinable_for_test());
+
+    // Events accepted after ON remain queued across the deferred purge.
     SnapLogClient::instance().log(SnapLogLevel::Info, "replacement-upload", SnapLogExt{{"eventName", "timeout_recovery"}, {"opId", "op2"}},
                                   SnapLogPolicy::Buffered, __FUNCTION__, __LINE__);
+
+    REQUIRE(create_count.load() == 1);
+    REQUIRE(put_count.load() == 0);
+    REQUIRE(completed_count.load() == 0);
+
+    // Release the stuck original worker. Its joiner purges the old spool and
+    // starts the replacement, which must complete a full upload cycle.
+    {
+        std::lock_guard<std::mutex> lk(gate_mu);
+        release_gate = true;
+    }
+    gate_cv.notify_all();
+
     auto wait_count = [](std::atomic<int>& value, int expected, int timeout_ms) {
         auto t0 = std::chrono::steady_clock::now();
         while (value.load() < expected) {
@@ -3098,23 +3160,11 @@ TEST_CASE("batch lifecycle: consent OFF join timeout leaves bt_worker restartabl
     REQUIRE(wait_count(create_count, 2, 3000));
     REQUIRE(wait_count(put_count, 1, 3000));
     REQUIRE(wait_count(completed_count, 1, 3000));
-
-    const int creates_before_release   = create_count.load();
-    const int puts_before_release      = put_count.load();
-    const int completed_before_release = completed_count.load();
-
-    // Release the stuck original worker so the detached joiner can join it. Its
-    // stale generation must not issue another create/PUT/completed request.
-    {
-        std::lock_guard<std::mutex> lk(gate_mu);
-        release_gate = true;
-    }
-    gate_cv.notify_all();
     REQUIRE(wait_flag(first_create_returned, 3000));
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    REQUIRE(create_count.load() == creates_before_release);
-    REQUIRE(put_count.load() == puts_before_release);
-    REQUIRE(completed_count.load() == completed_before_release);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    REQUIRE(create_count.load() == 2);
+    REQUIRE(put_count.load() == 1);
+    REQUIRE(completed_count.load() == 1);
 
     SnapLogClient::instance().shutdown();
 }

@@ -491,14 +491,6 @@ void SideTools::update_status(MachineObject* obj)
         }
     }
 
-    // Plan B Task 8: sample batch-channel instrumentation (non-urgent device
-    // status refresh). Fires on MQTT push / timer-driven UI refresh; rate-
-    // limiter caps it to the configured per-sec allowance.
-    SNAP_LOG_BATCH(Info, "device status widget refresh", {
-        {"eventName", "device_status_refresh"},
-        {"wifiSignal", obj->wifi_signal},
-        {"networkWired", obj->network_wired ? "true" : "false"},
-    });
 }
 
 void SideTools::show_status(int status)

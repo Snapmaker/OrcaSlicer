@@ -614,8 +614,18 @@ private:
     mutable std::mutex         m_state_mu;
     mutable std::mutex         m_lifecycle_mu;
     std::shared_ptr<Internals> m_int;
+    // The spool path is stable after init, so one pending purge is sufficient.
+    boost::filesystem::path    m_purge_spool_dir;
+    std::shared_ptr<std::promise<bool>> m_purge_promise;
+    std::shared_future<bool>   m_purge_completion;
+    boost::filesystem::path    m_purge_lock_spool_dir;
+    SpoolLock                  m_purge_spool_lock;
     std::shared_ptr<Internals> internals() const;
     void                       cancel_current(const std::shared_ptr<Internals>& in, SnapLogPolicy p);
+    void                       start_batch_worker(const std::shared_ptr<Internals>& in);
+    std::shared_future<bool>   begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker = {});
+    void                       start_batch_worker_after_purge(const std::shared_ptr<Internals>& in);
+    bool                       spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const;
     // Realtime worker thread entry point (defined in .cpp where Internals is
     // complete). Static + takes Internals by shared_ptr so it runs detached
     // from the client instance.

@@ -15,6 +15,7 @@
 #include <regex>
 #include <thread>
 #include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
 #ifdef _WIN32
 #include <share.h>
 #include <io.h>
@@ -28,6 +29,47 @@
 #include <boost/filesystem/fstream.hpp>
 #include <nlohmann/json.hpp>
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
+
+constexpr int kShutdownRealtimeJoinMaxSec = 2;
+constexpr int kShutdownBatchJoinMaxSec    = 3;
+
+static bool is_valid_spool_path(const boost::filesystem::path& path)
+{
+    return !path.empty() && !path.native().empty();
+}
+
+static void log_detached_thread_failure(const char* operation) noexcept
+{
+    BOOST_LOG_TRIVIAL(warning) << "SnapLog " << operation << " thread failed";
+}
+
+static void fulfill_purge_completion(const std::shared_ptr<std::promise<bool>>& completion, bool succeeded) noexcept
+{
+    if (!completion)
+        return;
+
+    completion->set_value(succeeded);
+}
+
+class PurgeCompletionGuard
+{
+public:
+    explicit PurgeCompletionGuard(std::shared_ptr<std::promise<bool>> completion) : m_completion(std::move(completion)) {}
+
+    ~PurgeCompletionGuard()
+    {
+        fulfill_purge_completion(m_completion, false);
+    }
+
+    void fulfill(bool succeeded)
+    {
+        fulfill_purge_completion(m_completion, succeeded);
+        m_completion.reset();
+    }
+
+private:
+    std::shared_ptr<std::promise<bool>> m_completion;
+};
 
 // ---- SpoolLock: cross-platform exclusive file lock (multi-instance safety) ----
 SnapLogClient::SpoolLock::~SpoolLock()
@@ -64,12 +106,15 @@ SnapLogClient::SpoolLock& SnapLogClient::SpoolLock::operator=(SnapLogClient::Spo
 SnapLogClient::SpoolLock SnapLogClient::try_acquire_spool_lock(const boost::filesystem::path& dir)
 {
     SpoolLock                 lk;
+    if (!is_valid_spool_path(dir))
+        return lk;
+
     boost::system::error_code ec;
     boost::filesystem::create_directories(dir, ec);
     auto lock_path = dir / ".lock";
 #ifdef _WIN32
     int     fd  = -1;
-    errno_t err = _sopen_s(&fd, lock_path.string().c_str(), _O_RDWR | _O_CREAT, _SH_DENYRW, _S_IREAD | _S_IWRITE);
+    errno_t err = _wsopen_s(&fd, lock_path.native().c_str(), _O_RDWR | _O_CREAT, _SH_DENYRW, _S_IREAD | _S_IWRITE);
     if (err != 0 || fd < 0)
         return lk; // sharing violation = held by another process
 #else
@@ -741,9 +786,10 @@ bool RateLimiter::allow(const std::string&                eventName,
 
 SnapLogClient& SnapLogClient::instance()
 {
-    // Meyers singleton — thread-safe in C++11+.
-    static SnapLogClient inst;
-    return inst;
+    // Detached consent joiners may still own lifecycle state after app exit.
+    // Intentionally leak the singleton so they never race static destruction.
+    static SnapLogClient* inst = new SnapLogClient();
+    return *inst;
 }
 
 // Realtime worker thread function. Runs in its own thread;
@@ -872,6 +918,248 @@ namespace {
 std::string generate_batch_id();
 } // anonymous namespace
 
+static void reset_batch_upload_state(SnapLogClient::Internals& in);
+
+static bool purge_spool(const std::shared_ptr<SnapLogClient::Internals>& in)
+{
+    if (!in || !is_valid_spool_path(in->spool_dir_resolved))
+        return false;
+
+    namespace fs = boost::filesystem;
+    boost::system::error_code dir_ec;
+    if (!fs::is_directory(in->spool_dir_resolved, dir_ec)) {
+        in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
+        BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at directory check: " << dir_ec.message();
+        return false;
+    }
+
+    bool all_purged = true;
+
+    auto purge_file = [&in](const fs::path& path) {
+        const auto mark_failure = [&in](const char* stage, const boost::system::error_code& failure_ec) {
+            in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
+            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at " << stage << ": " << failure_ec.message();
+            return false;
+        };
+
+        boost::system::error_code ec;
+        const bool exists = fs::exists(path, ec);
+        if (!ec && !exists)
+            return true;
+        if (ec == boost::system::errc::no_such_file_or_directory)
+            return true;
+        if (ec)
+            return mark_failure("exists", ec);
+
+        const bool removed = fs::remove(path, ec);
+        if (!ec) {
+            boost::system::error_code exists_ec;
+            if (removed || !fs::exists(path, exists_ec))
+                return true;
+        }
+        if (ec == boost::system::errc::no_such_file_or_directory)
+            return true;
+
+        ec.clear();
+        boost::system::error_code resize_ec;
+        fs::resize_file(path, 0, resize_ec);
+        if (resize_ec)
+            return mark_failure("resize", resize_ec);
+
+        boost::system::error_code size_ec;
+        const auto size = fs::file_size(path, size_ec);
+        if (size_ec || size != 0)
+            return mark_failure("file size", size_ec);
+
+        boost::system::error_code remove_ec;
+        (void) fs::remove(path, remove_ec);
+        if (!remove_ec || remove_ec == boost::system::errc::no_such_file_or_directory)
+            return true;
+
+        return mark_failure("remove after truncate", remove_ec);
+    };
+
+    all_purged = purge_file(in->active_path) && all_purged;
+    for (const auto& sealed : list_sealed(in->spool_dir_resolved)) {
+        all_purged = purge_file(sealed) && all_purged;
+    }
+
+    return all_purged;
+}
+
+// Caller must hold m_lifecycle_mu. The consent-OFF retire path invokes this
+// only after its asynchronous joiner has drained the retired worker.
+void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
+{
+    if (!in || in->spool_dir_resolved.empty() || in->bt_worker.joinable())
+        return;
+
+    if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
+        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        m_purge_lock_spool_dir.clear();
+    }
+
+    if (!in->bt_spool_lock.acquired) {
+        in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
+        if (!in->bt_spool_lock.acquired) {
+            in->batch_locked_out.store(true);
+            return;
+        }
+    }
+
+    namespace fs = boost::filesystem;
+    boost::system::error_code ec;
+    if (fs::exists(in->active_path, ec)) {
+        boost::system::error_code size_ec;
+        const auto active_size = fs::file_size(in->active_path, size_ec);
+        if (!size_ec && active_size > 0) {
+            std::string err;
+            rotate_active(in->spool_dir_resolved, in->active_path, "recovery00000000", err);
+        }
+    }
+
+    in->batch_deps_invalid.store(false, std::memory_order_release);
+    in->stop_uploads.store(false, std::memory_order_release);
+    in->drain_and_flush.store(false);
+    in->stop_receiving.store(false);
+    if (in->current_batch_id.empty()) {
+        in->current_batch_id = generate_batch_id();
+    }
+
+    {
+        std::lock_guard<std::mutex> hk(in->m_h_mu);
+        in->bt_handle.reset();
+    }
+    reset_batch_upload_state(*in);
+    in->events_in_active = 0;
+    in->last_flush_ms    = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    std::shared_ptr<Internals> in_for_bt  = in;
+    const uint64_t             generation = in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+    in->bt_worker = std::thread(bt_worker_loop, in_for_bt, generation);
+}
+
+static bool purge_completion_blocks(const std::shared_future<bool>& completion)
+{
+    if (!completion.valid())
+        return false;
+    if (completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        return true;
+    return !completion.get();
+}
+
+static bool purge_completion_active(const std::shared_future<bool>& completion)
+{
+    return completion.valid() && completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
+}
+
+std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker)
+{
+    // Caller must hold m_lifecycle_mu.
+    if (!in || in->spool_dir_resolved.empty())
+        return {};
+
+    auto retired_worker_handle = std::make_shared<std::thread>(std::move(retired_worker));
+    if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
+        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        m_purge_lock_spool_dir.clear();
+    } else if (m_purge_lock_spool_dir != in->spool_dir_resolved) {
+        m_purge_spool_lock       = SpoolLock{};
+        m_purge_lock_spool_dir.clear();
+    }
+
+    if (purge_completion_active(m_purge_completion) && m_purge_spool_dir == in->spool_dir_resolved) {
+        if (retired_worker_handle->joinable()) {
+            std::thread([retired_worker_handle] { retired_worker_handle->join(); }).detach();
+            return m_purge_completion;
+        }
+    }
+
+    auto previous_completion = m_purge_completion;
+    auto completion_promise = std::make_shared<std::promise<bool>>();
+    auto completion = completion_promise->get_future().share();
+    m_purge_spool_dir = in->spool_dir_resolved;
+    m_purge_promise   = completion_promise;
+    m_purge_completion = completion;
+
+    std::thread(
+        [this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
+            PurgeCompletionGuard completion_guard(completion_promise);
+            bool purged = false;
+
+            if (retired_worker_handle->joinable())
+                retired_worker_handle->join();
+            if (previous_completion.valid())
+                previous_completion.wait();
+
+            if (!in->bt_spool_lock.acquired)
+                in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
+            if (in->bt_spool_lock.acquired)
+                purged = purge_spool(in);
+            else {
+                in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
+                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not acquire the spool lock";
+            }
+
+            std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+            if (in->bt_spool_lock.acquired) {
+                m_purge_spool_lock       = std::move(in->bt_spool_lock);
+                m_purge_lock_spool_dir = in->spool_dir_resolved;
+            }
+            if (m_purge_promise == completion_promise && purged) {
+                m_purge_promise.reset();
+                m_purge_completion = {};
+                m_purge_spool_dir.clear();
+            }
+            if (m_int == in) {
+                if (in->stop_receiving.load(std::memory_order_relaxed)) {
+                    std::lock_guard<std::mutex> state_lock(m_state_mu);
+                    m_int.reset();
+                } else if (purged && in->consent.load(std::memory_order_relaxed)) {
+                    start_batch_worker(in);
+                }
+            }
+            // The deferred starter must not observe completion before spool-lock ownership has moved.
+            completion_guard.fulfill(purged);
+        })
+        .detach();
+
+    return completion;
+}
+
+void SnapLogClient::start_batch_worker_after_purge(const std::shared_ptr<Internals>& in)
+{
+    // Caller must hold m_lifecycle_mu.
+    if (!in || in->spool_dir_resolved.empty())
+        return;
+
+    if (!spool_purge_blocks_worker(in->spool_dir_resolved)) {
+        start_batch_worker(in);
+        return;
+    }
+
+    if (!purge_completion_active(m_purge_completion)) {
+        // A completed false purge means removal could not be verified. Keeping
+        // the batch channel disabled is deliberate: uploading a residual file
+        // would violate consent-OFF. A later consent OFF starts a fresh purge.
+        return;
+    }
+
+    auto completion = m_purge_completion;
+    std::thread([this, in, completion] {
+        completion.wait();
+        std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+        if (m_int != in || !in->consent.load(std::memory_order_relaxed) || spool_purge_blocks_worker(in->spool_dir_resolved))
+            return;
+        start_batch_worker(in);
+    }).detach();
+}
+
+bool SnapLogClient::spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const
+{
+    return m_purge_spool_dir == spool_dir && purge_completion_blocks(m_purge_completion);
+}
+
 void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
 {
     std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
@@ -943,26 +1231,17 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
         in->machine_id_snapshot = in->deps.machine_id();
     in->stop_receiving.store(false);
 
+    const bool initial_consent = in->consent.load(std::memory_order_relaxed);
     if (!in->cfg.spool_dir.empty()) {
         namespace fs           = boost::filesystem;
         in->spool_dir_resolved = fs::path(in->cfg.spool_dir);
         in->active_path        = in->spool_dir_resolved / "active.log";
 
-        // Create the spool directory (idempotent).
+        // Create the spool directory (idempotent). The lock, crash recovery,
+        // and privacy purge are all handled off this thread so a large spool
+        // cannot block GUI startup or a re-init.
         boost::system::error_code ec;
         fs::create_directories(in->spool_dir_resolved, ec);
-
-        // Recovery: if active.log exists and is non-empty, rotate it to seal
-        // any leftover data from a prior session / crash.
-        if (fs::exists(in->active_path, ec)) {
-            boost::system::error_code sz_ec;
-            auto                      sz = fs::file_size(in->active_path, sz_ec);
-            if (!sz_ec && sz > 0) {
-                std::string err;
-                std::string recovery_batch = "recovery00000000";
-                rotate_active(in->spool_dir_resolved, in->active_path, recovery_batch, err);
-            }
-        }
     }
 
     // Start the realtime worker thread (moves the shared_ptr by value so the
@@ -973,22 +1252,13 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
 
     // Start the batch worker thread if spool_dir is configured. drain_and_flush
     // starts false (only set true during shutdown for the final flush).
-    if (!in->spool_dir_resolved.empty()) {
-        // Try exclusive file lock on spool_dir/.lock. If another OrcaSlicer
-        // process already holds it, skip batch channel (realtime unaffected).
-        in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
-        if (in->bt_spool_lock.acquired) {
-            in->drain_and_flush.store(false);
-            in->current_batch_id = generate_batch_id();
-            in->events_in_active = 0;
-            in->last_flush_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
-                                    .count();
-            std::shared_ptr<Internals> in_for_bt  = in;
-            const uint64_t             generation = in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
-            in->bt_worker                         = std::thread(bt_worker_loop, in_for_bt, generation);
-        } else {
-            in->batch_locked_out.store(true);
-        }
+    if (initial_consent) {
+        start_batch_worker_after_purge(in);
+    } else {
+        // Consent was already OFF at startup. Crash remnants belong to a
+        // session the user did not agree to upload, so purge them instead
+        // of rotating them into a sealed recovery batch.
+        begin_spool_purge(in);
     }
 
     {
@@ -1019,6 +1289,7 @@ void SnapLogClient::shutdown()
     //    detached worker drains safely after m_int.reset() without UAF.
     if (!in)
         return;
+    const bool deferred_consent_purge = purge_completion_active(m_purge_completion) && m_purge_spool_dir == in->spool_dir_resolved;
     in->stop_receiving.store(true);
     cancel_current(in, SnapLogPolicy::Realtime); // abort in-flight so worker's done() trips
 
@@ -1047,7 +1318,9 @@ void SnapLogClient::shutdown()
         });
         joiner.detach();
 
-        int deadline_sec = in->cfg.realtime_join_deadline_sec;
+        // Shutdown is on the GUI exit path. Keep its total bounded even when a
+        // transport ignores cancellation; a detached worker can finish later.
+        int deadline_sec = std::min(in->cfg.realtime_join_deadline_sec, kShutdownRealtimeJoinMaxSec);
         if (deadline_sec < 1)
             deadline_sec = 1;
         if (join_future.wait_for(std::chrono::seconds(deadline_sec)) == std::future_status::ready) {
@@ -1090,7 +1363,7 @@ void SnapLogClient::shutdown()
         });
         bt_joiner.detach();
 
-        int bt_deadline_sec = in->cfg.batch_join_deadline_sec;
+        int bt_deadline_sec = std::min(in->cfg.batch_join_deadline_sec, kShutdownBatchJoinMaxSec);
         if (bt_deadline_sec < 1)
             bt_deadline_sec = 1;
         if (bt_join_future.wait_for(std::chrono::seconds(bt_deadline_sec)) == std::future_status::ready) {
@@ -1106,7 +1379,9 @@ void SnapLogClient::shutdown()
 
     {
         std::lock_guard<std::mutex> state_lock(m_state_mu);
-        if (m_int == in)
+        // A consent-OFF purge may still be waiting for its retired worker. Keep
+        // Internals published so that joiner can finish the privacy purge.
+        if (m_int == in && !deferred_consent_purge)
             m_int.reset();
     }
 }
@@ -1279,127 +1554,26 @@ void SnapLogClient::set_consent(bool ok)
         in->rt_queue.clear();
         in->bt_queue.clear();
     }
+
     if (!ok) {
-        // Retire the current batch generation before cancelling or purging. A
-        // worker blocked inside do_request will observe the stale generation
-        // when it returns and cannot touch the restarted worker's state.
+        // Retire the worker synchronously, but perform its join and the spool
+        // purge off the UI thread. A blocked transport can otherwise park the
+        // preferences callback for the full batch join deadline.
         in->batch_deps_invalid.store(true, std::memory_order_release);
         in->stop_uploads.store(true, std::memory_order_release);
         in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel);
-
-        // ON → OFF: cancel any in-flight requests on both channels.
         cancel_current(in, SnapLogPolicy::Realtime);
         cancel_current(in, SnapLogPolicy::Buffered);
 
-        // bt_worker exits on consent-false (its loop checks consent at the top).
-        // We bounded-join it so the purge happens AFTER the worker has stopped
-        // touching spool files (no race between purge and worker FS ops).
-        //
-        // Restart-safety vs join-timeout: the OFF->ON guard is
-        // !bt_worker.joinable(). If the join times out (worker stuck in a tick),
-        // bt_worker would stay joinable forever and OFF->ON could never restart
-        // it (batch channel dead for the session). shutdown() avoids this only
-        // because it m_int.reset()s; the re-init guard avoids it by replacing
-        // the whole Internals. Neither trick applies here, so we MOVE bt_worker
-        // into the joiner's exclusive ownership. After the move m_int->bt_worker
-        // is a moved-from (non-joinable) thread object, deterministically and
-        // synchronously, so:
-        //   - OFF->ON's !bt_worker.joinable() guard works immediately.
-        //   - Only ONE handle (the joiner-owned std::thread `w`) ever calls
-        //     join(), so there is no join/detach race on the same object (the
-        //     naive "detach bt_worker on timeout" would race the joiner that is
-        //     blocked in join() on the SAME object = UB).
-        //   - The moved thread (if still running) is safely joined by the
-        //     detached joiner, which holds in_pin alive via shared_ptr.
-        if (in->bt_worker.joinable()) {
-            std::thread                worker_owner = std::move(in->bt_worker); // in->bt_worker now non-joinable
-            auto                       join_promise = std::make_shared<std::promise<void>>();
-            auto                       join_future  = join_promise->get_future();
-            std::shared_ptr<Internals> in_pin       = in;
-            std::thread                joiner([in_pin, join_promise, w = std::move(worker_owner)]() mutable {
-                // Only this lambda owns `w`; join is race-free.
-                if (w.joinable()) {
-                    w.join();
-                    join_promise->set_value();
-                }
-            });
-            joiner.detach();
-            int deadline_sec = in->cfg.batch_join_deadline_sec;
-            if (deadline_sec < 1)
-                deadline_sec = 1;
-            if (join_future.wait_for(std::chrono::seconds(deadline_sec)) == std::future_status::ready) {
-                // Joined within deadline.
-            } else {
-                // Worker is stuck in a tick (e.g. a do_request that hasn't
-                // returned). The batch-only fence keeps this old generation
-                // from issuing more requests after it unwinds. m_int->bt_worker
-                // is ALREADY non-joinable from the move above, so OFF->ON can
-                // restart it without clearing the realtime/shutdown fence.
-                in->batch_deps_invalid.store(true);
-            }
-        }
-
-        // Purge spool: remove_all + recreate. On Windows, files that are locked
-        // (e.g. an upload handle still open) may fail to delete — truncate each
-        // sealed to zero instead and bump purge_delete_failed.
-        if (!in->spool_dir_resolved.empty()) {
-            namespace fs = boost::filesystem;
-            boost::system::error_code ec;
-            fs::remove_all(in->spool_dir_resolved, ec);
-            if (ec || fs::exists(in->spool_dir_resolved, ec)) {
-                // remove_all failed (Windows file lock) — recreate dir and
-                // truncate sealed files to zero.
-                fs::create_directories(in->spool_dir_resolved, ec);
-                auto sealed = list_sealed(in->spool_dir_resolved);
-                for (const auto& p : sealed) {
-                    boost::system::error_code trunc_ec;
-                    fs::resize_file(p, 0, trunc_ec);
-                    if (trunc_ec) {
-                        in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
-                    } else {
-                        // Truncated to zero — remove the now-empty file.
-                        fs::remove(p, ec);
-                    }
-                }
-                // Also remove active.log if present.
-                if (fs::exists(in->active_path, ec)) {
-                    fs::remove(in->active_path, ec);
-                }
-            } else {
-                // Successfully removed — recreate the empty dir.
-                fs::create_directories(in->spool_dir_resolved, ec);
-            }
-        }
+        std::thread retired_worker;
+        if (in->bt_worker.joinable())
+            retired_worker = std::move(in->bt_worker);
+        begin_spool_purge(in, std::move(retired_worker));
     } else {
-        // OFF → ON: bt_queue already cleared above. Restart bt_worker so it
-        // resumes draining new events. consent is now true so the loop runs.
-        if (!in->spool_dir_resolved.empty() && !in->bt_worker.joinable()) {
-            in->batch_deps_invalid.store(false, std::memory_order_release);
-            in->stop_uploads.store(false, std::memory_order_release);
-            in->drain_and_flush.store(false);
-            in->stop_receiving.store(false);
-            if (in->current_batch_id.empty()) {
-                in->current_batch_id = generate_batch_id();
-            }
-            // The retired worker cannot safely share an in-flight state
-            // machine with its replacement. It is generation-fenced above;
-            // clear the state before publishing the new worker.
-            {
-                std::lock_guard<std::mutex> hk(in->m_h_mu);
-                in->bt_handle.reset();
-            }
-            in->bt_upload_phase = Internals::BtUploadPhase::Idle;
-            in->bt_in_flight_sealed.clear();
-            in->bt_put_url.clear();
-            in->bt_put_key.clear();
-            in->bt_frozen_token.clear();
-            in->bt_frozen_client_id.clear();
-            in->bt_frozen_batch_id.clear();
-            in->bt_upload_attempt                 = 0;
-            std::shared_ptr<Internals> in_for_bt  = in;
-            const uint64_t             generation = in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
-            in->bt_worker                         = std::thread(bt_worker_loop, in_for_bt, generation);
-        }
+        // If a retired worker is still unwinding, the deferred starter waits
+        // for the purge; events accepted after this ON transition queue until
+        // the replacement owns the spool.
+        start_batch_worker_after_purge(in);
     }
 }
 
@@ -1630,6 +1804,9 @@ std::string make_upload_file_name(const std::string& clientId, const std::string
 bool append_line(const boost::filesystem::path& active, const std::string& line)
 {
     namespace fs = boost::filesystem;
+    if (!is_valid_spool_path(active))
+        return false;
+
     boost::system::error_code ec;
     auto                      parent = active.parent_path();
     if (!parent.empty() && !fs::exists(parent, ec)) {
@@ -1637,7 +1814,11 @@ bool append_line(const boost::filesystem::path& active, const std::string& line)
         // Even if create_directories fails (e.g. race), try to open anyway.
     }
     // Open in append + binary mode. This creates the file if missing.
+#ifdef _WIN32
+    std::ofstream ofs(active.native(), std::ios::app | std::ios::binary);
+#else
     std::ofstream ofs(active.string(), std::ios::app | std::ios::binary);
+#endif
     if (!ofs.is_open())
         return false;
     ofs.write(line.data(), static_cast<std::streamsize>(line.size()));
@@ -1704,6 +1885,9 @@ std::vector<boost::filesystem::path> list_sealed(const boost::filesystem::path& 
 {
     namespace fs = boost::filesystem;
     std::vector<fs::path>     result;
+    if (!is_valid_spool_path(spool))
+        return result;
+
     boost::system::error_code ec;
     if (!fs::exists(spool, ec) || !fs::is_directory(spool, ec))
         return result;

@@ -3120,9 +3120,6 @@ bool GUI_App::on_init_inner()
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     };
 
-    snap_cfg.event_rate_cap_per_sec["device_status_refresh"] = 2;
-    snap_cfg.event_rate_cap_per_sec["monitor_panel_refresh"] = 1;
-
     snap_cfg.app_version = SLIC3R_BUILD_ID;
     snap_cfg.app_build   = GIT_COMMIT_HASH;
 #if defined(_WIN32)

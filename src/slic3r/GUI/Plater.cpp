@@ -719,6 +719,21 @@ Preset* resolve_filament_preset(PresetBundle* preset_bundle,
     return nullptr;
 }
 
+// Deterministic key identifying a machine-reported filament (by vendor+type only, so it still
+// matches on later scans of the same or a same-vendor/type spool). Stored in AppConfig's
+// "machine_filament_presets" section to explicitly remember which local preset a "Create
+// Filament" wizard run — launched from that exact machine slot — produced, instead of relying
+// purely on reconstructing a name match afterwards. Keep in sync with the identical helper in
+// PresetComboBoxes.cpp (ResolveMachineFilamentPreset's caller), which reads this mapping back.
+std::string machine_filament_signature(const std::string& vendor, const std::string& type)
+{
+    std::string v = boost::algorithm::to_lower_copy(vendor);
+    std::string t = boost::algorithm::to_lower_copy(type);
+    boost::algorithm::trim(v);
+    boost::algorithm::trim(t);
+    return t + "|" + v;
+}
+
 void build_design_filament_list(PresetBundle* preset_bundle, std::vector<FilamentData>& out_list)
 {
     if (!preset_bundle)
@@ -10390,6 +10405,10 @@ struct Plater::priv
     void on_combobox_select(wxCommandEvent&);
     void on_select_bed_type(wxCommandEvent&);
     void on_select_preset(wxCommandEvent&);
+    // Handles picking a "Machine Filament" combo entry that has no exact matching local
+    // preset (shown muted/grey): resolves a sensible fallback preset instead of assigning
+    // the raw machine name as-is, reflects the reported colour, and opens Material settings.
+    void on_select_unmatched_machine_filament(PlaterPresetComboBox* combo, int idx, int selection);
     void on_slicing_update(SlicingStatusEvent&);
     void on_slicing_completed(wxCommandEvent&);
     void on_process_completed(SlicingProcessCompletedEvent&);
@@ -14897,6 +14916,14 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
 
     auto idx = combo->get_filament_idx();
 
+    if (preset_type == Preset::TYPE_FILAMENT && combo->IsItemMuted(static_cast<unsigned int>(selection))) {
+        // This entry is a machine-reported filament with no exact local preset match: the
+        // generic GetString()-based lookup below would assign a bogus, non-existent preset
+        // name. Handle it separately instead.
+        on_select_unmatched_machine_filament(combo, idx, selection);
+        return;
+    }
+
     // BBS:Save the plate parameters before switching
     PartPlateList& old_plate_list = this->partplate_list;
     PartPlate* old_plate = old_plate_list.get_selected_plate();
@@ -15016,6 +15043,75 @@ void Plater::priv::on_select_preset(wxCommandEvent &evt)
     auto plate_list = partplate_list.get_plate_list();
     for (auto plate : plate_list) {
          plate->update_slice_result_valid_state(false);
+    }
+}
+
+void Plater::priv::on_select_unmatched_machine_filament(PlaterPresetComboBox* combo, int idx, int selection)
+{
+    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    if (!preset_bundle)
+        return;
+
+    // Capture which raw machine slot this entry corresponds to *before* reverting the combo
+    // below — that rebuilds the item list and would invalidate the index.
+    int machine_idx = combo->selected_ams_filament();
+    const auto& machineList = preset_bundle->m_connect_machine_info_list;
+
+    // Nothing was actually applied when this entry was clicked (it has no backing preset) —
+    // snap the combo back to whatever was selected before, so it doesn't keep showing the raw
+    // machine name as if it were the active filament.
+    combo->update();
+
+    if (machine_idx < 0 || static_cast<size_t>(machine_idx) >= machineList.size())
+        return;
+    const ConnectMachineInfo& machineInfo = machineList[machine_idx];
+
+    // The machine builds filament_info as "<vendor> <type>[ <sub_type>]" (see SSWCP.cpp). Split
+    // it back apart using the type we already know, so vendor/serial land in the right fields.
+    std::string vendor, serial;
+    size_t type_pos = machineInfo.filament_type.empty() ? std::string::npos
+                                                          : machineInfo.filament_info.find(machineInfo.filament_type);
+    if (type_pos != std::string::npos) {
+        vendor = machineInfo.filament_info.substr(0, type_pos);
+        serial = machineInfo.filament_info.substr(type_pos + machineInfo.filament_type.size());
+        boost::algorithm::trim(vendor);
+        boost::algorithm::trim(serial);
+    } else {
+        vendor = machineInfo.filament_info;
+    }
+
+    const std::string preferred_base = vendor.empty() ? machineInfo.filament_type : (vendor + " " + machineInfo.filament_type);
+
+    // Same nozzle-diameter formatting as the "Machine Filament" combo's own currentNozzleInfo
+    // (PresetComboBoxes.cpp), so the wizard can auto-check the entry that will actually be
+    // selectable afterwards instead of an arbitrary/wrong-nozzle one.
+    std::string current_nozzle_diameter;
+    if (const auto* nd_opt = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+        nd_opt && !nd_opt->values.empty()) {
+        current_nozzle_diameter = float_to_string_decimal_point(nd_opt->values.front(), 2);
+        while (!current_nozzle_diameter.empty() && current_nozzle_diameter.back() == '0')
+            current_nozzle_diameter.pop_back();
+        if (!current_nozzle_diameter.empty() && current_nozzle_diameter.back() == '.')
+            current_nozzle_diameter.pop_back();
+    }
+
+    CreateFilamentPresetDialog dlg(wxGetApp().mainframe);
+    dlg.prefill_from_machine_filament(vendor, machineInfo.filament_type, serial, preferred_base, current_nozzle_diameter);
+    if (dlg.ShowModal() == wxID_OK) {
+        // Remember which preset this exact machine slot's "Create Filament" run produced, so
+        // future readings of the same (or same-vendor/type) filament resolve to it directly
+        // instead of depending on the created preset's name still resembling the machine's.
+        if (AppConfig* app_config = wxGetApp().app_config; app_config && !dlg.get_last_created_filament_name().empty()) {
+            app_config->set("machine_filament_presets", machine_filament_signature(vendor, machineInfo.filament_type),
+                             dlg.get_last_created_filament_name());
+            app_config->save();
+        }
+
+        wxGetApp().mainframe->update_side_preset_ui();
+        update_ui_from_settings();
+        sidebar->update_all_preset_comboboxes();
+        CreatePresetSuccessfulDialog success_dlg(wxGetApp().mainframe, SuccessType::FILAMENT);
+        success_dlg.ShowModal();
     }
 }
 

@@ -26,6 +26,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "common_func/common_func.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -1959,6 +1960,12 @@ static bool reload_configs_update_gui()
 	GUI::wxGetApp().load_current_presets();
 	if (GUI::Plater* pl = GUI::wxGetApp().plater())
 		pl->set_bed_shape();
+
+	// The vendor directory copied in by an update also carries filaments_colours.json
+	// (hot-updated color palette / Full Spectrum SKUs). The color library caches that
+	// file for the process lifetime, so reload it here — same UI thread as the preset
+	// reload above — to make hot-updated colors visible without an app restart.
+	FilamentColorLibrary::Instance().Reload();
 
 	return true;
 }

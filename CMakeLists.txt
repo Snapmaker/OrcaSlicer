@@ -57,6 +57,8 @@ endif ()
 project(Snapmaker_Orca)
 
 include("version.inc")
+# Upstream OrcaSlicer AppImage templates still reference SoftFever_VERSION.
+set(SoftFever_VERSION "${Snapmaker_VERSION}")
 include(GNUInstallDirs)
 include(CMakeDependentOption)
 
@@ -107,7 +109,14 @@ option(SLIC3R_PCH               "Use precompiled headers" 1)
 option(SLIC3R_MSVC_COMPILE_PARALLEL "Compile on Visual Studio in parallel" 1)
 option(SLIC3R_MSVC_PDB          "Generate PDB files on MSVC in Release mode" 1)
 option(SLIC3R_PERL_XS           "Compile XS Perl module and enable Perl unit and integration tests" 0)
-option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
+
+# ── Sanitizers (legacy compat) ──────────────────────────────────────────────
+# ENABLE_ASAN / ENABLE_UBSAN are declared in cmake/sanitizers.cmake.
+# SLIC3R_ASAN is the legacy name; forward with a deprecation warning.
+if(DEFINED SLIC3R_ASAN)
+    message(WARNING "SLIC3R_ASAN is deprecated — use ENABLE_ASAN instead")
+    set(ENABLE_ASAN ${SLIC3R_ASAN} CACHE BOOL "Enable AddressSanitizer (ASan)" FORCE)
+endif()
 
 # Sentry crash reporting - enabled only on Windows by default
 if (WIN32 OR APPLE)
@@ -239,6 +248,22 @@ foreach (DIR ${PREFIX_PATH_CHECK})
         message(WARNING "CMAKE_PREFIX_PATH element doesn't exist: ${DIR}")
     endif ()
 endforeach ()
+
+# When configuring from an IDE (without build_linux.sh), dependencies are often
+# already installed under deps/build/destdir/usr/local — pick them up automatically.
+# Flatpak passes -DFLATPAK=ON and copies the whole source tree; host destdir must not
+# be prepended or it can shadow /app and break find_package (e.g. Boost iostreams -> zstd).
+set(_ORCA_BUNDLED_DEPS_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/deps/build/destdir/usr/local")
+if (EXISTS "${_ORCA_BUNDLED_DEPS_PREFIX}/include/openvdb/version.h" AND NOT FLATPAK)
+    list(FIND CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX}" _orca_bundled_deps_idx)
+    if (_orca_bundled_deps_idx LESS 0)
+        set(CMAKE_PREFIX_PATH "${_ORCA_BUNDLED_DEPS_PREFIX};${CMAKE_PREFIX_PATH}" CACHE PATH
+            "Where to look for external packages (OpenVDB, OCCT, …); bundled deps prepended when present." FORCE)
+        message(STATUS "Prepended bundled deps install to CMAKE_PREFIX_PATH: ${_ORCA_BUNDLED_DEPS_PREFIX}")
+    endif ()
+endif ()
+unset(_ORCA_BUNDLED_DEPS_PREFIX)
+unset(_orca_bundled_deps_idx)
 
 # Add our own cmake module path.
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake/modules/)
@@ -391,24 +416,11 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
 
 endif()
 
-if (SLIC3R_ASAN)
-    # ASAN should be available on MSVC starting with Visual Studio 2019 16.9
-    # https://devblogs.microsoft.com/cppblog/address-sanitizer-for-msvc-now-generally-available/
-    add_compile_options(-fsanitize=address)
+# ── Sanitizers (ASan / UBSan) ──────────────────────────────────────────────
+include(cmake/sanitizers.cmake)
 
-    if (NOT MSVC)
-        add_compile_options(-fno-omit-frame-pointer)
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
-        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address")
-    else()
-        add_compile_definitions(_DISABLE_STRING_ANNOTATION=1 _DISABLE_VECTOR_ANNOTATION=1)
-    endif ()
-
-    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lasan")
-    endif ()
-endif ()
+# ── Code Coverage ───────────────────────────────────────────────────────────
+include(cmake/coverage.cmake)
 
 if (APPLE)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
@@ -526,15 +538,13 @@ if(NOT SLIC3R_STATIC)
 endif()
 
 function(slic3r_remap_configs targets from_Cfg to_Cfg)
-    if(MSVC)
-        string(TOUPPER ${from_Cfg} from_CFG)
+    string(TOUPPER ${from_Cfg} from_CFG)
 
-        foreach(tgt ${targets})
-            if(TARGET ${tgt})
-                set_target_properties(${tgt} PROPERTIES MAP_IMPORTED_CONFIG_${from_CFG} ${to_Cfg})
-            endif()
-        endforeach()
-    endif()
+    foreach(tgt ${targets})
+        if(TARGET ${tgt})
+            set_target_properties(${tgt} PROPERTIES MAP_IMPORTED_CONFIG_${from_CFG} ${to_Cfg})
+        endif()
+    endforeach()
 endfunction()
 
 target_include_directories(boost_headeronly SYSTEM INTERFACE ${Boost_INCLUDE_DIRS})
@@ -876,7 +886,15 @@ endfunction()
 
 
 # libslic3r, Snapmaker_Orca GUI and the Snapmaker_Orca executable.
-add_subdirectory(deps_src)
+# src/CMakeLists.txt calls project(); use this for paths to repo-root (e.g. deps/) from there.
+set(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_SOURCE_DIR}" CACHE INTERNAL "Top of Snapmaker_Orca source tree")
+
+# GitLab CI can override with -DDEPS_SRC_DIR=gitlab_deps_src to use vendor-provided deps
+if(DEFINED DEPS_SRC_DIR)
+    add_subdirectory(${DEPS_SRC_DIR} deps_src)
+else()
+    add_subdirectory(deps_src)
+endif()
 add_subdirectory(src)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Snapmaker_Orca_app_gui)
 
@@ -895,6 +913,17 @@ endif()
 
 if(BUILD_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(BUILD_TESTS)
+    if(NOT TARGET tests)
+        add_custom_target(tests)
+    endif()
+    foreach(_t IN ITEMS libnest2d_tests libslic3r_tests slic3rutils_tests fff_print_tests sla_print_tests)
+        if(TARGET ${_t})
+            add_dependencies(tests ${_t})
+        endif()
+    endforeach()
 endif()
 
 if (NOT WIN32 AND NOT APPLE)

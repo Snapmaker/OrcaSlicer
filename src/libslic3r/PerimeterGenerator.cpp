@@ -1445,8 +1445,8 @@ void PerimeterGenerator::process_classic()
                     this->object_config->brim_type == BrimType::btOuterOnly &&
                     this->object_config->brim_width.value > 0))
                 entities.reverse();
-            // Orca: sandwich mode. Apply after 1st layer.
-            else if ((this->config->wall_sequence == WallSequence::InnerOuterInner) && layer_id > 0){
+            // Orca: sandwich mode. Apply on all layers incl.
+            else if (this->config->wall_sequence == WallSequence::InnerOuterInner){
                 entities.reverse(); // reverse all entities - order them from external to internal
                 if(entities.entities.size()>2){ // 3 walls minimum needed to do inner outer inner ordering
                     int position = 0; // index to run the re-ordering for multiple external perimeters in a single island.
@@ -2351,7 +2351,7 @@ void PerimeterGenerator::process_arachne()
         }
 
        // printf("New Layer: Layer ID %d\n",layer_id); //debug - new layer
-        if (this->config->wall_sequence == WallSequence::InnerOuterInner && layer_id > 0) { // only enable inner outer inner algorithm after first layer
+        if (this->config->wall_sequence == WallSequence::InnerOuterInner) {
             if (ordered_extrusions.size() > 2) { // 3 walls minimum needed to do inner outer inner ordering
                 int position = 0; // index to run the re-ordering for multiple external perimeters in a single island.
                 int arr_i, arr_j = 0;    // indexes to run through the walls in the for loops

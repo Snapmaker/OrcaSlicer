@@ -18268,3 +18268,12 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Modell orientációja"
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"Átváltasz vonalak mintázatra?\n"
+"Igen - Váltás a vonalak mintázatra\n"
+"Nem  - Sűrűség visszaállítása az alapértelmezett, nem 100%-os értékre"

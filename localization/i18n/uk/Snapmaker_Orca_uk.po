@@ -15199,6 +15199,7 @@ msgstr ""
 msgid "Top solid layers"
 msgstr "Верхові суцільні шари"
 
+
 msgid "Top shell thickness"
 msgstr "Товщина верхньої оболонки"
 
@@ -19344,3 +19345,17 @@ msgstr ""
 
 #~ msgid "Set the brim type to \"painted\""
 #~ msgstr "Встановіть тип кайми на \"Мальована\""
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"Перемкнутися на прямокутну структуру?\n"
+"Так - автоматично перемкнутися на прямокутну структуру\n"
+"Ні - автоматично скинути густину до типового значення, не дорівнює 100%"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "Шаблон заповнення %1% не підтримує щільність 100%%."
+

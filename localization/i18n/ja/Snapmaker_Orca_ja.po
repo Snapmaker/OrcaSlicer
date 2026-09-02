@@ -17728,3 +17728,12 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"直線パターンに切り替えますか？\n"
+"はい - 直線パターンに切り替える\n"
+"いいえ - 密度をデフォルトの100%未満の値にリセットする"

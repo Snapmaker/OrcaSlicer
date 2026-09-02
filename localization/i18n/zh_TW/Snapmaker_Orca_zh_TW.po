@@ -14089,6 +14089,7 @@ msgstr ""
 msgid "Top solid layers"
 msgstr "頂部殼體層數"
 
+
 msgid "Top shell thickness"
 msgstr "頂部殼體厚度"
 
@@ -18278,3 +18279,16 @@ msgstr "啟用內支撐肋以增強擦料塔的穩定性。"
 
 msgid "Enable tower interface features"
 msgstr "啟用料塔接觸層最佳化"
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"切換到直線圖案？\n"
+"是 - 自動切換到直線圖案\n"
+"否 - 自動將密度重置為預設的非100%值"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "%1% 填充圖案不支援 100%% 密度。"
+

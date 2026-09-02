@@ -20100,3 +20100,16 @@ msgstr ""
 
 #~ msgid "Right click to reset value to system default."
 #~ msgstr "Правая кнопка мыши - сброс значения до системного по умолчанию."
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"Переключиться на прямолинейный (rectilinear) шаблон?\n"
+"Да - переключиться на прямолинейный шаблон\n"
+"Нет - сбросить плотность заполнения до значения по умолчанию (отличного от 100%)"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "Шаблон заполнения «%1%» не поддерживает 100%% заполнение."

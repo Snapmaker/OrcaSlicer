@@ -18260,3 +18260,12 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Orientera modellen"
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"Byt till rätlinjigt mönster?\n"
+"Ja -  växla till rätlinjärt mönster\n"
+"Nej - återställ densiteten till standardvärdet icke 100%."

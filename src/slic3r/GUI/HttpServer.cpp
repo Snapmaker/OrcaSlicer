@@ -337,8 +337,8 @@ void session::read_next_line()
         // 构造OPTIONS响应（允许跨域）
         std::stringstream ssOut;
         write_common_headers(ssOut, 200, "OK");
-        ssOut << "Content-Length: 0\r\n"; // 无响应体
-        ssOut << "\r\n";                  // 头和主体之间的空行（必须）
+        ssOut << "Content-Length: 0\r\n"; // no response body
+        ssOut << "\r\n";                  // blank line between headers and body (required)
 
         // 异步发送响应
         async_write(socket, boost::asio::buffer(ssOut.str()), [this, self](const boost::beast::error_code& e, std::size_t s) {

@@ -20,7 +20,7 @@
 #if defined(_WIN32) || defined(_WIN64)
 #pragma comment(lib, "crypt32.lib")
 
-int SHA1_Init_mqtt(SHA_CTX *c)
+int SHA1_Init(SHA_CTX *c)
 {
 	if (!CryptAcquireContext(&c->hProv, NULL, NULL,
 		PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
@@ -33,7 +33,7 @@ int SHA1_Init_mqtt(SHA_CTX *c)
 	return 1;
 }
 
-int SHA1_Update_mqtt(SHA_CTX *c, const void *data, size_t len)
+int SHA1_Update(SHA_CTX *c, const void *data, size_t len)
 {
 	int rv = 1;
 	if (!CryptHashData(c->hHash, data, (DWORD)len, 0))
@@ -41,7 +41,7 @@ int SHA1_Update_mqtt(SHA_CTX *c, const void *data, size_t len)
 	return rv;
 }
 
-int SHA1_Final_mqtt(unsigned char *md, SHA_CTX *c)
+int SHA1_Final(unsigned char *md, SHA_CTX *c)
 {
 	int rv = 0;
 	DWORD md_len = SHA1_DIGEST_LENGTH;
@@ -151,7 +151,7 @@ int SHA1_Final(unsigned char *md, SHA_CTX *ctx)
 	else
 		pad_amount = 64 + 56 - ctx->size;
 
-	SHA1_Update_mqtt(ctx, pad, pad_amount);
+	SHA1_Update(ctx, pad, pad_amount);
 
 	ctx->w[14] = htobe32((uint32_t)(total >> 32));
 	ctx->w[15] = htobe32((uint32_t)total);
@@ -229,9 +229,9 @@ int main(int argc, char *argv[])
 		char out[SHA1_DIGEST_LENGTH * 2 + 1];
 		SHA_CTX c;
 		int j;
-		r[0] = SHA1_Init_mqtt( &c );
-		r[1] = SHA1_Update_mqtt( &c, test_data[i].in, strlen(test_data[i].in));
-		r[2] = SHA1_Final_mqtt( sha_out, &c );
+		r[0] = SHA1_Init( &c );
+		r[1] = SHA1_Update( &c, test_data[i].in, strlen(test_data[i].in));
+		r[2] = SHA1_Final( sha_out, &c );
 		for ( j = 0u; j < SHA1_DIGEST_LENGTH; ++j )
 			snprintf( &out[j*2], 3u, "%02x", sha_out[j] );
 		out[SHA1_DIGEST_LENGTH * 2] = '\0';

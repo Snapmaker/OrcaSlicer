@@ -26,6 +26,9 @@
   "filament_cost": [
     "19.9"
   ],
+  "filament_density": [
+    "1.21"
+  ],
   "filament_flow_ratio": [
     "0.966"
   ],
@@ -84,7 +87,7 @@
     "40"
   ],
   "temperature_vitrification": [
-    "55"
+    "45"
   ],
   "textured_plate_temp": [
     "65"

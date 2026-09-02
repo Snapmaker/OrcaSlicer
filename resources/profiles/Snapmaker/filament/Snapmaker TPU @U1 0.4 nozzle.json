@@ -29,6 +29,9 @@
   "filament_cost": [
     "29.99"
   ],
+  "filament_density": [
+    "1.22"
+  ],
   "filament_max_volumetric_speed": [
     "10.5"
   ],

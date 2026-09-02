@@ -195,6 +195,8 @@ private:
 
     // Sentry
     void sw_UploadEvent();
+    // SnapLog
+    void sw_SnapLog();
 
     // Get software basic info
     void sw_GetSoftwareInfo();
@@ -293,6 +295,12 @@ public:
 
     static WebPresetDialog* m_dialog;
 
+    // Funnel-correlation id for the connection attempt on a given webview. Each
+    // sw_* call is a fresh instance object, so (like m_mqtt_engine_map) this id
+    // lives in static state keyed by the webview: assigned in sw_create_mqtt_client,
+    // read by connect/subscribe/set_engine/disconnect, cleared on disconnect.
+    static std::unordered_map<wxWebView*, std::string> m_connect_session_map;
+
 public:
     bool validate_id(const std::string& id);
     std::shared_ptr<MqttClient> get_current_engine() {
@@ -313,6 +321,23 @@ public:
         
         m_engine_map_mtx.unlock();
         return flag;
+    }
+
+    // Accessors for the per-webview connectSessionId (guarded by m_engine_map_mtx,
+    // the same lock that protects m_mqtt_engine_map). Empty when no connection is
+    // in progress on this webview.
+    std::string get_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        auto it = m_connect_session_map.find(m_webview);
+        return it != m_connect_session_map.end() ? it->second : std::string{};
+    }
+    void set_connect_session_id(const std::string& id) {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map[m_webview] = id;
+    }
+    void clear_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map.erase(m_webview);
     }
 
     void set_Instance_illegal() override;

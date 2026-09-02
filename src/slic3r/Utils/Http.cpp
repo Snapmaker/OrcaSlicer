@@ -516,10 +516,11 @@ void Http::priv::http_perform()
 				}
 			}
 		}
-		//BBS check error http status code
-		else if (http_status >= 400) {
-			if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
-		}
+        //BBS check error http status code (any non-2xx, including 1xx/3xx
+        // that survived redirect following, must fire the error callback)
+        else {
+            if (errorfn) { errorfn(std::move(buffer), std::string(), http_status); }
+        }
 	}
 }
 

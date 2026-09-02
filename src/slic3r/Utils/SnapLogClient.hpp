@@ -697,15 +697,6 @@ std::function<std::shared_ptr<SnapLogHandle>(const std::string&,
                                              const std::string*)>
 make_production_do_request(SnapLogConfig cfg);
 
-// Thread-safe identity snapshot getters/setters (mutex-guarded std::string
-// copies). The GUI hooks call the setters; the Deps lambdas call the getters.
-std::string snaplog_identity_user_token();
-std::string snaplog_identity_user_id();
-std::string snaplog_identity_device_id();
-void        snaplog_identity_set_user_token(std::string t);
-void        snaplog_identity_set_user_id(std::string u);
-void        snaplog_identity_set_device_id(std::string d);
-
 }}} // namespace Slic3r::SnapLog::v1
 
 // Global-scope macros using the fully-qualified namespace. Call sites write:

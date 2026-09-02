@@ -1669,69 +1669,6 @@ void SnapLogClient::set_auth_known_dead_for_test(bool v)
         in->auth_dead_skip_counted.store(false, std::memory_order_relaxed);
 }
 
-// IdentitySnapshots: a tiny set of mutex-guarded strings that the GUI login /
-// logout / device hooks write and the SnapLogDeps callbacks read. We deliberately
-// do NOT read SMUserInfo directly from the worker thread because its members are
-// plain std::string (non-atomic) — doing so would be UB. The hooks
-// call both the SnapLogClient setters (which store into Internals) AND these
-// snapshots (which the Deps callbacks read), keeping a single source of truth
-// reachable from a pure-function callback without pulling wx headers into this
-// translation unit.
-struct IdentitySnapshots
-{
-    std::mutex  mu;
-    std::string user_token;
-    std::string user_id;
-    std::string device_id;
-};
-// File-scope shared_ptr so the Deps lambdas (which outlive any single stack
-// frame in on_init_inner) capture it by value. Leaked intentionally — it lives
-// for the duration of the process and is never freed (same lifetime as the app).
-static std::shared_ptr<IdentitySnapshots>& identity_snapshots_ref()
-{
-    static auto inst = std::make_shared<IdentitySnapshots>();
-    return inst;
-}
-
-// Helper accessors used by both the Deps lambdas and the GUI hooks (declared in
-// the header as well so the hooks can call them). Each is a thin lock+copy.
-std::string snaplog_identity_user_token()
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    return s->user_token;
-}
-std::string snaplog_identity_user_id()
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    return s->user_id;
-}
-std::string snaplog_identity_device_id()
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    return s->device_id;
-}
-void snaplog_identity_set_user_token(std::string t)
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    s->user_token = std::move(t);
-}
-void snaplog_identity_set_user_id(std::string u)
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    s->user_id = std::move(u);
-}
-void snaplog_identity_set_device_id(std::string d)
-{
-    auto&                       s = identity_snapshots_ref();
-    std::lock_guard<std::mutex> lk(s->mu);
-    s->device_id = std::move(d);
-}
-
 std::string sanitize_file_name(std::string s)
 {
     // Pass 1: remove dangerous chars and control chars, collapse whitespace.
@@ -2770,15 +2707,22 @@ make_production_do_request(SnapLogConfig cfg)
         auto h    = std::make_shared<SnapLogHandle>();
         h->prom   = std::make_shared<std::promise<SnapLogResult>>();
         auto prom = h->prom;
-        auto hcap = h; // keep the handle alive for the callback closures
-        http.on_complete([prom, hcap](std::string body, unsigned http_status) {
-            if (!hcap->fulfilled.exchange(true)) {
-                prom->set_value({static_cast<int>(http_status), std::move(body), false});
+        // weak_ptr breaks the Handle -> Http -> callback -> Handle cycle. The
+ // io_thread inside Http::perform() keeps the Http object alive, so the
+ // callbacks can safely observe an expired handle after the worker resets it.
+        auto hweak = std::weak_ptr<SnapLogHandle>(h);
+        http.on_complete([prom, hweak](std::string body, unsigned http_status) {
+            if (auto hcap = hweak.lock()) {
+                if (!hcap->fulfilled.exchange(true)) {
+                    prom->set_value({static_cast<int>(http_status), std::move(body), false});
+                }
             }
         });
-        http.on_error([prom, hcap](std::string body, std::string /*err*/, unsigned http_status) {
-            if (!hcap->fulfilled.exchange(true)) {
-                prom->set_value({static_cast<int>(http_status), std::move(body), false});
+        http.on_error([prom, hweak](std::string body, std::string /*err*/, unsigned http_status) {
+            if (auto hcap = hweak.lock()) {
+                if (!hcap->fulfilled.exchange(true)) {
+                    prom->set_value({static_cast<int>(http_status), std::move(body), false});
+                }
             }
         });
 

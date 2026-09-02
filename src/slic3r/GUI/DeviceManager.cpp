@@ -6530,7 +6530,6 @@ bool DeviceManager::set_selected_machine(std::string dev_id, bool need_disconnec
     }
     selected_machine = dev_id;
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_device_id(dev_id);
-    ::Slic3r::SnapLog::v1::snaplog_identity_set_device_id(dev_id);
     return true;
 }
 

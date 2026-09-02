@@ -3111,9 +3111,6 @@ bool GUI_App::on_init_inner()
     deps.do_request            = snap::make_production_do_request(snap_cfg);
     const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
     deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
-    deps.user_token            = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_user_token(); };
-    deps.user_id               = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_user_id(); };
-    deps.device_id             = []() -> std::string { return ::Slic3r::SnapLog::v1::snaplog_identity_device_id(); };
     deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
     deps.now_ms                = []() -> int64_t {
         return static_cast<int64_t>(
@@ -4376,8 +4373,6 @@ void GUI_App::sm_request_user_logout()
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
-    ::Slic3r::SnapLog::v1::snaplog_identity_set_user_token("");
-    ::Slic3r::SnapLog::v1::snaplog_identity_set_user_id("");
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";

@@ -282,8 +282,6 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         // Mirror-push login identity into SnapLogClient (Task 12).
                         ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(token);
                         ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(user_id);
-                        ::Slic3r::SnapLog::v1::snaplog_identity_set_user_token(token);
-                        ::Slic3r::SnapLog::v1::snaplog_identity_set_user_id(user_id);
                         auto* ac = wxGetApp().app_config;
                         if (ac) {
                             bool consent = ac->get("app", PRIVACY_POLICY_FLAGS) == "true";

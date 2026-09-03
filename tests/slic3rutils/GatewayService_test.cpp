@@ -77,7 +77,10 @@ struct FakeWebSocket final : public WebSocketTransport
         const nlohmann::json request = nlohmann::json::parse(message);
         if (request.value("method", "") == "action.device.watch") {
             listener.message(nlohmann::json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"result", {{"watching", true}}}}.dump());
+        } else if (request.value("method", "") == "sync.echo") {
+            listener.message(nlohmann::json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"result", {{"echoed", true}}}}.dump());
         }
+        // "sync.silent" intentionally gets no response (timeout / failure scenarios).
         return true;
     }
 
@@ -240,4 +243,103 @@ TEST_CASE("GatewayService bounded wait fails when the gateway cannot start", "[g
     REQUIRE_FALSE(service.wait_for_connected(std::chrono::milliseconds{20}));
     REQUIRE(service.localfile_url("a.gcode").empty());
     service.stop();
+}
+
+TEST_CASE("request_sync returns the rpc result", "[gateway][service][sync]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    const auto result = service.request_sync("sync.echo", nlohmann::json::object(), std::chrono::milliseconds{1000});
+    REQUIRE_FALSE(result.error);
+    REQUIRE(result.value.at("echoed") == true);
+
+    service.stop();
+}
+
+TEST_CASE("request_sync times out when nothing answers", "[gateway][service][sync]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    const auto start  = std::chrono::steady_clock::now();
+    const auto result = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{200});
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(result.error);
+    REQUIRE(result.error.code == GatewayErrorCode::TransportError);
+    REQUIRE(result.error.message.find("timed out") != std::string::npos);
+    REQUIRE(elapsed < std::chrono::seconds{2});
+
+    service.stop();
+}
+
+TEST_CASE("request_sync fails fast when the websocket drops while waiting", "[gateway][service][sync]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    std::atomic<int>          error_code{-1};
+    std::atomic<long long>    elapsed_ms{0};
+    std::thread               caller([&] {
+        const auto start  = std::chrono::steady_clock::now();
+        const auto result = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{10000});
+        const auto end    = std::chrono::steady_clock::now();
+        elapsed_ms        = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        if (result.error)
+            error_code = static_cast<int>(result.error.code);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    websocket->close(); // fail_pending must complete the sync request directly, not via the dispatcher
+
+    caller.join();
+    REQUIRE(error_code.load() == static_cast<int>(GatewayErrorCode::NotConnected));
+    REQUIRE(elapsed_ms.load() < 3000); // nowhere near the 10 s timeout
+
+    service.stop();
+}
+
+TEST_CASE("request_sync fails fast when the service stops while waiting", "[gateway][service][sync]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+
+    std::atomic<int>       error_code{-1};
+    std::atomic<long long> elapsed_ms{0};
+    std::thread            caller([&] {
+        const auto start  = std::chrono::steady_clock::now();
+        const auto result = service.request_sync("sync.silent", nlohmann::json::object(), std::chrono::milliseconds{10000});
+        const auto end    = std::chrono::steady_clock::now();
+        elapsed_ms        = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        if (result.error)
+            error_code = static_cast<int>(result.error.code);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    service.stop(); // fail_pending must complete the sync request directly, not via the dispatcher
+
+    caller.join();
+    const int code = error_code.load();
+    REQUIRE((code == static_cast<int>(GatewayErrorCode::NotConnected) || code == static_cast<int>(GatewayErrorCode::Cancelled)));
+    REQUIRE(elapsed_ms.load() < 3000); // nowhere near the 10 s timeout
 }

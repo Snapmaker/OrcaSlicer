@@ -10,7 +10,7 @@
 using namespace std::literals;
 
 #include <boost/log/trivial.hpp>
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 namespace Slic3r {
 

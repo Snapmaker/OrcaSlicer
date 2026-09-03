@@ -673,6 +673,10 @@ endif ()
 find_package(PNG REQUIRED)
 
 set(OpenGL_GL_PREFERENCE "LEGACY")
+if (APPLE)
+    # AGL was removed from the macOS 26 SDK. CMake 3.28 FindOpenGL still treats AGL as GLU.
+    set(OPENGL_glu_LIBRARY "" CACHE FILEPATH "Do not link AGL (removed in macOS 26 SDK)")
+endif ()
 find_package(OpenGL REQUIRED)
 
 set(GLEW_ROOT "${CMAKE_PREFIX_PATH}")

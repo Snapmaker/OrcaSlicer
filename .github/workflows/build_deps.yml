@@ -72,8 +72,31 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             cd ${{ github.workspace }}/deps/build
 
+      - name: Free disk space mac
+        if: inputs.os == 'macos-26'
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          sw_vers
+          df -h
+          XCODE_DEV="$(xcode-select -p)"
+          XCODE_APP="$(cd "${XCODE_DEV}/../.." && pwd -P)"
+          echo "Keeping selected Xcode: $XCODE_APP"
+          for app in /Applications/Xcode_*.app; do
+            [ -e "$app" ] || continue
+            APP_REAL="$(cd "$app" && pwd -P)"
+            if [ "$APP_REAL" = "$XCODE_APP" ]; then
+              echo "Keeping $app"
+            else
+              echo "Removing unused $app"
+              sudo rm -rf "$app"
+            fi
+          done
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -h
+
       - name: Build on Mac ${{ inputs.arch }}
-        if: inputs.os == 'macos-14'
+        if: inputs.os == 'macos-26'
         working-directory: ${{ github.workspace }}
         run: |
             brew install automake texinfo libtool
@@ -116,7 +139,7 @@ jobs:
 
       # Upload Artifacts (commented out to reduce artifact storage usage)
       # - name: Upload Mac ${{ inputs.arch }} artifacts
-      #   if: inputs.os == 'macos-14'
+      #   if: inputs.os == 'macos-26'
       #   uses: actions/upload-artifact@v4
       #   with:
       #     name: OrcaSlicer_dep_mac_${{ env.date }}
@@ -158,6 +181,6 @@ jobs:
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-26' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
       release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

@@ -1347,6 +1347,10 @@ int PartPlate::picking_id_component(int idx) const
 
 static void expand_plate_extruders(std::vector<int>& ids)
 {
+	// In CLI mode there is no wxApp instance: wxGetApp() resolves to *wxTheApp == nullptr and
+	// dereferencing any GUI_App member crashes (observed via get_extruders_under_cli).
+	if (wxTheApp == nullptr)
+		return;
 	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
 	if (num_physical > 0) {
 		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);

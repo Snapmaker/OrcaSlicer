@@ -12,6 +12,7 @@
 #include <chrono>
 #include <deque>
 #include <exception>
+#include <future>
 #include <random>
 #include <stdexcept>
 #include <utility>
@@ -494,6 +495,39 @@ std::int64_t GatewayService::send_request(const std::string& method, const nlohm
     return id;
 }
 
+GatewayService::ApiResult GatewayService::request_sync(const std::string& method, const nlohmann::json& params, std::chrono::milliseconds timeout)
+{
+    ApiResult result;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (stop_requested_ || state_ != ConnectionState::Connected || !websocket_open_) {
+            result.error = {GatewayErrorCode::NotConnected, "gateway websocket is not connected"};
+            return result;
+        }
+    }
+
+    auto               response = std::make_shared<std::promise<ApiResult>>();
+    std::future<ApiResult> future = response->get_future();
+    const std::int64_t     id     = next_request_id();
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_requests_.emplace(id, PendingRequest{[response](GatewayError error, const nlohmann::json& value) { response->set_value(ApiResult{error, value}); }, true});
+    }
+    if (!dependencies_.websocket->send(build_jsonrpc_request(id, method, params).dump())) {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_requests_.erase(id);
+        result.error = {GatewayErrorCode::TransportError, "failed to queue websocket request"};
+        return result;
+    }
+    if (future.wait_for(timeout) != std::future_status::ready) {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_requests_.erase(id);
+        result.error = {GatewayErrorCode::TransportError, "request timed out"};
+        return result;
+    }
+    return future.get();
+}
+
 std::int64_t GatewayService::watch_device(const nlohmann::json& params, RpcCallback callback)
 { return request("action.device.watch", params.is_null() ? nlohmann::json::object() : params, std::move(callback)); }
 
@@ -713,8 +747,12 @@ void GatewayService::complete_pending(std::int64_t id, GatewayError error, const
         request = std::move(pending->second);
         pending_requests_.erase(pending);
     }
-    if (request.callback)
-        dependencies_.dispatcher([callback = std::move(request.callback), error, result]() mutable { callback(error, result); });
+    if (request.callback) {
+        if (request.direct_invoke)
+            request.callback(error, result);
+        else
+            dependencies_.dispatcher([callback = std::move(request.callback), error, result]() mutable { callback(error, result); });
+    }
 }
 
 void GatewayService::fail_pending(const GatewayError& error)
@@ -725,10 +763,13 @@ void GatewayService::fail_pending(const GatewayError& error)
         requests.swap(pending_requests_);
     }
     for (auto& item : requests) {
-        if (item.second.callback) {
+        if (!item.second.callback)
+            continue;
+        if (item.second.direct_invoke)
+            item.second.callback(error, nlohmann::json::object());
+        else
             dependencies_.dispatcher(
                 [callback = std::move(item.second.callback), error]() mutable { callback(error, nlohmann::json::object()); });
-        }
     }
 }
 

@@ -138,6 +138,10 @@ public:
     void clear_notification_handler(const std::string& method);
 
     std::int64_t request(const std::string& method, const nlohmann::json& params, RpcCallback callback);
+    // Synchronous request. The callback is invoked directly on the websocket thread (bypassing
+    // the dispatcher), so this is safe from any thread except the gateway's own websocket I/O
+    // thread: waiting there would block the only thread that can deliver the response.
+    ApiResult    request_sync(const std::string& method, const nlohmann::json& params, std::chrono::milliseconds timeout);
     std::int64_t watch_device(const nlohmann::json& params, RpcCallback callback);
     ApiResult    get_device(const std::optional<std::string>& serial_number = std::nullopt);
     ApiResult    get_account();
@@ -149,6 +153,7 @@ private:
     struct PendingRequest
     {
         RpcCallback callback;
+        bool        direct_invoke{false}; // complete on the websocket thread instead of the dispatcher
     };
 
     void         run(const std::string locale);

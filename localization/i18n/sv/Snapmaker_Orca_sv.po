@@ -18260,3 +18260,42 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Orientera modellen"
+
+msgid "Adhesiveness Category"
+msgstr "Kategori för vidhäftningsförmåga"
+
+msgid "Filament category"
+msgstr "Filament kategori"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Gränssnitt lager för-extruderings avstånd"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "För-extruderings avstånd för gränssnitts lagret av prime tower (där olika material möts)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Gränssnitt lager för-extruderings längd"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "För-extruderings längd för gränssnitts lagret av prime tower (där olika material möts)."
+
+msgid "Interface layer print temperature"
+msgstr "Gränssnitts lagrets utskriftstemperatur"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Utskriftstemperatur för prime tower gränssnitts lager (där olika material träffas). Om satt till -1, använd max rekommenderad nozzle temperatur."
+
+msgid "Max speed"
+msgstr "Max hastighet"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Den maximala utskrifts hastigheten på prime tornet exklusive ramning."
+
+msgid "Internal ribs"
+msgstr "Invändiga ribbor"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Aktivera invändiga ribbor för att öka stabiliteten i prime tornet."
+
+msgid "Enable tower interface features"
+msgstr "Aktivera funktioner för tower gräns snittet"

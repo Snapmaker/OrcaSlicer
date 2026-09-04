@@ -22092,3 +22092,42 @@ msgstr ""
 #~ "Proszę podać poprawne wartości:\n"
 #~ "start > 10 kroków >= 0\n"
 #~ "koniec > start + krok)"
+
+msgid "Adhesiveness Category"
+msgstr "Kategoria przyczepności"
+
+msgid "Filament category"
+msgstr "Kategoria filamentu"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Odległość wstępnej ekstruzji dla warstwy łączącej"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Odległość wstępnej ekstruzji dla warstwy łączącej wieży czyszczącej (w miejscu styku różnych materiałów)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Długość wstępnej ekstruzji dla warstwy łączącej"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Długość wstępnej ekstruzji dla warstwy łączącej wieży czyszczącej (w miejscu styku różnych materiałów)."
+
+msgid "Interface layer print temperature"
+msgstr "Temperatura druku warstwy łączącej"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Temperatura druku dla warstwy łączącej wieży czyszczącej (w miejscu styku różnych materiałów). Jeśli ustawiona na -1, użyj maksymalnej rekomendowanej temperatury dyszy."
+
+msgid "Max speed"
+msgstr "Prędkość maks."
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Maksymalna prędkość drukowania wieży czyszczącej, poza wyciskaniem."
+
+msgid "Internal ribs"
+msgstr "Wewnętrzne użebrowanie"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Aktywuj wewnętrzne użebrowanie aby poprawić stabilność wieży czyszczącej."
+
+msgid "Enable tower interface features"
+msgstr "Włącz funkcje warstwy łączącej wierzy"

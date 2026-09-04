@@ -17728,3 +17728,42 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
+
+msgid "Adhesiveness Category"
+msgstr "粘着性カテゴリー"
+
+msgid "Filament category"
+msgstr "フィラメントカテゴリ"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "インターフェース層の事前押出し距離"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "異なる材料が接するプライムタワーのインターフェース層における、事前押出し距離です。"
+
+msgid "Interface layer pre-extrusion length"
+msgstr "インターフェース層の事前押出し長さ"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "異なる材料が接するプライムタワーのインターフェース層における、事前押出しの長さです。"
+
+msgid "Interface layer print temperature"
+msgstr "インターフェース層の造形温度"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "異なる材料が接するプライムタワーのインターフェース層に使用する造形温度です。-1 に設定すると、推奨ノズル温度の最大値が使用されます。"
+
+msgid "Max speed"
+msgstr "最高速度"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "ラム動作を除いたプライムタワーでの最大造形速度です。"
+
+msgid "Internal ribs"
+msgstr "内部リブ"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "プライムタワーの安定性を高めるために内部リブを有効にします。"
+
+msgid "Enable tower interface features"
+msgstr "プライムタワーのインターフェース機能を有効化"

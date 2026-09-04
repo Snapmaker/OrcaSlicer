@@ -20100,3 +20100,21 @@ msgstr ""
 
 #~ msgid "Right click to reset value to system default."
 #~ msgstr "Правая кнопка мыши - сброс значения до системного по умолчанию."
+
+msgid "Adhesiveness Category"
+msgstr "Категория адгезии"
+
+msgid "Filament category"
+msgstr "Категория прутка"
+
+msgid "Max speed"
+msgstr "Макс. скорость"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Максимальная скорость печати черновой башни без учёта рэмминга."
+
+msgid "Internal ribs"
+msgstr "Внутренние ребра"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Печать внутренних ребёр жёсткости для повышения устойчивости черновой башни."

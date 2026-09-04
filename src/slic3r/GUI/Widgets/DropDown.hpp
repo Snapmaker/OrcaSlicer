@@ -18,6 +18,7 @@ class DropDown : public PopupWindow
     std::vector<wxString> &       texts;
     std::vector<wxString> &       tips;
     std::vector<wxBitmap> &     icons;
+    std::vector<bool>     &     muted;
     bool                          need_sync  = false;
     int                         selection = -1;
     int                         hover_item = -1;
@@ -47,12 +48,14 @@ class DropDown : public PopupWindow
 public:
     DropDown(std::vector<wxString> &texts,
              std::vector<wxString> &tips,
-             std::vector<wxBitmap> &icons);
-    
+             std::vector<wxBitmap> &icons,
+             std::vector<bool>     &muted);
+
     DropDown(wxWindow *     parent,
              std::vector<wxString> &texts,
              std::vector<wxString> &tips,
              std::vector<wxBitmap> &icons,
+             std::vector<bool>     &muted,
              long           style     = 0);
     
     void Create(wxWindow *     parent,

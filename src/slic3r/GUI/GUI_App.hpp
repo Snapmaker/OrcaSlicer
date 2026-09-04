@@ -352,7 +352,7 @@ private:
 
 public:
     HttpServer       m_page_http_server;
-    mutable std::unique_ptr<Gateway::GatewayService> m_gateway_service;
+    mutable std::shared_ptr<Gateway::GatewayService> m_gateway_service;
     
 private:
     bool             m_show_gcode_window{true};
@@ -654,6 +654,7 @@ private:
     Gateway::PreprintStoreResult gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload,
                                                                 int ttl_seconds = 1800) const;
     bool            is_gateway_url(const wxString& url) const;
+    std::shared_ptr<Gateway::GatewayService> gateway_service() const { return m_gateway_service; }
 
     enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };
     /// Copy bundled flutter_web into the user data directory. On failure, records status for deferred user notification.

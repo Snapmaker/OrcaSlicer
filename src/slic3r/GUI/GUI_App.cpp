@@ -5642,7 +5642,7 @@ bool GUI_App::start_gateway_service(bool restart)
         dependencies.websocket = std::make_shared<Gateway::GatewayWebSocketTransport>();
         dependencies.dispatcher = [this](std::function<void()> task) { CallAfter(std::move(task)); };
 
-        m_gateway_service = std::make_unique<Gateway::GatewayService>(Gateway::GatewayService::Config{}, std::move(dependencies));
+        m_gateway_service = std::make_shared<Gateway::GatewayService>(Gateway::GatewayService::Config{}, std::move(dependencies));
         const std::string locale = gateway_locale();
         BOOST_LOG_TRIVIAL(info) << "starting connection gateway with locale " << locale;
         if (!m_gateway_service->start(locale))

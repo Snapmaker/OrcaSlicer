@@ -144,6 +144,7 @@
 #include "../Utils/PresetUpdater.hpp"
 #include "../Utils/Process.hpp"
 #include "../Utils/GatewayProtocol.hpp"
+#include "../Utils/GatewayDevice.hpp"
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
 #include "NotificationManager.hpp"
@@ -2126,7 +2127,14 @@ Sidebar::Sidebar(Plater *parent)
                     hasConnectDevice = true;
             }
 
-            if (!hasConnectDevice)
+            std::string                machine_type = "";
+            std::vector<std::string>   nozzle_diameters;
+            std::string                device_name = "";
+            // Single gateway RPC doubles as the connected-guard: a device answering
+            // machine.system_info is connected (avoids probe + query serial waits).
+            const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
+
+            if (!hasConnectDevice && !got_machine_info)
             {
                 // showdialog tips no connect device
                 wxTheApp->CallAfter([this]() {
@@ -2134,16 +2142,9 @@ Sidebar::Sidebar(Plater *parent)
                                       _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
                                       _L("Note"), wxOK);
                     dlg.ShowModal();
-                    });                
-                return;        
+                    });
+                return;
             }
-
-            std::string                machine_type = "";
-            std::vector<std::string>   nozzle_diameters;
-            std::string                device_name = "";
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            const bool got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
 
             const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
             if (!sync_nozzle_slots.empty()) {
@@ -9145,7 +9146,14 @@ void Sidebar::show_sync_filament_dialog()
         }
     }
 
-    if (!host && !device_machine) {
+    std::string machine_type;
+    std::string device_name;
+    std::vector<std::string> nozzle_diameters;
+    // Single gateway RPC doubles as the connected-guard: a device answering
+    // machine.system_info is connected (avoids probe + query serial waits).
+    bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
+
+    if (!host && !device_machine && !got_machine_info) {
         SyncRichConfirmDialog dlg(this,
             _L("No printer is connected. Please connect your U1 from the Device page before syncing."),
             wxYES_NO);
@@ -9161,14 +9169,6 @@ void Sidebar::show_sync_filament_dialog()
         static const std::set<std::string> white_list_machine_types = {
             "Snapmaker U1"
         };
-        std::string machine_type;
-        std::string device_name;
-        std::vector<std::string> nozzle_diameters;
-        bool got_machine_info = false;
-
-        if (host) {
-            got_machine_info = SSWCP::query_machine_info(host, machine_type, nozzle_diameters, device_name);
-        }
 
         if (!got_machine_info || machine_type.empty()) {
             if (device_machine) {

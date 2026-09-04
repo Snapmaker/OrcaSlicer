@@ -601,6 +601,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Frustum.hpp
     Utils/GatewayProtocol.cpp
     Utils/GatewayProtocol.hpp
+    Utils/GatewayDevice.cpp
+    Utils/GatewayDevice.hpp
     Utils/GatewayService.cpp
     Utils/GatewayService.hpp
     Utils/HexFile.cpp

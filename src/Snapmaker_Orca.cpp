@@ -841,7 +841,7 @@ static int construct_assemble_list(std::vector<assemble_plate_info_t> &assemble_
                     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": found no mesh data from stl file %1%, plate index %2%, object index %3%") % assemble_object.path % (index + 1) % (obj_index + 1);
                     return CLI_DATA_FILE_ERROR;
                 }
-                object_name.erase(object_name.end() - 3, object_name.end());
+                object_name.erase(object_name.end() - 4, object_name.end());
             }
             else if (boost::algorithm::iends_with(assemble_object.path, ".obj"))
             {

@@ -978,6 +978,12 @@ set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
+# Window caption. Keep install dir / Start Menu / registry without version.
+# CPack NSIS scripts are compiled as ACP (no Unicode/BOM). Extra commands MUST
+# stay ASCII-only; UTF-8 Chinese makes makensis fail with "Bad text encoding".
+set (CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_NAME}")
+set (CPACK_NSIS_PACKAGE_NAME "${CPACK_PACKAGE_NAME} V${Snapmaker_VERSION}")
+set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKAGE_NAME}\"")
 # Preinstall guard in one place:
 # 1) Block while app is running.
 # 2) If old version exists, uninstall it with clear failure reason.
@@ -1001,32 +1007,78 @@ SnapmakerOrcaPre_prompt:
   Abort
 SnapmakerOrcaPre_done:
   ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
-  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_uninst SnapmakerOrcaPre_has_uninst
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_uninst SnapmakerOrcaPre_have_uninst_str
 SnapmakerOrcaPre_read_hkcu_uninst:
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "UninstallString"
-SnapmakerOrcaPre_has_uninst:
-  StrCmp $0 "" SnapmakerOrcaPre_finish
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkml_space SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_read_hkml_space:
+  ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_read_hkcu_space SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_read_hkcu_space:
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "UninstallString"
+  StrCmp $0 "" SnapmakerOrcaPre_try_instdir SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_try_instdir:
+  IfFileExists "$INSTDIR\Uninstall.exe" 0 SnapmakerOrcaPre_check_app
+  StrCpy $0 "$INSTDIR\Uninstall.exe"
+  Goto SnapmakerOrcaPre_have_uninst_str
+SnapmakerOrcaPre_check_app:
+  IfFileExists "$INSTDIR\snapmaker-orca.exe" SnapmakerOrcaPre_missing_uninst SnapmakerOrcaPre_check_legacy_app
+SnapmakerOrcaPre_check_legacy_app:
+  IfFileExists "$INSTDIR\Snapmaker_Orca.exe" SnapmakerOrcaPre_missing_uninst SnapmakerOrcaPre_finish
 
-  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker_Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
-  Abort
-
-SnapmakerOrcaPre_uninst:
-  ClearErrors
+SnapmakerOrcaPre_have_uninst_str:
   StrCpy $2 $0 1 0
   StrCmp $2 "$\"" SnapmakerOrcaPre_trim_first_quote SnapmakerOrcaPre_check_last_quote
 SnapmakerOrcaPre_trim_first_quote:
   StrCpy $0 $0 "" 1
 SnapmakerOrcaPre_check_last_quote:
   StrCpy $2 $0 1 -1
-  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_last_quote SnapmakerOrcaPre_have_uninst_path
+  StrCmp $2 "$\"" SnapmakerOrcaPre_trim_last_quote SnapmakerOrcaPre_path_ready
 SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
-SnapmakerOrcaPre_have_uninst_path:
+SnapmakerOrcaPre_path_ready:
+  IfFileExists "$0" 0 SnapmakerOrcaPre_missing_uninst
 
+  StrCpy $4 ""
+  SetRegView 64
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  SetRegView 32
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "DisplayVersion"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Snapmaker\Snapmaker_Orca" "Version"
+  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
+  ReadRegStr $4 HKLM "Software\Snapmaker\Snapmaker Orca" "Version"
+SnapmakerOrcaPre_have_ver:
+  SetRegView 32
+  StrCpy $5 $4 1
+  StrCmp $5 "V" 0 SnapmakerOrcaPre_ver_ready
+  StrCpy $4 $4 "" 1
+SnapmakerOrcaPre_ver_ready:
+  StrCmp $4 "" SnapmakerOrcaPre_already_no_ver SnapmakerOrcaPre_already_ver
+SnapmakerOrcaPre_already_ver:
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca V$4 is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+SnapmakerOrcaPre_already_no_ver:
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
+  Abort
+
+SnapmakerOrcaPre_missing_uninst:
+  MessageBox MB_OK|MB_ICONSTOP "An existing Snapmaker Orca installation was found, but the uninstaller is missing.$\n$\nUninstaller: $0$\nInstall dir: $INSTDIR$\n$\nRemove the old folder manually, then run this installer again."
+  Abort
+
+SnapmakerOrcaPre_uninst:
+  ClearErrors
   StrLen $2 "Uninstall.exe"
   StrCpy $3 $0 -$2
   ; $3 ends with "\" (e.g. ...\Snapmaker_Orca\). _?="...\" breaks Windows cmdline parsing
-  ; (\" escapes the closing quote), truncating _?= at the first space — strip trailing backslashes.
+  ; (\" escapes the closing quote), truncating _?= at the first space -- strip trailing backslashes.
 SnapmakerOrcaPre_trim_inst_slash:
   StrCpy $2 $3 1 -1
   StrCmp $2 "\" SnapmakerOrcaPre_do_trim_slash SnapmakerOrcaPre_trim_slash_done
@@ -1053,7 +1105,13 @@ SnapmakerOrcaPre_uninst_launch_failed:
 SnapmakerOrcaPre_finish:
 ]=])
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
-file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS)
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
+set(_snapmaker_nsis_uninst_kill [=[
+  ExecWait 'cmd.exe /c taskkill /F /IM snapmaker-orca.exe /T'
+  ExecWait 'cmd.exe /c taskkill /F /IM Snapmaker_Orca.exe /T'
+]=])
+string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+       "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
 # Desktop shortcut inside MUI_STARTMENU_WRITE_BEGIN: respects "do not create shortcuts" on the start menu page.
 set(CPACK_NSIS_CREATE_ICONS_EXTRA [=[
   SetShellVarContext current

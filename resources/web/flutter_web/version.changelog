@@ -1,9 +1,9 @@
  #  Changelog
  
- ## 2026-07-27
+ ## 2026-08-24
  ###Features
-  * Filament Tangle Detection
-  * Foreign Object Detection
- ### Improvements
-  * Consumables recognition optimization
-  * Error code structure refinement for faster diagnostics
+  * Added device control capabilities. 
+  * Added support for more official consumables.
+ ### Bug Fixes
+  * Fixed IP input issue in the German language environment.
+  * Fixed other known issues.

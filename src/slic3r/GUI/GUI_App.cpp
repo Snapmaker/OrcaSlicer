@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
@@ -38,6 +39,8 @@
 #include <regex>
 #include <thread>
 #include <string_view>
+#include <cstdio>
+#include <random>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
@@ -96,6 +99,7 @@
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
+#include "../Utils/SnapLogClient.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
@@ -119,6 +123,7 @@
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
 #include "Widgets/ProgressDialog.hpp"
+#include "Widgets/SideButton.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
 #include "WebDownPluginDlg.hpp"
@@ -495,15 +500,6 @@ public:
                        startX + brandExt.GetWidth() + gap,
                        tagY);
 
-        // Beta text below brand, centered
-        int betaY = scaleY(279);
-        memDc.SetFont(m_constant_text.versionFont);
-        memDc.SetTextForeground(wxColour(143, 143, 143));
-        wxSize betaExt = memDc.GetTextExtent(m_constant_text.betaText);
-        wxRect betaRect(wxPoint(0, betaY),
-                        wxPoint(width, betaY + betaExt.GetHeight()));
-        memDc.DrawLabel(m_constant_text.betaText, betaRect, wxALIGN_CENTER);
-
         // Dynamic text y position (for SetText)
         m_action_line_y_position = scaleY(384);
     }
@@ -580,7 +576,6 @@ private:
     {
         wxString title;
         wxString version;
-        wxString betaText;
 
         wxFont   titleFont;
         wxFont   versionFont;
@@ -589,8 +584,7 @@ private:
         void init()
         {
             title    = "Snapmaker Orca";
-            version  = std::string("V") + Snapmaker_VERSION;
-            betaText = _L("Beta version");
+            version  = wxString::Format("V%s %s", Snapmaker_VERSION, _L("Release"));
 
             titleFont   = Label::sysFont(20, false);
             versionFont = Label::Body_13;
@@ -2052,6 +2046,15 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
+    if (m_token_check_timer) {
+        m_token_check_timer->Stop();
+        m_token_check_timer.reset();
+    }
+    if (m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer->Stop();
+        m_silent_refresh_timeout_timer.reset();
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy app_config");
@@ -2067,6 +2070,8 @@ GUI_App::~GUI_App()
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy preset updater");
         delete preset_updater;
     }
+
+    AllowlistManager::uninit();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": exit");
 
@@ -2415,6 +2420,7 @@ void GUI_App::on_start_subscribe_again(std::string dev_id)
 {
     auto start_subscribe_timer = new wxTimer(this, wxID_ANY);
     Bind(wxEVT_TIMER, [this, start_subscribe_timer, dev_id](auto& e) {
+        if (e.GetId() != start_subscribe_timer->GetId()) return;
         start_subscribe_timer->Stop();
         Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
         if (!dev) return;
@@ -2468,6 +2474,8 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
+
     stop_sync_user_preset();
 
     if (m_device_manager) {
@@ -3085,6 +3093,60 @@ bool GUI_App::on_init_inner()
         Slic3r::GUI::SSWCP::enable_debug_mode(false);
     }
 
+    namespace snap = ::Slic3r::SnapLog::v1;
+    snap::SnapLogConfig snap_cfg;
+    std::string snap_cc   = app_config ? app_config->get_country_code() : "";
+    snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
+                                "https://api.snapmaker.cn"
+                                :
+                                "https://api.snapmaker.com";
+    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
+    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
+    std::string machine_id;
+    if (app_config) {
+        machine_id = ::Slic3r::instance_id::ensure(*app_config);
+    }
+
+    snap::SnapLogDeps deps;
+    deps.do_request            = snap::make_production_do_request(snap_cfg);
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
+    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
+    deps.now_ms                = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    snap_cfg.app_version = SLIC3R_BUILD_ID;
+    snap_cfg.app_build   = GIT_COMMIT_HASH;
+#if defined(_WIN32)
+    snap_cfg.platform = "Windows";
+#elif defined(__APPLE__)
+    snap_cfg.platform = "macOS";
+#elif defined(__linux__)
+    snap_cfg.platform = "Linux";
+#else
+    snap_cfg.platform = "Unknown";
+#endif
+    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
+    {
+        std::random_device                          rd;
+        std::uniform_int_distribution<unsigned int> dist(0, 255);
+        char                                        hex[33];
+        for (int i = 0; i < 16; ++i) {
+            std::snprintf(hex + i * 2, 3, "%02x", dist(rd));
+        }
+        snap_cfg.session_id.assign(hex, 32);
+    }
+    snap_cfg.process_id = std::to_string(get_current_pid());
+    if (app_config) {
+        snap_cfg.region = app_config->get_country_code();
+    }
+    snap_cfg.home_for_redact = data_dir();
+
+    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+    BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
+
     profiler.mark("on_init_inner return");
 
     return true;
@@ -3467,6 +3529,16 @@ static bool is_default(wxWindow* win)
 
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
+    // SideButton manages its own per-state colors via StateColor and adapts
+    // them to the theme at paint time (StateColor::colorForStates runs the
+    // dark palette). Its SetBackgroundColour/SetForegroundColour overrides
+    // replace the WHOLE state table with one color, so letting this walker
+    // touch it permanently flattens the enabled/disabled/hover colors —
+    // seen when toggling dark mode off: the slice/print buttons keep a
+    // washed-out single background until the app restarts.
+    if (dynamic_cast<SideButton*>(window))
+        return;
+
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
         if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW)
             return;
@@ -3912,7 +3984,7 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) + "/web/flutter_web/index.html?path=2");
+            wxString url      = build_flutter_web_url("2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {
@@ -4252,6 +4324,9 @@ void GUI_App::sm_request_login(bool show_user_info)
 
 void GUI_App::sm_ShowUserLogin(bool show)
 {
+    if (show)
+        sm_stop_silent_token_refresh();
+
     // BBS: User Login Dialog
     if (show) {
         try {
@@ -4261,8 +4336,11 @@ void GUI_App::sm_ShowUserLogin(bool show)
                 delete sm_login_dlg;
                 sm_login_dlg = new SMUserLogin();
             }
+            m_sm_login_dialog_showing = true;
             sm_login_dlg->ShowModal();
+            m_sm_login_dialog_showing = false;
         } catch (std::exception&) {
+            m_sm_login_dialog_showing = false;
             ;
         }
     } else {
@@ -4282,9 +4360,19 @@ void GUI_App::sm_ShowUserLogin(bool show)
 
 void GUI_App::sm_request_user_logout()
 {
+    sm_stop_silent_token_refresh();
+    if (m_token_check_timer)
+        m_token_check_timer->Stop();
+
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
+    SNAP_LOG_BATCH(Info, "user logout",
+        {"eventName", "user_logout"}, {"source", "cpp"});
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
     try {
         wxString region = wxString::FromUTF8(app_config->get_country_code());
         std::string url    = "";
@@ -4298,6 +4386,94 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::sm_maybe_refresh_login_token()
+{
+    if (!m_login_userinfo.is_user_login())
+        return;
+    if (m_sm_login_dialog_showing || m_sm_silent_refresh_in_progress)
+        return;
+
+    auto now = std::chrono::system_clock::now();
+    if (now - m_token_last_refresh_success < std::chrono::hours(SM_TOKEN_REFRESH_INTERVAL_H))
+        return;
+    if (now - m_token_last_refresh_attempt < std::chrono::minutes(SM_TOKEN_REFRESH_RETRY_MIN))
+        return;
+
+    m_token_last_refresh_attempt   = now;
+    m_sm_silent_refresh_in_progress = true;
+    ++m_silent_refresh_generation;
+    BOOST_LOG_TRIVIAL(info) << "sm: start silent login-token refresh";
+
+    if (!m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, m_silent_refresh_timeout_timer->GetId());
+    }
+    m_silent_refresh_timeout_timer->Start(std::chrono::seconds(SM_TOKEN_REFRESH_TIMEOUT_S).count() * 1000, wxTIMER_ONE_SHOT);
+
+    auto refresh_generation = m_silent_refresh_generation;
+    CallAfter([refresh_generation]() {
+        if (refresh_generation == wxGetApp().sm_token_refresh_generation())
+            wxGetApp().sm_ShowUserLogin(false);
+    });
+}
+
+void GUI_App::on_silent_refresh_timeout(wxTimerEvent &event)
+{
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        BOOST_LOG_TRIVIAL(warning) << "sm: silent login-token refresh timed out, keep old token and retry later";
+    }
+}
+
+void GUI_App::sm_on_token_captured(std::size_t refresh_generation)
+{
+    if (refresh_generation != m_silent_refresh_generation) {
+        BOOST_LOG_TRIVIAL(warning) << "sm: ignore stale login-token capture";
+        return;
+    }
+
+    m_token_last_refresh_success = std::chrono::system_clock::now();
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        if (m_silent_refresh_timeout_timer)
+            m_silent_refresh_timeout_timer->Stop();
+        BOOST_LOG_TRIVIAL(info) << "sm: silent login-token refresh succeeded";
+    }
+
+    if (!m_token_check_timer) {
+        m_token_check_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, m_token_check_timer->GetId());
+    }
+    m_token_check_timer->Start(SM_TOKEN_CHECK_INTERVAL_MS);
+
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
+    }
+}
+
+bool GUI_App::sm_is_token_refresh_current(std::size_t refresh_generation) const
+{ return refresh_generation == m_silent_refresh_generation; }
+
+void GUI_App::on_token_check_timer(wxTimerEvent &event)
+{
+    sm_maybe_refresh_login_token();
+}
+
+void GUI_App::sm_stop_silent_token_refresh()
+{
+    ++m_silent_refresh_generation;
+    m_sm_silent_refresh_in_progress = false;
+    if (m_silent_refresh_timeout_timer)
+        m_silent_refresh_timeout_timer->Stop();
+
+    // Drop the hidden login dialog so a late redirect cannot re-login the user.
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
     }
 }
 
@@ -5236,6 +5412,19 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
+wxString GUI_App::flutter_web_base_url(const wxString& path)
+{
+    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()));
+}
+
+// Full launch url: base plus &version= of the embedding desktop client, so the
+// flutter side can identify which app build it is talking to.
+wxString GUI_App::build_flutter_web_url(const wxString& path)
+{
+    return flutter_web_base_url(path) + wxString::Format("&version=%s", Snapmaker_VERSION);
+}
+
 std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
@@ -6334,12 +6523,7 @@ bool GUI_App::check_and_keep_current_preset_changes(const wxString& caption, con
                             static_cast<TabPrinter*>(tab)->cache_extruder_cnt();
                         }
                     }
-                    std::vector<std::string> selected_options2;
-                    std::transform(selected_options.begin(), selected_options.end(), std::back_inserter(selected_options2), [](auto & o) {
-                        auto i = o.find('#');
-                        return i != std::string::npos ? o.substr(0, i) : o;
-                    });
-                    tab->cache_config_diff(selected_options2);
+                    tab->cache_config_diff(selected_options);
                     if (!is_called_from_configwizard)
                         tab->m_presets->discard_current_changes();
                 }
@@ -7123,6 +7307,23 @@ void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& s
     }
 }
 
+void GUI_App::notify_foreground_change(const bool active)
+{
+    if (active)
+        sm_maybe_refresh_login_token();
+
+    json data;
+    data["state"] = active;
+
+    for (const auto& instance : m_foreground_change_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = data;
+            ptr->send_to_js();
+        }
+    }
+}
+
 void GUI_App::cache_notify(const std::string& key, const json& res)
 {
     for (const auto& instance : m_cache_subscribers) {
@@ -7143,6 +7344,7 @@ void GUI_App::cache_notify(const std::string& key, const json& res)
 void GUI_App::user_update_privacy_notify(const bool& res)
 {
     set_privacy_policy(res);
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(res);
 
     json data;
 

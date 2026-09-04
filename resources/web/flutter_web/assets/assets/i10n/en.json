@@ -539,11 +539,14 @@
   "delete_time_lapse_desc": "Do you want to delete this video?",
   "delete_time_lapse_success": "{name} deleted",
   "delete_time_lapse_failed_format": "Delete video failed {}",
-  "time_lapse_video_downloaded_success_format": "Video {} downloaded",
-  "time_lapse_video_downloaded_success_2_format": "Video {} downloaded，but export video failed",
+  "time_lapse_video_downloaded_success_format": "Video {} saved to gallery",
+  "time_lapse_video_downloaded_success_2_format": "Video {} downloaded but failed to save to gallery",
   "time_lapse_video_start_downloading": "Start downloading...",
   "time_lapse_video_download_completed": "{name} downloaded",
   "time_lapse_video_export_video_failed": "Export video failed",
+  "time_lapse_cover_load_failed": "Failed to load",
+  "time_lapse_cover_retry": "Reload",
+  "time_lapse_exit_confirm_title": "Leaving will interrupt the download. Exit now?",
   "Network may be unstable, device connection may be unreliable.": "Network may be unstable, device connection may be unreliable",
   "network_unstable_partial_operation_failed": "Network unstable, partial operation may failed",
   "camera_turn_off_countdown": "Camera turn-off countdown",
@@ -571,7 +574,30 @@
   "Untitled Config": "Untitled Config",
   "Display Area": "Display Area",
   "Print Now is only available in Cloud Mode": "Print Now is only available in Cloud Mode",
-  "nozzle_mismatch_tip": "The nozzle diameter does not match the preset. Please confirm the match before starting the print.",
+  "nozzle": {
+    "flow": {
+      "standard": "Standard Flow",
+      "high": "High Flow"
+    },
+    "filament": {
+      "not_recommended_prefix": "Not recommended with the {} mm High Flow nozzle: ",
+      "unsupported_prefix": "Cannot be used with the {} mm High Flow nozzle: ",
+      "label_cf_gf": "CF or GF materials",
+      "label_pla_wood": "PLA Wood",
+      "label_tpu_90a": "TPU 90A",
+      "label_tpu_85a": "TPU 85A",
+      "regroup_tip": "Need to adjust the assignment? Regroup and slice."
+    },
+    "mismatch": {
+      "diameter": "Detected nozzle diameter mismatches between the machine and the print file ({x}). Please verify before printing.",
+      "high_flow_on_standard_error": "Nozzle {x}: Standard Flow installed. G-code specifies High Flow. Please confirm before printing.",
+      "high_flow_on_standard_error_multi": "{x} nozzles are Standard Flow. G-code specifies High Flow. Please confirm before printing.",
+      "standard_on_high_flow_warning": "Nozzle {x}: High Flow installed. G-code specifies Standard Flow. Please confirm before printing.",
+      "standard_on_high_flow_warning_multi": "{x} nozzles are High Flow. G-code specifies Standard Flow. Please confirm before printing.",
+      "material": "Detected filament type mismatches between the machine and the print file ({x}). Please verify before printing.",
+      "flow_tip": "This nozzle flow type does not match the file. Change the nozzle, or update the nozzle type on the printer."
+    }
+  },
   "Next": "Next",
   "File stream error. Please resend.": "File stream error. Please resend.",
   "purifier_fan_outer_desc": "Exhaust Fan Speed",

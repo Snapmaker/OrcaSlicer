@@ -518,6 +518,7 @@
   "Bed detecting...": "床面检测中...",
   "Docking Coordinate Calibrating": "停靠坐标校准",
   "Homing Calibration...": "归位校准中...",
+  "Stepper Resonance Calibration...":"GD电驱电机振动抑制校准...",
   "Pre-extruding...": "预挤出中...",
   "Cleaning Nozzle 1 (1/4)": "清洁1喷嘴 (1/4)",
   "Cleaning Nozzle 2 (2/4)": "清洁2喷嘴 (2/4)",
@@ -735,11 +736,14 @@
   "delete_time_lapse_desc": "确定要删除这个视频吗？",
   "delete_time_lapse_success": "{name} 已删除",
   "delete_time_lapse_failed_format": "删除视频失败 {}",
-  "time_lapse_video_downloaded_success_format": "视频 {} 已下载",
-  "time_lapse_video_downloaded_success_2_format": "视频 {} 已下载，但导出视频到相册失败",
+  "time_lapse_video_downloaded_success_format": "视频 {} 已下载到相册",
+  "time_lapse_video_downloaded_success_2_format": "视频 {} 已下载，但保存到相册失败",
   "time_lapse_video_start_downloading": "正在下载视频……",
   "time_lapse_video_download_completed": "{name} 已下载",
   "time_lapse_video_export_video_failed": "导出视频失败",
+  "time_lapse_cover_load_failed": "加载失败",
+  "time_lapse_cover_retry": "重新加载",
+  "time_lapse_exit_confirm_title": "离开会中断下载，是否确定退出？",
   "camera_turn_off_countdown": "摄像机关闭倒计时",
   "continue_camera": "继续播放",
   "Export": "导出",
@@ -767,7 +771,30 @@
   "No split data available": "没有可用的分盘数据",
   "Untitled Config": "未命名配置",
   "Display Area": "展示区域",
-  "nozzle_mismatch_tip": "喷嘴直径与预设均不一致，请确认匹配后再发起打印。",
+  "nozzle": {
+    "flow": {
+      "standard": "标准流量",
+      "high": "高流量"
+    },
+    "filament": {
+      "not_recommended_prefix": "不推荐使用{}mm 高流量喷嘴打印材料: ",
+      "unsupported_prefix": "不可以使用{}mm 高流量喷嘴打印材料: ",
+      "label_cf_gf": "CF或GF材料",
+      "label_pla_wood": "PLA Wood",
+      "label_tpu_90a": "TPU 90A",
+      "label_tpu_85a": "TPU 85A",
+      "regroup_tip": "对耗材分配不满意？重新分组并切片"
+    },
+    "mismatch": {
+      "diameter": "设备有 {x} 处喷嘴直径与文件不匹配。请确认一致后再发起打印。",
+      "high_flow_on_standard_error": "{x} 号喷嘴：设备端为标准流量，与 G-code 文件中的高流量类型不一致，请确认匹配后再发起打印。",
+      "high_flow_on_standard_error_multi": "设备有 {x} 处喷嘴为标准流量，与 G-code 文件中的高流量类型不一致，请确认匹配后再发起打印。",
+      "standard_on_high_flow_warning": "{x} 号喷嘴：设备端为高流量，与 G-code 文件中的标准流量类型不一致，请确认匹配后再发起打印。",
+      "standard_on_high_flow_warning_multi": "设备有 {x} 处喷嘴为高流量，与 G-code 文件中的标准流量类型不一致，请确认匹配后再发起打印。",
+      "material": "设备有 {x} 处耗材类型与文件不匹配。请确认一致后再发起打印。",
+      "flow_tip": "此喷嘴流量类型与文件要求不匹配，请更换喷嘴或在打印机上修改喷嘴类型"
+    }
+  },
   "Next": "下一步",
   "File stream error. Please resend.": "文件流错误，请重新发送。",
   "purifier_fan_outer_desc": "外排风扇风速",

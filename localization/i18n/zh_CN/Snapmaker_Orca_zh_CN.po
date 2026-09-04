@@ -5886,6 +5886,12 @@ msgstr "该项目由 Snapmaker Orca 2.3.1-alpha 创建，并使用了填充旋�
 msgid "Would you like Snapmaker Orca to automatically fix this by clearing the rotation template settings?"
 msgstr "您是否希望 Snapmaker Orca 清除旋转模板设置以自动修复此问题？"
 
+msgid "The current version of Snapmaker Orca cannot fully load this 3MF file. Please update to the latest version and try again."
+msgstr "当前 Snapmaker Orca 版本过低，无法完整加载此 3MF 文件。请更新至最新版本后重试。"
+
+msgid "Loading 3MF"
+msgstr "加载 3MF"
+
 #, c-format, boost-format
 msgid "The 3mf's version %s is newer than %s's version %s, found following unrecognized keys:"
 msgstr "该3mf的版本%s比%s的版本%s新，发现以下参数键值无法识别:"
@@ -7130,6 +7136,12 @@ msgstr "请在打印机屏幕上确认。"
 
 msgid "Log in failed. Please check the Pin Code."
 msgstr "登录失败，请检查Pin码。"
+
+msgid "Log in"
+msgstr "登录"
+
+msgid "Are you sure you want to log in?"
+msgstr "确定要登录吗？"
 
 msgid "Log in printer"
 msgstr "登录打印机"
@@ -8468,6 +8480,9 @@ msgstr "更新固件"
 
 msgid "Beta version"
 msgstr "Beta 版"
+
+msgid "Release"
+msgstr "版本"
 
 msgid "Updating"
 msgstr "更新中"
@@ -15306,7 +15321,7 @@ msgid ""
 "The mix ratios for %s in the Color Mapping list are outside the recommended %d"
 "%%–%d%% range. Adjust the mix ratios manually for better results."
 msgstr ""
-"Color Mapping 列表中 %s 的混色比例超出推荐范围 %d%%–%d%%。请手动调整混色比例以获得更好效果。"
+"颜色映射列表中 %s 混色比例超出推荐范围 %d%%–%d%%。建议手动调整混色比例，以获得更好的颜色效果。"
 
 msgid "Cannot enable both Variable Layer Height and Subdivide Mix Layer."
 msgstr "可变层高与混色细分层高功能互斥，请勿同时开启。"
@@ -15376,6 +15391,55 @@ msgstr "其他颜色"
 
 msgid "Multiple Color"
 msgstr "多色"
+# Snapmaker requirement 7.1: high-flow filament grouping UI
+
+msgid "High Flow"
+msgstr "高流量"
+
+msgid "[Standard flow]"
+msgstr "【标准流量】"
+
+msgid "[High flow]"
+msgstr "【高流量】"
+
+msgid "Standard Mode"
+msgstr "标准模式"
+
+msgid "Custom Mode"
+msgstr "自定义模式"
+
+msgid "Prioritize print quality"
+msgstr "优先保证打印质量"
+
+msgid "Manually assign filaments to nozzles"
+msgstr "手动分配耗材给喷嘴"
+
+msgid "Custom Filament Grouping"
+msgstr "自定义耗材分组"
+
+msgid "Slicing will follow the nozzle assignment below:"
+msgstr "将基于下列喷嘴分配方案进行切片："
+
+msgid "Standard Nozzle"
+msgstr "标准喷嘴"
+
+msgid "High Flow Nozzle"
+msgstr "高流量喷嘴"
+
+msgid "Tip: Drag and drop filaments to assign them to a different nozzle."
+msgstr "提示：拖拽耗材图标以分配至不同喷嘴。"
+
+msgid "Warning:%1%mm High Flow nozzles are not recommended for %2%"
+msgstr "不建议使用%1%mm 高流量喷嘴打印%2%"
+
+msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
+msgstr "不可以使用%1%mm 高流量喷嘴打印%2%"
+
+msgid "CF/GF filaments"
+msgstr "CF/GF耗材"
+
+msgid "Swap the two groups"
+msgstr "交换两组耗材"
 
 msgid "High temperature:"
 msgstr "高温耗材："
@@ -15429,8 +15493,8 @@ msgstr "耗材管理列表仅存在单条耗材时，无法启用混色匹配功
 msgid "Color mapping list limit reached (max 64 colors). Excess colors will be removed."
 msgstr "颜色映射列表已达上限（64 色），超出颜色将被移除。"
 
-msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n2.The order of the Color Mapping list may differ from that of the Color Mixing list."
-msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜色映射。\n提示：\n1.混色匹配基于官方推荐的 CMYG 耗材进行计算，匹配结果可能与模型原始颜色存在差异。\n2.颜色映射列表中的顺序可能与耗材混色列表的顺序不同。"
+msgid "Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\nNote:\n1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n2. The order of the Color Mapping list may differ from that of the Color Mixing list."
+msgstr "自动计算最接近原模型颜色的混色方案，并一键完成颜色映射。\n提示：\n1. 混色匹配基于官方推荐的耗材进行计算，匹配结果可能与模型原始颜色存在差异。\n2. 颜色映射列表中的顺序可能与耗材混色列表的顺序不同。"
 
 msgid "No model detected. Import a multi-color model to continue."
 msgstr "未检测到模型，请先导入多色模型。"
@@ -15483,8 +15547,11 @@ msgstr "开始匹配"
 msgid "Rematch"
 msgstr "重新匹配"
 
-msgid "Automatically uses official CMYG filaments for color mixing. The mix ratio for each color is limited to %d%%–%d%%."
-msgstr "自动选择官方 CMYG 耗材进行混色匹配。单色混色比例范围：%d%%–%d%%。"
+msgid "Automatically select an official filament set for color mixing match. Mix ratio for each color: 0%–70%."
+msgstr "自动选择官方混色耗材套装进行混色匹配。单色混色比例范围：0%–70%。"
 
 msgid "Manually select filaments from the current list for color mixing."
 msgstr "手动选择当前列表中的耗材进行混色匹配。"
+
+msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
+msgstr "未配置官方 Full Spectrum 全光谱耗材，将自动使用已配置的耗材。完成官方耗材配置后，可在耗材列表中进行替换，不影响混色匹配结果。"

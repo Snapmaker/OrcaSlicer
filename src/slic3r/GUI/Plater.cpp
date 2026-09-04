@@ -15850,15 +15850,18 @@ bool Plater::priv::confirm_auto_generated_gradients(wxWindow *parent, size_t num
     if (app_config == nullptr)
         return MixedFilamentManager::auto_generate_enabled();
 
-    const bool pref_enabled = app_config->get_bool("auto_generate_gradients");
-    if (!pref_enabled) {
+    const bool auto_generate_enabled = app_config->get_bool("auto_generate_gradients");
+    const bool without_confirmation  = app_config->get_bool("auto_generate_gradients_without_confirmation");
+    const MixedFilamentAutoGradientAction action =
+        mixed_filament_auto_gradient_action(auto_generate_enabled, without_confirmation, num_physical);
+    if (action == MixedFilamentAutoGradientAction::Disable) {
         m_last_auto_gradient_prompt_physical_count = 0;
         m_last_auto_gradient_prompt_accepted = false;
         MixedFilamentManager::set_auto_generate_enabled(false);
         return false;
     }
 
-    if (num_physical <= 4) {
+    if (action == MixedFilamentAutoGradientAction::Generate) {
         m_last_auto_gradient_prompt_physical_count = 0;
         m_last_auto_gradient_prompt_accepted = false;
         MixedFilamentManager::set_auto_generate_enabled(true);
@@ -15882,12 +15885,15 @@ bool Plater::priv::confirm_auto_generated_gradients(wxWindow *parent, size_t num
         _L("Using %d physical filaments will create %d auto-generated gradients.\nDo you want to create them now?"),
         int(num_physical),
         int(auto_gradient_count));
-    const int result = MessageDialog(parent,
-                                     message,
-                                     wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Auto gradients"),
-                                     wxYES_NO | wxYES_DEFAULT | wxCENTRE | wxICON_QUESTION)
-                           .ShowModal();
+    MessageDialog dialog(parent, message, wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Auto gradients"),
+                         wxYES_NO | wxYES_DEFAULT | wxCENTRE | wxICON_QUESTION);
+    dialog.show_dsa_button(_L("Always create auto-generated gradients without asking"));
+    const int  result   = dialog.ShowModal();
     const bool accepted = result == wxID_YES;
+    if (accepted && dialog.get_checkbox_state()) {
+        app_config->set_bool("auto_generate_gradients_without_confirmation", true);
+        app_config->save();
+    }
     m_last_auto_gradient_prompt_physical_count = num_physical;
     m_last_auto_gradient_prompt_accepted = accepted;
     MixedFilamentManager::set_auto_generate_enabled(accepted);
@@ -24668,5 +24674,4 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 }
 
 }}    // namespace Slic3r::GUI
-
 

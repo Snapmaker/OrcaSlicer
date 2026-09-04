@@ -376,6 +376,8 @@ void GatewayService::stop()
         std::lock_guard<std::mutex> lock(state_mutex_);
         stop_requested_ = true;
         state_          = ConnectionState::Disconnected;
+        port_           = 0;
+        health_         = HealthInfo{};
         websocket_open_ = false;
     }
     state_condition_.notify_all();
@@ -421,6 +423,8 @@ HealthInfo GatewayService::health() const
 std::string GatewayService::base_url() const
 {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    if (state_ != ConnectionState::Connected)
+        return {};
     return health_.base_url;
 }
 
@@ -429,6 +433,8 @@ std::string GatewayService::web_url(const std::string& page_key) const
     HealthInfo copied_health;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        if (state_ != ConnectionState::Connected)
+            return {};
         copied_health = health_;
     }
 
@@ -600,7 +606,9 @@ void GatewayService::run(const std::string locale)
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             state_          = ConnectionState::Disconnected;
-            websocket_open_ = false;
+            port_           = 0;
+            health_         = HealthInfo{};
+            websocket_open_  = false;
         }
         fail_pending({GatewayErrorCode::NotConnected, "gateway connection was lost"});
         dependencies_.websocket->close();

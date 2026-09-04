@@ -202,9 +202,6 @@ private:
     void sw_OpenNetworkDialog();
 
 
-public:    
-    void update_filament_info(const json& objects, bool send_message = false);
-
 protected:
     std::thread m_work_thread; // Worker thread
 
@@ -472,8 +469,6 @@ private:
     // Request device heartbeat
     void sw_MachineHeartbeat();
 
-    // update machine filament info
-    void sw_UpdateMachineFilamentInfo();
 };
 
 // Instance class for Snapmaker machine manage

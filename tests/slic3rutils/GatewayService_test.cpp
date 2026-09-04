@@ -220,6 +220,29 @@ TEST_CASE("GatewayService reconnects after the first websocket failure", "[gatew
     service.stop();
 }
 
+TEST_CASE("GatewayService clears cached endpoints after websocket disconnect", "[gateway][service]")
+{
+    std::shared_ptr<ConnectionProcessManager> process;
+    std::shared_ptr<FakeHttp>                 http;
+    std::shared_ptr<FakeWebSocket>            websocket;
+    GatewayService::Config                    config;
+    config.reconnect.initial_delay = std::chrono::milliseconds{1};
+    config.reconnect.max_delay     = std::chrono::milliseconds{1};
+    config.reconnect.max_attempts  = 1;
+    GatewayService service(config, make_dependencies(process, http, websocket));
+
+    REQUIRE(service.start("zh-CN"));
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
+    REQUIRE_FALSE(service.web_url("home_page").empty());
+
+    websocket->listener.closed("connection lost");
+    REQUIRE(wait_for_state(service, ConnectionState::Disconnected));
+    REQUIRE(service.port() == 0);
+    REQUIRE(service.base_url().empty());
+    REQUIRE(service.web_url("home_page").empty());
+    REQUIRE(service.localfile_url("a.gcode").empty());
+}
+
 TEST_CASE("GatewayService bounded wait fails when the gateway cannot start", "[gateway][service]")
 {
     std::shared_ptr<ConnectionProcessManager> process =

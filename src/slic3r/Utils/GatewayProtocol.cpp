@@ -15,6 +15,17 @@ bool get_string(const nlohmann::json& object, const char* key, std::string& valu
     return true;
 }
 
+bool get_optional_string(const nlohmann::json& object, const char* key, std::string& value)
+{
+    const auto item = object.find(key);
+    if (item == object.end())
+        return true;
+    if (!item->is_string())
+        return false;
+    value = item->get<std::string>();
+    return true;
+}
+
 } // namespace
 
 nlohmann::json build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params)
@@ -64,6 +75,19 @@ GatewayError parse_health(const std::string& body, HealthInfo& health)
         return {GatewayErrorCode::InvalidResponse, "health base_url is missing"};
 
     get_string(root, "cli_version", health.cli_version);
+    const auto device_connected = root.find("device_connected");
+    const auto device_sn        = root.find("sn");
+    if (device_connected != root.end()) {
+        if (!device_connected->is_boolean())
+            return {GatewayErrorCode::InvalidResponse, "health device_connected must be a boolean"};
+        if (device_sn != root.end() && !device_sn->is_string())
+            return {GatewayErrorCode::InvalidResponse, "health sn must be a string"};
+
+        health.has_device_state = true;
+        health.device_connected = device_connected->get<bool>();
+        if (device_sn != root.end())
+            health.device_sn = device_sn->get<std::string>();
+    }
     health.pages.clear();
     for (const auto& item : server_url->items()) {
         if (item.key() == "base_url")
@@ -72,6 +96,56 @@ GatewayError parse_health(const std::string& body, HealthInfo& health)
             health.pages.emplace(item.key(), item.value().get<std::string>());
     }
     return {};
+}
+
+std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params)
+{
+    if (!params.is_object())
+        return std::nullopt;
+
+    const nlohmann::json* source = &params;
+    const auto            device = params.find("device");
+    if (device != params.end()) {
+        if (!device->is_object())
+            return std::nullopt;
+        source = &*device;
+    }
+
+    ActiveDeviceSnapshot active_device;
+    for (const char* key : {"sn", "device_sn", "serial_number"}) {
+        if (get_string(*source, key, active_device.serial_number) && !active_device.serial_number.empty())
+            break;
+        active_device.serial_number.clear();
+    }
+    if (active_device.serial_number.empty())
+        return std::nullopt;
+
+    const auto connected = source->find("connected");
+    if (connected == source->end() || !connected->is_boolean())
+        return std::nullopt;
+    active_device.connected = connected->get<bool>();
+
+    if (!get_optional_string(*source, "machine_type", active_device.machine_type) ||
+        !get_optional_string(*source, "device_name", active_device.device_name) ||
+        !get_optional_string(*source, "preset_name", active_device.preset_name))
+        return std::nullopt;
+
+    for (const char* key : {"nozzle_diameters", "nozzle_sizes"}) {
+        const auto diameters = source->find(key);
+        if (diameters == source->end())
+            continue;
+        if (!diameters->is_array())
+            return std::nullopt;
+        for (const auto& diameter : *diameters) {
+            if (!diameter.is_string())
+                return std::nullopt;
+            active_device.nozzle_diameters.push_back(diameter.get<std::string>());
+        }
+        break;
+    }
+
+    active_device.valid = true;
+    return active_device;
 }
 
 RpcFrame classify_jsonrpc_message(const nlohmann::json& message)

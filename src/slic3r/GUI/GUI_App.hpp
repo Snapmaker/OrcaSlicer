@@ -35,6 +35,7 @@
 #include <mutex>
 #include <stack>
 #include <unordered_map>
+#include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -79,6 +80,7 @@ class TaskManager;
 
 namespace Gateway {
 class GatewayService;
+struct ActiveDeviceSnapshot;
 struct PreprintStoreResult;
 }
 
@@ -102,6 +104,7 @@ class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
 class NetworkErrorDialog;
+class GatewayMachineSnapshot;
 
 
 enum FileType
@@ -366,6 +369,19 @@ private:
     wxTimer* m_machine_find_timer = nullptr;
     std::shared_ptr<Bonjour> m_machine_find_engine = nullptr;
     const int                m_machine_find_id     = 10086;
+    std::unique_ptr<GatewayMachineSnapshot> m_gateway_machine_snapshot;
+    struct GatewayActiveDeviceState
+    {
+        bool                     valid{false};
+        bool                     connected{false};
+        std::string              serial_number;
+        std::string              machine_type;
+        std::string              device_name;
+        std::string              preset_name;
+        std::vector<std::string> nozzle_diameters;
+    };
+    GatewayActiveDeviceState m_gateway_active_device;
+    std::string m_gateway_loaded_base_url;
 
   public:
     DynamicPrintConfig*             get_host_config() {
@@ -675,6 +691,10 @@ private:
     bool            load_language(wxString language, bool initial);
     std::string     gateway_locale() const;
 
+private:
+    void            register_gateway_notifications();
+
+public:
     Tab*            get_tab(Preset::Type type);
     Tab*            get_plate_tab();
     Tab*            get_model_tab(bool part = false);

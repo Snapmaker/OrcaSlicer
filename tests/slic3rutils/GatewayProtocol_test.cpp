@@ -4,6 +4,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <vector>
+
 using namespace Slic3r::Gateway;
 using nlohmann::json;
 
@@ -13,6 +15,8 @@ TEST_CASE("parse_health accepts the documented health response", "[gateway][prot
         "status": "ok",
         "cli_version": "1.0",
         "components": {"ipc_server": "ok", "web_server": "ok"},
+        "device_connected": true,
+        "sn": "U1-001",
         "server_url": {
             "base_url": "http://127.0.0.1:8080/",
             "home_page": "/index.html?x=1",
@@ -23,6 +27,9 @@ TEST_CASE("parse_health accepts the documented health response", "[gateway][prot
     REQUIRE(!parse_health(body, health));
     REQUIRE(health.cli_version == "1.0");
     REQUIRE(health.base_url == "http://127.0.0.1:8080/");
+    REQUIRE(health.device_connected);
+    REQUIRE(health.device_sn == "U1-001");
+    REQUIRE(health.has_device_state);
     REQUIRE(health.pages.at("home_page") == "/index.html?x=1");
     REQUIRE(health.pages.find("base_url") == health.pages.end());
 }
@@ -34,6 +41,74 @@ TEST_CASE("parse_health rejects unhealthy components", "[gateway][protocol]")
     const GatewayError error = parse_health(body, health);
     REQUIRE(error);
     REQUIRE(error.code == GatewayErrorCode::HealthNotReady);
+}
+
+TEST_CASE("parse_health accepts an explicit disconnected device without sn", "[gateway][protocol]")
+{
+    HealthInfo health;
+    const auto body = json{
+        {"status", "ok"},
+        {"components", json{{"ipc_server", "ok"}, {"web_server", "ok"}}},
+        {"device_connected", false},
+        {"server_url", {{"base_url", "http://127.0.0.1:8080/"}, {"home_page", "/index.html"}}}
+    }.dump();
+
+    REQUIRE(!parse_health(body, health));
+    REQUIRE(health.has_device_state);
+    REQUIRE_FALSE(health.device_connected);
+    REQUIRE(health.device_sn.empty());
+
+    const auto invalid = json{
+        {"status", "ok"},
+        {"components", json{{"ipc_server", "ok"}, {"web_server", "ok"}}},
+        {"device_connected", "false"},
+        {"server_url", {{"base_url", "http://127.0.0.1:8080/"}, {"home_page", "/index.html"}}}
+    }.dump();
+    const auto error = parse_health(invalid, health);
+    REQUIRE(error);
+    REQUIRE(error.code == GatewayErrorCode::InvalidResponse);
+}
+
+TEST_CASE("parse_health ignores device state when connection state is absent", "[gateway][protocol]")
+{
+    HealthInfo health;
+    const auto body = json{
+        {"status", "ok"},
+        {"components", json{{"ipc_server", "ok"}, {"web_server", "ok"}}},
+        {"sn", "U1-001"},
+        {"server_url", {{"base_url", "http://127.0.0.1:8080/"}, {"home_page", "/index.html"}}}
+    }.dump();
+
+    REQUIRE(!parse_health(body, health));
+    REQUIRE_FALSE(health.has_device_state);
+    REQUIRE(health.device_sn.empty());
+}
+
+TEST_CASE("parse_active_device accepts direct and nested payloads", "[gateway][protocol]")
+{
+    const auto parsed = parse_active_device(json{{"sn", "U1-001"},
+                                                {"connected", true},
+                                                {"machine_type", "Snapmaker U1"},
+                                                {"device_name", "Studio U1"},
+                                                {"preset_name", "Snapmaker U1 0.4"},
+                                                {"nozzle_diameters", json::array({"0.4", "0.4"})}});
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->valid);
+    REQUIRE(parsed->connected);
+    REQUIRE(parsed->serial_number == "U1-001");
+    REQUIRE(parsed->machine_type == "Snapmaker U1");
+    REQUIRE(parsed->device_name == "Studio U1");
+    REQUIRE(parsed->preset_name == "Snapmaker U1 0.4");
+    REQUIRE(parsed->nozzle_diameters == std::vector<std::string>{"0.4", "0.4"});
+
+    const auto nested = parse_active_device(json{{"device", {{"device_sn", "U1-002"}, {"connected", false}}}});
+    REQUIRE(nested.has_value());
+    REQUIRE(nested->valid);
+    REQUIRE_FALSE(nested->connected);
+    REQUIRE(nested->serial_number == "U1-002");
+
+    REQUIRE_FALSE(parse_active_device(json{{"connected", true}}).has_value());
+    REQUIRE_FALSE(parse_active_device(json{{"sn", "U1-001"}, {"connected", "online"}}).has_value());
 }
 
 TEST_CASE("JSON-RPC frames are classified and requests are built", "[gateway][protocol]")

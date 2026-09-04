@@ -40,6 +40,20 @@ struct HealthInfo
     std::string                        cli_version;
     std::string                        base_url;
     std::map<std::string, std::string> pages;
+    bool                               has_device_state{false};
+    bool                               device_connected{false};
+    std::string                        device_sn;
+};
+
+struct ActiveDeviceSnapshot
+{
+    bool                      valid{false};
+    bool                      connected{false};
+    std::string               serial_number;
+    std::string               machine_type;
+    std::string               device_name;
+    std::string               preset_name;
+    std::vector<std::string>  nozzle_diameters;
 };
 
 struct HttpResponse
@@ -70,6 +84,7 @@ struct RpcFrame
 
 nlohmann::json                build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params);
 GatewayError                  parse_health(const std::string& body, HealthInfo& health);
+std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params);
 RpcFrame                      classify_jsonrpc_message(const nlohmann::json& message);
 std::optional<nlohmann::json> parse_json_object(const std::string& body);
 

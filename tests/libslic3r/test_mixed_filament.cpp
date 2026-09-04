@@ -3,6 +3,7 @@
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
+#include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
@@ -409,6 +410,27 @@ TEST_CASE("Mixed filament auto generation can be disabled without dropping custo
     MixedFilamentManager loaded;
     loaded.load_custom_entries(serialized_auto_rows, colors);
     CHECK(loaded.mixed_filaments().empty());
+}
+
+TEST_CASE("Auto-gradient policy disables generation when the feature is off", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(false, false, 7) == MixedFilamentAutoGradientAction::Disable);
+    CHECK(mixed_filament_auto_gradient_action(false, true, 7) == MixedFilamentAutoGradientAction::Disable);
+}
+
+TEST_CASE("Auto-gradient policy generates small sets without confirmation", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(true, false, 4) == MixedFilamentAutoGradientAction::Generate);
+}
+
+TEST_CASE("Auto-gradient policy asks before generating a large set by default", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(true, false, 5) == MixedFilamentAutoGradientAction::Confirm);
+}
+
+TEST_CASE("Auto-gradient policy honors the persistent confirmation opt-out", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(true, true, 7) == MixedFilamentAutoGradientAction::Generate);
 }
 
 TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by inset", "[MixedFilament]")

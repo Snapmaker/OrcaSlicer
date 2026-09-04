@@ -322,6 +322,10 @@ void AppConfig::set_defaults()
         set_bool("auto_generate_gradients", false);
     }
 
+    if (get("auto_generate_gradients_without_confirmation").empty()) {
+        set_bool("auto_generate_gradients_without_confirmation", false);
+    }
+
     if (get("show_home_page").empty()) {
         set_bool("show_home_page", true);
     }

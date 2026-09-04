@@ -111,6 +111,18 @@ TEST_CASE("parse_active_device accepts direct and nested payloads", "[gateway][p
     REQUIRE_FALSE(parse_active_device(json{{"sn", "U1-001"}, {"connected", "online"}}).has_value());
 }
 
+TEST_CASE("parse_device_sn uses the active device contract", "[gateway][protocol]")
+{
+    for (const char* key : {"sn", "device_sn", "serial_number"}) {
+        REQUIRE(parse_device_sn(json{{key, "U1-001"}}) == "U1-001");
+        REQUIRE(parse_device_sn(json{{"device", {{key, "U1-002"}}}}) == "U1-002");
+    }
+
+    REQUIRE(parse_device_sn(json{{"device", json{{"connected", true}}}}).empty());
+    REQUIRE(parse_device_sn(json{{"sn", 1}}).empty());
+    REQUIRE(parse_device_sn(json::array()).empty());
+}
+
 TEST_CASE("JSON-RPC frames are classified and requests are built", "[gateway][protocol]")
 {
     const nlohmann::json request = build_jsonrpc_request(7, "action.device.watch", {{"sn", "A1"}});

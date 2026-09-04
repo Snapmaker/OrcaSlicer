@@ -381,6 +381,7 @@ public:
 
     // 添加设备相关的方法
     void save_device_info(const DeviceInfo& device);
+    bool update_device_info(const DeviceInfo& device);
     void remove_device_info(const std::string& dev_id);
     std::vector<DeviceInfo> get_devices() const;
     bool get_device_info(const std::string& dev_id, DeviceInfo& info) const;

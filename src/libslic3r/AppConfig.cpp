@@ -1526,6 +1526,20 @@ void AppConfig::save_device_info(const DeviceInfo& device)
     m_dirty = true;
 }
 
+bool AppConfig::update_device_info(const DeviceInfo& device)
+{
+    auto it = std::find_if(m_device_list.begin(), m_device_list.end(), [&device](const DeviceInfo& existing) {
+        return (!device.dev_id.empty() && existing.dev_id == device.dev_id) ||
+               (!device.sn.empty() && existing.sn == device.sn);
+    });
+    if (it == m_device_list.end())
+        return false;
+
+    *it      = device;
+    m_dirty = true;
+    return true;
+}
+
 void AppConfig::clear_device_info()
 {
     m_device_list.clear();

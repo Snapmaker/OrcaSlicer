@@ -182,28 +182,6 @@ typedef BOOL (WINAPI *LPFN_ISWOW64PROCESS2)(
 using namespace std::literals;
 namespace pt = boost::property_tree;
 
-namespace {
-
-std::string gateway_device_sn(const nlohmann::json& params)
-{
-    if (!params.is_object())
-        return {};
-    for (const char* key : {"sn", "device_sn", "serial_number"}) {
-        const auto value = params.find(key);
-        if (value != params.end() && value->is_string())
-            return value->get<std::string>();
-    }
-    const auto device = params.find("device");
-    if (device != params.end() && device->is_object()) {
-        const auto sn = device->find("sn");
-        if (sn != device->end() && sn->is_string())
-            return sn->get<std::string>();
-    }
-    return {};
-}
-
-} // namespace
-
 namespace Slic3r {
 namespace GUI {
 
@@ -5716,37 +5694,44 @@ void GUI_App::register_gateway_notifications()
         if (app_config == nullptr || serial_number.empty())
             return;
 
-        bool changed = false;
-        for (DeviceInfo& device : app_config->get_devices()) {
-            if (device.sn != serial_number && device.dev_id != serial_number)
+        DeviceInfo device;
+        bool       found_device = false;
+        for (const DeviceInfo& candidate : app_config->get_devices()) {
+            if (candidate.sn != serial_number && candidate.dev_id != serial_number)
                 continue;
-            bool device_changed = false;
-            if (device.connected != active_device.connected) {
-                device.connected = active_device.connected;
-                device_changed = true;
-            }
-            if (active_device.valid && device.model_name != active_device.machine_type && !active_device.machine_type.empty()) {
-                device.model_name = active_device.machine_type;
-                device_changed = true;
-            }
-            if (active_device.valid && device.dev_name != active_device.device_name && !active_device.device_name.empty()) {
-                device.dev_name = active_device.device_name;
-                device_changed = true;
-            }
-            if (active_device.valid && device.preset_name != active_device.preset_name && !active_device.preset_name.empty()) {
-                device.preset_name = active_device.preset_name;
-                device_changed = true;
-            }
-            if (active_device.valid && device.nozzle_sizes != active_device.nozzle_diameters && !active_device.nozzle_diameters.empty()) {
-                device.nozzle_sizes = active_device.nozzle_diameters;
-                device_changed = true;
-            }
-            if (!device_changed)
-                continue;
-            app_config->save_device_info(device);
-            changed = true;
+            device         = candidate;
+            found_device   = true;
+            break;
         }
-        if (changed && mainframe != nullptr && mainframe->plater() != nullptr)
+        if (!found_device)
+            return;
+
+        bool device_changed = false;
+        if (device.connected != active_device.connected) {
+            device.connected = active_device.connected;
+            device_changed   = true;
+        }
+        if (active_device.valid && device.model_name != active_device.machine_type && !active_device.machine_type.empty()) {
+            device.model_name = active_device.machine_type;
+            device_changed    = true;
+        }
+        if (active_device.valid && device.dev_name != active_device.device_name && !active_device.device_name.empty()) {
+            device.dev_name  = active_device.device_name;
+            device_changed   = true;
+        }
+        if (active_device.valid && device.preset_name != active_device.preset_name && !active_device.preset_name.empty()) {
+            device.preset_name = active_device.preset_name;
+            device_changed     = true;
+        }
+        if (active_device.valid && device.nozzle_sizes != active_device.nozzle_diameters && !active_device.nozzle_diameters.empty()) {
+            device.nozzle_sizes = active_device.nozzle_diameters;
+            device_changed      = true;
+        }
+        if (!device_changed)
+            return;
+
+        app_config->update_device_info(device);
+        if (mainframe != nullptr && mainframe->plater() != nullptr)
             mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
     };
 
@@ -5768,14 +5753,10 @@ void GUI_App::register_gateway_notifications()
             return;
         }
 
-        const std::string previous_serial_number = m_gateway_active_device.valid ? m_gateway_active_device.serial_number : std::string{};
         m_gateway_active_device = active_device;
+        if (m_gateway_machine_snapshot != nullptr)
+            m_gateway_machine_snapshot->set_active_device(active_device.serial_number, active_device.connected);
         set_device_connection(active_device);
-
-        if (!active_device.connected)
-            m_gateway_machine_snapshot->clear(active_device.serial_number);
-        else if (!previous_serial_number.empty() && previous_serial_number != active_device.serial_number)
-            m_gateway_machine_snapshot->clear(previous_serial_number);
     };
 
     m_gateway_service->set_notification_handler("device.active_changed", [apply_active_device, make_active_device_state](const nlohmann::json& params) {
@@ -5799,7 +5780,7 @@ void GUI_App::register_gateway_notifications()
     };
 
     m_gateway_service->set_notification_handler("notify.device.connected", [set_active_device_connection](const nlohmann::json& params) {
-        const std::string serial_number = gateway_device_sn(params);
+        const std::string serial_number = Gateway::parse_device_sn(params);
         if (serial_number.empty()) {
             BOOST_LOG_TRIVIAL(warning) << "ignored gateway device connected notification without sn";
             return;
@@ -5807,15 +5788,19 @@ void GUI_App::register_gateway_notifications()
         set_active_device_connection(serial_number, true);
     });
 
-    const auto connection_lost = [this, set_active_device_connection](const nlohmann::json& params) {
-        const std::string serial_number = gateway_device_sn(params);
-        if (!serial_number.empty())
+    const auto connection_lost = [this, set_active_device_connection, apply_active_device](const nlohmann::json& params) {
+        const std::string serial_number = Gateway::parse_device_sn(params);
+        if (!serial_number.empty()) {
             set_active_device_connection(serial_number, false);
-        else {
+        } else if (m_gateway_active_device.valid) {
+            GatewayActiveDeviceState active_device = m_gateway_active_device;
+            active_device.connected = false;
+            apply_active_device(active_device);
+        } else {
             BOOST_LOG_TRIVIAL(warning) << "gateway device disconnected notification did not contain sn";
+            if (m_gateway_machine_snapshot != nullptr)
+                m_gateway_machine_snapshot->clear();
         }
-        if (m_gateway_machine_snapshot != nullptr)
-            m_gateway_machine_snapshot->clear(serial_number);
     };
     m_gateway_service->set_notification_handler("device.connection_lost", connection_lost);
     m_gateway_service->set_notification_handler("notify.device.disconnected", connection_lost);

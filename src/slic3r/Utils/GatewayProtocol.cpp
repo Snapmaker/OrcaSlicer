@@ -98,6 +98,24 @@ GatewayError parse_health(const std::string& body, HealthInfo& health)
     return {};
 }
 
+std::string parse_device_sn(const nlohmann::json& params)
+{
+    if (!params.is_object())
+        return {};
+
+    const nlohmann::json* source = &params;
+    const auto            device = params.find("device");
+    if (device != params.end() && device->is_object())
+        source = &*device;
+
+    for (const char* key : {"sn", "device_sn", "serial_number"}) {
+        const auto value = source->find(key);
+        if (value != source->end() && value->is_string() && !value->get<std::string>().empty())
+            return value->get<std::string>();
+    }
+    return {};
+}
+
 std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params)
 {
     if (!params.is_object())
@@ -112,11 +130,7 @@ std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& pa
     }
 
     ActiveDeviceSnapshot active_device;
-    for (const char* key : {"sn", "device_sn", "serial_number"}) {
-        if (get_string(*source, key, active_device.serial_number) && !active_device.serial_number.empty())
-            break;
-        active_device.serial_number.clear();
-    }
+    active_device.serial_number = parse_device_sn(params);
     if (active_device.serial_number.empty())
         return std::nullopt;
 

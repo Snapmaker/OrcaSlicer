@@ -1,6 +1,6 @@
 #include "GatewayMachineSnapshot.hpp"
 
-#include "FilamentColorUtils.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
 #include <boost/log/trivial.hpp>
@@ -74,9 +74,34 @@ void GatewayMachineSnapshot::set_dependencies(PresetBundleAccessor preset_bundle
 
 void GatewayMachineSnapshot::reset()
 {
+    pending_snapshot_.reset();
     serial_number_.clear();
     revisions_.clear();
-    initialized_ = false;
+    initialized_             = false;
+    has_active_device_       = false;
+    active_device_connected_ = false;
+    active_serial_number_.clear();
+}
+
+void GatewayMachineSnapshot::set_active_device(const std::string& serial_number, bool connected)
+{
+    if (serial_number.empty()) {
+        clear();
+        return;
+    }
+
+    auto pending_snapshot = std::move(pending_snapshot_);
+    pending_snapshot_.reset();
+    if (!has_active_device_ || active_serial_number_ != serial_number)
+        clear();
+
+    has_active_device_       = true;
+    active_serial_number_    = serial_number;
+    active_device_connected_ = connected;
+    if (!connected)
+        clear(serial_number);
+    else if (pending_snapshot.has_value())
+        apply(*pending_snapshot);
 }
 
 void GatewayMachineSnapshot::apply(const nlohmann::json& snapshot)
@@ -99,6 +124,15 @@ void GatewayMachineSnapshot::apply(const nlohmann::json& snapshot)
         return;
     }
     const std::string serial_number = sn_value->get<std::string>();
+    if (!has_active_device_) {
+        pending_snapshot_ = snapshot;
+        BOOST_LOG_TRIVIAL(info) << "deferred machine snapshot for " << serial_number << " until the active device is known";
+        return;
+    }
+    if (!active_device_connected_ || serial_number != active_serial_number_) {
+        BOOST_LOG_TRIVIAL(warning) << "ignored machine snapshot for inactive device " << serial_number;
+        return;
+    }
 
     const auto         previous_revision = revisions_.find(serial_number);
     const std::int64_t last_revision     = previous_revision == revisions_.end() ? -1 : previous_revision->second;
@@ -161,7 +195,7 @@ void GatewayMachineSnapshot::apply(const nlohmann::json& snapshot)
         machine_info.filament_info = machine_filament_display_name(filament);
         machine_info.filament_type = filament.at("type").get<std::string>();
         machine_info.nozzle_info   = nozzle;
-        machine_info.color_info    = FilamentColorUtils::NormalizeHexColor(filament.at("color").get<std::string>(), "#FFFFFF");
+        machine_info.color_info    = NormalizeFilamentHexColor(filament.at("color").get<std::string>(), "#FFFFFF");
 
         const auto multi_colors = filament.find("multi_colors");
         if (multi_colors != filament.end()) {
@@ -172,7 +206,7 @@ void GatewayMachineSnapshot::apply(const nlohmann::json& snapshot)
             for (const auto& color : *multi_colors) {
                 if (!color.is_string())
                     continue;
-                const std::string normalized_color = FilamentColorUtils::NormalizeHexColor(color.get<std::string>());
+                const std::string normalized_color = NormalizeFilamentHexColor(color.get<std::string>());
                 if (!normalized_color.empty())
                     machine_info.multiColors.emplace_back(normalized_color);
             }
@@ -221,6 +255,7 @@ void GatewayMachineSnapshot::apply(const nlohmann::json& snapshot)
 
 void GatewayMachineSnapshot::clear(const std::string& serial_number)
 {
+    pending_snapshot_.reset();
     if (!serial_number.empty() && serial_number != serial_number_) {
         revisions_.erase(serial_number);
         return;
@@ -240,6 +275,11 @@ void GatewayMachineSnapshot::clear(const std::string& serial_number)
         revisions_.clear();
     else
         revisions_.erase(serial_number);
+    if (clear_all) {
+        has_active_device_       = false;
+        active_device_connected_ = false;
+        active_serial_number_.clear();
+    }
 
     if (had_filaments && refresh_native_ui_)
         refresh_native_ui_();

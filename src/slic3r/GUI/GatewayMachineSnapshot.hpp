@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace Slic3r {
@@ -24,6 +25,7 @@ public:
 
     void set_dependencies(PresetBundleAccessor preset_bundle_accessor, NativeUiRefresh refresh_native_ui);
     void reset();
+    void set_active_device(const std::string& serial_number, bool connected);
     void apply(const nlohmann::json& snapshot);
     void clear(const std::string& serial_number = {});
 
@@ -34,6 +36,10 @@ private:
     std::string                         serial_number_;
     std::map<std::string, std::int64_t> revisions_;
     bool                                initialized_{false};
+    bool                                has_active_device_{false};
+    bool                                active_device_connected_{false};
+    std::string                         active_serial_number_;
+    std::optional<nlohmann::json>       pending_snapshot_;
 };
 
 } // namespace GUI

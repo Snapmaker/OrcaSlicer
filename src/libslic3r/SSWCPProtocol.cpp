@@ -7,6 +7,11 @@
 
 namespace Slic3r { namespace SSWCPProtocol {
 
+bool silent_login_token_refresh_enabled()
+{
+    return false;
+}
+
 namespace {
 
 bool is_valid_flow_type(const std::string &value)

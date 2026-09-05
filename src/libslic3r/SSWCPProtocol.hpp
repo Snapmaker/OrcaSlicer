@@ -22,6 +22,10 @@ struct MachineInfo {
 /// No wxWidgets dependency — safe to unit-test without a GUI event loop.
 namespace SSWCPProtocol {
 
+/// Whether the desktop host may refresh login tokens in a hidden webview.
+/// Keep this false while startup interference from that path is under investigation.
+bool silent_login_token_refresh_enabled();
+
 /// Result of parsing the optional nozzle_volume_types field in a machine update payload.
 enum class OptionalFlowTypesStatus { Missing, Valid, Invalid };
 

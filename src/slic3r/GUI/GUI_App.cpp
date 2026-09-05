@@ -80,6 +80,7 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/I18N.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/miniz_extension.hpp"
 #include "libslic3r/Utils.hpp"
@@ -4391,6 +4392,9 @@ void GUI_App::sm_request_user_logout()
 
 void GUI_App::sm_maybe_refresh_login_token()
 {
+    if (!SSWCPProtocol::silent_login_token_refresh_enabled())
+        return;
+
     if (!m_login_userinfo.is_user_login())
         return;
     if (m_sm_login_dialog_showing || m_sm_silent_refresh_in_progress)

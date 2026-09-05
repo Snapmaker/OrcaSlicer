@@ -1,4 +1,4 @@
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include "libslic3r/SSWCPProtocol.hpp"
 
@@ -22,6 +22,11 @@ TEST_CASE("SSWCP file flow mappings are aligned and normalized", "[SSWCPProtocol
     const std::vector<int> unknown{fvtHighFlow, 99};
     CHECK(SSWCPProtocol::build_filament_volume_types(&unknown, 2) ==
           std::vector<std::string>{"high_flow", "standard"});
+}
+
+TEST_CASE("Silent login-token refresh is disabled", "[SSWCPProtocol]")
+{
+    CHECK_FALSE(SSWCPProtocol::silent_login_token_refresh_enabled());
 }
 
 TEST_CASE("SSWCP machine update flow types are optional but validated", "[SSWCPProtocol]")

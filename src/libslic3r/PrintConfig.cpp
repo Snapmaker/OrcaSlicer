@@ -7531,9 +7531,13 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Step granularity for independent support layer heights while the prime tower is enabled. "
                      "With whole layers, support layer heights are multiples of the object layer height. "
                      "Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support "
-                     "nozzle's maximum layer height sits between two whole multiples. The finer steps place "
-                     "support boundaries between object layers, which adds thin prime tower layers there and "
-                     "increases the purged volume on those toolchanges.");
+                     "nozzle's maximum layer height sits between two whole multiples. Support boundaries may then "
+                     "fall between object layers; such support-only layers print without a prime tower layer: the "
+                     "switch to the support filament happens directly (any residue ends up in the support) and the "
+                     "switch back purges on the next full prime tower layer. With smooth timelapse the sub-layer "
+                     "boundaries get their own prime tower layers instead and are only used where those stay at or "
+                     "above the nozzles' minimum layer height. Not used with single-extruder multi-material, which "
+                     "keeps whole layers.");
     def->enum_keys_map = &ConfigOptionEnum<SupportLayerHeightStep>::get_enum_values();
     def->enum_values.emplace_back("whole");
     def->enum_values.emplace_back("half");
@@ -7548,7 +7552,8 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Independent support layer height");
     def->category = L("Support");
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. "
-                     "This option will be invalid when the prime tower is enabled.");
+                     "With the prime tower enabled, support layer heights stay aligned to the object layer grid "
+                     "(see Support layer height step).");
     def->mode = comAdvanced;
     // Mainline default. The Snapmaker process profiles either set this to 1
     // explicitly or (U1) leave it unset; with the old false default, loading a

@@ -625,7 +625,9 @@ bool ToolOrdering::insert_wipe_tower_extruder()
     bool changed = false;
     const unsigned int wipe_extruder = (unsigned int)(m_print_config_ptr->wipe_tower_filament - 1);
     for (LayerTools &lt : m_layer_tools) {
-        if (lt.wipe_tower_partitions > 0) {
+        // Only layers that carry a tower slab (fill_wipe_tower_partitions has run): a
+        // fractional support-only layer without one must not switch to the tower filament.
+        if (lt.wipe_tower_partitions > 0 && lt.has_wipe_tower) {
             if (std::find(lt.extruders.begin(), lt.extruders.end(), wipe_extruder) == lt.extruders.end()) {
                 lt.extruders.emplace_back(wipe_extruder);
                 changed = true;
@@ -646,28 +648,31 @@ void ToolOrdering::sort_and_build_data(const Print& print, unsigned int first_ex
     m_sorted = true;
 
     double max_layer_height = 0.;
-    double object_bottom_z = 0.;
+    // The lowest object bottom: below it the tower needs its base (raft, support under a
+    // floating part); above it a lower object's fractional support layers must not be taken
+    // for raft layers.
+    double object_bottom_z = std::numeric_limits<double>::max();
     for (const auto& object : print.objects()) {
         for (const Layer* layer : object->layers()) {
             if (layer->has_extrusions()) {
-                object_bottom_z = layer->print_z - layer->height;
+                object_bottom_z = std::min(object_bottom_z, layer->print_z - layer->height);
                 break;
             }
         }
         max_layer_height = std::max(max_layer_height, object->config().layer_height.value);
     }
+    if (object_bottom_z == std::numeric_limits<double>::max())
+        object_bottom_z = 0.;
 
     max_layer_height = calc_max_layer_height(print.config(), max_layer_height);
 
-    this->bridge_fractional_support_layers(print.config());
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         // Orca reorders a second time here (BBS has no such path); re-enforce so the
         // mixed sub-layer component order survives the extra pass.
         this->enforce_mixed_component_order();
-        this->bridge_fractional_support_layers(print.config());
-    this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
+        this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
     }
 
     this->collect_extruder_statistics(prime_multi_material);
@@ -685,15 +690,13 @@ void ToolOrdering::sort_and_build_data(const PrintObject& object , unsigned int 
 
     double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
 
-    this->bridge_fractional_support_layers(object.print()->config());
     this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         // Orca reorders a second time here (BBS has no such path); re-enforce so the
         // mixed sub-layer component order survives the extra pass.
         this->enforce_mixed_component_order();
-        this->bridge_fractional_support_layers(object.print()->config());
-    this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
+        this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
     }
 
     this->collect_extruder_statistics(prime_multi_material);
@@ -725,6 +728,8 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
         for (auto layer : object.support_layers())
             zs.emplace_back(layer->print_z);
         this->initialize_layers(zs);
+        for (auto layer : object.layers())
+            this->tools_for_layer(layer->print_z).on_object_grid = true;
     }
 
     // Collect extruders reuqired to print the layers. Add dontcare extruders
@@ -776,6 +781,9 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
             max_layer_height = std::max(max_layer_height, object->config().layer_height.value);
         }
         this->initialize_layers(zs);
+        for (auto object : print.objects())
+            for (auto layer : object->layers())
+                this->tools_for_layer(layer->print_z).on_object_grid = true;
     }
     max_layer_height = calc_max_layer_height(print.config(), max_layer_height);
 
@@ -1265,7 +1273,8 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
     // Collect the support extruders.
     for (auto support_layer : object.support_layers()) {
         LayerTools   &layer_tools   = this->tools_for_layer(support_layer->print_z);
-        layer_tools.layer_height    = support_layer->height;
+        if (!layer_tools.has_object) // a shared Z keeps the object layer height
+            layer_tools.layer_height = support_layer->height;
         ExtrusionRole role          = support_layer->support_fills.role();
         bool          has_support   = false;
         bool          has_interface = false;
@@ -1356,32 +1365,16 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 }
 
 
-// Fractional independent support heights place support-only layers between object grid Zs.
-// Give each such layer its tool as the incumbent: the layer below ends with that tool, so
-// the toolchange (if one is needed) happens there and purges on a full-height tower slab,
-// and the fractional layer itself changes no tools - it then needs no tower layer at all.
-void ToolOrdering::bridge_fractional_support_layers(const PrintConfig &config)
+// The chain the tower plan and the G-code emission walk: a layer starts with the tool still
+// loaded whenever it uses it (GCode::process_layer rotates the layer's extruders to it), so a
+// custom or cyclic sequence never counts a phantom initial toolchange.
+static std::vector<unsigned int> rotate_extruders_to_start_with(const std::vector<unsigned int> &extruders, unsigned int start_extruder)
 {
-    if (!config.independent_support_layer_height || config.support_layer_height_step == slhsWholeLayer ||
-        config.timelapse_type == TimelapseType::tlSmooth)
-        return;
-    for (size_t i = 1; i < m_layer_tools.size(); ++i) {
-        LayerTools &lt = m_layer_tools[i];
-        if (!(lt.has_support && !lt.has_object) || lt.extruders.size() != 1)
-            continue;
-        const unsigned int tool = lt.extruders.front();
-        // Per-extruder layer height combining leaves many LayerTools without extrusions;
-        // the incumbent comes from the last layer that actually prints something.
-        LayerTools *below = nullptr;
-        for (size_t j = i; j-- > 0; )
-            if (!m_layer_tools[j].extruders.empty()) { below = &m_layer_tools[j]; break; }
-        if (below == nullptr || below->extruders.back() == tool)
-            continue;
-        auto it = std::find(below->extruders.begin(), below->extruders.end(), tool);
-        if (it != below->extruders.end())
-            below->extruders.erase(it);
-        below->extruders.emplace_back(tool);
-    }
+    std::vector<unsigned int> rotated = extruders;
+    auto it = std::find(rotated.begin(), rotated.end(), start_extruder);
+    if (it != rotated.end())
+        std::rotate(rotated.begin(), it, rotated.end());
+    return rotated;
 }
 
 void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_t object_bottom_z, coordf_t max_layer_height)
@@ -1389,15 +1382,16 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     if (m_layer_tools.empty())
         return;
 
-    // Count the minimum number of tool changes per layer.
+    // Count the minimum number of tool changes per layer, on the rotated chain.
     size_t last_extruder = size_t(-1);
     for (LayerTools &lt : m_layer_tools) {
         lt.wipe_tower_partitions = lt.extruders.size();
         if (! lt.extruders.empty()) {
-            if (last_extruder == size_t(-1) || last_extruder == lt.extruders.front())
+            const std::vector<unsigned int> chain = rotate_extruders_to_start_with(lt.extruders, (unsigned int) last_extruder);
+            if (last_extruder == size_t(-1) || last_extruder == chain.front())
                 // The first extruder on this layer is equal to the current one, no need to do an initial tool change.
                 -- lt.wipe_tower_partitions;
-            last_extruder = lt.extruders.back();
+            last_extruder = chain.back();
         }
     }
 
@@ -1406,32 +1400,49 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
         m_layer_tools[i].wipe_tower_partitions = std::max(m_layer_tools[i + 1].wipe_tower_partitions, m_layer_tools[i].wipe_tower_partitions);
 
 
-    int wrapping_layer_nums = config.wrapping_detection_layers;
-    for (size_t i = 0; i < wrapping_layer_nums; ++i) {
-        if (i >= m_layer_tools.size())
-            break;
-        LayerTools &lt    = m_layer_tools[i];
-        lt.has_wipe_tower = config.enable_wrapping_detection;
-    }
-
     // Fractional independent support heights place support-only layers between the object
     // grid Zs. Those layers get no tower layer of their own: the tower would have to print
     // a sub-minimum slab there, and the toolchange they carry switches TO the support
     // filament, which tolerates an unpurged nozzle (the residue lands in the support).
     // The switch back to an object filament happens on an object-grid layer with a full
-    // tower slab. Smooth timelapse needs a tower layer on every print layer, so it keeps
-    // the old behavior.
-    auto support_only_off_grid = [&config](const LayerTools &lt) {
-        return lt.has_support && !lt.has_object &&
+    // tower slab; the tower re-syncs its loaded tool per layer. Smooth timelapse needs a
+    // tower layer on every print layer and single-extruder multi-material needs the
+    // tower's ramming for every change, so both keep the old behavior.
+    auto off_grid_gates = [&config]() {
+        return config.enable_prime_tower &&
                config.independent_support_layer_height &&
                config.support_layer_height_step != slhsWholeLayer &&
-               config.timelapse_type != TimelapseType::tlSmooth;
+               config.timelapse_type != TimelapseType::tlSmooth &&
+               !config.single_extruder_multi_material;
     };
+    auto support_only_off_grid = [&off_grid_gates](const LayerTools &lt) {
+        return lt.has_support && !lt.has_object && !lt.on_object_grid && off_grid_gates();
+    };
+    // Only fractional Zs are ever left without a tower slab: support-only layers there and
+    // support layers that ended up without extrusions (the ladder continues above the
+    // support tops). Object grid layers (even empty ones) keep theirs, so the slabs that
+    // remain are whole grid steps.
+    auto tower_skippable = [&off_grid_gates](const LayerTools &lt) {
+        return !lt.has_object && !lt.on_object_grid && (lt.has_support || lt.extruders.empty()) && off_grid_gates();
+    };
+
+    // The first wrapping_detection_layers slabs; a fractional entry never carries a slab and
+    // does not consume one of them.
+    const int wrapping_layer_nums = config.wrapping_detection_layers;
+    for (size_t i = 0, marked = 0; i < m_layer_tools.size() && int(marked) < wrapping_layer_nums; ++i) {
+        LayerTools &lt = m_layer_tools[i];
+        if (tower_skippable(lt))
+            continue;
+        lt.has_wipe_tower = config.enable_wrapping_detection;
+        ++marked;
+    }
 
     //FIXME this is a hack to get the ball rolling.
     for (LayerTools &lt : m_layer_tools)
         lt.has_wipe_tower |= ((lt.has_object || lt.has_support) && !support_only_off_grid(lt) &&
                               (config.timelapse_type == TimelapseType::tlSmooth || lt.wipe_tower_partitions > 0))
+            // Below the object bottom (raft layers, support under a floating part) the tower
+            // always needs its base, fractional support Zs included.
             || lt.print_z < object_bottom_z + EPSILON;
 
     // Test for a raft, insert additional wipe tower layer to fill in the raft separation gap.
@@ -1500,16 +1511,16 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             }
         for (int i = first_wt_idx + 1; i < last_wt_idx; ++i) {
             LayerTools &lt = m_layer_tools[i];
-            if (support_only_off_grid(lt)) {
-                // Prefer no tower slab on a fractional support-only layer, but only when
-                // the slab bridging over it stays within the maximum layer height -
-                // otherwise this layer keeps its (thin) tower slab.
+            if (tower_skippable(lt) && !lt.has_wipe_tower) {
+                // Prefer no tower slab on a fractional support-only (or empty) layer, but
+                // only when the slab bridging over it stays within the maximum layer
+                // height - otherwise this layer keeps its (thin) tower slab.
                 coordf_t prev_z = m_layer_tools[first_wt_idx].print_z;
                 for (int j = i - 1; j >= first_wt_idx; --j)
                     if (m_layer_tools[j].has_wipe_tower) { prev_z = m_layer_tools[j].print_z; break; }
                 coordf_t next_z = m_layer_tools[last_wt_idx].print_z;
                 for (int j = i + 1; j <= last_wt_idx; ++j)
-                    if (m_layer_tools[j].has_wipe_tower || !support_only_off_grid(m_layer_tools[j])) {
+                    if (m_layer_tools[j].has_wipe_tower || !tower_skippable(m_layer_tools[j])) {
                         next_z = m_layer_tools[j].print_z;
                         break;
                     }
@@ -1576,10 +1587,14 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
     // stopping at the first empty layer.
     const bool skip_empty_layer_tools = has_extruder_layer_heights(config);
     const LayerTools *lt_last_printing = nullptr;
+    // The tool loaded after the last printing layer, on the rotated chain.
+    unsigned int loaded_tool = (unsigned int) -1;
     for (unsigned int i=0; i+1<m_layer_tools.size(); ++i) {
         LayerTools& lt = m_layer_tools[i];
-        if (! lt.extruders.empty())
+        if (! lt.extruders.empty()) {
             lt_last_printing = &lt;
+            loaded_tool      = rotate_extruders_to_start_with(lt.extruders, loaded_tool).back();
+        }
         LayerTools& lt_next = m_layer_tools[i+1];
         if (lt.extruders.empty() || lt_next.extruders.empty()) {
             if (! skip_empty_layer_tools)
@@ -1587,18 +1602,27 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
             if (lt_last_printing == nullptr || lt_next.extruders.empty())
                 continue;
         }
-        if (!lt_next.has_wipe_tower && !support_only_off_grid(lt_next) &&
-            (lt_next.extruders.front() != lt_last_printing->extruders.back() || lt_next.extruders.size() > 1))
+        if (!lt_next.has_wipe_tower && !tower_skippable(lt_next) &&
+            (lt_next.extruders.size() > 1 ||
+             std::find(lt_next.extruders.begin(), lt_next.extruders.end(), loaded_tool) == lt_next.extruders.end()))
             lt_next.has_wipe_tower = true;
-        // We should also check that the next wipe tower layer is no further than max_layer_height:
+        // We should also check that the next wipe tower layer is no further than max_layer_height.
+        // Fractional entries are transparent here: they never carry a slab, their neighbours
+        // bridge them.
         unsigned int j = i+1;
         double last_wipe_tower_print_z = lt_next.print_z;
-        while (++j < m_layer_tools.size()-1 && !m_layer_tools[j].has_wipe_tower)
-            if (m_layer_tools[j+1].print_z - last_wipe_tower_print_z > max_layer_height + EPSILON) {
+        while (++j < m_layer_tools.size()-1 && !m_layer_tools[j].has_wipe_tower) {
+            if (tower_skippable(m_layer_tools[j]))
+                continue;
+            size_t jn = j + 1;
+            while (jn < m_layer_tools.size() && !m_layer_tools[jn].has_wipe_tower && tower_skippable(m_layer_tools[jn]))
+                ++jn;
+            if (jn < m_layer_tools.size() && m_layer_tools[jn].print_z - last_wipe_tower_print_z > max_layer_height + EPSILON) {
                 if (!config.enable_wrapping_detection)
                     m_layer_tools[j].has_wipe_tower = true;
                 last_wipe_tower_print_z = m_layer_tools[j].print_z;
             }
+        }
     }
 
 
@@ -3561,8 +3585,9 @@ void ToolOrdering::mark_skirt_layers(const PrintConfig &config, coordf_t max_lay
 static CustomGCode::Info custom_gcode_per_print_z;
 void ToolOrdering::assign_custom_gcodes(const Print &print)
 {
-	// Only valid for non-sequential print.
-	assert(print.config().print_sequence == PrintSequence::ByLayer);
+	// Only valid for non-sequential print; a sequential print with a wipe tower is emitted
+	// by layer from the print-wide ordering and takes the custom G-codes the same way.
+	assert(print.config().print_sequence == PrintSequence::ByLayer || print.has_wipe_tower());
 
     custom_gcode_per_print_z = print.model().get_curr_plate_custom_gcodes();
 	if (custom_gcode_per_print_z.gcodes.empty())

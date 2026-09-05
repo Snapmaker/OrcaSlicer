@@ -200,7 +200,7 @@ struct SupportParameters {
         // Sub-layer step for grid-aligned heights: 1 = whole object layers, 2/4 allow
         // boundaries on half/quarter subdivisions (thin tower layers appear there).
         grid_height_step = 1;
-        if (grid_aligned_layer_height) {
+        if (grid_aligned_layer_height && !print_config.single_extruder_multi_material) {
             if (print_config.support_layer_height_step.value == slhsHalfLayer)
                 grid_height_step = 2;
             else if (print_config.support_layer_height_step.value == slhsQuarterLayer)

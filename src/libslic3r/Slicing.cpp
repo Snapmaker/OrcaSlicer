@@ -169,6 +169,11 @@ SlicingParameters SlicingParameters::create_from_config(
             support_layer_height_limit(object_config.support_filament.value, false),
             support_layer_height_limit(object_config.support_interface_filament.value, false));
         params.max_suport_layer_height = params.max_layer_height;
+        // The support extruders' own (unclamped) minimum matters only when supports are pinned
+        // to their own filaments or nozzle; with the object's filaments the object's clamped
+        // minimum applies as before.
+        if (object_config.support_filament.value != 0 || object_config.support_interface_filament.value != 0 || restricted_default(0))
+            params.min_suport_layer_height = params.min_layer_height;
     }
 
     if (object_extruders.empty()) {

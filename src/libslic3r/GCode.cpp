@@ -1041,7 +1041,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             if (gcodegen.writer().filament() != nullptr && !filament_end_gcode.empty()) {
                 DynamicConfig config;
                 config.set_key_value("current_filament_id", new ConfigOptionInt((int) old_filament_id));
-                config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, (int) old_filament_id, (int) gcodegen.writer().filament()->extruder_id(), m_layer_idx)));
+                config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, (int) old_filament_id, (int) gcodegen.writer().filament()->extruder_id(), gcodegen.m_layer_index)));
                 config.set_key_value("nozzle_diameter_at_nozzle_id", new ConfigOptionFloats(get_nozzle_diameters_by_nozzle_id(group_result.get())));
                 config.set_key_value("nozzle_volume_types", new ConfigOptionStrings(get_nozzle_volume_types_by_nozzle_id(group_result.get())));
                 config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
@@ -1106,17 +1106,17 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             int old_filament_id = gcodegen.writer().filament() ? (int)gcodegen.writer().filament()->id() : -1;
             int old_extruder_id = gcodegen.writer().filament() ? (int)gcodegen.writer().filament()->extruder_id() : -1;
             // Logical nozzle ids for old/new filament (null-safe -> extruder id).
-            int old_nozzle_id  = nozzle_id_for_gcode_placeholder(group_result, old_filament_id, old_extruder_id, m_layer_idx);
-            int next_nozzle_id = nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx);
+            int old_nozzle_id  = nozzle_id_for_gcode_placeholder(group_result, old_filament_id, old_extruder_id, gcodegen.m_layer_index);
+            int next_nozzle_id = nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index);
 
             config.set_key_value("previous_extruder", new ConfigOptionInt(old_filament_id));
             config.set_key_value("next_extruder", new ConfigOptionInt(new_filament_id));
             // current_hotend/next_hotend (see hotend_id_for_gcode_placeholder): multi-nozzle H2C -> -1
             // (static; dynamic branch dormant), X2D -> -1, existing printers -> extruder id.
             config.set_key_value("current_hotend", new ConfigOptionInt(
-                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, old_filament_id, old_extruder_id, m_layer_idx)));
+                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, old_filament_id, old_extruder_id, gcodegen.m_layer_index)));
             config.set_key_value("next_hotend", new ConfigOptionInt(
-                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, (int) gcodegen.get_extruder_id(new_filament_id), m_layer_idx)));
+                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, (int) gcodegen.get_extruder_id(new_filament_id), gcodegen.m_layer_index)));
             config.set_key_value("current_nozzle_id", new ConfigOptionInt(old_nozzle_id));
             config.set_key_value("next_nozzle_id", new ConfigOptionInt(next_nozzle_id));
             config.set_key_value("current_filament_id", new ConfigOptionInt(old_filament_id));
@@ -1319,7 +1319,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             // Orca: null-safe, layer-aware nozzle lookup — group_result may be null on
             // non-multi-nozzle paths (the helper falls back to the extruder id).
             toolchange_command = gcodegen.writer().toolchange(new_filament_id,
-                nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx));
+                nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_filament_id))
             toolchange_gcode_str += toolchange_command;
         else {
@@ -1393,9 +1393,9 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
         gcodegen.placeholder_parser().set("current_filament_id", new_filament_id);
         gcodegen.placeholder_parser().set("current_extruder_id", new_extruder_id);
         gcodegen.placeholder_parser().set("current_nozzle_id",
-            nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx));
+            nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         gcodegen.placeholder_parser().set("current_hotend",
-            hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, new_extruder_id, m_layer_idx));
+            hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         {
             size_t fi = gcodegen.get_filament_config_index(new_filament_id);
             gcodegen.placeholder_parser().set("retraction_distance_when_cut", gcodegen.m_config.retraction_distances_when_cut.get_at(fi));
@@ -1412,7 +1412,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             DynamicConfig config;
             config.set_key_value("filament_extruder_id", new ConfigOptionInt(new_filament_id));
             config.set_key_value("current_filament_id", new ConfigOptionInt(new_filament_id));
-            config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx)));
+            config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index)));
             config.set_key_value("nozzle_diameter_at_nozzle_id", new ConfigOptionFloats(get_nozzle_diameters_by_nozzle_id(group_result.get())));
             config.set_key_value("nozzle_volume_types", new ConfigOptionStrings(get_nozzle_volume_types_by_nozzle_id(group_result.get())));
             start_filament_gcode_str = gcodegen.placeholder_parser_process("filament_start_gcode", filament_start_gcode, new_filament_id, &config);
@@ -2261,7 +2261,11 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
 
         bool   ignore_sparse = false;
         if (gcodegen.config().wipe_tower_no_sparse_layers.value) {
-            ignore_sparse = (m_tool_changes[m_layer_idx].size() == 1 && m_tool_changes[m_layer_idx].front().initial_tool == m_tool_changes[m_layer_idx].front().new_tool);
+            // Mirror tool_change(): the Type2 tower never skips its first layer (brim + base
+            // slab), even when that layer carries no toolchange.
+            ignore_sparse = (m_tool_changes[m_layer_idx].size() == 1 &&
+                             m_tool_changes[m_layer_idx].front().initial_tool == m_tool_changes[m_layer_idx].front().new_tool &&
+                             (gcodegen.wipe_tower_type() != WipeTowerType::Type2 || m_layer_idx != 0));
         }
 
         if ((m_enable_timelapse_print || m_enable_wrapping_detection) && m_is_first_print) {
@@ -3234,7 +3238,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
     m_layer_count = 0;
-    if (print.config().print_sequence == PrintSequence::ByObject) {
+    // A by-object print with a wipe tower is emitted by layer (see the sequential branch below),
+    // so it changes layer once per merged print Z like a by-layer print.
+    const bool count_layers_by_object = print.config().print_sequence == PrintSequence::ByObject &&
+                                        !(print.has_wipe_tower() && print.tool_ordering().has_wipe_tower());
+    if (count_layers_by_object) {
         // Add each of the object's layers separately.
         for (auto object : print.objects()) {
             std::vector<coordf_t> zs;
@@ -3517,7 +3525,28 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // Use the extruder IDs collected from Regions.
         this->set_extruders(print.extruders());
 
-        has_wipe_tower = print.has_wipe_tower() && tool_ordering.has_wipe_tower();
+        // With a wipe tower the layers are emitted by layer (see below) from the print-wide
+        // ordering the tower was planned on: the per-object ordering lacks layers that only
+        // other objects print (e.g. support-only layers), which would desynchronize the
+        // positional tower consumption, and the last object's own ordering may not even carry
+        // a tower although the print does. Everything the by-layer branch derives from its
+        // ordering (initial tool, extruder set, first filaments) has to come from that same
+        // ordering too, or the first layer may end on a tool the tower never planned a change
+        // to, or a filament only the print-wide ordering knows (custom per-layer change) has
+        // no extruder entry in the writer.
+        has_wipe_tower = print.has_wipe_tower() && print.tool_ordering().has_wipe_tower();
+        if (has_wipe_tower) {
+            tool_ordering = print.tool_ordering();
+            tool_ordering.assign_custom_gcodes(print);
+            initial_extruder_id = (wipe_tower_type == WipeTowerType::Type2 && !print.config().single_extruder_multi_material_priming) ?
+                tool_ordering.all_extruders().back() :
+                tool_ordering.first_extruder();
+            initial_non_support_extruder_id = (unsigned int) -1;
+            std::fill(first_non_support_filaments.begin(), first_non_support_filaments.end(), -1);
+            std::fill(first_filaments.begin(), first_filaments.end(), -1);
+            tool_ordering.cal_non_support_filaments(print.config(), initial_non_support_extruder_id, first_non_support_filaments, first_filaments);
+            this->set_extruders(tool_ordering.all_extruders());
+        }
     } else {
         // Find tool ordering for all the objects at once, and the initial extruder ID.
         // If the tool ordering has been pre-calculated by Print class for wipe tower already, reuse it.
@@ -8437,7 +8466,8 @@ LayerResult GCode::process_layer(
             }
         }
 
-        if (print.config().print_sequence == PrintSequence::ByLayer && m_enable_exclude_object && print.config().support_object_skip_flush.value) {
+        // By-layer emission (including a sequential print that falls back to it for the wipe tower).
+        if (single_object_instance_idx == size_t(-1) && m_enable_exclude_object && print.config().support_object_skip_flush.value) {
             std::set<size_t> all_label_ids;
             for (InstanceToPrint &instance : filament_to_print_instances[extruder_id].first)
                 all_label_ids.insert(instance.label_object_id);

@@ -398,6 +398,10 @@ private:
 
 		std::vector<ToolChange> tool_changes;
         std::vector<ToolChange> local_z_tool_changes;
+        // Tool loaded when this layer starts (-1 = unknown). Toolchanges may happen off
+        // the tower between layers (fractional support layers), so the tower cannot infer
+        // it from its own toolchange chain.
+        int start_tool = -1;
 
 		WipeTowerInfo(float z_par, float layer_height_par)
 			: z{z_par}, height{layer_height_par}, depth{0} {}

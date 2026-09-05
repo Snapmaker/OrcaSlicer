@@ -170,6 +170,9 @@ public:
     coordf_t 					print_z	= 0.;
     bool 						has_object = false;
     bool						has_support = false;
+    // This print_z is an object layer boundary (of any object, extrusions or not); support-only
+    // layers between such Zs come from fractional independent support layer heights.
+    bool						on_object_grid = false;
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
     bool                        preserve_extruder_order = false;
@@ -392,7 +395,6 @@ private:
     void				initialize_layers(std::vector<coordf_t> &zs);
     void 				collect_extruders(const PrintObject &object, const std::vector<std::pair<double, unsigned int>> &per_layer_extruder_switches);
     void 				fill_wipe_tower_partitions(const PrintConfig &config, coordf_t object_bottom_z, coordf_t max_layer_height);
-    void 				bridge_fractional_support_layers(const PrintConfig &config);
     bool                insert_wipe_tower_extruder();
     void                mark_skirt_layers(const PrintConfig &config, coordf_t max_layer_height);
     void 				collect_extruder_statistics(bool prime_multi_material);

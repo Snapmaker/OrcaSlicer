@@ -71,6 +71,8 @@ struct SlicingParameters
     coordf_t    min_layer_height { 0 };
     coordf_t    max_layer_height { 0 };
     coordf_t    max_suport_layer_height { 0 };
+    // The support extruders' own minimum, not clamped to the object layer height.
+    coordf_t    min_suport_layer_height { 0 };
 
     // First layer height of the print, this may be used for the first layer of the raft
     // or for the first layer of the print.

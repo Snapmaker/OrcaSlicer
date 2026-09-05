@@ -871,6 +871,18 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             ) {
             steps.emplace_back(psWipeTower);
             steps.emplace_back(psSkirtBrim);
+            if ((opt_key == "enable_prime_tower" || opt_key == "single_extruder_multi_material") && m_config.independent_support_layer_height.value) {
+                // The support layer height plan depends on both: supports align to the object
+                // grid under the tower and keep whole steps under single-extruder multi-material.
+                osteps.emplace_back(posSupportMaterial);
+                osteps.emplace_back(posSimplifySupportPath);
+            }
+        } else if (opt_key == "timelapse_type") {
+            // Print-level: everything (the key used to reach the catch-all below); object-level:
+            // the support layer plan gates fractional boundaries on smooth timelapse.
+            invalidated |= this->invalidate_all_steps();
+            osteps.emplace_back(posSupportMaterial);
+            osteps.emplace_back(posSimplifySupportPath);
         } else if (opt_key == "filament_soluble"
                 || opt_key == "filament_is_support"
                 || opt_key == "filament_printable"
@@ -5230,16 +5242,25 @@ void Print::_make_wipe_tower()
                 // filament bookkeeping in sync, so the next tower layer plans the switch back.
                 if (!layer_tools.extruders.empty()) {
                     used_filament_ids.insert(layer_tools.extruders.begin(), layer_tools.extruders.end());
-                    current_filament_id = layer_tools.extruders.back();
+                    for (unsigned int filament_id : rotate_extruders_to_start_with(layer_tools.extruders, current_filament_id))
+                        if (auto nozzle = nozzle_group_result.get_nozzle_for_filament(filament_id, layer_idx))
+                            nozzle_recorder.set_nozzle_status(nozzle->group_id, filament_id, nozzle->extruder_id);
+                    current_filament_id = rotate_extruders_to_start_with(layer_tools.extruders, current_filament_id).back();
                 }
                 continue;
             }
             bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
             wipe_tower.plan_toolchange((float)layer_tools.print_z, (float)layer_tools.wipe_tower_layer_height, current_filament_id, current_filament_id);
+            // Per-layer nozzle maps are indexed by this ordering's layer index, which no longer
+            // equals the tower's own layer index once fractional layers carry no slab.
+            wipe_tower.set_plan_layer_ordering_index(layer_idx);
 
             used_filament_ids.insert(layer_tools.extruders.begin(), layer_tools.extruders.end());
 
-            for (const auto filament_id : layer_tools.extruders) {
+            // Mirrors GCode::process_layer, which rotates the layer's filaments to start with
+            // the one currently loaded (same as the Type2 branch below).
+            const std::vector<unsigned int> layer_filaments = rotate_extruders_to_start_with(layer_tools.extruders, current_filament_id);
+            for (const auto filament_id : layer_filaments) {
                 if (filament_id == current_filament_id)
                     continue;
 
@@ -5393,9 +5414,10 @@ void Print::_make_wipe_tower()
             for (auto &layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) { // for all layers
                 if (!layer_tools.has_wipe_tower) {
                     // Keep the tool chain in sync across layers that switch filament without
-                    // a tower slab (fractional support-only layers).
+                    // a tower slab (fractional support-only layers): emission rotates the
+                    // layer to start with the loaded tool, so the last tool is the rotated back.
                     if (!layer_tools.extruders.empty())
-                        current_extruder_id = layer_tools.extruders.back();
+                        current_extruder_id = rotate_extruders_to_start_with(layer_tools.extruders, current_extruder_id).back();
                     continue;
                 }
                 while (layers_to_print_idx + 1 < layers_to_print.size() &&
@@ -5438,12 +5460,10 @@ void Print::_make_wipe_tower()
                         current_extruder_id = local_z_toolchanges.back().new_tool;
                 }
 
-                // Plan in the same order G-code emission walks the layer's extruders. The
-                // flush-volume reorder starts each layer with the incumbent, so this used to
-                // equal the rotated order - but a layer that deliberately ENDS with a tool
-                // (bridging for fractional support layers) needs the raw order or the plan
-                // misses the trailing toolchange.
-                const std::vector<unsigned int> &nominal_layer_extruders = layer_tools.extruders;
+                // Mirrors GCode::process_layer, which rotates the layer's extruders to start
+                // with the tool currently loaded.
+                const std::vector<unsigned int> nominal_layer_extruders =
+                    rotate_extruders_to_start_with(layer_tools.extruders, current_extruder_id);
 
                 wipe_tower.plan_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height, current_extruder_id,
                                            current_extruder_id, false);

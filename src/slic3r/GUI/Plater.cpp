@@ -10151,6 +10151,7 @@ struct Plater::priv
     bool m_is_dark = false;
     size_t m_last_auto_gradient_prompt_physical_count = 0;
     bool   m_last_auto_gradient_prompt_accepted = false;
+    bool   m_auto_gradient_project_choice_changed_during_load = false;
 
     priv(Plater *q, MainFrame *main_frame);
     ~priv();
@@ -15851,9 +15852,24 @@ bool Plater::priv::confirm_auto_generated_gradients(wxWindow *parent, size_t num
         return MixedFilamentManager::auto_generate_enabled();
 
     const bool auto_generate_enabled = app_config->get_bool("auto_generate_gradients");
-    const bool without_confirmation  = app_config->get_bool("auto_generate_gradients_without_confirmation");
+    MixedFilamentAutoGradientChoice remembered_choice = MixedFilamentAutoGradientChoice::Ask;
+    size_t remembered_physical_count = 0;
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    if (preset_bundle != nullptr) {
+        const DynamicPrintConfig &project_config = preset_bundle->project_config;
+        if (const ConfigOptionInt *choice_opt = project_config.option<ConfigOptionInt>("mixed_filament_auto_gradient_choice")) {
+            if (choice_opt->value == int(MixedFilamentAutoGradientChoice::Generate))
+                remembered_choice = MixedFilamentAutoGradientChoice::Generate;
+            else if (choice_opt->value == int(MixedFilamentAutoGradientChoice::DoNotGenerate))
+                remembered_choice = MixedFilamentAutoGradientChoice::DoNotGenerate;
+        }
+        if (const ConfigOptionInt *count_opt = project_config.option<ConfigOptionInt>("mixed_filament_auto_gradient_physical_count");
+            count_opt != nullptr && count_opt->value > 0) {
+            remembered_physical_count = size_t(count_opt->value);
+        }
+    }
     const MixedFilamentAutoGradientAction action =
-        mixed_filament_auto_gradient_action(auto_generate_enabled, without_confirmation, num_physical);
+        mixed_filament_auto_gradient_action(auto_generate_enabled, remembered_choice, remembered_physical_count, num_physical);
     if (action == MixedFilamentAutoGradientAction::Disable) {
         m_last_auto_gradient_prompt_physical_count = 0;
         m_last_auto_gradient_prompt_accepted = false;
@@ -15887,12 +15903,18 @@ bool Plater::priv::confirm_auto_generated_gradients(wxWindow *parent, size_t num
         int(auto_gradient_count));
     MessageDialog dialog(parent, message, wxString(SLIC3R_APP_FULL_NAME) + " - " + _L("Auto gradients"),
                          wxYES_NO | wxYES_DEFAULT | wxCENTRE | wxICON_QUESTION);
-    dialog.show_dsa_button(_L("Always create auto-generated gradients without asking"));
+    dialog.show_dsa_button(_L("Remember this choice for this project"));
     const int  result   = dialog.ShowModal();
     const bool accepted = result == wxID_YES;
-    if (accepted && dialog.get_checkbox_state()) {
-        app_config->set_bool("auto_generate_gradients_without_confirmation", true);
-        app_config->save();
+    if (dialog.get_checkbox_state() && preset_bundle != nullptr) {
+        DynamicPrintConfig &project_config = preset_bundle->project_config;
+        project_config.option<ConfigOptionInt>("mixed_filament_auto_gradient_choice", true)->value =
+            int(accepted ? MixedFilamentAutoGradientChoice::Generate : MixedFilamentAutoGradientChoice::DoNotGenerate);
+        project_config.option<ConfigOptionInt>("mixed_filament_auto_gradient_physical_count", true)->value = int(num_physical);
+        if (q->is_loading_project())
+            m_auto_gradient_project_choice_changed_during_load = true;
+        else
+            q->update_project_dirty_from_presets();
     }
     m_last_auto_gradient_prompt_physical_count = num_physical;
     m_last_auto_gradient_prompt_accepted = accepted;
@@ -17570,6 +17592,9 @@ void Plater::load_project(wxString const& filename2,
     }
     else
         m_loading_project = true;
+    p->m_last_auto_gradient_prompt_physical_count = 0;
+    p->m_last_auto_gradient_prompt_accepted = false;
+    p->m_auto_gradient_project_choice_changed_during_load = false;
 
     m_only_gcode = false;
     m_exported_file = false;
@@ -17658,6 +17683,11 @@ void Plater::load_project(wxString const& filename2,
     up_to_date(true, true);
 
     wxGetApp().params_panel()->switch_to_object_if_has_object_configs();
+
+    if (p->m_auto_gradient_project_choice_changed_during_load) {
+        p->m_auto_gradient_project_choice_changed_during_load = false;
+        p->set_plater_dirty(true);
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
     m_loading_project = false;
@@ -24674,4 +24704,3 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 }
 
 }}    // namespace Slic3r::GUI
-

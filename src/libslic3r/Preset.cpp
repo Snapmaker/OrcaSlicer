@@ -3017,7 +3017,12 @@ inline t_config_option_keys deep_diff(const ConfigBase &config_this, const Confi
 
 static constexpr const std::initializer_list<const char*> optional_keys { "compatible_prints", "compatible_printers" };
 //BBS: skip these keys for dirty check
-static std::set<std::string> skipped_in_dirty = {"printer_settings_id", "print_settings_id", "filament_settings_id", "mixed_filament_definitions"};
+static std::set<std::string> skipped_in_dirty = {"printer_settings_id",
+                                                 "print_settings_id",
+                                                 "filament_settings_id",
+                                                 "mixed_filament_definitions",
+                                                 "mixed_filament_auto_gradient_choice",
+                                                 "mixed_filament_auto_gradient_physical_count"};
 
 bool PresetCollection::is_dirty(const Preset *edited, const Preset *reference)
 {

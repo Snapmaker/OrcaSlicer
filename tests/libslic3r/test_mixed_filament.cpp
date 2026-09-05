@@ -414,23 +414,60 @@ TEST_CASE("Mixed filament auto generation can be disabled without dropping custo
 
 TEST_CASE("Auto-gradient policy disables generation when the feature is off", "[MixedFilament][AutoGradientPolicy]")
 {
-    CHECK(mixed_filament_auto_gradient_action(false, false, 7) == MixedFilamentAutoGradientAction::Disable);
-    CHECK(mixed_filament_auto_gradient_action(false, true, 7) == MixedFilamentAutoGradientAction::Disable);
+    CHECK(mixed_filament_auto_gradient_action(false, MixedFilamentAutoGradientChoice::Ask, 0, 7) ==
+          MixedFilamentAutoGradientAction::Disable);
+    CHECK(mixed_filament_auto_gradient_action(false, MixedFilamentAutoGradientChoice::Generate, 7, 7) ==
+          MixedFilamentAutoGradientAction::Disable);
 }
 
 TEST_CASE("Auto-gradient policy generates small sets without confirmation", "[MixedFilament][AutoGradientPolicy]")
 {
-    CHECK(mixed_filament_auto_gradient_action(true, false, 4) == MixedFilamentAutoGradientAction::Generate);
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::Ask, 0, 4) ==
+          MixedFilamentAutoGradientAction::Generate);
 }
 
 TEST_CASE("Auto-gradient policy asks before generating a large set by default", "[MixedFilament][AutoGradientPolicy]")
 {
-    CHECK(mixed_filament_auto_gradient_action(true, false, 5) == MixedFilamentAutoGradientAction::Confirm);
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::Ask, 0, 5) ==
+          MixedFilamentAutoGradientAction::Confirm);
 }
 
-TEST_CASE("Auto-gradient policy honors the persistent confirmation opt-out", "[MixedFilament][AutoGradientPolicy]")
+TEST_CASE("Auto-gradient policy remembers an accepted choice for the same project filament count", "[MixedFilament][AutoGradientPolicy]")
 {
-    CHECK(mixed_filament_auto_gradient_action(true, true, 7) == MixedFilamentAutoGradientAction::Generate);
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::Generate, 7, 7) ==
+          MixedFilamentAutoGradientAction::Generate);
+}
+
+TEST_CASE("Auto-gradient policy remembers a declined choice for the same project filament count", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::DoNotGenerate, 7, 7) ==
+          MixedFilamentAutoGradientAction::Disable);
+}
+
+TEST_CASE("Auto-gradient policy asks again when the project filament count changes", "[MixedFilament][AutoGradientPolicy]")
+{
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::Generate, 7, 8) ==
+          MixedFilamentAutoGradientAction::Confirm);
+    CHECK(mixed_filament_auto_gradient_action(true, MixedFilamentAutoGradientChoice::DoNotGenerate, 7, 8) ==
+          MixedFilamentAutoGradientAction::Confirm);
+}
+
+TEST_CASE("Auto-gradient remembered choice is stored in project configuration", "[MixedFilament][AutoGradientPolicy][Config]")
+{
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("mixed_filament_auto_gradient_choice"));
+    REQUIRE(bundle.project_config.has("mixed_filament_auto_gradient_physical_count"));
+    CHECK(bundle.project_config.opt_int("mixed_filament_auto_gradient_choice") == int(MixedFilamentAutoGradientChoice::Ask));
+    CHECK(bundle.project_config.opt_int("mixed_filament_auto_gradient_physical_count") == 0);
+
+    bundle.project_config.set_key_value(
+        "mixed_filament_auto_gradient_choice", new ConfigOptionInt(int(MixedFilamentAutoGradientChoice::Generate)));
+    bundle.project_config.set_key_value("mixed_filament_auto_gradient_physical_count", new ConfigOptionInt(7));
+
+    DynamicPrintConfig full_config = DynamicPrintConfig::full_print_config();
+    full_config.apply(bundle.project_config);
+    CHECK(full_config.opt_int("mixed_filament_auto_gradient_choice") == int(MixedFilamentAutoGradientChoice::Generate));
+    CHECK(full_config.opt_int("mixed_filament_auto_gradient_physical_count") == 7);
 }
 
 TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by inset", "[MixedFilament]")
@@ -2949,6 +2986,18 @@ TEST_CASE("mixed_filament_definitions skipped in dirty check", "[MixedFilament][
     // Simulate what happens after 3MF load: mixed_filament_definitions exists
     // in edited (from the loaded config) but not in the system preset reference.
     edited.config.set_key_value("mixed_filament_definitions", new ConfigOptionString("0,1;1,0"));
+
+    CHECK_FALSE(PresetCollection::is_dirty(&edited, &reference));
+}
+
+TEST_CASE("Auto-gradient project choice is skipped in print preset dirty check", "[MixedFilament][AutoGradientPolicy][Config]")
+{
+    Preset edited(Preset::TYPE_PRINT, "test_edited", false);
+    Preset reference(Preset::TYPE_PRINT, "test_reference", false);
+
+    edited.config.set_key_value(
+        "mixed_filament_auto_gradient_choice", new ConfigOptionInt(int(MixedFilamentAutoGradientChoice::Generate)));
+    edited.config.set_key_value("mixed_filament_auto_gradient_physical_count", new ConfigOptionInt(7));
 
     CHECK_FALSE(PresetCollection::is_dirty(&edited, &reference));
 }

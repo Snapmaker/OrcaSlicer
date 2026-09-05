@@ -112,8 +112,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     option(DEP_WX_GTK3 "Build wxWidgets against GTK3" ON)
 endif()
 
-# Sentry crash reporting - enabled only on Windows by default
-if (WIN32 OR APPLE)
+# Sentry crash reporting - on by default everywhere except the Flatpak build
+# (Flathub distribution stays telemetry-free).
+if (WIN32 OR APPLE OR (UNIX AND NOT FLATPAK))
     set(SLIC3R_SENTRY_DEFAULT ON)
 else()
     set(SLIC3R_SENTRY_DEFAULT OFF)

@@ -85,17 +85,20 @@ jobs:
       arch: universal
       macos-combine-only: true
     secrets: inherit
-  # The macOS dSYM is only produced by the universal combine leg above, so it is
-  # uploaded here rather than from build_deps.yml (which handles the Windows PDB).
-  upload_symbols_macos:
-    name: Upload macOS Debug Symbols to Sentry
-    needs: build_macos_universal
+  # One Sentry upload for every platform: the macOS dSYM from the universal
+  # combine leg, the Windows PDB from the x64 build leg and the unstripped
+  # Linux binaries. upload-dif handles all formats from a single runner.
+  upload_symbols:
+    name: Upload Debug Symbols to Sentry
+    needs: [build_macos_universal, build_windows, build_linux]
     # Needs the Sentry org secrets; forks without them skip instead of failing.
-    if: ${{ !cancelled() && needs.build_macos_universal.result == 'success' && !vars.SELF_HOSTED && (github.repository_owner == 'Snapmaker' || vars.SENTRY_UPLOAD == '1') }}
+    if: ${{ !cancelled() && !vars.SELF_HOSTED && (needs.build_macos_universal.result == 'success' || needs.build_windows.result == 'success' || needs.build_linux.result == 'success') && (github.repository_owner == 'Snapmaker' || vars.SENTRY_UPLOAD == '1') }}
     uses: ./.github/workflows/sentry_cli.yml
     with:
-      os: macos-14
-      dsym-artifact-name: dSYM_Mac_${{ needs.build_macos_universal.outputs.release }}
+      os: ubuntu-latest
+      pdb-artifact-name: PDB
+      dsym-artifact-name: ${{ needs.build_macos_universal.result == 'success' && format('dSYM_Mac_{0}', needs.build_macos_universal.outputs.release) || '' }}
+      linux-symbols-pattern: Linux_symbols_*
       release: ${{ needs.build_macos_universal.outputs.release || github.sha }}
     secrets: inherit
   # One test job per built arch, on the runner that built it.

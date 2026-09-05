@@ -515,7 +515,7 @@ jobs:
           name: Snapmaker_Orca_Windows_${{ env.ver }}${{ env.ARCH_SUFFIX }}
           path: ${{ github.workspace }}/${{ env.BUILD_DIR }}/Snapmaker_Orca*.exe
 
-      # sentry_cli.yml consumes this artifact name (via build_deps.yml).
+      # sentry_cli.yml consumes this artifact name (via build_all.yml).
       - name: Upload artifacts Win PDB
         if: runner.os == 'Windows' && inputs.arch != 'arm64'
         uses: actions/upload-artifact@v7
@@ -584,6 +584,27 @@ jobs:
           mv -n ./build/Snapmaker_Orca_Linux_V${{ env.ver_pure }}.AppImage "$appimage"
           chmod +x "$appimage"
           tar -cvf build_tests.tar build/tests
+
+        # The unstripped build-tree binary carries the symtab Sentry needs; the
+        # AppImage ships the same build (same ELF build-id). Arch subdir keeps the
+        # two Linux legs from colliding in the unified symbol upload.
+      - name: Pack Linux symbols
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch=${{ inputs.arch == 'aarch64' && 'aarch64' || 'x86_64' }}
+          mkdir -p symbols_linux/$arch
+          cp build/src/Release/snapmaker-orca symbols_linux/$arch/
+
+      - name: Upload Linux symbols artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Linux_symbols_${{ inputs.arch == 'aarch64' && 'aarch64' || 'x86_64' }}
+          overwrite: true
+          path: symbols_linux
+          retention-days: 5
+          if-no-files-found: error
 
         # Use tar because upload-artifacts won't always preserve directory structure
         # and doesn't preserve file permissions

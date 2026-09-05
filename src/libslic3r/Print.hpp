@@ -10,6 +10,7 @@
 #include "Flow.hpp"
 #include "Point.hpp"
 #include "Slicing.hpp"
+#include "Surface.hpp"
 #include "TriangleMeshSlicer.hpp"
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
@@ -169,7 +170,9 @@ public:
     ObjectID                    gradient_volume_id() const throw() { return m_gradient_volume_id; }
 	// 1-based extruder identifier for this region and role.
 	unsigned int 				extruder(FlowRole role) const;
-    Flow                        flow(const PrintObject &object, FlowRole role, double layer_height, bool first_layer = false) const;
+    // filament_id: 1-based filament actually printing this flow when it differs from the role's default
+    // mapping (top / bottom surface fills), 0 to resolve the filament from the role.
+    Flow                        flow(const PrintObject &object, FlowRole role, double layer_height, bool first_layer = false, unsigned int filament_id = 0) const;
     // Average diameter of nozzles participating on extruding this region.
     coordf_t                    nozzle_dmr_avg(const PrintConfig &print_config) const;
     // Average diameter of nozzles participating on extruding this region.
@@ -510,6 +513,56 @@ public:
     // returns 0-based indices of extruders used to print the object (without brim, support and other helper extrusions)
     std::vector<unsigned int>   object_extruders() const;
 
+    // ORCA: per-extruder layer height ("extruder_layer_height" printer option).
+    // Preferred layer height (mm) of the extruder printing the given 1-based filament id; 0 when unset or not reliably resolvable.
+    double       extruder_preferred_layer_height(unsigned int filament_id) const;
+    // Object layers a region printing with the given 1-based filament id combines into one extrusion where its geometry allows it (1 = no combining).
+    unsigned int layer_height_multiplier_for_filament(unsigned int filament_id) const;
+    // 0-based filaments allowed to drive a region's layer pitch: its walls, or - when no wall filament carries an
+    // explicit layer height preference - its top/bottom/solid feature filaments. Returns false when the region
+    // involves a mixed (virtual) filament whose physical extruder varies per layer, in which case no pitch applies.
+    bool         collect_region_pitch_filaments(const PrintRegionConfig &config, std::vector<unsigned int> &filaments, bool &pitch_from_features) const;
+    // Layer pitch multiplier of a region, driven by its wall filaments; 1 when no combining is requested or possible.
+    unsigned int region_layer_height_multiplier(const PrintRegion &region) const;
+    // Do inner-wall loops print in this region? Besides wall_loops > 1, the alternating extra
+    // wall and the extra perimeters on overhangs add inner loops even at a single wall loop.
+    static bool  region_prints_inner_walls(const PrintRegionConfig &config);
+    // Does the given 0-based filament print nothing in this region? True only for a sparse infill
+    // selector at 100% density (the solid interior belongs to the internal solid filament) that
+    // prints no other feature of the region.
+    static bool  region_filament_prints_nothing(const PrintRegionConfig &config, unsigned int filament);
+    // Walls-only pitch multiplier: when the region as a whole cannot follow its wall filaments'
+    // preferred pitch (region_layer_height_multiplier() == 1, e.g. a finer-nozzle filament prints
+    // the region's other features), the walls alone combine to it while everything else keeps
+    // printing every layer. 1 when the walls print with the region's own pitch.
+    unsigned int wall_layer_height_multiplier(const PrintRegion &region) const;
+    // Effective wall pitch multipliers of the two wall classes: the conforming multipliers of
+    // their filaments' explicit preferred heights (0 = no explicit preference; inner_m is 0 when
+    // the region prints no inner walls), with the "split_wall_adjust" adjustment applied when the
+    // two do not divide evenly. Adjusted heights respect the filament's layer height limits.
+    // Returns false for mixed virtual wall filaments, which forbid wall combining.
+    bool         wall_effective_multipliers(const PrintRegion &region, unsigned int &outer_m, unsigned int &inner_m) const;
+    // Split wall layer heights: true when the outer and inner walls print with their own pitches
+    // - both effective multipliers explicit, unequal, and the larger a whole multiple of the
+    // smaller. fine/coarse receive the two multipliers, coarse_is_outer which wall class prints
+    // the coarse one. Callers must only act on it while the region prints at the object layer
+    // height (region_layer_height_multiplier() == 1).
+    bool         wall_split_pitches(const PrintRegion &region, unsigned int &fine, unsigned int &coarse, bool &coarse_is_outer) const;
+    // Any region of this object printing with a layer height multiplier > 1?
+    bool         has_combined_layer_regions() const;
+    // Multi-nozzle support restrictions ("support_nozzle_diameter" plus the "support_base_material" /
+    // "support_interface_material" print options): may the given 1-based filament print this object's
+    // support / raft base (interface_role false) or interface (interface_role true)? A filament passes
+    // when its nozzle matches the support nozzle diameter and its type matches the role's material;
+    // an unset restriction does not exclude. Always true for the "default" filament 0.
+    bool         support_filament_allowed(unsigned int filament_id, bool interface_role = false) const;
+    // Any support filament restriction configured (nozzle diameter or either material)?
+    bool         has_support_filament_restriction() const;
+    // 1-based filament a "default" (0) support filament of the role resolves to when none of a layer's
+    // own filaments pass the restrictions: the first non-soluble passing filament, else the first
+    // passing one; 0 when the role is unrestricted or nothing passes.
+    unsigned int resolved_default_support_filament(bool interface_role = false) const;
+
     // Called by make_perimeters()
     void slice();
 
@@ -587,6 +640,8 @@ private:
     std::vector<std::set<int>> detect_extruder_geometric_unprintables() const;
 
     void slice_volumes();
+    // Combine slices of regions configured with a thicker extruder layer height into every Nth layer where geometry allows. Called by slice().
+    void apply_extruder_layer_heights();
     //BBS
     ExPolygons _shrink_contour_holes(double contour_delta, double hole_delta, const ExPolygons& polys) const;
     // BBS
@@ -603,6 +658,15 @@ private:
     void clip_fill_surfaces();
     void discover_horizontal_shells();
     void combine_infill();
+    // Per-extruder layer height: top surfaces print at their filament's preferred pitch by
+    // absorbing the internal solid layers right below them into one thick pass.
+    void combine_top_surfaces();
+    // Per-extruder layer height: the remaining internal solid infill (shell backing and other
+    // solid interior) combines to its own filament's preferred pitch.
+    void combine_internal_solid_infill();
+    // Shared machinery of the passes above: combine runs of a region's fill surfaces, anchored
+    // at the top of each column, honoring the extruder's min layer height for leftovers.
+    void combine_surface_runs(size_t region_id, SurfaceType surface_type, unsigned int mult, unsigned int min_mult, float fill_clearance_factor, bool grid_aligned);
     void _generate_support_material();
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;
@@ -1232,6 +1296,9 @@ public:
     //SoftFever
     bool &is_BBL_printer() { return m_isBBLPrinter; }
     const bool is_BBL_printer() const { return m_isBBLPrinter; }
+    // Per-extruder vector index of a 0-based filament: this fork's classic multi-tool printers
+    // index per-extruder options by the filament directly.
+    size_t extruder_index_of(unsigned int filament_idx) const { return size_t(filament_idx); }
     WipeTowerType wipe_tower_type() const { return is_BBL_printer() ? WipeTowerType::Type1 : m_config.wipe_tower_type.value; }
     CalibMode& calib_mode() { return m_calib_params.mode; }
     const CalibMode calib_mode() const { return m_calib_params.mode; }
@@ -1377,7 +1444,9 @@ private:
     PrintRegionPtrs                         m_print_regions;
     
     //SoftFever
-    bool m_isBBLPrinter = false;
+    // Assigned by the GUI (BackgroundSlicingProcess) from the vendor; must not be read
+    // uninitialized by CLI/tests - BBL-only code paths key off it.
+    bool m_isBBLPrinter { false };
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;

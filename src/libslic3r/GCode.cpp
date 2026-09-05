@@ -1041,7 +1041,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             if (gcodegen.writer().filament() != nullptr && !filament_end_gcode.empty()) {
                 DynamicConfig config;
                 config.set_key_value("current_filament_id", new ConfigOptionInt((int) old_filament_id));
-                config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, (int) old_filament_id, (int) gcodegen.writer().filament()->extruder_id(), m_layer_idx)));
+                config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, (int) old_filament_id, (int) gcodegen.writer().filament()->extruder_id(), gcodegen.m_layer_index)));
                 config.set_key_value("nozzle_diameter_at_nozzle_id", new ConfigOptionFloats(get_nozzle_diameters_by_nozzle_id(group_result.get())));
                 config.set_key_value("nozzle_volume_types", new ConfigOptionStrings(get_nozzle_volume_types_by_nozzle_id(group_result.get())));
                 config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
@@ -1106,17 +1106,17 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             int old_filament_id = gcodegen.writer().filament() ? (int)gcodegen.writer().filament()->id() : -1;
             int old_extruder_id = gcodegen.writer().filament() ? (int)gcodegen.writer().filament()->extruder_id() : -1;
             // Logical nozzle ids for old/new filament (null-safe -> extruder id).
-            int old_nozzle_id  = nozzle_id_for_gcode_placeholder(group_result, old_filament_id, old_extruder_id, m_layer_idx);
-            int next_nozzle_id = nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx);
+            int old_nozzle_id  = nozzle_id_for_gcode_placeholder(group_result, old_filament_id, old_extruder_id, gcodegen.m_layer_index);
+            int next_nozzle_id = nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index);
 
             config.set_key_value("previous_extruder", new ConfigOptionInt(old_filament_id));
             config.set_key_value("next_extruder", new ConfigOptionInt(new_filament_id));
             // current_hotend/next_hotend (see hotend_id_for_gcode_placeholder): multi-nozzle H2C -> -1
             // (static; dynamic branch dormant), X2D -> -1, existing printers -> extruder id.
             config.set_key_value("current_hotend", new ConfigOptionInt(
-                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, old_filament_id, old_extruder_id, m_layer_idx)));
+                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, old_filament_id, old_extruder_id, gcodegen.m_layer_index)));
             config.set_key_value("next_hotend", new ConfigOptionInt(
-                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, (int) gcodegen.get_extruder_id(new_filament_id), m_layer_idx)));
+                hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, (int) gcodegen.get_extruder_id(new_filament_id), gcodegen.m_layer_index)));
             config.set_key_value("current_nozzle_id", new ConfigOptionInt(old_nozzle_id));
             config.set_key_value("next_nozzle_id", new ConfigOptionInt(next_nozzle_id));
             config.set_key_value("current_filament_id", new ConfigOptionInt(old_filament_id));
@@ -1319,7 +1319,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             // Orca: null-safe, layer-aware nozzle lookup — group_result may be null on
             // non-multi-nozzle paths (the helper falls back to the extruder id).
             toolchange_command = gcodegen.writer().toolchange(new_filament_id,
-                nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx));
+                nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_filament_id))
             toolchange_gcode_str += toolchange_command;
         else {
@@ -1393,9 +1393,9 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
         gcodegen.placeholder_parser().set("current_filament_id", new_filament_id);
         gcodegen.placeholder_parser().set("current_extruder_id", new_extruder_id);
         gcodegen.placeholder_parser().set("current_nozzle_id",
-            nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx));
+            nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         gcodegen.placeholder_parser().set("current_hotend",
-            hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, new_extruder_id, m_layer_idx));
+            hotend_id_for_gcode_placeholder(gcodegen.m_config, group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
         {
             size_t fi = gcodegen.get_filament_config_index(new_filament_id);
             gcodegen.placeholder_parser().set("retraction_distance_when_cut", gcodegen.m_config.retraction_distances_when_cut.get_at(fi));
@@ -1412,7 +1412,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             DynamicConfig config;
             config.set_key_value("filament_extruder_id", new ConfigOptionInt(new_filament_id));
             config.set_key_value("current_filament_id", new ConfigOptionInt(new_filament_id));
-            config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, m_layer_idx)));
+            config.set_key_value("current_nozzle_id", new ConfigOptionInt(nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index)));
             config.set_key_value("nozzle_diameter_at_nozzle_id", new ConfigOptionFloats(get_nozzle_diameters_by_nozzle_id(group_result.get())));
             config.set_key_value("nozzle_volume_types", new ConfigOptionStrings(get_nozzle_volume_types_by_nozzle_id(group_result.get())));
             start_filament_gcode_str = gcodegen.placeholder_parser_process("filament_start_gcode", filament_start_gcode, new_filament_id, &config);
@@ -2261,7 +2261,11 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
 
         bool   ignore_sparse = false;
         if (gcodegen.config().wipe_tower_no_sparse_layers.value) {
-            ignore_sparse = (m_tool_changes[m_layer_idx].size() == 1 && m_tool_changes[m_layer_idx].front().initial_tool == m_tool_changes[m_layer_idx].front().new_tool);
+            // Mirror tool_change(): the Type2 tower never skips its first layer (brim + base
+            // slab), even when that layer carries no toolchange.
+            ignore_sparse = (m_tool_changes[m_layer_idx].size() == 1 &&
+                             m_tool_changes[m_layer_idx].front().initial_tool == m_tool_changes[m_layer_idx].front().new_tool &&
+                             (gcodegen.wipe_tower_type() != WipeTowerType::Type2 || m_layer_idx != 0));
         }
 
         if ((m_enable_timelapse_print || m_enable_wrapping_detection) && m_is_first_print) {
@@ -2495,7 +2499,13 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
                 }
                 extra_gap = std::max(extra_gap, object.config().raft_contact_distance.value);
             }
-            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_to_print.layer()->height +
+            double layer_span = layer_to_print.layer()->height;
+            // ORCA: the top layer of a combined group or walls-only run prints the whole group at
+            // once, so tolerate a gap of its height (equals the layer height when not combined).
+            if (layer_to_print.object_layer != nullptr)
+                for (const LayerRegion *layerm : layer_to_print.object_layer->regions())
+                    layer_span = std::max(layer_span, layerm->wall_combined_height());
+            double maximal_print_z = (last_extrusion_layer ? last_extrusion_layer->print_z() : 0.) + layer_span +
                                      std::max(0., extra_gap);
             // Negative support_contact_z is not taken into account, it can result in false positives in cases
 
@@ -3228,7 +3238,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
     m_layer_count = 0;
-    if (print.config().print_sequence == PrintSequence::ByObject) {
+    // A by-object print with a wipe tower is emitted by layer (see the sequential branch below),
+    // so it changes layer once per merged print Z like a by-layer print.
+    const bool count_layers_by_object = print.config().print_sequence == PrintSequence::ByObject &&
+                                        !(print.has_wipe_tower() && print.tool_ordering().has_wipe_tower());
+    if (count_layers_by_object) {
         // Add each of the object's layers separately.
         for (auto object : print.objects()) {
             std::vector<coordf_t> zs;
@@ -3511,7 +3525,28 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // Use the extruder IDs collected from Regions.
         this->set_extruders(print.extruders());
 
-        has_wipe_tower = print.has_wipe_tower() && tool_ordering.has_wipe_tower();
+        // With a wipe tower the layers are emitted by layer (see below) from the print-wide
+        // ordering the tower was planned on: the per-object ordering lacks layers that only
+        // other objects print (e.g. support-only layers), which would desynchronize the
+        // positional tower consumption, and the last object's own ordering may not even carry
+        // a tower although the print does. Everything the by-layer branch derives from its
+        // ordering (initial tool, extruder set, first filaments) has to come from that same
+        // ordering too, or the first layer may end on a tool the tower never planned a change
+        // to, or a filament only the print-wide ordering knows (custom per-layer change) has
+        // no extruder entry in the writer.
+        has_wipe_tower = print.has_wipe_tower() && print.tool_ordering().has_wipe_tower();
+        if (has_wipe_tower) {
+            tool_ordering = print.tool_ordering();
+            tool_ordering.assign_custom_gcodes(print);
+            initial_extruder_id = (wipe_tower_type == WipeTowerType::Type2 && !print.config().single_extruder_multi_material_priming) ?
+                tool_ordering.all_extruders().back() :
+                tool_ordering.first_extruder();
+            initial_non_support_extruder_id = (unsigned int) -1;
+            std::fill(first_non_support_filaments.begin(), first_non_support_filaments.end(), -1);
+            std::fill(first_filaments.begin(), first_filaments.end(), -1);
+            tool_ordering.cal_non_support_filaments(print.config(), initial_non_support_extruder_id, first_non_support_filaments, first_filaments);
+            this->set_extruders(tool_ordering.all_extruders());
+        }
     } else {
         // Find tool ordering for all the objects at once, and the initial extruder ID.
         // If the tool ordering has been pre-calculated by Print class for wipe tower already, reuse it.
@@ -6901,12 +6936,20 @@ LayerResult GCode::process_layer(
         if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
             if (layer_tools.extruder_override != 0)
                 return layer_tools.extruder_override;
-            const ExtrusionRole role = entities.entities.empty() ? erNone : entities.entities.front()->role();
-            if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
-                return unsigned(region.config().sparse_infill_filament_id.value);
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return unsigned(region.config().outer_wall_filament_id.value);
             if (role == erTopSolidInfill || role == erIroning)
                 return unsigned(region.config().top_surface_filament_id.value);
-            if (role == erBottomSurface)
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
                 return unsigned(region.config().bottom_surface_filament_id.value);
             if (is_solid_infill(role))
                 return unsigned(region.config().internal_solid_filament_id.value);
@@ -6914,16 +6957,39 @@ LayerResult GCode::process_layer(
         }
         if (layer_tools.extruder_override != 0)
             return layer_tools.extruder_override;
-        return entities.role() == erPerimeter ? unsigned(region.config().inner_wall_filament_id.value)
-                                              : unsigned(region.config().outer_wall_filament_id.value);
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? unsigned(region.config().inner_wall_filament_id.value)
+                                        : unsigned(region.config().outer_wall_filament_id.value);
     };
 
-    // Zero based counterpart of configured_filament_id_1based(), which already folds in extruder_override.
-    auto configured_extruder_id = [&configured_filament_id_1based](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
-                                                                   const ExtrusionEntityCollection&                    entities,
-                                                                   const PrintRegion&                                  region) -> int {
-        const unsigned int filament_id = configured_filament_id_1based(entity_type, entities, region);
-        return filament_id == 0 ? 0 : int(filament_id) - 1;
+    auto configured_extruder_id = [&layer_tools](const GCode::ObjectByExtruder::Island::Region::Type entity_type,
+                                                 const ExtrusionEntityCollection&                    entities,
+                                                 const PrintRegion&                                  region) -> int {
+        if (entity_type == GCode::ObjectByExtruder::Island::Region::INFILL) {
+            // gap fill inherits the filament of the surface it fills; derive the role from the
+            // first non-gap-fill entity (must match ToolOrdering::collect_extruders()).
+            ExtrusionRole role = erNone;
+            for (const ExtrusionEntity *fill_entity : entities.entities)
+                if (fill_entity->role() != erGapFill) {
+                    role = fill_entity->role();
+                    break;
+                }
+            if (role == erNone && ! entities.entities.empty())
+                // perimeter-generated gap fill with no sibling surface prints with the outer wall filament.
+                return int(layer_tools.wall_extruder_id(region));
+            if (role == erTopSolidInfill || role == erIroning)
+                return int(layer_tools.top_surface_filament_id(region));
+            if (role == erBottomSurface || role == erBridgeInfill) // ORCA: external bridges print as bottom surfaces (internal bridges stay internal solid)
+                return int(layer_tools.bottom_surface_filament_id(region));
+            if (is_solid_infill(role))
+                return int(layer_tools.internal_solid_filament_id(region));
+            return int(layer_tools.sparse_infill_filament_id(region));
+        }
+        bool any_outer = false, any_inner = false;
+        classify_wall_filaments(entities, any_outer, any_inner);
+        return any_inner && ! any_outer ? int(layer_tools.inner_wall_extruder_id(region))
+                                        : int(layer_tools.wall_extruder_id(region));
     };
 
     auto pointillism_sequence_for_filament = [&](unsigned int filament_id_1based) -> const std::vector<unsigned int>* {
@@ -7267,6 +7333,29 @@ LayerResult GCode::process_layer(
                         support_extruder = dontcare_extruder;
                     if (interface_dontcare)
                         interface_extruder = dontcare_extruder;
+                }
+                // ORCA: with support nozzle diameter / material restrictions, ("don't care") support/interface may only use a passing extruder; prefer one scheduled on this layer (as ToolOrdering did).
+                if (object.has_support_filament_restriction()) {
+                    auto restrict_to_support_filaments = [&print, &object, &layer_tools](unsigned int extruder_id, bool interface_role) -> unsigned int {
+                        if (object.support_filament_allowed(extruder_id + 1, interface_role))
+                            return extruder_id;
+                        unsigned int fallback   = extruder_id;
+                        bool have_fallback      = false;
+                        for (unsigned int candidate : layer_tools.extruders) // 0 based at this point
+                            if (object.support_filament_allowed(candidate + 1, interface_role)) {
+                                if (! print.config().filament_soluble.get_at(candidate))
+                                    return candidate;
+                                if (! have_fallback) {
+                                    fallback      = candidate;
+                                    have_fallback = true;
+                                }
+                            }
+                        return fallback;
+                    };
+                    if (support_dontcare)
+                        support_extruder = restrict_to_support_filaments(support_extruder, false);
+                    if (interface_dontcare)
+                        interface_extruder = restrict_to_support_filaments(interface_extruder, true);
                 }
                 // Both the support and the support interface are printed with the same extruder, therefore
                 // the interface may be interleaved with the support base.
@@ -7644,29 +7733,36 @@ LayerResult GCode::process_layer(
                             }
                         };
 
-                        bool split_mixed_perimeters =
-                            entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
-                            region.config().outer_wall_filament_id.value != region.config().inner_wall_filament_id.value &&
-                            filtered_extrusions->role() == erMixed;
+                        // ORCA: gate the split on the actual per-path classification: the collection
+                        // role() is erMixed only when the loops' FIRST paths differ, missing e.g. a
+                        // collection whose loops all start with an overhang path.
+                        bool any_outer_wall = false, any_inner_wall = false;
+                        if (entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
+                            region.config().outer_wall_filament_id.value != region.config().inner_wall_filament_id.value)
+                            classify_wall_filaments(*filtered_extrusions, any_outer_wall, any_inner_wall);
+                        const bool split_mixed_perimeters = any_outer_wall && any_inner_wall;
 
                         if (split_mixed_perimeters) {
                             auto outer_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             auto inner_perimeters = std::make_unique<ExtrusionEntityCollection>();
                             for (const ExtrusionEntity* entity : filtered_extrusions->entities) {
-                                const ExtrusionRole role = entity->role();
-                                if (role == erExternalPerimeter || role == erOverhangPerimeter)
+                                // Same classification as the wall filament dispatch (LayerTools::extruder()).
+                                if (perimeter_entity_uses_outer_wall_filament(*entity))
                                     outer_perimeters->append(*entity);
-                                else if (role == erPerimeter)
+                                else
                                     inner_perimeters->append(*entity);
                             }
 
+                            // Wiping-extrusion overrides were marked (and their purge volume
+                            // credited) against the ORIGINAL collection - look them up under that
+                            // key so a purge planned into these perimeters still happens.
                             if (!outer_perimeters->entities.empty()) {
                                 split_perimeter_storage.emplace_back(std::move(outer_perimeters));
-                                process_extrusions(split_perimeter_storage.back().get(), nullptr, false);
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
                             }
                             if (!inner_perimeters->entities.empty()) {
                                 split_perimeter_storage.emplace_back(std::move(inner_perimeters));
-                                process_extrusions(split_perimeter_storage.back().get(), nullptr, false);
+                                process_extrusions(split_perimeter_storage.back().get(), filtered_extrusions, true);
                             }
                         } else {
                             process_extrusions(filtered_extrusions, filtered_extrusions, true);
@@ -8370,7 +8466,8 @@ LayerResult GCode::process_layer(
             }
         }
 
-        if (print.config().print_sequence == PrintSequence::ByLayer && m_enable_exclude_object && print.config().support_object_skip_flush.value) {
+        // By-layer emission (including a sequential print that falls back to it for the wipe tower).
+        if (single_object_instance_idx == size_t(-1) && m_enable_exclude_object && print.config().support_object_skip_flush.value) {
             std::set<size_t> all_label_ids;
             for (InstanceToPrint &instance : filament_to_print_instances[extruder_id].first)
                 all_label_ids.insert(instance.label_object_id);

@@ -1896,6 +1896,16 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
+    // ORCA: support enabled by the user on a printer with differing nozzle sizes: ask which
+    // nozzle size prints the support and which materials serve as raft/base and interface.
+    // Only here, on a real edit - preset and project loading must not raise dialogs.
+    if (opt_key == "enable_support" && m_type == Preset::TYPE_PRINT && m_config->opt_bool("enable_support") &&
+        ConfigManipulation::printer_has_mixed_nozzle_sizes()) {
+        DynamicPrintConfig new_conf = *m_config;
+        if (m_config_manipulation.show_support_filament_dialog(m_config, &new_conf) == wxID_OK)
+            m_config_manipulation.apply(m_config, &new_conf);
+    }
+
     if (opt_key == "single_extruder_multi_material" || opt_key == "extruders_count" )
         update_wiping_button_visibility();
 
@@ -2822,6 +2832,8 @@ void TabPrint::build()
         auto optgroup = page->new_optgroup(L("Layer height"), L"param_layer_height");
         optgroup->append_single_option_line("layer_height","quality_settings_layer_height");
         optgroup->append_single_option_line("initial_layer_print_height","quality_settings_layer_height");
+        optgroup->append_single_option_line("extruder_layer_height_mode","quality_settings_layer_height");
+        optgroup->append_single_option_line("extruder_layer_height_tolerance","quality_settings_layer_height");
         optgroup->append_single_option_line("enable_mixed_color_sublayer");
 
         optgroup = page->new_optgroup(L("Line width"), L"param_line_width");
@@ -3114,9 +3126,41 @@ void TabPrint::build()
         optgroup->append_single_option_line("raft_contact_distance", "support_settings_raft");
 
         optgroup = page->new_optgroup(L("Filament for Supports"), L"param_support_filament");
+        // ORCA: Snapmaker support material / nozzle selection.
+        optgroup->append_single_option_line("support_nozzle_diameter", "support_settings_filament");
+        optgroup->append_single_option_line("support_base_material", "support_settings_filament");
+        optgroup->append_single_option_line("support_interface_material", "support_settings_filament");
         optgroup->append_single_option_line("support_filament", "support_settings_filament#base");
         optgroup->append_single_option_line("support_interface_filament", "support_settings_filament#interface");
         optgroup->append_single_option_line("support_interface_not_for_body", "support_settings_filament#avoid-interface-filament-for-base");
+        // ORCA: the support material options own the base/interface choice; this toggle
+        // reveals the legacy selectors above for older projects.
+        auto legacy_support_toggle = [this](wxWindow* parent) {
+            auto *sizer = new wxBoxSizer(wxHORIZONTAL);
+            auto *check = m_legacy_support_check = new ::CheckBox(parent);
+            check->SetValue(wxGetApp().app_config->get_bool("show_legacy_support_filament"));
+            // Page controls are destroyed when another page activates; drop the cached pointer.
+            check->Bind(wxEVT_DESTROY, [this, check](wxWindowDestroyEvent &evt) {
+                if (m_legacy_support_check == check)
+                    m_legacy_support_check = nullptr;
+                evt.Skip();
+            });
+            check->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent &evt) {
+                wxGetApp().app_config->set_bool("show_legacy_support_filament", evt.IsChecked());
+                update();
+                if (m_active_page != nullptr)
+                    m_active_page->update_visibility(m_mode, true);
+                m_page_view->GetParent()->Layout();
+                evt.Skip();
+            });
+            sizer->Add(check, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 4);
+            sizer->Add(new wxStaticText(parent, wxID_ANY, _(L("Show legacy filament selection"))), 0, wxALIGN_CENTER_VERTICAL);
+            return sizer;
+        };
+        Line legacy_support_line = Line{ "", "" };
+        legacy_support_line.full_width = 1;
+        legacy_support_line.append_widget(legacy_support_toggle);
+        optgroup->append_line(legacy_support_line);
 
         optgroup = page->new_optgroup(L("Support ironing"), L"param_ironing");
         optgroup->append_single_option_line("support_ironing", "support_settings_ironing");
@@ -3147,6 +3191,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("bridge_no_support", "support_settings_advanced#dont-support-bridges");
         optgroup->append_single_option_line("max_bridge_length", "support_settings_advanced");
         optgroup->append_single_option_line("independent_support_layer_height", "support_settings_advanced#independent-support-layer-height");
+        optgroup->append_single_option_line("support_layer_height_step");
 
         optgroup = page->new_optgroup(L("Tree supports"), L"param_support_tree");
         optgroup->append_single_option_line("tree_support_tip_diameter", "support_settings_tree#tip-diameter");
@@ -3192,6 +3237,10 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Filament for Features"), L"param_filament_for_features");
         optgroup->append_single_option_line("outer_wall_filament_id", "multimaterial_settings_filament_for_features#outer-walls");
         optgroup->append_single_option_line("inner_wall_filament_id", "multimaterial_settings_filament_for_features#inner-walls");
+        // ORCA: split wall layer heights.
+        optgroup->append_single_option_line("split_wall_adjust", "multimaterial_settings_filament_for_features#inner-walls");
+        optgroup->append_single_option_line("split_wall_adjust_filament", "multimaterial_settings_filament_for_features#inner-walls");
+        optgroup->append_single_option_line("split_wall_adjust_direction", "multimaterial_settings_filament_for_features#inner-walls");
         optgroup->append_single_option_line("sparse_infill_filament_id", "multimaterial_settings_filament_for_features#sparse-infill");
         optgroup->append_single_option_line("internal_solid_filament_id", "multimaterial_settings_filament_for_features#internal-solid-infill");
         optgroup->append_single_option_line("top_surface_filament_id", "multimaterial_settings_filament_for_features#top-surface");
@@ -3374,6 +3423,9 @@ void TabPrint::toggle_options()
     }
 
     m_config_manipulation.toggle_print_fff_options(m_config, int(intptr_t(m_extruder_switch->GetClientData())), m_type < Preset::TYPE_COUNT);
+    // The visibility pass may have switched the legacy toggle on for a loaded selection.
+    if (m_legacy_support_check != nullptr)
+        m_legacy_support_check->SetValue(wxGetApp().app_config->get_bool("show_legacy_support_filament"));
 
     Field *field = m_active_page->get_field("support_style");
     auto   support_type = m_config->opt_enum<SupportType>("support_type");
@@ -3558,24 +3610,32 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
-static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
+static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config, const DynamicPrintConfig* parent_scope_config)
 {
     DynamicPrintConfig resolved(config);
 
+    // Mirror the slicing precedence (apply_to_print_region_config): explicit selectors of outer
+    // scopes - the process preset and, for the part/layer tabs, the parent object's own config -
+    // win over this scope's extruder; the extruder only fills selectors left on "Default" (0) by
+    // every outer scope. The gate reads the edited print preset directly: a parent TAB's m_config
+    // may carry values auto-filled from the parent object's extruder, which must NOT beat this
+    // scope's own extruder. No cross-propagation between the selectors either - the engine
+    // resolves each feature's "Default" independently.
     if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
         const int extruder = extruder_opt->value;
-        if (!resolved.has("outer_wall_filament_id"))
-            resolved.set_key_value("outer_wall_filament_id", new ConfigOptionInt(extruder));
-        if (!resolved.has("inner_wall_filament_id"))
-            resolved.set_key_value("inner_wall_filament_id", new ConfigOptionInt(extruder));
-        if (!resolved.has("sparse_infill_filament_id"))
-            resolved.set_key_value("sparse_infill_filament_id", new ConfigOptionInt(extruder));
-        if (!resolved.has("internal_solid_filament_id"))
-            resolved.set_key_value("internal_solid_filament_id", new ConfigOptionInt(extruder));
+        const DynamicPrintConfig& preset_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        for (const char* key : {"outer_wall_filament_id", "inner_wall_filament_id", "sparse_infill_filament_id",
+                                "internal_solid_filament_id", "top_surface_filament_id", "bottom_surface_filament_id"}) {
+            if (resolved.has(key))
+                continue;
+            if (const auto* preset_opt = preset_config.option<ConfigOptionInt>(key); preset_opt != nullptr && preset_opt->value > 0)
+                continue;
+            if (parent_scope_config != nullptr)
+                if (const auto* parent_opt = parent_scope_config->option<ConfigOptionInt>(key); parent_opt != nullptr && parent_opt->value > 0)
+                    continue;
+            resolved.set_key_value(key, new ConfigOptionInt(extruder));
+        }
     }
-
-    if (!resolved.has("internal_solid_filament_id") && resolved.has("sparse_infill_filament_id"))
-        resolved.set_key_value("internal_solid_filament_id", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament_id")));
 
     return resolved;
 }
@@ -3668,8 +3728,15 @@ void TabPrintModel::update_model_config()
     }
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
+        // For the part/layer tabs, the parent object's own explicit selectors also beat this
+        // scope's extruder in the engine; the object tab holds that object's config while a
+        // part/layer is selected (GUI_ObjectSettings).
+        const DynamicPrintConfig *parent_object_config = nullptr;
+        if (auto *object_tab = dynamic_cast<TabPrintModel*>(wxGetApp().get_model_tab());
+            object_tab != nullptr && object_tab != this && m_parent_tab == object_tab && object_tab->m_object_configs.size() == 1)
+            parent_object_config = &object_tab->m_object_configs.begin()->second->get();
         DynamicPrintConfig const & global_config= *m_config;
-        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
+        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get(), parent_object_config);
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = variant_keys(local_config); // at least one has these keys
         std::vector<std::string> local_diffs; // all diff keys to first config
@@ -3679,7 +3746,7 @@ void TabPrintModel::update_model_config()
                 // ORCA: the object/part/layer scope resolves its own explicit selectors first
                 // (see resolved_model_config_for_tab); local_config is a resolved copy, so the
                 // first entry simply diffs to nothing instead of being skipped by address.
-                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get(), parent_object_config);
                 all_keys = concat(all_keys, variant_keys(resolved_config));
                 auto diffs = deep_diff(resolved_config, global_config, false);
                 global_diffs = concat(global_diffs, diffs);
@@ -6102,6 +6169,8 @@ if (is_marlin_flavor)
             optgroup = page->new_optgroup(L("Layer height limits"), L"param_layer_height");
             optgroup->append_single_option_line("min_layer_height", "printer_extruder_basic_information#extruder-layer-height-limits", extruder_idx);
             optgroup->append_single_option_line("max_layer_height", "printer_extruder_basic_information#extruder-layer-height-limits", extruder_idx);
+            // ORCA: per-extruder layer height.
+            optgroup->append_single_option_line("extruder_layer_height", "printer_extruder_basic_information#extruder-layer-height-limits", extruder_idx);
 
             optgroup = page->new_optgroup(L("Position"), L"param_position");
             optgroup->append_single_option_line("extruder_offset", "printer_extruder_basic_information#extruder-offset-position", extruder_idx);

@@ -84,7 +84,11 @@ public:
     Flow                         perimeter_flow;
     Flow                         ext_perimeter_flow;
     Flow                         overhang_flow;
+    // Overhangs of external / fully overhanging loops print with the outer wall filament (GCode::process_layer() splits mixed perimeters by filament), whose nozzle may differ.
+    Flow                         ext_overhang_flow;
     Flow                         solid_infill_flow;
+    // Gap fill prints with the outer wall filament (LayerTools::extruder()), whose nozzle may differ from the internal solid infill filament's.
+    Flow                         gap_fill_flow;
     const PrintRegionConfig     *config;
     const PrintObjectConfig     *object_config;
     const PrintConfig           *print_config;
@@ -129,13 +133,13 @@ public:
         ExPolygons*                 fill_no_overlap)
         : slices(slices), compatible_regions(compatible_regions), upper_slices(nullptr), lower_slices(nullptr), layer_height(layer_height),
             slice_z(slice_z), layer_id(-1), perimeter_flow(flow), ext_perimeter_flow(flow),
-            overhang_flow(flow), solid_infill_flow(flow),
+            overhang_flow(flow), ext_overhang_flow(flow), solid_infill_flow(flow), gap_fill_flow(flow),
             config(config), object_config(object_config), print_config(print_config),
             m_spiral_vase(spiral_mode),
             m_scaled_resolution(scaled<double>(print_config->resolution.value > EPSILON ? print_config->resolution.value : EPSILON)),
             m_model_rotation_rad(model_rotation_rad),
             loops(loops), gap_fill(gap_fill), fill_surfaces(fill_surfaces), fill_no_overlap(fill_no_overlap),
-            m_ext_mm3_per_mm(-1), m_mm3_per_mm(-1), m_mm3_per_mm_overhang(-1), m_ext_mm3_per_mm_smaller_width(-1)
+            m_ext_mm3_per_mm(-1), m_mm3_per_mm(-1), m_mm3_per_mm_overhang(-1), m_ext_mm3_per_mm_overhang(-1), m_ext_mm3_per_mm_smaller_width(-1)
         {}
 
     void        process_classic();
@@ -146,6 +150,7 @@ public:
     double      ext_mm3_per_mm()        const { return m_ext_mm3_per_mm; }
     double      mm3_per_mm()            const { return m_mm3_per_mm; }
     double      mm3_per_mm_overhang()   const { return m_mm3_per_mm_overhang; }
+    double      ext_mm3_per_mm_overhang() const { return m_ext_mm3_per_mm_overhang; }
     //BBS
     double      smaller_width_ext_mm3_per_mm()   const { return m_ext_mm3_per_mm_smaller_width; }
     Polygons    lower_slices_polygons() const { return m_lower_slices_polygons; }
@@ -163,6 +168,7 @@ private:
     double      m_ext_mm3_per_mm;
     double      m_mm3_per_mm;
     double      m_mm3_per_mm_overhang;
+    double      m_ext_mm3_per_mm_overhang;
     //BBS
     double      m_ext_mm3_per_mm_smaller_width;
     Polygons    m_lower_slices_polygons;

@@ -23,6 +23,15 @@ namespace Slic3r {
 class Print;
 class PrintObject;
 class LayerTools;
+
+// ORCA: per-feature wall filaments. Classify a perimeter entity the way GCode::process_layer()'s
+// mixed-perimeter split does: a loop carrying an external perimeter path - or a fully overhanging
+// loop without any plain perimeter path - prints with the outer wall filament, everything else
+// with the inner wall filament. The split and every wall filament dispatch must agree on this.
+bool perimeter_entity_uses_outer_wall_filament(const ExtrusionEntity &entity);
+// Do any of the collection's perimeter entities print with the outer / the inner wall filament?
+void classify_wall_filaments(const ExtrusionEntityCollection &collection, bool &any_outer, bool &any_inner);
+
 namespace CustomGCode { struct Item; }
 class PrintRegion;
 
@@ -161,6 +170,9 @@ public:
     coordf_t 					print_z	= 0.;
     bool 						has_object = false;
     bool						has_support = false;
+    // This print_z is an object layer boundary (of any object, extrusions or not); support-only
+    // layers between such Zs come from fractional independent support layer heights.
+    bool						on_object_grid = false;
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
     bool                        preserve_extruder_order = false;

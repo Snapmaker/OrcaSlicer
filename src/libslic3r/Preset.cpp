@@ -1195,7 +1195,7 @@ static std::vector<std::string> s_Preset_print_options{
     // BBS
     "print_extruder_id",
     "print_extruder_variant",
-    "independent_support_layer_height",
+    "independent_support_layer_height", "support_layer_height_step",
     "support_angle",
     "support_interface_top_layers",
     "support_interface_bottom_layers",
@@ -1223,6 +1223,9 @@ static std::vector<std::string> s_Preset_print_options{
     "top_surface_filament_id",
     "bottom_surface_filament_id",
     "support_filament",
+    "support_nozzle_diameter",
+    "support_base_material",
+    "support_interface_material",
     "support_interface_filament",
     "support_interface_not_for_body",
     "ooze_prevention",
@@ -1286,6 +1289,12 @@ static std::vector<std::string> s_Preset_print_options{
     "precise_z_height",
     "infill_combination",
     "infill_combination_max_layer_height", /*"adaptive_layer_height",*/
+    // ORCA: per-extruder layer height ("extruder_layer_height").
+    "extruder_layer_height_mode",
+    "extruder_layer_height_tolerance",
+    "split_wall_adjust",
+    "split_wall_adjust_filament",
+    "split_wall_adjust_direction",
     "support_bottom_interface_spacing",
     "enable_overhang_speed",
     "slowdown_for_curled_perimeters",
@@ -4009,17 +4018,17 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection &&othe
             }
             m_presets.emplace(it, std::move(preset));
         } else {
+            // Take the name first: the Snapmaker-wins branch moves the preset away.
+            std::string preset_name = preset.name;
             std::string default_vendor = std::string(PresetBundle::SM_BUNDLE);
-            if (preset.vendor->name == default_vendor) {
-                if (preset.vendor != nullptr) {
-                    // Re-assign a pointer to the vendor structure in the new PresetBundle.
-                    auto it = new_vendors.find(preset.vendor->id);
-                    assert(it != new_vendors.end());
-                    preset.vendor = &it->second;
-                }
+            if (preset.vendor != nullptr && preset.vendor->name == default_vendor) {
+                // Re-assign a pointer to the vendor structure in the new PresetBundle.
+                auto it_vendor = new_vendors.find(preset.vendor->id);
+                assert(it_vendor != new_vendors.end());
+                preset.vendor = &it_vendor->second;
                 m_presets.emplace(it, std::move(preset));
             }
-            duplicates.emplace_back(std::move(preset.name));
+            duplicates.emplace_back(std::move(preset_name));
         }
             
     }

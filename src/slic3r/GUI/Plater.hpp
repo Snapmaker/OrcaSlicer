@@ -243,6 +243,8 @@ public:
     void update_dynamic_filament_list();
 
     void update_nozzle_settings(bool switch_machine = false);
+    // Refresh the nozzle tabs' combo values in place; rebuilds (deferred) on extruder count change.
+    void update_nozzle_values();
 
     PlaterPresetComboBox *  printer_combox();
     ObjectList*             obj_list();

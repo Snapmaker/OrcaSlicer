@@ -17592,8 +17592,6 @@ void Plater::load_project(wxString const& filename2,
     }
     else
         m_loading_project = true;
-    p->m_last_auto_gradient_prompt_physical_count = 0;
-    p->m_last_auto_gradient_prompt_accepted = false;
     p->m_auto_gradient_project_choice_changed_during_load = false;
 
     m_only_gcode = false;
@@ -17624,6 +17622,10 @@ void Plater::load_project(wxString const& filename2,
         }
     }
     bool load_restore = strategy & LoadStrategy::Restore;
+    if (strategy & LoadStrategy::LoadConfig) {
+        p->m_last_auto_gradient_prompt_physical_count = 0;
+        p->m_last_auto_gradient_prompt_accepted = false;
+    }
 
     // Take the Undo / Redo snapshot.
     reset();

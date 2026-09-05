@@ -205,6 +205,13 @@ public:
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
     void plan_toolchange(float z_par, float layer_height_par, unsigned int old_tool, unsigned int new_tool, float wipe_volume_ec = 0.f, float wipe_volume_nc = 0.f, float prime_volume = 0.f);
+    // Records the ToolOrdering layer index of the last planned layer (see WipeTowerInfo::ordering_layer_idx).
+    void set_plan_layer_ordering_index(int ordering_layer_idx) { if (!m_plan.empty()) m_plan.back().ordering_layer_idx = ordering_layer_idx; }
+    // Maps a plan layer index to the ToolOrdering layer index the per-layer nozzle maps use.
+    int  nozzle_layer_id(int plan_layer_id) const {
+        return plan_layer_id >= 0 && size_t(plan_layer_id) < m_plan.size() && m_plan[plan_layer_id].ordering_layer_idx >= 0 ?
+               m_plan[plan_layer_id].ordering_layer_idx : plan_layer_id;
+    }
 
 
 	// Iterates through prepared m_plan, generates ToolChangeResults and appends them to "result"
@@ -610,6 +617,11 @@ private:
 		float toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
 
 		std::vector<ToolChange> tool_changes;
+		// Tool loaded when this layer starts (-1 = unknown); toolchanges may happen off the tower.
+		int start_tool = -1;
+		// Index of this layer in the ToolOrdering that planned it (-1 = same as the plan index).
+		// Per-layer nozzle maps are indexed by it; the plan skips layers without a slab.
+		int ordering_layer_idx = -1;
 
 		WipeTowerInfo(float z_par, float layer_height_par)
 			: z{z_par}, height{layer_height_par}, depth{0}, extra_spacing{1.f} {}

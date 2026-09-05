@@ -492,6 +492,13 @@ static const t_config_enum_values s_keys_map_TimelapseType = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(TimelapseType)
 
+static const t_config_enum_values s_keys_map_SupportLayerHeightStep = {
+    {"whole",   slhsWholeLayer},
+    {"half",    slhsHalfLayer},
+    {"quarter", slhsQuarterLayer}
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SupportLayerHeightStep)
+
 static const t_config_enum_values s_keys_map_SkirtType = {
     { "combined", stCombined },
     { "perobject", stPerObject }
@@ -7518,11 +7525,35 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SupportMaterialStyle>(smsDefault));
 
+    def = this->add("support_layer_height_step", coEnum);
+    def->label = L("Support layer height step");
+    def->category = L("Support");
+    def->tooltip = L("Step granularity for independent support layer heights while the prime tower is enabled. "
+                     "With whole layers, support layer heights are multiples of the object layer height. "
+                     "Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support "
+                     "nozzle's maximum layer height sits between two whole multiples. Support boundaries may then "
+                     "fall between object layers; such support-only layers print without a prime tower layer: the "
+                     "switch to the support filament happens directly (any residue ends up in the support) and the "
+                     "switch back purges on the next full prime tower layer. With smooth timelapse the sub-layer "
+                     "boundaries get their own prime tower layers instead and are only used where those stay at or "
+                     "above the nozzles' minimum layer height. Not used with single-extruder multi-material, which "
+                     "keeps whole layers.");
+    def->enum_keys_map = &ConfigOptionEnum<SupportLayerHeightStep>::get_enum_values();
+    def->enum_values.emplace_back("whole");
+    def->enum_values.emplace_back("half");
+    def->enum_values.emplace_back("quarter");
+    def->enum_labels.emplace_back(L("100% (whole layers)"));
+    def->enum_labels.emplace_back(L("50%"));
+    def->enum_labels.emplace_back(L("25%"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<SupportLayerHeightStep>(slhsWholeLayer));
+
     def = this->add("independent_support_layer_height", coBool);
     def->label = L("Independent support layer height");
     def->category = L("Support");
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. "
-                     "This option will be invalid when the prime tower is enabled.");
+                     "With the prime tower enabled, support layer heights stay aligned to the object layer grid "
+                     "(see Support layer height step).");
     def->mode = comAdvanced;
     // Mainline default. The Snapmaker process profiles either set this to 1
     // explicitly or (U1) leave it unset; with the old false default, loading a
@@ -10103,12 +10134,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             ept_opt->value = false;
         }
 
-        if (ept_opt->value) {
-            if (islh_opt)
-                islh_opt->value = false;
-            //if (alh_opt)
-            //    alh_opt->value = false;
-        }
+        // With the prime tower enabled, independent support layer heights are no longer
+        // forced off: tree supports plan grid-aligned thick layers (whole multiples of
+        // object layers) so every toolchange still lands on a tower layer, and the
+        // classic support generator falls back to synchronized layers on its own.
+        (void) islh_opt;
         /* BBS: MusangKing - not sure if this is still valid, just comment it out cause "Independent support layer height" is re-opened.
         else {
             if (islh_opt)
@@ -10205,13 +10235,9 @@ t_config_option_keys DynamicPrintConfig::normalize_fdm_2(int num_objects, int us
         }
 
         if (ept_opt->value) {
-            if (islh_opt) {
-                if (islh_opt->value) {
-                    islh_opt->value = false;
-                    changed_keys.push_back("independent_support_layer_height");
-                }
-                //islh_opt->value = false;
-            }
+            // Independent support layer heights stay enabled with the prime tower (see
+            // normalize_fdm()); supports print grid-aligned thick layers instead.
+            (void) islh_opt;
             //if (alh_opt) {
             //    if (alh_opt->value) {
             //        alh_opt->value = false;

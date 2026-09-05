@@ -3259,6 +3259,154 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
             z_heights[m_object->get_layer(layer_nr)->print_z] = m_object->get_layer(layer_nr)->height;
             layer_heights[layer_nr] = {m_object->get_layer(layer_nr)->print_z, m_object->get_layer(layer_nr)->height, size_t(layer_nr)};
         }
+    } else if (m_support_params.grid_aligned_layer_height) {
+        // Grid-aligned independent heights: support boundaries land on object layers or,
+        // with a finer configured step, on half/quarter subdivisions of them. Boundaries
+        // on the object grid keep every toolchange on an existing prime tower layer;
+        // sub-layer boundaries get their own (thinner) tower layers, which costs extra
+        // purge there but lets support heights exceed whole multiples (e.g. 1.5x) when
+        // the support nozzle's maximum lies between two whole multiples.
+        const int      height_step      = std::max(1, m_support_params.grid_height_step);
+        // The support extruder's own minimum is not clamped to the object layer height: a
+        // coarse support nozzle under a fine object grid must not get sub-minimum tails.
+        const coordf_t min_layer_height = std::max(m_slicing_params.min_layer_height, m_slicing_params.min_suport_layer_height);
+        // Floor the maximum at one sub-step: a support nozzle with a maximum below the object
+        // pitch then closes its pieces on sub-grid positions instead of whole object layers.
+        const coordf_t max_layer_height = std::max({m_slicing_params.max_suport_layer_height, m_object->config().layer_height.value / height_step, min_layer_height});
+        const size_t   n = m_object->layer_count();
+        // Fractional support-only layers normally get no prime tower layer (their
+        // toolchange goes straight to the support filament), so they impose nothing on
+        // the tower. Smooth timelapse is the exception: it needs a tower layer on every
+        // print layer, so there a fractional boundary splits an object layer into two
+        // tower slabs and both must stay printable by every filament - gate sub-positions
+        // on the strictest configured minimum layer height (0 = the 0.07 mm default).
+        coordf_t tower_min_slab = 0.;
+        if (m_object->print()->config().timelapse_type.value == TimelapseType::tlSmooth)
+            for (unsigned int extruder_id : m_object->print()->extruders()) {
+                coordf_t min_h = m_object->print()->config().min_layer_height.get_at(extruder_id);
+                tower_min_slab = std::max(tower_min_slab, min_h == 0. ? 0.07 : min_h);
+            }
+        // Sub-positions of an object layer usable as piece boundaries. Fractional positions
+        // keep a quantum comfortably above the tower plan's 1e-3 mm Z-merge epsilon, or the
+        // layer is left unsplittable.
+        auto sub_positions = [&](const Layer *layer, std::vector<coordf_t> &out) {
+            out.clear();
+            const coordf_t h     = layer->height;
+            const int      steps = h / height_step > 0.002 ? height_step : 1;
+            for (int k = 1; k < steps; ++k) {
+                const coordf_t below = h * k / steps;
+                if (below < tower_min_slab - EPSILON || h - below < tower_min_slab - EPSILON)
+                    continue; // a tower slab on either side of this boundary would be too thin
+                out.push_back(layer->print_z - h + below);
+            }
+        };
+        // A run must end exactly at a top-contact layer so the support tops keep their
+        // contact Z (mirrors the boundaries the free-form planner inserts), and the contact
+        // layer itself prints at the object layer height for interface quality.
+        std::vector<char>     boundary(n + 1, 0);
+        std::vector<coordf_t> forced_close_zs; // exact support tops between object layers
+        std::vector<coordf_t> layer_subs;
+        for (size_t layer_nr = 1; layer_nr < contact_nodes.size() && layer_nr < n; ++layer_nr)
+            if (!contact_nodes[layer_nr].empty()) {
+                boundary[layer_nr]     = 1;
+                boundary[layer_nr + 1] = 1;
+                // The support top sits support_top_z_distance below the contact (the contact
+                // node's height is that gap, as the free-form planner uses it). Close a piece
+                // exactly there: on a sub-position of the object layer containing it when the
+                // step allows, otherwise at the nearest object layer below - or the gap rounds
+                // up to a whole support piece.
+                const SupportNode *node = contact_nodes[layer_nr].front();
+                if (node->height > EPSILON) {
+                    const coordf_t gap_bottom = node->print_z - node->height;
+                    for (size_t j = layer_nr; j-- > 0;)
+                        if (m_object->get_layer(j)->print_z <= gap_bottom + EPSILON) {
+                            bool on_sub_position = false;
+                            if (j + 1 < n) {
+                                sub_positions(m_object->get_layer(j + 1), layer_subs);
+                                for (coordf_t z : layer_subs)
+                                    if (std::abs(z - gap_bottom) < EPSILON) { on_sub_position = true; break; }
+                            }
+                            if (on_sub_position)
+                                forced_close_zs.push_back(gap_bottom);
+                            else
+                                boundary[j + 1] = 1;
+                            break;
+                        }
+                }
+            }
+        auto forced_close = [&forced_close_zs](coordf_t z) {
+            for (coordf_t f : forced_close_zs)
+                if (std::abs(f - z) < EPSILON)
+                    return true;
+            return false;
+        };
+        layer_heights.reserve(n);
+        layer_heights.push_back({m_object->get_layer(0)->print_z, m_object->get_layer(0)->height, 0});
+        // A candidate boundary: a sub-position of an object layer.
+        struct SubPos { coordf_t z; size_t obj_layer_nr; };
+        std::vector<SubPos> subs;
+        size_t i = 1;
+        while (i < n) {
+            size_t span_end = i + 1;
+            while (span_end < n && !boundary[span_end]) ++span_end;
+            // Sub-position ladder over object layers i..span_end-1. Grid positions use the
+            // layer's print_z verbatim so they stay bit-exact.
+            subs.clear();
+            for (size_t l = i; l < span_end; ++l) {
+                const Layer *layer = m_object->get_layer(l);
+                sub_positions(layer, layer_subs);
+                for (coordf_t z : layer_subs)
+                    subs.push_back({z, l});
+                subs.push_back({layer->print_z, l});
+            }
+            // Pieces are laid out per segment: the ladder up to each forced close (an exact
+            // support top) and the remainder get the same closing and rebalancing.
+            coordf_t piece_start = m_object->get_layer(i)->print_z - m_object->get_layer(i)->height;
+            size_t   seg_begin   = 0;
+            while (seg_begin < subs.size()) {
+                size_t seg_end = seg_begin; // index of the last ladder position of this segment
+                while (seg_end + 1 < subs.size() && !forced_close(subs[seg_end].z)) ++seg_end;
+                const size_t pieces_begin = layer_heights.size();
+                for (size_t s = seg_begin; s <= seg_end; ++s) {
+                    // Close the piece at the segment end, or right before the sub-position that
+                    // would push it past the maximum support layer height.
+                    if (s == seg_end || subs[s + 1].z - piece_start > max_layer_height + EPSILON) {
+                        layer_heights.push_back({subs[s].z, subs[s].z - piece_start, subs[s].obj_layer_nr});
+                        piece_start = subs[s].z;
+                    }
+                }
+                // Rebalance a trailing piece thinner than the support minimum.
+                if (layer_heights.size() - pieces_begin >= 2 && layer_heights.back().height < min_layer_height - EPSILON) {
+                    LayerHeightData tail = layer_heights.back(); layer_heights.pop_back();
+                    LayerHeightData prev = layer_heights.back(); layer_heights.pop_back();
+                    const coordf_t combined_start = prev.print_z - prev.height;
+                    const coordf_t combined       = tail.print_z - combined_start;
+                    if (combined <= max_layer_height + EPSILON) {
+                        layer_heights.push_back({tail.print_z, combined, tail.obj_layer_nr});
+                    } else {
+                        // Cannot merge: split the two pieces as evenly as the sub-grid allows.
+                        const coordf_t ideal = combined_start + combined / 2.;
+                        size_t         best  = subs.size();
+                        // Both halves must respect the support minimum, or the split just moves
+                        // the thin piece.
+                        for (size_t s = seg_begin; s <= seg_end; ++s)
+                            if (subs[s].z - combined_start >= min_layer_height - EPSILON && tail.print_z - subs[s].z >= min_layer_height - EPSILON &&
+                                (best == subs.size() || std::abs(subs[s].z - ideal) < std::abs(subs[best].z - ideal)))
+                                best = s;
+                        if (best < subs.size()) {
+                            layer_heights.push_back({subs[best].z, subs[best].z - combined_start, subs[best].obj_layer_nr});
+                            layer_heights.push_back({tail.print_z, tail.print_z - subs[best].z, tail.obj_layer_nr});
+                        } else {
+                            // No usable split point: keep the original pieces, thin tail and all.
+                            layer_heights.push_back(prev);
+                            layer_heights.push_back(tail);
+                        }
+                    }
+                }
+                seg_begin = seg_end + 1;
+            }
+            i = span_end;
+        }
     } else {
         const coordf_t               max_layer_height = m_slicing_params.max_suport_layer_height;
         const coordf_t               min_layer_height = m_slicing_params.min_layer_height;

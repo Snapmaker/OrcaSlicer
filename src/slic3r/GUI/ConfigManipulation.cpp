@@ -977,6 +977,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // ORCA: Independent support layer height is not compatible with organic tree supports,
     // as they rely on the support layers being the same as the object layers to determine where to place branches.
     toggle_line("independent_support_layer_height", have_support_material && !support_is_organic);
+    // The step only has an effect for non-organic tree supports with independent layer heights
+    // under the prime tower; single-extruder multi-material keeps whole steps.
+    toggle_line("support_layer_height_step", support_is_normal_tree && config->opt_bool("independent_support_layer_height") &&
+                                                 config->opt_bool("enable_prime_tower") && !bSEMM);
 
     toggle_field("tree_support_brim_width", support_is_tree && !config->opt_bool("tree_support_auto_brim"));
     // tree support use max_bridge_length instead of bridge_no_support

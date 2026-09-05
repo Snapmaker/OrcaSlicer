@@ -170,6 +170,9 @@ public:
     coordf_t 					print_z	= 0.;
     bool 						has_object = false;
     bool						has_support = false;
+    // This print_z is an object layer boundary (of any object, extrusions or not); support-only
+    // layers between such Zs come from fractional independent support layer heights.
+    bool						on_object_grid = false;
     // Zero based extruder IDs, ordered to minimize tool switches.
     std::vector<unsigned int> 	extruders;
     bool                        preserve_extruder_order = false;

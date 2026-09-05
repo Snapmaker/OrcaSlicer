@@ -1265,11 +1265,11 @@ void PrintObject::apply_extruder_layer_heights()
             // object volume exists through the pass height, so the run fills it instead.
             LayerRegion *fill_target = nullptr;
             ExPolygons   filled;
-            auto fill_by_covering_run = [&](const ExPolygon &piece, const Polygons &near) {
+            auto fill_by_covering_run = [&](const ExPolygon &piece, const Polygons &nearby) {
                 for (size_t other = 0; other < num_regions; ++ other) {
                     LayerRegion *neighbor = m_layers[idx]->regions()[other];
                     if (other == region_id || neighbor->combined_layer_count() < 2 ||
-                        intersection(near, to_polygons(neighbor->slices.surfaces)).empty())
+                        intersection(nearby, to_polygons(neighbor->slices.surfaces)).empty())
                         continue;
                     const size_t run_bottom = idx + 1 - size_t(neighbor->combined_layer_count());
                     if (run_bottom > 0 && ! intersection(to_polygons(piece), printed_at(run_bottom - 1)).empty())
@@ -1286,10 +1286,10 @@ void PrintObject::apply_extruder_layer_heights()
             };
             ExPolygons dropped;
             for (ExPolygon &piece : floating) {
-                const Polygons near = offset(piece, anchor_dist);
-                if (! intersection(near, anchors).empty())
-                    fill_by_covering_run(piece, near);
-                else if (! intersection(near, unprinted_now).empty())
+                const Polygons nearby = offset(piece, anchor_dist);
+                if (! intersection(nearby, anchors).empty())
+                    fill_by_covering_run(piece, nearby);
+                else if (! intersection(nearby, unprinted_now).empty())
                     // Beside or over deferred geometry, with no anchor: would extrude into thin air.
                     dropped.emplace_back(std::move(piece));
             }

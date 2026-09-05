@@ -2437,8 +2437,10 @@ void WipeTower2::plan_toolchange(float z_par, float layer_height_par, unsigned i
 {
     assert(m_plan.empty() || m_plan.back().z <= z_par + WT_EPSILON); // refuses to add a layer below the last one
 
-    if (m_plan.empty() || m_plan.back().z + WT_EPSILON < z_par) // if we moved to a new layer, we'll add it to m_plan first
+    if (m_plan.empty() || m_plan.back().z + WT_EPSILON < z_par) { // if we moved to a new layer, we'll add it to m_plan first
         m_plan.push_back(WipeTowerInfo(z_par, layer_height_par));
+        m_plan.back().start_tool = int(old_tool);
+    }
 
     if (m_first_layer_idx == size_t(-1) && (!m_no_sparse_layers || old_tool != new_tool || m_plan.size() == 1))
         m_first_layer_idx = m_plan.size() - 1;
@@ -2501,8 +2503,10 @@ void WipeTower2::plan_local_z_toolchange(float z_par, float layer_height_par, un
 {
     assert(m_plan.empty() || m_plan.back().z <= z_par + WT_EPSILON);
 
-    if (m_plan.empty() || m_plan.back().z + WT_EPSILON < z_par)
+    if (m_plan.empty() || m_plan.back().z + WT_EPSILON < z_par) {
         m_plan.push_back(WipeTowerInfo(z_par, layer_height_par));
+        m_plan.back().start_tool = int(old_tool);
+    }
 
     if (m_first_layer_idx == size_t(-1) && (!m_no_sparse_layers || old_tool != new_tool || m_plan.size() == 1))
         m_first_layer_idx = m_plan.size() - 1;
@@ -2838,17 +2842,26 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
     m_layer_info = m_plan.begin();
     m_current_height = 0.f;
 
-    // We don't know which extruder to start with, so take the first actual toolchange on the tower.
-    for (const auto& layer : m_plan) {
-        if (!layer.local_z_tool_changes.empty()) {
-            m_current_tool = layer.local_z_tool_changes.front().old_tool;
+    // Start with the tool loaded at the first planned layer; fall back to the first
+    // actual toolchange on the tower for plans that did not record it.
+    bool start_tool_known = false;
+    for (const auto& layer : m_plan)
+        if (layer.start_tool >= 0) {
+            m_current_tool   = size_t(layer.start_tool);
+            start_tool_known = true;
             break;
         }
-        if (!layer.tool_changes.empty()) {
-            m_current_tool = layer.tool_changes.front().old_tool;
-            break;
+    if (!start_tool_known)
+        for (const auto& layer : m_plan) {
+            if (!layer.local_z_tool_changes.empty()) {
+                m_current_tool = layer.local_z_tool_changes.front().old_tool;
+                break;
+            }
+            if (!layer.tool_changes.empty()) {
+                m_current_tool = layer.tool_changes.front().old_tool;
+                break;
+            }
         }
-    }
 
     m_used_filament_length.assign(m_used_filament_length.size(), 0.f); // reset used filament stats
     assert(m_used_filament_length_until_layer.empty());
@@ -2868,6 +2881,10 @@ void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>&
                                  << " planned_depth=" << layer.planned_depth();
         set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
         m_internal_rotation += 180.f;
+        // Re-sync to the tool actually loaded at this layer: a filament change may have
+        // happened off the tower since the previous layer.
+        if (layer.start_tool >= 0 && size_t(layer.start_tool) != m_current_tool)
+            m_current_tool = size_t(layer.start_tool);
 
         if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width)
             m_y_shift = (m_wipe_tower_depth - m_layer_info->depth - m_perimeter_width) / 2.f;

@@ -1748,7 +1748,7 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
     }
     else {
         // BBS: need to consider adaptive layer heights
-        if (print_config.independent_support_layer_height) {
+        if (support_layer_heights_free(print_config)) {
             print_z = layer.bottom_z() - slicing_params.gap_support_object;
             height = 0;
         }
@@ -1781,13 +1781,13 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
 
         // Contact layer will be printed with a normal flow, but
         // it will support layers printed with a bridging flow.
-        if (object_config.thick_bridges && SupportMaterialInternal::has_bridging_extrusions(layer) && print_config.independent_support_layer_height) {
+        if (object_config.thick_bridges && SupportMaterialInternal::has_bridging_extrusions(layer) && support_layer_heights_free(print_config)) {
             coordf_t bridging_height = 0.;
             for (const LayerRegion* region : layer.regions())
                 bridging_height += region->region().bridging_height_avg(print_config);
             bridging_height /= coordf_t(layer.regions().size());
             // BBS: align bridging height
-            if (!print_config.independent_support_layer_height)
+            if (!support_layer_heights_free(print_config))
                 bridging_height = std::ceil(bridging_height / object_config.layer_height - EPSILON) * object_config.layer_height;
             coordf_t bridging_print_z = layer.print_z - bridging_height - slicing_params.gap_support_object;
             if (bridging_print_z >= min_print_z) {
@@ -1807,7 +1807,7 @@ static inline std::pair<SupportGeneratorLayer*, SupportGeneratorLayer*> new_cont
                     } else {
                         // BBS: if independent_support_layer_height is not enabled, the support layer_height should be the same as layer height.
                         // Note that for this case, adaptive layer height must be disabled.
-                        bridging_layer->height = print_config.independent_support_layer_height ? 0. : object_config.layer_height;
+                        bridging_layer->height = support_layer_heights_free(print_config) ? 0. : object_config.layer_height;
                         // Don't know the height yet.
                         bridging_layer->bottom_z = bridging_print_z - bridging_layer->height;
                     }
@@ -2419,7 +2419,7 @@ static inline SupportGeneratorLayer* detect_bottom_contacts(
     // with some spacing from object - it looks we don't need the actual
     // top shapes so this can be done here
     Layer* upper_layer = layer.upper_layer;
-    if (object.print()->config().independent_support_layer_height) {
+    if (support_layer_heights_free(object.print()->config())) {
         // If the layer is extruded with no bridging flow, support just the normal extrusions.
         layer_new.height = slicing_params.zero_gap_interface_bottom ?
             // Align the interface layer with the object's layer height.

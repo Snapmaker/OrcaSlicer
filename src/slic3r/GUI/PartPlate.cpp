@@ -1600,7 +1600,8 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
     std::sort(plate_extruders.begin(), plate_extruders.end());
     auto it_end = std::unique(plate_extruders.begin(), plate_extruders.end());
     plate_extruders.resize(std::distance(plate_extruders.begin(), it_end));
-    expand_plate_extruders(plate_extruders);
+    // Do not call expand_plate_extruders() from the CLI path. It depends on
+    // wxGetApp().preset_bundle, which is GUI state and may be unavailable here.
     std::ostringstream extruders_list;
     for (size_t i = 0; i < plate_extruders.size(); ++i) {
         if (i != 0)

@@ -416,10 +416,10 @@
         "0.088"
     ],
     "hot_plate_temp": [
-        "80"
+        "70"
     ],
     "hot_plate_temp_initial_layer": [
-        "80"
+        "70"
     ],
     "impact_strength_z": [
         "10"
@@ -463,10 +463,10 @@
         "60"
     ],
     "textured_plate_temp": [
-        "80"
+        "70"
     ],
     "textured_plate_temp_initial_layer": [
-        "80"
+        "70"
     ],
     "volumetric_speed_coefficients": [
         "0 0 0 0 0 0"

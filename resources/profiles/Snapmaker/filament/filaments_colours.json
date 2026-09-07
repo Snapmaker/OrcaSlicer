@@ -589,45 +589,6 @@
 			"enabled": true,
 			"filament_color": [
 				{
-					"sku": "34262",
-					"TD": 5.5,
-					"mode": 0,
-					"filament_color": [
-						"#08ABFB"
-					],
-					"color_name": {
-						"en": "Semi-Translucent Cyan",
-						"zh_CN": "半透青色"
-					},
-					"enabled": true
-				},
-				{
-					"sku": "34263",
-					"TD": 5.5,
-					"mode": 0,
-					"filament_color": [
-						"#D93B90"
-					],
-					"color_name": {
-						"en": "Semi-Translucent Magenta",
-						"zh_CN": "半透品红"
-					},
-					"enabled": true
-				},
-				{
-					"sku": "34264",
-					"TD": 9.5,
-					"mode": 0,
-					"filament_color": [
-						"#F9ED3D"
-					],
-					"color_name": {
-						"en": "Semi-Translucent Yellow",
-						"zh_CN": "半透黄色"
-					},
-					"enabled": true
-				},
-				{
 					"sku": "34265",
 					"TD": 8.8,
 					"mode": 0,
@@ -643,6 +604,7 @@
 				{
 					"sku": "34266",
 					"mode": 0,
+					"TD": 6.5,
 					"filament_color": [
 						"#F5F4F2"
 					],
@@ -654,6 +616,7 @@
 				},
 				{
 					"sku": "34267",
+					"TD": 5.5,
 					"mode": 0,
 					"filament_color": [
 						"#00C3FF"
@@ -666,6 +629,7 @@
 				},
 				{
 					"sku": "34268",
+					"TD": 5.5,
 					"mode": 0,
 					"filament_color": [
 						"#F54399"
@@ -678,6 +642,7 @@
 				},
 				{
 					"sku": "34269",
+					"TD": 9.5,
 					"mode": 0,
 					"filament_color": [
 						"#FAE727"

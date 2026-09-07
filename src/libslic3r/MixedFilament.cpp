@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <boost/log/trivial.hpp>
 #include <cctype>
 #include <cmath>
@@ -1675,6 +1676,14 @@ uint64_t MixedFilamentManager::allocate_stable_id()
 {
     const uint64_t stable_id = std::max<uint64_t>(1, m_next_stable_id);
     m_next_stable_id = stable_id + 1;
+    // Contract: a non-zero stable_id is the invariant every live mixed row relies on —
+    // the batch remap's stable_id path (PresetBundle.cpp) only fires for stable_id != 0,
+    // and the pair-fallback path (a known silent-painting-loss bug when stable_id == 0)
+    // is unreachable precisely because this allocator never returns 0. assert it here so
+    // a future change that weakens the max(1,...) floor surfaces immediately (debug builds)
+    // rather than turning the [!shouldfail] sentinel test into a live wrong-delete. This
+    // guards all 3 callers (add_custom_filament, add_batch_custom_filaments, auto_generate).
+    assert(stable_id != 0);
     return stable_id;
 }
 
@@ -1929,6 +1938,278 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
     mf.origin_auto = false;
     m_mixed.push_back(std::move(mf));
     refresh_display_colors(filament_colours);
+}
+
+void MixedFilamentManager::add_batch_custom_filaments(
+    const std::vector<MixedFilamentBatchEntry>& entries,
+    const std::vector<std::string>&             filament_colours,
+    std::vector<unsigned int>*                  out_assigned_ids)
+{
+    if (out_assigned_ids != nullptr) {
+        out_assigned_ids->clear();
+        out_assigned_ids->reserve(entries.size());
+    }
+
+    const size_t n = filament_colours.size();
+    if (n < 2) {
+        if (out_assigned_ids != nullptr) out_assigned_ids->assign(entries.size(), 0u);
+        return;
+    }
+    if (entries.empty()) return;
+
+    size_t current_total = total_filaments(n);
+    const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
+
+    for (const auto& e : entries) {
+        if (current_total >= kMax) {
+            if (out_assigned_ids != nullptr) out_assigned_ids->push_back(0u);
+            continue;
+        }
+
+        unsigned int a = std::max<unsigned int>(1, std::min<unsigned int>(e.component_a, static_cast<unsigned int>(n)));
+        unsigned int b = std::max<unsigned int>(1, std::min<unsigned int>(e.component_b, static_cast<unsigned int>(n)));
+        if (a == b) {
+            b = (a == 1) ? 2u : 1u;
+            if (a == b) {
+                if (out_assigned_ids != nullptr) out_assigned_ids->push_back(0u);
+                continue;
+            }
+        }
+
+        MixedFilament mf;
+        mf.component_a     = a;
+        mf.component_b     = b;
+        mf.stable_id       = allocate_stable_id();
+        mf.mix_b_percent   = std::clamp(e.mix_b_percent, 0, 100);
+        mf.ratio_a         = 1;
+        mf.ratio_b         = 1;
+        mf.manual_pattern  = e.manual_pattern;
+        mf.gradient_component_ids     = e.gradient_component_ids;
+        mf.gradient_component_weights = e.gradient_component_weights;
+        mf.pointillism_all_filaments  = false;
+        mf.distribution_mode          = e.distribution_mode;
+        mf.local_z_max_sublayers      = 0;
+        mf.component_a_surface_offset = 0.f;
+        mf.component_b_surface_offset = 0.f;
+        mf.enabled        = true;
+        mf.deleted        = false;
+        mf.custom         = true;
+        mf.origin_auto    = false;
+        mf.ui_mode        = 2; // MATCH
+        mf.gradient_enabled = e.gradient_enabled;
+        mf.gradient_start   = e.gradient_start;
+        mf.gradient_end     = e.gradient_end;
+        mf.display_color    = e.display_color;
+
+        mf.manual_pattern = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+        mf.gradient_component_ids = MixedFilamentManager::normalize_gradient_component_ids(mf.gradient_component_ids);
+        if (mf.gradient_enabled &&
+            std::abs(mf.gradient_start - mf.gradient_end) < MixedFilament::k_min_gradient_difference) {
+            mf.gradient_enabled = false;
+        }
+
+        // Validation perimeter: reject rows whose gradient/pattern references a
+        // literal physical id > n.  This is the SAME invariant load_custom_entries
+        // enforces (:2359); without it here the m1 divergence between
+        // compute_redundant_filaments (bounds tokens by num_physical) and
+        // remove_physical_filament (bounds by kMaxPhysicalFilaments=64) would be
+        // reachable, and the confirm-flow cleanup would silently mark the wrong
+        // mixed rows deleted (painting then re-aliases to a survivor).  Today's
+        // recipe generator never emits out-of-range tokens, but enforcing the
+        // invariant at the write layer makes that an audited contract rather than
+        // caller discipline, and keeps add_batch symmetric with load_custom_entries.
+        if (mixed_filament_references_exceed_physical(mf.gradient_component_ids, mf.manual_pattern, n)) {
+            if (out_assigned_ids != nullptr) out_assigned_ids->push_back(0u);
+            continue;
+        }
+
+        m_mixed.push_back(std::move(mf));
+        if (out_assigned_ids != nullptr)
+            out_assigned_ids->push_back(static_cast<unsigned int>(current_total + 1));
+        ++current_total;
+    }
+
+    refresh_display_colors(filament_colours);
+}
+
+// --------------------------------------------------------------------------
+// build_mixed_deletion_painting_remap  (pure, testable)
+// --------------------------------------------------------------------------
+std::vector<unsigned int> MixedFilamentManager::build_mixed_deletion_painting_remap(
+    size_t                           num_physical,
+    size_t                           t2_total_filaments,
+    const std::vector<unsigned int>& deleted_t2_vids)
+{
+    // Empty input -> identity (caller should also short-circuit, but stay safe).
+    // Size for the identity return so callers can iterate without a separate check.
+    std::vector<unsigned int> remap(t2_total_filaments + 1, 0u);
+    if (deleted_t2_vids.empty()) {
+        for (size_t i = 1; i <= t2_total_filaments; ++i)
+            remap[i] = static_cast<unsigned int>(i);
+        return remap;
+    }
+
+    // Sort + dedup a local copy so the offset count is correct regardless of
+    // caller order, and so duplicate ids do not inflate the shift.
+    std::vector<unsigned int> sorted_deleted = deleted_t2_vids;
+    std::sort(sorted_deleted.begin(), sorted_deleted.end());
+    sorted_deleted.erase(std::unique(sorted_deleted.begin(), sorted_deleted.end()),
+                         sorted_deleted.end());
+
+    for (size_t old_vid = 1; old_vid <= t2_total_filaments; ++old_vid) {
+        if (old_vid <= num_physical) {
+            // Physical slots are never renumbered by a mixed-only deletion.
+            remap[old_vid] = static_cast<unsigned int>(old_vid);
+            continue;
+        }
+        // deleted_below = count of deleted vids strictly less than old_vid;
+        // since sorted_deleted is ascending, std::lower_bound gives that count.
+        const auto it = std::lower_bound(sorted_deleted.begin(), sorted_deleted.end(),
+                                         static_cast<unsigned int>(old_vid));
+        const size_t deleted_below = static_cast<size_t>(it - sorted_deleted.begin());
+
+        const bool is_deleted = (it != sorted_deleted.end() && *it == static_cast<unsigned int>(old_vid));
+        if (is_deleted) {
+            remap[old_vid] = 0u; // NONE — the deleted row itself.
+        } else {
+            // New T3 id = old T2 id minus the number of deleted rows below it.
+            // deleted_below < old_vid always holds (all deleted vids are >= num_physical+1
+            // and we are past num_physical), so the subtraction cannot underflow here,
+            // but guard defensively against a caller that passes a physical id in the
+            // delete set.
+            if (deleted_below >= old_vid) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "build_mixed_deletion_painting_remap: deleted_below=" << deleted_below
+                    << " >= old_vid=" << old_vid << " (unexpected); mapping to NONE";
+                remap[old_vid] = 0u;
+            } else {
+                remap[old_vid] = static_cast<unsigned int>(old_vid - deleted_below);
+            }
+        }
+    }
+    return remap;
+}
+
+// --------------------------------------------------------------------------
+// compute_redundant_filaments  (pure, testable)
+// --------------------------------------------------------------------------
+
+RedundantFilamentSet compute_redundant_filaments(
+    size_t                            num_physical,
+    const std::vector<unsigned int>  &kept_physical_ids,
+    const std::vector<unsigned int>  &kept_mixed_ids,
+    const std::vector<MixedFilament> &mixed_filaments)
+{
+    // No physical filaments means nothing can be redundant and no survivor
+    // floor applies.  Production callers (cleanup_unused_filaments_after_
+    // batch_match) guard on filament_presets.empty() at entry, so this branch
+    // is unreachable there, but this is a pure, exported, test-visible helper:
+    // return a clean empty result rather than rely on the loops below to
+    // incidentally no-op (virtual_id would otherwise enumerate mixed rows from
+    // 1, producing nonsensical cascade output for a nonsensical input).
+    if (num_physical == 0)
+        return RedundantFilamentSet{};
+
+    RedundantFilamentSet result;
+
+    // ---- Build kept-physical set, apply survivor floor ----
+    std::vector<bool> phys_kept(num_physical + 1, false); // 1-based
+    for (unsigned int id : kept_physical_ids) {
+        if (id >= 1 && id <= num_physical)
+            phys_kept[id] = true;
+    }
+    size_t kept_count = 0;
+    for (size_t i = 1; i <= num_physical; ++i) {
+        if (phys_kept[i]) ++kept_count;
+    }
+    if (kept_count == 0 && num_physical >= 1) {
+        phys_kept[1] = true;
+        ++kept_count;
+    }
+    result.new_num_physical = kept_count;
+
+    // Redundant physicals (descending — caller can iterate directly for deletion)
+    for (size_t i = num_physical; i >= 1; --i) {
+        if (!phys_kept[i])
+            result.redundant_physical.push_back(static_cast<unsigned int>(i));
+    }
+
+    // ---- Build kept-mixed lookup ----
+    std::unordered_set<unsigned int> surv_mixed;
+    for (unsigned int id : kept_mixed_ids) {
+        if (id > num_physical)
+            surv_mixed.insert(id);
+    }
+
+    // ---- Enumerate mixed rows ----
+    unsigned int virtual_id = static_cast<unsigned int>(num_physical + 1);
+    for (const MixedFilament &mf : mixed_filaments) {
+        if (!mf.enabled || mf.deleted) continue;
+
+        bool in_kept_set = (surv_mixed.count(virtual_id) > 0);
+
+        // Cascade: mixed depends on a physical that will be deleted.
+        // Precedence mirrors remove_physical_filament / resolve(): when a
+        // manual_pattern is present it is authoritative and component_b /
+        // gradient_component_ids are shadowed, so they must NOT be checked
+        // here — checking them would cascade rows whose stale component_b
+        // references a deleted physical even though the pattern does not.
+        // component_a is likewise shadowed when a pattern is present: only the
+        // pattern tokens decide; the pair (including component_a) is checked only
+        // in the norm-empty branch, matching remove_physical_filament.
+        bool cascade = false;
+        if (in_kept_set) {
+            const std::string norm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
+            if (!norm.empty()) {
+                // Manual pattern authoritative: token '1'->component_a,
+                // '2'->component_b, any other number or [NN] bracket is a literal
+                // physical id.  Reuse the same authoritative tokenizer that
+                // remove_physical_filament uses so the two never drift apart
+                // (a bespoke parser here is how the B1 cascade disagreement
+                // originally slipped in).  physical_filament_from_token resolves
+                // the symbolic 1/2 to the row's components and bounds literal
+                // ids to num_physical, returning 0 on any out-of-range/invalid
+                // reference (handled by the actual<1 guard below).
+                const auto groups = MixedFilamentManager::split_pattern_groups(norm);
+                for (const std::string &group : groups) {
+                    for (const std::string &token : MixedFilamentManager::split_pattern_group_to_tokens(group, 0)) {
+                        const unsigned int actual = MixedFilamentManager::physical_filament_from_token(token, mf, num_physical);
+                        if (actual < 1 || !phys_kept[actual]) {
+                            cascade = true;
+                            break;
+                        }
+                    }
+                    if (cascade) break;
+                }
+            } else {
+                // No manual pattern: component_a / component_b (pair) and
+                // gradient_component_ids are the real references. Mirrors
+                // remove_physical_filament, whose pair AND gradient checks run
+                // only when norm is empty.
+                if (mf.component_a < 1 || mf.component_a > num_physical || !phys_kept[mf.component_a]
+                    || mf.component_b < 1 || mf.component_b > num_physical || !phys_kept[mf.component_b])
+                    cascade = true;
+                else {
+                    auto grad_ids = MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0);
+                    for (unsigned int gid : grad_ids) {
+                        if (gid < 1 || gid > num_physical || !phys_kept[gid]) {
+                            cascade = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!in_kept_set || cascade) {
+            result.redundant_mixed.push_back(virtual_id);
+            if (cascade) ++result.cascade_mixed_count;
+        }
+
+        ++virtual_id;
+    }
+
+    return result;
 }
 
 void MixedFilamentManager::clear_custom_entries()

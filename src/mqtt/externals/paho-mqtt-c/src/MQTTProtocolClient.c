@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2022 IBM Corp. and Ian Craggs
+ * Copyright (c) 2009, 2024 IBM Corp. and Ian Craggs
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -331,8 +331,21 @@ int MQTTProtocol_handlePublishes(void* pack, SOCKET sock)
 	FUNC_ENTRY;
 	client = (Clients*)(ListFindItem(bstate->clients, &sock, clientSocketCompare)->content);
 	clientid = client->clientID;
-	Log(LOG_PROTOCOL, 11, NULL, sock, clientid, publish->msgId, publish->header.bits.qos,
-					publish->header.bits.retain, publish->payloadlen, min(20, publish->payloadlen), publish->payload);
+
+	/* Format and print publish data to trace */
+	{
+#if defined(_WIN32) || defined(_WIN64)
+		#define buflen 30
+#else
+		const int buflen = 30;
+#endif
+		char buf[buflen];
+		int len = 0;
+
+		len = MQTTPacket_formatPayload(buflen, buf, publish->payloadlen, publish->payload);
+		Log(LOG_PROTOCOL, 11, NULL, sock, clientid, publish->msgId, publish->header.bits.qos,
+						publish->header.bits.retain, publish->payloadlen, len, buf);
+	}
 
 	if (publish->header.bits.qos == 0)
 	{

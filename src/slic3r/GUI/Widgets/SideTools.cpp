@@ -8,6 +8,7 @@
 #include "../wxExtensions.hpp"
 #include "../I18N.hpp"
 #include "../GUI.hpp"
+#include "../Utils/SnapLogClient.hpp"
 
 namespace Slic3r { namespace GUI {
 	SideToolsPanel::SideToolsPanel(wxWindow *parent, wxWindowID id, const wxPoint &pos, const wxSize &size)
@@ -489,6 +490,7 @@ void SideTools::update_status(MachineObject* obj)
             m_side_tools->set_current_printer_signal(WifiSignal::MIDDLE);
         }
     }
+
 }
 
 void SideTools::show_status(int status)

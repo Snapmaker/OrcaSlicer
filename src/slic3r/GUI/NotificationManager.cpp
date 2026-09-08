@@ -1972,7 +1972,19 @@ void NotificationManager::push_pla_petg_mix_warning(const std::string& text)
     NotificationData data{ NotificationType::SlicingWarning,
                            NotificationLevel::WarningNotificationLevel,
                            0,
-                           _u8L("Warning:") + "\n" + text };
+                           _u8L("Warning:") + "\n" + text,
+                           _u8L("Wiki"),
+                           // PLA/PETG mutual-support printing guide on Snapmaker wiki.
+                           // Chinese UI gets the zh page (zh_TW included: no separate wiki page),
+                           // every other language falls back to the en page.
+                           [](wxEvtHandler*) {
+                               wxString lang = wxGetApp().current_language_code().BeforeFirst('_');
+                               std::string url = lang == "zh"
+                                   ? "https://wiki.snapmaker.com/zh/snapmaker_u1/printing_guides/pla_and_petg"
+                                   : "https://wiki.snapmaker.com/en/snapmaker_u1/printing_guides/pla_and_petg";
+                               wxGetApp().open_browser_with_warning_dialog(url);
+                               return false; // keep the warning on screen; only X or a data change dismisses it
+                           } };
     auto notification = std::make_unique<NotificationManager::PlaPetgMixNotification>(data, m_id_provider, m_evt_handler);
     push_notification_data(std::move(notification), 0);
 }

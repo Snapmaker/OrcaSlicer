@@ -91,8 +91,8 @@ VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "English"
 
-LangString UNINSTALL_CONFIRM_TEXT ${LANG_SIMPCHINESE} "确定要彻底卸载 $(^Name) 及其全部组件吗？"
-LangString UNINSTALL_CONFIRM_TEXT ${LANG_ENGLISH} "Are you sure you want to completely uninstall $(^Name) and all of its components?"
+LangString UNINSTALL_CONFIRM_TEXT ${LANG_SIMPCHINESE} "确定要彻底卸载 ${PRODUCT_DISPLAY_NAME} 及其全部组件吗？"
+LangString UNINSTALL_CONFIRM_TEXT ${LANG_ENGLISH} "Are you sure you want to completely uninstall ${PRODUCT_DISPLAY_NAME} and all of its components?"
 LangString UNINSTALLER_MISSING_TEXT ${LANG_SIMPCHINESE} "检测到本机已安装 Snapmaker Orca，但找不到卸载程序。$\r$\n$\r$\n卸载路径：$R8$\r$\n安装目录：$INSTDIR$\r$\n$\r$\n请先手动删除旧安装目录后再运行本安装程序。"
 LangString UNINSTALLER_MISSING_TEXT ${LANG_ENGLISH} "An existing Snapmaker Orca installation was found, but the uninstaller is missing.$\r$\n$\r$\nUninstaller: $R8$\r$\nInstall dir: $INSTDIR$\r$\n$\r$\nRemove the old folder manually, then run this installer again."
 
@@ -185,7 +185,9 @@ Section "Uninstall"
     
     DetailPrint "Checking for running processes..."
     nsExec::ExecToLog 'taskkill /F /IM snapmaker-orca.exe /T'
+    Pop $0
     nsExec::ExecToLog 'taskkill /F /IM Snapmaker_Orca.exe /T'
+    Pop $0
     Sleep 500
     
     DetailPrint "Removing desktop shortcut..."
@@ -221,10 +223,12 @@ FunctionEnd
 ; Prevent overwriting locked DLLs when snapmaker-orca (or legacy Snapmaker_Orca.exe) is still running.
 Function EnsureSnapmakerNotRunning
     snapmaker_check_loop:
-        ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+        nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul'
+        Pop $0
         IntCmp $0 0 snapmaker_in_use snapmaker_try_legacy snapmaker_try_legacy
     snapmaker_try_legacy:
-        ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+        nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul'
+        Pop $0
         IntCmp $0 0 snapmaker_in_use snapmaker_idle snapmaker_idle
     snapmaker_in_use:
         IfSilent snapmaker_silent snapmaker_prompt

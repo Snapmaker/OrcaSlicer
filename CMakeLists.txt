@@ -979,8 +979,8 @@ set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
 # Window caption. Keep install dir / Start Menu / registry without version.
-# CPack NSIS scripts are compiled as ACP (no Unicode/BOM). Extra commands MUST
-# stay ASCII-only; UTF-8 Chinese makes makensis fail with "Bad text encoding".
+# Extra PREINSTALL/UNINSTALL commands stay ASCII-only. Chinese uninstall confirm
+# lives in cmake/nsis/SnapmakerUninstallConfirm.nsh.in (UTF-8 BOM + Unicode true).
 set (CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_NAME}")
 set (CPACK_NSIS_PACKAGE_NAME "${CPACK_PACKAGE_NAME} V${Snapmaker_VERSION}")
 set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKAGE_NAME}\"")
@@ -990,10 +990,12 @@ set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKA
 # We keep this in EXTRA_PREINSTALL because CPack's default .onInit uninstall prompt runs before section logic.
 set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS [=[
 SnapmakerOrcaPre_check_loop:
-  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul' $0
+  nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq snapmaker-orca.exe" 2>nul | find /i "snapmaker-orca.exe" >nul'
+  Pop $0
   IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_try_legacy SnapmakerOrcaPre_try_legacy
 SnapmakerOrcaPre_try_legacy:
-  ExecWait 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul' $0
+  nsExec::Exec 'cmd.exe /c tasklist /FI "IMAGENAME eq Snapmaker_Orca.exe" 2>nul | find /i "Snapmaker_Orca.exe" >nul'
+  Pop $0
   IntCmp $0 0 SnapmakerOrcaPre_in_use SnapmakerOrcaPre_idle SnapmakerOrcaPre_idle
 SnapmakerOrcaPre_idle:
   Goto SnapmakerOrcaPre_done
@@ -1107,8 +1109,10 @@ SnapmakerOrcaPre_finish:
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
 set(_snapmaker_nsis_uninst_kill [=[
-  ExecWait 'cmd.exe /c taskkill /F /IM snapmaker-orca.exe /T'
-  ExecWait 'cmd.exe /c taskkill /F /IM Snapmaker_Orca.exe /T'
+  nsExec::Exec 'taskkill /F /IM snapmaker-orca.exe /T'
+  Pop $0
+  nsExec::Exec 'taskkill /F /IM Snapmaker_Orca.exe /T'
+  Pop $0
 ]=])
 string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
        "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
@@ -1170,7 +1174,18 @@ if (WIN32)
 
 ]=])
     string(REPLACE "${_snapmaker_nsis_old_registry}" "${_snapmaker_nsis_new_registry}" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    string(REPLACE
+        [=[;Include Modern UI
+
+  !include "MUI.nsh"]=]
+        [=[;Include Modern UI
+
+  Unicode true
+  !include "MUI.nsh"]=]
+        _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     foreach(_snapmaker_nsis_erase IN ITEMS
+        [=[  !insertmacro MUI_UNPAGE_CONFIRM
+]=]
         [=[  Var DO_NOT_ADD_TO_PATH
   Var ADD_TO_PATH_ALL_USERS
   Var ADD_TO_PATH_CURRENT_USER
@@ -1229,6 +1244,16 @@ FunctionEnd
     endforeach()
     set(_snapmaker_nsis_tpl_dir "${CMAKE_BINARY_DIR}/cmake/cpack")
     file(MAKE_DIRECTORY "${_snapmaker_nsis_tpl_dir}")
+    file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallConfirm.nsh.in"
+         _snapmaker_uninst_confirm ENCODING UTF-8)
+    string(REPLACE "@Snapmaker_VERSION@" "${Snapmaker_VERSION}"
+           _snapmaker_uninst_confirm "${_snapmaker_uninst_confirm}")
+    string(ASCII 239 187 191 _snapmaker_utf8_bom)
+    file(WRITE "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallConfirm.nsh"
+         "${_snapmaker_utf8_bom}${_snapmaker_uninst_confirm}")
+    file(TO_NATIVE_PATH "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallConfirm.nsh" _snapmaker_uninst_confirm_nsh)
+    string(PREPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
+           "  !include \"${_snapmaker_uninst_confirm_nsh}\"\n")
     file(WRITE "${_snapmaker_nsis_tpl_dir}/NSIS.template.in" "${_snapmaker_nsis_tpl}")
     list(PREPEND CMAKE_MODULE_PATH "${_snapmaker_nsis_tpl_dir}")
 endif ()

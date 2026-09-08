@@ -64,10 +64,8 @@ static const int PARTPLATE_TEXT_OFFSET_Y = 1;
 static const int PARTPLATE_PLATENAME_OFFSET_Y  = 10;
 
 const float WIPE_TOWER_DEFAULT_X_POS = 13.;
-const float WIPE_TOWER_DEFAULT_Y_POS = 214.5;  // Max y
 
 const float I3_WIPE_TOWER_DEFAULT_X_POS = 0.;
-const float I3_WIPE_TOWER_DEFAULT_Y_POS = 250.; // Max y
 
 std::array<unsigned char, 4>  PlateTextureForeground = {0x0, 0xae, 0x42, 0xff};
 
@@ -3574,13 +3572,11 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx)
     wipe_tower_y->values.resize(m_plate_list.size(), wipe_tower_y->values.front());
 
     auto printer_structure_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<PrinterStructure>>("printer_structure");
-    // set the default position, the same with print config(left top)
+    // set the default position: x the same with print config(left), y at the middle of the plate
     ConfigOptionFloat wt_x_opt(WIPE_TOWER_DEFAULT_X_POS);
-    ConfigOptionFloat wt_y_opt(WIPE_TOWER_DEFAULT_Y_POS);
-    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3) {
+    if (printer_structure_opt && printer_structure_opt->value == PrinterStructure::psI3)
         wt_x_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_X_POS);
-        wt_y_opt = ConfigOptionFloat(I3_WIPE_TOWER_DEFAULT_Y_POS);
-    }
+    ConfigOptionFloat wt_y_opt(m_plate_depth * 0.5f);
     dynamic_cast<ConfigOptionFloats *>(proj_cfg.option("wipe_tower_x"))->set_at(&wt_x_opt, plate_idx, 0);
     dynamic_cast<ConfigOptionFloats *>(proj_cfg.option("wipe_tower_y"))->set_at(&wt_y_opt, plate_idx, 0);
 }

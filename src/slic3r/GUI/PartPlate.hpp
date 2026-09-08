@@ -51,10 +51,8 @@ inline int compute_colum_count(int count)
 
 
 extern const float WIPE_TOWER_DEFAULT_X_POS;
-extern const float WIPE_TOWER_DEFAULT_Y_POS;  // Max y
 
 extern const float I3_WIPE_TOWER_DEFAULT_X_POS;
-extern const float I3_WIPE_TOWER_DEFAULT_Y_POS; // Max y
 
 
 

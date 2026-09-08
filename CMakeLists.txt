@@ -979,8 +979,8 @@ set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
 # Window caption. Keep install dir / Start Menu / registry without version.
-# Extra PREINSTALL/UNINSTALL commands stay ASCII-only. Chinese uninstall confirm
-# lives in cmake/nsis/SnapmakerUninstallConfirm.nsh.in (UTF-8 BOM + Unicode true).
+# CPack-generated .nsi stays ASCII. Chinese uninstall confirm is a UTF-8 BOM
+# .nsh included after "Unicode true" so language switch (SimpChinese/English) works.
 set (CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_NAME}")
 set (CPACK_NSIS_PACKAGE_NAME "${CPACK_PACKAGE_NAME} V${Snapmaker_VERSION}")
 set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKAGE_NAME}\"")
@@ -1244,8 +1244,11 @@ FunctionEnd
     endforeach()
     set(_snapmaker_nsis_tpl_dir "${CMAKE_BINARY_DIR}/cmake/cpack")
     file(MAKE_DIRECTORY "${_snapmaker_nsis_tpl_dir}")
-    file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallConfirm.nsh.in"
-         _snapmaker_uninst_confirm ENCODING UTF-8)
+    set(_snapmaker_uninst_confirm_in "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallConfirm.nsh.in")
+    if(NOT EXISTS "${_snapmaker_uninst_confirm_in}")
+        message(FATAL_ERROR "Missing ${_snapmaker_uninst_confirm_in} (required for CPack NSIS uninstall confirm).")
+    endif()
+    file(READ "${_snapmaker_uninst_confirm_in}" _snapmaker_uninst_confirm ENCODING UTF-8)
     string(REPLACE "@Snapmaker_VERSION@" "${Snapmaker_VERSION}"
            _snapmaker_uninst_confirm "${_snapmaker_uninst_confirm}")
     string(ASCII 239 187 191 _snapmaker_utf8_bom)

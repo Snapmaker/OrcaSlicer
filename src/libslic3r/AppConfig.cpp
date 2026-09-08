@@ -219,6 +219,10 @@ void AppConfig::set_defaults()
     if (get("show_3d_navigator").empty())
         set_bool("show_3d_navigator", true);
 
+    // per-object center of gravity markers in the preview
+    if (get("show_objects_cog").empty())
+        set_bool("show_objects_cog", false);
+
 #ifdef _WIN32
 
 //#ifdef SUPPORT_3D_CONNEXION

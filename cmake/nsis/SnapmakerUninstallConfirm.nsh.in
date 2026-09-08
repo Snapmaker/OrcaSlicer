@@ -1,0 +1,10 @@
+; Uninstall confirmation (skipped for silent /S upgrades).
+; Version is substituted from Snapmaker_VERSION at CMake configure time.
+IfSilent SnapmakerOrcaUn_confirm_done
+StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaUn_confirm_en
+MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "确定要彻底卸载 Snapmaker Orca V@Snapmaker_VERSION@ 及其全部组件吗？" IDYES SnapmakerOrcaUn_confirm_done
+Abort
+SnapmakerOrcaUn_confirm_en:
+MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Are you sure you want to completely uninstall Snapmaker Orca V@Snapmaker_VERSION@ and all of its components?" IDYES SnapmakerOrcaUn_confirm_done
+Abort
+SnapmakerOrcaUn_confirm_done:

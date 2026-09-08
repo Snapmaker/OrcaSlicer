@@ -5412,17 +5412,11 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
-wxString GUI_App::flutter_web_base_url(const wxString& path)
-{
-    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
-                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()));
-}
-
-// Full launch url: base plus &version= of the embedding desktop client, so the
-// flutter side can identify which app build it is talking to.
 wxString GUI_App::build_flutter_web_url(const wxString& path)
 {
-    return flutter_web_base_url(path) + wxString::Format("&version=%s", Snapmaker_VERSION);
+    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()) +
+                              "&version=" + Snapmaker_VERSION);
 }
 
 std::string GUI_App::format_display_version()

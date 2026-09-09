@@ -113,9 +113,7 @@
     "pellet_flow_coefficient": [
         "0.4157"
     ],
-    "pressure_advance": [
-        "0.02"
-    ],
+    "pressure_advance": ["0.02", "0.024"],
     "required_nozzle_HRC": [
         "0"
     ],
@@ -149,7 +147,5 @@
     "supertack_plate_temp_initial_layer": [
         "45"
     ],
-    "filament_flow_support": [
-        "standard"
-    ]
+    "filament_flow_support": ["standard", "high_flow"]
 }

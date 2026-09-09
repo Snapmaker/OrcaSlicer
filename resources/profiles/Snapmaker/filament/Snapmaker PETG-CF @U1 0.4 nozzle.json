@@ -47,18 +47,14 @@
   "filament_loading_speed_start": [
     "3"
   ],
-  "filament_max_volumetric_speed": [
-    "12"
-  ],
+  "filament_max_volumetric_speed": ["12", "18"],
   "filament_minimal_purge_on_wipe_tower": [
     "30"
   ],
   "filament_multitool_ramming": [
     "1"
   ],
-  "filament_multitool_ramming_volume": [
-    "5"
-  ],
+  "filament_multitool_ramming_volume": ["5", "0.5"],
   "filament_retract_before_wipe": [
     "5%"
   ],
@@ -77,12 +73,8 @@
   "hot_plate_temp": [
     "80"
   ],
-  "nozzle_temperature": [
-    "255"
-  ],
-  "nozzle_temperature_initial_layer": [
-    "255"
-  ],
+  "nozzle_temperature": ["255", "260"],
+  "nozzle_temperature_initial_layer": ["255", "260"],
   "nozzle_temperature_range_high": [
     "270"
   ],
@@ -92,9 +84,7 @@
   "overhang_fan_speed": [
     "100"
   ],
-  "pressure_advance": [
-    "0.02"
-  ],
+  "pressure_advance": ["0.02", "0.028"],
   "temperature_vitrification": [
     "70"
   ],
@@ -131,9 +121,7 @@
   "adaptive_pressure_advance_overhangs": [
     "0"
   ],
-  "additional_cooling_fan_speed": [
-    "0"
-  ],
+  "additional_cooling_fan_speed": ["0", "20"],
   "chamber_temperature": [
     "0"
   ],
@@ -173,12 +161,8 @@
   "filament_end_gcode": [
     ""
   ],
-  "filament_flow_ratio": [
-    "0.95"
-  ],
-  "filament_flow_support": [
-    "standard"
-  ],
+  "filament_flow_ratio": ["0.95", "1.01"],
+  "filament_flow_support": ["standard", "high_flow"],
   "filament_is_high_temperature": [
     "0"
   ],
@@ -188,9 +172,7 @@
   "filament_long_retractions_when_cut": [
     "nil"
   ],
-  "filament_multitool_ramming_flow": [
-    "10"
-  ],
+  "filament_multitool_ramming_flow": ["10", "13"],
   "filament_notes": [
     ""
   ],
@@ -221,9 +203,7 @@
   "filament_retraction_distances_when_cut": [
     "nil"
   ],
-  "filament_retraction_length": [
-    "nil"
-  ],
+  "filament_retraction_length": ["nil", "0.6"],
   "filament_retraction_minimum_travel": [
     "nil"
   ],
@@ -302,9 +282,7 @@
   "slow_down_for_layer_cooling": [
     "1"
   ],
-  "slow_down_layer_time": [
-    "6"
-  ],
+  "slow_down_layer_time": ["8"],
   "slow_down_min_speed": [
     "10"
   ],

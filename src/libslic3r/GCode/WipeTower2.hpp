@@ -209,12 +209,12 @@ public:
     {
         int block_id{ 0 };
         int filament_adhesiveness_category{ 0 };
-        std::vector<float> layer_depths; // 每层的深度
-        std::vector<float> finish_depth{ 0 }; // 每层的 finish 起始位置
-        std::vector<WipeTowerLayerType> layers_type; // 每层的类型
-        float depth{ 0 }; // 总深度
-        float start_depth{ 0 }; // 在擦拭塔中的 Y 起始位置
-        float cur_depth{ 0 }; // 当前打印 Y 位置
+        std::vector<float> layer_depths; // depth of each layer
+        std::vector<float> finish_depth{ 0 }; // finish start position of each layer
+        std::vector<WipeTowerLayerType> layers_type; // type of each layer
+        float depth{ 0 }; // total depth
+        float start_depth{ 0 }; // Y start position in the wipe tower
+        float cur_depth{ 0 }; // current printing Y position
         int last_filament_change_id{ -1 };
         int last_nozzle_change_id{ -1 };
     };
@@ -234,8 +234,8 @@ private:
     std::vector<WipeTowerBlock> m_wipe_tower_blocks;
     int m_last_block_id;
     WipeTowerBlock* m_cur_block{ nullptr };
-    std::vector<int> m_filament_categories; // 粘接性类别
-    bool m_tower_framework = false; // 内支撑肋
+    std::vector<int> m_filament_categories; // adhesiveness categories
+    bool m_tower_framework = false; // internal support rib
     bool m_enable_tower_interface_features = false;
     bool m_enable_tower_interface_cooldown_during_tower = false;
     size_t m_cur_layer_id;

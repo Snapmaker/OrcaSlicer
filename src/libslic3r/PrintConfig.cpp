@@ -5261,7 +5261,6 @@ void PrintConfigDef::init_fff_params()
                     "On layers with a tool change, extruder will travel downward to print the wipe tower. "
                     "User is responsible for ensuring there is no collision with the print.");
     def->mode = comDevelop;
-    def->readonly = true;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("single_extruder_multi_material_priming", coBool);

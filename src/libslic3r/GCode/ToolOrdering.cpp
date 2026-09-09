@@ -4,7 +4,6 @@
 #include "Layer.hpp"
 #include "ClipperUtils.hpp"
 #include "ParameterUtils.hpp"
-#include <boost/multiprecision/cpp_int.hpp>
 
 // #define SLIC3R_DEBUG
 

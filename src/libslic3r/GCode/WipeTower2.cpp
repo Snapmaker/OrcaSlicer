@@ -1843,7 +1843,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
         m_current_tool = tc.old_tool;
     }
     m_nozzle_change_result.gcode.clear();
-    m_nozzle_change_result = ramming(tc, solid_nozzlechange);
+    m_nozzle_change_result = toolchange_unload_new(tc, solid_nozzlechange);
 
     size_t new_tool = tc.new_tool;
     size_t old_tool = tc.old_tool;
@@ -2240,7 +2240,7 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
     writer.resume_preview().flush_planner_queue();
 }
 
-WipeTower::NozzleChangeResult WipeTower2::ramming(const WipeTowerInfo::ToolChange& tc, 
+WipeTower::NozzleChangeResult WipeTower2::toolchange_unload_new(const WipeTowerInfo::ToolChange& tc,
     bool solid_infill, bool extruder_change)
 {
     size_t old_filament_id = tc.old_tool;

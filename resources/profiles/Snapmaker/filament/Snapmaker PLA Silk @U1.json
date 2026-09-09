@@ -84,9 +84,7 @@
     "filament_wipe": [
         "nil"
     ],
-    "filament_z_hop_types": [
-        "nil"
-    ],
+    "filament_z_hop_types": ["nil", "Slope Lift"],
     "is_custom_defined": "0",
     "nozzle_temperature_range_high": [
         "240"
@@ -172,10 +170,7 @@
     "graphic_effect_plate_temp_initial_layer": [
         "65"
     ],
-    "filament_flow_support": [
-        "standard",
-        "high_flow"
-    ],
+    "filament_flow_support": ["standard", "high_flow"],
     "supertack_plate_temp": [
         "40"
     ],

@@ -1083,8 +1083,9 @@ void SSWCP_Instance::sw_SetCache() {
             m_param_data["objects"].size() > 0) {
             json objects = m_param_data["objects"];
             for (size_t i = 0; i < objects.size(); ++i) {
-                m_wcp_cache.insert({objects[i]["key"].get<std::string>(), objects[i]["value"]});
-                wxGetApp().cache_notify(objects[i]["key"].get<std::string>(), objects[i]["value"]);
+                std::string key = objects[i]["key"].get<std::string>();
+                m_wcp_cache[key] = objects[i]["value"];
+                wxGetApp().cache_notify(key, objects[i]["value"]);
             }
 
             send_to_js();

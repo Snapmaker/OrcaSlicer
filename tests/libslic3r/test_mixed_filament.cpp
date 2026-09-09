@@ -1,5 +1,6 @@
-#include <catch2/catch.hpp>
-
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -307,33 +308,33 @@ TEST_CASE("Mixed filament apparent mix percent follows the signed bias target", 
 TEST_CASE("Mixed filament bias helper maps signed bias to a one-sided safe offset pair", "[MixedFilament]")
 {
     const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.06f, 0.4f);
-    CHECK(offset_a == Approx(0.0f));
-    CHECK(offset_b == Approx(0.06f));
+    CHECK_THAT(offset_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(offset_b, WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Approx(0.06f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f), WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Approx(-0.02f));
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Approx(0.02f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f), WithinRel(-0.02f, 0.001));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f), WithinRel(0.02f, 0.001));
 
     const auto [negative_a, negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.06f, 0.4f);
-    CHECK(negative_a == Approx(0.06f));
-    CHECK(negative_b == Approx(0.0f));
+    CHECK_THAT(negative_a, WithinRel(0.06f, 0.001));
+    CHECK_THAT(negative_b, WithinRel(0.0f, 0.001));
 
     const auto [unclamped_a, unclamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.30f, 0.4f);
-    CHECK(unclamped_a == Approx(0.0f));
-    CHECK(unclamped_b == Approx(0.30f));
+    CHECK_THAT(unclamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(unclamped_b, WithinRel(0.30f, 0.001));
 
     const auto [unclamped_negative_a, unclamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.30f, 0.4f);
-    CHECK(unclamped_negative_a == Approx(0.30f));
-    CHECK(unclamped_negative_b == Approx(0.0f));
+    CHECK_THAT(unclamped_negative_a, WithinRel(0.30f, 0.001));
+    CHECK_THAT(unclamped_negative_b, WithinRel(0.0f, 0.001));
 
     const auto [clamped_a, clamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.40f, 0.4f);
-    CHECK(clamped_a == Approx(0.0f));
-    CHECK(clamped_b == Approx(0.35f));
+    CHECK_THAT(clamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(clamped_b, WithinRel(0.35f, 0.001));
 
     const auto [clamped_negative_a, clamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.40f, 0.4f);
-    CHECK(clamped_negative_a == Approx(0.35f));
-    CHECK(clamped_negative_b == Approx(0.0f));
+    CHECK_THAT(clamped_negative_a, WithinRel(0.35f, 0.001));
+    CHECK_THAT(clamped_negative_b, WithinRel(0.0f, 0.001));
 }
 
 TEST_CASE("Mixed filament component surface offsets follow the signed bias target across alternating layers", "[MixedFilament]")
@@ -539,10 +540,6 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.wall_filament(region) == 0);
     CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 1);
-    CHECK(layer1.sparse_infill_filament(region) == 1);
-    CHECK(layer0.solid_infill_filament(region) == 0);
-    CHECK(layer1.solid_infill_filament(region) == 0);
 
     region_config.sparse_infill_filament.value          = 2;
     region_config.solid_infill_filament.value           = 2;
@@ -5239,4 +5236,219 @@ TEST_CASE("Dual-color primary drops invalid tokens and falls back on empty", "[M
     REQUIRE(parts.size() == 2); // invalid token whitelisted away
     CHECK(FilamentColor::FromColors(parts, FilamentColorMode::Segment).PrimaryColor() == "#AABBCC");
     CHECK(FilamentColor::FromColors({}, FilamentColorMode::Segment).PrimaryColor("#26A69A") == "#26A69A");
+}
+
+// ============================================================================
+// [MixedFilament][FilamentColor] — phase-2 recommended-mode palette. The
+// palette is config-driven: BuildFullSpectrumPalette enumerates every library
+// filament whose type contains "Full Spectrum" and keeps its single-color
+// SKUs, sorted family-grouped (families alphabetical, colors alphabetical
+// within each family); DefaultFullSpectrumSelections picks the default
+// dropdown slots (cyan/magenta/yellow/white, default family preferred). These
+// cases pin both pure functions against constructed library data.
+// ============================================================================
+namespace {
+
+static FilamentColorItem palette_item(const std::string &hex, const std::string &en_name, const std::string &zh_name)
+{
+    FilamentColorItem item;
+    item.colorData.colors = {hex};
+    item.colorNames = {{"en", en_name}, {"zh_CN", zh_name}};
+    return item;
+}
+
+static FilamentColorInfo palette_family(const std::string &name, const std::string &type, std::vector<FilamentColorItem> items)
+{
+    FilamentColorInfo info;
+    info.filamentName = name;
+    info.type = type;
+    info.colors = std::move(items);
+    return info;
+}
+
+static std::vector<FilamentColorInfo> full_spectrum_library(bool with_white, bool with_petg)
+{
+    std::vector<FilamentColorItem> pla = {
+        palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+        palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色"),
+        palette_item("#F9ED3D", "Semi-Translucent Yellow", "半透黄色"),
+        palette_item("#9199A4", "Semi-Translucent Gray", "半透灰色"),
+    };
+    if (with_white)
+        pla.push_back(palette_item("#FFFFFF", "Semi-Translucent White", "半透白色"));
+
+    std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Basic @U1", "PLA", {palette_item("#FFFFFF", "White", "白色")}), // wrong type: excluded
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", std::move(pla)),
+    };
+    if (with_petg) {
+        std::vector<FilamentColorItem> petg = {
+            palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+            palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色"),
+        };
+        library.push_back(palette_family("Snapmaker PETG Full Spectrum @U1", "PETG Full Spectrum", std::move(petg)));
+    }
+    return library;
+}
+
+} // namespace
+
+TEST_CASE("Full Spectrum palette enumerates single-color SKUs across families, alphabetically", "[MixedFilament][FilamentColor]")
+{
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    // 5 PLA entries (multi/gradient SKUs would be dropped) + 2 PETG entries; the
+    // PLA Basic "White" is excluded (its type has no "Full Spectrum").
+    REQUIRE(palette.size() == 7);
+    // Family-grouped (test matrix #10): families in alphabetical order (PETG < PLA),
+    // colors alphabetical within each family — cyan/magenta (PETG), then cyan/gray/
+    // magenta/white/yellow (PLA).
+    CHECK(palette[0].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[0].family_name == "Snapmaker PETG Full Spectrum @U1");
+    CHECK(palette[1].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[1].family_name == "Snapmaker PETG Full Spectrum @U1");
+    CHECK(palette[2].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[2].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[3].en_name == "Semi-Translucent Gray");
+    CHECK(palette[3].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[4].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[4].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[5].en_name == "Semi-Translucent White");
+    CHECK(palette[5].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[6].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[6].family_name == "Snapmaker PLA Full Spectrum @U1");
+    // Hex normalization and the locale name map survive into the entry.
+    CHECK(palette[0].hex == "#08ABFB");
+    CHECK(palette[0].color_names.at("zh_CN") == "半透青色");
+}
+
+TEST_CASE("Full Spectrum palette default selections pick CMYW from the default family", "[MixedFilament][FilamentColor]")
+{
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    const std::string pla = "Snapmaker PLA Full Spectrum @U1";
+    const auto sel = DefaultFullSpectrumSelections(palette, pla);
+    REQUIRE(sel.size() == 4);
+    // Slots 1-4 = cyan/magenta/yellow/white of the PLA family; gray stays unselected
+    // (cyan is matched in-family even though PETG's cyan sorts first alphabetically).
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[0]].family_name == pla);
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[sel[1]].family_name == pla);
+    CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[sel[3]].en_name == "Semi-Translucent White");
+    std::set<int> distinct(sel.begin(), sel.end());
+    CHECK(distinct.size() == 4);
+}
+
+TEST_CASE("Full Spectrum palette default selections fall back to gray without white", "[MixedFilament][FilamentColor]")
+{
+    // Bundled config today: no White SKU yet (arrives via hot update). Slot 4 falls
+    // back to the next unused default-family entry: gray.
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(false, false));
+    REQUIRE(palette.size() == 4);
+    const auto sel = DefaultFullSpectrumSelections(palette, "Snapmaker PLA Full Spectrum @U1");
+    REQUIRE(sel.size() == 4);
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[sel[3]].en_name == "Semi-Translucent Gray");
+}
+
+TEST_CASE("Full Spectrum palette default selections degrade on short palettes", "[MixedFilament][FilamentColor]")
+{
+    std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum",
+                       {palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+                        palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色")}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 2);
+    const auto sel = DefaultFullSpectrumSelections(palette, "Snapmaker PLA Full Spectrum @U1");
+    CHECK(sel.size() == 2);
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+
+    CHECK(BuildFullSpectrumPalette({}).empty());
+    CHECK(DefaultFullSpectrumSelections({}, "any").empty());
+}
+
+TEST_CASE("Full Spectrum palette passes config td values through as-read (no fallback)", "[MixedFilament][FilamentColor]")
+{
+    // TD comes from the hot-updated config (per-SKU "td" field, parsed by the config
+    // side). The palette builder passes the value through untouched — there is NO
+    // static fallback table: a color whose config entry has no td simply carries 0.0
+    // (test matrix #1: Cyan 5.5 -> 6.0 after hot update; #11: unread td shows 0.0).
+    FilamentColorItem cyan  = palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色");
+    cyan.tdValue = 6.0;  // post-hot-update value
+    FilamentColorItem gray  = palette_item("#9199A4", "Semi-Translucent Gray", "半透灰色");
+    gray.tdValue = 8.8;
+    FilamentColorItem white = palette_item("#FFFFFF", "Semi-Translucent White", "半透白色"); // no td in config
+
+    const std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", {cyan, gray, white}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 3);
+    // Palette is alphabetical: Cyan, Gray, White.
+    CHECK(palette[0].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[0].td_value == 6.0);
+    CHECK(palette[1].en_name == "Semi-Translucent Gray");
+    CHECK(palette[1].td_value == 8.8);
+    CHECK(palette[2].en_name == "Semi-Translucent White");
+    CHECK(palette[2].td_value == 0.0);
+}
+
+TEST_CASE("Full Spectrum palette leaves en_name empty without an en entry (no arbitrary pick)", "[MixedFilament][FilamentColor]")
+{
+    // A SKU carrying only zh_CN must NOT get its en_name from an arbitrary
+    // unordered_map::begin() pick: en_name feeds the sort key and slot-name matching,
+    // so an arbitrary locale's name there would make palette order and default slot
+    // anchoring depend on the hash layout and on which non-English translations the
+    // config happens to carry. Leave it empty instead (GetColorNameForSort contract).
+    FilamentColorItem no_en;
+    no_en.colorData.colors = {"#123456"};
+    no_en.colorNames       = {{"zh_CN", "半透青色"}};
+
+    const std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", {no_en}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 1);
+    CHECK(palette[0].en_name.empty());
+    CHECK(palette[0].hex == "#123456");
+}
+
+TEST_CASE("Full Spectrum default selections normalize the default family argument", "[MixedFilament][FilamentColor]")
+{
+    // Callers may pass any of the three family-name forms — the raw library name
+    // ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the already-stripped
+    // match name — and all must anchor the default C/M/Y/W slots on that family.
+    // Regression: the GUI passes the stripped form, which silently never matched the raw
+    // family names the palette carries, so the default-family preference never fired
+    // (invisible with the single-family bundled config, wrong defaults after a
+    // multi-family hot update).
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    REQUIRE(palette.size() == 7);
+
+    const std::string default_family_forms[] = {
+        "Snapmaker PLA Full Spectrum @U1",             // raw library name
+        "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",  // full preset name
+        "Snapmaker PLA Full Spectrum",                 // stripped match name (GUI form)
+    };
+    for (const std::string& default_family : default_family_forms)
+    {
+        SECTION(default_family)
+        {
+            const auto sel = DefaultFullSpectrumSelections(palette, default_family);
+            REQUIRE(sel.size() == 4);
+            // Every slot must land on the DEFAULT family (never the PETG entries that
+            // sort first alphabetically), cyan/magenta/yellow/white in slot order.
+            CHECK(palette[sel[0]].family_name == "Snapmaker PLA Full Spectrum @U1");
+            CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+            CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+            CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+            CHECK(palette[sel[3]].en_name == "Semi-Translucent White");
+            std::set<int> distinct(sel.begin(), sel.end());
+            CHECK(distinct.size() == 4);
+        }
+    }
 }

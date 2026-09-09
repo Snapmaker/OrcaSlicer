@@ -11,7 +11,7 @@
 !define PRODUCT_INSTALL_KEY "Software\${PRODUCT_PUBLISHER}\${PRODUCT_NAME}"
 
 !ifndef VERSION
-    !define VERSION "2.3.6"
+    !define VERSION "2.4.0"
 !endif
 
 !ifndef SOURCE_DIR

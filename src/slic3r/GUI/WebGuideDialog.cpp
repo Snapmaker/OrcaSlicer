@@ -995,12 +995,11 @@ int GuideFrame::GetFilamentInfo( std::string VendorDirectory, const json & pFila
                 }
                 std::string FPath = inherited["sub_path"];
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Before Format Inherits Path: VendorDirectory - " << VendorDirectory << ", sub_path - " << FPath;
-                wxString strNewFile = wxString::Format("%s%c%s", wxString(VendorDirectory.c_str(), wxConvUTF8), boost::filesystem::path::preferred_separator, FPath);
-                boost::filesystem::path inherits_path(w2s(strNewFile));
+                // Avoid w2s()/mb_str(): ANSI code page breaks Unicode paths on Windows.
+                boost::filesystem::path inherits_path = (boost::filesystem::path(VendorDirectory) / FPath).make_preferred();
                 if (!boost::filesystem::exists(inherits_path))
                     inherits_path = (boost::filesystem::path(m_OrcaFilaLibPath) / boost::filesystem::path(FPath)).make_preferred();
 
-                //boost::filesystem::path nf(strNewFile.c_str());
                 if (boost::filesystem::exists(inherits_path))
                     return GetFilamentInfo(VendorDirectory,pFilaList, inherits_path.string(), sVendor, sType);
                 else {
@@ -1411,7 +1410,7 @@ int GuideFrame::LoadProfileFamily(std::string strVendor, std::string strFilePath
 
                 int nRet = GetFilamentInfo(vendor_dir.string(), tFilaList_ro, sub_file, sV, sT);
                 if (nRet != 0) {
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "Load Filament:" << s1 << ",GetFilamentInfo Failed, Vendor:" << sV << ",Type:"<< sT;
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "Load Filament:" << s1 << ",GetFilamentInfo Failed, Vendor:" << sV << ",Type:"<< sT;
                     return;
                 }
 

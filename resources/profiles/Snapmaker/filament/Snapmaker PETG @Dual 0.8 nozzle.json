@@ -22,5 +22,7 @@
   "fan_min_speed": [
     "10"
   ],
-  "filament_type": ["PETG"]
+  "filament_max_volumetric_speed": [
+    "10"
+  ]
 }

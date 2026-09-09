@@ -1,9 +1,9 @@
  #  Changelog
  
- ## 2026-07-27
+ ## 2026-09-05
  ###Features
-  * Filament Tangle Detection
-  * Foreign Object Detection
- ### Improvements
-  * Consumables recognition optimization
-  * Error code structure refinement for faster diagnostics
+  * Added support for high-flow hotends  
+  * Added gradient filament display
+ ### Bug Fixes
+  * Fixed UI adaptation issues on some pages.
+  * Fixed other known issues.

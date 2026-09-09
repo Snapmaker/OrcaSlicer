@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp., Ian Craggs and others
+ * Copyright (c) 2009, 2024 IBM Corp., Ian Craggs and others
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -80,6 +80,7 @@
 #define URI_MQTT "mqtt://"
 #define URI_WS   "ws://"
 #define URI_WSS  "wss://"
+#define URI_UNIX "unix://"
 
 #include "VersionInfo.h"
 #include "WebSocket.h"
@@ -294,6 +295,7 @@ typedef struct
 {
 	char* serverURI;
 	const char* currentServerURI; /* when using HA options, set the currently used serverURI */
+	int unixsock;
 #if defined(OPENSSL)
 	int ssl;
 #endif
@@ -404,6 +406,9 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
          && strncmp(URI_MQTTS, serverURI, strlen(URI_MQTTS)) != 0
 		 && strncmp(URI_WSS, serverURI, strlen(URI_WSS)) != 0
 #endif
+#if defined(UNIXSOCK)
+		 && strncmp(URI_UNIX, serverURI, strlen(URI_UNIX)) != 0
+#endif
 			)
 		{
 			rc = MQTTCLIENT_BAD_PROTOCOL;
@@ -483,6 +488,13 @@ int MQTTClient_createWithOptions(MQTTClient* handle, const char* serverURI, cons
 		goto exit;
 #endif
 	}
+#if defined(UNIXSOCK)
+	else if (strncmp(URI_UNIX, serverURI, strlen(URI_UNIX)) == 0)
+	{
+		serverURI += strlen(URI_UNIX);
+		m->unixsock = 1;
+	}
+#endif
 	m->serverURI = MQTTStrdup(serverURI);
 	ListAppend(handles, m, sizeof(MQTTClients));
 
@@ -1235,17 +1247,17 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 	Log(TRACE_MIN, -1, "Connecting to serverURI %s with MQTT version %d", serverURI, MQTTVersion);
 #if defined(OPENSSL)
 #if defined(__GNUC__) && defined(__linux__)
-	rc = MQTTProtocol_connect(serverURI, m->c, m->ssl, m->websocket, MQTTVersion, connectProperties, willProperties,
+	rc = MQTTProtocol_connect(serverURI, m->c, m->unixsock, m->ssl, m->websocket, MQTTVersion, connectProperties, willProperties,
 			millisecsTimeout - MQTTTime_elapsed(start));
 #else
-	rc = MQTTProtocol_connect(serverURI, m->c, m->ssl, m->websocket, MQTTVersion, connectProperties, willProperties);
+	rc = MQTTProtocol_connect(serverURI, m->c, m->unixsock, m->ssl, m->websocket, MQTTVersion, connectProperties, willProperties);
 #endif
 #else
 #if defined(__GNUC__) && defined(__linux__)
-	rc = MQTTProtocol_connect(serverURI, m->c, m->websocket, MQTTVersion, connectProperties, willProperties,
+	rc = MQTTProtocol_connect(serverURI, m->c, m->unixsock, m->websocket, MQTTVersion, connectProperties, willProperties,
 			millisecsTimeout - MQTTTime_elapsed(start));
 #else
-	rc = MQTTProtocol_connect(serverURI, m->c, m->websocket, MQTTVersion, connectProperties, willProperties);
+	rc = MQTTProtocol_connect(serverURI, m->c, m->unixsock, m->websocket, MQTTVersion, connectProperties, willProperties);
 #endif
 #endif
 	if (rc == SOCKET_ERROR)
@@ -1428,7 +1440,7 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 				m->c->connected = 1;
 				m->c->good = 1;
 				m->c->connect_state = NOT_IN_PROGRESS;
-				if (MQTTVersion == 4)
+				if (MQTTVersion >= MQTTVERSION_3_1_1)
 					sessionPresent = connack->flags.bits.sessionPresent;
 				if (m->c->cleansession || m->c->cleanstart)
 					rc = MQTTClient_cleanSession(m->c);
@@ -1439,8 +1451,8 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 
 					while (ListNextElement(m->c->outboundMsgs, &outcurrent))
 					{
-						Messages* m = (Messages*)(outcurrent->content);
-						memset(&m->lastTouch, '\0', sizeof(m->lastTouch));
+						Messages* m2 = (Messages*)(outcurrent->content);
+						memset(&m2->lastTouch, '\0', sizeof(m2->lastTouch));
 					}
 					MQTTProtocol_retry(zero, 1, 1);
 					if (m->c->connected != 1)
@@ -1454,6 +1466,24 @@ static MQTTResponse MQTTClient_connectURIVersion(MQTTClient handle, MQTTClient_c
 						goto exit;
 					}
 					*resp.properties = MQTTProperties_copy(&connack->properties);
+
+					if (MQTTProperties_hasProperty(&connack->properties, MQTTPROPERTY_CODE_SERVER_KEEP_ALIVE))
+					{
+						/* update the keep alive from the server keep alive */
+						int server_keep_alive = (int)MQTTProperties_getNumericValue(&connack->properties, MQTTPROPERTY_CODE_SERVER_KEEP_ALIVE);
+						if (server_keep_alive != -999999)
+						{
+							Log(LOG_PROTOCOL, -1, "Setting keep alive interval to server keep alive %d", server_keep_alive);
+							m->c->keepAliveInterval = server_keep_alive;
+						}
+					}
+					else if (m->c->keepAliveInterval != m->c->savedKeepAliveInterval)
+					{
+						/* if the keep alive has been previously updated with a server keep alive, but there is no server keep alive
+						on this connect, reset it to the value requested in the original connect API */
+						Log(LOG_PROTOCOL, -1, "Resetting keep alive interval to %d", m->c->savedKeepAliveInterval);
+						m->c->keepAliveInterval = m->c->savedKeepAliveInterval;
+					}
 				}
 			}
 			MQTTPacket_freeConnack(connack);
@@ -1507,7 +1537,7 @@ static MQTTResponse MQTTClient_connectURI(MQTTClient handle, MQTTClient_connectO
 	start = MQTTTime_start_clock();
 
 	m->currentServerURI = serverURI;
-	m->c->keepAliveInterval = options->keepAliveInterval;
+	m->c->keepAliveInterval = m->c->savedKeepAliveInterval = options->keepAliveInterval;
 	m->c->retryInterval = options->retryInterval;
 	setRetryLoopInterval(options->keepAliveInterval);
 	m->c->MQTTVersion = options->MQTTVersion;
@@ -1880,6 +1910,13 @@ MQTTResponse MQTTClient_connectAll(MQTTClient handle, MQTTClient_connectOptions*
 				m->websocket = 1;
 			}
 #endif
+#if defined(UNIXSOCK)
+			else if (strncmp(URI_UNIX, serverURI, strlen(URI_UNIX)) == 0)
+			{
+				serverURI += strlen(URI_UNIX);
+				m->unixsock = 1;
+			}
+#endif
 			rc = MQTTClient_connectURI(handle, options, serverURI, connectProperties, willProperties);
 			if (rc.reasonCode == MQTTREASONCODE_SUCCESS)
 				break;
@@ -1889,7 +1926,7 @@ MQTTResponse MQTTClient_connectAll(MQTTClient handle, MQTTClient_connectOptions*
 	{
 		if (rc.properties && MQTTProperties_hasProperty(rc.properties, MQTTPROPERTY_CODE_RECEIVE_MAXIMUM))
 		{
-			int recv_max = MQTTProperties_getNumericValue(rc.properties, MQTTPROPERTY_CODE_RECEIVE_MAXIMUM);
+			int recv_max = (int)MQTTProperties_getNumericValue(rc.properties, MQTTPROPERTY_CODE_RECEIVE_MAXIMUM);
 			if (m->c->maxInflightMessages > recv_max)
 				m->c->maxInflightMessages = recv_max;
 		}
@@ -2933,8 +2970,8 @@ int MQTTClient_getPendingDeliveryTokens(MQTTClient handle, MQTTClient_deliveryTo
 		}
 		while (ListNextElement(m->c->outboundMsgs, &current))
 		{
-			Messages* m = (Messages*)(current->content);
-			(*tokens)[count++] = m->msgid;
+			Messages* m2 = (Messages*)(current->content);
+			(*tokens)[count++] = m2->msgid;
 		}
 		(*tokens)[count] = -1;
 	}

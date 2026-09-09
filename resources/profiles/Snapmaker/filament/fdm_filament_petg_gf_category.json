@@ -61,6 +61,7 @@
     "enable_pressure_advance": [
         "0"
     ],
+    "filament_adhesiveness_category": ["300"],
     "filament_cooling_final_speed": [
         "3.4"
     ],

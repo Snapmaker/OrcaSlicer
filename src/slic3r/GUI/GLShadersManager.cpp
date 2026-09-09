@@ -46,6 +46,10 @@ std::pair<bool, std::string> GLShadersManager::init()
     valid &= append_shader("background", { prefix + "background.vs", prefix + "background.fs" });
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
+    // used to render gcode toolpaths with GPU-generated geometry (data tables in TBOs)
+    valid &= append_shader("gpu_path", { prefix + "gpu_path.vs", prefix + "gpu_path.fs" });
+    // used to render gcode option markers (seams, tool changes, ...) with GPU-side placement
+    valid &= append_shader("gpu_path_marker", { prefix + "gpu_path_marker.vs", prefix + "gpu_path_marker.fs" });
     //used to render thumbnail
     valid &= append_shader("thumbnail", { prefix + "thumbnail.vs", prefix + "thumbnail.fs"});
     // used to render printbed

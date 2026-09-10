@@ -8,6 +8,7 @@
 #include <boost/log/trivial.hpp>
 #include <memory>
 #include <atomic>
+#include <mutex>
 #include <boost/filesystem.hpp>
 
 // Number of retries for connection and subscription attempts
@@ -91,9 +92,16 @@ public:
     // Set callback for handling incoming messages
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback);
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload, void* this_)> callback);
+    // Resolves ambiguity of SetMessageCallback(nullptr) between the two overloads above
+    void SetMessageCallback(std::nullptr_t) {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
+        message_callback_  = nullptr;
+        message_callback1_ = nullptr;
+    }
 
     //  add set connect callback
     void SetConnectionFailureCallback(std::function<void()> callback) {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
         connection_failure_callback_ = callback;
     }
 
@@ -115,11 +123,16 @@ private:
     std::string server_address_;     // MQTT broker address
     std::string client_id_;          // Unique client identifier
     std::unique_ptr<mqtt::async_client> client_;      // Async MQTT client instance
+    // Guards message_callback_ / message_callback1_ / connection_failure_callback_,
+    // which are read on the Paho callback threads and written from owner threads
+    // (including being nulled at the start of ~MqttClient).
+    mutable std::mutex cb_mtx_;
     std::function<void(const std::string& topic, const std::string& payload)> message_callback_;  // Message handler
     std::function<void(const std::string& topic, const std::string& payload, void* this_)> message_callback1_;  // Message handler
 
     mqtt::connect_options connOpts_; // Connection options
     std::atomic<bool> connected_;    // Connection status flag
+    mutable std::mutex topics_mtx_;  // Guards topics_to_resubscribe_
     std::map<std::string, int> topics_to_resubscribe_;  // Topics to resubscribe after reconnection
     action_listener subListener_;    // Subscription listener
     int connect_retry_time_;         // Connection retry counter

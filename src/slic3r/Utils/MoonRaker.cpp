@@ -853,6 +853,20 @@ std::string Moonraker_Mqtt::m_notification_topic = "/notification";
 std::string Moonraker_Mqtt::m_request_topic = "/request";
 std::string Moonraker_Mqtt::m_sn = "";
 std::mutex Moonraker_Mqtt::m_sn_mtx;
+std::mutex Moonraker_Mqtt::m_client_mtx;
+std::mutex Moonraker_Mqtt::m_cbs_mtx;
+
+std::shared_ptr<MqttClient> Moonraker_Mqtt::get_mqtt_client()
+{
+    std::lock_guard<std::mutex> lock(m_client_mtx);
+    return m_mqtt_client;
+}
+
+std::shared_ptr<MqttClient> Moonraker_Mqtt::get_mqtt_client_tls()
+{
+    std::lock_guard<std::mutex> lock(m_client_mtx);
+    return m_mqtt_client_tls;
+}
 std::string Moonraker_Mqtt::m_auth_topic = "/config/response";
 std::string Moonraker_Mqtt::m_auth_req_topic = "/config/request";
 nlohmann::json Moonraker_Mqtt::m_auth_info = nlohmann::json::object();
@@ -921,6 +935,8 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
             local_ip = "0.0.0.0"; 
         }
+
+        std::lock_guard<std::mutex> lock(m_client_mtx);
         try {
             m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
         } catch (const std::exception& e) {
@@ -969,12 +985,22 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
     }
     BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] new engine connection status OK";
 
-    if (m_mqtt_client_tls) {
+    // Detach the old engine under the lock, then disconnect/destroy it outside
+    // the lock: ~MqttClient waits for the Paho threads, and those threads must
+    // never block on a mutex this function (or its callers) still hold.
+    std::shared_ptr<MqttClient> old_engine;
+    {
+        std::lock_guard<std::mutex> lock(m_client_mtx);
+        old_engine         = std::move(m_mqtt_client_tls);
+        m_mqtt_client_tls  = engine;
+    }
+
+    if (old_engine) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] checking old engine connection status...";
-        if (m_mqtt_client_tls->CheckConnected()) {
+        if (old_engine->CheckConnected()) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] old engine still connected, disconnecting...";
             std::string dis_msg = "success";
-            bool disconnect_result = m_mqtt_client_tls->Disconnect(dis_msg);
+            bool disconnect_result = old_engine->Disconnect(dis_msg);
             if (disconnect_result) {
                 BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] old engine disconnected successfully: " << dis_msg;
             } else {
@@ -983,16 +1009,14 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
         } else {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] old engine already disconnected";
         }
+        old_engine->SetMessageCallback(nullptr);
     } else {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] no old engine to disconnect";
     }
 
-    BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] setting new engine pointer";
-    m_mqtt_client_tls = engine;
-
     BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] setting message callback";
     std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
-    m_mqtt_client_tls->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
+    engine->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
         if (weak_tsm.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTTS message";
             return;
@@ -1014,13 +1038,14 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
 bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    if (!m_mqtt_client) {
+    std::shared_ptr<MqttClient> client = get_mqtt_client();
+    if (!client) {
         return false;
     }
 
-    if(m_mqtt_client->CheckConnected()) {
+    if (client->CheckConnected()) {
         std::string dc_msg = "";
-        m_mqtt_client->Disconnect(dc_msg);
+        client->Disconnect(dc_msg);
     }
 
     m_sn_mtx.lock();
@@ -1028,7 +1053,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     m_sn_mtx.unlock();
 
     std::string connection_msg = "";
-    bool is_connect = m_mqtt_client->Connect(connection_msg);
+    bool is_connect = client->Connect(connection_msg);
 
     if(!is_connect || !cn_params.count("code") || cn_params["code"].get<std::string>() == "") {
         return false;
@@ -1037,12 +1062,12 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     std::string auth_code  = cn_params["code"].get<std::string>();
 
     std::string sub_msg             = "success";
-    bool response_subscribed = m_mqtt_client->Subscribe(auth_code + m_auth_topic, 1, sub_msg);
+    bool response_subscribed = client->Subscribe(auth_code + m_auth_topic, 1, sub_msg);
     if (!response_subscribed) {
         return false;
     }
     std::weak_ptr<TimeSyncManager> weak_tsm_mqtt = time_sync_manager_;
-    m_mqtt_client->SetMessageCallback([this, weak_tsm_mqtt](const std::string& topic, const std::string& payload) {
+    client->SetMessageCallback([this, weak_tsm_mqtt](const std::string& topic, const std::string& payload) {
         if (weak_tsm_mqtt.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTT message";
             return;
@@ -1055,7 +1080,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     body["method"] = "server.request_key";
     json params;
     std::string clientid = "";    
-    clientid = m_mqtt_client->get_client_id();   
+    clientid = client->get_client_id();
     if(clientid == "0.0.0.0") {
         return false;
     }
@@ -1109,7 +1134,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     }
 
     std::string pub_msg = "";
-    if(!m_mqtt_client->Publish(auth_code + m_auth_req_topic, body.dump(), 1, pub_msg)){
+    if(!client->Publish(auth_code + m_auth_req_topic, body.dump(), 1, pub_msg)){
         return false;
     }
     
@@ -1213,23 +1238,30 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
         << "\n - private key present: " << (!m_key.empty() ? "yes" : "no");
     wcp_loger.add_log("MQTTS connection parameters: " + m_host + ":" + std::to_string(m_port) + ", client ID: " + m_client_id + ", CA cert present: " + (!m_ca.empty() ? "yes" : "no") + ", client cert present: " + (!m_cert.empty() ? "yes" : "no") + ", private key present: " + (!m_key.empty() ? "yes" : "no"), false, "", "Moonraker_Mqtt", "info");
 
-    // Ensure old connection is disconnected before creating a new one
-    if (m_mqtt_client) {
+    // Detach the old clients under the lock, then disconnect/destroy them
+    // outside it: ~MqttClient waits for the Paho threads to stop, so the lock
+    // must not be held during teardown (same pattern as disconnect()).
+    std::shared_ptr<MqttClient> old_client;
+    std::shared_ptr<MqttClient> old_client_tls;
+    {
+        std::lock_guard<std::mutex> lock(m_client_mtx);
+        old_client     = std::move(m_mqtt_client);
+        old_client_tls = std::move(m_mqtt_client_tls);
+    }
+    if (old_client) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] disconnecting old MQTT client";
         wcp_loger.add_log("disconnecting old MQTT client", false, "", "Moonraker_Mqtt", "info");
         std::string dc_msg = "success";
-        m_mqtt_client->Disconnect(dc_msg);
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        m_mqtt_client.reset();
+        old_client->Disconnect(dc_msg);
+        old_client.reset();
     }
 
-    if (m_mqtt_client_tls) {
+    if (old_client_tls) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] disconnecting old MQTTS client";
         wcp_loger.add_log("disconnecting old MQTTS client", false, "", "Moonraker_Mqtt", "info");
         std::string dc_msg = "success";
-        m_mqtt_client_tls->Disconnect(dc_msg);
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        m_mqtt_client_tls.reset();
+        old_client_tls->Disconnect(dc_msg);
+        old_client_tls.reset();
     }
 
     // Create new MQTTS connection
@@ -1244,23 +1276,32 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     std::string mqtts_url = "mqtts://" + host_ip + ":" + std::to_string(m_port);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] creating MQTTS client, URL: " << mqtts_url << ", client ID: " << m_client_id;
     wcp_loger.add_log("creating MQTTS client, URL: " + mqtts_url + ", client ID: " + m_client_id, false, "", "Moonraker_Mqtt", "info");
+    std::shared_ptr<MqttClient> new_client;
     try {
-        m_mqtt_client_tls.reset(new MqttClient(mqtts_url, m_client_id, m_ca, m_cert, m_key));
+        new_client = std::make_shared<MqttClient>(mqtts_url, m_client_id, m_ca, m_cert, m_key);
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTTS client: " << e.what();
         wcp_loger.add_log("failed to create MQTTS client: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");
-        m_mqtt_client_tls.reset();
         return false;
     }
 
-    if (!m_mqtt_client_tls) {
+    if (!new_client) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTT client";
         wcp_loger.add_log("failed to create MQTT client", false, "", "Moonraker_Mqtt", "error");
         return false;
     }
 
+    // Publish the new client under the lock before using it. Concurrent
+    // readers (send_to_request, subscribe/unsubscribe, disconnect) take their
+    // own snapshot, so they either see the old client (still alive) or this
+    // one — never a half-destroyed pointer.
+    {
+        std::lock_guard<std::mutex> lock(m_client_mtx);
+        m_mqtt_client_tls = new_client;
+    }
+
     std::string connection_msg = "";
-    bool is_connect = m_mqtt_client_tls->Connect(connection_msg);
+    bool is_connect = new_client->Connect(connection_msg);
     msg                        = connection_msg;
     if (!is_connect) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] MQTT connection failed";
@@ -1288,16 +1329,16 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     std::string no_sub_msg              = "success";
-    bool notification_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_notification_topic, 1, no_sub_msg);
+    bool notification_subscribed = new_client->Subscribe(tmp_sn + m_notification_topic, 1, no_sub_msg);
 
     std::string res_sub_msg         = "success";
-    bool response_subscribed = m_mqtt_client_tls->Subscribe(tmp_sn + m_response_topic, 1, res_sub_msg);
+    bool response_subscribed = new_client->Subscribe(tmp_sn + m_response_topic, 1, res_sub_msg);
     
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] topic subscription result - notification topic: " << (notification_subscribed ? "success" : "failed")
                            << ", response topic: " << (response_subscribed ? "success" : "failed");
     wcp_loger.add_log("topic subscription result - notification topic: " + std::string((notification_subscribed ? "success" : "failed")) + ", response topic: " + (response_subscribed ? "success" : "failed"), false, "", "Moonraker_Mqtt", "info");
     std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
-    m_mqtt_client_tls->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
+    new_client->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
         if (weak_tsm.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTTS message";
             return;
@@ -1316,14 +1357,22 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] starting MQTT disconnect";
     wcp_loger.add_log("starting MQTT disconnect", false, "", "Moonraker_Mqtt", "info");
-    if (!m_mqtt_client_tls) {
+
+    // Take a snapshot of the client: the shared_ptr keeps it alive for the
+    // whole teardown even if another thread disconnects/connects concurrently.
+    // This function can be entered from several threads at once (UI thread via
+    // sm_disconnect_current_machine, SSWCP worker thread, ...); previously the
+    // unsynchronized m_mqtt_client_tls.reset() below raced between them and
+    // corrupted the heap.
+    std::shared_ptr<MqttClient> client = get_mqtt_client_tls();
+    if (!client) {
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS client does not exist, nothing to disconnect";
         wcp_loger.add_log("MQTTS client does not exist, nothing to disconnect", false, "", "Moonraker_Mqtt", "info");
         return false;
     }
 
     std::string dc_msg = "success";
-    bool flag = m_mqtt_client_tls->Disconnect(dc_msg);
+    bool flag = client->Disconnect(dc_msg);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS disconnect result: " << (flag ? "success" : "failed");
     wcp_loger.add_log("MQTTS disconnect result: " + std::string((flag ? "success" : "failed")), false, "", "Moonraker_Mqtt", "info");
 
@@ -1332,6 +1381,7 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     time_sync_manager_.reset();
 
     if (flag) {
+        std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
         m_status_cbs.clear();
         m_notification_cbs.clear();
     }
@@ -1342,9 +1392,23 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] SN reset";
     wcp_loger.add_log("SN reset", false, "", "Moonraker_Mqtt", "info");
     
-    // Wait for MQTT client cleanup to complete, avoiding memory access issues
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    m_mqtt_client_tls.reset();
+    // Stop delivering messages to this object before teardown: late
+    // message_arrived() calls on the Paho thread become no-ops.
+    client->SetMessageCallback(nullptr);
+
+    // Detach the global pointer (only if we still own this client — another
+    // thread may already have reconnected), then drop our reference OUTSIDE
+    // the lock. ~MqttClient waits for the Paho send/receive threads to exit,
+    // and those threads must never wait on m_client_mtx: destroying the client
+    // while holding the lock could deadlock against a message dispatch that
+    // publishes a new request.
+    {
+        std::lock_guard<std::mutex> lock(m_client_mtx);
+        if (m_mqtt_client_tls == client) {
+            m_mqtt_client_tls.reset();
+        }
+    }
+    client.reset();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS client reset";
     wcp_loger.add_log("MQTTS client reset", false, "", "Moonraker_Mqtt", "info");    
     return flag;
@@ -1357,7 +1421,12 @@ void Moonraker_Mqtt::async_subscribe_machine_info(const std::string& hash, std::
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] starting machine status subscription";
     wcp_loger.add_log("starting machine status subscription", false, "", "Moonraker_Mqtt", "info");
 
-    if (m_status_cbs.empty()) {
+    bool need_subscribe;
+    {
+        std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
+        need_subscribe = m_status_cbs.empty();
+    }
+    if (need_subscribe) {
         std::string main_layer = "+";
 
         m_sn_mtx.lock();
@@ -1367,8 +1436,9 @@ void Moonraker_Mqtt::async_subscribe_machine_info(const std::string& hash, std::
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] using SN topic: " << main_layer;
         wcp_loger.add_log("using SN topic: " + main_layer, false, "", "Moonraker_Mqtt", "info");
         std::string sub_msg    = "success";
-        bool        res_status = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
-        bool res_notification  = m_mqtt_client_tls ? m_mqtt_client_tls->Subscribe(main_layer + m_notification_topic, 1, sub_msg) : false;
+        std::shared_ptr<MqttClient> client = get_mqtt_client_tls();
+        bool        res_status = client ? client->Subscribe(main_layer + m_status_topic, 1, sub_msg) : false;
+        bool res_notification  = client ? client->Subscribe(main_layer + m_notification_topic, 1, sub_msg) : false;
 
         if (!res_status || !res_notification) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to subscribe to status topic";
@@ -1381,8 +1451,11 @@ void Moonraker_Mqtt::async_subscribe_machine_info(const std::string& hash, std::
         wcp_loger.add_log("successfully subscribed to status topic: " + main_layer + m_status_topic, false, "", "Moonraker_Mqtt", "info");
     }
 
-    m_status_cbs.insert({hash, callback});
-    m_notification_cbs.insert({hash, callback});
+    {
+        std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
+        m_status_cbs.insert({hash, callback});
+        m_notification_cbs.insert({hash, callback});
+    }
     callback(json::object());
 
     
@@ -1493,7 +1566,8 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
         cb(json::value_t::null);
     }
 
-    if (m_mqtt_client_tls) {
+    std::shared_ptr<MqttClient> mqtt_client_tls = get_mqtt_client_tls();
+    if (mqtt_client_tls) {
         std::string main_layer = "+";
 
         if (wait_for_sn()) {
@@ -1512,7 +1586,7 @@ void Moonraker_Mqtt::test_async_wcp_mqtt_moonraker(const nlohmann::json& mqtt_re
             BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] publishing test request to topic: " << main_layer + m_request_topic;
             wcp_loger.add_log("publishing test request to topic: " + main_layer + m_request_topic, false, "", "Moonraker_Mqtt", "info");
             std::string pub_msg = "success";
-            bool res = m_mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 1, pub_msg);
+            bool res = mqtt_client_tls->Publish(main_layer + m_request_topic, mqtt_request_params.dump(), 1, pub_msg);
             if (!res) {
                 BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to publish test request";
                 wcp_loger.add_log("failed to publish test request", false, "", "Moonraker_Mqtt", "error");
@@ -1613,13 +1687,19 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(const std::string& hash, std
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting unsubscribe machine status";
     wcp_loger.add_log("Starting unsubscribe machine status", false, "", "Moonraker_Mqtt", "info");
 
+    bool no_cbs_left;
+    {
+        std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
     if (m_status_cbs.count(hash))
         m_status_cbs.erase(hash);
 
     if (m_notification_cbs.count(hash))
         m_notification_cbs.erase(hash);
 
-    if (m_status_cbs.empty()) {
+        no_cbs_left = m_status_cbs.empty();
+    }
+
+    if (no_cbs_left) {
         std::string main_layer = "+";
 
         m_sn_mtx.lock();
@@ -1627,7 +1707,8 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(const std::string& hash, std
         m_sn_mtx.unlock();
 
         std::string un_sub_msg = "success";
-        bool        res        = m_mqtt_client_tls ? m_mqtt_client_tls->Unsubscribe(main_layer + m_status_topic, un_sub_msg) : false;
+        std::shared_ptr<MqttClient> client = get_mqtt_client_tls();
+        bool        res        = client ? client->Unsubscribe(main_layer + m_status_topic, un_sub_msg) : false;
 
         if (!res) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to unsubscribe from status topic";
@@ -2678,9 +2759,9 @@ bool Moonraker_Mqtt::send_to_request(
         body["id"] = seq_id;
     }
 
-    if (m_mqtt_client_tls) {
+    std::shared_ptr<MqttClient> mqtt_client_tls = get_mqtt_client_tls();
+    if (mqtt_client_tls) {
         std::string main_layer = "+";
-    
         m_sn_mtx.lock();
         main_layer = m_sn;
         m_sn_mtx.unlock();
@@ -2702,7 +2783,7 @@ bool Moonraker_Mqtt::send_to_request(
         }
 
         std::string pub_msg = "success";
-        bool res = m_mqtt_client_tls->Publish(topic, body.dump(), 1, pub_msg);
+        bool res = mqtt_client_tls->Publish(topic, body.dump(), 1, pub_msg);
         if (!res) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to publish request, method: " << method;
             wcp_loger.add_log("failed to publish request, method: " + method, false, "", "Moonraker_Mqtt", "error");
@@ -2924,14 +3005,23 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
             wcp_loger.add_log("status update contains method: " + body["method"].get<std::string>(), false, "", "Moonraker_Mqtt", "info");
         }
 
-        if (m_status_cbs.empty()) {
+        // Snapshot the callbacks under m_cbs_mtx and invoke the copies:
+        // disconnect()/unsubscribe run on other threads and clear/erase these
+        // maps; iterating them directly raced with that and corrupted the heap.
+        std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> cbs;
+        {
+            std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
+            cbs = m_status_cbs;
+        }
+
+        if (cbs.empty()) {
             BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] status callback not set";
             wcp_loger.add_log("status callback not set", false, "", "Moonraker_Mqtt", "info");
             return;
         }
         
         wcp_loger.add_log("invoking status callback", false, "", "Moonraker_Mqtt", "info");
-        for (const auto& func : m_status_cbs) {
+        for (const auto& func : cbs) {
             func.second(data);
         }
 
@@ -2967,11 +3057,18 @@ void Moonraker_Mqtt::on_notification_arrived(const std::string& payload)
             wcp_loger.add_log("status update contains method: " + body["method"].get<std::string>(), false, "", "Moonraker_Mqtt", "info");
         }
 
-        if (m_notification_cbs.empty()) {
+        // Snapshot the callbacks under m_cbs_mtx and invoke the copies:
+        // disconnect()/unsubscribe run on other threads and clear/erase these
+        // maps; iterating them directly raced with that and corrupted the heap.
+        std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> cbs;
+        {
+            std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
+            cbs = m_notification_cbs;
+        }
+        if (cbs.empty()) {
             return;
         }
-
-        for (const auto& func : m_notification_cbs) {
+        for (const auto& func : cbs) {
             func.second(data);
         }
     }
@@ -3008,8 +3105,8 @@ void Moonraker_Mqtt::set_connection_lost(std::function<void()> callback) {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] setting connection lost callback";
     wcp_loger.add_log("setting connection lost callback", false, "", "Moonraker_Mqtt", "info");
-    if (m_mqtt_client_tls)
-        m_mqtt_client_tls->SetConnectionFailureCallback(callback);
+    if (std::shared_ptr<MqttClient> client = get_mqtt_client_tls())
+        client->SetConnectionFailureCallback(callback);
 }
 
 

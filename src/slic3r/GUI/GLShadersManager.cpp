@@ -68,9 +68,14 @@ std::pair<bool, std::string> GLShadersManager::init()
     // used to render bed axes and model, selection hints, gcode sequential view marker model, preview shells, options in gcode preview
     valid &= append_shader("gouraud_light", { prefix + "gouraud_light.vs", prefix + "gouraud_light.fs" });
     // used to render gcode toolpaths with GPU-generated geometry (data tables in TBOs)
-    valid &= append_shader("gpu_path", { prefix + "gpu_path.vs", prefix + "gpu_path.fs" });
-    // used to render gcode option markers (seams, tool changes, ...) with GPU-side placement
-    valid &= append_shader("gpu_path_marker", { prefix + "gpu_path_marker.vs", prefix + "gpu_path_marker.fs" });
+    // and gcode option markers (seams, tool changes, ...) with GPU-side placement.
+    // The shaders need GLSL 140 / texture buffers; register them only when the
+    // context can use them (on older GL the gpu path pipeline stays disabled
+    // and the files only exist in the 140/ directory anyway).
+    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1)) {
+        valid &= append_shader("gpu_path", { prefix + "gpu_path.vs", prefix + "gpu_path.fs" });
+        valid &= append_shader("gpu_path_marker", { prefix + "gpu_path_marker.vs", prefix + "gpu_path_marker.fs" });
+    }
     //used to render thumbnail
     valid &= append_shader("thumbnail", { prefix + "thumbnail.vs", prefix + "thumbnail.fs"});
     // used to render printbed

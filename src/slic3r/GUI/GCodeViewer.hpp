@@ -899,8 +899,8 @@ private:
     void extract_layer_metadata(const GCodeProcessorResult& gcode_result);
     void load_toolpaths(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box);
     // GPU path pipeline: builds the de-geometrized tables instead of the
-    // legacy CPU vertex buffers (ORCA_GPU_TOOLPATH switch)
-    void load_toolpaths_gpu(const GCodeProcessorResult& gcode_result);
+    // legacy CPU vertex buffers (enabled automatically on GL 3.1+)
+    void load_toolpaths_gpu(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box);
     //BBS: always load shell at preview
     //void load_shells(const Print& print);
     void refresh_render_paths(bool keep_sequential_current_first, bool keep_sequential_current_last) const;

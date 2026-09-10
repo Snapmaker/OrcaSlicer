@@ -93,17 +93,41 @@ static EMoveType buffer_type(unsigned char id) {
     return static_cast<EMoveType>(static_cast<unsigned char>(EMoveType::Retract) + id);
 }
 
-// GPU path pipeline (de-geometrized rendering) master switch: enabled with
-// the ORCA_GPU_TOOLPATH environment variable. When on, the toolpaths are
-// rendered by PathRenderer from the PathLayerStack tables instead of the
-// legacy CPU-generated vertex buffers.
+// GPU path pipeline (de-geometrized rendering) master switch: enabled
+// automatically whenever the OpenGL context is 3.1 or newer (the pipeline
+// needs texture buffers, GLSL 140 shaders and instanced draws); older
+// contexts keep the legacy CPU-generated vertex buffers.
 static bool gpu_path_pipeline_enabled()
 {
-    // explicit value check: unset, empty or "0" all select the legacy
-    // pipeline; any other value enables the GPU path pipeline
-    const char* value = std::getenv("ORCA_GPU_TOOLPATH");
-    static const bool enabled = (value != nullptr && value[0] != '\0' && strcmp(value, "0") != 0);
+    // evaluated once per process; first call happens during preview load,
+    // well after the GL context has been initialized
+    static const bool enabled = GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1);
     return enabled;
+}
+
+// Bed-containment check shared by both toolpath loaders: the build-volume
+// check plus the exclude-area convex-hull intersection. Besides returning
+// the containment flag it writes toolpath_outside into gcode_result, which
+// feeds the out-of-plate notification, the 3MF plate data and the
+// ready-for-print gate -- so no loader may skip it.
+static bool check_paths_containment(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume,
+    const std::vector<BoundingBoxf3>& exclude_bounding_box, const BoundingBoxf3& paths_bounding_box, const Points& pts)
+{
+    //BBS: use convex_hull for toolpath outside check
+    bool contained_in_bed = build_volume.all_paths_inside(gcode_result, paths_bounding_box);
+    if (contained_in_bed && exclude_bounding_box.size() > 0) {
+        Slic3r::Polygon convex_hull_2d = Slic3r::Geometry::convex_hull(pts);
+        for (const BoundingBoxf3& exclude_box : exclude_bounding_box) {
+            // instance convex hull is scaled, so we need to scale here
+            Slic3r::Polygon p = exclude_box.polygon(true);
+            if (intersection({ p }, { convex_hull_2d }).empty() == false) {
+                contained_in_bed = false;
+                break;
+            }
+        }
+    }
+    (const_cast<GCodeProcessorResult&>(gcode_result)).toolpath_outside = !contained_in_bed;
+    return contained_in_bed;
 }
 
 // Round to a bin with minimum two digits resolution.
@@ -1104,7 +1128,7 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
         // no GPU vertex buffers were built, so there is nothing to render as toolpath
         m_no_render_path = true;
     } else if (gpu_path_pipeline_enabled()) {
-        load_toolpaths_gpu(gcode_result);
+        load_toolpaths_gpu(gcode_result, build_volume, exclude_bounding_box);
     } else {
         load_toolpaths(gcode_result, build_volume, exclude_bounding_box);
     }
@@ -1216,7 +1240,8 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 // GPU path pipeline loader: fills the shared metadata (layer zs, roles,
 // extruder ids, sequential view ids, bounding box) and builds the
 // de-geometrized tables; no CPU-side geometry is generated.
-void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result)
+void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume,
+    const std::vector<BoundingBoxf3>& exclude_bounding_box)
 {
     m_moves_count = gcode_result.moves.size();
     m_extruders_count = gcode_result.extruders_count;
@@ -1228,14 +1253,18 @@ void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result)
             m_sequential_view.gcode_ids.push_back(move.gcode_id);
     }
 
-    // paths bounding box, same filter as the legacy loader
+    // paths bounding box + 2d hull points, same filter as the legacy loader
+    Points pts;
     for (const GCodeProcessorResult::MoveVertex& move : gcode_result.moves) {
         if (move.type == EMoveType::Extrude && move.extrusion_role != erCustom
             && move.width != 0.0f && move.height != 0.0f) {
             m_paths_bounding_box.merge(move.position.cast<double>());
+            pts.emplace_back(Point(scale_(move.position.x()), scale_(move.position.y())));
             if (move.is_arc_move_with_interpolation_points())
-                for (const Vec3f& point : move.interpolation_points)
+                for (const Vec3f& point : move.interpolation_points) {
                     m_paths_bounding_box.merge(point.cast<double>());
+                    pts.emplace_back(Point(scale_(point.x()), scale_(point.y())));
+                }
         }
     }
 
@@ -1246,8 +1275,9 @@ void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result)
     m_max_bounding_box = m_paths_bounding_box;
     m_max_bounding_box.merge(m_paths_bounding_box.max + m_sequential_view.marker.get_bounding_box().size().z() * Vec3d::UnitZ());
 
-    // (m_contained_in_bed keeps its reset default; the bed-containment check
-    // is not part of the GPU pipeline yet)
+    // bed containment, shared with the legacy loader (the notification, the
+    // 3MF plate data and the ready-for-print gate all depend on it)
+    m_contained_in_bed = check_paths_containment(gcode_result, build_volume, exclude_bounding_box, m_paths_bounding_box, pts);
 
     // build the de-geometrized tables
     _pathStack->BuildFromResult(gcode_result);
@@ -2663,28 +2693,8 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
 
     //if (wxGetApp().is_editor())
     {
-        //BBS: use convex_hull for toolpath outside check
-        m_contained_in_bed = build_volume.all_paths_inside(gcode_result, m_paths_bounding_box);
-        if (m_contained_in_bed) {
-            //PartPlateList& partplate_list = wxGetApp().plater()->get_partplate_list();
-            //PartPlate* plate = partplate_list.get_curr_plate();
-            //const std::vector<BoundingBoxf3>& exclude_bounding_box = plate->get_exclude_areas();
-            if (exclude_bounding_box.size() > 0)
-            {
-                int index;
-                Slic3r::Polygon convex_hull_2d = Slic3r::Geometry::convex_hull(std::move(pts));
-                for (index = 0; index < exclude_bounding_box.size(); index ++)
-                {
-                    Slic3r::Polygon p = exclude_bounding_box[index].polygon(true);  // instance convex hull is scaled, so we need to scale here
-                    if (intersection({ p }, { convex_hull_2d }).empty() == false)
-                    {
-                        m_contained_in_bed = false;
-                        break;
-                    }
-                }
-            }
-        }
-        (const_cast<GCodeProcessorResult&>(gcode_result)).toolpath_outside = !m_contained_in_bed;
+        // bed containment + exclude-area check, shared with load_toolpaths_gpu()
+        m_contained_in_bed = check_paths_containment(gcode_result, build_volume, exclude_bounding_box, m_paths_bounding_box, pts);
     }
 
     m_sequential_view.gcode_ids.clear();

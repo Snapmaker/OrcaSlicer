@@ -4,7 +4,6 @@
     "instantiation": "false",
     "name": "fdm_filament_peba_category",
     "inherits": "fdm_filament_common",
-    "filament_adhesiveness_category": ["600"],
     "filament_type": [
         "PEBA"
     ]

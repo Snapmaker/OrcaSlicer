@@ -3,6 +3,5 @@
     "from": "system",
     "instantiation": "false",
     "name": "fdm_filament_support_bvoh_category",
-    "inherits": "fdm_filament_common",
-    "filament_adhesiveness_category": ["797"]
+    "inherits": "fdm_filament_common"
 }

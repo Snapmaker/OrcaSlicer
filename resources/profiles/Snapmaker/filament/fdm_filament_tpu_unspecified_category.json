@@ -49,7 +49,6 @@
     "fan_cooling_layer_time": [
         "100"
     ],
-    "filament_adhesiveness_category": ["600"],
     "filament_diameter": [
         "1.75"
     ],

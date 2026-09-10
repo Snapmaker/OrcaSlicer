@@ -70,7 +70,6 @@
     "fan_min_speed": [
         "10"
     ],
-    "filament_adhesiveness_category": ["500"],
     "filament_cooling_final_speed": [
         "3.4"
     ],

@@ -46,7 +46,6 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
-    "filament_adhesiveness_category": ["200"],
     "filament_density": [
         "1.04"
     ],

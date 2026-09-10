@@ -49,7 +49,6 @@
     "enable_pressure_advance": [
         "0"
     ],
-    "filament_adhesiveness_category": ["300"],
     "filament_density": [
         "1.25"
     ],

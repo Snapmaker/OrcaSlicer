@@ -190,11 +190,31 @@ void PathLayerData::RefreshMoveAttributes(const GCodeProcessorResult& result, un
     _attributeRecords.assign(_groups.size() * 4, 0.0f);
     const bool filamentIdView = (viewType == PathViewType::FILAMENT_ID);
 
+    // ColorPlay view: legacy collects the zs of Pause_Print / Custom_GCode
+    // moves (options_zs) and inverts cp_color_id on the extrude paths of
+    // those layers (always 0 -> 255 in this fork), which makes them render
+    // gray (the id then exceeds the tool-color count). Replicate by forcing
+    // the view value to 255 for the extrusions of such layers -- the gray
+    // fallback already exists in gpu_path.fs.
+    const bool colorPlayGray = (viewType == PathViewType::COLOR_PRINT);
+    bool layerHasOptionMove = false;
+    if (colorPlayGray) {
+        for (const MoveNodeGroup& group : _groups) {
+            const EMoveType type = result.moves[group.moveIndex].type;
+            if (type == EMoveType::Pause_Print || type == EMoveType::Custom_GCode) {
+                layerHasOptionMove = true;
+                break;
+            }
+        }
+    }
+
     for (size_t groupIndex = 0; groupIndex < _groups.size(); ++groupIndex) {
         const GCodeProcessorResult::MoveVertex& move = result.moves[_groups[groupIndex].moveIndex];
         float* record = &_attributeRecords[groupIndex * 4];
         record[0] = float(move.type);
         record[1] = ViewValueOfMove(viewType, move);
+        if (layerHasOptionMove && move.type == EMoveType::Extrude)
+            record[1] = 255.0f;
         // the FilamentId debug view encodes the role in the third channel
         record[2] = filamentIdView ? float(move.extrusion_role) : move.delta_extruder;
         record[3] = 0.0f;

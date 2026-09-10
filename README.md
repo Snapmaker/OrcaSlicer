@@ -71,9 +71,9 @@ Visit our GitHub Releases page for the latest stable version of Snapmaker Slicer
       - menu bar: Product => Run
 
 - Ubuntu 
-  - Dependencies **Will be auto-installed with the shell script**: `libmspack-dev libgstreamerd-3-dev libsecret-1-dev libwebkit2gtk-4.0-dev libosmesa6-dev libssl-dev libcurl4-openssl-dev eglexternalplatform-dev libudev-dev libdbus-1-dev extra-cmake-modules libgtk2.0-dev libglew-dev libudev-dev libdbus-1-dev cmake git texinfo`
-  - run 'sudo ./BuildLinux.sh -u'
-  - run './BuildLinux.sh -dsir'
+  - Dependencies **Will be auto-installed with the shell script**: `libmspack-dev libgstreamerd-3-dev libsecret-1-dev libwebkit2gtk-4.0-dev libosmesa6-dev libssl-dev libcurl4-openssl-dev eglexternalplatform-dev libudev-dev libdbus-1-dev extra-cmake-modules libgtk2.0-dev libglew-dev libudev-dev libdbus-1-dev cmake automake git texinfo gstreamer1.0-x`
+  - run 'sudo ./build_linux.sh -u'
+  - run './build_linux.sh -dsir'
 
 
 # Note: 

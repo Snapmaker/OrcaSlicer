@@ -2715,8 +2715,11 @@ void TreeSupport::drop_nodes()
     const size_t top_interface_layers = config.support_interface_top_layers.value;
     const size_t bottom_interface_layers = config.support_interface_bottom_layers.value < 0 ? top_interface_layers : config.support_interface_bottom_layers.value;
     SupportNode::diameter_angle_scale_factor = diameter_angle_scale_factor;
-    float        DO_NOT_MOVER_UNDER_MM       = is_slim ? 0 : 5;                     // do not move contact points under 5mm
-    const bool   bottom_expand_enabled      = config.tree_support_wall_count > 1 || config.tree_support_wall_count < 0;
+    // Ported from BambuStudio d61ebefa2: bottom expansion grows branch radius in the first
+    // DO_NOT_MOVER_UNDER_MM above the bed so tree bases fill cavities/grooves instead of spilling
+    // out of them. Bambu gates it on wall_count > 1 || < 0 (their auto is -1); here the range is
+    // [0,2] with 0 meaning auto, so the gate is every value except an explicit single wall.
+    const bool bottom_expand_enabled = config.tree_support_wall_count != 1;
 
     auto get_max_move_dist = [this, &config, tan_angle, wall_count, support_extrusion_width](const SupportNode *node, int power = 1) {
         if (node->max_move_dist == 0) {
@@ -3175,6 +3178,12 @@ void TreeSupport::drop_nodes()
 
                 Point  to_outside         = projection_onto(avoidance_next, node.position);
                 Point  direction_to_outer = to_outside - node.position;
+                // Ported from BambuStudio 976b5062c: a sharp tail within 3 mm of its tip steers both
+                // directions along the skin, so the tip keeps growing down the slanted surface
+                // instead of being flung to the avoidance border.
+                if (node.skin_direction != Point(0, 0) && node.dist_mm_to_top < 3) {
+                    direction_to_outer = move_to_neighbor_center = normal(node.skin_direction, scale_(max_move_distance));
+                }
                 double dist2_to_outer     = vsize2_with_unscale(direction_to_outer);
                 // don't move if
                 // 1) line of node and to_outside is cut by contour (means supports may intersect with object)
@@ -3196,18 +3205,26 @@ void TreeSupport::drop_nodes()
                 }
                 // move to the averaged direction of neighbor center and contour edge if they are roughly same direction
                 Point movement(0, 0);
-                if (support_on_buildplate_only)
-                    // Under build-plate-only an escape run must not lose speed to neighbour
-                    // convergence: the avoidance cone grows at max_move per layer, so any
-                    // lateral component lets a flaring wall catch the branch and the whole
-                    // chain is pruned. Push purely outward while an escape direction exists
-                    // (pre-a78168c2e8 behaviour, same as the strong blend); converge only
-                    // when safely outside the avoidance.
-                    movement = (dist2_to_outer > EPSILON) ? normal(direction_to_outer, scale_(get_max_move_dist(&node)))
-                                                          : move_to_neighbor_center;
-                else if (!is_strong)
-                    movement = move_to_neighbor_center*2 + (dist2_to_outer > EPSILON ? direction_to_outer * (1 / dist2_to_outer) : Point(0, 0));
-                else {
+                if (support_on_buildplate_only) {
+                    // With "support on build plate only" a branch has to reach the plate or its whole area goes
+                    // unsupported, so keep the full-speed escape semantics: outward when touching the
+                    // avoidance area, otherwise converge to the neighbor center (normalized, so branches in the
+                    // middle of a cavity still converge at node speed and can escape closed openings).
+                    // Sharp tails keep following their skin for the first layers.
+                    if (node.is_sharp_tail && node.dist_mm_to_top < 3 && node.skin_direction != Point(0, 0))
+                        movement = normal(node.skin_direction, scale_(get_max_move_dist(&node)));
+                    else if (dist2_to_outer > EPSILON)
+                        movement = normal(direction_to_outer, scale_(get_max_move_dist(&node)));
+                    else
+                        movement = normal(move_to_neighbor_center, scale_(get_max_move_dist(&node)));
+                } else {
+                    // The dot() reads movement before any assignment in the ported BambuStudio code too; zero
+                    // initializing it keeps that check deterministic (always false), so a branch follows the
+                    // neighbor center whenever one exists and only a lone branch falls outward.
+                    // Deliberate deviation from BambuStudio 976b5062c: upstream keeps a blended outward
+                    // escape term for the non-strong styles whose weight (1/dist2_to_outer) dominates once a
+                    // branch grazes a wall, which still walks slim/hybrid branches out of cavities. Pin every
+                    // 2D tree style to the neighbor-center skeleton the same way strong trees already are.
                     if (movement.dot(move_to_neighbor_center) >= 0.2 || move_to_neighbor_center == Point(0, 0))
                         movement = direction_to_outer + move_to_neighbor_center;
                     else
@@ -3220,8 +3237,6 @@ void TreeSupport::drop_nodes()
                 // component whenever dist2_to_outer > 0 (the common case), so branches
                 // only ever moved away from the object and never toward their neighbours.
                 // Only sharp-tail nodes keep a fixed skin_direction for their first layers.
-                if (node.is_sharp_tail && node.dist_mm_to_top < 3 && node.skin_direction != Point(0, 0))
-                    movement = normal(node.skin_direction, scale_(get_max_move_dist(&node)));
                 if (vsize2_with_unscale(movement) > get_max_move_dist(&node, 2))
                     movement = normal(movement, scale_(get_max_move_dist(&node)));
 
@@ -3245,7 +3260,11 @@ void TreeSupport::drop_nodes()
                 to_outside             = projection_onto(next_collision, next_node->position);
                 direction_to_outer     = to_outside - node.position;
                 double dist_to_outer   = unscale_(direction_to_outer.cast<double>().norm());
-                next_node->radius      = std::max(node.radius, std::min(next_node->radius, dist_to_outer));
+                // Near the bed the branch keeps the full radius lineage and grows by half an extrusion
+                // width per layer (bottom expansion), which widens the base instead of dodging outward.
+                next_node->radius      = (bottom_expand_enabled && next_node->print_z < DO_NOT_MOVER_UNDER_MM && node.dist_mm_to_top > DO_NOT_MOVER_UNDER_MM) ?
+                                             node.radius + support_extrusion_width / 2. :
+                                             std::max(node.radius, std::min(next_node->radius, dist_to_outer));
                 get_max_move_dist(next_node);
                 m_ts_data->m_mutex.lock();
                 contact_nodes[layer_nr_next].push_back(next_node);

@@ -1281,6 +1281,11 @@ void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result, c
 
     // build the de-geometrized tables
     _pathStack->BuildFromResult(gcode_result);
+    // re-forward the persisted move-type visibility: BuildFromResult resets
+    // the stack to defaults, while the legacy buffers keep the user's toggles
+    // across loads (exactly like a legacy reload preserves them)
+    for (size_t id = 0; id < m_buffers.size(); ++id)
+        _pathStack->SetMoveTypeVisible(buffer_type(static_cast<unsigned char>(id)), m_buffers[id].visible);
     _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
     _pathStack->SetRoleVisibilityFlags(m_extrusions.role_visibility_flags);
     _pathStack->SetLayerWindow(m_layers_z_range[0], m_layers_z_range[1]);
@@ -2099,6 +2104,12 @@ void GCodeViewer::set_toolpath_move_type_visible(EMoveType type, bool visible)
 {
     if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
         _pathStack->SetMoveTypeVisible(type, visible);
+        // mirror into the legacy buffers: their visible flags persist across
+        // reloads, so they double as the storage the stack state is restored
+        // from after BuildFromResult (which resets the stack to defaults)
+        size_t id = static_cast<size_t>(buffer_id(type));
+        if (id < m_buffers.size())
+            m_buffers[id].visible = visible;
         return;
     }
     size_t id = static_cast<size_t>(buffer_id(type));

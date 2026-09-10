@@ -57,10 +57,6 @@ public:
     void plan_local_z_toolchange(float z_par, float layer_height_par, unsigned int old_tool, unsigned int new_tool, float wipe_volume = 0.f);
     void plan_local_z_reserve(float z_par, float layer_height_par, size_t reserve_slot_count, float wipe_volume = 0.f);
 
-	// Iterates through prepared m_plan, generates ToolChangeResults and appends them to "result"
-	void generate(std::vector<std::vector<WipeTower::ToolChangeResult>> &result,
-                  std::vector<std::vector<WipeTower::ToolChangeResult>> &local_z_result);
-
     void generate_new(std::vector<std::vector<WipeTower::ToolChangeResult>>& result,
         std::vector<std::vector<WipeTower::ToolChangeResult>>& local_z_result);
 
@@ -228,7 +224,6 @@ public:
 
     void set_filament_categories(const std::vector<int>& filament_categories) { m_filament_categories = filament_categories; }
 
-    void set_shared_print_bed(const Polygons& bed) { m_shared_print_bed = bed; }
 private:
     std::vector<std::vector<BlockDepthInfo>> m_all_layers_depth;
     std::vector<WipeTowerBlock> m_wipe_tower_blocks;
@@ -251,7 +246,6 @@ private:
     void add_depth_to_block(int filament_id, int filament_adhesiveness_category, float depth, bool is_nozzle_change = false);
     int get_filament_category(int filament_id);
     void reset_block_status();
-    void calc_block_infill_gap();
     float get_block_gap_width(int tool, bool is_ramming);
     void generate_wipe_tower_blocks(bool add_solid_flag);
     void update_all_layer_depth(float wipe_tower_depth);
@@ -368,7 +362,6 @@ private:
 	}
 
     // Calculates depth for all layers and propagates them downwards
-    void plan_tower();
     void plan_tower_new();
 
     // Goes through m_plan, calculates border and finish_layer extrusions and subtracts them from last wipe

@@ -3178,29 +3178,6 @@ void WipeTower2::plan_local_z_reserve(float z_par, float layer_height_par, size_
     layer.local_z_reserve_slot_count += reserve_slot_count;
 }
 
-void WipeTower2::plan_tower()
-{
-    // Calculate m_wipe_tower_depth (maximum depth for all the layers) and propagate depths downwards
-    m_wipe_tower_depth = 0.f;
-    for (auto& layer : m_plan)
-        layer.depth = 0.f;
-    m_wipe_tower_height = m_plan.empty() ? 0.f : m_plan.back().z;
-    m_current_height    = 0.f;
-
-    for (int layer_index = int(m_plan.size()) - 1; layer_index >= 0; --layer_index) {
-        float this_layer_depth    = std::max(m_plan[layer_index].depth, m_plan[layer_index].planned_depth());
-        m_plan[layer_index].depth = this_layer_depth;
-
-        if (this_layer_depth > m_wipe_tower_depth - m_perimeter_width)
-            m_wipe_tower_depth = this_layer_depth + m_perimeter_width;
-
-        for (int i = layer_index - 1; i >= 0; i--) {
-            if (m_plan[i].depth - this_layer_depth < 2 * m_perimeter_width)
-                m_plan[i].depth = this_layer_depth;
-        }
-    }
-}
-
 void WipeTower2::plan_tower_new()
 {
     if (m_use_rib_wall) {
@@ -3535,117 +3512,6 @@ std::vector<Vec2f> WipeTower2::get_wall_skip_points(size_t layer_id)
     if (layer_id < m_wall_skip_points.size())
         return m_wall_skip_points[layer_id];
     return {};
-}
-// Processes vector m_plan and calls respective functions to generate G-code for the wipe tower.
-// Normal per-layer toolchanges are appended into "result", while Local-Z phase-b toolchanges are
-// emitted into "local_z_result" so G-code can consume them before the nominal layer loop.
-void WipeTower2::generate(std::vector<std::vector<WipeTower::ToolChangeResult>>& result,
-                          std::vector<std::vector<WipeTower::ToolChangeResult>>& local_z_result)
-{
-    if (m_plan.empty())
-        return;
-
-    plan_tower();
-
-    if (m_wall_type == int(WipeTowerWallType::wtwRib)) {
-        float square_width = align_ceil(std::sqrt(std::fabs(m_wipe_tower_depth * m_wipe_tower_width)), m_perimeter_width);
-        m_wipe_tower_width = square_width;
-
-        int planSize = static_cast<int>(m_plan.size());
-        for (int idx = 0; idx < planSize; idx++) {
-            for (auto& toolchange : m_plan[idx].tool_changes) {
-                toolchange = set_toolchange(toolchange.old_tool, toolchange.new_tool, m_plan[idx].height, toolchange.wipe_volume);
-            }
-            for (auto& toolchange : m_plan[idx].local_z_tool_changes) {
-                toolchange = set_toolchange(toolchange.old_tool, toolchange.new_tool, m_plan[idx].height, toolchange.wipe_volume);
-            }
-        }
-        plan_tower(); // need Re-calculate depth
-    }
-
-    float diagonal = sqrt(m_wipe_tower_depth * m_wipe_tower_depth + m_wipe_tower_width * m_wipe_tower_width);
-    m_rib_length   = std::max({m_rib_length, diagonal});
-    m_rib_length += m_extra_rib_length;
-    m_rib_length = std::max(diagonal, m_rib_length);
-    m_rib_width  = std::min(m_rib_width, std::min(m_wipe_tower_depth, m_wipe_tower_width) / 2.f); // Ensure that the rib wall of the wipetower are attached to the infill.
-
-    if (m_use_gap_wall)
-        get_all_wall_skip_points();
-
-    m_layer_info     = m_plan.begin();
-    m_current_height = 0.f;
-
-    // We don't know which extruder to start with, so take the first actual toolchange on the tower.
-    for (const auto& layer : m_plan) {
-        if (!layer.local_z_tool_changes.empty()) {
-            m_current_tool = layer.local_z_tool_changes.front().old_tool;
-            break;
-        }
-        if (!layer.tool_changes.empty()) {
-            m_current_tool = layer.tool_changes.front().old_tool;
-            break;
-        }
-    }
-
-    m_used_filament_length.assign(m_used_filament_length.size(), 0.f); // reset used filament stats
-    assert(m_used_filament_length_until_layer.empty());
-    m_used_filament_length_until_layer.emplace_back(0.f, m_used_filament_length);
-
-    m_old_temperature = -1; // reset last temperature written in the gcode
-
-    for (const WipeTower2::WipeTowerInfo& layer : m_plan) {
-        std::vector<WipeTower::ToolChangeResult> layer_result;
-        std::vector<WipeTower::ToolChangeResult> local_z_layer_result;
-        BOOST_LOG_TRIVIAL(debug) << "Wipe tower layer plan"
-                                 << " z=" << layer.z
-                                 << " height=" << layer.height
-                                 << " nominal_toolchanges=" << layer.tool_changes.size()
-                                 << " local_z_toolchanges=" << layer.local_z_tool_changes.size()
-                                 << " reserve_slots=" << layer.local_z_reserve_slot_count
-                                 << " planned_depth=" << layer.planned_depth();
-        set_layer(layer.z, layer.height, 0, false /*layer.z == m_plan.front().z*/, layer.z == m_plan.back().z);
-        m_internal_rotation += 180.f;
-
-        if (m_layer_info->depth < m_wipe_tower_depth - m_perimeter_width)
-            m_y_shift = (m_wipe_tower_depth - m_layer_info->depth - m_perimeter_width) / 2.f;
-
-        int idx = first_toolchange_to_nonsoluble(layer.tool_changes);
-        WipeTower::ToolChangeResult finish_layer_tcr;
-
-        for (const WipeTowerInfo::ToolChange &toolchange : layer.local_z_tool_changes)
-            local_z_layer_result.emplace_back(emit_planned_tool_change(&toolchange));
-
-        if (idx == -1) {
-            // If there is no nominal-layer toolchange switching to non-soluble,
-            // finish_layer still runs after any Local-Z toolchanges already planned
-            // onto this tower layer.
-            finish_layer_tcr = finish_layer();
-        }
-
-        for (int i = 0; i < int(layer.tool_changes.size()); ++i) {
-            layer_result.emplace_back(emit_planned_tool_change(&layer.tool_changes[i]));
-            if (i == idx) // finish_layer will be called after this toolchange
-                finish_layer_tcr = finish_layer();
-        }
-
-        if (layer_result.empty()) {
-            // there is nothing to merge finish_layer with
-            layer_result.emplace_back(std::move(finish_layer_tcr));
-        } else {
-            if (idx == -1) {
-                layer_result[0]              = merge_tcr(finish_layer_tcr, layer_result[0]);
-                layer_result[0].force_travel = true;
-            } else
-                layer_result[idx] = merge_tcr(layer_result[idx], finish_layer_tcr);
-        }
-
-        result.emplace_back(std::move(layer_result));
-        local_z_result.emplace_back(std::move(local_z_layer_result));
-
-        if (m_used_filament_length_until_layer.empty() || m_used_filament_length_until_layer.back().first != layer.z)
-            m_used_filament_length_until_layer.emplace_back();
-        m_used_filament_length_until_layer.back() = std::make_pair(layer.z, m_used_filament_length);
-    }
 }
 
 int WipeTower2::get_wall_filament_for_layer(const WipeTowerInfo& layer)
@@ -4271,10 +4137,6 @@ void WipeTower2::reset_block_status()
         block.last_filament_change_id = -1;
         block.last_nozzle_change_id = -1;
     }
-}
-
-void WipeTower2::calc_block_infill_gap()
-{
 }
 
 float WipeTower2::get_block_gap_width(int tool, bool is_ramming)

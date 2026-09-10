@@ -15,7 +15,7 @@
 #include "slic3r/Utils/UndoRedo.hpp"
 
 
-#include <GL/glew.h>
+#include <glad/gl.h>
 #include <algorithm>
 #include <boost/log/trivial.hpp>
 

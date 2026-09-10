@@ -7,6 +7,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
+#include <boost/log/trivial.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -376,6 +377,8 @@ void GatewayService::stop()
         std::lock_guard<std::mutex> lock(state_mutex_);
         stop_requested_ = true;
         state_          = ConnectionState::Disconnected;
+        port_           = 0;
+        health_         = HealthInfo{};
         websocket_open_ = false;
     }
     state_condition_.notify_all();
@@ -421,6 +424,8 @@ HealthInfo GatewayService::health() const
 std::string GatewayService::base_url() const
 {
     std::lock_guard<std::mutex> lock(state_mutex_);
+    if (state_ != ConnectionState::Connected)
+        return {};
     return health_.base_url;
 }
 
@@ -429,6 +434,8 @@ std::string GatewayService::web_url(const std::string& page_key) const
     HealthInfo copied_health;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
+        if (state_ != ConnectionState::Connected)
+            return {};
         copied_health = health_;
     }
 
@@ -529,7 +536,11 @@ GatewayService::ApiResult GatewayService::request_sync(const std::string& method
 }
 
 std::int64_t GatewayService::watch_device(const nlohmann::json& params, RpcCallback callback)
-{ return request("action.device.watch", params.is_null() ? nlohmann::json::object() : params, std::move(callback)); }
+{
+    const nlohmann::json request_params = params.is_null() ? nlohmann::json::object() : params;
+    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] requesting action.device.watch, params=" << request_params.dump();
+    return request("action.device.watch", request_params, std::move(callback));
+}
 
 GatewayService::ApiResult GatewayService::get_device(const std::optional<std::string>& serial_number)
 { return get_json(serial_number.has_value() ? config_.device_path + "/" + *serial_number : config_.device_path); }
@@ -600,7 +611,9 @@ void GatewayService::run(const std::string locale)
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             state_          = ConnectionState::Disconnected;
-            websocket_open_ = false;
+            port_           = 0;
+            health_         = HealthInfo{};
+            websocket_open_  = false;
         }
         fail_pending({GatewayErrorCode::NotConnected, "gateway connection was lost"});
         dependencies_.websocket->close();
@@ -703,6 +716,8 @@ void GatewayService::handle_websocket_message(const std::string& message)
     }
     if (frame.type != RpcFrameType::Notification)
         return;
+
+    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] notification received: " << frame.method;
 
     NotificationCallback callback;
     {

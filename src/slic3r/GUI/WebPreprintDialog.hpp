@@ -15,6 +15,7 @@ public:
 
     void load_url(wxString &url);
     bool run();
+    void refresh_gateway_urls();
     void RunScript(const wxString &javascript);
 
     void reload();

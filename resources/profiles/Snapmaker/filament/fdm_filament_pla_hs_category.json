@@ -40,6 +40,7 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
+    "filament_adhesiveness_category": ["100"],
     "filament_diameter": [
         "1.75"
     ],

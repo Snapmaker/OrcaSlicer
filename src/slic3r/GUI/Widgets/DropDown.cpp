@@ -32,10 +32,12 @@ END_EVENT_TABLE()
 
 DropDown::DropDown(std::vector<wxString> &texts,
                    std::vector<wxString> &tips,
-                   std::vector<wxBitmap> &icons)
+                   std::vector<wxBitmap> &icons,
+                   std::vector<bool>     &muted)
     : texts(texts)
     , tips(tips)
     , icons(icons)
+    , muted(muted)
     , state_handler(this)
     , border_color(0xDBDBDB)
     , text_color(0x363636)
@@ -50,8 +52,9 @@ DropDown::DropDown(wxWindow *             parent,
                    std::vector<wxString> &texts,
                    std::vector<wxString> &tips,
                    std::vector<wxBitmap> &icons,
+                   std::vector<bool>     &muted,
                    long           style)
-    : DropDown(texts, tips, icons)
+    : DropDown(texts, tips, icons, muted)
 {
     Create(parent, style);
 }
@@ -282,13 +285,16 @@ void DropDown::render(wxDC &dc)
         rcContent.width -= szBmp.x + 5;
     }
     // draw texts & icons
-    dc.SetTextForeground(text_color.colorForStates(states));
+    const wxColour normalTextColor = text_color.colorForStates(states);
+    const wxColour mutedTextColor  = StateColor::darkModeColorFor(wxColour(0xB2, 0xB2, 0xB2));
+    dc.SetTextForeground(normalTextColor);
     for (int i = 0; i < texts.size(); ++i) {
         if (rcContent.GetBottom() < 0) {
             rcContent.y += rowSize.y;
             continue;
         }
         if (rcContent.y > size.y) break;
+        dc.SetTextForeground(i < (int) muted.size() && muted[i] ? mutedTextColor : normalTextColor);
         wxPoint pt   = rcContent.GetLeftTop();
         auto & icon = icons[i];
         auto size2 = GetBmpSize(icon);

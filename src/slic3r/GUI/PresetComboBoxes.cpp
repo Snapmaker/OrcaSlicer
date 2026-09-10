@@ -127,6 +127,127 @@ bool FilamentMatchesPresetName(const FilamentColorInfo& filament, const std::str
     return !filamentName.empty() && filamentName == currentFilamentName;
 }
 
+// Resolves a machine-reported filament to a local preset for the "Machine Filament" combo
+// section. Tries an exact historical name match first (preset literally named after the
+// machine's reported string, optionally with an "@<printer> <nozzle> nozzle" suffix), then
+// falls back to a "<vendor> <type>" prefix match (case-insensitive, ignoring the "@printer"
+// suffix and any filament_type match) — because the free-text "Serial" part of a preset
+// created via the "Create Filament" wizard need not reproduce whatever generic sub-type the
+// machine itself reports (e.g. the user naming it "White" instead of the machine's "Basic").
+//
+// Only ever returns a preset that's actually compatible with the current printer/nozzle: a
+// preset that matches by name/vendor+type but was created for a different nozzle is a dead end
+// (shown but not selectable) rather than a match — so it's treated as no match at all, keeping
+// the combo entry muted/clickable so re-opening "Create Filament" lets the user add the missing
+// nozzle variant instead.
+const Preset* ResolveMachineFilamentPreset(const std::deque<Preset>& filaments,
+                                           const std::string& filamentName,
+                                           const std::string& filamentType,
+                                           const std::string& machineNozzles)
+{
+    bool foundByName = false;
+    for (const auto& f : filaments) {
+        if (f.name == filamentName + " @U1 " + machineNozzles + " nozzle" ||
+            f.name == filamentName + " @U1 " + machineNozzles ||
+            f.name == filamentName + " @U1" ||
+            f.name == filamentName) {
+            if (f.is_compatible)
+                return &f;
+            foundByName = true;
+        }
+    }
+    if (foundByName)
+        return nullptr;
+
+    if (filamentType.empty())
+        return nullptr;
+
+    const size_t typePos = filamentName.find(filamentType);
+    if (typePos == std::string::npos)
+        return nullptr;
+    std::string vendorType = filamentName.substr(0, typePos + filamentType.size());
+    boost::algorithm::trim(vendorType);
+    if (vendorType.empty())
+        return nullptr;
+
+    for (const auto& f : filaments) {
+        const auto* typeOpt = f.config.option<ConfigOptionStrings>("filament_type");
+        if (!typeOpt || typeOpt->values.empty() || typeOpt->values[0] != filamentType)
+            continue;
+        std::string base = f.name;
+        const size_t atPos = base.find(" @");
+        if (atPos != std::string::npos)
+            base = base.substr(0, atPos);
+        if (boost::algorithm::istarts_with(base, vendorType) && f.is_compatible)
+            return &f;
+    }
+    return nullptr;
+}
+
+// Extracts the vendor portion of a machine-reported "<vendor> <type>[ <sub_type>]" string,
+// given the type we already know. Keep in sync with the identical split in Plater.cpp's
+// on_select_unmatched_machine_filament().
+std::string ExtractMachineFilamentVendor(const std::string& filamentInfo, const std::string& filamentType)
+{
+    if (filamentType.empty())
+        return filamentInfo;
+    const size_t pos = filamentInfo.find(filamentType);
+    if (pos == std::string::npos)
+        return filamentInfo;
+    std::string vendor = filamentInfo.substr(0, pos);
+    boost::algorithm::trim(vendor);
+    return vendor;
+}
+
+// Keep in sync with Plater.cpp's machine_filament_signature().
+std::string MachineFilamentSignature(const std::string& vendor, const std::string& type)
+{
+    std::string v = boost::algorithm::to_lower_copy(vendor);
+    std::string t = boost::algorithm::to_lower_copy(type);
+    boost::algorithm::trim(v);
+    boost::algorithm::trim(t);
+    return t + "|" + v;
+}
+
+// Looks up a preset explicitly linked, via AppConfig's "machine_filament_presets" section, to
+// this machine-reported filament by a prior "Create Filament" run launched from this exact
+// slot (see Plater.cpp's on_select_unmatched_machine_filament) — authoritative, since it
+// doesn't depend on the created preset's name still resembling the machine's. Falls back to
+// the heuristic ResolveMachineFilamentPreset() above when no such link is recorded.
+const Preset* ResolveMachineFilamentPresetForSlot(const std::deque<Preset>& filaments,
+                                                   const std::string& filamentName,
+                                                   const std::string& filamentType,
+                                                   const std::string& machineNozzles)
+{
+    const std::string vendor = ExtractMachineFilamentVendor(filamentName, filamentType);
+    const std::string signature = MachineFilamentSignature(vendor, filamentType);
+    if (AppConfig* app_config = wxGetApp().app_config; app_config && app_config->has("machine_filament_presets", signature)) {
+        const std::string mappedName = app_config->get("machine_filament_presets", signature);
+        if (!mappedName.empty()) {
+            bool foundByMapping = false;
+            for (const auto& f : filaments) {
+                std::string base = f.name;
+                const size_t atPos = base.find(" @");
+                if (atPos != std::string::npos)
+                    base = base.substr(0, atPos);
+                if (base == mappedName) {
+                    if (f.is_compatible)
+                        return &f;
+                    foundByMapping = true;
+                }
+            }
+            // A preset was created for this exact machine filament, but not for the current
+            // nozzle — stay muted (don't fall through to the weaker heuristic below, which
+            // could otherwise pick an unrelated compatible preset) so re-clicking reopens
+            // "Create Filament" already scoped to this family, letting the user add the
+            // missing nozzle variant.
+            if (foundByMapping)
+                return nullptr;
+        }
+    }
+    return ResolveMachineFilamentPreset(filaments, filamentName, filamentType, machineNozzles);
+}
+
 wxSize FilamentColorPickerBitmapSize(const wxButton* picker)
 {
     wxSize size = picker != nullptr ? picker->GetSize() : wxSize();
@@ -1424,39 +1545,27 @@ void PlaterPresetComboBox::update()
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),
-            [&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {
-                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
+            const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+            const Preset* matched = ResolveMachineFilamentPresetForSlot(filaments, filament_name, machineInfo.filament_type, machine_nozzles);
 
-                if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
+            std::vector<std::string> colors = machineInfo.multiColors;
+            if (colors.empty() && !machineInfo.color_info.empty())
+                colors.emplace_back(machineInfo.color_info);
+            const std::string name = std::to_string(i + 1);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+            if (icon == nullptr)
+                icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+            wxBitmap bmp(*icon);
 
-                if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
-
-                return false;
-            });
-
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
-                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
-                std::vector<std::string> colors = machineInfo.multiColors;
-                if (colors.empty() && !machineInfo.color_info.empty())
-                    colors.emplace_back(machineInfo.color_info);
-                const std::string name = std::to_string(i + 1);
-                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
-                if (icon == nullptr)
-                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
-                wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            if (matched) {
+                const_cast<Preset*>(matched)->is_visible = true;
+                Append(get_preset_name(*matched), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            } else {
+                // No local preset matched — show it anyway, using the machine's own filament
+                // name. Stays fully clickable (same indexed clientData as matched entries),
+                // just rendered muted/light-grey to flag it as unconfirmed.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                SetItemMuted(item_id, true);
             }
         }
         m_last_ams_filament = GetCount();
@@ -1995,39 +2104,27 @@ void TabPresetComboBox::update()
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 
-            auto item_iter = std::find_if(filaments.begin(), filaments.end(),[&filament_name, &machine_nozzles, &currentNozzleInfo](auto& f) {               
+            const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
+            const Preset* matched = ResolveMachineFilamentPresetForSlot(filaments, filament_name, machineInfo.filament_type, machine_nozzles);
 
-                if (f.name == filament_name + " @U1 " + machine_nozzles + " nozzle")
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1 " + machine_nozzles)
-                    if (f.is_compatible)
-                        return true;
-                
-                if (f.name == filament_name + " @U1")
-                    if (f.is_compatible)
-                        return true;
+            std::vector<std::string> colors = machineInfo.multiColors;
+            if (colors.empty() && !machineInfo.color_info.empty())
+                colors.emplace_back(machineInfo.color_info);
+            const std::string name = std::to_string(i + 1);
+            wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
+            if (icon == nullptr)
+                icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
+            wxBitmap bmp(*icon);
 
-                if (f.name == filament_name)
-                    if (f.is_compatible)
-                        return true;
-
-                return false;                
-                });
-
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
-                const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
-                std::vector<std::string> colors = machineInfo.multiColors;
-                if (colors.empty() && !machineInfo.color_info.empty())
-                    colors.emplace_back(machineInfo.color_info);
-                const std::string name = std::to_string(i + 1);
-                wxBitmap* icon = FilamentColorUtils::GetFilamentColorIcon(colors, machineInfo.colorMode, name, 24, 16);
-                if (icon == nullptr)
-                    icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
-                wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            if (matched) {
+                const_cast<Preset*>(matched)->is_visible = true;
+                Append(get_preset_name(*matched), bmp.ConvertToImage(), &m_first_ams_filament + i);
+            } else {
+                // No local preset matched — show it anyway, using the machine's own filament
+                // name. Stays fully clickable (same indexed clientData as matched entries),
+                // just rendered muted/light-grey to flag it as unconfirmed.
+                int item_id = Append(wxString::FromUTF8(filament_name), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                SetItemMuted(item_id, true);
             }
         }
 

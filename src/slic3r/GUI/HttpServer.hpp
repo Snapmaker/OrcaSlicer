@@ -205,6 +205,12 @@ private:
     };
     friend class session;
 
+    // Serializes server_ / m_http_server_thread lifecycle between stop(),
+    // restart() and is_healthy() (the latter runs on the health-check thread).
+    // The io thread never takes this lock; it only touches the IOServer, whose
+    // sessions set is joined before teardown (see HttpServer::stop).
+    std::mutex m_server_mtx;
+
     std::unique_ptr<IOServer> server_{nullptr};
 
     std::function<std::shared_ptr<Response>(const std::string&)> m_request_handler{&HttpServer::bbl_auth_handle_request};

@@ -36,7 +36,6 @@
 #include "MsgDialog.hpp"
 #include "OAuthDialog.hpp"
 #include "SimplyPrint.hpp"
-#include "slic3r/GUI/WebPresetDialog.hpp"
 
 namespace Slic3r {
 namespace GUI {
@@ -713,64 +712,6 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
             apikey = cfg.opt_string("printhost_apikey");
 
         wxGetApp().mainframe->load_printer_url(url, apikey);
-
-        // 更新其他设备连接状态为断开
-        bool is_history = false;
-        DeviceInfo history_info;
-        auto devices = wxGetApp().app_config->get_devices();
-        for (size_t i = 0; i < devices.size(); ++i) {
-            if (devices[i].connected) {
-                devices[i].connected = false;
-                wxGetApp().app_config->save_device_info(devices[i]);
-            }
-            if (devices[i].dev_id == host->get_host()) {
-                is_history = true;
-                history_info = devices[i];
-            }
-        }
-
-        if (is_history) {
-            history_info.connected = true;
-            history_info.protocol          = (int) (m_config->option<ConfigOptionEnum<PrintHostType>>("host_type")->value);
-            history_info.api_key           = cfg.opt_string("printhost_apikey");
-            wxGetApp().app_config->save_device_info(history_info);
-        } else {
-            // 绑定预设
-            DeviceInfo info;
-            info.ip        = host->get_host();
-            info.dev_id    = host->get_sn() != "" ? host->get_sn() : info.ip;
-            info.dev_name  = host->get_host();
-            info.connected = true;
-            info.protocol  = (int) (m_config->option<ConfigOptionEnum<PrintHostType>>("host_type")->value);
-            info.api_key   = cfg.opt_string("printhost_apikey");
-            info.sn        = "-1";
-
-            wxGetApp().app_config->save_device_info(info);
-
-            MessageDialog msg_window(nullptr,
-                                     host->get_host() + _L(" The target machine model has not been detected. Please bind manually. "),
-                                     L("Machine Bind"), wxICON_QUESTION | wxOK);
-            msg_window.ShowModal();
-            auto dialog        = WebPresetDialog(&wxGetApp());
-            dialog.m_device_id = host->get_host();
-            dialog.run();
-        }
-
-
-        // 更新卡片
-        devices = wxGetApp().app_config->get_devices();
-
-        json param;
-        param["command"]       = "local_devices_arrived";
-        param["sequece_id"]    = "10001";
-        param["data"]          = devices;
-        std::string logout_cmd = param.dump();
-        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-        GUI::wxGetApp().run_script(strJS);
-
-        // wcp订阅
-        json data = devices;
-        wxGetApp().device_card_notify(data);
 
         MessageDialog msg_window_connected(nullptr, host->get_host() + _L(" connected sucessfully !\n"), L("Machine Connected"),
                                            wxICON_QUESTION | wxOK);

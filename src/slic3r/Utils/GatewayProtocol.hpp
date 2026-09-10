@@ -40,6 +40,20 @@ struct HealthInfo
     std::string                        cli_version;
     std::string                        base_url;
     std::map<std::string, std::string> pages;
+    bool                               has_device_state{false};
+    bool                               device_connected{false};
+    std::string                        device_sn;
+};
+
+struct ActiveDeviceSnapshot
+{
+    bool                     valid{false};
+    bool                     connected{false};
+    std::string              serial_number;
+    std::string              machine_type;
+    std::string              device_name;
+    std::string              preset_name;
+    std::vector<std::string> nozzle_diameters;
 };
 
 struct HttpResponse
@@ -52,8 +66,8 @@ struct HttpResponse
 struct PreprintStoreResult
 {
     GatewayError error;
-    bool        ok{false};
-    bool        file_exists{true};
+    bool         ok{false};
+    bool         file_exists{true};
 };
 
 enum class RpcFrameType { Unknown, Result, Error, Notification };
@@ -68,8 +82,11 @@ struct RpcFrame
     nlohmann::json params;
 };
 
-nlohmann::json                build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params);
-GatewayError                  parse_health(const std::string& body, HealthInfo& health);
+nlohmann::json                      build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params);
+GatewayError                        parse_health(const std::string& body, HealthInfo& health);
+std::string                         parse_device_sn(const nlohmann::json& params);
+std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params);
+std::optional<nlohmann::json> build_machine_snapshot_from_device_objects(const nlohmann::json& params, const std::string& serial_number);
 RpcFrame                      classify_jsonrpc_message(const nlohmann::json& message);
 std::optional<nlohmann::json> parse_json_object(const std::string& body);
 

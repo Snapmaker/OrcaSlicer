@@ -110,6 +110,19 @@ void WebPreprintDialog::reload()
     load_url(m_prePrint_url);
 }
 
+void WebPreprintDialog::refresh_gateway_urls()
+{
+    m_prePrint_url = wxGetApp().gateway_web_url("pre_paint_page");
+    m_preSend_url  = wxGetApp().gateway_web_url("pre_paint_upload_page");
+    if (!wxGetApp().is_gateway_url(m_prePrint_url) || !wxGetApp().is_gateway_url(m_preSend_url) || m_browser == nullptr)
+        return;
+
+    wxString real_url = wxGetApp().get_international_url(m_send_page ? m_preSend_url : m_prePrint_url);
+    if (!m_store_id.empty())
+        real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
+    load_url(real_url);
+}
+
 void WebPreprintDialog::load_url(wxString &url)
 {
     wxGetApp().fltviews().add_view(m_browser, url);

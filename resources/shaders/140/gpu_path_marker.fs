@@ -1,8 +1,10 @@
 #version 140
 
 // Option marker shading: the color comes from a palette indexed by move
-// type, like the legacy option_color() (markers below the top layer keep
-// their color during sequential playback, matching the legacy pipeline).
+// type, like the legacy option_color(); during sequential playback markers
+// on the layers below the top one are dimmed to Neutral_Color, matching
+// the legacy option-marker rendering (which pushes them into a second
+// render range with the neutral color).
 
 #define INTENSITY_CORRECTION 0.6
 
@@ -24,6 +26,11 @@ uniform float emission_factor;
 // x = number of option colors
 uniform vec2 u_palette_config;
 
+// 1.0 while sequential playback is active (playhead below the slider end)
+uniform float u_top_layer_only;
+// 1.0 when this layer is the top layer of the visible window
+uniform float u_is_top_layer;
+
 uniform sampler2D s_option_ramp;          // one texel per option color (nearest)
 uniform samplerBuffer s_attribute_table;  // RGBA32F: moveType, ...
 
@@ -38,6 +45,11 @@ void main()
     // palette index by move type: Retract = 1 .. Custom_GCode = 7
     float moveType = texelFetch(s_attribute_table, int(moveGroup)).r;
     vec4 baseColor = texture(s_option_ramp, vec2((moveType - 1.0 + 0.5) / u_palette_config.x, 0.5));
+
+    // sequential playback: dim the markers of already-printed (non-top)
+    // layers like the paths are dimmed in gpu_path.fs
+    if (u_top_layer_only > 0.5 && u_is_top_layer < 0.5)
+        baseColor = vec4(0.25, 0.25, 0.25, 1.0); // Neutral_Color
 
     // same two-light shading as the legacy gouraud_light shader
     vec3 norm = normalize(normal_matrix * normalize(fragNormal));

@@ -369,6 +369,8 @@ void PathRenderer::Render(PathLayerStack& stack, const GCodeProcessorResult& res
         markerShader->set_uniform("normal_matrix", (Matrix3d)viewMatrix.matrix().block(0, 0, 3, 3).inverse().transpose());
         markerShader->set_uniform("emission_factor", 0.25f);
         markerShader->set_uniform("u_min_marker_size", markerMinSize);
+        // sequential playback: lower-layer markers are dimmed like the paths
+        markerShader->set_uniform("u_top_layer_only", settings.topLayerOnly ? 1.0f : 0.0f);
         markerShader->set_uniform("u_palette_config", std::array<float, 2>{
             static_cast<float>(GCodeViewer::Options_Colors.size()), 0.0f });
 
@@ -440,6 +442,8 @@ void PathRenderer::RenderMarkers(PathLayerStack& stack, const GCodeProcessorResu
             continue;
 
         layer.UploadTables(result);
+
+        shader.set_uniform("u_is_top_layer", isTop ? 1.0f : 0.0f);
 
         layer.NodeTable().Bind(STAGE_NODE_TABLE);
         shader.set_uniform("s_node_table", int(STAGE_NODE_TABLE));

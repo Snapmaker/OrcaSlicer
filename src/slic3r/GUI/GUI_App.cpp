@@ -12,7 +12,6 @@
 #include "Downloader.hpp"
 
 #include "slic3r/GUI/WebUrlDialog.hpp"
-#include "slic3r/GUI/WebPresetDialog.hpp"
 
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/DownloadManager.hpp"
@@ -98,6 +97,7 @@
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/GatewayService.hpp"
+#include "GatewayMachineSnapshot.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
@@ -890,9 +890,6 @@ void GUI_App::log_version_info()
     BOOST_LOG_TRIVIAL(warning) << "[Version] Snapmaker Orca: " << Snapmaker_VERSION
                                << ", Build: " << SLIC3R_VERSION;
 
-    std::string flutter_ver = common::get_flutter_version();
-    BOOST_LOG_TRIVIAL(warning) << "[Version] Orca Web: " << (flutter_ver.empty() ? "N/A" : flutter_ver);
-
     std::string profile_ver = common::get_profile_version();
     BOOST_LOG_TRIVIAL(warning) << "[Version] Profile: " << (profile_ver.empty() ? "N/A" : profile_ver);
 
@@ -1141,14 +1138,11 @@ void GUI_App::post_init()
            
             bool cw_showed = this->config_wizard_startup();
 
-            SSWCP_MqttAgent_Instance::m_dialog = new WebPresetDialog(this);
-
             std::string http_url = get_http_url(app_config->get_country_code());
             std::string language = GUI::into_u8(current_language_code());
             std::string network_ver = Slic3r::NetworkAgent::get_version();
             bool        sys_preset  = app_config->get("sync_system_preset") == "true";
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
-            this->preset_updater->sync_web_async(true);
             this->check_new_version_sf(false, false);
 
         });
@@ -1268,7 +1262,6 @@ GUI_App::GUI_App()
     m_page_http_server.set_request_handler(HttpServer::web_server_handle_request);
     m_page_http_server.start();
     profiler.mark("m_page_http_server.start");
-    BOOST_LOG_TRIVIAL(info) << "[Flutter] Version:" << common::get_flutter_version();
     BOOST_LOG_TRIVIAL(info) << "[Profile] Version:" << common::get_profile_version();
     flush_logs();
     m_fltviews.set_app(this);
@@ -1307,14 +1300,6 @@ void GUI_App::shutdown(bool isRecreate)
         delete web_preprint_dialog;
         web_preprint_dialog = nullptr;
     }
-
-    // Delete WebPresetDialog to ensure proper cleanup
-    if (SSWCP_MqttAgent_Instance::m_dialog != nullptr && !isRecreate) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy WebPresetDialog");
-        delete SSWCP_MqttAgent_Instance::m_dialog;
-        SSWCP_MqttAgent_Instance::m_dialog = nullptr;
-    }
-
 
     if (m_is_recreating_gui) return;
     m_is_closing = true;
@@ -2267,95 +2252,6 @@ bool GUI_App::check_older_app_config(Semver current_version, bool backup)
     return false;
 }
 
-void GUI_App::copy_web_resources() {
-    StartupProfiler profiler("GUI_App::copy_web_resources");
-
-    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
-    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        copy_bundled_flutter_web(false);
-        profiler.mark("copy flutter_web (missing target)");
-    } else {
-        auto source_version_file = boost::filesystem::path(resources_dir()) / "web" / "flutter_web" / "version.json";
-        auto target_version_file = data_web_path / "flutter_web" / "version.json";
-
-        try {
-            boost::property_tree::ptree source_config, target_config;
-            boost::property_tree::read_json(source_version_file.string(), source_config);
-            boost::property_tree::read_json(target_version_file.string(), target_config);
-            std::string source_build_number_str = source_config.get<std::string>("build_number", "0");
-            std::string target_build_number_str = target_config.get<std::string>("build_number", "0");
-
-            if (source_build_number_str > target_build_number_str) {
-                copy_bundled_flutter_web(true);
-                profiler.mark("copy flutter_web (version upgrade)");
-            } else {
-                profiler.note("flutter_web already up to date");
-            }
-        }
-        catch (std::exception& e) {
-            profiler.note(std::string("version check failed: ") + e.what());
-        }
-    }
-}
-
-bool GUI_App::copy_bundled_flutter_web(bool upgrade)
-{
-    auto source_path = boost::filesystem::path(resources_dir()) / "web" / "flutter_web";
-    auto target_path = boost::filesystem::path(data_dir()) / "web" / "flutter_web";
-    if (copy_directory_recursively(source_path, target_path))
-        return true;
-
-    BOOST_LOG_TRIVIAL(error) << "Failed to copy bundled flutter_web to " << target_path.string();
-    report_flutter_web_copy_failure(upgrade ? FlutterWebCopyStatus::UpgradeFailed : FlutterWebCopyStatus::InstallFailed);
-    return false;
-}
-
-void GUI_App::report_flutter_web_copy_failure(FlutterWebCopyStatus status)
-{
-    if (status == FlutterWebCopyStatus::InstallFailed)
-        m_flutter_web_copy_status = FlutterWebCopyStatus::InstallFailed;
-    else if (status == FlutterWebCopyStatus::UpgradeFailed &&
-             m_flutter_web_copy_status != FlutterWebCopyStatus::InstallFailed)
-        m_flutter_web_copy_status = FlutterWebCopyStatus::UpgradeFailed;
-    else 
-        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus not exit " << static_cast<int>(status);
-}
-
-void GUI_App::do_notify_flutter_web_copy_failure()
-{
-    if (m_flutter_web_copy_notified || m_flutter_web_copy_status == FlutterWebCopyStatus::Ok)
-        return;
-
-    m_flutter_web_copy_notified = true;
-
-    switch (m_flutter_web_copy_status) {
-    case FlutterWebCopyStatus::InstallFailed:
-        show_error(mainframe,
-                   _L("Failed to install Web UI resources. Some features may not work correctly.\n"
-                      "Please check disk space and file permissions, then restart the application."));
-        break;
-    case FlutterWebCopyStatus::UpgradeFailed:
-        if (notification_manager()) {
-            notification_manager()->push_notification(
-                NotificationType::CustomNotification,
-                NotificationManager::NotificationLevel::WarningNotificationLevel,
-                _u8L("Failed to update Web UI resources. The application will continue using the previous version."));
-        }
-        break;
-    default: 
-        BOOST_LOG_TRIVIAL(error) << "FlutterWebCopyStatus other status" << static_cast<int>(m_flutter_web_copy_status);
-        break;
-    }
-}
-
-void GUI_App::try_notify_flutter_web_copy_failure()
-{
-    if (wxThread::IsMain())
-        do_notify_flutter_web_copy_failure();
-    else
-        CallAfter([this]() { do_notify_flutter_web_copy_failure(); });
-}
-
 void GUI_App::copy_older_config()
 {
     preset_bundle->copy_files(m_older_data_dir_path);
@@ -2768,9 +2664,6 @@ bool GUI_App::on_init_inner()
     preset_bundle->setup_directories();
     profiler.mark("preset_bundle->setup_directories");
 
-    copy_web_resources();
-    profiler.mark("copy_web_resources");
-
     if (m_init_app_config_from_older)
         copy_older_config();
     profiler.mark("copy_older_config_if_needed");
@@ -2871,12 +2764,6 @@ bool GUI_App::on_init_inner()
 
         Bind(EVT_NO_PRESET_UPDATE, [this](const wxCommandEvent& evt) {
             wxString   msg = _L("The configuration is up to date.");
-            InfoDialog dlg(nullptr, _L("Info"), msg);
-            dlg.ShowModal();
-        });
-
-        Bind(EVT_NO_WEB_RESOURCE_UPDATE, [this](const wxCommandEvent& evt) {
-            wxString   msg = _L("This is the newest version.");
             InfoDialog dlg(nullptr, _L("Info"), msg);
             dlg.ShowModal();
         });
@@ -3086,18 +2973,6 @@ bool GUI_App::on_init_inner()
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
 
-    do_notify_flutter_web_copy_failure();
-
-    // WebSocket debug server: only when Preferences → "Web Debug Mode" (websocket_debug) is on.
-    // When off, explicitly stop the debug server so port 8766 is not left listening.
-    const bool websocket_debug_pref = app_config->get_bool("websocket_debug");
-    if (websocket_debug_pref) {
-        BOOST_LOG_TRIVIAL(debug) << "Web Debug Mode enabled in preferences, starting WebSocket debug server (port 8766)";
-        Slic3r::GUI::SSWCP::enable_debug_mode(true);
-    } else {
-        Slic3r::GUI::SSWCP::enable_debug_mode(false);
-    }
-
     namespace snap = ::Slic3r::SnapLog::v1;
     snap::SnapLogConfig snap_cfg;
     std::string snap_cc   = app_config ? app_config->get_country_code() : "";
@@ -3155,64 +3030,6 @@ bool GUI_App::on_init_inner()
     profiler.mark("on_init_inner return");
 
     return true;
-}
-
-void GUI_App::machine_find()
-{
-    std::vector<std::string> mdns_service_names;
-
-    mdns_service_names.push_back("snapmaker");
-
-    Bonjour::TxtKeys txt_keys   = {"sn", "version", "machine_type"};
-    std::string      unique_key = "sn";
-
-    m_machine_find_engine = Bonjour("snapmaker")
-                                .set_txt_keys(std::move(txt_keys))
-                                .set_retries(3)
-                                .set_timeout(10)
-                                .on_reply([this](BonjourReply&& reply) {
-                                    if (!GUI_App::m_app_alive.load())
-                                        return;
-                                    std::string hostname = reply.hostname;
-                                    size_t      pos      = hostname.find(".local");
-                                    if (pos != std::string::npos) {
-                                        hostname = hostname.substr(0, pos);
-                                    }
-                                    std::string ip = reply.ip.to_string();
-
-                                    if (reply.txt_data.count("sn")) {
-                                        std::string sn = reply.txt_data["sn"];
-                                        DeviceInfo  info;
-                                        if (app_config->get_device_info(sn, info)) {
-                                            if (info.ip != ip && info.link_mode != "wan") {
-                                                info.ip = ip;
-                                                app_config->save_device_info(info);
-
-                                                this->CallAfter([this]() {
-                                                    auto devices = app_config->get_devices();
-                                                    json param;
-                                                    param["command"]       = "local_devices_arrived";
-                                                    param["sequece_id"]    = "10001";
-                                                    param["data"]          = devices;
-                                                    std::string logout_cmd = param.dump();
-                                                    wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                                                    GUI::wxGetApp().run_script(strJS);
-
-                                                    // wcp订阅
-                                                    json data = this->app_config->get_devices();
-                                                    wxGetApp().device_card_notify(data);
-
-                                                });
-                                            }
-                                        }
-                                    }
-                                })
-                                .on_complete([this]() {
-                                    if (!GUI_App::m_app_alive.load())
-                                        return;
-                                    reset_machine_find_engine();
-                                })
-                                .lookup();
 }
 
 void GUI_App::copy_network_if_available()
@@ -3966,19 +3783,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     m_is_recreating_gui = false;
 
-    //reload home and device page
+    // Reload native views after the main frame has been recreated.
     sm_disconnect_current_machine(true);
-    auto devices = wxGetApp().app_config->get_devices();
-    for (auto iter = devices.begin(); iter != devices.end();) {
-        if (iter->link_mode == "wan") {
-            iter = devices.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
-    bool use_new_connection = wxGetApp().app_config->get("use_new_connect") == "true";
-    const auto& edit_preset = preset_bundle->printers.get_edited_preset();
 
     auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
     auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
@@ -3999,8 +3805,6 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
             mainframe->load_printer_url(url);
         }
     }
-
-    wxGetApp().device_card_notify(devices);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "recreate_GUI exit";
 }
@@ -4090,8 +3894,6 @@ void GUI_App::ShowOnlyFilament() {
         // wxMessageBox(e.what(), "", MB_OK);
     }
 }
-
-
 
 // static method accepting a wxWindow object as first parameter
 bool GUI_App::catch_error(std::function<void()> cb,
@@ -4281,14 +4083,6 @@ void GUI_App::import_presets()
         preset_updater->import_system_profile();
     }
     else {
-        MessageDialog(nullptr, _L("import failed!")).ShowModal();
-    }
-}
-
-void GUI_App::import_flutter_web() {
-    if (preset_updater) {
-        preset_updater->import_flutter_web();
-    } else {
         MessageDialog(nullptr, _L("import failed!")).ShowModal();
     }
 }
@@ -5219,12 +5013,6 @@ void maybe_attach_updater_signature(Http& http, const std::string& canonical_que
 
 } // namespace
 
-void GUI_App::check_web_version()
-{
-    if (preset_updater != nullptr)
-        preset_updater->sync_web_async();
-}
-
 void GUI_App::check_preset_version()
 {
     if (preset_updater != nullptr)
@@ -5418,13 +5206,6 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
-wxString GUI_App::build_flutter_web_url(const wxString& path)
-{
-    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
-                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()) +
-                              "&version=" + Snapmaker_VERSION);
-}
-
 std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
@@ -5837,6 +5618,17 @@ bool GUI_App::start_gateway_service(bool restart)
         dependencies.dispatcher = [this](std::function<void()> task) { CallAfter(std::move(task)); };
 
         m_gateway_service = std::make_shared<Gateway::GatewayService>(Gateway::GatewayService::Config{}, std::move(dependencies));
+        m_gateway_machine_snapshot = std::make_unique<GatewayMachineSnapshot>();
+        m_gateway_machine_snapshot->set_dependencies(
+            [this]() { return preset_bundle; },
+            [this]() {
+                load_current_presets();
+                if (mainframe != nullptr && mainframe->plater() != nullptr)
+                    mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
+            });
+        m_gateway_active_device       = GatewayActiveDeviceState{};
+        m_gateway_loaded_base_url.clear();
+        register_gateway_notifications();
         const std::string locale = gateway_locale();
         BOOST_LOG_TRIVIAL(info) << "starting connection gateway with locale " << locale;
         if (!m_gateway_service->start(locale))
@@ -5859,6 +5651,214 @@ void GUI_App::stop_gateway_service()
     if (m_gateway_service)
         m_gateway_service->stop();
     m_gateway_service.reset();
+}
+
+bool GUI_App::gateway_device_connected() const
+{
+    return m_gateway_active_device.valid && m_gateway_active_device.connected;
+}
+
+void GUI_App::register_gateway_notifications()
+{
+    if (!m_gateway_service)
+        return;
+
+    m_gateway_service->set_notification_handler("machine.snapshot_changed", [this](const nlohmann::json& snapshot) {
+        if (m_gateway_machine_snapshot != nullptr)
+            m_gateway_machine_snapshot->apply(snapshot);
+    });
+
+    m_gateway_service->set_notification_handler("notify.device.object.changed", [this](const nlohmann::json& params) {
+        if (!m_gateway_active_device.valid || m_gateway_machine_snapshot == nullptr)
+            return;
+
+        const auto snapshot = Gateway::build_machine_snapshot_from_device_objects(params, m_gateway_active_device.serial_number);
+        if (snapshot.has_value())
+            m_gateway_machine_snapshot->apply(*snapshot);
+    });
+
+    const auto make_active_device_state = [](const Gateway::ActiveDeviceSnapshot& snapshot) {
+        GatewayActiveDeviceState active_device;
+        active_device.valid = snapshot.valid;
+        active_device.connected = snapshot.connected;
+        active_device.serial_number = snapshot.serial_number;
+        active_device.machine_type = snapshot.machine_type;
+        active_device.device_name = snapshot.device_name;
+        active_device.preset_name = snapshot.preset_name;
+        active_device.nozzle_diameters = snapshot.nozzle_diameters;
+        return active_device;
+    };
+
+    const auto query_device_objects = [this]() {
+        if (!m_gateway_service)
+            return;
+
+        m_gateway_service->request(
+            "query.device.objects", nlohmann::json::object(),
+            [](Gateway::GatewayError query_error, const nlohmann::json&) {
+                if (query_error)
+                    BOOST_LOG_TRIVIAL(warning) << "failed to query gateway device objects: " << query_error.message;
+                else
+                    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] device objects queried";
+            });
+    };
+
+    const auto watch_active_device = [this](const std::string& serial_number) {
+        if (!m_gateway_service || serial_number.empty())
+            return;
+
+        m_gateway_service->watch_device(
+            nlohmann::json{{"sn", serial_number}},
+            [serial_number](Gateway::GatewayError error, const nlohmann::json& result) {
+                if (error)
+                    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] failed to watch device " << serial_number << ": " << error.message;
+                else
+                    BOOST_LOG_TRIVIAL(info) << "[gateway][device-status] watching device " << serial_number << ", result=" << result.dump();
+            });
+    };
+
+    const auto apply_active_device = [this, query_device_objects, watch_active_device](GatewayActiveDeviceState active_device) {
+            if (!active_device.valid || active_device.serial_number.empty()) {
+                BOOST_LOG_TRIVIAL(warning) << "ignored invalid gateway active device notification";
+                return;
+            }
+
+            const bool active_device_changed = !m_gateway_active_device.valid ||
+                                               m_gateway_active_device.serial_number != active_device.serial_number;
+            const bool should_query_objects  = active_device.connected &&
+                                               (active_device_changed || !m_gateway_active_device.connected);
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] applying active device, sn=" << active_device.serial_number
+                                    << ", connected=" << active_device.connected << ", device_changed=" << active_device_changed;
+            m_gateway_active_device          = active_device;
+            if (m_gateway_machine_snapshot != nullptr)
+                m_gateway_machine_snapshot->set_active_device(active_device.serial_number, active_device.connected);
+            if (mainframe != nullptr && mainframe->plater() != nullptr)
+                mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
+            if (should_query_objects)
+                query_device_objects();
+            if (should_query_objects)
+                watch_active_device(active_device.serial_number);
+        };
+
+    m_gateway_service->set_notification_handler("device.active_changed", [apply_active_device, make_active_device_state](const nlohmann::json& params) {
+        BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] device.active_changed: " << params.dump();
+        const auto active_device = Gateway::parse_active_device(params);
+        if (!active_device.has_value()) {
+            BOOST_LOG_TRIVIAL(warning) << "ignored invalid gateway active device notification";
+            return;
+        }
+        apply_active_device(make_active_device_state(*active_device));
+    });
+
+    const auto set_active_device_connection = [this, apply_active_device](const std::string& serial_number, bool connected) {
+        GatewayActiveDeviceState active_device = m_gateway_active_device;
+        if (!active_device.valid || active_device.serial_number != serial_number) {
+            active_device = GatewayActiveDeviceState{};
+            active_device.serial_number = serial_number;
+        }
+        active_device.valid = true;
+        active_device.connected = connected;
+        apply_active_device(active_device);
+    };
+
+    m_gateway_service->set_notification_handler("notify.device.connected", [set_active_device_connection](const nlohmann::json& params) {
+        const std::string serial_number = Gateway::parse_device_sn(params);
+        if (serial_number.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "ignored gateway device connected notification without sn";
+            return;
+        }
+        BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] notify.device.connected, sn=" << serial_number;
+        set_active_device_connection(serial_number, true);
+    });
+
+    const auto connection_lost = [this, set_active_device_connection, apply_active_device](const nlohmann::json& params) {
+        BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] disconnect notification: " << params.dump();
+        const std::string serial_number = Gateway::parse_device_sn(params);
+        if (!serial_number.empty()) {
+            set_active_device_connection(serial_number, false);
+        } else if (m_gateway_active_device.valid) {
+            GatewayActiveDeviceState active_device = m_gateway_active_device;
+            active_device.connected = false;
+            apply_active_device(active_device);
+        } else {
+            BOOST_LOG_TRIVIAL(warning) << "gateway device disconnected notification did not contain sn";
+            if (m_gateway_machine_snapshot != nullptr)
+                m_gateway_machine_snapshot->clear();
+        }
+    };
+    m_gateway_service->set_notification_handler("device.connection_lost", connection_lost);
+    m_gateway_service->set_notification_handler("notify.device.disconnected", connection_lost);
+    m_gateway_service->set_notification_handler(
+        "notify.device.current_changed", [this, apply_active_device](const nlohmann::json& params) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] current device changed: " << params.dump();
+            const auto current_device = params.find("current_device_sn");
+            if (current_device == params.end() || !current_device->is_null() || !m_gateway_active_device.valid)
+                return;
+
+            GatewayActiveDeviceState active_device = m_gateway_active_device;
+            active_device.connected = false;
+            apply_active_device(active_device);
+        });
+    m_gateway_service->set_state_callback(
+        [this, apply_active_device](
+            Gateway::ConnectionState state, const Gateway::GatewayError& error) {
+            if (state == Gateway::ConnectionState::Disconnected) {
+                BOOST_LOG_TRIVIAL(warning) << "connection gateway disconnected: " << error.message;
+                m_gateway_active_device       = GatewayActiveDeviceState{};
+                m_gateway_loaded_base_url.clear();
+                if (m_gateway_machine_snapshot != nullptr)
+                    m_gateway_machine_snapshot->clear();
+                if (mainframe != nullptr && mainframe->plater() != nullptr)
+                    mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
+                return;
+            }
+            if (state != Gateway::ConnectionState::Connected)
+                return;
+
+            if (!m_gateway_service)
+                return;
+
+            const Gateway::HealthInfo health = m_gateway_service->health();
+            const std::string base_url = m_gateway_service->base_url();
+            const bool endpoint_changed = m_gateway_loaded_base_url != base_url;
+            m_gateway_loaded_base_url = base_url;
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] websocket connected, base_url=" << base_url
+                                    << ", health_has_device_state=" << health.has_device_state
+                                    << ", health_connected=" << health.device_connected
+                                    << ", health_sn=" << health.device_sn;
+
+            if (health.has_device_state && !health.device_sn.empty()) {
+                GatewayActiveDeviceState active_device;
+                active_device.valid = true;
+                active_device.connected = health.device_connected;
+                active_device.serial_number = health.device_sn;
+                apply_active_device(active_device);
+            } else if (health.has_device_state && !health.device_connected) {
+                if (m_gateway_active_device.valid) {
+                    GatewayActiveDeviceState active_device = m_gateway_active_device;
+                    active_device.connected = false;
+                    apply_active_device(active_device);
+                } else {
+                    if (m_gateway_machine_snapshot != nullptr)
+                        m_gateway_machine_snapshot->clear();
+                }
+            }
+
+            if (endpoint_changed && mainframe != nullptr) {
+                wxString home_url = gateway_web_url("home_page");
+                if (!home_url.empty() && mainframe->m_webview != nullptr) {
+                    home_url = get_international_url(home_url);
+                    mainframe->m_webview->load_url(home_url);
+                }
+
+                wxString device_url = gateway_web_url("device_control");
+                if (!device_url.empty())
+                    mainframe->load_printer_url(get_international_url(device_url));
+
+                if (WebPreprintDialog* preprint_dialog = dynamic_cast<WebPreprintDialog*>(get_web_preprint_dialog()))
+                    preprint_dialog->refresh_gateway_urls();
+            }
+        });
 }
 
 wxString GUI_App::gateway_web_url(const wxString& page_key) const
@@ -7358,17 +7358,6 @@ void GUI_App::recent_file_notify(const json& res)
     }
 }
 
-void GUI_App::device_card_notify(const json& res)
-{
-    for (const auto& instance : m_device_card_subscribers) {
-        auto ptr = instance.second.lock();
-        if (ptr) {
-            ptr->m_res_data = res;
-            ptr->send_to_js();
-        }
-    }
-}
-
 void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& state)
 {
     if (!webview) return;
@@ -7400,23 +7389,6 @@ void GUI_App::notify_foreground_change(const bool active)
         if (ptr) {
             ptr->m_res_data = data;
             ptr->send_to_js();
-        }
-    }
-}
-
-void GUI_App::cache_notify(const std::string& key, const json& res)
-{
-    for (const auto& instance : m_cache_subscribers) {
-        auto ptr = instance.first.second.lock();
-        if (ptr) {
-            std::string cache_key = instance.second;
-            if (cache_key == key) {
-                json object = json::object();
-                object[key] = res;
-
-                ptr->m_res_data = object;
-                ptr->send_to_js();
-            }
         }
     }
 }
@@ -7723,28 +7695,6 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
             wxGetApp().app_config->set("use_new_connect", "false");
             /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
             p_config->set("print_host", "");*/
-
-            auto devices = wxGetApp().app_config->get_devices();
-            for (size_t i = 0; i < devices.size(); ++i) {
-                if (devices[i].connected) {
-                    devices[i].connected = false;
-                    wxGetApp().app_config->save_device_info(devices[i]);
-                    break;
-                }
-            }
-
-            //// 同步卡片
-            //json param;
-            //param["command"]       = "local_devices_arrived";
-            //param["sequece_id"]    = "10001";
-            //param["data"]          = devices;
-            //std::string logout_cmd = param.dump();
-            //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-            //GUI::wxGetApp().run_script(strJS);
-
-            // wcp订阅
-            json data = this->app_config->get_devices();
-            wxGetApp().device_card_notify(data);
 
             wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(need_reload_printerview);
             wxGetApp().set_connect_host(nullptr);

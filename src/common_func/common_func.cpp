@@ -124,52 +124,6 @@ namespace common
         return str_version;
     }
 
-    std::string get_flutter_version()
-    {
-
-            std::string versionFilePath = "";
-
-#ifdef _WIN32
-            PWSTR   pszPath = nullptr;
-            char*   path    = new char[MAX_PATH]();
-            size_t  pathLength = 0;
-            HRESULT hr         = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pszPath);
-            if (SUCCEEDED(hr)) {
-                wcstombs_s(&pathLength, path, MAX_PATH, pszPath, MAX_PATH);
-                CoTaskMemFree(pszPath);
-            }
-
-            std::string filePath = path;
-            versionFilePath      = filePath + "\\" + std::string("Snapmaker_Orca\\web\\flutter_web\\version.json");
-
-            delete[] path;
-#elif __APPLE__
-            const char* home_env = getenv("HOME");
-            versionFilePath      = home_env;
-            versionFilePath      = versionFilePath + "/Library/Application Support/Snapmaker_Orca/web/flutter_web/version.json";
-#else
-            std::string config_dir = get_linux_config_dir();
-            if (!config_dir.empty())
-                versionFilePath = config_dir + "/web/flutter_web/version.json";
-#endif
-
-            std::ifstream json_file(versionFilePath);
-            if (!json_file.is_open()) {
-                std::ifstream json_file(versionFilePath);                
-                return "";
-            }
-            nlohmann::json json_data;
-            json_file >> json_data;
-            std::string str_version = json_data.value("version", "");
-            std::string str_build_number = json_data.value("build_number", "");
-
-            std::string flutter_version = std::string("flutter_version: ") + str_version + std::string("  ") + std::string("build_number: ") +
-                              str_build_number;
-           
-            return flutter_version;
-    }
-
-
     std::string getLocalArea() 
     { 
         std::string localArea = "";

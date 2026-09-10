@@ -203,6 +203,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLTexture.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
+    GUI/GatewayMachineSnapshot.cpp
+    GUI/GatewayMachineSnapshot.hpp
     GUI/GUI_App.cpp
     GUI/GUI_App.hpp
     GUI/GUI_AuxiliaryList.cpp
@@ -550,8 +552,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/SMPhysicalPrinterDialog.cpp
     GUI/SSWCP.cpp
     GUI/SSWCP.hpp
-    GUI/WebSocketDebugServer.cpp
-    GUI/WebSocketDebugServer.hpp
     GUI/DownloadManager.cpp
     GUI/DownloadManager.hpp
     GUI/GenericDownloadDialog.cpp

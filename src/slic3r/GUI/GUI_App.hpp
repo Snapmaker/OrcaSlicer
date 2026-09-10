@@ -35,6 +35,7 @@
 #include <mutex>
 #include <stack>
 #include <unordered_map>
+#include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
 #define LOG_FILES_MAX_NUM           30
@@ -79,6 +80,7 @@ class TaskManager;
 
 namespace Gateway {
 class GatewayService;
+struct ActiveDeviceSnapshot;
 struct PreprintStoreResult;
 }
 
@@ -102,6 +104,7 @@ class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
 class NetworkErrorDialog;
+class GatewayMachineSnapshot;
 
 
 enum FileType
@@ -259,8 +262,6 @@ private:
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
-    /// Set only for the duration of `MsgUpdateConfig::ShowModal()` in load_flutter_web (atomic: safe vs updater threads + CallAfter).
-    std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_profile_config_update_dlg_open{ false };
 #ifdef __linux__
@@ -363,9 +364,19 @@ private:
     DynamicPrintConfig              m_host_config;
     std::mutex                 m_host_cfg_mtx;
 
-    wxTimer* m_machine_find_timer = nullptr;
-    std::shared_ptr<Bonjour> m_machine_find_engine = nullptr;
-    const int                m_machine_find_id     = 10086;
+    std::unique_ptr<GatewayMachineSnapshot> m_gateway_machine_snapshot;
+    struct GatewayActiveDeviceState
+    {
+        bool                     valid{false};
+        bool                     connected{false};
+        std::string              serial_number;
+        std::string              machine_type;
+        std::string              device_name;
+        std::string              preset_name;
+        std::vector<std::string> nozzle_diameters;
+    };
+    GatewayActiveDeviceState m_gateway_active_device;
+    std::string m_gateway_loaded_base_url;
 
   public:
     DynamicPrintConfig*             get_host_config() {
@@ -378,10 +389,6 @@ private:
     }
 
     void import_presets();
-
-    void import_flutter_web();
-
-    void reset_machine_find_engine() { m_machine_find_engine = nullptr; }
 
     void                       set_host_config(const DynamicPrintConfig& config)
     {
@@ -410,7 +417,6 @@ private:
     //explicit GUI_App(EAppMode mode = EAppMode::Editor);
     ~GUI_App() override;
 
-    void                   machine_find();
     void show_message_box(std::string msg) { wxMessageBox(msg); }
     EAppMode get_app_mode() const { return m_app_mode; }
     Slic3r::DeviceManager* getDeviceManager() { return m_device_manager; }
@@ -420,14 +426,6 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
-    bool flutter_web_config_update_dlg_open() const
-    {
-        return m_flutter_web_config_update_dlg_open.load(std::memory_order_acquire);
-    }
-    void set_flutter_web_config_update_dlg_open(bool v)
-    {
-        m_flutter_web_config_update_dlg_open.store(v, std::memory_order_release);
-    }
     bool profile_config_update_dlg_open() const { return m_profile_config_update_dlg_open.load(std::memory_order_acquire); }
     void set_profile_config_update_dlg_open(bool v) { m_profile_config_update_dlg_open.store(v, std::memory_order_release); }
     std::string logo_name() const { return is_editor() ? "Snapmaker_Orca" : "Snapmaker_Orca-gcodeviewer"; }
@@ -545,7 +543,6 @@ private:
     bool            is_user_login();
 
     wxString get_international_url(const wxString& origin_url);
-    wxString build_flutter_web_url(const wxString& path);
 
     // SM
     struct SMUserInfo
@@ -627,7 +624,6 @@ private:
     bool            m_studio_active = true;
     std::chrono::system_clock::time_point  last_active_point;
 
-    void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);
@@ -660,12 +656,8 @@ private:
                                                                 int ttl_seconds = 1800) const;
     bool            is_gateway_url(const wxString& url) const;
     std::shared_ptr<Gateway::GatewayService> gateway_service() const { return m_gateway_service; }
+    bool            gateway_device_connected() const;
 
-    enum class FlutterWebCopyStatus { Ok, UpgradeFailed, InstallFailed, Other };
-    /// Copy bundled flutter_web into the user data directory. On failure, records status for deferred user notification.
-    bool            copy_bundled_flutter_web(bool upgrade);
-    void            report_flutter_web_copy_failure(FlutterWebCopyStatus status);
-    void            try_notify_flutter_web_copy_failure();
     void            switch_staff_pick(bool on);
     bool            check_privacy_update();
     
@@ -680,6 +672,10 @@ private:
     bool            load_language(wxString language, bool initial);
     std::string     gateway_locale() const;
 
+private:
+    void            register_gateway_notifications();
+
+public:
     Tab*            get_tab(Preset::Type type);
     Tab*            get_plate_tab();
     Tab*            get_model_tab(bool part = false);
@@ -867,8 +863,6 @@ private:
     void            update_http_extra_header();
     bool            check_older_app_config(Semver current_version, bool backup);
     void            copy_older_config();
-    void                               copy_web_resources();
-    void            do_notify_flutter_web_copy_failure();
     void            window_pos_save(wxTopLevelWindow* window, const std::string &name);
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);
@@ -883,8 +877,6 @@ private:
     std::string             m_older_data_dir_path;
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
-    FlutterWebCopyStatus    m_flutter_web_copy_status{ FlutterWebCopyStatus::Ok };
-    bool                    m_flutter_web_copy_notified{ false };
     std::string             m_open_method;
     SMUserInfo m_login_userinfo;
 
@@ -907,27 +899,15 @@ private:
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
-    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_device_card_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_foreground_change_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_update_privacy_subscribers;
-    struct CachePairCompare
-    {
-        bool operator()(const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& lhs,
-                        const std::pair<void*, std::weak_ptr<SSWCP_Instance>>& rhs) const
-        {
-            return lhs.first <= rhs.first;
-        }
-    };
-    std::map<std::pair<void*, std::weak_ptr<SSWCP_Instance>>, std::string, CachePairCompare>                     m_cache_subscribers;
-
     void recent_file_notify(const json& res);
     void user_login_notify(const json& res);
-    void device_card_notify(const json& res);
     void page_state_notify_webview(wxWebView* webview, const std::string& state);
+
     // Push foreground/background state change to all subscribed webview instances
     void notify_foreground_change(const bool active);
-    void cache_notify(const std::string& key, const json& res);
     void user_update_privacy_notify(const bool& res);
 
 public:

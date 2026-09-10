@@ -18,7 +18,6 @@
 #include "slic3r/Utils/PrintHost.hpp"
 #include "slic3r/Utils/MQTT.hpp"
 #include "libslic3r/SSWCPProtocol.hpp"
-#include "WebSocketDebugServer.hpp"
 
 
 using namespace nlohmann;
@@ -149,22 +148,12 @@ public:
 
     static void on_mqtt_status_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, const json& response);
 
-    static std::unordered_map<std::string, json> m_wcp_cache;
-
 private:
     // Test methods
     void sync_test();
     void async_test();
 
     void test_mqtt_request();
-
-    // Cache methods
-    void sw_SetCache();
-    void sw_GetCache();
-    void sw_RemoveCache();
-
-    void sw_SubscribeCacheKey();
-    void sw_UnsubscribeCacheKeys();
 
     // select tab
     void sw_SwitchTab();
@@ -204,9 +193,6 @@ private:
     // open network dialog
     void sw_OpenNetworkDialog();
 
-
-public:    
-    void update_filament_info(const json& objects, bool send_message = false);
 
 protected:
     std::thread m_work_thread; // Worker thread
@@ -256,106 +242,12 @@ private:
     void sw_connect();
     void sw_disconnect();
 
-    void sw_get_connect_machine();
-
     void sw_connect_other_device();
 
     void sw_get_pin_code();
 
     // Subscribe to foreground/background change events (event_id=205890)
     void sw_SubscribeForegroundChange();
-
-};
-
-// mqtt-agent
-class WebPresetDialog;
-class SSWCP_MqttAgent_Instance : public SSWCP_Instance
-{
-public:
-    SSWCP_MqttAgent_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
-        : SSWCP_Instance(cmd, header, data, event_id, webview)
-    {
-        m_type = MQTT_AGENT;
-    }
-
-    ~SSWCP_MqttAgent_Instance()
-    {
-        if (m_work_thread.joinable())
-            m_work_thread.detach();
-    }
-
-    void process() override;
-
-public:
-    static std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient>>> m_mqtt_engine_map; // (id, client)
-    static std::mutex                                          m_engine_map_mtx;
-
-    static std::map<std::pair<std::string, wxWebView*>, std::string> m_subscribe_map;          // ((event_id, webview), topic)
-    static std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> m_subscribe_instance_map; // ((event_id, webview), instance)
-
-    static WebPresetDialog* m_dialog;
-
-    // Funnel-correlation id for the connection attempt on a given webview. Each
-    // sw_* call is a fresh instance object, so (like m_mqtt_engine_map) this id
-    // lives in static state keyed by the webview: assigned in sw_create_mqtt_client,
-    // read by connect/subscribe/set_engine/disconnect, cleared on disconnect.
-    static std::unordered_map<wxWebView*, std::string> m_connect_session_map;
-
-public:
-    bool validate_id(const std::string& id);
-    std::shared_ptr<MqttClient> get_current_engine() {
-        m_engine_map_mtx.lock();
-        std::shared_ptr<MqttClient> ptr = nullptr;
-        if (m_mqtt_engine_map.count(m_webview)) {
-            ptr = m_mqtt_engine_map[m_webview].second;
-        } 
-        
-        m_engine_map_mtx.unlock();
-
-        return ptr;
-    }
-    bool set_current_engine(const std::pair<std::string, std::shared_ptr<MqttClient>>& target) {
-        bool flag = true;
-        m_engine_map_mtx.lock();
-        m_mqtt_engine_map[m_webview] = target;
-        
-        m_engine_map_mtx.unlock();
-        return flag;
-    }
-
-    // Accessors for the per-webview connectSessionId (guarded by m_engine_map_mtx,
-    // the same lock that protects m_mqtt_engine_map). Empty when no connection is
-    // in progress on this webview.
-    std::string get_connect_session_id() {
-        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
-        auto it = m_connect_session_map.find(m_webview);
-        return it != m_connect_session_map.end() ? it->second : std::string{};
-    }
-    void set_connect_session_id(const std::string& id) {
-        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
-        m_connect_session_map[m_webview] = id;
-    }
-    void clear_connect_session_id() {
-        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
-        m_connect_session_map.erase(m_webview);
-    }
-
-    void set_Instance_illegal() override;
-
-private:
-
-    void sw_create_mqtt_client();
-    void sw_mqtt_connect();
-    void sw_mqtt_disconnect();
-    void sw_mqtt_subscribe();
-    void sw_mqtt_unsubscribe();
-    void sw_mqtt_publish();
-    void sw_mqtt_set_engine();
-
-private:
-    void clean_current_engine();
-
-    static void mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client);
 
 };
 
@@ -504,38 +396,6 @@ private:
     // Request device heartbeat
     void sw_MachineHeartbeat();
 
-    // update machine filament info
-    void sw_UpdateMachineFilamentInfo();
-};
-
-// Instance class for Snapmaker machine manage
-class SSWCP_MachineManage_Instance : public SSWCP_Instance
-{
-public:
-    SSWCP_MachineManage_Instance(std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview)
-        : SSWCP_Instance(cmd, header, data, event_id, webview)
-    {
-        m_type = MACHINE_MANAGE;
-    }
-
-    ~SSWCP_MachineManage_Instance() {}
-
-    void process() override;
-
-private:
-    void sw_GetLocalDevices();
-    
-    void sw_AddDevice();
-
-    void sw_SubscribeLocalDevices();
-
-    void sw_RenameDevice();
-
-    void sw_SwitchModel();
-
-    void sw_DeleteDevices();
-
-    void sw_UpdateDeviceInfo();
 };
 
 // Instance class for page state change subscription
@@ -667,9 +527,6 @@ public:
     // Handle incoming web messages
     static void handle_web_message(std::string message, wxWebView* webview);
 
-    // Handle incoming web messages for Flutter debug (no webview required)
-    static void handle_webmsg_for_debug(std::string message);
-
     // Create new SSWCP instance
     static std::shared_ptr<SSWCP_Instance> create_sswcp_instance(
         std::string cmd, const json& header, const json& data, std::string event_id, wxWebView* webview);
@@ -723,21 +580,12 @@ public:
 
     static std::unordered_map<std::string, int> m_tab_map; // for switching tab
 
-    // WebSocket Debug Server methods
-    static void enable_debug_mode(bool enable = true, unsigned short port = 8766);
-    static void disable_debug_mode();
-    static bool is_debug_mode_enabled();
-    static void send_message_to_flutter(const std::string& message);
-    static void send_message_auto(const std::string& message, wxWebView* webview = nullptr);
-
 private:
     static std::unordered_set<std::string> m_machine_find_cmd_list;     // Machine find commands
     static std::unordered_set<std::string> m_machine_option_cmd_list;   // Machine option commands
     static std::unordered_set<std::string> m_machine_connect_cmd_list;  // Machine connect commands
     static std::unordered_set<std::string> m_project_cmd_list; // homepage project commands
     static std::unordered_set<std::string> m_login_cmd_list; // homepage login commands
-    static std::unordered_set<std::string> m_machine_manage_cmd_list; // homepage machine manage commands;
-    static std::unordered_set<std::string> m_mqtt_agent_cmd_list; // mqtt-agent commands;
     static std::unordered_set<std::string> m_page_state_cmd_list; // page state change commands;
 
     static TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> m_instance_list;  // Active instances
@@ -746,10 +594,6 @@ private:
     static std::string m_active_gcode_filename; // name of the file which is pretend to be upload and print
     static std::string m_display_gcode_filename; // name for display
 
-    // WebSocket Debug Server
-    static std::unique_ptr<WebSocketDebugServer> m_debug_server;
-    static std::mutex m_debug_server_mutex;
-    static bool m_debug_mode_enabled;
 }; 
 
 class MachineIPType

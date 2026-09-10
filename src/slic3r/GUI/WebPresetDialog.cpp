@@ -473,38 +473,7 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 }
             }
 
-            DeviceInfo info;
-            if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
-                info.model_name   = MSelected.begin().value()["model"].get<std::string>();
-                info.nozzle_sizes = {MSelected.begin().value()["nozzle_diameter"].get<std::string>()};
-                info.preset_name  = info.model_name + " (" + info.nozzle_sizes[0] + " nozzle)";
-                size_t vendor_pos = info.model_name.find_first_of(" ");
-                if (vendor_pos != std::string::npos) {
-                    std::string vendor        = info.model_name.substr(0, vendor_pos);
-                    std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" + vendor + "/" +
-                                                info.model_name + "_cover.png";
-
-                    info.img = machine_cover;
-                }
-
-                wxGetApp().app_config->save_device_info(info);
-
-                //// 同步卡片
-                //auto devices = wxGetApp().app_config->get_devices();
-                //json param;
-                //param["command"]       = "local_devices_arrived";
-                //param["sequece_id"]    = "10001";
-                //param["data"]          = devices;
-                //std::string logout_cmd = param.dump();
-                //wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-                //GUI::wxGetApp().run_script(strJS);
-
-                // wcp订阅
-                json data = wxGetApp().app_config->get_devices();
-                wxGetApp().device_card_notify(data);
-
-                wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
-            }
+            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
 
         } else if (strCmd == "save_userguide_filaments") {
             {
@@ -609,21 +578,7 @@ void WebPresetDialog::SendUserGuideProfile()
         res_json = m_ProfileJson;
     }
 
-    std::string              model_name = "";
-    std::vector<std::string> nozzle_sizes;
-    if (m_device_id != "") {
-        DeviceInfo info;
-        if (wxGetApp().app_config->get_device_info(m_device_id, info)) {
-            if (info.model_name != "") {
-                // test
-                if (info.model_name == "lava" || info.model_name == "Snapmaker test") {
-                    info.model_name = "Snapmaker U1";
-                }
-                model_name   = info.model_name;
-                nozzle_sizes = info.nozzle_sizes;
-            }
-        }
-    }
+    const std::string model_name = "";
 
     if (res_json.count("model")) {
         json& model = res_json["model"];
@@ -631,11 +586,7 @@ void WebPresetDialog::SendUserGuideProfile()
             json& item = model[i];
             if (item.count("nozzle_selected")) {
                 if (item["model"].get<std::string>() == model_name) {
-                    if (!nozzle_sizes.empty()) {
-                        item["nozzle_selected"] = nozzle_sizes[0];
-                    } else {
-                        item["nozzle_selected"] = "";
-                    }
+                    item["nozzle_selected"] = "";
 
                     if (m_bind_nozzle) {
                         json cp_item = item;

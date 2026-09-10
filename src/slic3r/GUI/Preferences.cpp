@@ -1517,7 +1517,6 @@ wxWindow* PreferencesDialog::create_debug_page()
     page->SetBackgroundColour(*wxWHITE);
 
     m_internal_developer_mode_def = app_config->get("internal_developer_mode");
-    m_websocket_debug_def = app_config->get("websocket_debug");
     m_backup_interval_def = app_config->get("backup_interval");
     m_iot_environment_def = app_config->get("iot_environment");
 

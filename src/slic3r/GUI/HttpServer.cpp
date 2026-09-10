@@ -932,8 +932,8 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
         trimmed_url = trimmed_url.substr(0, question_mark);
     }
 
-    if (trimmed_url == "/") {
-        trimmed_url = "/flutter_web/index.html"; // defualt home page
+    if (trimmed_url == "/" || trimmed_url.rfind("/web/flutter_web/", 0) == 0) {
+        return "";
     }
     else if (trimmed_url.substr(0, 11) == "/localfile/") {
         auto real_path = trimmed_url.substr(11);
@@ -966,21 +966,7 @@ std::string HttpServer::map_url_to_file_path(const std::string& url)
 
         return decoded;
     }
-    auto data_web_path = boost::filesystem::path(data_dir()) / "web";
-    if (!boost::filesystem::exists(data_web_path / "flutter_web")) {
-        if (!GUI::wxGetApp().copy_bundled_flutter_web(false))
-            GUI::wxGetApp().try_notify_flutter_web_copy_failure();
-    }
-
-    wxString res = "";
-    if (trimmed_url.find("flutter_web") == std::string::npos) 
-    {
-       res = wxString::FromUTF8(resources_dir()) + trimmed_url;
-    }
-    else
-    {
-       res = wxString::FromUTF8(data_dir()) + trimmed_url;
-    }
+    wxString res = wxString::FromUTF8(resources_dir()) + trimmed_url;
  
     auto strUTF8 = res.ToStdString(wxConvUTF8);
 

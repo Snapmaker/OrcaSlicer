@@ -2168,13 +2168,6 @@ Sidebar::Sidebar(Plater *parent)
         p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
         p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-            bool hasConnectDevice = false;
-            auto devices = wxGetApp().app_config->get_devices();
-            for (const auto& device : devices) {
-                if (device.connected)
-                    hasConnectDevice = true;
-            }
-
             std::string                machine_type = "";
             std::vector<std::string>   nozzle_diameters;
             std::string                device_name = "";
@@ -2182,7 +2175,7 @@ Sidebar::Sidebar(Plater *parent)
             // machine.system_info is connected (avoids probe + query serial waits).
             const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
 
-            if (!hasConnectDevice && !got_machine_info)
+            if (!got_machine_info)
             {
                 // showdialog tips no connect device
                 wxTheApp->CallAfter([this]() {
@@ -3665,17 +3658,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             p_mainframe->set_print_button_to_default(print_btn_type);
 
             if (is_snapmaker_u1) {
-
-                auto        devices     = wxGetApp().app_config->get_devices();
-                bool hasOnlineMachine = false;
-                for (const auto& device : devices) {
-                    if (device.connected) {
-                        hasOnlineMachine = true;
-                        break;
-                    }
-                }
-
-                if(hasOnlineMachine)
+                if (wxGetApp().gateway_device_connected())
                     p->combo_printer->set_show_machine_connecting_button(true);
     
                 wxString url = wxGetApp().gateway_web_url("device_control");
@@ -9212,20 +9195,6 @@ void Sidebar::show_sync_filament_dialog()
     if (!wxGetApp().plater())
         return;
 
-    std::shared_ptr<PrintHost> host = nullptr;
-    wxGetApp().get_connect_host(host);
-    
-    MachineObject* device_machine = nullptr;
-    {
-        Slic3r::DeviceManager* dev = wxGetApp().getDeviceManager();
-        if (dev) {
-            MachineObject* obj = dev->get_selected_machine();
-            if (obj && obj->is_connected()) {
-                device_machine = obj;
-            }
-        }
-    }
-
     std::string machine_type;
     std::string device_name;
     std::vector<std::string> nozzle_diameters;
@@ -9233,7 +9202,7 @@ void Sidebar::show_sync_filament_dialog()
     // machine.system_info is connected (avoids probe + query serial waits).
     bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
 
-    if (!host && !device_machine && !got_machine_info) {
+    if (!got_machine_info) {
         SyncRichConfirmDialog dlg(this,
             _L("No printer is connected. Please connect your U1 from the Device page before syncing."),
             wxYES_NO);
@@ -9253,13 +9222,6 @@ void Sidebar::show_sync_filament_dialog()
         machine_info.model            = SSWCPProtocol::normalize_machine_model(machine_type);
         machine_info.device_name      = device_name;
         machine_info.nozzle_diameters = nozzle_diameters;
-
-        if (!got_machine_info || machine_info.model.empty()) {
-            if (device_machine) {
-                machine_info.model = SSWCPProtocol::normalize_machine_model(device_machine->printer_type);
-                got_machine_info = !machine_info.model.empty();
-            }
-        }
 
         bool is_white_listed_type = white_list_machine_types.find(machine_info.model) != white_list_machine_types.end();
 
@@ -21539,18 +21501,8 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         return output_file;
     };
 
-    // 校验机型
-    auto devices = wxGetApp().app_config->get_devices();
-    std::string connect_preset = "";
-    for (const auto device : devices) {
-        if (device.connected) {
-            connect_preset = device.preset_name;
-        }
-    }
-
     auto current_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
 
-    bool islegal = true;
     std::string c_preset = "";
     if (current_preset.is_system) {
         c_preset = current_preset.name;
@@ -21561,11 +21513,6 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
     c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), '('), c_preset.end());
     c_preset.erase(std::remove(c_preset.begin(), c_preset.end(), ')'), c_preset.end());
-
-    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), '('), connect_preset.end());
-    connect_preset.erase(std::remove(connect_preset.begin(), connect_preset.end(), ')'), connect_preset.end());
-
-    islegal = (c_preset == connect_preset);
 
     DynamicPrintConfig* physical_printer_config = &Slic3r::GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
     if (! physical_printer_config || p->model.objects.empty())

@@ -63,21 +63,12 @@ public:
 
 	void import_system_profile();
 
-	void import_flutter_web();
-
-	// serverUpdate=true: pass extracted flutter_web directory.
-	// serverUpdate=false: pass zip file chosen by user.
-	void load_flutter_web(const std::string& resource_path, bool serverUpdate = false);
-
     void sync_config_async();
-
-    void sync_web_async(bool isAutoUpdata = false);
 public:
 	struct priv;
 	std::unique_ptr<priv> p;
 };
 wxDECLARE_EVENT(EVT_REQUEST_SERVER_FAIL, wxCommandEvent);
-wxDECLARE_EVENT(EVT_NO_WEB_RESOURCE_UPDATE, wxCommandEvent);
 wxDECLARE_EVENT(EVT_NO_PRESET_UPDATE, wxCommandEvent);
 wxDECLARE_EVENT(EVT_SLIC3R_VERSION_ONLINE, wxCommandEvent);
 wxDECLARE_EVENT(EVT_SLIC3R_EXPERIMENTAL_VERSION_ONLINE, wxCommandEvent);

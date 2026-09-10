@@ -1647,9 +1647,6 @@ bool MainFrame::can_send_gcode() const
 {
     if (m_plater && !m_plater->model().objects.empty())
     {
-        auto        devices     = wxGetApp().app_config->get_devices();
-        const auto& edit_preset = wxGetApp().preset_bundle->printers.get_edited_preset();
-
         auto printer_config    = wxGetApp().preset_bundle->printers.get_edited_preset().config;
         auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
         bool is_snapmaker_u1   = false;
@@ -2418,19 +2415,8 @@ static wxMenu* generate_help_menu()
         },
         "", nullptr, []() { return true; });
 
-    append_menu_item(
-        helpMenu, wxID_ANY, _L("Check for Web Resource Updates"), _L("Check for Web Resource Updates"),
-        [](wxCommandEvent&) { 
-            wxGetApp().check_web_version();
-        },
-        "", nullptr, []() { return true; });
-
     append_menu_item(helpMenu, wxID_ANY, _L("Import Profile"), _L("Import Profile"), [](wxCommandEvent&) {
         wxGetApp().import_presets();
-    });
-
-    append_menu_item(helpMenu, wxID_ANY, _L("Import Web Resource"), _L("Import Web Resource"), [](wxCommandEvent&) {
-        wxGetApp().import_flutter_web();
     });
 
     append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {

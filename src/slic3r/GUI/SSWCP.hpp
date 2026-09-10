@@ -17,6 +17,7 @@
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
 #include "slic3r/Utils/MQTT.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 #include "WebSocketDebugServer.hpp"
 
 
@@ -194,6 +195,8 @@ private:
 
     // Sentry
     void sw_UploadEvent();
+    // SnapLog
+    void sw_SnapLog();
 
     // Get software basic info
     void sw_GetSoftwareInfo();
@@ -259,6 +262,9 @@ private:
 
     void sw_get_pin_code();
 
+    // Subscribe to foreground/background change events (event_id=205890)
+    void sw_SubscribeForegroundChange();
+
 };
 
 // mqtt-agent
@@ -289,6 +295,12 @@ public:
 
     static WebPresetDialog* m_dialog;
 
+    // Funnel-correlation id for the connection attempt on a given webview. Each
+    // sw_* call is a fresh instance object, so (like m_mqtt_engine_map) this id
+    // lives in static state keyed by the webview: assigned in sw_create_mqtt_client,
+    // read by connect/subscribe/set_engine/disconnect, cleared on disconnect.
+    static std::unordered_map<wxWebView*, std::string> m_connect_session_map;
+
 public:
     bool validate_id(const std::string& id);
     std::shared_ptr<MqttClient> get_current_engine() {
@@ -309,6 +321,23 @@ public:
         
         m_engine_map_mtx.unlock();
         return flag;
+    }
+
+    // Accessors for the per-webview connectSessionId (guarded by m_engine_map_mtx,
+    // the same lock that protects m_mqtt_engine_map). Empty when no connection is
+    // in progress on this webview.
+    std::string get_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        auto it = m_connect_session_map.find(m_webview);
+        return it != m_connect_session_map.end() ? it->second : std::string{};
+    }
+    void set_connect_session_id(const std::string& id) {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map[m_webview] = id;
+    }
+    void clear_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map.erase(m_webview);
     }
 
     void set_Instance_illegal() override;
@@ -418,6 +447,9 @@ private:
     void sw_GetFileFilamentMapping();
     void sw_SetFilamentMappingComplete();
     void sw_FinishFilamentMapping();
+    // sw_FinishFilamentMapping post-close handlers, one per FinishFilamentMappingEvent.
+    // Add a new handler here when a new event value is introduced.
+    void on_finish_filament_mapping_custom_flow_regroup();
 
     // new
     void sw_SetDeviceName();
@@ -502,6 +534,8 @@ private:
     void sw_SwitchModel();
 
     void sw_DeleteDevices();
+
+    void sw_UpdateDeviceInfo();
 };
 
 // Instance class for page state change subscription
@@ -541,6 +575,8 @@ public:
 private:
     void sw_UserLogin();
 
+    void sw_AskUserLogin();
+
     void sw_UserLogout();
 
     void sw_GetUserLoginState();
@@ -565,6 +601,10 @@ private:
     void sw_UnsubscribeDownloadState();
     void sw_GetFilesFromDir();
     void sw_NotifyUploadTimelaspe();
+
+public:
+    static bool                                            s_ask_dialog_showing;
+    static std::vector<std::weak_ptr<SSWCP_Instance>>      s_ask_waiters;
 
 public:
     // Passive subscription entry — sw_SubscribeDownloadState only registers,
@@ -637,6 +677,11 @@ public:
     // Delete instance
     static void delete_target(SSWCP_Instance* target);
 
+    // Extend a one-shot instance's timeout by the default timeout; used by
+    // long-running modal commands (e.g. sw_AskUserLogin) so their pending
+    // response is not dropped after the default 80 s.
+    static void renew_instance_timeout(SSWCP_Instance* instance);
+
     // Stop machine discovery
     static void stop_machine_find();
 
@@ -647,7 +692,15 @@ public:
     static void on_webview_delete(wxWebView* webview);
 
     // query the info of the machine
-    static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second = 5);
+    static bool query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second = 5);
+
+    // Resolve machine info via parallel system_info + objects.query, then merge by field priority.
+    // model/device_name from system_info (real-time, authoritative), normalized.
+    // nozzle from objects.query (real-time, preferred) or system_info fallback.
+    // Status: NoResponse / GotIdentity / Complete.
+    // Must be called from a thread that is NOT the UI thread if timeout_second is large,
+    // or from UI thread if cache hit is expected to short-circuit quickly.
+    static SSWCPProtocol::ResolveResult resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second = 8);
 
     // update the active file name
     static void update_active_filename(const std::string& filename);
@@ -702,22 +755,17 @@ public:
 
     void add_instance(const std::string& ip, const std::string& machine_type)
     {
-        m_map_mtx.lock();
+        std::lock_guard<std::mutex> lock(m_map_mtx);
         m_ip_type_map[ip] = machine_type;
-        m_map_mtx.unlock();
     }
 
     bool get_machine_type(const std::string& ip, std::string& output)
     {
-        bool res = true;
-        m_map_mtx.lock();
-        if (m_ip_type_map.count(ip)) {
-            output = m_ip_type_map[ip];
-        } else {
-            res = false;
-        }
-        m_map_mtx.unlock();
-        return res;
+        std::lock_guard<std::mutex> lock(m_map_mtx);
+        auto it = m_ip_type_map.find(ip);
+        if (it == m_ip_type_map.end()) return false;
+        output = it->second;
+        return true;
     }
 
 private:

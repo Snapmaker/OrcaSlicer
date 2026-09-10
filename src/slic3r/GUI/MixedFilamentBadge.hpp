@@ -8,6 +8,7 @@
 #include <string>
 
 namespace Slic3r {
+enum class FilamentColorMode;
 struct MixedFilament;
 struct MixedFilamentDisplayContext;
 }
@@ -48,8 +49,8 @@ wxColour interpolate_color(const std::vector<wxColour>& colors, double pos);
 // Key format:  "solid:#RRGGBB:hH:wW:label"  or  "grad:#RRGGBB:#RRGGBBBT:hH:wW:label"
 wxBitmap* get_color_block_bitmap_cached(const ColorBlockParams& params);
 
-// Cached bitmap for official filament colour blocks. Multiple colours are drawn left to right.
-wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, bool is_gradient,
+// Cached bitmap for official filament colour blocks.
+wxBitmap* get_color_block_bitmap_cached(const std::vector<wxColour>& colors, FilamentColorMode mode,
                                         int width, int height, const wxString& label,
                                         const wxColour& lightBorderColor,
                                         const CornerRadius& radius = {});

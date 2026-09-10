@@ -78,6 +78,7 @@ private:
         bool              visible;
     };
 
+    wxPanel*           m_content_panel;  // inset content panel (bg_color) inside the border
     wxPanel*           m_title_bar;
     wxPanel*           m_title_divider;
     Label*             m_title_label;
@@ -98,6 +99,7 @@ private:
     bool     m_was_dark_mode;  // for detecting theme switch in on_timer
 
     // Design constants (match Figma spec, in raw px — converted via FromDIP)
+    static constexpr int BORDER_WIDTH       = 1;   // outer border ring (divider_color)
     static constexpr int TITLE_BAR_HEIGHT   = 40;
     static constexpr int TASK_ROW_HEIGHT    = 58;
     static constexpr int DIALOG_WIDTH       = 375;

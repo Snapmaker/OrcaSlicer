@@ -12,7 +12,6 @@ RUN echo deb-src http://archive.ubuntu.com/ubuntu \
 RUN apt-get update && apt-get install  -y \
     autoconf \
     build-essential \
-    cmake \
     curl \
     eglexternalplatform-dev \
     extra-cmake-modules \
@@ -23,11 +22,11 @@ RUN apt-get update && apt-get install  -y \
     libcairo2-dev \
     libcurl4-openssl-dev \
     libdbus-1-dev \
-    libglew-dev \ 
+    libglew-dev \
     libglu1-mesa-dev \
     libglu1-mesa-dev \
     libgstreamer1.0-dev \
-    libgstreamerd-3-dev \ 
+    libgstreamerd-3-dev \
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-good1.0-dev \
     libgtk-3-dev \
@@ -48,6 +47,16 @@ RUN apt-get update && apt-get install  -y \
     sudo \
     wayland-protocols \
     wget
+
+# Pin CMake to 3.30.6 (OrcaSlicer supports 3.13–3.31.x; 4.x breaks curl configure)
+ARG CMAKE_VERSION=3.30.6
+RUN ARCH=$(uname -m) && \
+    wget -q "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" && \
+    tar xzf "cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" && \
+    cp -r "cmake-${CMAKE_VERSION}-linux-${ARCH}/bin/"* /usr/local/bin/ && \
+    cp -r "cmake-${CMAKE_VERSION}-linux-${ARCH}/share/"* /usr/local/share/ && \
+    rm -rf "cmake-${CMAKE_VERSION}-linux-${ARCH}" "cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" && \
+    cmake --version && echo "CMake pinned to ${CMAKE_VERSION}"
 
 # Change your locale here if you want.  See the output
 # of `locale -a` to pick the correct string formatting.

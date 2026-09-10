@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp. and Ian Craggs
+ * Copyright (c) 2009, 2024 IBM Corp. and Ian Craggs
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -114,8 +114,9 @@ typedef struct
 
 /**
  * Data related to one client
+ * The entire structure is initialized to 0 on creation, so all fields default to 0.
  */
-typedef struct
+typedef struct Clients
 {
 	char* clientID;					      /**< the string id of the client */
 	const char* username;					/**< MQTT v3.1 user name */
@@ -132,6 +133,7 @@ typedef struct
 	networkHandles net;             /**< network info for this client */
 	int msgID;                      /**< the MQTT message id */
 	int keepAliveInterval;          /**< the MQTT keep alive interval */
+	int savedKeepAliveInterval;     /**< saved keep alive interval, in case reset by server keep alive */
 	int retryInterval;              /**< the MQTT retry interval for QoS > 0 */
 	int maxInflightMessages;        /**< the max number of inflight outbound messages we allow */
 	willMessages* will;             /**< the MQTT will message, if any */

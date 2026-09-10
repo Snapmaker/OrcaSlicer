@@ -51,6 +51,7 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#F0F0F0", "#3F3F46"}, // rgb(240, 240, 240)  Card borders, dividers
     {"#F3F4F6", "#3A3A3F"}, // rgb(243, 244, 246)  Internal card dividers
     {"#242424", "#E4E4E7"}, // rgb(36, 36, 36)    Primary text (hex input, cancel btn)
+    {"#18181B", "#E4E4E7"}, // rgb(24, 24, 27)    Login confirmation text
     {"#4A4A4A", "#A1A1AA"}, // rgb(74, 74, 74)    Secondary text (segmented btns)
     {"#8F8F8F", "#8A8A95"}, // rgb(143, 143, 143) Label text (Hex:, Preview, percentages)
     {"#EBEBEB", "#45454B"}, // rgb(235, 235, 235)  Slider track background

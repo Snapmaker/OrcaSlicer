@@ -49,6 +49,24 @@ bool EndsWithCaseInsensitive(const std::string& value, const std::string& suffix
     return true;
 }
 
+std::string AsciiLowerCopy(const std::string& value)
+{
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char ch)
+                   {
+                       return static_cast<char>(std::tolower(ch));
+                   });
+    return lowered;
+}
+
+bool ContainsAsciiCaseInsensitive(const std::string& value, const std::string& needle)
+{
+    if (needle.empty())
+        return true;
+    return AsciiLowerCopy(value).find(AsciiLowerCopy(needle)) != std::string::npos;
+}
+
 std::string NormalizeHexColorNoFallback(const std::string& color)
 {
     std::string value = TrimCopy(color);
@@ -113,7 +131,7 @@ int JsonMode(const nlohmann::json& j)
     nlohmann::json::const_iterator it = j.find("mode");
     if (it == j.end() || !it->is_number_integer())
         return 0;
-    return it->get<int>() == 1 ? 1 : 0;
+    return it->get<int>();
 }
 
 bool JsonBool(const nlohmann::json& j, const char* key, bool defaultValue)
@@ -242,14 +260,18 @@ std::string GetFilamentMatchName(const std::string& name)
             matchName = matchName.substr(0, nozzlePos);
     }
 
+    const size_t atPos = matchName.find('@');
+    if (atPos != std::string::npos)
+        matchName = TrimCopy(matchName.substr(0, atPos));
+
     return TrimCopy(matchName);
 }
 
 FilamentColorMode FilamentColorModeFromConfig(int modeValue)
 {
-    if (modeValue == static_cast<int>(FilamentColorMode::Gradient))
-        return FilamentColorMode::Gradient;
-    return FilamentColorMode::Segment;
+    if (modeValue == static_cast<int>(FilamentColorMode::Segment))
+        return FilamentColorMode::Segment;
+    return FilamentColorMode::Gradient;
 }
 
 int FilamentColorModeToConfig(FilamentColorMode mode)
@@ -318,6 +340,122 @@ FilamentColor FilamentColor::FromMultiColors(const std::string& multiColors, Fil
                                              const std::string& fallbackColor)
 {
     return FromColors(SplitFilamentMultiColors(multiColors), mode, fallbackColor);
+}
+
+std::vector<FullSpectrumPaletteEntry> BuildFullSpectrumPalette(const std::vector<FilamentColorInfo>& library_data)
+{
+    std::vector<FullSpectrumPaletteEntry> palette;
+    for (const FilamentColorInfo& info : library_data)
+    {
+        if (!ContainsAsciiCaseInsensitive(info.type, "Full Spectrum"))
+            continue;
+
+        for (const FilamentColorItem& item : info.colors)
+        {
+            // Only single-color SKUs qualify as palette candidates; skip dual-color /
+            // gradient entries so they don't pollute the palette.
+            if (item.colorData.colors.size() != 1)
+                continue;
+
+            FullSpectrumPaletteEntry entry;
+            entry.hex = NormalizeFilamentHexColor(item.colorData.colors.front());
+            if (entry.hex.empty())
+                continue;
+
+            entry.family_name = info.filamentName;
+            entry.color_names = item.colorNames;
+            entry.td_value = item.tdValue;
+            auto englishIt = item.colorNames.find("en");
+            if (englishIt != item.colorNames.end())
+                entry.en_name = englishIt->second;
+            // No arbitrary-locale fallback when "en" is missing (the display-only
+            // fallback in english_color_name is a different context): en_name feeds the
+            // sort key and slot-name matching, so an unordered_map::begin() pick would
+            // make palette order and default slot anchoring depend on the hash layout
+            // and on which non-English translations the config carries. Leave it empty
+            // — same contract as GetColorNameForSort in FilamentColorDialog.
+            palette.emplace_back(std::move(entry));
+        }
+    }
+
+    // Family-grouped dropdown order (phase-2 spec, test matrix #10): entries are
+    // grouped by family (families in alphabetical order), colors within a family by
+    // canonical EN name. Single-family configs (bundled today) get the same plain
+    // alphabetical list as before; multi-family configs (after hot update) show the
+    // PLA/PETG groups. Case-insensitive and locale-independent (EN name is the SKU's
+    // canonical identity). en_name then hex break remaining ties deterministically.
+    std::stable_sort(palette.begin(), palette.end(),
+                     [](const FullSpectrumPaletteEntry& lhs, const FullSpectrumPaletteEntry& rhs)
+                     {
+                         const std::string left = AsciiLowerCopy(lhs.family_name) + " " + AsciiLowerCopy(lhs.en_name) + " " + AsciiLowerCopy(lhs.hex);
+                         const std::string right = AsciiLowerCopy(rhs.family_name) + " " + AsciiLowerCopy(rhs.en_name) + " " + AsciiLowerCopy(rhs.hex);
+                         return left < right;
+                     });
+    return palette;
+}
+
+std::vector<int> DefaultFullSpectrumSelections(const std::vector<FullSpectrumPaletteEntry>& palette, const std::string& default_family)
+{
+    static const char* slot_color_families[kFullSpectrumSlotCount] = {"cyan", "magenta", "yellow", "white"};
+
+    // Family identity is compared in the GetFilamentMatchName space, normalized on BOTH
+    // sides (same convention as FindFilamentByName): callers may pass the raw library
+    // name ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the already
+    // stripped match name, while palette entries always carry raw library names. Without
+    // this the default-family preference silently never fires for the non-raw forms.
+    const std::string default_match = GetFilamentMatchName(default_family);
+    const auto is_default_family = [&default_match](const FullSpectrumPaletteEntry& entry) {
+        return GetFilamentMatchName(entry.family_name) == default_match;
+    };
+
+    std::vector<int> selection(std::min<size_t>(static_cast<size_t>(kFullSpectrumSlotCount), palette.size()), -1);
+    std::vector<bool> used(palette.size(), false);
+
+    // Pass 1: named slots (cyan / magenta / yellow / white). Scanning in palette
+    // (alphabetical) order: the first in-family hit wins immediately; an out-of-family
+    // hit is only remembered while scanning continues for an in-family one.
+    for (size_t slot = 0; slot < selection.size(); ++slot)
+    {
+        int candidate = -1;
+        for (size_t i = 0; i < palette.size(); ++i)
+        {
+            if (used[i] || !ContainsAsciiCaseInsensitive(palette[i].en_name, slot_color_families[slot]))
+                continue;
+            if (is_default_family(palette[i]))
+            {
+                candidate = static_cast<int>(i);
+                break;
+            }
+            if (candidate < 0)
+                candidate = static_cast<int>(i);
+        }
+        if (candidate >= 0)
+        {
+            selection[slot] = candidate;
+            used[candidate] = true;
+        }
+    }
+
+    // Pass 2: fill the remaining slots with unused entries — default family first, then
+    // the rest, both in palette order.
+    std::vector<size_t> fill_order;
+    fill_order.reserve(palette.size());
+    for (size_t i = 0; i < palette.size(); ++i)
+        if (!used[i] && is_default_family(palette[i]))
+            fill_order.push_back(i);
+    for (size_t i = 0; i < palette.size(); ++i)
+        if (!used[i] && !is_default_family(palette[i]))
+            fill_order.push_back(i);
+
+    size_t next = 0;
+    for (size_t slot = 0; slot < selection.size() && next < fill_order.size(); ++slot)
+    {
+        if (selection[slot] >= 0)
+            continue;
+        selection[slot] = static_cast<int>(fill_order[next++]);
+    }
+
+    return selection;
 }
 
 FilamentColorLibrary& FilamentColorLibrary::Instance()
@@ -462,7 +600,10 @@ bool FilamentColorLibrary::LoadIndex()
             FilamentColorItem colorItem;
             colorItem.sku = JsonString(colorJson, "sku");
             colorItem.colorNames = JsonStringMap(colorJson, "color_name");
-            colorItem.colorData.mode = FilamentColorModeFromConfig(JsonMode(colorJson));
+            nlohmann::json::const_iterator tdIt = colorJson.find("TD");
+            if (tdIt != colorJson.end() && tdIt->is_number())
+                colorItem.tdValue = tdIt->get<double>();
+            const int modeValue = JsonMode(colorJson);
 
             bool hasInvalidColor = false;
             for (const std::string& rawColor : JsonStringArray(colorJson, "filament_color"))
@@ -478,6 +619,8 @@ bool FilamentColorLibrary::LoadIndex()
                 continue;
             }
 
+            colorItem.colorData.mode = FilamentColorModeFromConfig(modeValue);
+
             if (colorItem.sku.empty() || colorItem.colorData.colors.empty())
             {
                 BOOST_LOG_TRIVIAL(warning) << "Skip incomplete color item for official filament: "
@@ -485,10 +628,11 @@ bool FilamentColorLibrary::LoadIndex()
                 continue;
             }
 
-            if ((colorItem.colorData.mode == FilamentColorMode::Gradient && colorItem.colorData.colors.size() < 2) ||
-                (colorItem.colorData.mode == FilamentColorMode::Segment && colorItem.colorData.colors.size() > 2))
+            const bool isGradient = colorItem.colorData.IsGradient();
+            if ((isGradient && colorItem.colorData.colors.size() < 2) ||
+                (!isGradient && colorItem.colorData.colors.size() > 2))
             {
-                // Gradient requires at least 2 colors; segment supports at most 2 colors.
+                // Gradients require at least 2 colors; segments support at most 2 colors.
                 BOOST_LOG_TRIVIAL(warning) << "Skip color item with invalid color count: " << colorItem.sku;
                 continue;
             }

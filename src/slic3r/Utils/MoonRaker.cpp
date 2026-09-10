@@ -335,14 +335,20 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to get machine info, error: " << error << ", HTTP status: " << status;
             wcp_loger.add_log("failed to get machine info, error: " + error + ", HTTP status: " + std::to_string(status), false, "", "Moonraker_Mqtt", "error");
             res = false;
-            response = json::parse(body);
-
+            try{
+                response = json::parse(body);
+            } catch (std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis error: " << e.what();
+            }
         })
         .on_complete([&](std::string body, unsigned) {
         
             wcp_loger.add_log("got machine info successfully", false, "", "Moonraker_Mqtt", "info");
-            response = json::parse(body);
-
+            try {
+                response = json::parse(body);
+            } catch (std::exception& e) {
+                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis machine response: " << e.what();
+            }
         })
         .perform_sync();
 
@@ -858,9 +864,9 @@ std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> Moon
 Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) : Moonraker(config) {
     std::string host_info = config->option<ConfigOptionString>("print_host")->value;
     auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    if (change_engine) {        
+    if (change_engine) {
         std::string local_ip = "";
-        {
+        try {
             #ifdef _WIN32
                 SOCKET sock = socket(AF_INET, SOCK_DGRAM, 0);
                 if (sock == INVALID_SOCKET) {
@@ -911,8 +917,16 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
                 close(sock);
             #endif
 
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "Error getting local IP: " << e.what();
+            local_ip = "0.0.0.0"; 
         }
-        m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
+        try {
+            m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
+        } catch (const std::exception& e) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTT client: " << e.what();
+            m_mqtt_client.reset();
+        }
         m_mqtt_client_tls.reset();
         BOOST_LOG_TRIVIAL(error) << "local ip" << local_ip;
         wcp_loger.add_log("local IP: " + local_ip, false, "", "Moonraker_Mqtt", "error");
@@ -1230,7 +1244,14 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     std::string mqtts_url = "mqtts://" + host_ip + ":" + std::to_string(m_port);
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] creating MQTTS client, URL: " << mqtts_url << ", client ID: " << m_client_id;
     wcp_loger.add_log("creating MQTTS client, URL: " + mqtts_url + ", client ID: " + m_client_id, false, "", "Moonraker_Mqtt", "info");
-    m_mqtt_client_tls.reset(new MqttClient(mqtts_url, m_client_id, m_ca, m_cert, m_key));
+    try {
+        m_mqtt_client_tls.reset(new MqttClient(mqtts_url, m_client_id, m_ca, m_cert, m_key));
+    } catch (const std::exception& e) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTTS client: " << e.what();
+        wcp_loger.add_log("failed to create MQTTS client: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");
+        m_mqtt_client_tls.reset();
+        return false;
+    }
 
     if (!m_mqtt_client_tls) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTT client";

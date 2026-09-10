@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "schemaVersion": 1,
+  "flags": {
+    "modelCommunity": {
+      "rules": [
+        {
+          "platform": "all",
+          "region": "us",
+          "enabled": false
+        }
+      ]
+    }
+  }
+}

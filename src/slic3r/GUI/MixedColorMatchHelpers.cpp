@@ -20,6 +20,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp" // GetFilamentMatchName (family preset scan)
 
 namespace Slic3r { namespace GUI {
 wxColour parse_mixed_color(const std::string& value)
@@ -679,7 +680,7 @@ std::string full_spectrum_preset_name()
 
     // Fallback: the canonical 0.4 SKU (shipped today). If even that is missing
     // (profile not loaded), return the literal name so upstream fallback chains
-    // (load_full_spectrum_colors -> canonical CMYW palette) take over.
+    // (load_recommended_palette -> canonical palette) take over.
     return std::string(kFullSpectrumBase) + format_nozzle_label(kFallbackNozzle) + " nozzle";
 }
 
@@ -694,6 +695,50 @@ bool full_spectrum_preset_exists_for_current_nozzle()
     auto*            pb        = wxGetApp().preset_bundle;
     const std::string candidate = std::string(kFullSpectrumBase) + format_nozzle_label(nozzle) + " nozzle";
     return pb != nullptr && pb->filaments.find_preset(candidate) != nullptr;
+}
+
+std::string find_selectable_full_spectrum_family_preset(const std::string& family_name)
+{
+    if (family_name.empty())
+        return std::string();
+    auto* pb = wxGetApp().preset_bundle;
+    if (pb == nullptr)
+        return std::string();
+
+    // Scan by MATCH IDENTITY (GetFilamentMatchName strips the "<diameter> nozzle"
+    // suffix), never by name composition: composing "family + nozzle + nozzle" would
+    // re-encode the naming convention and inherit its case-sensitivity pitfalls
+    // (see #742, the U1 preset filename case mismatch).
+    // Normalize BOTH sides: FullSpectrumPaletteEntry::family_name comes verbatim from
+    // filaments_colours.json ("... @U1"), which GetFilamentMatchName would strip from the
+    // preset side ("... @U1 0.4 nozzle" -> "..."). Without this the raw-vs-normalized
+    // comparison never matches and every family is reported as not configured (the
+    // Confirm-time note in MixedFilamentBatchDialog fired unconditionally).
+    const std::string family_match_name = GetFilamentMatchName(family_name);
+    if (family_match_name.empty())
+        return std::string();
+
+    const double nozzle = current_nozzle_diameter();
+    std::string fallback_sku;   // 0.4 SKU of the family, if present (selectable or not)
+    std::string first_match;    // first visible+compatible match, lowest preference
+    for (const Preset& preset : pb->filaments) {
+        if (GetFilamentMatchName(preset.name) != family_match_name)
+            continue;
+        const bool selectable = preset.is_visible && preset.is_compatible;
+        if (!selectable)
+            continue;
+        const bool current_nozzle = preset.name.find(format_nozzle_label(nozzle) + " nozzle") != std::string::npos;
+        const bool fallback_nozzle = preset.name.find(format_nozzle_label(kFallbackNozzle) + " nozzle") != std::string::npos;
+        if (current_nozzle)
+            return preset.name;              // highest preference: current nozzle SKU
+        if (fallback_nozzle)
+            fallback_sku = preset.name;      // second preference: 0.4 SKU
+        else if (first_match.empty())
+            first_match = preset.name;       // lowest preference: any other SKU
+    }
+    if (!fallback_sku.empty())
+        return fallback_sku;
+    return first_match;
 }
 
 MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vector<std::string>& physical_colors)
@@ -1784,112 +1829,6 @@ void populate_mixed_filaments_from_mappings(
 
         result.mixed_filaments.push_back(std::move(mf));
     }
-}
-
-std::vector<std::string> recommend_best_filament_combo(
-    const std::vector<ModelColorEntry>&  model_colors,
-    const std::vector<std::string>&      all_preset_colors,
-    int                                  min_component_percent,
-    int                                  max_component_percent,
-    std::shared_ptr<std::atomic<bool>>   cancel_token)
-{
-    if (model_colors.empty() || all_preset_colors.size() < 4)
-        return {};
-
-    // Loose bounds only: this function scores colour COMBOS, it does not impose the
-    // final per-component cap (that is the Pass-2 batch_match_model_colors job, which
-    // independently validates min∈[0,50]/max∈[50,100]). So the legal range here is the
-    // full [0,100] for both — narrower limits (e.g. mirroring batch_match_model_colors's
-    // [0,50]/[50,100]) would wrongly reject valid callers like the worker's min=15.
-    // min>max is a genuine logic error: the search window is empty and every combo
-    // silently scores as "no valid recipe". Reject with a log instead of returning {}.
-    if (min_component_percent < 0 || min_component_percent > 100 ||
-        max_component_percent < 0 || max_component_percent > 100 ||
-        min_component_percent > max_component_percent) {
-        BOOST_LOG_TRIVIAL(warning)
-            << "recommend_best_filament_combo: invalid percent range min="
-            << min_component_percent << " max=" << max_component_percent
-            << " (need 0..100 and min<=max); returning empty";
-        return {};
-    }
-
-    // Step 1: Top-15 pre-filter by single-color ΔE
-    const size_t top_n = std::min<size_t>(15, all_preset_colors.size());
-    std::vector<std::pair<double, size_t>> ranked;
-    ranked.reserve(all_preset_colors.size());
-
-    // Average ΔE of each preset color against all model colors → quick filter
-    for (size_t fidx = 0; fidx < all_preset_colors.size(); ++fidx) {
-        wxColour fc;
-        if (!try_parse_color_match_hex(all_preset_colors[fidx], fc)) continue;
-        double sum_de = 0.0;
-        for (const auto& mc : model_colors)
-            sum_de += color_delta_e00(fc, mc.color);
-        ranked.emplace_back(sum_de / std::max(1.0, double(model_colors.size())), fidx);
-    }
-    std::sort(ranked.begin(), ranked.end(),
-        [](const auto& a, const auto& b) { return a.first < b.first; });
-    ranked.resize(top_n);
-
-    // Step 2: Enumerate C(N,4) combos from top-15 candidates
-    struct ComboScore { size_t i0, i1, i2, i3; double score; };
-    std::vector<ComboScore> combos;
-    const size_t n = ranked.size();
-    for (size_t i0 = 0; i0 + 3 < n; ++i0) {
-        for (size_t i1 = i0 + 1; i1 + 2 < n; ++i1) {
-            for (size_t i2 = i1 + 1; i2 + 1 < n; ++i2) {
-                for (size_t i3 = i2 + 1; i3 < n; ++i3) {
-                    if (cancel_token && cancel_token->load()) return {};
-
-                    // Build 4-color palette from original indices
-                    std::vector<std::string> combo_colors = {
-                        all_preset_colors[ranked[i0].second],
-                        all_preset_colors[ranked[i1].second],
-                        all_preset_colors[ranked[i2].second],
-                        all_preset_colors[ranked[i3].second]
-                    };
-
-                    // Score: average batch match ΔE over model colors (single-threaded, small loop).
-                    // check_compatible=false: this function is called only from the RECOMMENDED-mode
-                    // worker, whose palette is a single Full Spectrum PLA preset (same material by
-                    // construction) — no cross-type pair can exist, so the filter is a no-op. It
-                    // also keeps the worker off preset_bundle: build_compatibility_matrix reads
-                    // preset_bundle->filament_presets unsynchronized, which would race the UI thread
-                    // (data-race UB) from this worker call site. The slice gate still enforces real
-                    // incompatibility at slice time.
-                    double sum_de = 0.0;
-                    int matched = 0;
-                    for (const auto& mc : model_colors) {
-                        auto recipe = build_best_color_match_recipe(combo_colors, mc.color, min_component_percent, max_component_percent,
-                                                                     /*check_compatible=*/ false);
-                        if (recipe.valid) {
-                            sum_de += recipe.delta_e;
-                            ++matched;
-                        }
-                    }
-                    if (matched == 0) continue;
-
-                    double avg_de = sum_de / double(matched);
-                    double score = 1.0 / (1.0 + avg_de); // lower ΔE → higher score
-                    combos.push_back({ranked[i0].second, ranked[i1].second,
-                                      ranked[i2].second, ranked[i3].second, score});
-                }
-            }
-        }
-    }
-
-    if (combos.empty()) return {};
-
-    // Step 3: Return best combo
-    std::sort(combos.begin(), combos.end(),
-        [](const auto& a, const auto& b) { return a.score > b.score; });
-
-    return {
-        all_preset_colors[combos[0].i0],
-        all_preset_colors[combos[0].i1],
-        all_preset_colors[combos[0].i2],
-        all_preset_colors[combos[0].i3]
-    };
 }
 
 void apply_batch_match_to_model(const BatchMatchResult& result)

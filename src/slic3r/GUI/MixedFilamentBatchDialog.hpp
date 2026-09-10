@@ -3,6 +3,7 @@
 #include "GUI_Utils.hpp"
 #include "ThumbnailView.hpp" // ThumbnailView enum (lightweight; avoids pulling in GLCanvas3D.hpp)
 #include "MixedColorMatchHelpers.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp" // FullSpectrumPaletteEntry (m_recommended_palette)
 #include "libslic3r/MixedFilament.hpp"
 
 #include <wx/wx.h>
@@ -40,7 +41,7 @@ private:
     void build_banners();                            // error + warning panels
     void build_mode_row();                           // Match Mode combo + segmented Start/Re-match tabs
     void build_manual_card(wxBoxSizer& parent);      // filament config (manual mode): ComboBox rows + add/remove
-    void build_recommended_card(wxBoxSizer& parent); // filament config (auto mode): numbered swatches + names
+    void build_recommended_card(wxBoxSizer& parent); // filament config (auto mode): selectable palette ComboBox rows
     void build_preview_card(wxBoxSizer& parent);     // single card: dual previews + badges + plate/view controls
     void build_mapping_card(wxBoxSizer& parent);     // color mapping card shell (title + info icon + grid host)
     // No build_progress(): the progress bar lives inside the footer panel (see build_footer).
@@ -49,12 +50,20 @@ private:
     void on_method_changed(wxCommandEvent&);
     void update_method_combo_tooltip(); // refresh combo tooltip to describe the active mode
     void on_manual_selection_changed();
+    // Recommended-mode counterpart of on_manual_selection_changed: clears the previous
+    // match result (Start/Re-match re-enables via set_match_buttons_state). No
+    // selection-validity gating — duplicates and unselected slots are allowed; the
+    // worker falls back to the canonical palette when fewer than four colors exist.
+    void on_recommended_selection_changed();
     void update_add_remove_buttons(); // mirrors MixedFilamentDialog: hide add at max, remove at min
     // Compose drop_down arrow + numbered color badge into one transparent icon and set it as
     // the combo's left icon. Mirrors MixedFilamentDialog::set_combo_combined_icon: ComboBox
     // shows only the selected item's image when present (no native arrow), so we bake both
     // the arrow and the badge into a single SetIcon() image to keep the arrow visible.
     void set_manual_combo_icon(int row, int filament_idx);
+    // Same arrow+badge composition as set_manual_combo_icon, but the badge shows the SLOT
+    // number (1-4) over the palette color currently selected in that slot's dropdown.
+    void set_recommended_combo_icon(int row);
 
     // Preview lifecycle
     void build_preview_panels();                         // create wxStaticBitmaps once + render initial thumbnails
@@ -87,7 +96,6 @@ private:
     void check_manual_recipe_ratio();
 
     void set_match_buttons_state(bool matching);
-    void update_recommended_card();
     // Predict whether applying m_result would exceed MAXIMUM_FILAMENT_NUMBER (64)
     // at the add_batch_custom_filaments gate (the authoritative cap). The estimate
     // is an UPPER BOUND: post_apply_total = n + enabled_mixed + new_mixed_rows.
@@ -143,6 +151,8 @@ private:
     MatchingMethod m_last_result_method      = RECOMMENDED;
     int            m_last_result_selections[4] = {0, 1, 2, 3};
     int            m_last_result_manual_count  = 0;
+    // Recommended-mode arm of the same snapshot: the palette indices that produced m_result.
+    int            m_last_result_recommended_selections[kFullSpectrumSlotCount] = {-1, -1, -1, -1};
     bool                               m_match_completed = false;
     bool                               m_match_running   = false; // UI-thread-only; do not access from worker
     std::shared_ptr<std::atomic<bool>> m_destroyed{std::make_shared<std::atomic<bool>>(false)};
@@ -247,11 +257,17 @@ private:
     ComboBox*       m_tray_combo    = nullptr;
 
     // Filament config cards (manual + recommended; only one visible per mode, both styled alike)
-    wxWindow*       m_manual_card             = nullptr;
-    wxWindow*       m_recommended_card        = nullptr;
-    wxStaticBitmap* m_recommended_swatches[4] = {nullptr};
-    wxStaticText*   m_recommended_labels[4]   = {nullptr};
-    ComboBox*       m_filament_combo[4]       = {nullptr};
+    wxWindow* m_manual_card             = nullptr;
+    wxWindow* m_recommended_card        = nullptr;
+    ComboBox* m_filament_combo[4]       = {nullptr}; // manual mode: physical filament selector
+    // Recommended mode (phase 2): config-driven palette. m_recommended_palette is the
+    // Full Spectrum palette built in the ctor (BuildFullSpectrumPalette — every family,
+    // single-color SKUs, alphabetical); combo row j shows palette entry j, so combo row
+    // == palette index and no row→index map is needed. m_recommended_selections[i] is
+    // the palette index selected in slot i (-1 = none, e.g. degenerate short palette).
+    ComboBox* m_recommended_combo[kFullSpectrumSlotCount]          = {nullptr};
+    std::vector<FullSpectrumPaletteEntry>     m_recommended_palette;
+    int m_recommended_selections[kFullSpectrumSlotCount]           = {-1, -1, -1, -1};
     wxWindow*       m_manual_row_panels[4]    = {nullptr};
     int             m_manual_filament_count   = 0; // computed in ctor based on physical filaments
     // Add/remove buttons (mirrors MixedFilamentDialog: hidden at min/max count)

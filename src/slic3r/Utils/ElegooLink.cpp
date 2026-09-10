@@ -505,7 +505,11 @@ namespace Slic3r {
         std::string                    uuid_string = to_string(uuid);
 
         std::string md5;
-        bbl_calc_md5(source_path, md5);
+        if (!bbl_calc_md5(source_path, md5)) {
+            BOOST_LOG_TRIVIAL(error) << name << ": Failed to calculate upload file MD5: " << source_path;
+            error_fn(_L("Failed to calculate the upload file checksum."));
+            return false;
+        }
 
         auto        http   = Http::post(url);
 #ifdef WIN32

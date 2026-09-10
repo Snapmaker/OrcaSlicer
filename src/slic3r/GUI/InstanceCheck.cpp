@@ -16,7 +16,8 @@
 #include <iostream>
 #include <unordered_map>
 #include <fcntl.h>
-#include <errno.h>
+#include <cerrno>
+#include <cstring>
 #include <optional>
 #include <cstdint>
 
@@ -171,13 +172,21 @@ namespace instance_check_internal
         }
 
 		if ((fdlock = open(dest_dir.c_str(), O_WRONLY | O_CREAT, 0666)) == -1) {
-			BOOST_LOG_TRIVIAL(debug) << "Not creating lockfile.";
-			return true;
+			// Do not treat open failure as "another instance" (would exit with -1 from GUI_Init).
+			BOOST_LOG_TRIVIAL(warning) << "get_lock(): cannot open lock file " << dest_dir << ": " << std::strerror(errno);
+			return false;
 		}
 
 		if (fcntl(fdlock, F_SETLK, &fl) == -1) {
-			BOOST_LOG_TRIVIAL(debug) << "Not creating lockfile.";
-			return true;
+			const int err = errno;
+			::close(fdlock);
+			// Only EAGAIN / EACCES indicate an existing holder; other errors should not abort startup.
+			if (err == EAGAIN || err == EWOULDBLOCK || err == EACCES) {
+				BOOST_LOG_TRIVIAL(debug) << "get_lock(): lock already held (errno=" << err << ").";
+				return true;
+			}
+			BOOST_LOG_TRIVIAL(warning) << "get_lock(): unexpected fcntl failure on " << dest_dir << ": " << std::strerror(err);
+			return false;
 		}
 
 		BOOST_LOG_TRIVIAL(debug) << "Creating lockfile.";

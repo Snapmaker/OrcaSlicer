@@ -3042,31 +3042,31 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
     //Slic3r::DynamicPrintConfig config = wxGetApp().preset_bundle->full_config();
     printSpeedMap.maxSpeed = 0;
     if (config.has("inner_wall_speed")) {
-        printSpeedMap.perimeterSpeed = config.opt_float("inner_wall_speed");
+        printSpeedMap.perimeterSpeed = config.opt_float("inner_wall_speed", 0);
         if (printSpeedMap.perimeterSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.perimeterSpeed;
     }
     if (config.has("outer_wall_speed")) {
-        printSpeedMap.externalPerimeterSpeed = config.opt_float("outer_wall_speed");
+        printSpeedMap.externalPerimeterSpeed = config.opt_float("outer_wall_speed", 0);
         printSpeedMap.maxSpeed = std::max(printSpeedMap.maxSpeed, printSpeedMap.externalPerimeterSpeed);
     }
     if (config.has("sparse_infill_speed")) {
-        printSpeedMap.infillSpeed = config.opt_float("sparse_infill_speed");
+        printSpeedMap.infillSpeed = config.opt_float("sparse_infill_speed", 0);
         if (printSpeedMap.infillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.infillSpeed;
     }
     if (config.has("internal_solid_infill_speed")) {
-        printSpeedMap.solidInfillSpeed = config.opt_float("internal_solid_infill_speed");
+        printSpeedMap.solidInfillSpeed = config.opt_float("internal_solid_infill_speed", 0);
         if (printSpeedMap.solidInfillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.solidInfillSpeed;
     }
     if (config.has("top_surface_speed")) {
-        printSpeedMap.topSolidInfillSpeed = config.opt_float("top_surface_speed");
+        printSpeedMap.topSolidInfillSpeed = config.opt_float("top_surface_speed", 0);
         if (printSpeedMap.topSolidInfillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.topSolidInfillSpeed;
     }
     if (config.has("support_speed")) {
-        printSpeedMap.supportSpeed = config.opt_float("support_speed");
+        printSpeedMap.supportSpeed = config.opt_float("support_speed", 0);
 
         if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
@@ -3105,8 +3105,8 @@ void Model::setExtruderParams(const DynamicPrintConfig& config, int extruders_co
         if (config.has("filament_type")) {
             matName = config.opt_string("filament_type", i);
         }
-        if (config.has("nozzle_temperature")) {
-            endTemp = config.opt_int("nozzle_temperature", i);
+        if (const auto *temperature = config.option<ConfigOptionInts>("nozzle_temperature")) {
+            endTemp = get_value_at(config, *temperature, ConfigFlowDomain::Filament, i);
         }
 
         // FIXME: curr_bed_type is now a plate config rather than a global config.
@@ -3294,19 +3294,19 @@ double Model::findMaxSpeed(const ModelObject* object) {
     double smallPerimeterSpeedObj = Model::printSpeedMap.smallPerimeterSpeed;
     for (std::string objectKey : objectKeys) {
         if (objectKey == "inner_wall_speed"){
-            perimeterSpeedObj = object->config.opt_float(objectKey);
+            perimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
             externalPerimeterSpeedObj = Model::printSpeedMap.externalPerimeterSpeed / Model::printSpeedMap.perimeterSpeed * perimeterSpeedObj;
         }
         if (objectKey == "sparse_infill_speed")
-            infillSpeedObj = object->config.opt_float(objectKey);
+            infillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "internal_solid_infill_speed")
-            solidInfillSpeedObj = object->config.opt_float(objectKey);
+            solidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "top_surface_speed")
-            topSolidInfillSpeedObj = object->config.opt_float(objectKey);
+            topSolidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "support_speed")
             supportSpeedObj = object->config.opt_float(objectKey);
         if (objectKey == "outer_wall_speed")
-            externalPerimeterSpeedObj = object->config.opt_float(objectKey);
+            externalPerimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "small_perimeter_speed")
             smallPerimeterSpeedObj = object->config.opt_float(objectKey);
     }

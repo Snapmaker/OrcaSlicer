@@ -57,10 +57,10 @@ typedef struct SHA_CTX_S {
  *
  * @param[in,out]  ctx                 hashing context structure
  *
- * @see SHA1_Update_mqtt
+ * @see SHA1_Update
  * @see SHA1_Final
  */
-int SHA1_Init_mqtt(SHA_CTX *ctx);
+int SHA1_Init(SHA_CTX *ctx);
 
 /**
  * Updates a block to the SHA1 hash
@@ -69,10 +69,10 @@ int SHA1_Init_mqtt(SHA_CTX *ctx);
  * @param[in]      data                block of data to hash
  * @param[in]      len                 length of block to hash
  *
- * @see SHA1_Init_mqtt
+ * @see SHA1_Init
  * @see SHA1_Final
  */
-int SHA1_Update_mqtt(SHA_CTX *ctx, const void *data, size_t len);
+int SHA1_Update(SHA_CTX *ctx, const void *data, size_t len);
 
 /**
  * Produce final SHA1 hash
@@ -81,10 +81,10 @@ int SHA1_Update_mqtt(SHA_CTX *ctx, const void *data, size_t len);
  *                                     @p SHA1_DIGEST_LENGTH in length)
  * @param[in,out]  ctx                 hashing context structure
  *
- * @see SHA1_Init_mqtt
+ * @see SHA1_Init
  * @see SHA1_Final
  */
-int SHA1_Final_mqtt(unsigned char *md, SHA_CTX *ctx);
+int SHA1_Final(unsigned char *md, SHA_CTX *ctx);
 
 #endif /* if defined(OPENSSL) */
 #endif /* SHA1_H */

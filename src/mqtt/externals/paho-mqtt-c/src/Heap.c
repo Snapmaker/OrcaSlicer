@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp.
+ * Copyright (c) 2009, 2024 IBM Corp.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -180,7 +180,7 @@ void* mymalloc(char* file, int line, size_t size)
 		free(s);
 		goto exit;
 	}
-	memset(s->file, 0, sizeof(filenamelen));
+	memset(s->file, 0, filenamelen);
 
 	space += filenamelen;
 	strcpy(s->file, file);
@@ -193,7 +193,7 @@ void* mymalloc(char* file, int line, size_t size)
 		free(s);
 		goto exit;
 	}
-	memset(s->stack, 0, sizeof(filenamelen));
+	memset(s->stack, 0, STACK_LEN);
 	StackTrace_get(Paho_thread_getid(), s->stack, STACK_LEN);
 #endif
 	s->line = line;
@@ -338,17 +338,25 @@ void *myrealloc(char* file, int line, void* p, size_t size)
 		state.current_size += size - s->size;
 		if (state.current_size > state.max_size)
 			state.max_size = state.current_size;
-		if ((s->ptr = realloc(s->ptr, size + 2*sizeof(eyecatcherType))) == NULL)
+		void* newPtr = realloc(s->ptr, size + 2*sizeof(eyecatcherType));
+		if (newPtr == NULL)
 		{
 			Log(LOG_ERROR, 13, errmsg);
 			goto exit;
 		}
+		s->ptr = newPtr;
 		space += size + 2*sizeof(eyecatcherType) - s->size;
 		*(eyecatcherType*)(s->ptr) = eyecatcher; /* start eyecatcher */
 		*(eyecatcherType*)(((char*)(s->ptr)) + (sizeof(eyecatcherType) + size)) = eyecatcher; /* end eyecatcher */
 		s->size = size;
 		space -= strlen(s->file);
-		s->file = realloc(s->file, filenamelen);
+		newPtr = realloc(s->file, filenamelen);
+		if (newPtr == NULL)
+		{
+			Log(LOG_ERROR, 13, errmsg);
+			goto exit;
+		}
+		s->file = newPtr;
 		space += filenamelen;
 		strcpy(s->file, file);
 		s->line = line;

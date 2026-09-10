@@ -1,0 +1,20 @@
+@echo off
+call "%~dp0build_windows_clean.bat" ^
+    "%SystemRoot%" ^
+    "%SystemDrive%" ^
+    "%ComSpec%" ^
+    "%TEMP%" ^
+    "%TMP%" ^
+    "%NUMBER_OF_PROCESSORS%" ^
+    "%PROCESSOR_ARCHITECTURE%" ^
+    "%PROCESSOR_IDENTIFIER%" ^
+    "%PROCESSOR_LEVEL%" ^
+    "%PROCESSOR_REVISION%" ^
+    "%ProgramData%" ^
+    "%ProgramFiles%" ^
+    "%ProgramFiles(x86)%" ^
+    "%ProgramW6432%" ^
+    "%USERPROFILE%" ^
+    "%PATHEXT%" ^
+    "%*"
+exit /b %ERRORLEVEL%

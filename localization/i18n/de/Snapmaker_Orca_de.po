@@ -21706,3 +21706,42 @@ msgstr ""
 #~ "Zusammenführung der Äste und spart viel Material (Standard), während der "
 #~ "Hybridmodus bei großen überhängenden Flächen eine ähnliche Struktur wie "
 #~ "bei normalen Stützstrukturen erzeugt."
+
+msgid "Adhesiveness Category"
+msgstr "Haftfähigkeitskategorie"
+
+msgid "Filament category"
+msgstr "Filamentkategorie"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Vorextrusionsabstand der Schnittstellenschicht"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Vorextrusionsabstand für die Schnittstellenschicht des Reinigungsturms (wo verschiedene Materialien aufeinandertreffen)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Vorextrusionslänge der Schnittstellenschicht"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Vorextrusionslänge für die Schnittstellenschicht des Reinigungsturms (wo verschiedene Materialien aufeinandertreffen)."
+
+msgid "Interface layer print temperature"
+msgstr "Drucktemperatur der Schnittstellenschicht"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Drucktemperatur für die Schnittstellenschicht des Reinigungsturms (wo verschiedene Materialien aufeinandertreffen). Wenn auf -1 eingestellt, wird die maximal empfohlene Düsentemperatur verwendet."
+
+msgid "Max speed"
+msgstr "Max. Geschwindigkeit"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Die maximale Druckgeschwindigkeit auf dem Reinigungsturm ohne Rammen."
+
+msgid "Internal ribs"
+msgstr "Innere Verrippung"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Verstärkung durch Innenrippen zur Erhöhung der Stabilität des Reinigungsturms."
+
+msgid "Enable tower interface features"
+msgstr "Reinigungsturm-Schnittstelle aktivieren"

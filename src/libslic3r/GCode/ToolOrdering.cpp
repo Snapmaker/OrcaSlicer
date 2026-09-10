@@ -482,25 +482,6 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
 
-    /*if (prime_multi_material) {
-        std::map<unsigned int, int> extrudeCount;
-        for (const LayerTools& lt : m_layer_tools) {
-            for (unsigned int currentExtruder : lt.extruders) {
-                extrudeCount[currentExtruder]++;
-            }
-        }
-
-        unsigned int maxExtrude = -1;
-        int maxCount = 0;
-        for (auto& itPair : extrudeCount) {
-            if (itPair.second > maxCount && !m_print_config_ptr->filament_soluble.get_at(itPair.first)) {
-                maxCount = itPair.second;
-                maxExtrude = itPair.first;
-            }
-        }
-        const_cast<PrintConfig*>(m_print_config_ptr)->wipe_tower_filament.setInt(maxExtrude + 1);
-    }*/
-
     if (this->insert_wipe_tower_extruder()) {
         // Now convert the 0-based list to 1-based again, because that is what reorder_extruder expects.
         for (LayerTools& lt : m_layer_tools) {
@@ -1157,14 +1138,14 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
     }
 
     auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
-                                    std::optional<unsigned int>      initial_extruder_id) -> uint32_t {
-        uint32_t hash_key = 0;
-        // high 16 bit define initial extruder ,low 16 bit define extruder set
-        if (initial_extruder_id)
-            hash_key |= (1 << (16 + *initial_extruder_id));
-        for (auto item : extruders)
-            hash_key |= (1 << item);
-        return hash_key;
+        std::optional<unsigned int> initial_extruder_id) -> uint128_t {
+            uint128_t hash_key = 0;
+            // high 16 bit define initial extruder ,others define extruder set
+            if (initial_extruder_id)
+                hash_key |= (uint128_t(1) << (16 + *initial_extruder_id));
+            for (auto item : extruders)
+                hash_key |= (uint128_t(1) << item);
+            return hash_key;
     };
 
     std::vector<LayerPrintSequence> other_layers_seqs;

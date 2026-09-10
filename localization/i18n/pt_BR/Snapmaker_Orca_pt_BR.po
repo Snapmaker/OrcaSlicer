@@ -19827,3 +19827,42 @@ msgstr ""
 
 #~ msgid "Printer local connection failed, please try again."
 #~ msgstr "Falha na conexão local da impressora, por favor tente novamente."
+
+msgid "Adhesiveness Category"
+msgstr "Categoria de Adesividade"
+
+msgid "Filament category"
+msgstr "Categoria de filamento"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Distância de pré-extrusão da camada de interface"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Distância de pré-extrusão para a camada de interface da torre principal (onde diferentes materiais se encontram)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Comprimento de pré-extrusão da camada de interface"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Comprimento de pré-extrusão para a camada de interface da torre principal (onde diferentes materiais se encontram)."
+
+msgid "Interface layer print temperature"
+msgstr "temperatura de impressão da camada de interface"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Temperatura de impressão para a camada de interface da torre primária (onde diferentes materiais se encontram). Se definida como -1, utiliza a temperatura máxima recomendada do bico."
+
+msgid "Max speed"
+msgstr "Velocidade máxima"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "A velocidade máxima de impressão na torre principal, excluindo a compactação."
+
+msgid "Internal ribs"
+msgstr "Costelas internas"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Habilite nervuras internas para aumentar a estabilidade da torre principal."
+
+msgid "Enable tower interface features"
+msgstr "Ativar recursos da interface da torre"

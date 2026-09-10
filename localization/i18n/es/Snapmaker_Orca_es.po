@@ -22303,3 +22303,42 @@ msgstr ""
 
 #~ msgid "preparing, export 3mf failed!"
 #~ msgstr "Preparando; ¡Error al exportar 3MF!"
+
+msgid "Adhesiveness Category"
+msgstr "Categoría de adhesividad"
+
+msgid "Filament category"
+msgstr "Categoría de filamento"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Distancia de preextrusión de la capa de interfaz"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Distancia de preextrusión para la capa de interfaz de la torre principal (donde se encuentran los diferentes materiales)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Longitud de preextrusión de la capa de interfaz"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Longitud de preextrusión para la capa de interfaz de la torre principal (donde se encuentran los diferentes materiales)."
+
+msgid "Interface layer print temperature"
+msgstr "Temperatura de impresión de la capa de interfaz"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Temperatura de impresión para la capa de interfaz de la torre principal (donde se unen los diferentes materiales). Si se establece en -1, utilice la temperatura máxima recomendada de la boquilla."
+
+msgid "Max speed"
+msgstr "Velocidad máxima"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "La velocidad máxima de impresión en la torre principal, excluyendo las embestidas."
+
+msgid "Internal ribs"
+msgstr "Costillas internas"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Habilite las nervaduras internas para aumentar la estabilidad de la torre principal."
+
+msgid "Enable tower interface features"
+msgstr "Habilitar las funciones de la interfaz de la torre"

@@ -21002,3 +21002,42 @@ msgstr ""
 #~ "inferiore a quella del primo layer di oltre questa soglia. Una "
 #~ "temperatura del piano troppo bassa degli altri layer può causare il "
 #~ "distacco dell'oggetto dal piatto."
+
+msgid "Adhesiveness Category"
+msgstr "Classe di adesione"
+
+msgid "Filament category"
+msgstr "Categoria filamento"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Distanza di pre-estrusione del layer di interfaccia"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Distanza di pre-estrusione per il layer di interfaccia della torre di spurgo (dove si incontrano materiali diversi)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Lunghezza di pre-estrusione del layer di interfaccia"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Lunghezza di pre-estrusione per il layer di interfaccia della torre di spurgo (dove si incontrano materiali diversi)."
+
+msgid "Interface layer print temperature"
+msgstr "Temperatura di stampa del layer di interfaccia"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Temperatura di stampa per il layer di interfaccia della torre di spurgo (dove si incontrano materiali diversi). Se impostato su -1, utilizza la temperatura massima consigliata dell'ugello."
+
+msgid "Max speed"
+msgstr "Velocità massima"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "La velocità massima di stampa sulla prime tower, escluso il ramming."
+
+msgid "Internal ribs"
+msgstr "Nervature interne"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Abilita le nervature interne per aumentare la stabilità della prime tower."
+
+msgid "Enable tower interface features"
+msgstr "Abilita le funzionalità dell'interfaccia della tower"

@@ -1326,6 +1326,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,              filament_multitool_ramming_flow))
     ((ConfigOptionFloats,              filament_stamping_loading_speed))
     ((ConfigOptionFloats,              filament_stamping_distance))
+    ((ConfigOptionFloats, filament_tower_interface_pre_extrusion_dist))
+    ((ConfigOptionFloats, filament_tower_interface_pre_extrusion_length))
+    ((ConfigOptionInts, filament_tower_interface_print_temp))
     ((ConfigOptionBool,                purge_in_prime_tower))
     ((ConfigOptionBool,                enable_filament_ramming))
     ((ConfigOptionFloat,                ramming_line_width_ratio))
@@ -1472,6 +1475,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               nozzle_temperature_range_high))
     ((ConfigOptionFloats,             wipe_distance))
     ((ConfigOptionBool,               enable_prime_tower))
+    ((ConfigOptionBool,               enable_tower_interface_features))
+    ((ConfigOptionBool,               enable_tower_interface_cooldown_during_tower))
     // BBS: change wipe_tower_x and wipe_tower_y data type to floats to add partplate logic
     ((ConfigOptionFloats,             wipe_tower_x))
     ((ConfigOptionFloats,             wipe_tower_y))
@@ -1496,10 +1501,12 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              wipe_tower_rib_width))
     ((ConfigOptionBool,               wipe_tower_fillet_wall))
     ((ConfigOptionBool,               wipe_tower_wall_gap))
+    ((ConfigOptionBool,               prime_tower_enable_framework))
     ((ConfigOptionInt,                wipe_tower_filament))
     ((ConfigOptionFloats,             wiping_volumes_extruders))
     ((ConfigOptionInts,       idle_temperature))
     ((ConfigOptionFloats, filament_tower_ironing_area))
+    ((ConfigOptionInts, filament_adhesiveness_category))
 
     // BBS: wipe tower is only used for priming
     ((ConfigOptionFloat,              prime_volume))

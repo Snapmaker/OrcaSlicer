@@ -18268,3 +18268,42 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Modell orientációja"
+
+msgid "Adhesiveness Category"
+msgstr "Tapadás kategória"
+
+msgid "Filament category"
+msgstr "Filamentkategória"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Érintkező réteg előextrudálási távolság"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Előextrudálási távolság a törlőtorony érintkező rétegéhez (ahol különböző anyagok találkoznak)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Érintkező réteg előextrudálási hossz"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Előextrudálási hossz a törlőtorony érintkező rétegéhez (ahol különböző anyagok találkoznak)."
+
+msgid "Interface layer print temperature"
+msgstr "Érintkező réteg nyomtatási hőmérséklete"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Nyomtatási hőmérséklet a törlőtorony érintkező rétegéhez (ahol különböző anyagok találkoznak). Ha -1-re van állítva, a legmagasabb ajánlott fúvókahőmérsékletet használja."
+
+msgid "Max speed"
+msgstr "Max. sebesség"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "A maximális nyomtatási sebesség a törlőtoronynál, kivéve betoláskor."
+
+msgid "Internal ribs"
+msgstr "Belső bordák"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Lehetővé teszi a belső bordák használatát a törlőtorony stabilitásának növelése érdekében."
+
+msgid "Enable tower interface features"
+msgstr "Torony érintkezőfelület funkciók engedélyezése"

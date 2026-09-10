@@ -2594,15 +2594,22 @@ std::vector<int> ModelVolume::get_extruders() const
 
             mmuseg_extruders.push_back(idx);
         }
+
+        if (its_per_type.size() > 0 && its_per_type[0].indices.size() == 0) {
+            m_mmuseg_extruders_has_0_extruder = false;
+        }
+        else {
+            m_mmuseg_extruders_has_0_extruder = true;
+        }
     }
 
     std::vector<int> volume_extruders = mmuseg_extruders;
-
     int volume_extruder_id = this->extruder_id();
-    if (volume_extruder_id > 0)
-        volume_extruders.push_back(volume_extruder_id);
-    else if (volume_extruder_id == 0)
-        volume_extruders.push_back(volume_extruder_id + 1);
+    if (m_mmuseg_extruders_has_0_extruder) {
+        // extruder_id == 0 means "default", which is equivalent to extruder 1 for statistics.
+        int effective_id = (volume_extruder_id > 0) ? volume_extruder_id : 1;
+        volume_extruders.push_back(effective_id);
+    }
 
     return volume_extruders;
 }

@@ -15,6 +15,7 @@
 #include "GCode.hpp"
 #include "GCode/WipeTower.hpp"
 #include "GCode/WipeTower2.hpp"
+#include "GCode/WipeTowerHelper.hpp"
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
 #include "FilamentHotBedNozzleRules.hpp"
@@ -780,8 +781,12 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "initial_layer_speed"
             || opt_key == "initial_layer_travel_speed"
             || opt_key == "slow_down_layers"
-            || opt_key == "idle_temperature" 
+            || opt_key == "idle_temperature"
+            || opt_key == "enable_tower_interface_features"
             || opt_key == "filament_tower_ironing_area"
+            || opt_key == "filament_tower_interface_pre_extrusion_dist"
+            || opt_key == "filament_tower_interface_pre_extrusion_length"
+            || opt_key == "filament_tower_interface_print_temp"
             || opt_key == "wipe_tower_cone_angle"
             || opt_key == "wipe_tower_extra_spacing"
             || opt_key == "wipe_tower_max_purge_speed"
@@ -790,6 +795,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_rib_width"
             || opt_key == "wipe_tower_fillet_wall"
             || opt_key == "wipe_tower_wall_gap"
+            || opt_key == "prime_tower_enable_framework"
             || opt_key == "wipe_tower_filament"
             || opt_key == "wiping_volumes_extruders"
             || opt_key == "dithering_local_z_infill"
@@ -797,6 +803,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "purge_in_prime_tower"
             || opt_key == "z_offset"
             || opt_key == "support_multi_bed_types"
+            || opt_key == "filament_adhesiveness_category"
             ) {
             steps.emplace_back(psWipeTower);
             steps.emplace_back(psSkirtBrim);
@@ -879,8 +886,11 @@ bool Print::is_step_done(PrintObjectStep step) const
 std::vector<unsigned int> Print::object_extruders() const
 {
     std::vector<unsigned int> extruders;
+    if (m_objects.empty()) {
+        return extruders;
+    }
     extruders.reserve(m_print_regions.size() * m_objects.size() * 3);
-
+    
     //Orca: Collect extruders from all regions.
     for (const PrintObject *object : m_objects)
 		for (const PrintRegion &region : object->all_regions())
@@ -2973,9 +2983,9 @@ Points Print::first_layer_wipe_tower_corners(bool check_wipe_tower_existance) co
     if (check_wipe_tower_existance && (!has_wipe_tower() || m_wipe_tower_data.tool_changes.empty()))
         return corners;
     {
-        double width = m_config.prime_tower_width + 2*m_wipe_tower_data.brim_width;
-        double depth = m_wipe_tower_data.depth + 2*m_wipe_tower_data.brim_width;
-        Vec2d pt0(-m_wipe_tower_data.brim_width, -m_wipe_tower_data.brim_width);
+        double width = m_wipe_tower_data.bbx.max.x() - m_wipe_tower_data.bbx.min.x();
+        double depth = m_wipe_tower_data.bbx.max.y() - m_wipe_tower_data.bbx.min.y();
+        Vec2d  pt0 = m_wipe_tower_data.bbx.min + m_wipe_tower_data.rib_offset.cast<double>();
         
         // First the corners.
         std::vector<Vec2d> pts = { pt0,
@@ -3351,22 +3361,6 @@ void Print::_make_wipe_tower()
                 if (layers_with_same_print_z != nullptr) {
                     const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
                         collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z, int(current_extruder_id));
-                    if (!local_z_toolchanges.empty()) {
-                        std::ostringstream local_z_sequence;
-                        for (size_t toolchange_idx = 0; toolchange_idx < local_z_toolchanges.size(); ++toolchange_idx) {
-                            if (toolchange_idx != 0)
-                                local_z_sequence << ",";
-                            local_z_sequence << local_z_toolchanges[toolchange_idx].old_tool << "->"
-                                             << local_z_toolchanges[toolchange_idx].new_tool;
-                        }
-
-                        BOOST_LOG_TRIVIAL(debug) << "Local-Z wipe tower preplan"
-                                                 << " print_z=" << layer_tools.print_z
-                                                 << " start_tool=" << current_extruder_id
-                                                 << " nominal_toolchanges=" << layer_tools.extruders.size()
-                                                 << " local_z_toolchanges=" << local_z_toolchanges.size()
-                                                 << " sequence=" << local_z_sequence.str();
-                    }
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
                                                            toolchange.old_tool, toolchange.new_tool, (float) m_config.prime_volume);
@@ -3411,10 +3405,16 @@ void Print::_make_wipe_tower()
             }
         }
 
+        std::vector<int> categories;
+        for (size_t i = 0; i < m_config.filament_adhesiveness_category.values.size(); ++i) {
+            categories.push_back(m_config.filament_adhesiveness_category.get_at(i));
+        }
+        wipe_tower.set_filament_categories(categories);
+
         // Generate the wipe tower layers.
         m_wipe_tower_data.tool_changes.reserve(m_wipe_tower_data.tool_ordering.layer_tools().size());
         m_wipe_tower_data.local_z_tool_changes.reserve(m_wipe_tower_data.tool_ordering.layer_tools().size());
-        wipe_tower.generate(m_wipe_tower_data.tool_changes, m_wipe_tower_data.local_z_tool_changes);
+        wipe_tower.generate_new(m_wipe_tower_data.tool_changes, m_wipe_tower_data.local_z_tool_changes);
         BOOST_LOG_TRIVIAL(debug) << "Wipe tower generation completed"
                                  << " nominal_layers=" << m_wipe_tower_data.tool_changes.size()
                                  << " local_z_layers=" << m_wipe_tower_data.local_z_tool_changes.size();
@@ -3423,6 +3423,8 @@ void Print::_make_wipe_tower()
         m_wipe_tower_data.local_z_reserve_boxes = wipe_tower.get_local_z_reserve_boxes();
         m_wipe_tower_data.brim_width        = wipe_tower.get_brim_width();
         m_wipe_tower_data.height            = wipe_tower.get_wipe_tower_height();
+        m_wipe_tower_data.bbx               = wipe_tower.get_bbx();
+        m_wipe_tower_data.rib_offset = wipe_tower.get_rib_offset();
 
         // Unload the current filament over the purge tower.
         coordf_t layer_height = m_objects.front()->config().layer_height.value;
@@ -3445,6 +3447,9 @@ void Print::_make_wipe_tower()
 
         m_wipe_tower_data.used_filament         = wipe_tower.get_used_filament();
         m_wipe_tower_data.number_of_toolchanges = wipe_tower.get_number_of_toolchanges();
+        m_wipe_tower_data.construct_mesh(wipe_tower.width(), wipe_tower.get_depth(), wipe_tower.get_wipe_tower_height(), 
+            wipe_tower.get_brim_width(), wipe_tower.get_is_rib_wall(),
+            wipe_tower.get_rib_width(), wipe_tower.get_rib_length(), config().wipe_tower_fillet_wall.value);
         const Vec3d origin                      = Vec3d::Zero();
         m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position(), wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
                                                   config().initial_layer_print_height, m_wipe_tower_data.depth,
@@ -4918,7 +4923,83 @@ int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(co
     return this->parent_print_object_region(layer_range)->print_object_region_id();
 }
 
-ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const 
+std::vector<ExtrusionPaths> FakeWipeTower::getFakeExtrusionPathsFromWipeTower2() const
+{
+    float h = height;
+    float lh = layer_height;
+    int   d = scale_(depth);
+    int   w = scale_(width);
+    int   bd = scale_(brim_width);
+    Point minCorner = { -bd, -bd };
+    Point maxCorner = { minCorner.x() + w + bd, minCorner.y() + d + bd };
+
+    const auto [cone_base_R, cone_scale_x] = WipeTower2::get_wipe_tower_cone_base(width, height, depth, cone_angle);
+
+    std::vector<ExtrusionPaths> paths;
+    for (float hh = 0.f; hh < h; hh += lh) {
+
+        if (hh != 0.f) {
+            // The wipe tower may be getting smaller. Find the depth for this layer.
+            size_t i = 0;
+            for (i = 0; i < z_and_depth_pairs.size() - 1; ++i)
+                if (hh >= z_and_depth_pairs[i].first && hh < z_and_depth_pairs[i + 1].first)
+                    break;
+            d = scale_(z_and_depth_pairs[i].second);
+            minCorner = { 0.f, -d / 2 + scale_(z_and_depth_pairs.front().second / 2.f) };
+            maxCorner = { minCorner.x() + w, minCorner.y() + d };
+        }
+
+
+        ExtrusionPath path(ExtrusionRole::erWipeTower, 0.0, 0.0, lh);
+        path.polyline = { minCorner, {maxCorner.x(), minCorner.y()}, maxCorner, {minCorner.x(), maxCorner.y()}, minCorner };
+        paths.push_back({ path });
+
+        // We added the border, now add several parallel lines so we can detect an object that is fully inside the tower.
+        // For now, simply use fixed spacing of 3mm.
+        for (coord_t y = minCorner.y() + scale_(3.); y < maxCorner.y(); y += scale_(3.)) {
+            path.polyline = { {minCorner.x(), y}, {maxCorner.x(), y} };
+            paths.back().emplace_back(path);
+        }
+
+        // And of course the stabilization cone and its base...
+        if (cone_base_R > 0.) {
+            path.polyline.clear();
+            double r = cone_base_R * (1 - hh / height);
+            for (double alpha = 0; alpha < 2.01 * M_PI; alpha += 2 * M_PI / 20.)
+                path.polyline.points.emplace_back(Point::new_scale(width / 2. + r * std::cos(alpha) / cone_scale_x, depth / 2. + r * std::sin(alpha)));
+            paths.back().emplace_back(path);
+            if (hh == 0.f) { // Cone brim.
+                for (float bw = brim_width; bw > 0.f; bw -= 3.f) {
+                    path.polyline.clear();
+                    for (double alpha = 0; alpha < 2.01 * M_PI; alpha += 2 * M_PI / 20.) // see load_wipe_tower_preview, where the same is a bit clearer
+                        path.polyline.points.emplace_back(Point::new_scale(
+                            width / 2. + cone_base_R * std::cos(alpha) / cone_scale_x * (1. + cone_scale_x * bw / cone_base_R),
+                            depth / 2. + cone_base_R * std::sin(alpha) * (1. + bw / cone_base_R))
+                        );
+                    paths.back().emplace_back(path);
+                }
+            }
+        }
+
+        // Only the first layer has brim.
+        if (hh == 0.f) {
+            minCorner = minCorner + Point(bd, bd);
+            maxCorner = maxCorner - Point(bd, bd);
+        }
+    }
+
+    // Rotate and translate the tower into the final position.
+    for (ExtrusionPaths& ps : paths) {
+        for (ExtrusionPath& p : ps) {
+            p.polyline.rotate(Geometry::deg2rad(rotation_angle));
+            p.polyline.translate(scale_(pos.x()), scale_(pos.y()));
+        }
+    }
+
+    return paths;
+}
+
+ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const
 { 
     ExtrusionLayers wtels;
     wtels.type = ExtrusionLayersType::WIPE_TOWER;
@@ -4952,6 +5033,33 @@ ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const
         wtels.push_back(el);
     }
     return wtels;
+}
+
+void WipeTowerData::construct_mesh(float width, float depth, float height, 
+    float brim_width, bool is_rib_wipe_tower, float rib_width, float rib_length, bool fillet_wall)
+{
+    wipe_tower_mesh_data = WipeTowerMeshData{};
+    float first_layer_height = 0.08; //brim height
+    if (width < EPSILON || depth < EPSILON || height < EPSILON) 
+        return;
+    if (!is_rib_wipe_tower || rib_length < EPSILON) {
+        wipe_tower_mesh_data->real_wipe_tower_mesh = make_cube(width, depth, height);
+        wipe_tower_mesh_data->real_brim_mesh = make_cube(width + 2 * brim_width, depth + 2 * brim_width, first_layer_height);
+        wipe_tower_mesh_data->real_brim_mesh.translate({ -brim_width, -brim_width, 0 });
+        wipe_tower_mesh_data->bottom = { scaled(Vec2f{-brim_width, -brim_width}), scaled(Vec2f{width + brim_width, 0}), 
+            scaled(Vec2f{width + brim_width, depth + brim_width}), scaled(Vec2f{0, depth}) };
+    }
+    else {
+        wipe_tower_mesh_data->real_wipe_tower_mesh = WipeTowerHelper::its_make_rib_tower(width, depth, height, rib_length, rib_width, fillet_wall);
+        wipe_tower_mesh_data->bottom = WipeTowerHelper::rib_section(width, depth, rib_length, rib_width, fillet_wall);
+        auto brim_bottom = offset(wipe_tower_mesh_data->bottom, scaled(brim_width));
+        if (!brim_bottom.empty())
+            wipe_tower_mesh_data->bottom = brim_bottom.front();
+        wipe_tower_mesh_data->real_brim_mesh = WipeTowerHelper::its_make_rib_brim(wipe_tower_mesh_data->bottom, first_layer_height);
+        wipe_tower_mesh_data->real_wipe_tower_mesh.translate(Vec3f(rib_offset[0], rib_offset[1], 0));
+        wipe_tower_mesh_data->real_brim_mesh.translate(Vec3f(rib_offset[0], rib_offset[1], 0));
+        wipe_tower_mesh_data->bottom.translate(scaled(Vec2f(rib_offset[0], rib_offset[1])));
+    }
 }
 
 } // namespace Slic3r

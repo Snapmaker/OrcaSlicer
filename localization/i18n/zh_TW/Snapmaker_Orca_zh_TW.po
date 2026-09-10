@@ -18239,3 +18239,42 @@ msgstr ""
 
 #~ msgid ", ver: "
 #~ msgstr "，版本"
+
+msgid "Adhesiveness Category"
+msgstr "粘接性類別"
+
+msgid "Filament category"
+msgstr "材料類別"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "接觸層預擠出距離"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔接觸層（不同材料交界處）的預擠出距離。"
+
+msgid "Interface layer pre-extrusion length"
+msgstr "接觸層預擠出長度"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "擦拭塔接觸層（不同材料交界處）的預擠出長度。"
+
+msgid "Interface layer print temperature"
+msgstr "接觸層列印溫度"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "料塔接觸層（不同材料交界處）的列印溫度。如果設定為-1，使用最大推薦噴嘴列印溫度。"
+
+msgid "Max speed"
+msgstr "最大速度"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "擦料塔上除了預沖刷外的最大列印速度。"
+
+msgid "Internal ribs"
+msgstr "內支撐肋"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "啟用內支撐肋以增強擦料塔的穩定性。"
+
+msgid "Enable tower interface features"
+msgstr "啟用料塔接觸層最佳化"

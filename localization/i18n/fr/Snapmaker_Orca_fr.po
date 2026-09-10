@@ -21603,3 +21603,42 @@ msgstr ""
 #~ "Veuillez saisir des valeurs valides :\n"
 #~ "Début > 10 intervalles >= 0\n"
 #~ "Fin > Début + Intervalle"
+
+msgid "Adhesiveness Category"
+msgstr "Catégorie d’Adhésivité"
+
+msgid "Filament category"
+msgstr "Catégorie de filament"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Distance de pré-extrusion de la couche d'interface"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Distance de pré-extrusion pour la couche d'interface de la tour d'amorçage (interface entre matériaux)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Distance de pré-extrusion de la couche d'interface"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Longueur de pré-extrusion pour la couche d'interface de la tour d'amorçage (interface entre matériaux)."
+
+msgid "Interface layer print temperature"
+msgstr "Température d'impression de la couche d'interface"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Température d'impression pour la couche d'interface de la tour d'amorçage (interface entre matériaux). Si réglé à -1, utiliser la température max de la buse."
+
+msgid "Max speed"
+msgstr "Vitesse max"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Vitesse d'impression maximale sur la tour d'amorçage, hors éperonnage."
+
+msgid "Internal ribs"
+msgstr "Nervures internes"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Les nervures internes permettent d'augmenter la stabilité de la tour de purge."
+
+msgid "Enable tower interface features"
+msgstr "Activer les fonctionnalités de l'interface de tour"

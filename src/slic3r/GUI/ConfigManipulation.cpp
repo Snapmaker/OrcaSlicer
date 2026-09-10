@@ -790,6 +790,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"wall_filament", "sparse_infill_filament", "solid_infill_filament", "wipe_tower_filament"})
         toggle_line(el, !bSEMM);
 
+    std::string printer_model = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_model");
+    bool is_tower_interface_supported = printer_model.find("Snapmaker U1") != std::string::npos;
+    toggle_line("enable_tower_interface_features", have_prime_tower && is_tower_interface_supported);
+    toggle_line("enable_tower_interface_cooldown_during_tower",
+                have_prime_tower && is_tower_interface_supported && config->opt_bool("enable_tower_interface_features"));
+
     bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
 
     for (auto el : {"wipe_tower_cone_angle",
@@ -814,6 +820,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("wipe_tower_fillet_wall", have_prime_tower && !is_BBL_Printer && wipe_tower_wall_type == WipeTowerWallType::wtwRib);
     
     toggle_field("prime_tower_width", have_prime_tower && wipe_tower_wall_type != WipeTowerWallType::wtwRib);
+
+    toggle_line("wipe_tower_wall_gap", have_prime_tower);
+    toggle_line("prime_tower_enable_framework", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer_max_width", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer", have_prime_tower);
 
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 

@@ -21110,3 +21110,21 @@ msgstr ""
 #~ "Lütfen geçerli değerleri girin:\n"
 #~ "başlangıç > 10 adım >= 0\n"
 #~ "bitiş > başlangıç + adım)"
+
+msgid "Adhesiveness Category"
+msgstr "Yapışkanlık Kategorisi"
+
+msgid "Filament category"
+msgstr "Filament kategorisi"
+
+msgid "Max speed"
+msgstr "Maksimum hız"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Prime kulesinde sıkıştırma hariç maksimum baskı hızı."
+
+msgid "Internal ribs"
+msgstr "İç takviye hatları"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Başlangıç kulesinin stabilitesini artırmak için iç takviye hatlarını etkinleştir."

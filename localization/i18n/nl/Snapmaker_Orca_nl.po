@@ -18697,3 +18697,42 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Oriënteer het model"
+
+msgid "Adhesiveness Category"
+msgstr "Hechtvermogen Categorie"
+
+msgid "Filament category"
+msgstr "Filament categorie"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Interface-laag pre-extrusie afstand"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Voor-extrusieafstand voor de interfacelaag van de prime tower (waar verschillende materialen samenkomen)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Interface-laag pre-extrusie lengte"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Voor-extrusielengte voor de wissellaag van de prime tower (waar verschillende materialen samenkomen)."
+
+msgid "Interface layer print temperature"
+msgstr "Afdrukt temperatuur van interface-laag"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Printtemperatuur voor de interface-laag van de prime tower (waar verschillende materialen samenkomen). Als deze op -1 is ingesteld, wordt de maximaal aanbevolen nozzle-temperatuur gebruikt."
+
+msgid "Max speed"
+msgstr "Max snelheid"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "De maximale afdruksnelheid op de eerste toren, exclusief rammen."
+
+msgid "Internal ribs"
+msgstr "Interne ribben"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Maak interne ribben mogelijk om de stabiliteit van de hoofdtoren te vergroten."
+
+msgid "Enable tower interface features"
+msgstr "Schakel functies van de toreninterface in"

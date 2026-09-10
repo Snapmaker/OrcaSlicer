@@ -2,18 +2,14 @@
 #include "ProjectSchemaVersion.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
-#include "I18N.hpp"
 #include "format.hpp"
 
 #include "GCode/Thumbnails.hpp"
 #include <set>
-#include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/format.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/thread.hpp>
-#include <float.h>
 
 namespace {
 std::set<std::string> SplitStringAndRemoveDuplicateElement(const std::string &str, const std::string &separator)
@@ -2289,6 +2285,30 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("filament_tower_interface_pre_extrusion_dist", coFloats);
+    def->label = L("Interface layer pre-extrusion distance");
+    def->tooltip = L("Pre-extrusion distance for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 10. });
+
+    def = this->add("filament_tower_interface_pre_extrusion_length", coFloats);
+    def->label = L("Interface layer pre-extrusion length");
+    def->tooltip = L("Pre-extrusion length for prime tower interface layer (where different materials meet).");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    def = this->add("filament_tower_interface_print_temp", coInts);
+    def->label = L("Interface layer print temperature");
+    def->tooltip = L("Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature.");
+    def->sidetext = L("°C");
+    def->min = -1;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts { -1 });
 
     def = this->add("filament_cooling_initial_speed", coFloats);
     def->label = L("Speed of the first cooling move");
@@ -5240,7 +5260,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no tool changes. "
                     "On layers with a tool change, extruder will travel downward to print the wipe tower. "
                     "User is responsible for ensuring there is no collision with the print.");
-    def->mode = comAdvanced;
+    def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("single_extruder_multi_material_priming", coBool);
@@ -6020,6 +6040,18 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("enable_tower_interface_features", coBool);
+    def->label = L("Enable tower interface features");
+    def->tooltip = L("Enable optimized prime tower interface behavior when different materials meet.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("enable_tower_interface_cooldown_during_tower", coBool);
+    def->label = L("Cool down from interface boost during prime tower");
+    def->tooltip = L("When interface-layer temperature boost is active, set the nozzle back to print temperature at the start of the prime tower so it cools down during the tower.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("flush_volumes_vector", coFloats);
     // BBS: remove _L()
     def->label = ("Purging volumes - load/unload volumes");
@@ -6123,8 +6155,8 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(30.0));
     
     def = this->add("wipe_tower_max_purge_speed", coFloat);
-    def->label = L("Maximum wipe tower print speed of out wall");
-    def->tooltip = L("Maximum wipe tower print speed of out wall.");
+    def->label = L("Max speed");
+    def->tooltip = L("The maximum printing speed on the prime tower excluding ramming.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->mode = comAdvanced;
     def->min = 10;
@@ -6186,6 +6218,12 @@ void PrintConfigDef::init_fff_params()
                      "leaving the filament blob on the gap edge instead of on the outer wall surface.");
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("prime_tower_enable_framework", coBool);
+    def->label = L("Internal ribs");
+    def->tooltip = L("Enable internal ribs to increase the stability of the prime tower.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("wiping_volumes_extruders", coFloats);
     def->label = L("Purging volumes - load/unload volumes");
@@ -6271,6 +6309,13 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionFloats{4.});
+
+    def = this->add("filament_adhesiveness_category", coInts);
+    def->label = L("Adhesiveness Category");
+    def->tooltip = L("Filament category");
+    def->min = 0;
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionInts{ 100 });
 
     def = this->add("xy_hole_compensation", coFloat);
     def->label = L("X-Y hole compensation");
@@ -7470,7 +7515,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "prime_tower_width";
     } else if (opt_key == "wiping_volume") {
         opt_key = "prime_volume";
-    } else if (opt_key == "wipe_tower_brim_width") {
+    }
+    else if (opt_key == "wipe_tower_brim_width") {
         opt_key = "prime_tower_brim_width";
     } else if (opt_key == "tool_change_gcode") {
         opt_key = "change_filament_gcode";

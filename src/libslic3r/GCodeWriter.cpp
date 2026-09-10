@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <iomanip>
 #include <iostream>
-#include <map>
-#include <assert.h>
 #include <GCode/GCodeProcessor.hpp>
 
 #ifdef __APPLE__
@@ -831,7 +829,7 @@ std::string GCodeWriter::_retract(double length, double restart_extra, const std
     return gcode;
 }
 
-std::string GCodeWriter::unretract()
+std::string GCodeWriter::unretract(float extra_retract)
 {
     std::string gcode;
     
@@ -847,7 +845,7 @@ std::string GCodeWriter::unretract()
             //BBS
             // use G1 instead of G0 because G0 will blend the restart with the previous travel move
             GCodeG1Formatter w;
-            w.emit_e(m_extruder->E());
+            w.emit_e(m_extruder->E() + extra_retract);
             w.emit_f(m_extruder->deretract_speed() * 60.);
             //BBS
             w.emit_comment(GCodeWriter::full_gcode_comment, " ; unretract");

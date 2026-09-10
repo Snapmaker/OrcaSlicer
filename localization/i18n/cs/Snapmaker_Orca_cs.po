@@ -18970,3 +18970,42 @@ msgstr ""
 #~ "Zadejte prosím platné hodnoty:\n"
 #~ "start > 10 kroků >= 0\n"
 #~ "konec > začátek + krok)"
+
+msgid "Adhesiveness Category"
+msgstr "Kategorie přilnavosti"
+
+msgid "Filament category"
+msgstr "Kategorie filamentu"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "Předvytlačovací vzdálenost vrstvy rozhraní"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "Předvytlačovací vzdálenost pro rozhraní vrstvy věže pro oddělení trysky (kde se setkávají různé materiály)."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "Předvytlačovací délka vrstvy rozhraní"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "Předvytlačovací délka pro rozhraní vrstvy věže pro oddělení trysky (kde se setkávají různé materiály)."
+
+msgid "Interface layer print temperature"
+msgstr "Teplota tisku vrstvy rozhraní"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "Teplota tisku pro rozhraní vrstvy věže pro oddělení trysky (kde se setkávají různé materiály). Pokud je nastaveno na -1, použije se maximální doporučená teplota trysky."
+
+msgid "Max speed"
+msgstr "Maximální rychlost"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "Maximální rychlost tisku na věži pro oddělení trysky bez započítání akcelerace."
+
+msgid "Internal ribs"
+msgstr "Vnitřní výztuhy"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "Povolit vnitřní žebra pro zvýšení stability věže pro čištění trysky."
+
+msgid "Enable tower interface features"
+msgstr "Povolit funkce rozhraní primovací věže"

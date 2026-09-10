@@ -20144,3 +20144,42 @@ msgstr ""
 #~ "유효한 값을 입력하십시오:\n"
 #~ "시작 > 10 단계 >= 0\n"
 #~ "끝 > 시작 + 단계)"
+
+msgid "Adhesiveness Category"
+msgstr "접착력 카테고리"
+
+msgid "Filament category"
+msgstr "필라멘트 카테고리"
+
+msgid "Interface layer pre-extrusion distance"
+msgstr "인터페이스 레이어 사전 압출 거리"
+
+msgid "Pre-extrusion distance for prime tower interface layer (where different materials meet)."
+msgstr "프라임 타워 인터페이스 레이어(서로 다른 재료가 만나는 부분)의  사전 압출 거리."
+
+msgid "Interface layer pre-extrusion length"
+msgstr "인터페이스 레이어 사전 압출 길이"
+
+msgid "Pre-extrusion length for prime tower interface layer (where different materials meet)."
+msgstr "프라임 타워 인터페이스 레이어(서로 다른 재료가 만나는 부분)의 사전 압출 길이."
+
+msgid "Interface layer print temperature"
+msgstr "인터페이스 레이어 출력 온도"
+
+msgid "Print temperature for prime tower interface layer (where different materials meet). If set to -1, use max recommended nozzle temperature."
+msgstr "서로 다른 재료가 만나는 프라임 타워 인터페이스 층의 출력 온도입니다. -1로 설정하면 권장 최대 노즐 온도를 사용합니다."
+
+msgid "Max speed"
+msgstr "최대 속도"
+
+msgid "The maximum printing speed on the prime tower excluding ramming."
+msgstr "충돌을 제외한 프라임 타워의 최대 출력 속도입니다."
+
+msgid "Internal ribs"
+msgstr "내부 갈비"
+
+msgid "Enable internal ribs to increase the stability of the prime tower."
+msgstr "프라임 타워의 안정성을 높이기 위해 내부 리브를 활성화합니다."
+
+msgid "Enable tower interface features"
+msgstr "타워 인터페이스 기능 활성화"

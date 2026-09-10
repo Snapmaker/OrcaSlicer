@@ -1116,6 +1116,9 @@ set(_snapmaker_nsis_uninst_kill [=[
 ]=])
 string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
        "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
+# Auto-close the uninstall details page so the wizard advances to the custom
+# finish page as soon as the uninstall section finishes (no extra click).
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "  SetAutoClose true\n")
 # Desktop shortcut inside MUI_STARTMENU_WRITE_BEGIN: respects "do not create shortcuts" on the start menu page.
 set(CPACK_NSIS_CREATE_ICONS_EXTRA [=[
   SetShellVarContext current
@@ -1257,6 +1260,26 @@ FunctionEnd
     file(TO_NATIVE_PATH "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallConfirm.nsh" _snapmaker_uninst_confirm_nsh)
     string(PREPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
            "  !include \"${_snapmaker_uninst_confirm_nsh}\"\n")
+    # Welcome-style uninstall finish page, included at top level of the patched
+    # template so Function/Var live outside Section "Uninstall".
+    set(_snapmaker_uninst_finish_in "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallFinish.nsh.in")
+    if(NOT EXISTS "${_snapmaker_uninst_finish_in}")
+        message(FATAL_ERROR "Missing ${_snapmaker_uninst_finish_in} (required for CPack NSIS uninstall finish page).")
+    endif()
+    file(READ "${_snapmaker_uninst_finish_in}" _snapmaker_uninst_finish ENCODING UTF-8)
+    string(REPLACE "@Snapmaker_VERSION@" "${Snapmaker_VERSION}"
+           _snapmaker_uninst_finish "${_snapmaker_uninst_finish}")
+    file(WRITE "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallFinish.nsh"
+         "${_snapmaker_utf8_bom}${_snapmaker_uninst_finish}")
+    file(TO_NATIVE_PATH "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallFinish.nsh" _snapmaker_uninst_finish_nsh)
+    # Register the finish page AFTER MUI_UNPAGE_INSTFILES: shown automatically
+    # once file deletion in Section "Uninstall" has finished.
+    # BrandingText " " hides the default "Nullsoft Install System vX.XX" label
+    # in the bottom-left corner (empty string would reset to the default).
+    string(REPLACE
+        "  !insertmacro MUI_UNPAGE_INSTFILES\n"
+        "  !insertmacro MUI_UNPAGE_INSTFILES\n  !include \"${_snapmaker_uninst_finish_nsh}\"\n  UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishLeave\n  BrandingText \" \"\n"
+        _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     file(WRITE "${_snapmaker_nsis_tpl_dir}/NSIS.template.in" "${_snapmaker_nsis_tpl}")
     list(PREPEND CMAKE_MODULE_PATH "${_snapmaker_nsis_tpl_dir}")
 endif ()

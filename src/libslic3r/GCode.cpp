@@ -3068,6 +3068,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // Modifies
         print.m_print_statistics));
     print.m_print_statistics.initial_tool = initial_extruder_id;
+    // Debug aid for the file name placeholder filament_type[initial_tool]:
+    // the first extruder actually used by this plate's print.
+    BOOST_LOG_TRIVIAL(debug) << "File name initial_tool: first_extruder=" << initial_extruder_id
+                             << ", first_non_support_extruder=" << initial_non_support_extruder_id;
     if (!is_bbl_printers) {
         file.write_format("; total filament used [g] = %.2lf\n", print.m_print_statistics.total_weight);
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);

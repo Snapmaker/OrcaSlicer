@@ -76,6 +76,10 @@ void main()
 
     // the prism hangs below the path line (top face on the line)
     vec3 position = basePos - halfHeight * up;
+    // defined default for every vertex: the miter vertices 8/9 only get a
+    // real normal inside the hasPrev branch below, and reading an
+    // uninitialized varying at the normalize() further down is GLSL UB
+    fragNormal = up;
     if (0 == gl_VertexID || 4 == gl_VertexID) {
         position = position + dUp;
         fragNormal = up;

@@ -451,6 +451,7 @@ void PathLayerStack::Reset()
     _layerWindow = { 0, 0 };
     _moveWindow = { 0, 0 };
     _sidCount = 1;
+    _anyVisibleSteps = false;
 
     // defaults matching the legacy pipeline: extrusions and seams visible,
     // travel/wipe/options hidden; all roles visible
@@ -548,6 +549,16 @@ void PathLayerStack::RefreshVisibleSteps()
 
     for (auto& layer : _layers)
         layer->RefreshVisibleSteps(*this);
+
+    // maintained here (inside the dirty guard) so it costs nothing per
+    // frame: "any layer holds a visible path or marker record"
+    _anyVisibleSteps = false;
+    for (const auto& layer : _layers) {
+        if (layer->PathStepRecordCount() > 0 || layer->MarkerStepRecordCount() > 0) {
+            _anyVisibleSteps = true;
+            break;
+        }
+    }
 
     ClearDirty(EDirtyFlag::Layers);
     ClearDirty(EDirtyFlag::Visibility);

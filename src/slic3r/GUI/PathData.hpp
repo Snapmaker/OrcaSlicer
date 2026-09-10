@@ -202,6 +202,9 @@ public:
     // Rebuilds the visible step lists of all layers when visibility or view
     // type changed. Cheap no-op otherwise.
     void RefreshVisibleSteps();
+    // True when the last RefreshVisibleSteps() rebuild left at least one
+    // visible path or marker record (feeds the viewer's no-render-path flag).
+    bool AnyVisibleSteps() const { return _anyVisibleSteps; }
     // Rebuilds the per-move attribute tables of all layers when the view
     // type changed. Cheap no-op otherwise.
     void RefreshMoveAttributes(const GCodeProcessorResult& result);
@@ -229,6 +232,8 @@ private:
 
     unsigned int _viewType{ PathViewType::FEATURE_TYPE };
     unsigned char _dirtyMask{ 0xff };
+    // recomputed inside RefreshVisibleSteps() when a rebuild runs
+    bool _anyVisibleSteps{ false };
     // number of sids (move indices with seams skipped) in the current result
     uint32_t _sidCount{ 1 };
 

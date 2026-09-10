@@ -3440,6 +3440,14 @@ void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, b
 {
     _pathStack->SetLayerWindow(m_layers_z_range[0], m_layers_z_range[1]);
 
+    // keep m_no_render_path in sync with the visibility tables, like legacy
+    // derives it from its render paths: it gates the print-head marker, the
+    // G-code window and refresh()'s early-out. Running the (dirty-guarded)
+    // step rebuild here also keeps the flag fresh at event time instead of
+    // one render late.
+    _pathStack->RefreshVisibleSteps();
+    m_no_render_path = !_pathStack->AnyVisibleSteps();
+
     const auto window = _pathStack->LayerWindow();
     // the bottom slider is a playback of the CURRENT layer: its range spans
     // only the top layer of the visible window (not the whole window), so

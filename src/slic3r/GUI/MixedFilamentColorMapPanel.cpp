@@ -5,6 +5,7 @@
 
 namespace Slic3r { namespace GUI {
 
+
 wxColour blend_multi_filament_mixer(const std::vector<wxColour>& colors, const std::vector<double>& weights)
 {
     if (colors.empty() || weights.empty())

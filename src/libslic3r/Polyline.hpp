@@ -132,10 +132,10 @@ public:
     //BBS: 
     Polylines equally_spaced_lines(double distance) const;
 
+    void reset_to_linear_move();
 private:
     void append_fitting_result_after_append_points();
     void append_fitting_result_after_append_polyline(const Polyline& src);
-    void reset_to_linear_move();
     bool split_fitting_result_before_index(const size_t index, Point &new_endpoint, std::vector<PathFittingData>& data) const;
     bool split_fitting_result_after_index(const size_t index, Point &new_startpoint, std::vector<PathFittingData>& data) const;
 };

@@ -83,14 +83,14 @@ void DropDown::Invalidate(bool clear)
         selection = hover_item = -1;
         offset = wxPoint();
     }
-    assert(selection < (int) texts.size());
+    if (selection >= (int) texts.size())
+        selection = -1;
     need_sync = true;
 }
 
 void DropDown::SetSelection(int n)
 {
-    assert(n < (int) texts.size());
-    if (n >= (int) texts.size())
+    if (n < 0 || n >= (int) texts.size())
         n = -1;
     if (selection == n) return;
     selection = n;

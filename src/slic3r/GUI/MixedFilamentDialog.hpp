@@ -143,6 +143,10 @@ private:
     MatchRangeSlider*       m_match_range_slider    = nullptr;
     wxStaticText*           m_match_range_value     = nullptr;
     int                     m_match_min_pct         = 15;
+    // True once Match-mode state has been saved into m_result during a mode
+    // switch. Guards re-entry so the user's adjustments are restored instead
+    // of being overwritten by the 2:1:1 default / recomputed target color.
+    bool                    m_match_state_persisted { false };
 
     ScalableButton*         m_btn_swap_gradient_dir = nullptr;
     int                     m_gradient_direction   = 0;

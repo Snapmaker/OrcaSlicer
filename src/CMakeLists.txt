@@ -25,15 +25,205 @@ if (SLIC3R_GUI)
         message(STATUS "WXWIN environment set to: $ENV{WXWIN}")
     elseif(UNIX)
         set(wxWidgets_USE_UNICODE ON)
-        if(SLIC3R_STATIC)
-            set(wxWidgets_USE_STATIC ON)
-        else()
-            set(wxWidgets_USE_STATIC OFF)
-        endif()
+        # Linux: wxWidgets_USE_STATIC is set after wx-config is resolved (bundled wx is static;
+        # distro wx is almost always shared-only and breaks wx-config --static=yes).
+        if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            if (SLIC3R_STATIC)
+                set(wxWidgets_USE_STATIC ON)
+            else ()
+                set(wxWidgets_USE_STATIC OFF)
+            endif ()
+        endif ()
     endif()
 
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set (wxWidgets_CONFIG_OPTIONS "--toolkit=gtk${SLIC3R_GTK}")
+        # FindwxWidgets uses find_program(... ONLY_CMAKE_FIND_ROOT_PATH), so wx-config is not
+        # discovered under CMAKE_PREFIX_PATH/bin unless we set wxWidgets_CONFIG_EXECUTABLE.
+        # Bundled deps wx is GTK3 + static (see deps/wxWidgets/wxWidgets.cmake + build_linux.sh).
+        if (wxWidgets_CONFIG_EXECUTABLE AND NOT EXISTS "${wxWidgets_CONFIG_EXECUTABLE}")
+            unset(wxWidgets_CONFIG_EXECUTABLE CACHE)
+        endif ()
+        if (NOT wxWidgets_CONFIG_EXECUTABLE AND NOT DEFINED ENV{WX_CONFIG})
+            set(_wx_search_prefixes "")
+            if (NOT DEFINED SNAPMAKER_ORCA_TOP_SOURCE_DIR)
+                get_filename_component(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+            endif ()
+            list(APPEND _wx_search_prefixes "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local")
+            foreach (_wx_p IN LISTS CMAKE_PREFIX_PATH)
+                list(APPEND _wx_search_prefixes "${_wx_p}")
+            endforeach ()
+            list(REMOVE_DUPLICATES _wx_search_prefixes)
+            set(_wx_cfg_candidates
+                wx-config
+                wx-config-3.2
+                wx-config-3.1
+                wx-config-3.0)
+            set(_wx_cfg_done FALSE)
+            foreach (_wx_prefix ${_wx_search_prefixes})
+                if (_wx_cfg_done OR NOT EXISTS "${_wx_prefix}/bin")
+                    continue()
+                endif ()
+                foreach (_wx_name ${_wx_cfg_candidates})
+                    if (EXISTS "${_wx_prefix}/bin/${_wx_name}")
+                        set(wxWidgets_CONFIG_EXECUTABLE "${_wx_prefix}/bin/${_wx_name}" CACHE FILEPATH
+                            "wxWidgets wx-config (Orca deps / CMAKE_PREFIX_PATH)" FORCE)
+                        message(STATUS "Using wx-config: ${wxWidgets_CONFIG_EXECUTABLE}")
+                        set(_wx_cfg_done TRUE)
+                        break()
+                    endif ()
+                endforeach ()
+                if (NOT _wx_cfg_done)
+                    file(GLOB _wx_glob_cfg
+                        LIST_DIRECTORIES false
+                        "${_wx_prefix}/bin/wx-config-*"
+                        "${_wx_prefix}/bin/wxgtk*u-*-config"
+                        "${_wx_prefix}/bin/wxgtk*-*-config")
+                    list(SORT _wx_glob_cfg)
+                    if (_wx_glob_cfg)
+                        list(GET _wx_glob_cfg 0 _wx_one)
+                        set(wxWidgets_CONFIG_EXECUTABLE "${_wx_one}" CACHE FILEPATH
+                            "wxWidgets wx-config (glob under prefix bin)" FORCE)
+                        message(STATUS "Using wx-config: ${wxWidgets_CONFIG_EXECUTABLE}")
+                        set(_wx_cfg_done TRUE)
+                    endif ()
+                    unset(_wx_glob_cfg)
+                    unset(_wx_one)
+                endif ()
+                if (_wx_cfg_done)
+                    break()
+                endif ()
+            endforeach ()
+            unset(_wx_cfg_done)
+            unset(_wx_cfg_candidates)
+            unset(_wx_prefix)
+            unset(_wx_p)
+            unset(_wx_name)
+            unset(_wx_search_prefixes)
+        endif ()
+
+        # FindwxWidgets's own find_program(... ONLY_CMAKE_FIND_ROOT_PATH) skips normal PATH when
+        # CMAKE_FIND_ROOT_PATH is empty, so /usr/bin/wx-config is never found unless we set it here.
+        if (NOT wxWidgets_CONFIG_EXECUTABLE OR NOT EXISTS "${wxWidgets_CONFIG_EXECUTABLE}")
+            if (NOT DEFINED SNAPMAKER_ORCA_TOP_SOURCE_DIR)
+                get_filename_component(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+            endif ()
+            # Prefer any wx-config* from deps (find_program NAMES order can pick /usr/bin first).
+            file(GLOB _orca_deps_wx_cfgs LIST_DIRECTORIES false
+                "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/bin/wx-config*"
+                "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/bin/wxgtk*config")
+            list(SORT _orca_deps_wx_cfgs)
+            if (_orca_deps_wx_cfgs)
+                list(GET _orca_deps_wx_cfgs 0 _orca_wx_cfg_pick)
+                set(wxWidgets_CONFIG_EXECUTABLE "${_orca_wx_cfg_pick}" CACHE FILEPATH
+                    "wxWidgets wx-config (deps install)" FORCE)
+                message(STATUS "Using wx-config: ${wxWidgets_CONFIG_EXECUTABLE}")
+            else ()
+                find_program(_orca_wx_config_sys
+                    NAMES wx-config wx-config-3.2 wx-config-3.1 wx-config-3.0
+                    PATHS
+                        "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/bin"
+                        /usr/local/bin
+                        /usr/bin
+                    NO_CMAKE_FIND_ROOT_PATH
+                )
+                if (_orca_wx_config_sys)
+                    set(wxWidgets_CONFIG_EXECUTABLE "${_orca_wx_config_sys}" CACHE FILEPATH
+                        "wxWidgets wx-config (PATH / standard locations)" FORCE)
+                    message(STATUS "Using wx-config: ${wxWidgets_CONFIG_EXECUTABLE}")
+                endif ()
+                unset(_orca_wx_config_sys CACHE)
+            endif ()
+            unset(_orca_deps_wx_cfgs)
+            unset(_orca_wx_cfg_pick)
+        endif ()
+
+        # Orca dependency wx is static; match wx-config selection to avoid empty --libs.
+        if (wxWidgets_CONFIG_EXECUTABLE)
+            if (NOT DEFINED SNAPMAKER_ORCA_TOP_SOURCE_DIR)
+                get_filename_component(SNAPMAKER_ORCA_TOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+            endif ()
+            string(FIND "${wxWidgets_CONFIG_EXECUTABLE}" "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build" _wx_bundled_idx)
+            if (NOT _wx_bundled_idx LESS 0)
+                set(wxWidgets_USE_STATIC ON)
+                message(STATUS "wxWidgets from bundled deps: wxWidgets_USE_STATIC=ON")
+            else ()
+                set(wxWidgets_USE_STATIC OFF)
+                if (SLIC3R_STATIC)
+                    message(WARNING "SLIC3R_STATIC is ON but wx-config is not from bundled deps; "
+                        "using shared system wx. For a static stack like build_linux.sh, build deps (-d) "
+                        "so wx installs under deps/build/destdir/usr/local.")
+                endif ()
+            endif ()
+            unset(_wx_bundled_idx)
+        endif ()
+
+        set(wxWidgets_CONFIG_OPTIONS "--toolkit=gtk${SLIC3R_GTK}")
+        if (wxWidgets_CONFIG_EXECUTABLE)
+            execute_process(
+                COMMAND sh "${wxWidgets_CONFIG_EXECUTABLE}" ${wxWidgets_CONFIG_OPTIONS} --cxxflags
+                RESULT_VARIABLE _wx_cxxflags_rc
+                OUTPUT_QUIET ERROR_QUIET)
+            if (NOT _wx_cxxflags_rc EQUAL 0)
+                execute_process(
+                    COMMAND sh "${wxWidgets_CONFIG_EXECUTABLE}" --toolkit=gtk3 --cxxflags
+                    RESULT_VARIABLE _wx_gtk3_rc
+                    OUTPUT_QUIET ERROR_QUIET)
+                if (_wx_gtk3_rc EQUAL 0)
+                    set(wxWidgets_CONFIG_OPTIONS "--toolkit=gtk3")
+                    message(STATUS "wx-config: gtk${SLIC3R_GTK} failed; using --toolkit=gtk3 (typical for Orca deps)")
+                else ()
+                    execute_process(
+                        COMMAND sh "${wxWidgets_CONFIG_EXECUTABLE}" --toolkit=gtk2 --cxxflags
+                        RESULT_VARIABLE _wx_gtk2_rc
+                        OUTPUT_QUIET ERROR_QUIET)
+                    if (_wx_gtk2_rc EQUAL 0)
+                        set(wxWidgets_CONFIG_OPTIONS "--toolkit=gtk2")
+                        message(STATUS "wx-config: gtk${SLIC3R_GTK} failed; using --toolkit=gtk2")
+                    endif ()
+                    unset(_wx_gtk2_rc)
+                endif ()
+                unset(_wx_gtk3_rc)
+            endif ()
+            unset(_wx_cxxflags_rc)
+        endif ()
+
+        # FindwxWidgets verifies each -lfoo with find_library(); ensure prefix lib dirs are searched.
+        foreach (_wx_lp IN LISTS CMAKE_PREFIX_PATH)
+            foreach (_wx_sub lib lib64)
+                if (EXISTS "${_wx_lp}/${_wx_sub}")
+                    list(APPEND CMAKE_LIBRARY_PATH "${_wx_lp}/${_wx_sub}")
+                endif ()
+            endforeach ()
+        endforeach ()
+        if (DEFINED SNAPMAKER_ORCA_TOP_SOURCE_DIR AND EXISTS "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/lib")
+            list(APPEND CMAKE_LIBRARY_PATH "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/lib")
+        endif ()
+        if (DEFINED SNAPMAKER_ORCA_TOP_SOURCE_DIR AND EXISTS "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/lib64")
+            list(APPEND CMAKE_LIBRARY_PATH "${SNAPMAKER_ORCA_TOP_SOURCE_DIR}/deps/build/destdir/usr/local/lib64")
+        endif ()
+        # wx-config often emits -L/usr/lib/x86_64-linux-gnu; FindwxWidgets still uses find_library()
+        # with short names — ensure typical distro multiarch dirs are on CMAKE_LIBRARY_PATH.
+        foreach (_orca_sys_lib IN ITEMS
+                /usr/lib/x86_64-linux-gnu
+                /usr/lib/aarch64-linux-gnu
+                /usr/lib64
+                /usr/lib)
+            if (EXISTS "${_orca_sys_lib}")
+                list(APPEND CMAKE_LIBRARY_PATH "${_orca_sys_lib}")
+            endif ()
+        endforeach ()
+        unset(_orca_sys_lib)
+        if (CMAKE_LIBRARY_PATH)
+            list(REMOVE_DUPLICATES CMAKE_LIBRARY_PATH)
+        endif ()
+        unset(_wx_lp)
+        unset(_wx_sub)
+
+        if (NOT wxWidgets_CONFIG_EXECUTABLE OR NOT EXISTS "${wxWidgets_CONFIG_EXECUTABLE}")
+            message(FATAL_ERROR "wxWidgets: no usable wx-config. On Debian/Ubuntu install e.g. "
+                "libwxgtk3.2-dev (and webview package), or build Orca deps: ./build_linux.sh -d")
+        endif ()
+
         if (SLIC3R_WX_STABLE)
             find_package(wxWidgets 3.0 REQUIRED COMPONENTS base core adv html gl aui net media webview)
         else ()
@@ -278,9 +468,20 @@ else ()
                 VERBATIM)
         endif()
     else ()
-        add_custom_command(TARGET Snapmaker_Orca POST_BUILD
-            WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
-            VERBATIM)
+        # Linux/Unix: CLI::setup resolves resources as <binary>/../../resources (Multi-Config:
+        # build/src/Release/snapmaker-orca -> build/src/resources). Without this symlink, OnInit
+        # fails wxCHECK_MSG(wxDirExists(resources_dir)) and wxEntry returns -1 (exit 255).
+        if (UNIX AND NOT APPLE)
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E rm -f "$<TARGET_FILE_DIR:Snapmaker_Orca>/../resources"
+                COMMAND ${CMAKE_COMMAND} -E create_symlink "${SLIC3R_RESOURCES_DIR}" "$<TARGET_FILE_DIR:Snapmaker_Orca>/../resources"
+                COMMENT "Symlinking resources directory for Linux dev build"
+                VERBATIM)
+        else ()
+            add_custom_command(TARGET Snapmaker_Orca POST_BUILD
+                WORKING_DIRECTORY "$<TARGET_FILE_DIR:Snapmaker_Orca>"
+                VERBATIM)
+        endif ()
     endif ()
     if (XCODE)
         # Because of Debug/Release/etc. configurations (similar to MSVC) the slic3r binary is located in an extra level

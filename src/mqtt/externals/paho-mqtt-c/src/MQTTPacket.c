@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp. and Ian Craggs
+ * Copyright (c) 2009, 2024 IBM Corp. and Ian Craggs
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -30,6 +30,8 @@
 #if !defined(NO_PERSISTENCE)
 	#include "MQTTPersistence.h"
 #endif
+#include <ctype.h>
+
 #include "Messages.h"
 #include "StackTrace.h"
 #include "WebSocket.h"
@@ -843,6 +845,45 @@ exit:
 
 
 /**
+ * Format the payload for printing in the trace.
+ * Any unprintable characters output as hex.
+ * @param buflen the length of the supplied print buffer
+ * @param buf the supplied print buffer
+ * @param payloadlen the length of the payload to be printed
+ * @param payload the payload data to be printed
+ * @return the length of the data output to the print buffer
+ */
+int MQTTPacket_formatPayload(int buflen, char* buf, int payloadlen, char* payload)
+{
+	int pos = 0;
+	int i = 0;
+
+	for (i = 0; i < payloadlen; i++)
+	{
+		if (isprint(payload[i]))
+		{
+			if (pos >= buflen)
+				break;
+			buf[pos++] = payload[i];
+		}
+		else
+		{
+			static char *hexdigit = "0123456789ABCDEF";
+
+			if (pos >= buflen - 3)
+				break;
+			buf[pos++] = '\\';
+			buf[pos++] = 'x';
+			buf[pos++] = hexdigit[payload[i] & 0xF0];
+			buf[pos++] = hexdigit[payload[i] & 0x0F];
+		}
+	}
+
+	return pos;
+}
+
+
+/**
  * Send an MQTT PUBLISH packet down a socket.
  * @param pack a structure from which to get some values to use, e.g topic, payload
  * @param dup boolean - whether to set the MQTT DUP flag
@@ -903,12 +944,23 @@ int MQTTPacket_send_publish(Publish* pack, int dup, int qos, int retained, netwo
 		rc = MQTTPacket_sends(net, header, &packetbufs, pack->MQTTVersion);
 		memcpy(pack->mask, packetbufs.mask, sizeof(pack->mask));
 	}
-	if (qos == 0)
-		Log(LOG_PROTOCOL, 27, NULL, net->socket, clientID, retained, rc, pack->payloadlen,
-				min(20, pack->payloadlen), pack->payload);
-	else
-		Log(LOG_PROTOCOL, 10, NULL, net->socket, clientID, pack->msgId, qos, retained, rc, pack->payloadlen,
-				min(20, pack->payloadlen), pack->payload);
+	{
+#if defined(_WIN32) || defined(_WIN64)
+		#define buflen 30
+#else
+		const int buflen = 30;
+#endif
+		char buf[buflen];
+		int len = 0;
+
+		len = MQTTPacket_formatPayload(buflen, buf, pack->payloadlen, pack->payload);
+
+		if (qos == 0)
+			Log(LOG_PROTOCOL, 27, NULL, net->socket, clientID, retained, rc, pack->payloadlen, len, buf);
+		else
+			Log(LOG_PROTOCOL, 10, NULL, net->socket, clientID, pack->msgId, qos, retained, rc, pack->payloadlen,
+					len, buf);
+	}
 exit_free:
 	if (rc != TCPSOCKET_INTERRUPTED)
 		free(topiclen);

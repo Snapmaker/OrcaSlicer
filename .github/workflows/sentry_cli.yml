@@ -6,7 +6,7 @@ on:
       os:
         required: true
         type: string
-        description: "Target OS: windows-2022, macos-14, ubuntu-20.04, ubuntu-24.04"
+        description: "Target OS: windows-2022, macos-26, ubuntu-20.04, ubuntu-24.04"
       pdb-artifact-name:
         required: false
         type: string
@@ -91,7 +91,7 @@ jobs:
 
       # ==================== macOS ====================
       - name: "[macOS] Install sentry-cli"
-        if: inputs.os == 'macos-14'
+        if: inputs.os == 'macos-26'
         run: |
           # Try multiple installation methods for reliability
           # Method 1: Official install script (most reliable)
@@ -124,14 +124,14 @@ jobs:
           fi
 
       - name: "[macOS] Download dSYM artifact"
-        if: inputs.os == 'macos-14'
+        if: inputs.os == 'macos-26'
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.dsym-artifact-name }}
           path: ./symbols
 
       - name: "[macOS] Upload dSYM to Sentry (sentry-cli)"
-        if: inputs.os == 'macos-14'
+        if: inputs.os == 'macos-26'
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_LOG_LEVEL: debug

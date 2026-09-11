@@ -335,7 +335,7 @@ public:
     // BBS: check snapshot
     bool up_to_date(bool saved, bool backup);
 
-    bool open_3mf_file(const fs::path &file_path);
+    bool open_3mf_file(const fs::path &file_path, bool from_url = false);
     int  get_3mf_file_count(std::vector<fs::path> paths);
     void add_file();
     void add_model(bool imperial_units = false, std::string fname = "");
@@ -387,8 +387,10 @@ public:
     std::vector<size_t> load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
     // To be called when providing a list of files to the GUI slic3r on command line.
     std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
-    // to be called on drag and drop
-    bool load_files(const wxArrayString& filenames);
+    // to be called on drag and drop, or for a project downloaded from a
+    // snapmaker-orca:// URL, in which case from_url is true: the user has already
+    // said which project to open, so do not ask them again.
+    bool load_files(const wxArrayString& filenames, bool from_url = false);
 
     const wxString& get_last_loaded_gcode() const { return m_last_loaded_gcode; }
 

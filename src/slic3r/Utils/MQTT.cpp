@@ -438,7 +438,16 @@ void MqttClient::connection_lost(const std::string& cause)
     }
 
     connected_.store(false, std::memory_order_release);
-        
+
+    // ~MqttClient nulls the callbacks and disconnects; a connection_lost that
+    // races destruction must not spawn the reconnect checker below (its
+    // shared_from_this() would throw bad_weak_ptr once the last owner is gone,
+    // and the exception escapes through Paho's C callback into terminate()).
+    if (tearing_down_.load(std::memory_order_acquire)) {
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT client is being destroyed, ignoring connection_lost";
+        return;
+    }
+
     if (!ever_connected_.load(std::memory_order_acquire)) {
         BOOST_LOG_TRIVIAL(error) << "The first connection failed. Since no successful connection has been made before, automatic reconnection remains disabled";
         std::function<void()> failure_cb;
@@ -453,13 +462,21 @@ void MqttClient::connection_lost(const std::string& cause)
     }
     
     if (!is_reconnecting.load(std::memory_order_acquire)) {
+        // self_ is cached by create() while the client is owned, so reading it
+        // can never throw (unlike shared_from_this(), which throws
+        // bad_weak_ptr once the last owner has started destruction). An
+        // expired/empty weak_ptr means no owner: auto-reconnect is impossible
+        // for this client.
+        std::weak_ptr<MqttClient> weak_self = self_;
+        if (weak_self.expired()) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client has no shared_ptr owner (or is being destroyed); automatic reconnection skipped";
+            return;
+        }
+
         is_reconnecting.store(true, std::memory_order_release);
         pending_reconnect_checks.fetch_add(1, std::memory_order_release);
-        
-        
+
         {
-            std::weak_ptr<MqttClient> weak_self = shared_from_this();
-        
             std::thread([weak_self]() {
                 
                 std::this_thread::sleep_for(std::chrono::seconds(20));
@@ -632,6 +649,12 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 
 MqttClient::~MqttClient()
 {
+    // 0. Mark teardown before anything else: connection_lost() checks this
+    //    before calling shared_from_this(), which would otherwise throw
+    //    bad_weak_ptr (the last owner is the one running this destructor) and
+    //    kill the process from Paho's C callback thread.
+    tearing_down_.store(true, std::memory_order_release);
+
     // 1. Null the callbacks FIRST so any Paho callback that is still in flight
     //    (or fires during teardown below) becomes a no-op instead of touching
     //    members being destroyed. Without this, message_arrived() could run on

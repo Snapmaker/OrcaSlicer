@@ -9,6 +9,7 @@
 #include <memory>
 #include <atomic>
 #include <mutex>
+#include <utility>
 #include <boost/filesystem.hpp>
 
 // Number of retries for connection and subscription attempts
@@ -70,6 +71,19 @@ public:
                const std::string& username = "",
                const std::string& password = "",
                bool clean_session = false);
+
+    // Factory: the supported way to create a MqttClient. It caches the
+    // client's own weak reference (self_) exactly when shared ownership is
+    // established, so Paho callbacks can arm the reconnect checker from the
+    // cached weak_ptr instead of calling shared_from_this() — which throws
+    // bad_weak_ptr once the last owner has started destruction (and always
+    // threw for raw `new`-ed clients).
+    template<typename... Args>
+    static std::shared_ptr<MqttClient> create(Args&&... args) {
+        std::shared_ptr<MqttClient> p(new MqttClient(std::forward<Args>(args)...));
+        p->self_ = p;
+        return p;
+    }
 
     // Destructor
     ~MqttClient();
@@ -139,9 +153,16 @@ private:
     int subscribe_retry_time_;       // Subscription retry counter
     std::function<void()> connection_failure_callback_; 
 
-    std::atomic<bool> is_reconnecting; 
-    std::atomic<int> pending_reconnect_checks;  
-    std::atomic<bool> ever_connected_;  
+    std::atomic<bool> is_reconnecting;
+    std::atomic<int> pending_reconnect_checks;
+    std::atomic<bool> ever_connected_;
+    // Set as the very first step of ~MqttClient. Paho callbacks (esp.
+    // connection_lost) check it before touching any other member.
+    std::atomic<bool> tearing_down_{false};
+    // Cached by create() while the client is owned; connection_lost() reads
+    // this instead of calling shared_from_this() (which throws bad_weak_ptr
+    // once the last owner has started destruction).
+    std::weak_ptr<MqttClient> self_;
 
     // tmp path
     boost::filesystem::path temp_ca_path_;

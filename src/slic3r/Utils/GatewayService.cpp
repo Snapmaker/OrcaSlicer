@@ -547,33 +547,41 @@ GatewayService::ApiResult GatewayService::get_device(const std::optional<std::st
 
 GatewayService::ApiResult GatewayService::get_account() { return get_json(config_.account_path); }
 
-PreprintStoreResult GatewayService::store_preprint_context(const std::string& id, const nlohmann::json& payload, int ttl_seconds)
+PreprintStoreResult GatewayService::store_preprint_context(const std::string& id, const nlohmann::json& payload)
 {
     PreprintStoreResult result;
-    if (id.empty() || ttl_seconds <= 0 || !payload.is_object()) {
-        result.error = {GatewayErrorCode::InvalidRequest, "preprint store id, payload, or ttl is invalid"};
+    if (id.empty() || !payload.is_object()) {
+        result.error = {GatewayErrorCode::InvalidRequest, "preprint store id or payload is invalid"};
         return result;
     }
 
-    const nlohmann::json request{{"id", id}, {"payload", payload}, {"ttl_seconds", ttl_seconds}};
-    const ApiResult       api_result = post_json(config_.store_path, request);
+    const nlohmann::json request{{"id", id}, {"payload", payload}};
+    const ApiResult      api_result = post_json(config_.store_path, request);
     if (api_result.error) {
         result.error = api_result.error;
         return result;
     }
 
-    const auto ok = api_result.value.find("ok");
-    if (ok == api_result.value.end() || !ok->is_boolean() || !ok->get<bool>()) {
+    const auto ok            = api_result.value.find("ok");
+    const auto legacy_code   = api_result.value.find("code");
+    const bool documented_ok = ok != api_result.value.end() && ok->is_boolean() && ok->get<bool>();
+    const bool legacy_ok     = legacy_code != api_result.value.end() && legacy_code->is_number_integer() && legacy_code->get<int>() == 200;
+    if (!documented_ok && !legacy_ok) {
         result.error = {GatewayErrorCode::InvalidResponse, "store endpoint did not report ok=true"};
         return result;
     }
 
     result.ok = true;
-    const auto data = api_result.value.find("data");
-    if (data != api_result.value.end() && data->is_object()) {
-        const auto file_exists = data->find("file_exists");
-        if (file_exists != data->end() && file_exists->is_boolean())
+    for (const char* key : {"data", "meta"}) {
+        const auto container = api_result.value.find(key);
+        if (container == api_result.value.end() || !container->is_object())
+            continue;
+
+        const auto file_exists = container->find("file_exists");
+        if (file_exists != container->end() && file_exists->is_boolean()) {
             result.file_exists = file_exists->get<bool>();
+            break;
+        }
     }
     return result;
 }

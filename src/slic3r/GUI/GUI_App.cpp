@@ -1078,17 +1078,26 @@ void GUI_App::post_init()
         }
 //#endif
         mainframe->Thaw();
-        // Defer the final tab selection to after pending events are
-        // processed. During GL init, the PAGE_CHANGED handler posts
-        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
-        // select_tab(0) and switch back to the Prepare tab.
-        CallAfter([this] {
-            if (is_editor() && app_config->get("default_page") != "1")
-                mainframe->select_tab(size_t(0));
-            else if (app_config->get("default_page") == "1")
-                mainframe->select_tab(size_t(1));
-        });
-        plater_->trigger_restore_project(1);
+        // A URL open already in flight loads its own project and has already selected the 3D
+        // view. Sending the user to the home page and starting a blank project would undo both.
+        // On macOS the URL arrives through MacOpenURL after launch, so it is never visible in
+        // init_params->input_files and switch_to_3d above cannot account for it. This mirrors
+        // what switch_to_3d already does on platforms that receive the URL as a launch argument.
+        if (m_url_open_pending) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view and skipping the blank project";
+        } else {
+            // Defer the final tab selection to after pending events are
+            // processed. During GL init, the PAGE_CHANGED handler posts
+            // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+            // select_tab(0) and switch back to the Prepare tab.
+            CallAfter([this] {
+                if (is_editor() && app_config->get("default_page") != "1")
+                    mainframe->select_tab(size_t(0));
+                else if (app_config->get("default_page") == "1")
+                    mainframe->select_tab(size_t(1));
+            });
+            plater_->trigger_restore_project(1);
+        }
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
 //#endif
@@ -6718,6 +6727,10 @@ void GUI_App::MacOpenURL(const wxString& url)
 {
     if (url.empty())
         return;
+    // post_init() decides whether to start a blank project based on init_params->input_files,
+    // which is always empty here: macOS launches the app first and delivers the URL afterwards.
+    // Without this flag post_init resets the project that this download is about to load.
+    m_url_open_pending = true;
     start_download(into_u8(url));
 }
 

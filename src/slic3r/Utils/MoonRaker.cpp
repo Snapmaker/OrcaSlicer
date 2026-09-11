@@ -936,14 +936,39 @@ Moonraker_Mqtt::Moonraker_Mqtt(DynamicPrintConfig* config, bool change_engine) :
             local_ip = "0.0.0.0"; 
         }
 
-        std::lock_guard<std::mutex> lock(m_client_mtx);
+        // Construct the new client first (outside the lock), then swap the
+        // static pointers under the lock and destroy the old clients OUTSIDE
+        // it: ~MqttClient waits for the Paho threads, which must never wait on
+        // m_client_mtx (a message dispatch may publish a new request via
+        // get_mqtt_client_tls()) — the same invariant connect() / disconnect()
+        // / set_engine() follow. Destroying under the lock deadlocks and also
+        // blocks every reader for the full teardown duration.
+        std::shared_ptr<MqttClient> new_client;
         try {
-            m_mqtt_client.reset(new MqttClient("mqtt://" + host_info, local_ip, "", "", true));
+            new_client = MqttClient::create("mqtt://" + host_info, local_ip, "", "", true);
         } catch (const std::exception& e) {
             BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTT client: " << e.what();
-            m_mqtt_client.reset();
         }
-        m_mqtt_client_tls.reset();
+        std::shared_ptr<MqttClient> old_client;
+        std::shared_ptr<MqttClient> old_client_tls;
+        {
+            std::lock_guard<std::mutex> lock(m_client_mtx);
+            old_client     = std::move(m_mqtt_client);
+            old_client_tls = std::move(m_mqtt_client_tls);
+            m_mqtt_client  = new_client;
+        }
+        if (old_client) {
+            old_client->SetMessageCallback(nullptr);
+            std::string dc_msg;
+            old_client->Disconnect(dc_msg);
+        }
+        if (old_client_tls) {
+            old_client_tls->SetMessageCallback(nullptr);
+            std::string dc_msg;
+            old_client_tls->Disconnect(dc_msg);
+        }
+        old_client.reset();
+        old_client_tls.reset();
         BOOST_LOG_TRIVIAL(error) << "local ip" << local_ip;
         wcp_loger.add_log("local IP: " + local_ip, false, "", "Moonraker_Mqtt", "error");
     }
@@ -1278,7 +1303,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     wcp_loger.add_log("creating MQTTS client, URL: " + mqtts_url + ", client ID: " + m_client_id, false, "", "Moonraker_Mqtt", "info");
     std::shared_ptr<MqttClient> new_client;
     try {
-        new_client = std::make_shared<MqttClient>(mqtts_url, m_client_id, m_ca, m_cert, m_key);
+        new_client = MqttClient::create(mqtts_url, m_client_id, m_ca, m_cert, m_key);
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to create MQTTS client: " << e.what();
         wcp_loger.add_log("failed to create MQTTS client: " + std::string(e.what()), false, "", "Moonraker_Mqtt", "error");
@@ -2912,7 +2937,13 @@ void Moonraker_Mqtt::on_mqtt_message_arrived(const std::string& topic, const std
 
 // Handle auth messages
 void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
-    json body = json::parse(payload);
+    // Non-throwing parse (allow_exceptions=false): a parse error must not
+    // escape into Paho's C callback stack (uncaught exception = terminate).
+    json body = json::parse(payload, nullptr, false);
+    if (body.is_discarded()) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] malformed JSON in auth message, ignoring";
+        return;
+    }
 
     if (time_sync_manager_) {
         time_sync_manager_->updateFromResponse(body);
@@ -2937,7 +2968,13 @@ void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
 // Handle response messages
 void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
 {
-    json body = json::parse(payload);
+    // Non-throwing parse: a parse error must not escape into Paho's C
+    // callback stack (uncaught exception = terminate).
+    json body = json::parse(payload, nullptr, false);
+    if (body.is_discarded()) {
+        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] malformed JSON in response message, ignoring";
+        return;
+    }
 
     if (time_sync_manager_) {
         time_sync_manager_->updateFromResponse(body);
@@ -2984,7 +3021,13 @@ void Moonraker_Mqtt::on_status_arrived(const std::string& payload)
     auto& wcp_loger = GUI::WCP_Logger::getInstance();    
     wcp_loger.add_log("handling status update message", false, "", "Moonraker_Mqtt", "info");
     {
-        json body = json::parse(payload);
+        // Non-throwing parse: a parse error must not escape into Paho's C
+        // callback stack (uncaught exception = terminate).
+        json body = json::parse(payload, nullptr, false);
+        if (body.is_discarded()) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] malformed JSON in status message, ignoring";
+            return;
+        }
 
         json data;
         if (body.count("params")) {
@@ -3035,7 +3078,13 @@ void Moonraker_Mqtt::on_notification_arrived(const std::string& payload)
     wcp_loger.add_log("handling notification message, payload length: " + std::to_string(payload.length()), false, "", "Moonraker_Mqtt", "info");
     {
         // TODO: add msg notice
-        json body = json::parse(payload);
+        // Non-throwing parse: a parse error must not escape into Paho's C
+        // callback stack (uncaught exception = terminate).
+        json body = json::parse(payload, nullptr, false);
+        if (body.is_discarded()) {
+            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] malformed JSON in notification message, ignoring";
+            return;
+        }
         json data;
 
         if (body.count("params")) {

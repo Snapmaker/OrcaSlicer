@@ -1,7 +1,28 @@
 #!/usr/bin/env sh
 
-# Work-around https://gitlab.gnome.org/GNOME/gnome-build-meta/-/issues/754
-grep -q org.freedesktop.Platform.GL.nvidia /.flatpak-info && export WEBKIT_DISABLE_DMABUF_RENDERER=1
+# Work around NVIDIA rendering issues under Wayland. The AppImage launcher uses
+# Zink for NVIDIA drivers newer than 555, but glxinfo and nvidia-smi are not
+# available in the Flatpak runtime. Derive the driver version from the mounted
+# org.freedesktop.Platform.GL.nvidia-* extension instead.
+if grep -q 'org.freedesktop.Platform.GL.nvidia-' /.flatpak-info; then
+    export WEBKIT_DISABLE_DMABUF_RENDERER=1
+
+    nvidia_driver_major=$(sed -n 's/.*org\.freedesktop\.Platform\.GL\.nvidia-\([0-9][0-9]*\)-.*/\1/p' /.flatpak-info | head -n 1)
+    if [ "$XDG_SESSION_TYPE" = "wayland" ] && [ "${ZINK_DISABLE_OVERRIDE:-0}" != "1" ] && \
+       { [ "${ZINK_FORCE_OVERRIDE:-0}" = "1" ] || { [ -n "$nvidia_driver_major" ] && [ "$nvidia_driver_major" -gt 555 ]; }; }; then
+        for mesa_egl_vendor in \
+            /usr/lib/*-linux-gnu/GL/default/share/glvnd/egl_vendor.d/50_mesa.json \
+            /usr/share/glvnd/egl_vendor.d/50_mesa.json; do
+            if [ -f "$mesa_egl_vendor" ]; then
+                export __GLX_VENDOR_LIBRARY_NAME=mesa
+                export __EGL_VENDOR_LIBRARY_FILENAMES="$mesa_egl_vendor"
+                export MESA_LOADER_DRIVER_OVERRIDE=zink
+                export GALLIUM_DRIVER=zink
+                break
+            fi
+        done
+    fi
+fi
 
 # Work-around https://github.com/bambulab/BambuStudio/issues/3440
 export LC_ALL=C.UTF-8

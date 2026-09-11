@@ -1348,6 +1348,12 @@ int PartPlate::picking_id_component(int idx) const
 
 static void expand_plate_extruders(std::vector<int>& ids)
 {
+	// wxGetApp() dereferences the wx application object, which does not exist when running
+	// headless (CLI). There is no GUI preset bundle to expand virtual extruder ids against
+	// in that case, so leave the ids as they are rather than crashing.
+	if (wxTheApp == nullptr)
+		return;
+
 	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
 	if (num_physical > 0) {
 		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);
@@ -1913,6 +1919,14 @@ Vec3d PartPlate::get_center_origin()
 
 void PartPlate::generate_plate_name_texture()
 {
+	// There is no texture to generate without a 3D canvas, and in CLI mode wxGetApp() has no
+	// application object, so the em_unit() call below would dereference null. Matches upstream.
+	auto canvas = (this->m_partplate_list != nullptr && this->m_partplate_list->m_plater != nullptr)
+	                  ? this->m_partplate_list->m_plater->get_view3D_canvas3D()
+	                  : nullptr;
+	if (canvas == nullptr)
+		return;
+
     m_plate_name_icon.reset();
 
 	// generate m_name_texture texture from m_name with generate_from_text_string
@@ -1950,7 +1964,6 @@ void PartPlate::generate_plate_name_texture()
     if (!init_model_from_poly(m_plate_name_icon, poly, GROUND_Z))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "Unable to generate geometry buffers for icons\n";
 
-	auto canvas = this->m_partplate_list->m_plater->get_view3D_canvas3D();
     canvas->remove_raycasters_for_picking(SceneRaycaster::EType::Bed, picking_id_component(6));
     calc_vertex_for_plate_name_edit_icon(&m_name_texture, 0, m_plate_name_edit_icon);
     register_model_for_picking(*canvas, m_plate_name_edit_icon, picking_id_component(6));

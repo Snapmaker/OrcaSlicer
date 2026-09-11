@@ -16,6 +16,27 @@ class PrintObject;
 
 std::vector<int> fill_continuous_layer_range(const std::vector<int> &sorted_layers);
 
+enum class MixedFilamentAutoGradientAction : uint8_t { Disable, Generate, Confirm };
+enum class MixedFilamentAutoGradientChoice : int8_t { Ask = -1, DoNotGenerate = 0, Generate = 1 };
+
+constexpr MixedFilamentAutoGradientAction mixed_filament_auto_gradient_action(bool   auto_generate_enabled,
+                                                                              MixedFilamentAutoGradientChoice remembered_choice,
+                                                                              size_t remembered_physical_count,
+                                                                              size_t num_physical)
+{
+    if (!auto_generate_enabled)
+        return MixedFilamentAutoGradientAction::Disable;
+    if (num_physical <= 4)
+        return MixedFilamentAutoGradientAction::Generate;
+    if (remembered_physical_count == num_physical) {
+        if (remembered_choice == MixedFilamentAutoGradientChoice::Generate)
+            return MixedFilamentAutoGradientAction::Generate;
+        if (remembered_choice == MixedFilamentAutoGradientChoice::DoNotGenerate)
+            return MixedFilamentAutoGradientAction::Disable;
+    }
+    return MixedFilamentAutoGradientAction::Confirm;
+}
+
 // Represents a virtual "mixed" filament created from physical filaments
 // (layer cadence and/or same-layer interleaved stripe distribution). Display
 // colour blending uses FilamentMixer  so pair previews better

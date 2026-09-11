@@ -5875,11 +5875,11 @@ std::string GUI_App::gateway_localfile_url(const std::string& file_path) const
     return m_gateway_service ? m_gateway_service->localfile_url(file_path) : std::string{};
 }
 
-Gateway::PreprintStoreResult GUI_App::gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload, int ttl_seconds) const
+Gateway::PreprintStoreResult GUI_App::gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload) const
 {
     if (!m_gateway_service)
         return {{Gateway::GatewayErrorCode::NotConnected, "connection gateway is not available"}};
-    return m_gateway_service->store_preprint_context(id, payload, ttl_seconds);
+    return m_gateway_service->store_preprint_context(id, payload);
 }
 
 bool GUI_App::is_gateway_url(const wxString& url) const

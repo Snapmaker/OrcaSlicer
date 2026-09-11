@@ -21592,7 +21592,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
         nlohmann::json payload;
         payload["file_path"] = source_path;
-        payload["filename"] = display_name;
+        payload["file_name"] = display_name;
         payload["active_file"] = SSWCP::build_active_file_json(source_path, display_name, false);
         payload["filament_mapping"] = SSWCP::build_filament_mapping_json(active_filename);
 

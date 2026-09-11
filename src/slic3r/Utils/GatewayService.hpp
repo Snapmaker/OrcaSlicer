@@ -145,7 +145,7 @@ public:
     std::int64_t watch_device(const nlohmann::json& params, RpcCallback callback);
     ApiResult    get_device(const std::optional<std::string>& serial_number = std::nullopt);
     ApiResult    get_account();
-    PreprintStoreResult store_preprint_context(const std::string& id, const nlohmann::json& payload, int ttl_seconds = 1800);
+    PreprintStoreResult store_preprint_context(const std::string& id, const nlohmann::json& payload);
     std::string  web_url(const std::string& page_key) const;
     std::string  localfile_url(const std::string& file_path) const;
 

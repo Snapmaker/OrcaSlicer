@@ -10,6 +10,9 @@
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/Slicing.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/ClipperUtils.hpp"
 #include <libslic3r/ModelArrange.hpp>
 
 #include "test_helpers.hpp"
@@ -1903,6 +1906,81 @@ SCENARIO("Fractional support layers keep the prime tower on whole object layers"
                 const std::string gcode = Slic3r::Test::gcode(print);
                 REQUIRE(! gcode.empty());
             }
+        }
+    }
+}
+
+SCENARIO("A painted slope cut to a ribbon prints its colour in full runs", "[MultiNozzleLayerHeight][Segmentation]") {
+    // A wedge whose +x face rises at 45 degrees (1 mm sideways per mm of height), that face
+    // painted with the coarse extruder (here a 0.8 mm nozzle, 0.6 mm layer height = runs of
+    // three 0.2 mm layers), and the painted side regions cut to a 1 mm ribbon along the outline
+    // (mmu_segmented_region_max_width). A run commits the shape common to its three layers; the
+    // ribbon of the top layer only shares 1 - 2 * 0.2 = 0.6 mm with the ribbon two layers down,
+    // less than the 0.84 mm outer wall of the 0.8 mm nozzle (and the face's own strips add up to
+    // 3 * 0.2 = 0.6 mm as well), so without the projected ribbons under a painted face
+    // (MultiMaterialSegmentation.cpp) the runs break into single layers or drop the face.
+    GIVEN("A wedge with its sloped face painted for the coarse extruder and a 1 mm region width") {
+        DynamicPrintConfig config = two_extruder_config(0.6);
+        config.set_key_value("nozzle_diameter",                new ConfigOptionFloats({0.4, 0.8}));
+        config.set_key_value("max_layer_height",               new ConfigOptionFloats({0.3, 0.6}));
+        config.set_key_value("mmu_segmented_region_max_width", new ConfigOptionFloat(1.0));
+        Print print;
+        Model model;
+        {
+            indexed_triangle_set its;
+            its.vertices = { {0.f, 0.f, 0.f}, {20.f, 0.f, 0.f}, {20.f, 20.f, 0.f}, {0.f, 20.f, 0.f},
+                             {0.f, 0.f, 10.f}, {10.f, 0.f, 10.f}, {10.f, 20.f, 10.f}, {0.f, 20.f, 10.f} };
+            its.indices  = { {0, 2, 1}, {0, 3, 2},   // bottom
+                             {4, 5, 6}, {4, 6, 7},   // top
+                             {0, 1, 5}, {0, 5, 4},   // y = 0
+                             {3, 7, 6}, {3, 6, 2},   // y = 20
+                             {0, 4, 7}, {0, 7, 3},   // x = 0
+                             {1, 2, 6}, {1, 6, 5} }; // the slope
+            ModelObject *object = model.add_object();
+            object->name = "painted_wedge";
+            ModelVolume *volume = object->add_volume(TriangleMesh(std::move(its)));
+            TriangleSelector selector(volume->mesh());
+            const indexed_triangle_set &mesh_its = volume->mesh().its;
+            for (size_t f = 0; f < mesh_its.indices.size(); ++ f) {
+                const Vec3f &a = mesh_its.vertices[mesh_its.indices[f](0)], &b = mesh_its.vertices[mesh_its.indices[f](1)], &c = mesh_its.vertices[mesh_its.indices[f](2)];
+                const Vec3f n = (b - a).cross(c - a).normalized();
+                if (n.x() > 0.5f && n.z() > 0.5f)
+                    selector.set_facet(int(f), EnforcerBlockerType(2));
+            }
+            REQUIRE(volume->mmu_segmentation_facets.set(selector));
+            object->add_instance();
+            for (ModelObject *mo : model.objects) {
+                mo->center_around_origin();
+                mo->translate(120., 120., 0.);
+                mo->ensure_on_bed();
+            }
+            print.apply(model, config);
+            print.set_status_silent();
+        }
+        THEN("the painted face prints with the coarse extruder in whole runs, never in single layers") {
+            REQUIRE(print.validate().string.empty());
+            print.process();
+            const PrintObject &object = *print.objects().front();
+            int fine_region, coarse_region;
+            find_regions(object, fine_region, coarse_region);
+            REQUIRE(coarse_region >= 0);
+            // Well inside the slope (z 2..8): every coarse extrusion is a 0.6 mm run, and the
+            // runs are there (the face is not left to the fine extruder).
+            size_t at_pitch = 0, off_pitch = 0, single_rows = 0;
+            for (size_t idx = 8; idx <= 38; ++ idx) {
+                const LayerRegion *layerm = object.get_layer(int(idx))->get_region(coarse_region);
+                if (layerm->combined_layer_count() == 1 && ! layerm->slices.empty())
+                    ++ single_rows;
+                for (float height : region_path_heights(layerm)) {
+                    if (std::abs(height - 0.6) < 1e-3)
+                        ++ at_pitch;
+                    else
+                        ++ off_pitch;
+                }
+            }
+            CHECK(at_pitch > 0);
+            CHECK(off_pitch == 0);
+            CHECK(single_rows == 0);
         }
     }
 }

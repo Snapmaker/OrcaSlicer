@@ -981,10 +981,13 @@ void PrintObject::apply_extruder_layer_heights()
         const size_t mult       = walls_only ? wall_multipliers[region_id] : multipliers[region_id];
         if (mult <= 1 && ! split)
             continue;
-        // Shapes thinner than half a bead of the region's nozzle cannot be printed by it.
+        // Shapes narrower than one outer wall of the region cannot be printed by it: the perimeter
+        // generator emits nothing for them, so a run must not commit such a sliver as its shape
+        // (a painted region cut to a ribbon loses the run's lateral step on a slope).
         const double nozzle_diameter = print_config.nozzle_diameter.get_at(m_print->extruder_index_of(
             feature_filament_idx(this->printing_region(region_id).config().outer_wall_filament_id.value)));
-        const float bead = 0.25f * float(scale_(nozzle_diameter));
+        const Flow  outer_wall = this->printing_region(region_id).flow(*this, frExternalPerimeter, m_config.layer_height.value, false, 0);
+        const float bead       = 0.5f * float(scale_(outer_wall.width()));
         // The colour guard below ignores anything narrower than a bead of the region's nozzle:
         // such a strip prints as part of the neighboring wall anyway, in that wall's colour.
         const float guard_bead = 0.5f * float(scale_(nozzle_diameter));
@@ -1326,6 +1329,7 @@ void PrintObject::apply_extruder_layer_heights()
             }
         }
         const size_t max_mult = *std::max_element(multipliers.begin(), multipliers.end());
+        auto area_of = [](const ExPolygons &ex) { double a = 0.; for (const ExPolygon &e : ex) a += e.area(); return a; };
         auto count_at = [this](size_t l, size_t r) -> unsigned short { return m_layers[l]->regions()[r]->combined_layer_count(); };
         auto shape_at = [this](size_t l, size_t r) { return to_expolygons(m_layers[l]->regions()[r]->slices.surfaces); };
         // The layer a region's row l extrudes on: the row itself, or the run top above a cleared
@@ -1405,11 +1409,22 @@ void PrintObject::apply_extruder_layer_heights()
             }
         };
         // The region printing `area` right below row l (through further free rows), or -1.
+        // The region printing most of `area` on row i, or -1 if nothing prints there.
+        auto dominant_at = [&](const ExPolygons &area, size_t i) -> int {
+            int    best      = -1;
+            double best_area = 0.;
+            for (size_t r = 0; r < num_regions; ++ r)
+                if (const size_t t = top_of(i, r); t < n_layers)
+                    if (const double a = area_of(intersection_ex(area, shape_at(t, r))); a > best_area) {
+                        best_area = a;
+                        best      = int(r);
+                    }
+            return best;
+        };
         auto region_below = [&](const ExPolygons &area, size_t l) -> int {
             for (size_t i = l; i-- > 0 && l - i <= 2 * max_mult;) {
-                for (size_t r = 0; r < num_regions; ++ r)
-                    if (const size_t t = top_of(i, r); t < n_layers && ! intersection_ex(area, shape_at(t, r)).empty())
-                        return int(r);
+                if (const int r = dominant_at(area, i); r >= 0)
+                    return r;
                 if (intersection_ex(area, accepted[i]).empty())
                     break;
             }
@@ -1418,13 +1433,18 @@ void PrintObject::apply_extruder_layer_heights()
         // The region printing `area` right above row l (through the free rows), or -1.
         auto region_above = [&](const ExPolygons &area, size_t l) -> int {
             for (size_t i = l + 1; i < n_layers; ++ i) {
-                for (size_t r = 0; r < num_regions; ++ r)
-                    if (const size_t t = top_of(i, r); t < n_layers && ! intersection_ex(area, shape_at(t, r)).empty())
-                        return int(r);
+                if (const int r = dominant_at(area, i); r >= 0)
+                    return r;
                 if (intersection_ex(area, voids[i]).empty())
                     break;
             }
             return -1;
+        };
+        // The skin of a row: what a stranger to the gap must never fill (its walls would show).
+        const float skin_depth = 2.f * *std::max_element(beads.begin(), beads.end());
+        // Does region f's material extruded on layer t touch `area`?
+        auto abuts = [&](size_t f, size_t t, const ExPolygons &area) {
+            return ! intersection_ex(offset_ex(area, beads[f]), shape_at(t, f)).empty();
         };
         for (size_t row = first_idx; row < n_layers; ++ row) {
             if (voids[row].empty())
@@ -1437,6 +1457,7 @@ void PrintObject::apply_extruder_layer_heights()
             ExPolygons todo = opening_ex(intersection_ex(voids[row], union_ex(support)), anchor_dist);
             if (todo.empty())
                 continue;
+            const ExPolygons skin = diff_ex(m_layers[row]->lslices, offset_ex(m_layers[row]->lslices, -skin_depth));
             // 1. Runs (or single layers) that already exist and start exactly on this row take
             //    what fits into the free rows they span. Longest slab first, then the region
             //    printed below the gap (its material simply continues).
@@ -1452,13 +1473,24 @@ void PrintObject::apply_extruder_layer_heights()
                         candidates.push_back({ r, t, c });
                 }
                 const int below = candidates.empty() ? -1 : region_below(todo, row);
-                std::stable_sort(candidates.begin(), candidates.end(), [below](const Candidate &a, const Candidate &b) {
+                // A run whose own material touches the gap first (its colour continues); a
+                // stranger fills the interior only, never the skin.
+                std::vector<char> adjacent(candidates.size(), 0);
+                for (size_t i = 0; i < candidates.size(); ++ i)
+                    adjacent[i] = abuts(candidates[i].region, candidates[i].top, todo) ? 1 : 0;
+                std::vector<size_t> order(candidates.size());
+                std::iota(order.begin(), order.end(), size_t(0));
+                std::stable_sort(order.begin(), order.end(), [&](size_t ia, size_t ib) -> bool {
+                    const Candidate &a = candidates[ia], &b = candidates[ib];
+                    if (adjacent[ia] != adjacent[ib])
+                        return adjacent[ia] > adjacent[ib];
                     return a.count != b.count ? a.count > b.count : (int(a.region) == below) > (int(b.region) == below);
                 });
-                for (const Candidate &c : candidates) {
+                for (size_t i : order) {
+                    const Candidate &c = candidates[i];
                     if (todo.empty())
                         break;
-                    ExPolygons area = todo;
+                    ExPolygons area = adjacent[i] ? todo : diff_ex(todo, skin);
                     for (size_t l = row + 1; l <= c.top && ! area.empty(); ++ l)
                         area = intersection_ex(area, voids[l]);
                     area = opening_ex(area, beads[c.region]);
@@ -1470,6 +1502,37 @@ void PrintObject::apply_extruder_layer_heights()
             }
             if (todo.empty())
                 continue;
+            // A gap whose filling run starts one row higher (the run phases differ by a row):
+            // accept this row as it is, the run above then rests on it and takes the rest.
+            if (row + 1 < n_layers) {
+                ExPolygons stepped;
+                for (size_t r = 0; r < num_regions; ++ r) {
+                    const size_t t = top_of(row + 1, r);
+                    if (t >= n_layers || m_layers[t]->regions()[r]->slices.empty())
+                        continue;
+                    const size_t c = std::max<unsigned short>(count_at(t, r), 1);
+                    if (t + 1 - c != row + 1)
+                        continue;
+                    ExPolygons area = todo;
+                    for (size_t l = row + 1; l <= t && ! area.empty(); ++ l)
+                        area = intersection_ex(area, voids[l]);
+                    area = opening_ex(area, beads[r]);
+                    if (! area.empty() && abuts(r, t, area))
+                        append(stepped, std::move(area));
+                }
+                if (! stepped.empty()) {
+                    stepped = union_ex(stepped);
+                    accepted[row] = union_ex(accepted[row], stepped);
+                    for (size_t r = 0; r < num_regions; ++ r) {
+                        LayerRegion *layerm = m_layers[row]->regions()[r];
+                        if (! layerm->m_combined_away_exposed.empty())
+                            layerm->m_combined_away_exposed = diff_ex(layerm->m_combined_away_exposed, stepped);
+                    }
+                    todo = diff_ex(todo, stepped);
+                    if (todo.empty())
+                        continue;
+                }
+            }
             // 2. No existing run fits. Longest gaps first: a new short run of a region that has
             //    no layer on these rows, as long as the gap allows (below the region's pitch, no
             //    shorter than its extruders' minimum layer height) - the region printed below the
@@ -1582,11 +1645,12 @@ void PrintObject::apply_extruder_layer_heights()
                         take(under_run);
                     }
                 }
-                // Any other region only where its filament is on the layers anyway: a run of a
-                // region printing nowhere near would add toolchanges for an invisible fill.
+                // Any other region only where its filament is on the layers anyway (a run of a
+                // region printing nowhere near would add toolchanges for an invisible fill), and
+                // only in the interior: a stranger's walls must not show on the skin.
                 for (size_t r = 0; r < num_regions && ! area.empty(); ++ r)
                     if (multipliers[r] > 1 && int(r) != below && int(r) != above && filament_on_layer(row + len - 1, r))
-                        take(new_run(r, len, area));
+                        take(new_run(r, len, diff_ex(area, skin)));
                 if (! area.empty() && below >= 0 && multipliers[size_t(below)] <= 1)
                     take(new_run(size_t(below), len, area));
                 for (size_t r = 0; r < num_regions && ! area.empty(); ++ r)
@@ -1595,7 +1659,7 @@ void PrintObject::apply_extruder_layer_heights()
                         for (size_t l = row; on_layers && l < row + len; ++ l)
                             on_layers = filament_on_layer(l, r);
                         if (on_layers)
-                            take(new_run(r, len, area));
+                            take(new_run(r, len, diff_ex(area, skin)));
                     }
             }
         }

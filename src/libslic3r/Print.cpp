@@ -2336,6 +2336,28 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
             if (layer_height > EPSILON) {
                 // Gates diagnostics that would otherwise fire for configurations not using the feature.
                 const bool heights_feature_active = has_extruder_layer_heights(m_config);
+                // ORCA: a painted region cut narrower than one outer wall of its filament prints
+                // nothing there and the base filament shows instead (with runs of layers there is
+                // no per-layer fallback for it, so only then is it worth a warning).
+                if (const double max_width = object->config().mmu_segmented_region_max_width.value;
+                    heights_feature_active && max_width > 0. && object->model_object()->is_mm_painted()) {
+                    double       widest          = 0.;
+                    unsigned int widest_filament = 0;
+                    for (const PrintRegion &region : object->all_regions()) {
+                        const double width = region.flow(*object, frExternalPerimeter, layer_height, false, 0).width();
+                        if (width > widest) {
+                            widest          = width;
+                            widest_filament = unsigned(region.config().outer_wall_filament_id.value);
+                        }
+                    }
+                    if (widest > max_width + EPSILON)
+                        warn(Slic3r::format(_u8L("The maximum width of a segmented region (%1% mm) is narrower than the outer wall "
+                                                 "of filament %2% (%3% mm): painted regions of that filament print nothing where the "
+                                                 "cut leaves less than one wall, and the base filament shows instead. Use at least the "
+                                                 "widest painted outer wall (more on slopes printed in thick runs), or 0 for no limit."),
+                                            max_width, widest_filament, widest),
+                             "mmu_segmented_region_max_width", object);
+                }
                 bool object_has_combined_regions = false;
                 for (const PrintRegion &region : object->all_regions()) {
                     const PrintRegionConfig &region_config = region.config();

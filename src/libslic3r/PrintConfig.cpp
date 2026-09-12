@@ -962,7 +962,9 @@ void PrintConfigDef::init_common_params()
     def = this->add("layer_height", coFloat);
     def->label = L("Layer height");
     def->category = L("Quality");
-    def->tooltip = L("This is the height for each layer. Smaller layer heights give greater accuracy but longer printing time.");
+    def->tooltip = L("This is the height for each layer. Smaller layer heights give greater accuracy but longer printing time.\n"
+                     "While a preferred layer height is set for any extruder (printer settings), the object layer height is "
+                     "derived from the preferred layer heights - the finest one - and the global value is locked here.");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(INITIAL_LAYER_HEIGHT));

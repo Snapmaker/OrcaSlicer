@@ -3983,39 +3983,39 @@ Sidebar::Sidebar(Plater *parent)
 
                 if (res)
                 {
+                    // ORCA multi-nozzle-size: the printer reports tool heads of different sizes.
+                    // Mixed nozzle sizes print (per-nozzle diameters, layer heights and painted
+                    // regions), so take them over as they are: the printer profile of the first
+                    // tool head's size, then every other tool head's own size on top of it (as
+                    // the sidebar nozzle combos set it). Formerly a picker forced one size on all.
                     std::vector<std::string> diameters_raw = nozzle_diameters;
-                    //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
-                    wxTheApp->CallAfter([this, diameters_raw]() {
-                        NozzleDiameterSelectDialog dlg(
-                            wxGetApp().mainframe,
-                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
-                            _L("Set Nozzle Diameter"),
-                            diameters_raw);
-                        if (dlg.ShowModal() == wxID_OK) {
-                            std::string sel = dlg.GetSelectedDiameter();
-                            if (!sel.empty()) {
-                                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
-                                if (preset) {
-                                    preset->is_visible = true;
-
-                                    auto diameter = sel;
-                                    auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
-                                    if (preset == nullptr) {
-                                        BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                                        return;
-                                    }
-                                    preset->is_visible = true; // force visible
-
-                                    for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                                        p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-                                    }
-
-                                    wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                                    wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                                    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
-                                }
+                    wxTheApp->CallAfter([diameters_raw]() {
+                        std::vector<std::string> diameters = diameters_raw;
+                        for (std::string &d : diameters) {
+                            boost::algorithm::trim(d);
+                            if (d.size() > 2 && boost::iends_with(d, "mm")) {
+                                d.resize(d.size() - 2);
+                                boost::algorithm::trim(d);
                             }
                         }
+                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameters.front());
+                        if (preset == nullptr) {
+                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (mixed nozzle sync)";
+                            return;
+                        }
+                        preset->is_visible = true; // force visible
+                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+                        Sidebar &sidebar = wxGetApp().plater()->sidebar();
+                        for (size_t i = 1; i < diameters.size(); ++i)
+                            sidebar.apply_nozzle_diameter(i, wxString::FromUTF8(diameters[i]));
+                        sidebar.update_all_preset_comboboxes(true);
+                        sidebar.update_nozzle_settings(true);
+
+                        wxTheApp->CallAfter([]() {
+                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
+                                                 _L("Note"), wxOK);
+                            dlg_Ex.ShowModal();
+                        });
                     });
                     return;
                 }
@@ -11350,6 +11350,93 @@ bool Sidebar::confirm_object_layer_height_edit()
     return true;
 }
 
+// ORCA multi-nozzle-size: set ONLY nozzle `i`'s diameter - the sidebar nozzle combo and the
+// printer sync go through here - mirroring the Printer Settings -> Extruder tab: the printer
+// preset is kept (switching it to a single-diameter variant would force all nozzles to that
+// size, which defeats per-nozzle sizes), the nozzle's layer height limits follow its profile
+// variant, and a preferred layer height that no longer fits through it is reset. `variant` is
+// the diameter as the profiles name it ("0.4").
+void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
+{
+    double new_nd = 0.;
+    if (!diameter_label.ToCDouble(&new_nd) || new_nd <= 0.)
+        return;
+
+    Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+    if (printer_tab == nullptr)
+        return;
+
+    // Write nozzle_diameter[i] into the edited printer config, like Tab.cpp's extruder page.
+    DynamicPrintConfig  new_conf         = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto*         nozzle_diam_opt  = static_cast<const ConfigOptionFloats*>(new_conf.option("nozzle_diameter"));
+    if (nozzle_diam_opt == nullptr || i >= nozzle_diam_opt->values.size())
+        return;
+    std::vector<double> nozzle_diameters = nozzle_diam_opt->values;
+    if (std::abs(nozzle_diameters[i] - new_nd) < EPSILON)
+        return; // unchanged
+    nozzle_diameters[i] = new_nd;
+    new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(nozzle_diameters));
+
+    // ORCA multi-nozzle-size: a different nozzle size usually means different layer
+    // height limits. Adopt them from the printer's profile for the new nozzle size when
+    // one exists, otherwise ask the user to review the limits manually.
+    std::string notice;
+    bool        variant_found = false;
+    {
+        const PrinterPresetCollection &printers = wxGetApp().preset_bundle->printers;
+        const std::string model   = new_conf.opt_string("printer_model");
+        const std::string variant = diameter_label.ToStdString();
+        const Preset *variant_preset = printers.find_system_preset_by_model_and_variant(model, variant);
+        if (variant_preset == nullptr)
+            variant_preset = printers.find_custom_preset_by_model_and_variant(model, variant);
+        const auto *v_min = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("min_layer_height");
+        const auto *v_max = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("max_layer_height");
+        const auto *e_min = static_cast<const ConfigOptionFloats*>(new_conf.option("min_layer_height"));
+        const auto *e_max = static_cast<const ConfigOptionFloats*>(new_conf.option("max_layer_height"));
+        if (v_min != nullptr && !v_min->values.empty() && v_max != nullptr && !v_max->values.empty() &&
+            e_min != nullptr && e_max != nullptr) {
+            variant_found = true;
+            std::vector<double> mins = e_min->values, maxs = e_max->values;
+            mins.resize(nozzle_diameters.size(), mins.empty() ? 0. : mins.back());
+            maxs.resize(nozzle_diameters.size(), maxs.empty() ? 0. : maxs.back());
+            mins[i] = v_min->get_at(i);
+            maxs[i] = v_max->get_at(i);
+            new_conf.set_key_value("min_layer_height", new ConfigOptionFloats(mins));
+            new_conf.set_key_value("max_layer_height", new ConfigOptionFloats(maxs));
+            notice = GUI::format(_u8L("Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."),
+                                 i + 1, mins[i], maxs[i], variant_preset->name);
+        } else {
+            notice = GUI::format(_u8L("This printer has no profile for a %1% mm nozzle. Please review the "
+                                      "layer height limits of nozzle %2% in the printer settings."),
+                                 variant, i + 1);
+        }
+    }
+    // A preferred layer height that no longer fits through the new nozzle cannot print;
+    // reset it to Default rather than leave a dead setting behind.
+    if (const auto *height_opt = static_cast<const ConfigOptionFloats*>(new_conf.option("extruder_layer_height"));
+        height_opt != nullptr && !height_opt->values.empty() && height_opt->get_at(i) > new_nd + EPSILON) {
+        std::vector<double> heights = height_opt->values;
+        heights.resize(nozzle_diameters.size(), 0.);
+        heights[i] = 0.;
+        new_conf.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+        notice += "\n";
+        notice += GUI::format(_u8L("The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."), i + 1);
+    }
+
+    // load_config marks the printer preset modified and propagates the change without
+    // rebuilding these combos or switching presets, so the other nozzles keep their sizes.
+    printer_tab->load_config(new_conf);
+
+    wxGetApp().plater()->get_notification_manager()->push_notification(
+        NotificationType::CustomNotification,
+        variant_found ? NotificationManager::NotificationLevel::RegularNotificationLevel :
+                        NotificationManager::NotificationLevel::WarningNotificationLevel,
+        notice);
+    // The valid preferred layer heights of this nozzle follow its bore and limits.
+    if (i < p->m_nozzle_layer_height_lists.size() && p->m_nozzle_layer_height_lists[i] != nullptr)
+        fill_nozzle_layer_height_field(p->m_nozzle_layer_height_lists[i], i);
+}
+
 void Sidebar::update_nozzle_settings(bool switch_machine)
 {
     if (!p->m_nozzle_notebook)
@@ -11418,90 +11505,8 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         }
 
         diameter_combo->Bind(wxEVT_COMBOBOX, [this, diameter_combo, i](wxCommandEvent& event) {
-            // ORCA multi-nozzle-size: set ONLY this nozzle's diameter, mirroring the
-            // Printer Settings -> Extruder tab. Previously this switched the whole printer preset
-            // to a single-diameter variant (forcing all nozzles to the same size); that defeats
-            // per-nozzle sizes, which the slicer now supports.
-
-            // Parse the selected diameter from the "0.4mm" combo item.
-            const wxString sel_num = nozzle_combo_number(diameter_combo->GetValue());
-            double new_nd = 0.;
-            if (!sel_num.ToCDouble(&new_nd) || new_nd <= 0.)
-                return;
-
-            Tab* printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
-            if (printer_tab == nullptr)
-                return;
-
-            // Write nozzle_diameter[i] into the edited printer config, like Tab.cpp's extruder page.
-            DynamicPrintConfig  new_conf         = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-            const auto*         nozzle_diam_opt  = static_cast<const ConfigOptionFloats*>(new_conf.option("nozzle_diameter"));
-            if (nozzle_diam_opt == nullptr || i >= nozzle_diam_opt->values.size())
-                return;
-            std::vector<double> nozzle_diameters = nozzle_diam_opt->values;
-            if (std::abs(nozzle_diameters[i] - new_nd) < EPSILON)
-                return; // unchanged
-            nozzle_diameters[i] = new_nd;
-            new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(nozzle_diameters));
-
-            // ORCA multi-nozzle-size: a different nozzle size usually means different layer
-            // height limits. Adopt them from the printer's profile for the new nozzle size when
-            // one exists, otherwise ask the user to review the limits manually.
-            std::string notice;
-            bool        variant_found = false;
-            {
-                const PrinterPresetCollection &printers = wxGetApp().preset_bundle->printers;
-                const std::string model   = new_conf.opt_string("printer_model");
-                const std::string variant = sel_num.ToStdString();
-                const Preset *variant_preset = printers.find_system_preset_by_model_and_variant(model, variant);
-                if (variant_preset == nullptr)
-                    variant_preset = printers.find_custom_preset_by_model_and_variant(model, variant);
-                const auto *v_min = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("min_layer_height");
-                const auto *v_max = variant_preset == nullptr ? nullptr : variant_preset->config.option<ConfigOptionFloats>("max_layer_height");
-                const auto *e_min = static_cast<const ConfigOptionFloats*>(new_conf.option("min_layer_height"));
-                const auto *e_max = static_cast<const ConfigOptionFloats*>(new_conf.option("max_layer_height"));
-                if (v_min != nullptr && !v_min->values.empty() && v_max != nullptr && !v_max->values.empty() &&
-                    e_min != nullptr && e_max != nullptr) {
-                    variant_found = true;
-                    std::vector<double> mins = e_min->values, maxs = e_max->values;
-                    mins.resize(nozzle_diameters.size(), mins.empty() ? 0. : mins.back());
-                    maxs.resize(nozzle_diameters.size(), maxs.empty() ? 0. : maxs.back());
-                    mins[i] = v_min->get_at(i);
-                    maxs[i] = v_max->get_at(i);
-                    new_conf.set_key_value("min_layer_height", new ConfigOptionFloats(mins));
-                    new_conf.set_key_value("max_layer_height", new ConfigOptionFloats(maxs));
-                    notice = GUI::format(_u8L("Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."),
-                                         i + 1, mins[i], maxs[i], variant_preset->name);
-                } else {
-                    notice = GUI::format(_u8L("This printer has no profile for a %1% mm nozzle. Please review the "
-                                              "layer height limits of nozzle %2% in the printer settings."),
-                                         variant, i + 1);
-                }
-            }
-            // A preferred layer height that no longer fits through the new nozzle cannot print;
-            // reset it to Default rather than leave a dead setting behind.
-            if (const auto *height_opt = static_cast<const ConfigOptionFloats*>(new_conf.option("extruder_layer_height"));
-                height_opt != nullptr && !height_opt->values.empty() && height_opt->get_at(i) > new_nd + EPSILON) {
-                std::vector<double> heights = height_opt->values;
-                heights.resize(nozzle_diameters.size(), 0.);
-                heights[i] = 0.;
-                new_conf.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
-                notice += "\n";
-                notice += GUI::format(_u8L("The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."), i + 1);
-            }
-
-            // load_config marks the printer preset modified and propagates the change without
-            // rebuilding these combos or switching presets, so the other nozzles keep their sizes.
-            printer_tab->load_config(new_conf);
-
-            wxGetApp().plater()->get_notification_manager()->push_notification(
-                NotificationType::CustomNotification,
-                variant_found ? NotificationManager::NotificationLevel::RegularNotificationLevel :
-                                NotificationManager::NotificationLevel::WarningNotificationLevel,
-                notice);
-            // The valid preferred layer heights of this nozzle follow its bore and limits.
-            if (i < p->m_nozzle_layer_height_lists.size() && p->m_nozzle_layer_height_lists[i] != nullptr)
-                fill_nozzle_layer_height_field(p->m_nozzle_layer_height_lists[i], i);
+            // ORCA multi-nozzle-size: set ONLY this nozzle's diameter (see apply_nozzle_diameter).
+            apply_nozzle_diameter(i, nozzle_combo_number(diameter_combo->GetValue()));
             // Do not event.Skip(): this is a plain ComboBox; skipping would let the sidebar treat
             // it as the bed-type combo (Plater::priv::on_combobox_select) and mishandle it.
         });
@@ -28119,6 +28124,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
     bool update_scheduled = false;
     bool bed_shape_changed = false;
     bool nozzle_tabs_changed = false;
+    bool print_tab_lock_changed = false;
     bool layer_heights_changed = false;
     //bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
@@ -28218,11 +28224,18 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
             // that are no whole multiples of the object layer height: reconcile once settled.
             if (opt_key != "min_layer_height" && opt_key != "max_layer_height")
                 layer_heights_changed = true;
+            // The Quality tab locks its layer height while preferred layer heights drive it
+            // (ConfigManipulation::toggle_print_fff_options): refresh that lock.
+            if (opt_key == "extruder_layer_height")
+                print_tab_lock_changed = true;
         }
     }
 
     if (nozzle_tabs_changed && p->sidebar != nullptr)
         p->sidebar->update_nozzle_values();
+    if (print_tab_lock_changed && p->main_frame != nullptr && p->main_frame->is_loaded())
+        if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT); print_tab != nullptr)
+            print_tab->update();
     if (layer_heights_changed && p->sidebar != nullptr && p->main_frame != nullptr && p->main_frame->is_loaded())
         p->sidebar->schedule_layer_height_reconcile();
 

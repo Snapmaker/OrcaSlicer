@@ -189,8 +189,10 @@ struct Update
                     return false;
                 }
 
+                // Orca: a vendor installed as a preset cache has no profile beside it.
                 const fs::path vendor_json = target.parent_path() / (vendor + ".json");
-                if (!fs::exists(vendor_json)) {
+                const fs::path vendor_cache = target.parent_path() / (vendor + ".opc");
+                if (!fs::exists(vendor_json) && !fs::exists(vendor_cache)) {
                     BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging: %1%.json is not installed yet", vendor);
                     return false;
                 }
@@ -1616,7 +1618,22 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
 	for (const auto &bundle : bundles) {
 		auto path_in_rsrc = (this->rsrc_path / bundle).replace_extension(".json");
 		auto path_in_vendors = (this->vendor_path / bundle).replace_extension(".json");
-		updates.updates.emplace_back(std::move(path_in_rsrc), std::move(path_in_vendors), Version(), bundle, "", "");
+		// A vendor the build ships as a preset cache installs as that cache (it carries the
+		// vendor profile, the presets and their version): scripts/build_preset_cache.sh prunes
+		// the profile JSON the cache replaces from the bundle, and copying the profile that was
+		// not there aborted the start of every packaged build (the filament library is always
+		// installed). Same choice of form as install_vendor_bundles_from_resources().
+		const bool from_cache = installable_cache_version(this->rsrc_path, bundle).valid();
+		if (from_cache) {
+			auto cache_in_rsrc    = (this->rsrc_path / bundle).replace_extension(".opc");
+			auto cache_in_vendors = (this->vendor_path / bundle).replace_extension(".opc");
+			updates.updates.emplace_back(std::move(cache_in_rsrc), std::move(cache_in_vendors), Version(), bundle, "", "");
+		} else if (fs::exists(path_in_rsrc)) {
+			updates.updates.emplace_back(std::move(path_in_rsrc), std::move(path_in_vendors), Version(), bundle, "", "");
+		} else {
+			BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]: vendor " << bundle << " ships neither a profile nor a preset cache, skipped";
+			continue;
+		}
 
         //BBS: add directory support
         auto print_in_rsrc = this->rsrc_path / bundle;
@@ -1628,7 +1645,15 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
         }
 
         // Guard against empty / missing source: never clear target unless we do have source content to copy.
-        if (source_dir_valid && source_dir_has_entries) {
+        if (from_cache) {
+            // The cache carries the presets; the pruned vendor directory holds only covers, bed
+            // models and textures, which are read from resources. An installed profile tree of
+            // an earlier version would be parsed in place of the cache, so it goes (as in
+            // install_vendor_bundles_from_resources()).
+            fs::path print_folder(print_in_vendors);
+            if (fs::exists(print_folder))
+                fs::remove_all(print_folder);
+        } else if (source_dir_valid && source_dir_has_entries) {
             fs::path print_folder(print_in_vendors);
             if (fs::exists(print_folder))
                 fs::remove_all(print_folder);

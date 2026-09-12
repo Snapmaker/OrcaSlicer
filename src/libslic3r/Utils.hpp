@@ -773,6 +773,11 @@ void remove_installed_vendor(const std::string& vendor);
 // ships preset caches instead of the raw profile JSONs, by its cache alone.
 std::set<std::string> vendor_names_in(const boost::filesystem::path& dir);
 
+// The version of the preset cache `<vendor>.opc` in `dir` when that cache is the form of the
+// vendor to install (it covers the vendor profile beside it, if any); invalid when the vendor
+// installs as its profile JSON. See utils.cpp.
+Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor);
+
 // The version a build ships `vendor` at: whichever of its preset cache and its
 // profile is newer, that being the one installing lays down. Invalid Semver if the
 // build ships neither.

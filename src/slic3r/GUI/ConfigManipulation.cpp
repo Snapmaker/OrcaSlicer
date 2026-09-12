@@ -792,6 +792,19 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     const GCodeFlavor gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
     const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
 
+    // ORCA multi-nozzle-size: while a preferred layer height is set for any extruder, the object
+    // layer height is derived from the preferred heights (the finest one; the sidebar and the
+    // Printer tab reconcile it) and a value typed here could only be reconciled back or leave
+    // heights that are no whole multiples of it. Lock the global field; the preferred layer
+    // heights are the place to change it.
+    if (is_global_config) {
+        bool derived = false;
+        if (const auto *heights = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("extruder_layer_height"))
+            for (double h : heights->values)
+                derived = derived || h > EPSILON;
+        toggle_field("layer_height", !derived);
+    }
+
     // Orca: use booleans to avoid repeated comparisons with enum values
     const bool gcf_is_marlin_firmware = gcflavor == GCodeFlavor::gcfMarlinFirmware;
     const bool gcf_is_klipper = gcflavor == GCodeFlavor::gcfKlipper;

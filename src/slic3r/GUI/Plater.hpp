@@ -243,6 +243,9 @@ public:
     void update_dynamic_filament_list();
 
     void update_nozzle_settings(bool switch_machine = false);
+    // Sets only nozzle `nozzle_idx`'s diameter (`variant` as the profiles name it, "0.4"),
+    // keeping the printer preset; see Plater.cpp.
+    void apply_nozzle_diameter(size_t nozzle_idx, const wxString &diameter_label);
     // Re-derives the object layer height from the per-extruder layer heights (see Plater.cpp).
     void derive_object_layer_height();
     // Fixes a configuration whose preferred layer heights are no whole multiples of the object

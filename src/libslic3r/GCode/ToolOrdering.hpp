@@ -192,6 +192,9 @@ public:
     // Due to the support layers possibly interleaving the object layers,
     // wipe tower will be disabled for some support only layers.
     bool 						has_wipe_tower = false;
+    // ORCA: per-extruder layer height. An object-grid layer that changes no tool: the prime
+    // tower may leave it without a slab and bridge it with the next slab (fill_wipe_tower_partitions).
+    bool                        tower_optional = false;
     // Number of wipe tower partitions to support the required number of tool switches
     // and to support the wipe tower partitions above this one.
     size_t                      wipe_tower_partitions = 0;

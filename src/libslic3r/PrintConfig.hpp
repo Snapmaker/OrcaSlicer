@@ -1865,6 +1865,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloats,               fan_min_speed))
     ((ConfigOptionFloats,             min_layer_height))
     ((ConfigOptionFloats,             extruder_layer_height))
+    ((ConfigOptionBool,               extruder_layer_height_exact))
     ((ConfigOptionFloat,              printable_height))
     ((ConfigOptionFloatsNullable,     extruder_printable_height))
     ((ConfigOptionPoint,              best_object_pos))

@@ -767,6 +767,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "precise_z_height"
             // ORCA: layer combining for thicker extruder layer heights happens at the slicing step.
             || opt_key == "extruder_layer_height"
+            || opt_key == "extruder_layer_height_exact"
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"

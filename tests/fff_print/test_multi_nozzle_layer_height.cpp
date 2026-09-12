@@ -1984,3 +1984,121 @@ SCENARIO("A painted slope cut to a ribbon prints its colour in full runs", "[Mul
         }
     }
 }
+
+SCENARIO("Preferred layer heights are planned onto a shared object layer grid", "[MultiNozzleLayerHeight][Plan]") {
+    using Catch::Approx;
+    const std::vector<double> nozzles { 0.2, 0.4, 0.6, 0.8 };
+    GIVEN("free values 0.08 / 0.13 / 0.37 / 0.59 on a 0.2 mm object layer height") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.08, 0.13, 0.37, 0.59 }, 0.2, nozzles, 0.2, false);
+        THEN("the coarsest grid every value lands on within 0.01 mm is chosen and the values are rounded to it") {
+            CHECK(plan.grid == Approx(0.045));
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.09));
+            CHECK(plan.heights[1] == Approx(0.135));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.585));
+            CHECK(plan.rounded.size() == 4);
+            CHECK(plan.pinned.empty());
+        }
+    }
+    GIVEN("values sharing a grid, 0.12 / 0.18 / 0.30, with the first extruder at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.12, 0.18, 0.30 }, 0.2, nozzles, 0.2, false);
+        THEN("they print exactly on the 0.06 mm grid and the Default extruder keeps its height") {
+            CHECK(plan.grid == Approx(0.06));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[1] == Approx(0.12));
+            CHECK(plan.heights[2] == Approx(0.18));
+            CHECK(plan.heights[3] == Approx(0.30));
+            REQUIRE(plan.pinned == std::vector<size_t> { 0 });
+            CHECK(plan.heights[0] == Approx(0.18));   // 0.2 rounded to the grid within the 0.2 mm bore
+        }
+    }
+    GIVEN("values that already are multiples of the finest one, 0.1 / 0.2 / 0.3") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.1, 0.2, 0.3, 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the finest value is the grid and nothing is rounded") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+        }
+    }
+    GIVEN("a finest value above the smallest nozzle") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0., 0.6 }, 0.2, nozzles, 0.2, false);
+        THEN("the grid fits through the smallest nozzle") {
+            CHECK(plan.grid == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.6));
+        }
+    }
+    GIVEN("the experimental exact mode with 0.13 and 0.37") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.13, 0., 0.37 }, 0.2, nozzles, 0.2, true);
+        THEN("every value is kept and the grid is what both are whole multiples of") {
+            CHECK(plan.grid == Approx(0.01));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[1] == Approx(0.13));
+            CHECK(plan.heights[3] == Approx(0.37));
+        }
+    }
+}
+
+SCENARIO("The prime tower prints one slab per tool change with per-extruder layer heights", "[MultiNozzleLayerHeight][WipeTower]") {
+    // Object layers of 0.1 mm, the second part on a 0.6 mm nozzle printing 0.4 mm runs: three of
+    // every four layers print the first extruder only, and the second and third of them change no
+    // tool. Those get no tower slab; the next slab bridges them (within the 0.3 mm maximum).
+    auto tower_config = [](double second_extruder_layer_height) {
+        DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
+        config.set_key_value("layer_height",               new ConfigOptionFloat(0.1));
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+        config.set_key_value("enable_prime_tower",         new ConfigOptionBool(true));
+        config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+        config.set_key_value("use_relative_e_distances", new ConfigOptionBool(true));
+        config.set_key_value("layer_change_gcode",       new ConfigOptionString("G92 E0"));
+        config.set_key_value("prime_tower_width", new ConfigOptionFloat(35));
+        config.set_key_value("wipe_tower_x",      new ConfigOptionFloats({50.}));
+        config.set_key_value("wipe_tower_y",      new ConfigOptionFloats({50.}));
+        return config;
+    };
+    GIVEN("the two-part object with the second part at 0.4 mm") {
+        Print print;
+        Model model;
+        init_two_part_print(print, model, tower_config(0.4));
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("object layers without a tool change carry no slab and every slab stays within the maximum layer height") {
+            REQUIRE(print.has_wipe_tower());
+            size_t slabs = 0, skipped = 0, optional = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (lt.tower_optional)
+                    ++ optional;
+                if (lt.has_wipe_tower) {
+                    INFO("tower slab at z=" << lt.print_z << " height=" << lt.wipe_tower_layer_height);
+                    CHECK(lt.wipe_tower_layer_height <= 0.3 + 1e-3);
+                    ++ slabs;
+                } else if (lt.tower_optional)
+                    ++ skipped;
+            }
+            CHECK(optional > 0);
+            CHECK(skipped > 0);
+            CHECK(slabs > 0);
+        }
+        THEN("the G-code exports") {
+            const std::string gcode = Slic3r::Test::gcode(print);
+            REQUIRE(! gcode.empty());
+        }
+    }
+    GIVEN("the same object without per-extruder layer heights") {
+        Print print;
+        Model model;
+        init_two_part_print(print, model, tower_config(0.));
+        REQUIRE(print.validate().string.empty());
+        print.process();
+        THEN("every printing layer keeps its tower slab, as before") {
+            size_t without = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+                if (! lt.extruders.empty() && ! lt.has_wipe_tower)
+                    ++ without;
+            CHECK(without == 0);
+        }
+    }
+}

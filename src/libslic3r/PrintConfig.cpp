@@ -5490,8 +5490,10 @@ void PrintConfigDef::init_fff_params()
     def = this->add("extruder_layer_height", coFloats);
     def->label = L("Preferred layer height");
     def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
-                     "different nozzle sizes. Any value can be entered: the finest preferred layer height becomes "
-                     "the object layer height and the other preferred heights are rounded to its whole multiples. "
+                     "different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest "
+                     "height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the "
+                     "finest preferred height down to a quarter of it), and the preferred heights are rounded to those "
+                     "multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. "
                      "A part whose features all follow this extruder prints only on every Nth layer with "
                      "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
                      "falls back to the object layer height. When the rest of the part cannot follow, "
@@ -5504,6 +5506,20 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
+
+    // ORCA multi-nozzle-size: experimental exact preferred layer heights.
+    def = this->add("extruder_layer_height_exact", coBool);
+    def->label = L("Exact preferred layer heights");
+    def->category = L("Extruders");
+    def->tooltip = L("Experimental. Keep every preferred layer height exactly as entered: the object layer height "
+                     "becomes the coarsest height all of them are whole multiples of, which can be very fine "
+                     "(0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers "
+                     "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
+                     "printing can take much longer; the prime tower prints one slab per tool change instead, but "
+                     "those slabs can fall below the extruders' minimum layer height. Off: the preferred heights "
+                     "are rounded to the coarsest grid on which they land within 0.01 mm.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("slow_down_min_speed", coFloats);
     def->label = L("Min print speed");

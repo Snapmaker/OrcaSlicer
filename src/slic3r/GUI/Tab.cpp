@@ -1824,6 +1824,9 @@ static wxString pad_combo_value_for_config(const DynamicPrintConfig &config)
     return config.opt_bool("pad_enable") ? (config.opt_bool("pad_around_object") ? _("Around object") : _("Below object")) : _("None");
 }
 
+// ORCA multi-nozzle-size: defined with TabPrinter::on_value_change below.
+static bool confirm_exact_extruder_heights(wxWindow *parent, bool ask_experimental, bool ask_prime_tower);
+
 void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 {
     // Orca:
@@ -2036,6 +2039,20 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 m_config_manipulation.apply(m_config, &new_conf);
             }
             wxGetApp().plater()->update();
+        }
+        // ORCA multi-nozzle-size: the experimental exact preferred layer heights need the user's
+        // OK for the tower's slabs; declined, the printer option goes off again.
+        if (boost::any_cast<bool>(value) && m_config->opt_bool("enable_prime_tower")) {
+            Tab *printer_tab = wxGetApp().get_tab(Preset::TYPE_PRINTER);
+            const DynamicPrintConfig &printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+            const auto *exact = printer_config.option<ConfigOptionBool>("extruder_layer_height_exact");
+            if (printer_tab != nullptr && exact != nullptr && exact->value &&
+                !confirm_exact_extruder_heights(wxGetApp().plater(), false, true)) {
+                DynamicPrintConfig new_conf = printer_config;
+                new_conf.set_key_value("extruder_layer_height_exact", new ConfigOptionBool(false));
+                printer_tab->load_config(new_conf);
+                wxGetApp().plater()->sidebar().derive_object_layer_height();
+            }
         }
         update_wiping_button_visibility();
     }
@@ -5484,6 +5501,11 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("z_offset", "printer_basic_information_printable_space#z-offset");
         optgroup->append_single_option_line("preferred_orientation", "printer_basic_information_printable_space#preferred-orientation");
 
+        // ORCA multi-nozzle-size: experimental exact preferred layer heights (the heights
+        // themselves are on the extruder pages).
+        optgroup = page->new_optgroup(L("Per-extruder layer heights"), L"param_layer_height");
+        optgroup->append_single_option_line("extruder_layer_height_exact", "printer_extruder_basic_information#extruder-layer-height-limits");
+
         optgroup = page->new_optgroup(L("Advanced"), L"param_advanced");
 
         optgroup->append_single_option_line("printer_structure", "printer_basic_information_advanced#printer-structure");
@@ -6801,6 +6823,33 @@ void TabPrinter::toggle_options()
 }
 
 // Orca:
+// ORCA multi-nozzle-size: the confirmations of the experimental exact preferred layer heights.
+// Returns false when the user declines - the option is then turned off again by the caller.
+static bool confirm_exact_extruder_heights(wxWindow *parent, bool ask_experimental, bool ask_prime_tower)
+{
+    if (ask_experimental) {
+        MessageDialog dlg(parent,
+                          _L("Exact preferred layer heights are experimental. The object layer height becomes the coarsest "
+                             "height every preferred layer height is a whole multiple of, which can be very fine: extruders "
+                             "left at Default, supports, the first layers and the areas that cannot follow an extruder's "
+                             "height then print at that grid, and slicing and printing can take much longer.\n\nContinue?"),
+                          _L("Exact preferred layer heights"), wxICON_WARNING | wxYES | wxNO);
+        if (dlg.ShowModal() != wxID_YES)
+            return false;
+    }
+    if (ask_prime_tower) {
+        MessageDialog dlg(parent,
+                          _L("With exact preferred layer heights the prime tower prints one slab per tool change and bridges "
+                             "the layers between them. Where tool changes fall on neighbouring layers of a very fine grid, "
+                             "those slabs can be thinner than the extruders' minimum layer height, outside the printer's "
+                             "limits.\n\nKeep exact preferred layer heights together with the prime tower?"),
+                          _L("Prime tower layer height"), wxICON_WARNING | wxYES | wxNO);
+        if (dlg.ShowModal() != wxID_YES)
+            return false;
+    }
+    return true;
+}
+
 void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& value)
 {
     if (wxGetApp().plater() == nullptr || m_config_manipulation.is_applying())
@@ -6810,6 +6859,20 @@ void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& v
     // same way as one entered in the sidebar (object layer height derived, defaults pinned).
     if (boost::starts_with(opt_key, "extruder_layer_height") && !boost::starts_with(opt_key, "extruder_layer_height_"))
         wxGetApp().plater()->sidebar().derive_object_layer_height();
+    // ORCA multi-nozzle-size: exact preferred layer heights are experimental - confirm when they
+    // are turned on (and their prime tower slabs when the tower is on); either way re-derive the
+    // object layer height under the new rule.
+    if (opt_key == "extruder_layer_height_exact") {
+        if (boost::any_cast<bool>(value)) {
+            const bool tower_on = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_bool("enable_prime_tower");
+            if (!confirm_exact_extruder_heights(parent(), true, tower_on)) {
+                DynamicPrintConfig new_conf = *m_config;
+                new_conf.set_key_value("extruder_layer_height_exact", new ConfigOptionBool(false));
+                load_config(new_conf);
+            }
+        }
+        wxGetApp().plater()->sidebar().derive_object_layer_height();
+    }
 
     const int pos = opt_key.find("#");
 

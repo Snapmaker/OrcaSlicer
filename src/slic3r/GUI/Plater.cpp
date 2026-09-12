@@ -11033,25 +11033,6 @@ static std::string extruder_heights_list(const std::vector<double> &heights)
     return list + " mm";
 }
 
-// ORCA multi-nozzle-size: the coarsest object layer height (5 um quanta) every explicit extruder
-// layer height is a whole multiple of; with `include_base` the given base joins in, so the result
-// can only be finer than it. The object layer height also prints the Default extruders, so it is
-// capped to the smallest nozzle diameter (largest divisor that fits). 0 when nothing constrains it.
-static double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height)
-{
-    auto quanta = [](double height) { return std::lround(height / 0.005); };
-    long common = 0;
-    for (double height : heights)
-        if (height > EPSILON)
-            common = std::gcd(common, quanta(height));
-    if ((include_base || common == 0) && base > EPSILON)
-        common = std::gcd(common, quanta(base));
-    for (long k = 1; common > 0 && k <= common; ++k)
-        if (common % k == 0 && (max_height <= EPSILON || (common / k) * 0.005 <= max_height + EPSILON))
-            return std::round((common / k) * 0.005 * 1e6) / 1e6;
-    return 0.;
-}
-
 // ORCA multi-nozzle-size: the smallest nozzle diameter of the edited printer (0 when unknown).
 static double smallest_nozzle_diameter()
 {
@@ -11063,62 +11044,20 @@ static double smallest_nozzle_diameter()
     return min_bore;
 }
 
+// ORCA multi-nozzle-size: whether the experimental exact preferred layer heights are on.
+static bool exact_extruder_heights()
+{
+    const auto *opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionBool>("extruder_layer_height_exact");
+    return opt != nullptr && opt->value;
+}
+
 // ORCA multi-nozzle-size: the object layer height for a set of preferred layer heights, and the
-// heights made whole multiples of it. The finest preferred height becomes the object layer height
-// (a grid that fine is what the user asked for; the gcd of free values would be arbitrarily fine
-// and print the prime tower and supports in unprintable slabs); the other preferred heights are
-// rounded to its nearest whole multiple within their nozzle bore. When the finest height does not
-// fit through the smallest nozzle (Default extruders and the fallback areas of every part print
-// at the object layer height), the coarsest divisor that does is used. Default extruders keep
-// their current height (rounded to the grid) when the grid gets finer than it, so they do not
-// suddenly print the finest extruder's layers. Returns the grid (0 = nothing to derive).
-struct LayerHeightPlan
+// heights made whole multiples of it (plan_extruder_layer_heights() in libslic3r: the coarsest
+// grid every preferred height lands on within 0.01 mm, or every value exactly with the
+// experimental option; Default extruders keep their current height when the grid gets finer).
+static ExtruderLayerHeightPlan plan_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles)
 {
-    double              grid = 0.;
-    std::vector<double> heights;             // adjusted preferred heights (0 = Default)
-    std::vector<size_t> rounded;             // extruders whose preferred height was rounded
-    std::vector<size_t> pinned;              // Default extruders pinned to the previous height
-};
-static LayerHeightPlan plan_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles)
-{
-    LayerHeightPlan plan;
-    const double    min_nozzle = smallest_nozzle_diameter();
-    double          finest     = 0.;
-    for (double h : heights)
-        if (h > EPSILON && (finest <= 0. || h < finest))
-            finest = h;
-    if (finest <= 0.) {
-        plan.heights = std::move(heights);
-        return plan;
-    }
-    double grid = finest;
-    if (min_nozzle > EPSILON && grid > min_nozzle + EPSILON)
-        grid = conforming_object_layer_height(heights, base, false, min_nozzle);
-    if (grid <= EPSILON) {
-        plan.heights = std::move(heights);
-        return plan;
-    }
-    auto multiple_of_grid = [&](double h, double bore) {
-        long n = std::max(1L, std::lround(h / grid));
-        while (n > 1 && n * grid > bore + EPSILON)
-            --n;
-        return std::round(n * grid * 1e6) / 1e6;
-    };
-    for (size_t j = 0; j < heights.size(); ++j) {
-        const double bore = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
-        if (heights[j] > EPSILON) {
-            const double snapped = multiple_of_grid(heights[j], bore);
-            if (std::abs(snapped - heights[j]) > 1e-6)
-                plan.rounded.push_back(j);
-            heights[j] = snapped;
-        } else if (base > EPSILON && grid < base - EPSILON && bore >= grid - EPSILON) {
-            heights[j] = multiple_of_grid(base, bore);
-            plan.pinned.push_back(j);
-        }
-    }
-    plan.grid    = grid;
-    plan.heights = std::move(heights);
-    return plan;
+    return plan_extruder_layer_heights(std::move(heights), base, nozzles, smallest_nozzle_diameter(), exact_extruder_heights());
 }
 
 // ORCA multi-nozzle-size: whether an explicit extruder layer height is a whole multiple of the
@@ -11183,7 +11122,7 @@ static bool derive_object_layer_height_from_extruder_heights(std::vector<double>
     for (double height : heights)
         all_conform = all_conform && extruder_height_conforms(height, base_height);
     if (base_height > EPSILON && !(only_if_nonconforming && all_conform)) {
-        LayerHeightPlan plan = plan_layer_heights(heights, base_height, nd_opt->values);
+        ExtruderLayerHeightPlan plan = plan_layer_heights(heights, base_height, nd_opt->values);
         if (plan.grid > EPSILON) {
             std::string notice;
             if (std::abs(plan.grid - base_height) > EPSILON) {
@@ -11193,7 +11132,8 @@ static bool derive_object_layer_height_from_extruder_heights(std::vector<double>
                     print_tab->load_config(print_conf);
                     print_changed = true;
                 }
-                notice = GUI::format(_u8L("Object layer height set to %1% mm, the finest preferred layer height."), plan.grid);
+                notice = GUI::format(exact_extruder_heights() ? _u8L("Object layer height set to %1% mm, the coarsest height every preferred layer height is a whole multiple of.") :
+                                                                _u8L("Object layer height set to %1% mm, the coarsest height the preferred layer heights land on."), plan.grid);
             }
             if (!plan.rounded.empty()) {
                 std::string list;
@@ -11531,9 +11471,11 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         // Free entry: any layer height can be typed; the object layer height follows.
         TextInput* lh_field = new TextInput(nozzle_panel, wxEmptyString, "", "", wxDefaultPosition, {-1, FromDIP(32)}, wxTE_PROCESS_ENTER);
         lh_field->SetToolTip(_L("Layer height this extruder should print with: type any value, or Default to keep the "
-                                "object layer height. The finest preferred layer height becomes the object layer height "
-                                "and the other preferred heights are rounded to its whole multiples; extruders left at "
-                                "Default keep their current height."));
+                                "object layer height. The object layer height becomes the coarsest height on which every "
+                                "preferred layer height lands within 0.01 mm of a whole multiple, and the preferred heights "
+                                "are rounded to those multiples (every value is kept exactly with the experimental "
+                                "\"Exact preferred layer heights\" printer setting); extruders left at Default keep "
+                                "their current height."));
         fill_nozzle_layer_height_field(lh_field, i);
 
         // Applies the typed height for extruder `i` (Enter or leaving the field).
@@ -28217,7 +28159,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         // nozzle sizes, layer height limits and preferred layer heights, and the valid preferred
         // heights follow the object layer height. update_nozzle_values() refreshes them in place
         // (and defers a full tab rebuild when the extruder count changed).
-        else if (opt_key == "nozzle_diameter" || opt_key == "extruder_layer_height" ||
+        else if (opt_key == "nozzle_diameter" || opt_key == "extruder_layer_height" || opt_key == "extruder_layer_height_exact" ||
                  opt_key == "layer_height" || opt_key == "min_layer_height" || opt_key == "max_layer_height") {
             nozzle_tabs_changed = true;
             // A preset switch, project load or nozzle change can leave preferred layer heights

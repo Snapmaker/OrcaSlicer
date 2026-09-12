@@ -1,4 +1,5 @@
 #include <limits>
+#include <numeric>
 
 #include "libslic3r.h"
 #include "Slicing.hpp"
@@ -1055,6 +1056,95 @@ int generate_layer_height_texture(
 
     // Returns number of cells of the 0th LOD level.
     return ncells;
+}
+
+// ORCA multi-nozzle-size: see Slicing.hpp.
+double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height)
+{
+    auto quanta = [](double height) { return std::lround(height / 0.005); };
+    long common = 0;
+    for (double height : heights)
+        if (height > EPSILON)
+            common = std::gcd(common, quanta(height));
+    if ((include_base || common == 0) && base > EPSILON)
+        common = std::gcd(common, quanta(base));
+    for (long k = 1; common > 0 && k <= common; ++ k)
+        if (common % k == 0 && (max_height <= EPSILON || (common / k) * 0.005 <= max_height + EPSILON))
+            return std::round((common / k) * 0.005 * 1e6) / 1e6;
+    return 0.;
+}
+
+ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
+                                                    double min_nozzle, bool exact, double tolerance)
+{
+    ExtruderLayerHeightPlan plan;
+    auto snap = [](double v) { return std::round(v * 1e6) / 1e6; };
+    double finest = 0.;
+    for (double h : heights)
+        if (h > EPSILON && (finest <= 0. || h < finest))
+            finest = h;
+    if (finest <= 0.) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    double grid = 0.;
+    if (exact) {
+        // Every entered value prints exactly: the grid is what they all are whole multiples of.
+        grid = conforming_object_layer_height(heights, base, false, min_nozzle);
+    } else {
+        // The coarsest grid on which every entered value lands within the tolerance of a whole
+        // multiple; candidates run from the finest value (or the smallest nozzle, if that is
+        // finer) down to a quarter of the finest value, never below 0.02 mm, in 5 um steps.
+        const double top   = min_nozzle > EPSILON ? std::min(finest, min_nozzle) : finest;
+        const double floor = std::max(0.02, snap(finest / 4.));
+        const long   q_top = std::lround(top / 0.005), q_floor = std::lround(floor / 0.005);
+        for (long q = q_top; q >= q_floor && grid <= 0.; -- q) {
+            const double g  = snap(q * 0.005);
+            bool         ok = true;
+            for (size_t j = 0; j < heights.size() && ok; ++ j) {
+                if (heights[j] <= EPSILON)
+                    continue;
+                const long   n       = std::max(1L, std::lround(heights[j] / g));
+                const double snapped = snap(n * g);
+                const double bore    = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
+                ok = std::abs(snapped - heights[j]) <= tolerance + EPSILON && snapped <= bore + EPSILON;
+            }
+            if (ok)
+                grid = g;
+        }
+        if (grid <= EPSILON) {
+            // Nothing coarse enough fits within the tolerance: the finest value is the grid (a
+            // grid that fine is what the user asked for), capped to the smallest nozzle.
+            grid = finest;
+            if (min_nozzle > EPSILON && grid > min_nozzle + EPSILON)
+                grid = conforming_object_layer_height(heights, base, false, min_nozzle);
+        }
+    }
+    if (grid <= EPSILON) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    auto multiple_of_grid = [&](double h, double bore) {
+        long n = std::max(1L, std::lround(h / grid));
+        while (n > 1 && n * grid > bore + EPSILON)
+            -- n;
+        return snap(n * grid);
+    };
+    for (size_t j = 0; j < heights.size(); ++ j) {
+        const double bore = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
+        if (heights[j] > EPSILON) {
+            const double snapped = multiple_of_grid(heights[j], bore);
+            if (std::abs(snapped - heights[j]) > 1e-6)
+                plan.rounded.push_back(j);
+            heights[j] = snapped;
+        } else if (base > EPSILON && grid < base - EPSILON && bore >= grid - EPSILON) {
+            heights[j] = multiple_of_grid(base, bore);
+            plan.pinned.push_back(j);
+        }
+    }
+    plan.grid    = grid;
+    plan.heights = std::move(heights);
+    return plan;
 }
 
 }; // namespace Slic3r

@@ -1401,6 +1401,14 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
         }
     }
 
+    // ORCA: per-extruder layer height. An object-grid layer that changes no tool may lose its
+    // tower slab (the thinning pass at the end). Not with smooth timelapse (a slab on every
+    // print layer), single-extruder multi-material (ramming on every change) or wrapping detection.
+    if (has_extruder_layer_heights(config) && config.enable_prime_tower && config.timelapse_type != TimelapseType::tlSmooth &&
+        !config.single_extruder_multi_material && !config.enable_wrapping_detection)
+        for (LayerTools &lt : m_layer_tools)
+            lt.tower_optional = lt.on_object_grid && lt.wipe_tower_partitions == 0 && lt.print_z >= object_bottom_z + EPSILON;
+
     // Propagate the wipe tower partitions down to support the upper partitions by the lower partitions.
     for (int i = int(m_layer_tools.size()) - 2; i >= 0; -- i)
         m_layer_tools[i].wipe_tower_partitions = std::max(m_layer_tools[i + 1].wipe_tower_partitions, m_layer_tools[i].wipe_tower_partitions);
@@ -1632,6 +1640,40 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
         }
     }
 
+
+    // ORCA: per-extruder layer height. With the object grid finer than the extruders' pitches
+    // most object-grid layers change no tool, and a tower slab on each of them is the finest
+    // extruder's slab count for the whole print. Thin them out: such a slab (tower_optional) is
+    // dropped when the slab above can bridge to the slab below within the maximum layer height,
+    // greedily from the bottom, so the tower prints one slab per tool change where the grid
+    // allows. Every tool change keeps its slab, as do the first and last tower layers and
+    // everything below the object bottom; the fractional support rules above are untouched, so
+    // a dropped slab never makes a fractional layer carry one.
+    {
+        int first_wt = -1, last_wt = -1;
+        for (int i = 0; i < int(m_layer_tools.size()); ++ i)
+            if (m_layer_tools[i].has_wipe_tower) {
+                if (first_wt < 0)
+                    first_wt = i;
+                last_wt = i;
+            }
+        int prev = -1;
+        for (int i = first_wt; i >= 0 && i <= last_wt; ++ i) {
+            LayerTools &lt = m_layer_tools[i];
+            if (! lt.has_wipe_tower)
+                continue;
+            if (prev >= 0 && i < last_wt && lt.tower_optional) {
+                int next = i + 1;
+                while (next <= last_wt && ! m_layer_tools[next].has_wipe_tower)
+                    ++ next;
+                if (next <= last_wt && m_layer_tools[next].print_z - m_layer_tools[prev].print_z <= max_layer_height + EPSILON) {
+                    lt.has_wipe_tower = false;
+                    continue;
+                }
+            }
+            prev = i;
+        }
+    }
 
     // Calculate the wipe_tower_layer_height values.
     coordf_t wipe_tower_print_z_last = 0.;

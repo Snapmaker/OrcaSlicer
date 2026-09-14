@@ -976,14 +976,17 @@ set (CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})
 set (CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/resources/images\\\\Snapmaker_Orca.ico")
 set (CPACK_NSIS_MUI_ICON "${CPACK_PACKAGE_ICON}")
 set (CPACK_NSIS_MUI_UNIICON "${CPACK_PACKAGE_ICON}")
-set (CPACK_NSIS_INSTALLED_ICON_NAME "$INSTDIR\\\\snapmaker-orca.exe")
+set (CPACK_NSIS_INSTALLED_ICON_NAME "snapmaker-orca.exe")
 set(CPACK_NSIS_UNINSTALL_NAME "Uninstall")
 # Window caption. Keep install dir / Start Menu / registry without version.
 # CPack-generated .nsi stays ASCII. Chinese uninstall confirm is a UTF-8 BOM
 # .nsh included after "Unicode true" so language switch (SimpChinese/English) works.
 set (CPACK_NSIS_DISPLAY_NAME "${CPACK_PACKAGE_NAME}")
 set (CPACK_NSIS_PACKAGE_NAME "${CPACK_PACKAGE_NAME} V${Snapmaker_VERSION}")
-set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKAGE_NAME}\"")
+# Pre-fill the directory page with the existing install path on overwrite
+# (logic lives in cmake/nsis/SnapmakerDirPre.nsh, pulled in via MUI hook).
+file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerDirPre.nsh" _snapmaker_dirpre_nsh)
+set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKAGE_NAME}\"\n!include \"${_snapmaker_dirpre_nsh}\"")
 # Preinstall guard in one place:
 # 1) Block while app is running.
 # 2) If old version exists, uninstall it with clear failure reason.
@@ -1040,6 +1043,8 @@ SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
 SnapmakerOrcaPre_path_ready:
   IfFileExists "$0" 0 SnapmakerOrcaPre_missing_uninst
+  ; Existing install confirmed -> this is an upgrade (overwrite or uninstall-first).
+  StrCpy $SnapmakerIsUpgrade "1"
 
   StrCpy $4 ""
   SetRegView 64
@@ -1094,7 +1099,13 @@ SnapmakerOrcaPre_trim_slash_done:
   ; _?="C:\Program Fil...) and causes uninstall failure. See NSIS forums t-212468.
   ExecWait '"$0" /S _?=$3' $1
   IfErrors SnapmakerOrcaPre_uninst_launch_failed 0
-  IntCmp $1 0 SnapmakerOrcaPre_finish SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
+  IntCmp $1 0 SnapmakerOrcaPre_uninst_ok SnapmakerOrcaPre_uninst_failed SnapmakerOrcaPre_uninst_failed
+SnapmakerOrcaPre_uninst_ok:
+  ; The old uninstaller's self-delete may be deferred or fail; remove it again so
+  ; Uninstall.exe never survives an upgrade into the new install.
+  Delete "$0"
+  ClearErrors
+  Goto SnapmakerOrcaPre_finish
 
 SnapmakerOrcaPre_uninst_failed:
   MessageBox MB_OK|MB_ICONSTOP "Uninstall failed.$\nUninstaller path: $0$\nWorking dir: $3$\nExit code: $1"
@@ -1105,6 +1116,9 @@ SnapmakerOrcaPre_uninst_launch_failed:
   Abort
 
 SnapmakerOrcaPre_finish:
+  StrCmp $SnapmakerIsUpgrade "1" 0 SnapmakerOrcaPre_cleanup_done
+  Call SnapmakerCleanupUpgradeData
+SnapmakerOrcaPre_cleanup_done:
 ]=])
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
@@ -1272,13 +1286,24 @@ FunctionEnd
     file(WRITE "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallFinish.nsh"
          "${_snapmaker_utf8_bom}${_snapmaker_uninst_finish}")
     file(TO_NATIVE_PATH "${_snapmaker_nsis_tpl_dir}/SnapmakerUninstallFinish.nsh" _snapmaker_uninst_finish_nsh)
+    # Upgrade cleanup: remove version-specific user data (system/ota) before the
+    # new files are installed. Included at top level (Function/Var) and invoked
+    # from CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS when an existing install is found.
+    set(_snapmaker_upgrade_cleanup_in "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUpgradeCleanup.nsh.in")
+    if(NOT EXISTS "${_snapmaker_upgrade_cleanup_in}")
+        message(FATAL_ERROR "Missing ${_snapmaker_upgrade_cleanup_in} (required for CPack NSIS upgrade cleanup).")
+    endif()
+    file(READ "${_snapmaker_upgrade_cleanup_in}" _snapmaker_upgrade_cleanup ENCODING UTF-8)
+    file(WRITE "${_snapmaker_nsis_tpl_dir}/SnapmakerUpgradeCleanup.nsh"
+         "${_snapmaker_utf8_bom}${_snapmaker_upgrade_cleanup}")
+    file(TO_NATIVE_PATH "${_snapmaker_nsis_tpl_dir}/SnapmakerUpgradeCleanup.nsh" _snapmaker_upgrade_cleanup_nsh)
     # Register the finish page AFTER MUI_UNPAGE_INSTFILES: shown automatically
     # once file deletion in Section "Uninstall" has finished.
     # BrandingText " " hides the default "Nullsoft Install System vX.XX" label
     # in the bottom-left corner (empty string would reset to the default).
     string(REPLACE
         "  !insertmacro MUI_UNPAGE_INSTFILES\n"
-        "  !insertmacro MUI_UNPAGE_INSTFILES\n  !include \"${_snapmaker_uninst_finish_nsh}\"\n  UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishLeave\n  BrandingText \" \"\n"
+        "  !insertmacro MUI_UNPAGE_INSTFILES\n  !include \"${_snapmaker_upgrade_cleanup_nsh}\"\n  !include \"${_snapmaker_uninst_finish_nsh}\"\n  UninstPage custom un.SnapmakerUninstallFinishCreate un.SnapmakerUninstallFinishLeave\n  BrandingText \" \"\n"
         _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     file(WRITE "${_snapmaker_nsis_tpl_dir}/NSIS.template.in" "${_snapmaker_nsis_tpl}")
     list(PREPEND CMAKE_MODULE_PATH "${_snapmaker_nsis_tpl_dir}")

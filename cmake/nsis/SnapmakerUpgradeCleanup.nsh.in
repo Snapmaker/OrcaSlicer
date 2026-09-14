@@ -1,0 +1,87 @@
+; Upgrade cleanup, run from the install section (via CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS)
+; only when an existing install was detected. Removes version-specific user data
+; that must be refreshed on upgrade:
+;   %APPDATA%\Snapmaker_Orca\system   (system configuration)
+;   %APPDATA%\Snapmaker_Orca\ota      (OTA update cache)
+; $APPDATA is resolved under SetShellVarContext current so it points at the
+; current user's Roaming profile, not machine-wide ProgramData (the installer's
+; .onInit sets "all" for admin installs).
+; Progress is shown in the InstFiles details list via DetailPrint, one line per
+; removed path.
+!ifndef LANG_SIMPCHINESE
+!define LANG_SIMPCHINESE 2052
+!endif
+
+; "1" once an existing install (uninstaller) is confirmed -> upgrade path.
+Var SnapmakerIsUpgrade
+; Localized "deleting:" prefix, chosen once by SnapmakerCleanupUpgradeData.
+Var SnapmakerDelPrefix
+
+; Recursively delete the directory tree rooted at $0, printing each removed path
+; to the InstFiles details list. Deletes every file/subdirectory under $0 but
+; leaves $0 itself (the caller removes it with RMDir).
+; Usage: Push "<dir>"  Call SnapmakerDeleteDirRecursive
+Function SnapmakerDeleteDirRecursive
+  Exch $0
+  Push $1
+  Push $2
+  Push $3
+  FindFirst $1 $2 "$0\*.*"
+  StrCmp $2 "" done
+loop:
+  StrCmp $2 "." next
+  StrCmp $2 ".." next
+  StrCpy $3 "$0\$2"
+  IfFileExists "$3\*.*" 0 is_file
+    DetailPrint "$SnapmakerDelPrefix$3"
+    Push "$3"
+    Call SnapmakerDeleteDirRecursive
+    RMDir "$3"
+    ClearErrors
+    Goto next
+is_file:
+    DetailPrint "$SnapmakerDelPrefix$3"
+    Delete "$3"
+    ClearErrors
+next:
+  FindNext $1 $2
+  StrCmp $2 "" done
+  Goto loop
+done:
+  FindClose $1
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+; Entry point: remove system/ota upgrade residue, then restore the all-users
+; shell context so later start-menu shortcut creation is unaffected.
+Function SnapmakerCleanupUpgradeData
+  SetShellVarContext current
+
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerCleanup_en
+    StrCpy $SnapmakerDelPrefix "删除: "
+    DetailPrint "正在清理升级残留数据..."
+    Goto SnapmakerCleanup_do
+  SnapmakerCleanup_en:
+    StrCpy $SnapmakerDelPrefix "Deleting: "
+    DetailPrint "Cleaning up upgrade data..."
+  SnapmakerCleanup_do:
+
+  StrCpy $0 "$APPDATA\Snapmaker_Orca\system"
+  IfFileExists "$0\*.*" 0 SnapmakerCleanup_ota
+    Push "$0"
+    Call SnapmakerDeleteDirRecursive
+    RMDir "$0"
+  SnapmakerCleanup_ota:
+
+  StrCpy $0 "$APPDATA\Snapmaker_Orca\ota"
+  IfFileExists "$0\*.*" 0 SnapmakerCleanup_done
+    Push "$0"
+    Call SnapmakerDeleteDirRecursive
+    RMDir "$0"
+  SnapmakerCleanup_done:
+
+  SetShellVarContext all
+FunctionEnd

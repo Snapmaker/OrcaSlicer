@@ -77,6 +77,13 @@ Function SnapmakerCleanupUpgradeData
   SnapmakerCleanup_ota:
 
   StrCpy $0 "$APPDATA\Snapmaker_Orca\ota"
+  IfFileExists "$0\*.*" 0 SnapmakerCleanup_flutter
+    Push "$0"
+    Call SnapmakerDeleteDirRecursive
+    RMDir "$0"
+  SnapmakerCleanup_flutter:
+
+  StrCpy $0 "$APPDATA\Snapmaker_Orca\web\flutter_web"
   IfFileExists "$0\*.*" 0 SnapmakerCleanup_done
     Push "$0"
     Call SnapmakerDeleteDirRecursive

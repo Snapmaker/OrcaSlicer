@@ -69,5 +69,6 @@
     "wipe_tower_no_sparse_layers": "0",
     "prime_tower_width": "35",
     "wall_generator": "classic",
-    "compatible_printers": []
+    "compatible_printers": [],
+    "exclude_object": "1"
 }

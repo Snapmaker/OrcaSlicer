@@ -2585,6 +2585,9 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         }
         this->set_done(psWipeTower);
     }
+    if (this->has_wipe_tower()) {
+        m_fake_wipe_tower.set_pos({ m_config.wipe_tower_x.get_at(m_plate_index), m_config.wipe_tower_y.get_at(m_plate_index) });
+    }
     if (this->set_started(psSkirtBrim)) {
         this->set_status(70, L("Generating skirt & brim"));
 
@@ -3450,12 +3453,13 @@ void Print::_make_wipe_tower()
         m_wipe_tower_data.construct_mesh(wipe_tower.width(), wipe_tower.get_depth(), wipe_tower.get_wipe_tower_height(), 
             wipe_tower.get_brim_width(), wipe_tower.get_is_rib_wall(),
             wipe_tower.get_rib_width(), wipe_tower.get_rib_length(), config().wipe_tower_fillet_wall.value);
-        const Vec3d origin                      = Vec3d::Zero();
-        m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position(), wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
-                                                  config().initial_layer_print_height, m_wipe_tower_data.depth,
-                                                  m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
-                                                  config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
-                                                  {scale_(origin.x()), scale_(origin.y())});
+        const Vec3d origin = this->get_plate_origin();
+        m_fake_wipe_tower.rib_offset = wipe_tower.get_rib_offset();
+        m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position() + m_fake_wipe_tower.rib_offset, wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
+            config().initial_layer_print_height, m_wipe_tower_data.depth,
+            m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
+            config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
+            { scale_(origin.x()), scale_(origin.y()) });
         m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
 }

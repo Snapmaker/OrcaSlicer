@@ -2054,6 +2054,10 @@ GUI_App::~GUI_App()
         m_silent_refresh_timeout_timer->Stop();
         m_silent_refresh_timeout_timer.reset();
     }
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
@@ -4387,6 +4391,47 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::start_flutter_wcp_timeout_watch()
+{
+    if (m_flutter_wcp_reported || m_flutter_wcp_timeout_timer)
+        return;
+
+    m_flutter_wcp_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+    Bind(wxEVT_TIMER, &GUI_App::on_flutter_wcp_timeout, this, m_flutter_wcp_timeout_timer->GetId());
+    m_flutter_wcp_timeout_timer->Start(FLUTTER_WCP_TIMEOUT_MS, wxTIMER_ONE_SHOT);
+}
+
+void GUI_App::on_flutter_wcp_received()
+{
+    report_flutter_run_result_once(true);
+}
+
+void GUI_App::on_flutter_wcp_timeout(wxTimerEvent &event)
+{
+    report_flutter_run_result_once(false);
+}
+
+void GUI_App::report_flutter_run_result_once(bool success)
+{
+    if (m_flutter_wcp_reported)
+        return;
+
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
+
+    m_flutter_wcp_reported = true;
+
+    if (success) {
+        SNAP_LOG_BATCH_FORCE(Info, "flutter run success",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "true"});
+    } else {
+        SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
     }
 }
 

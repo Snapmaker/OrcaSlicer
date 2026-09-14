@@ -552,6 +552,84 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     CHECK(layer1.solid_infill_filament(overridden_region) == 1);
 }
 
+TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+
+    DynamicPrintConfig config = mixed_region_print_config("1,4,1,1,63,0,g,w,m2,z0,xa0,xb0,d0,o0,u1,cm0;"
+                                                          "3,4,1,1,42,0,g,w,m2,z0,xa0,xb0,d0,o0,u2,cm0;"
+                                                          "2,1,1,1,50,0,g,w,m0,z2,xa0,xb0,d0,o0,u3,cm3,r1/0.8000/0.2000");
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    config.set("dithering_local_z_infill", true);
+    config.set("mixed_filament_height_lower_bound", 0.04);
+    config.set("mixed_filament_height_upper_bound", 0.16);
+    config.set("enable_prime_tower", false);
+    config.set("flush_into_infill", true);
+
+    bool assign_part = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    ModelConfig& assignment = assign_part ? volume->config : object->config;
+
+    Print print;
+    print.set_status_silent();
+    const std::vector<std::pair<int, std::set<size_t>>> assignments = {{7, {0, 1}}, {6, {2, 3}}, {5, {0, 3}},
+                                                                       {7, {0, 1}}, {1, {}},     {6, {2, 3}}};
+    for (const auto& [filament, expected_tools] : assignments) {
+        CAPTURE(filament, assign_part);
+        assignment.set("extruder", filament);
+        print.apply(model, config);
+        // Reuse normalized settings, as the GUI does. Reapplying raw defaults
+        // can invalidate slicing for unrelated reasons and hide stale plans.
+        config = print.full_print_config();
+        print.process();
+        REQUIRE(print.objects().size() == 1);
+
+        std::set<size_t> planned_tools;
+        for (const SubLayerPlan& plan : print.objects().front()->local_z_sublayer_plan()) {
+            for (size_t tool = 0; tool < plan.painted_masks_by_extruder.size(); ++tool) {
+                if (!plan.painted_masks_by_extruder[tool].empty())
+                    planned_tools.insert(tool);
+            }
+        }
+        CHECK(planned_tools == expected_tools);
+    }
+}
+
+TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_prime_tower", false);
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    SECTION("Local-Z disabled") { config.set("dithering_local_z_mode", false); }
+    SECTION("Full domain disabled") { config.set("dithering_local_z_whole_objects", false); }
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    config = print.full_print_config();
+    print.process();
+    REQUIRE(print.objects().size() == 1);
+    const PrintObject* print_object = print.objects().front();
+    REQUIRE(print_object->is_step_done(posSlice));
+
+    object->config.set("extruder", 2);
+    print.apply(model, config);
+    REQUIRE(print.objects().front() == print_object);
+    CHECK(print_object->is_step_done(posSlice));
+}
+
 TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled", "[MixedFilament][LocalZ][Wiping]")
 {
     Model model;

@@ -1177,6 +1177,11 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "precise_outer_wall") {
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posSupportMaterial);
+            // Whole-object Local-Z masks and tool assignments are built during
+            // slicing from the wall filament, not during perimeter generation.
+            if (opt_key == "wall_filament" && m_print->config().dithering_local_z_mode.value &&
+                m_print->config().dithering_local_z_whole_objects.value)
+                steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
             if (m_config.support_top_z_distance > 0.) {
             	// Only invalidate due to bridging if bridging is enabled.

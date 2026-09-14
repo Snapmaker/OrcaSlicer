@@ -1027,10 +1027,14 @@ SnapmakerOrcaPre_try_instdir:
   StrCpy $0 "$INSTDIR\Uninstall.exe"
   Goto SnapmakerOrcaPre_have_uninst_str
 SnapmakerOrcaPre_check_app:
-  IfFileExists "$INSTDIR\snapmaker-orca.exe" SnapmakerOrcaPre_missing_uninst SnapmakerOrcaPre_check_legacy_app
+  IfFileExists "$INSTDIR\snapmaker-orca.exe" SnapmakerOrcaPre_have_existing_install SnapmakerOrcaPre_check_legacy_app
 SnapmakerOrcaPre_check_legacy_app:
-  IfFileExists "$INSTDIR\Snapmaker_Orca.exe" SnapmakerOrcaPre_missing_uninst SnapmakerOrcaPre_finish
+  IfFileExists "$INSTDIR\Snapmaker_Orca.exe" SnapmakerOrcaPre_have_existing_install SnapmakerOrcaPre_finish
 
+SnapmakerOrcaPre_have_existing_install:
+  ; App exe found but no uninstaller path in registry ($0 stays empty). Fall through
+  ; to the common prompt; the quote-strip below is a no-op on an empty string, and
+  ; the uninstall step will skip removal because $0 is empty.
 SnapmakerOrcaPre_have_uninst_str:
   StrCpy $2 $0 1 0
   StrCmp $2 "$\"" SnapmakerOrcaPre_trim_first_quote SnapmakerOrcaPre_check_last_quote
@@ -1042,20 +1046,16 @@ SnapmakerOrcaPre_check_last_quote:
 SnapmakerOrcaPre_trim_last_quote:
   StrCpy $0 $0 -1
 SnapmakerOrcaPre_path_ready:
-  IfFileExists "$0" 0 SnapmakerOrcaPre_missing_uninst
   ; Existing install confirmed -> this is an upgrade (overwrite or uninstall-first).
   StrCpy $SnapmakerIsUpgrade "1"
 
   StrCpy $4 ""
-  SetRegView 64
+  ; Uninstall key is written by CPack in the default (32-bit) registry view; read it
+  ; in the same view. Do NOT SetRegView 64 here -- the 32-bit installer writes to
+  ; the WOW6432Node, so a 64-bit read would always come back empty.
   ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
   StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
   ReadRegStr $4 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
-  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
-  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "DisplayVersion"
-  StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
-  SetRegView 32
-  ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker_Orca" "DisplayVersion"
   StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
   ReadRegStr $4 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Snapmaker Orca" "DisplayVersion"
   StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
@@ -1063,7 +1063,6 @@ SnapmakerOrcaPre_path_ready:
   StrCmp $4 "" 0 SnapmakerOrcaPre_have_ver
   ReadRegStr $4 HKLM "Software\Snapmaker\Snapmaker Orca" "Version"
 SnapmakerOrcaPre_have_ver:
-  SetRegView 32
   StrCpy $5 $4 1
   StrCmp $5 "V" 0 SnapmakerOrcaPre_ver_ready
   StrCpy $4 $4 "" 1
@@ -1076,11 +1075,14 @@ SnapmakerOrcaPre_already_no_ver:
   MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "Snapmaker Orca is already installed.$\n$\nDo you want to uninstall the old version before installing the new one?" /SD IDYES IDYES SnapmakerOrcaPre_uninst IDNO SnapmakerOrcaPre_finish
   Abort
 
-SnapmakerOrcaPre_missing_uninst:
-  MessageBox MB_OK|MB_ICONSTOP "An existing Snapmaker Orca installation was found, but the uninstaller is missing.$\n$\nUninstaller: $0$\nInstall dir: $INSTDIR$\n$\nRemove the old folder manually, then run this installer again."
-  Abort
+SnapmakerOrcaPre_skip_uninst:
+  ; User chose to uninstall but the uninstaller is missing: skip removal and
+  ; proceed with the overwrite install (no blocking dialog).
+  DetailPrint "Uninstaller not found, skipping old-version removal and overwriting."
+  Goto SnapmakerOrcaPre_finish
 
 SnapmakerOrcaPre_uninst:
+  IfFileExists "$0" 0 SnapmakerOrcaPre_skip_uninst
   ClearErrors
   StrLen $2 "Uninstall.exe"
   StrCpy $3 $0 -$2
@@ -1259,6 +1261,14 @@ FunctionEnd
     )
         string(REPLACE "${_snapmaker_nsis_erase}" "" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     endforeach()
+    # CPack only deletes Software\<vendor>\<key>, not the parent <vendor> key, so
+    # an empty "Software\Snapmaker" key is left behind after uninstall. Delete it
+    # too (with /ifempty so it stays if other Snapmaker products also use it).
+    string(REPLACE
+        [=[  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"]=]
+        [=[  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"
+  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@"]=]
+        _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     set(_snapmaker_nsis_tpl_dir "${CMAKE_BINARY_DIR}/cmake/cpack")
     file(MAKE_DIRECTORY "${_snapmaker_nsis_tpl_dir}")
     set(_snapmaker_uninst_confirm_in "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallConfirm.nsh.in")

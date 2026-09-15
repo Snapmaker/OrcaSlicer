@@ -19827,16 +19827,3 @@ msgstr ""
 
 #~ msgid "Printer local connection failed, please try again."
 #~ msgstr "Falha na conexão local da impressora, por favor tente novamente."
-
-msgid ""
-"Switch to rectilinear pattern?\n"
-"Yes - switch to rectilinear pattern automatically\n"
-"No  - reset density to default non 100% value automatically"
-msgstr ""
-"Mudar para o padrão retilíneo?\n"
-"Sim - mude para o padrão retilíneo\n"
-"Não - redefina a densidade para o valor padrão diferente de 100%"
-
-#, boost-format
-msgid "%1% infill pattern doesn't support 100%% density."
-msgstr "%1%padrão de preenchimento não suporta 100%% densidade."

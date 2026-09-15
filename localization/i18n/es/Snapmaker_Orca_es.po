@@ -22303,12 +22303,3 @@ msgstr ""
 
 #~ msgid "preparing, export 3mf failed!"
 #~ msgstr "Preparando; ¡Error al exportar 3MF!"
-
-msgid ""
-"Switch to rectilinear pattern?\n"
-"Yes - switch to rectilinear pattern automatically\n"
-"No  - reset density to default non 100% value automatically"
-msgstr ""
-"¿Cambiar a patrón rectilíneo?\n"
-"Sí - cambiar a patrón rectilíneo\n"
-"No - restablecer la densidad al valor por defecto no 100%"

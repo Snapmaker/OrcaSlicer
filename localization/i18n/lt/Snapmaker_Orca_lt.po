@@ -15101,7 +15101,6 @@ msgstr ""
 msgid "Top solid layers"
 msgstr "Viršutiniai vientisi sluoksniai"
 
-
 msgid "Top shell thickness"
 msgstr "Viršutinio apvalkalo storis"
 
@@ -19748,14 +19747,3 @@ msgstr ""
 #, c-format, boost-format
 #~ msgid "Support: propagate branches at layer %d"
 #~ msgstr "Atramos: skleisti šakas sluoksnyje %d"
-
-msgid ""
-"Switch to rectilinear pattern?\n"
-"Yes - switch to rectilinear pattern automatically\n"
-"No  - reset density to default non 100% value automatically"
-msgstr ""
-
-#, boost-format
-msgid "%1% infill pattern doesn't support 100%% density."
-msgstr ""
-

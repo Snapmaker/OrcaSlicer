@@ -51,3 +51,20 @@ TEST_CASE("ConnectionProcessManager uses the injected process runner", "[gateway
     REQUIRE(result.port == 8080);
     REQUIRE(seen_arguments == std::vector<std::string>{"--locale=en-US", "--orca"});
 }
+
+TEST_CASE("ConnectionProcessManager terminate is a no-op without a tracked child", "[gateway][process]")
+{
+    ConnectionProcessManager::Config config;
+    config.executable = boost::filesystem::path{"snapmaker_connection.exe"};
+
+    ConnectionProcessManager manager(config, [](const std::vector<std::string>&) {
+        ConnectionProcessManager::ProcessRunResult result;
+        result.stdout_data = "PORT:8080\r\n\r\n";
+        return result;
+    });
+
+    REQUIRE(manager.discover_port("en-US").error == ProcessDiscoveryError::None);
+    // Injected runners bypass the real child tracking, so terminate() must stay safe.
+    manager.terminate();
+    manager.terminate();
+}

@@ -16,14 +16,18 @@ class GatewayService;
 class GatewayDevice
 {
 public:
-    // Replacement for SSWCP::query_machine_info. Fresh values via the
-    // transparent RPC machine.system_info (result.system_info.product_info).
+    // Replacement for SSWCP::query_machine_info. Fresh values via the gateway's
+    // read-only device snapshot GET /api/device (data.info.product for the model,
+    // data.objects.extruder* for the per-extruder nozzle_volume_type).
     // Returns false when the gateway is down or no device is connected.
-    static bool query_machine_info(const std::shared_ptr<GatewayService>& gateway, std::string& out_model, std::vector<std::string>& out_nozzle_diameters,
-                                    std::string& device_name);
+    static bool query_machine_info(const std::shared_ptr<GatewayService>& gateway,
+                                   std::string&                           out_model,
+                                   std::vector<std::string>&              out_nozzle_diameters,
+                                   std::vector<std::string>&              out_nozzle_volume_types,
+                                   std::string&                           device_name);
 
-    // True when a device is connected through the gateway. machine.system_info
-    // reaches the device, so a successful call proves a live device channel.
+    // True when the gateway exposes a product snapshot for the current device
+    // through GET /api/device.
     static bool is_device_connected(const std::shared_ptr<GatewayService>& gateway);
 };
 

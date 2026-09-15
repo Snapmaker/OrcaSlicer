@@ -3245,6 +3245,10 @@ void GCodeViewer::load_shells(const Print& print, bool initialized, bool force_p
     while (true) {
         GLVolumePtrs::iterator it = std::find_if(m_shells.volumes.volumes.begin(), m_shells.volumes.volumes.end(), [](GLVolume* volume) { return volume->is_modifier; });
         if (it != m_shells.volumes.volumes.end()) {
+            // Unregister from the LOD sharing map before the pointer becomes
+            // dangling, otherwise a later load_object_volume() with the same
+            // mesh picks up this stale GLVolume* from g_meshVolumesMap.
+            m_shells.volumes.release_volume(*it);
             delete (*it);
             m_shells.volumes.volumes.erase(it);
         }

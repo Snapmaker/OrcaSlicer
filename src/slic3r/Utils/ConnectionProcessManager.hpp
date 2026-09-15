@@ -60,7 +60,10 @@ public:
 
     static ProcessDiscoveryError    parse_port_frame(const std::string& output, std::uint16_t& port);
     static std::vector<std::string> build_arguments(const std::string& locale);
-    static ProcessRunner            default_runner(Config config);
+    // File name of the snapmaker_connection CLI binary expected next to the resources directory
+    // for the current platform and architecture. The binary itself is placed locally and not tracked in git.
+    static std::string_view cli_executable_name();
+    static ProcessRunner    default_runner(Config config);
 
 private:
     Config        config_;

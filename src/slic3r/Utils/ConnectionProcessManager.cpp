@@ -46,6 +46,31 @@ ConnectionProcessManager::ConnectionProcessManager(Config config, ProcessRunner 
 
 std::vector<std::string> ConnectionProcessManager::build_arguments(const std::string& locale) { return {"--locale=" + locale, "--orca"}; }
 
+std::string_view ConnectionProcessManager::cli_executable_name()
+{
+#if defined(_WIN32)
+    return "snapmaker_connection.exe";
+#elif defined(__APPLE__)
+#if defined(__x86_64__)
+    return "snapmaker_connection_macos_x64";
+#elif defined(__arm64__) || defined(__aarch64__)
+    return "snapmaker_connection_macos_arm64";
+#else
+#error "unsupported macOS architecture for the snapmaker_connection CLI"
+#endif
+#elif defined(__linux__)
+#if defined(__x86_64__)
+    return "snapmaker_connection_linux_x64";
+#elif defined(__aarch64__) || defined(__arm64__)
+    return "snapmaker_connection_linux_arm64";
+#else
+#error "unsupported Linux architecture for the snapmaker_connection CLI"
+#endif
+#else
+#error "unsupported platform for the snapmaker_connection CLI"
+#endif
+}
+
 ProcessDiscoveryError ConnectionProcessManager::parse_port_frame(const std::string& output, std::uint16_t& port)
 {
     constexpr std::string_view prefix{"PORT:"};
@@ -85,7 +110,7 @@ ConnectionProcessManager::DiscoveryResult ConnectionProcessManager::discover_por
 
     if (config_.executable.empty()) {
         result.error   = ProcessDiscoveryError::InvalidExecutable;
-        result.message = "snapmaker_connection.exe path is empty";
+        result.message = "connection cli path is empty";
         return result;
     }
     if (!is_valid_locale(locale)) {
@@ -104,7 +129,7 @@ ConnectionProcessManager::DiscoveryResult ConnectionProcessManager::discover_por
     }
     if (process_result.launch_failed) {
         result.error   = ProcessDiscoveryError::LaunchFailed;
-        result.message = process_result.error.empty() ? "failed to launch snapmaker_connection.exe" : process_result.error;
+        result.message = process_result.error.empty() ? "failed to launch " + config_.executable.filename().string() : process_result.error;
         return result;
     }
     if (process_result.timed_out) {
@@ -121,7 +146,9 @@ ConnectionProcessManager::DiscoveryResult ConnectionProcessManager::discover_por
     const ProcessDiscoveryError parse_error = parse_port_frame(process_result.stdout_data, result.port);
     result.error                            = parse_error;
     switch (parse_error) {
-    case ProcessDiscoveryError::NoPortFrame: result.message = "PORT frame was not found in snapmaker_connection.exe stdout"; break;
+    case ProcessDiscoveryError::NoPortFrame:
+        result.message = "PORT frame was not found in " + config_.executable.filename().string() + " stdout";
+        break;
     case ProcessDiscoveryError::InvalidPortFrame: result.message = "PORT frame is malformed"; break;
     case ProcessDiscoveryError::MultiplePortFrames: result.message = "multiple PORT frames were found"; break;
     case ProcessDiscoveryError::None: break;

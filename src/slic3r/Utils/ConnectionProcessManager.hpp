@@ -52,8 +52,14 @@ public:
     using ProcessRunner = std::function<ProcessRunResult(const std::vector<std::string>& arguments)>;
 
     ConnectionProcessManager(Config config, ProcessRunner runner = {});
+    virtual ~ConnectionProcessManager() = default;
 
     DiscoveryResult discover_port(const std::string& locale);
+
+    // Force-terminates the CLI process spawned by the most recent discover_port() call
+    // (TerminateProcess on Windows, SIGKILL elsewhere). No-op when the injected runner is
+    // used or no process has been spawned yet.
+    virtual void terminate();
 
     const boost::filesystem::path& executable() const { return config_.executable; }
     const Config&                  config() const { return config_; }
@@ -63,11 +69,15 @@ public:
     // File name of the snapmaker_connection CLI binary expected next to the resources directory
     // for the current platform and architecture. The binary itself is placed locally and not tracked in git.
     static std::string_view cli_executable_name();
-    static ProcessRunner    default_runner(Config config);
 
 private:
-    Config        config_;
-    ProcessRunner runner_;
+    struct ChildProcessTracker;
+
+    static ProcessRunner default_runner(Config config, const std::shared_ptr<ChildProcessTracker>& tracker);
+
+    Config                         config_;
+    ProcessRunner                  runner_;
+    std::shared_ptr<ChildProcessTracker> tracker_;
 };
 
 }} // namespace Slic3r::Gateway

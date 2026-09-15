@@ -22,11 +22,14 @@ struct FakeHttp final : public HttpTransport
     std::vector<std::string> urls;
     std::vector<std::string> posts;
     std::string              store_response{R"({"ok":true,"data":{"file_exists":true}})"};
+    std::atomic<bool>        health_ok{true};
 
     HttpResponse get(const std::string& url) override
     {
         urls.push_back(url);
         if (url.find("/health") != std::string::npos) {
+            if (!health_ok.load())
+                return {404, {}, "not ready"};
             return {200,
                     R"({"status":"ok","cli_version":"1.0","components":{"ipc_server":"ok","web_server":"ok"},)"
                     R"("server_url":{"base_url":"http://127.0.0.1:8080/","home_page":"/index","device_control":""}})",
@@ -133,6 +136,15 @@ GatewayService::Dependencies make_dependencies(std::shared_ptr<ConnectionProcess
     return dependencies;
 }
 
+struct RecordingProcessManager final : public ConnectionProcessManager
+{
+    std::atomic<int> terminate_calls{0};
+
+    using ConnectionProcessManager::ConnectionProcessManager;
+
+    void terminate() override { terminate_calls.fetch_add(1); }
+};
+
 } // namespace
 
 TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", "[gateway][service]")
@@ -223,6 +235,37 @@ TEST_CASE("GatewayService reconnects after the first websocket failure", "[gatew
     REQUIRE(wait_for_state(service, ConnectionState::Connected));
     REQUIRE(service.wait_for_connected(std::chrono::milliseconds{100}));
     REQUIRE(websocket->connections.load() >= 2);
+    service.stop();
+}
+
+TEST_CASE("GatewayService force-kills the stale CLI process when a reconnect attempt times out", "[gateway][service]")
+{
+    auto manager    = std::make_shared<RecordingProcessManager>(ConnectionProcessManager::Config{boost::filesystem::path{
+                                                                    "snapmaker_connection.exe"}},
+                                                                [](const std::vector<std::string>&) {
+                                                                 ConnectionProcessManager::ProcessRunResult result;
+                                                                 result.stdout_data = "PORT:8888\r\n\r\n";
+                                                                 return result;
+                                                                });
+    auto http       = std::make_shared<FakeHttp>();
+    auto websocket  = std::make_shared<FakeWebSocket>();
+    http->health_ok = false; // every health check fails, so each connect attempt times out
+
+    GatewayService::Config config;
+    config.health_timeout          = std::chrono::milliseconds{50};
+    config.reconnect.initial_delay = std::chrono::milliseconds{1};
+    config.reconnect.max_delay     = std::chrono::milliseconds{1};
+
+    GatewayService::Dependencies dependencies;
+    dependencies.process_manager = manager;
+    dependencies.http            = http;
+    dependencies.websocket       = websocket;
+    GatewayService service(config, std::move(dependencies));
+
+    REQUIRE(service.start("zh-CN"));
+    for (int i = 0; i < 1000 && manager->terminate_calls.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    REQUIRE(manager->terminate_calls.load() >= 1);
     service.stop();
 }
 

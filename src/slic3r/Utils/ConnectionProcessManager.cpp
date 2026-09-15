@@ -12,7 +12,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <memory>
+#include <mutex>
 #include <system_error>
+#include <vector>
 
 namespace Slic3r { namespace Gateway {
 namespace {
@@ -37,12 +40,40 @@ std::size_t find_next_line_port(const std::string& data, std::size_t from)
 
 } // namespace
 
+struct ConnectionProcessManager::ChildProcessTracker
+{
+    // Detached children survive the runner's local child object, so the manager keeps the
+    // handles here until the next terminate() call reaps them.
+    std::mutex                                          mutex;
+    std::vector<std::shared_ptr<boost::process::child>> children;
+
+    void track(std::shared_ptr<boost::process::child> child)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        children.push_back(std::move(child));
+    }
+
+    void terminate_all()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& child : children) {
+            std::error_code terminate_error;
+            child->terminate(terminate_error);
+            std::error_code wait_error;
+            child->wait(wait_error);
+        }
+        children.clear();
+    }
+};
+
 ConnectionProcessManager::ConnectionProcessManager(Config config, ProcessRunner runner)
-    : config_(std::move(config)), runner_(std::move(runner))
+    : config_(std::move(config)), runner_(std::move(runner)), tracker_(std::make_shared<ChildProcessTracker>())
 {
     if (!runner_)
-        runner_ = default_runner(config_);
+        runner_ = default_runner(config_, tracker_);
 }
+
+void ConnectionProcessManager::terminate() { tracker_->terminate_all(); }
 
 std::vector<std::string> ConnectionProcessManager::build_arguments(const std::string& locale) { return {"--locale=" + locale, "--orca"}; }
 
@@ -157,9 +188,10 @@ ConnectionProcessManager::DiscoveryResult ConnectionProcessManager::discover_por
     return result;
 }
 
-ConnectionProcessManager::ProcessRunner ConnectionProcessManager::default_runner(Config config)
+ConnectionProcessManager::ProcessRunner ConnectionProcessManager::default_runner(Config                                     config,
+                                                                                 const std::shared_ptr<ChildProcessTracker>& tracker)
 {
-    return [config = std::move(config)](const std::vector<std::string>& arguments) -> ProcessRunResult {
+    return [config = std::move(config), tracker](const std::vector<std::string>& arguments) -> ProcessRunResult {
         ProcessRunResult           result;
         boost::asio::io_context    io_context;
         boost::process::async_pipe stdout_pipe(io_context);
@@ -224,7 +256,10 @@ ConnectionProcessManager::ProcessRunner ConnectionProcessManager::default_runner
 
         const auto* data = boost::asio::buffer_cast<const char*>(buffer.data());
         result.stdout_data.assign(data, bytes_read);
-        child.detach();
+        auto tracked_child = std::make_shared<boost::process::child>(std::move(child));
+        tracked_child->detach();
+        if (tracker)
+            tracker->track(std::move(tracked_child));
         boost::system::error_code pipe_error;
         stdout_pipe.close(pipe_error);
         return result;

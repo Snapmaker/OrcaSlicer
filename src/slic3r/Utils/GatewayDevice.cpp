@@ -1,6 +1,9 @@
 #include "GatewayDevice.hpp"
 #include "GatewayService.hpp"
 
+#include "libslic3r/SSWCPProtocol.hpp"
+#include "libslic3r/PrintConfig.hpp"
+
 #include <boost/log/trivial.hpp>
 
 #include <cmath>
@@ -44,51 +47,73 @@ void append_nozzle(const nlohmann::json& value, std::vector<std::string>& out_no
 
 } // namespace
 
-bool GatewayDevice::query_machine_info(const std::shared_ptr<GatewayService>& gateway, std::string& out_model, std::vector<std::string>& out_nozzle_diameters,
-                                        std::string& device_name)
+bool GatewayDevice::query_machine_info(const std::shared_ptr<GatewayService>& gateway,
+                                       std::string&                           out_model,
+                                       std::vector<std::string>&              out_nozzle_diameters,
+                                       std::vector<std::string>&              out_nozzle_volume_types,
+                                       std::string&                           device_name)
 {
     if (gateway == nullptr)
         return false;
 
-    const GatewayService::ApiResult result = gateway->request_sync("machine.system_info", nlohmann::json::object(), std::chrono::milliseconds{5000});
+    // GET /api/device is the gateway's read-only full snapshot of the current device, so the
+    // firmware passthrough machine.system_info is no longer needed for these fields.
+    const GatewayService::ApiResult result = gateway->get_device();
     if (result.error) {
-        // -32000 not_connected (no device) is an expected answer; anything else is worth a log line.
-        if (result.error.code != GatewayErrorCode::NotConnected && result.error.code != GatewayErrorCode::RpcError)
-            BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: gateway request failed: " << result.error.message;
+        // NotConnected (gateway process not ready yet) is an expected answer; anything else is worth a log line.
+        if (result.error.code != GatewayErrorCode::NotConnected)
+            BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/device failed: " << result.error.message;
         return false;
     }
 
-    const nlohmann::json* system_info = find_object(result.value, "system_info");
-    if (system_info == nullptr)
-        return false;
+    const nlohmann::json* data     = find_object(result.value, "data");
+    const nlohmann::json* info     = data == nullptr ? nullptr : find_object(*data, "info");
+    const nlohmann::json* product  = info == nullptr ? nullptr : find_object(*info, "product");
+    const nlohmann::json* identity = data == nullptr ? nullptr : find_object(*data, "identity");
 
-    const nlohmann::json* product_info = find_object(*system_info, "product_info");
-    if (product_info == nullptr)
-        return false;
-
-    std::string              model = get_string(*product_info, "machine_type");
+    std::string model = product == nullptr ? std::string{} : get_string(*product, "machine_type");
+    if (model.empty() && identity != nullptr)
+        model = get_string(*identity, "productName");
     std::vector<std::string> nozzles;
-    std::string              name = get_string(*product_info, "device_name");
-    if (product_info->contains("nozzle_diameter")) {
-        const nlohmann::json& nozzle_json = (*product_info)["nozzle_diameter"];
+    std::string name = identity == nullptr ? std::string{} : get_string(*identity, "name");
+    if (name.empty() && identity != nullptr)
+        name = get_string(*identity, "device_name");
+    if (name.empty() && product != nullptr)
+        name = get_string(*product, "device_name");
+    if (product != nullptr && product->contains("nozzle_diameter")) {
+        const nlohmann::json& nozzle_json = (*product)["nozzle_diameter"];
         if (nozzle_json.is_array()) {
             for (const auto& nozzle : nozzle_json)
                 append_nozzle(nozzle, nozzles);
-        } else {
+        } else if (!nozzle_json.is_null()) {
             append_nozzle(nozzle_json, nozzles);
         }
+    }
+
+    // nozzle_volume_type lives on the extruder objects in data.objects, not in data.info.product.
+    std::vector<std::string> flows;
+    const nlohmann::json* objects = data == nullptr ? nullptr : find_object(*data, "objects");
+    if (objects == nullptr || objects->empty()) {
+        // Preserve the legacy resolver's behavior when the snapshot has no runtime objects.
+        if (!nozzles.empty())
+            flows.assign(nozzles.size(), FLOW_MODE_STANDARD);
+    } else {
+        std::vector<std::string> object_diameters;
+        if (!SSWCPProtocol::parse_extruder_objects(*objects, object_diameters, flows) || object_diameters.size() != nozzles.size())
+            flows.clear();
     }
 
     // An answer without a machine type is not usable: callers gate on it (e.g. the
     // "Snapmaker U1" whitelist), so treat a malformed payload as a failed query.
     if (model.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: machine.system_info returned no machine_type";
+        BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/device returned no machine_type";
         return false;
     }
 
-    out_model            = std::move(model);
-    out_nozzle_diameters = std::move(nozzles);
-    device_name          = std::move(name);
+    out_model               = std::move(model);
+    out_nozzle_diameters    = std::move(nozzles);
+    out_nozzle_volume_types = std::move(flows);
+    device_name             = std::move(name);
 
     return true;
 }
@@ -97,8 +122,9 @@ bool GatewayDevice::is_device_connected(const std::shared_ptr<GatewayService>& g
 {
     std::string              model;
     std::vector<std::string> nozzles;
+    std::vector<std::string> flows;
     std::string              name;
-    return query_machine_info(gateway, model, nozzles, name);
+    return query_machine_info(gateway, model, nozzles, flows, name);
 }
 
 }} // namespace Slic3r::Gateway

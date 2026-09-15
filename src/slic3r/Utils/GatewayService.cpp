@@ -164,8 +164,8 @@ private:
     void handshake()
     {
         websocket::stream_base::timeout timeout = websocket::stream_base::timeout::suggested(beast::role_type::client);
-        timeout.handshake_timeout               = std::chrono::seconds{5};
-        timeout.idle_timeout                    = std::chrono::seconds{30};
+        timeout.handshake_timeout               = std::chrono::seconds{5};  // 5 secondes timeout for the handshake, otherwise the gateway may be busy and not respond
+        timeout.idle_timeout                    = std::chrono::seconds{25}; // 25 seconds keep-alive timeout, otherwise the gateway may close the connection if no message is sent for a long time
         timeout.keep_alive_pings                = true;
         stream.set_option(timeout);
         stream.set_option(websocket::stream_base::decorator([](websocket::request_type& request) {
@@ -629,6 +629,15 @@ void GatewayService::run(const std::string locale)
 
         if (stop_requested_ || !reconnect_policy_.should_retry())
             break;
+
+        // discover_port() detaches the CLI child, so a wedged process from the failed attempt
+        // would otherwise linger forever while the next attempt spawns yet another instance.
+        // Force-kill the stale process before retrying (TerminateProcess / SIGKILL) so every
+        // reconnect starts from a clean single-instance state.
+        BOOST_LOG_TRIVIAL(warning) << "connection gateway reconnect attempt failed: " << error.message
+                                   << "; force-restarting the snapmaker_connection CLI";
+        if (dependencies_.process_manager)
+            dependencies_.process_manager->terminate();
 
         static thread_local std::mt19937       random_generator{std::random_device{}()};
         std::uniform_real_distribution<double> distribution{0.0, 1.0};

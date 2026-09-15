@@ -5656,8 +5656,10 @@ bool GUI_App::start_gateway_service(bool restart)
 
     try {
         Gateway::GatewayService::Dependencies dependencies;
-        dependencies.process_manager = std::make_shared<Gateway::ConnectionProcessManager>(Gateway::ConnectionProcessManager::Config{
-            boost::filesystem::path{Slic3r::resources_dir()} / "snapmaker_connection.exe"});
+        const boost::filesystem::path connection_cli_path =
+            boost::filesystem::path{Slic3r::resources_dir()} / Gateway::ConnectionProcessManager::cli_executable_name();
+        dependencies.process_manager =
+            std::make_shared<Gateway::ConnectionProcessManager>(Gateway::ConnectionProcessManager::Config{connection_cli_path});
         dependencies.http      = std::make_shared<Gateway::LibcurlHttpTransport>();
         dependencies.websocket = std::make_shared<Gateway::GatewayWebSocketTransport>();
         dependencies.dispatcher = [this](std::function<void()> task) { CallAfter(std::move(task)); };

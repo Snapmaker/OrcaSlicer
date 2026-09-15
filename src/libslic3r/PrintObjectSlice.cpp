@@ -321,8 +321,6 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     if (complex)
                         zs_complex.push_back({ z_idx, z });
                     else if (idx_first_printable_region >= 0) {
-                        // BBS: assign the slices of ALL printable volumes at this z, not just the first one,
-                        // otherwise non-overlapping volumes at the same layer are silently dropped.
                         for (int printable_region_id : printable_region_ids) {
                             const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[printable_region_id];
                             append(slices_by_region[region.region->print_object_region_id()][z_idx], std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]));

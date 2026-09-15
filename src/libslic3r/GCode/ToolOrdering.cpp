@@ -782,8 +782,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
     }
 
     // Collect the support extruders.
-    // BBS: collected after the object extruders, so has_reusable_layer_extruder()
-    // can see the extruders already assigned to this layer.
     for (auto support_layer : object.support_layers()) {
         LayerTools &layer_tools = this->tools_for_layer(support_layer->print_z);
         layer_tools.layer_height = support_layer->height;
@@ -795,9 +793,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         unsigned int extruder_interface = resolve_mixed(object.config().support_interface_filament.value,
             layer_tools.layer_index, float(support_layer->print_z), float(support_layer->height), &object);
 
-        // BBS: when support base has no dedicated filament and the layer has no reusable
-        // extruder, assign a concrete one (flush-volume optimal, never the interface filament
-        // when support_interface_not_for_body) so the base never falls back to interface filament.
         if (has_support && extruder_support == 0 && extruder_interface != 0) {
             bool interface_not_for_body = object.config().support_interface_not_for_body;
             const PrintConfig &print_config = object.print()->config();

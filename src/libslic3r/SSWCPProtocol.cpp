@@ -173,9 +173,6 @@ bool parse_extruder_nozzle_info(const nlohmann::json &response,
                                  std::vector<std::string> &diameters,
                                  std::vector<std::string> &volume_types)
 {
-    diameters.clear();
-    volume_types.clear();
-
     // Navigate to data.status
     const nlohmann::json *root = &response;
     if (const auto data = response.find("data"); data != response.end() && data->is_object())
@@ -184,12 +181,22 @@ bool parse_extruder_nozzle_info(const nlohmann::json &response,
     if (status == root->end() || !status->is_object())
         return false;
 
+    return parse_extruder_objects(*status, diameters, volume_types);
+}
+
+bool parse_extruder_objects(const nlohmann::json &objects,
+                             std::vector<std::string> &diameters,
+                             std::vector<std::string> &volume_types)
+{
+    diameters.clear();
+    volume_types.clear();
+
     // Dynamically discover extruder objects: "extruder", "extruder1", "extruder2", ...
     // Moonraker names the first toolhead "extruder" and subsequent ones with a numeric suffix.
     // Collect matching keys with their ordinal index for stable ordering.
     struct ExtruderEntry { size_t index; std::string key; };
     std::vector<ExtruderEntry> extruders;
-    for (auto it = status->begin(); it != status->end(); ++it) {
+    for (auto it = objects.begin(); it != objects.end(); ++it) {
         const std::string &key = it.key();
         size_t index;
         if (key == "extruder") {
@@ -211,7 +218,7 @@ bool parse_extruder_nozzle_info(const nlohmann::json &response,
 
     bool all_flows_present = true;
     for (const auto &entry : extruders) {
-        const auto extr = status->find(entry.key);
+        const auto extr = objects.find(entry.key);
         const auto nd = extr->find("nozzle_diameter");
         if (nd == extr->end())
             continue;

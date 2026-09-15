@@ -1205,9 +1205,16 @@ private:
 #endif
 };
 
+struct NozzleSyncState
+{
+    std::atomic<bool> alive{true};
+    Sidebar*          sidebar{nullptr};
+};
+
 struct Sidebar::priv
 {
     Plater *plater;
+    std::shared_ptr<NozzleSyncState> nozzle_sync_state = std::make_shared<NozzleSyncState>();
 
     wxPanel *scrolled;
     PlaterPresetComboBox *combo_print;
@@ -2116,6 +2123,8 @@ static wxString nozzle_type_key_to_label(const std::string& key)
 Sidebar::Sidebar(Plater *parent)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(42 * wxGetApp().em_unit(), -1)), p(new priv(parent))
 {
+    p->nozzle_sync_state->sidebar = this;
+
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
@@ -2168,148 +2177,39 @@ Sidebar::Sidebar(Plater *parent)
         p->m_printerinfo_syncbtn->SetCursor(wxCURSOR_HAND);
         p->m_printerinfo_syncbtn->SetToolTip(_L("Synchronize nozzle information"));
         p->m_printerinfo_syncbtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-            std::string                machine_type = "";
-            std::vector<std::string>   nozzle_diameters;
-            std::string                device_name = "";
-            // Single gateway RPC doubles as the connected-guard: a device answering
-            // machine.system_info is connected (avoids probe + query serial waits).
-            const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
-
-            if (!got_machine_info)
-            {
-                // showdialog tips no connect device
-                wxTheApp->CallAfter([this]() {
-                    MessageDialog dlg(wxGetApp().mainframe,
-                                      _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
-                                      _L("Note"), wxOK);
-                    dlg.ShowModal();
-                    });
+            // The gateway snapshot fetch is a blocking HTTP call (up to ~5s on a slow link), so run
+            // it on a worker thread and marshal the result back instead of freezing the main UI.
+            if (!p->m_printerinfo_syncbtn->IsEnabled())
                 return;
-            }
+            p->m_printerinfo_syncbtn->Disable();
 
-            SSWCPProtocol::ResolveResult resolve_result;
-            resolve_result.status         = !got_machine_info ? SSWCPProtocol::ResolveStatus::NoResponse :
-                                               (nozzle_diameters.empty() ? SSWCPProtocol::ResolveStatus::GotIdentity :
-                                                                           SSWCPProtocol::ResolveStatus::Complete);
-            MachineInfo& machine_info     = resolve_result.info;
-            machine_info.model            = SSWCPProtocol::normalize_machine_model(machine_type);
-            machine_info.device_name      = device_name;
-            machine_info.nozzle_diameters = nozzle_diameters;
-            const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
-            if (!sync_nozzle_slots.empty()) {
-                std::vector<std::pair<std::string, std::string>> cached_slots;
-                for (const auto& slot : sync_nozzle_slots)
-                    cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
-                SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
-            }
-            if (resolve_result.status != SSWCPProtocol::ResolveStatus::NoResponse && machine_info.model == "Snapmaker U1")
-            {
-                if (nozzle_diameters.size() <= 0)
-                {
-                    wxTheApp->CallAfter([this]() {
-                        MessageDialog dlgEx(wxGetApp().mainframe,
-                                            _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
-                                            _L("Note"), wxOK);
-                        dlgEx.ShowModal();
-                    });    
+            const auto gateway = wxGetApp().gateway_service();
+            // wxWeakRef mutates wxTrackable state and must not be copied or destroyed on this worker.
+            const auto sync_state = p->nozzle_sync_state;
+            std::thread([sync_state, gateway]() {
+                std::string              machine_type = "";
+                std::vector<std::string> nozzle_diameters;
+                std::vector<std::string> nozzle_volume_types;
+                std::string              device_name = "";
+                // The gateway device snapshot doubles as the connected-guard: a successful
+                // GET /api/device proves a live device channel (avoids probe + query serial waits).
+                const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(gateway, machine_type, nozzle_diameters, nozzle_volume_types,
+                                                                                          device_name);
 
-                    return;
-                }
-
-                bool res = false;
-                std::string headNozzleSize = nozzle_diameters[0];
-                for (int i = 1; i < nozzle_diameters.size(); i++)
-                {
-                    if (headNozzleSize != nozzle_diameters[i])
-                    {
-                        res = true;
-                        break;
-                    }
-                }
-
-                if (res)
-                {
-                    std::vector<std::string> diameters_raw = nozzle_diameters;
-                    //std::vector<std::string> diameters_raw = {"0.2", "0.8"};
-                    wxTheApp->CallAfter([this, diameters_raw, nozzle_volume_types = machine_info.nozzle_volume_types]() {
-                        NozzleDiameterSelectDialog dlg(
-                            wxGetApp().mainframe,
-                            _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
-                            _L("Set Nozzle Diameter"),
-                            diameters_raw);
-                        if (dlg.ShowModal() == wxID_OK) {
-                            std::string sel = dlg.GetSelectedDiameter();
-                            if (!sel.empty()) {
-                                auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, sel);
-                                if (preset) {
-                                    preset->is_visible = true;
-
-                                    auto diameter = sel;
-                                    auto preset   = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
-                                    if (preset == nullptr) {
-                                        BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
-                                    } else {
-                                        preset->is_visible = true; // force visible
-
-                                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i) {
-                                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-                                        }
-
-                                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (!nozzle_volume_types.empty())
-                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
-
-                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
-                    });
-                    return;
-                }
-                else {
-                    // All tool heads report the same diameter: apply it without opening the picker.
-                    std::string diameter = headNozzleSize;
-                    boost::algorithm::trim(diameter);
-                    if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
-                        diameter.resize(diameter.size() - 2);
-                        boost::algorithm::trim(diameter);
-                    }
-                    wxTheApp->CallAfter([this, diameter, nozzle_volume_types = machine_info.nozzle_volume_types]() {
-                        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
-                        if (preset == nullptr) {
-                            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail (uniform nozzle sync)";
-                            return;
-                        }
-                        preset->is_visible = true;
-
-                        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
-                            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
-
-                        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
-                        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
-
-                        // Apply synchronized nozzle flow types BEFORE rebuilding the nozzle
-                        // UI: update_nozzle_settings rebuilds the per-nozzle flow combos by
-                        // reading nozzle_volume_type from config, so the write must land first
-                        // or the combos show stale values.
-                        if (!nozzle_volume_types.empty())
-                            GUI::FlowType::set_nozzle_volume_types(nozzle_volume_types);
-
-                        wxGetApp().plater()->sidebar().update_nozzle_settings(true);
-
-                        wxTheApp->CallAfter([this]() {
-                            MessageDialog dlg_Ex(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"),
-                                                 _L("Note"), wxOK);
-                            dlg_Ex.ShowModal();
-                        });
-                    });
-                }
-            }
-            
-            });
+                wxTheApp->CallAfter([sync_state, got_machine_info, machine_type = std::move(machine_type),
+                                     nozzle_diameters = std::move(nozzle_diameters),
+                                     nozzle_volume_types = std::move(nozzle_volume_types),
+                                     device_name = std::move(device_name)]() {
+                    if (!sync_state->alive.load(std::memory_order_acquire))
+                        return;
+                    Sidebar *self = sync_state->sidebar;
+                    if (self->p->m_printerinfo_syncbtn)
+                        self->p->m_printerinfo_syncbtn->Enable();
+                    self->apply_nozzle_sync_result(got_machine_info, std::move(machine_type), std::move(nozzle_diameters),
+                                                   std::move(nozzle_volume_types), std::move(device_name));
+                });
+            }).detach();
+        });
         
         p->m_printer_setting = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "settings");
         p->m_printer_setting->SetToolTip(_L("settings"));
@@ -3474,7 +3374,7 @@ Sidebar::Sidebar(Plater *parent)
     SetSizer(sizer);
 }
 
-Sidebar::~Sidebar() {}
+Sidebar::~Sidebar() { p->nozzle_sync_state->alive.store(false, std::memory_order_release); }
 
 void Sidebar::create_printer_preset()
 {
@@ -9190,6 +9090,90 @@ void Sidebar::sync_ams_list()
     Layout();
 }
 
+void Sidebar::apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
+                                       std::vector<std::string> nozzle_diameters,
+                                       std::vector<std::string> nozzle_volume_types,
+                                       std::string device_name)
+{
+    if (!got_machine_info) {
+        MessageDialog dlg(wxGetApp().mainframe,
+                          _L("Printer not connected. Please go to the home page or the device page to connect the printer."),
+                          _L("Note"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    MachineInfo machine_info;
+    machine_info.model                = SSWCPProtocol::normalize_machine_model(machine_type);
+    machine_info.device_name          = device_name;
+    machine_info.nozzle_diameters     = nozzle_diameters;
+    machine_info.nozzle_volume_types = nozzle_volume_types;
+    const auto& sync_nozzle_slots = wxGetApp().preset_bundle->m_connect_machine_info_list;
+    if (!sync_nozzle_slots.empty()) {
+        std::vector<std::pair<std::string, std::string>> cached_slots;
+        for (const auto& slot : sync_nozzle_slots)
+            cached_slots.emplace_back(slot.nozzle_info, slot.nozzle_volume_type);
+        SSWCPProtocol::select_complete_cached_nozzle_info(cached_slots, nozzle_diameters, machine_info.nozzle_volume_types);
+    }
+    if (machine_info.model != "Snapmaker U1")
+        return;
+
+    if (nozzle_diameters.empty()) {
+        MessageDialog dlg(wxGetApp().mainframe,
+                          _L("No nozzle information detected. Please go to the printer settings to configure the nozzle."),
+                          _L("Note"), wxOK);
+        dlg.ShowModal();
+        return;
+    }
+
+    auto apply_nozzle_preset = [this](const std::string& diameter) {
+        auto preset = wxGetApp().preset_bundle->get_similar_printer_preset({}, diameter);
+        if (preset == nullptr) {
+            BOOST_LOG_TRIVIAL(error) << "get the similar printer preset fail";
+            return false;
+        }
+        preset->is_visible = true;
+        for (size_t i = 0; i < p->m_nozzle_diameter_lists.size(); ++i)
+            p->m_nozzle_diameter_lists[i]->SetValue(diameter + "mm");
+        wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset->name);
+        wxGetApp().plater()->sidebar().update_all_preset_comboboxes(true);
+        return true;
+    };
+
+    const std::string& first_diameter = nozzle_diameters.front();
+    const bool         mixed_diameters = std::any_of(nozzle_diameters.begin() + 1,
+                                                     nozzle_diameters.end(),
+                                                     [&](const std::string& diameter) { return diameter != first_diameter; });
+    if (mixed_diameters) {
+        NozzleDiameterSelectDialog dlg(wxGetApp().mainframe,
+                                       _L("Note: Inconsistent nozzle diameters. Current version does not support mixed diameter printing. Please select one nozzle for this print."),
+                                       _L("Set Nozzle Diameter"),
+                                       nozzle_diameters);
+        if (dlg.ShowModal() == wxID_OK) {
+            std::string selected_diameter = dlg.GetSelectedDiameter();
+            if (!selected_diameter.empty())
+                apply_nozzle_preset(selected_diameter);
+        }
+    } else {
+        std::string diameter = first_diameter;
+        boost::algorithm::trim(diameter);
+        if (diameter.size() > 2 && boost::iends_with(diameter, "mm")) {
+            diameter.resize(diameter.size() - 2);
+            boost::algorithm::trim(diameter);
+        }
+        if (!apply_nozzle_preset(diameter))
+            return;
+    }
+
+    if (!machine_info.nozzle_volume_types.empty())
+        GUI::FlowType::set_nozzle_volume_types(machine_info.nozzle_volume_types);
+    wxGetApp().plater()->sidebar().update_nozzle_settings(true);
+    if (!mixed_diameters)
+        wxTheApp->CallAfter([this]() {
+            MessageDialog dlg(wxGetApp().mainframe, _L("Nozzle settings synchronized successfully"), _L("Note"), wxOK);
+            dlg.ShowModal();
+        });
+}
 void Sidebar::show_sync_filament_dialog()
 {
     if (!wxGetApp().plater())
@@ -9198,9 +9182,10 @@ void Sidebar::show_sync_filament_dialog()
     std::string machine_type;
     std::string device_name;
     std::vector<std::string> nozzle_diameters;
-    // Single gateway RPC doubles as the connected-guard: a device answering
-    // machine.system_info is connected (avoids probe + query serial waits).
-    bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, device_name);
+    std::vector<std::string> nozzle_volume_types;
+    // The gateway device snapshot doubles as the connected-guard: a successful
+    // GET /api/device proves a live device channel (avoids probe + query serial waits).
+    bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, nozzle_volume_types, device_name);
 
     if (!got_machine_info) {
         SyncRichConfirmDialog dlg(this,
@@ -9222,6 +9207,7 @@ void Sidebar::show_sync_filament_dialog()
         machine_info.model            = SSWCPProtocol::normalize_machine_model(machine_type);
         machine_info.device_name      = device_name;
         machine_info.nozzle_diameters = nozzle_diameters;
+        machine_info.nozzle_volume_types = nozzle_volume_types;
 
         bool is_white_listed_type = white_list_machine_types.find(machine_info.model) != white_list_machine_types.end();
 

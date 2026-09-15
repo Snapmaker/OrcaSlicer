@@ -75,6 +75,13 @@ bool parse_extruder_nozzle_info(const nlohmann::json &response,
                                  std::vector<std::string> &diameters,
                                  std::vector<std::string> &volume_types);
 
+/// Parse an extruder object map directly. The objects argument is the value of
+/// data.status (printer.objects.query) or data.objects (gateway device snapshot).
+/// Returns true if at least one extruder with a valid nozzle_diameter was found.
+bool parse_extruder_objects(const nlohmann::json &objects,
+                             std::vector<std::string> &diameters,
+                             std::vector<std::string> &volume_types);
+
 /// sw_FinishFilamentMapping params.event — selects the action to run after the
 /// preprint webview closes. Extensible: add a new value here, then handle it in
 /// SSWCP_MachineOption_Instance (a dedicated on_finish_* handler + a switch case).

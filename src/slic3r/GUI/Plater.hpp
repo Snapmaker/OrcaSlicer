@@ -229,6 +229,12 @@ public:
     const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
 
 private:
+    // Applies a nozzle sync query result on the UI thread (async sync-button path).
+    void apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
+                                  std::vector<std::string> nozzle_diameters,
+                                  std::vector<std::string> nozzle_volume_types,
+                                  std::string device_name);
+
     struct priv;
     std::unique_ptr<priv> p;
 

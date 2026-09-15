@@ -359,15 +359,11 @@ public:
             smallest_distance_with_lower_speed=-1.f;
 
         // Orca: Pass to the point properties estimator the smallest ovehang distance that triggers a slowdown (smallest_distance_with_lower_speed)
-        // Subdivide long straight segments so that a local overhang (e.g. a small step of the
-        // previous layer contour in the middle of the segment) is actually sampled; without this,
-        // the whole segment inherits one speed from its endpoints and a far-away notch slows down
-        // an otherwise fully supported stretch.
         std::vector<ExtendedPoint> extended_points = estimate_points_properties<true, true, true, true>
                                                                 (path.polyline.points,
                                                                  prev_layer_boundaries[current_object],
                                                                  path.width,
-                                                                 found ? 2.0f : -1.0f,
+                                                                 -1,
                                                                  smallest_distance_with_lower_speed);
         const auto width_inv = 1.0f / path.width;
         std::vector<ProcessedPoint> processed_points;
@@ -445,15 +441,7 @@ public:
                 return round(final_speed);
             };
             
-            // Take the lower of the current and next point speed to decelerate before entering an
-            // overhang, but only when the points are close enough (2x flow width). Propagating the
-            // slowdown over long gaps slows down fully supported stretches that merely precede a
-            // distant local overhang.
-            float extrusion_speed;
-            if ((next.position - curr.position).norm() > 2.0 * path.width)
-                extrusion_speed = calculate_speed(curr.distance);
-            else
-                extrusion_speed = std::min(calculate_speed(curr.distance), calculate_speed(next.distance));
+            float extrusion_speed = std::min(calculate_speed(curr.distance), calculate_speed(next.distance));
             // ORCA: Clamp resulting speed to lowest of calculated speed based on the overhang values and the current speed
             // Fixes bug where resulting overhang speed is higher than the current speed due to (for example) volumetric flow limits.
             extrusion_speed = std::min(extrusion_speed, original_speed);

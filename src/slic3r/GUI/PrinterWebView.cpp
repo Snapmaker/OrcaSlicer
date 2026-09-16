@@ -28,12 +28,10 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                           "/web/flutter_web/index.html?path=2");
-    auto     real_url = wxGetApp().get_international_url(url);
     wxGetApp().start_flutter_wcp_timeout_watch();
-      // Create the webview
-    m_browser = WebView::CreateWebView(this, real_url);
+    // Load the real URL only in load_url(). Creating with Flutter here races the later
+    // missing_connection / path=2 LoadURL and cancels the in-flight document (-999).
+    m_browser = WebView::CreateWebView(this, "about:blank");
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -98,6 +96,14 @@ bool PrinterWebView::isSnapmakerPage()
         return false;
     auto url = m_browser->GetCurrentURL();
     return (url.find("flutter_web") != std::string::npos);
+}
+
+bool PrinterWebView::is_u1_device_page()
+{
+    if (m_browser == nullptr)
+        return false;
+    auto url = m_browser->GetCurrentURL();
+    return url.find("flutter_web") != std::string::npos && url.find("path=2") != std::string::npos;
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {

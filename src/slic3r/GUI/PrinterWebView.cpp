@@ -28,7 +28,6 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxGetApp().start_flutter_wcp_timeout_watch();
     // Load the real URL only in load_url(). Creating with Flutter here races the later
     // missing_connection / path=2 LoadURL and cancels the in-flight document (-999).
     m_browser = WebView::CreateWebView(this, "about:blank");
@@ -246,7 +245,6 @@ void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
     //     wxLogMessage("Script message received; value = %s, handler = %s", evt.GetString(), evt.GetMessageHandler());
 
     // test
-    wxGetApp().on_flutter_wcp_received();
     SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
 }
 

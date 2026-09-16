@@ -957,17 +957,15 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     }
 
     // BBS
-    const ConfigOptionStrings* filament_colour = config.option<ConfigOptionStrings>("filament_colour");
-    if (filament_colour != nullptr && filament_colour->values.size() == m_result.extruder_colors.size()) {
-        for (size_t i = 0; i < m_result.extruder_colors.size(); ++i) {
-            if (m_result.extruder_colors[i].empty())
-                m_result.extruder_colors[i] = filament_colour->values[i];
-        }
-    }
+    // Resize to the extruder count before copying, so per-slot colours from
+    // the G-code config block have slots to land in.
+    m_result.extruder_colors.resize(m_result.extruders_count);
 
-    if (m_result.extruder_colors.size() < m_result.extruders_count) {
-        for (size_t i = m_result.extruder_colors.size(); i < m_result.extruders_count; ++i) {
-            m_result.extruder_colors.emplace_back(std::string());
+    const ConfigOptionStrings* filament_colour = config.option<ConfigOptionStrings>("filament_colour");
+    if (filament_colour != nullptr) {
+        for (size_t i = 0; i < m_result.extruders_count && i < filament_colour->values.size(); ++i) {
+            if (!filament_colour->values[i].empty())
+                m_result.extruder_colors[i] = filament_colour->values[i];
         }
     }
 

@@ -191,8 +191,8 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     // Bind(wxEVT_CLOSE_WINDOW, &WebPresetDialog::OnClose, this);
     m_load_thread = std::make_unique<std::thread>([this]() { LoadProfile(); });
 
-    // UI
-    SetStartPage(BBL_REGION);
+    // Same document as CreateWebView (preset_bind/24); do not LoadURL again.
+    SetStartPage(BBL_REGION, false);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",  finished");
     wxGetApp().UpdateDlgDarkUI(this);

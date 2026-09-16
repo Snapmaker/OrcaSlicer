@@ -3619,9 +3619,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         const auto& edit_preset = preset_bundle.printers.get_edited_preset();
 
-        static bool is_sm_page = false;
+        const bool showing_u1_device = p_mainframe->m_printer_view && p_mainframe->m_printer_view->is_u1_device_page();
+        // Non-U1: always leave path=2 for missing_connection / print_host. Keep skipping
+        // when use_new_connect already sits on the GIF (connect flow loads path=2 afterwards).
+        const bool load_non_u1_page = !is_snapmaker_u1 && reload_printer_view && (!use_new_connection || showing_u1_device);
 
-        if (!use_new_connection && !is_snapmaker_u1 && reload_printer_view) {
+        if (load_non_u1_page) {
 
             p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
@@ -3646,7 +3649,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             }
             
             p_mainframe->load_printer_url(url, apikey);
-            is_sm_page = false;
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -3672,9 +3674,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
-                if (!is_sm_page && reload_printer_view) {
+                if (reload_printer_view && !showing_u1_device) {
                     wxGetApp().mainframe->load_printer_url(real_url); 
-                    is_sm_page = true;
                 }                   
             }
 
@@ -15692,6 +15693,30 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
             if (main_frame->m_printer_view && url.empty()) {
                 // It's missing_connection page, reload so that we can replay the gif image
                 // main_frame->m_printer_view->reload();
+            }
+            // Device WKWebView is hidden on Prepare/Preview; GIF LoadURL may never settle,
+            // so a queued path=2 never runs. Sync once the tab is shown.
+            if (main_frame->m_printer_view) {
+                auto printer_model_opt = cfg.option<ConfigOptionString>("printer_model");
+                bool is_snapmaker_u1   = false;
+                if (printer_model_opt) {
+                    const std::string &printer_model = printer_model_opt->value;
+                    is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+                }
+                const bool showing_u1 = main_frame->m_printer_view->is_u1_device_page();
+                if (is_snapmaker_u1 && !showing_u1) {
+                    wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                                         "/web/flutter_web/index.html?path=2");
+                    main_frame->load_printer_url(wxGetApp().get_international_url(u1_url));
+                } else if (!is_snapmaker_u1 && showing_u1) {
+                    wxString non_u1 = url;
+                    if (non_u1.empty()) {
+                        std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+                        non_u1               = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+                    } else if (!non_u1.Lower().starts_with("http"))
+                        non_u1 = wxString::Format("http://%s", non_u1);
+                    main_frame->load_printer_url(non_u1);
+                }
             }
         }
     }

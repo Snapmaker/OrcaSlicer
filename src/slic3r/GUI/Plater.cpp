@@ -8593,12 +8593,24 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         pb.build_merge_filament_remap(filament_id, replace_filament_id, old_total_filaments, old_num_physical);
         
         BOOST_LOG_TRIVIAL(info) << "Built custom remap for physical to mixed merge (accounts for virtual ID changes)";
-        
-        // Call on_filaments_delete with -1 to trigger remap usage
-        // This updates object colors using the remap table
-        wxGetApp().plater()->on_filaments_delete(old_total_filaments, filament_id, -1, is_mixed_snapshot);
-        
-        // Now delete the physical filament
+
+        // Preserve the custom merge target for config-level object/volume extruder
+        // assignments. on_filaments_delete() consumes the remap for painted facets;
+        // passing the target also lets ObjectList remap "extruder" configs so newly
+        // reloaded GLVolumes receive the post-deletion mixed filament ID.
+        const std::vector<unsigned int> physical_to_mixed_remap = pb.last_filament_id_remap();
+        const int merged_target_id =
+            physical_to_mixed_remap.size() > filament_id + 1 &&
+            physical_to_mixed_remap[filament_id + 1] > 0
+                ? int(physical_to_mixed_remap[filament_id + 1] - 1)
+                : -1;
+
+        // Pass the post-deletion mixed target so painted states and config-level
+        // object/volume extruder assignments follow the same remap.
+        wxGetApp().plater()->on_filaments_delete(
+            old_total_filaments, filament_id, merged_target_id, is_mixed_snapshot);
+
+        // Delete the physical filament.
         pb.update_num_filaments(filament_id);
         pb.consume_last_filament_id_remap(); // discard the remap built by update_num_filaments
         wxGetApp().plater()->get_partplate_list().on_filament_deleted(

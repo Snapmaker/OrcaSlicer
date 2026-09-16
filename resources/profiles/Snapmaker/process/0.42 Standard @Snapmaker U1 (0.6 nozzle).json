@@ -3,6 +3,8 @@
     "name": "0.42 Standard @Snapmaker U1 (0.6 nozzle)",
     "inherits": "fdm_process_U1_0.42_nozzle_0.6",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "3",
     "setting_id": "GP031",
     "instantiation": "true",
     "description": "Compared with the default profile of a 0.6 mm nozzle, it has a bigger layer height, and results in much more apparent layer lines and much lower printing quality, but shorter printing time in some printing cases.",

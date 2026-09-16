@@ -3,6 +3,8 @@
     "name": "0.06 High Quality @Snapmaker U1 (0.2 nozzle)",
     "inherits": "fdm_process_U1_0.06_nozzle_0.2",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "5",
     "setting_id": "GP115",
     "instantiation": "true",
     "description": "Compared with the default profile of a 0.2 mm nozzle, it has a smaller layer lines, lower speeds and acceleration, and the sparse infill pattern is Gyroid. So, it results in minimal layer lines and much higher printing quality, but much longer printing time.",

@@ -3,6 +3,8 @@
     "setting_id": "GP008",
     "name": "0.20 Bambu Support W @Snapmaker U1 (0.4 nozzle)",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "5",
     "instantiation": "true",
     "inherits": "fdm_process_U1_0.20",
     "enable_support": "1",

@@ -439,16 +439,6 @@ public:
     void process() override;
 
 private:
-    void sw_UserLogin();
-
-    void sw_AskUserLogin();
-
-    void sw_UserLogout();
-
-    void sw_GetUserLoginState();
-
-    void sw_SubscribeUserLoginState();
-
     void sw_GetUserUpdatePrivacy();
 
     void sw_SubUserUpdatePrivacy();
@@ -467,10 +457,6 @@ private:
     void sw_UnsubscribeDownloadState();
     void sw_GetFilesFromDir();
     void sw_NotifyUploadTimelaspe();
-
-public:
-    static bool                                            s_ask_dialog_showing;
-    static std::vector<std::weak_ptr<SSWCP_Instance>>      s_ask_waiters;
 
 public:
     // Passive subscription entry — sw_SubscribeDownloadState only registers,
@@ -541,8 +527,8 @@ public:
     static void delete_target(SSWCP_Instance* target);
 
     // Extend a one-shot instance's timeout by the default timeout; used by
-    // long-running modal commands (e.g. sw_AskUserLogin) so their pending
-    // response is not dropped after the default 80 s.
+    // long-running modal commands so their pending response is not dropped
+    // after the default 80 s.
     static void renew_instance_timeout(SSWCP_Instance* instance);
 
     // Stop machine discovery

@@ -34,11 +34,13 @@ add_executable(gateway_tests
     GatewayProtocol_test.cpp
     GatewayService_test.cpp
     GatewayDevice_test.cpp
+    GatewayAccount_test.cpp
     GatewayMachineSnapshot_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/ConnectionProcessManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayProtocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayDevice.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayAccount.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/GUI/GatewayMachineSnapshot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/Http.cpp
     )

@@ -5569,39 +5569,39 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 80. });
 
-    def = this->add("support_top_contact_speed_split", coBool);
+    def = this->add("support_top_contact_speed_split", coBools);
     def->label = L("Support top contact speed");
     def->category = L("Speed");
     def->tooltip = L("Enable to set first, middle, and top support top contact layer speeds separately.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool { false });
+    def->set_default_value(new ConfigOptionBools { false });
 
-    def = this->add("support_top_contact_speed_first", coFloat);
+    def = this->add("support_top_contact_speed_first", coFloats);
     def->label = L("First layer contact speed");
     def->category = L("Speed");
     def->tooltip = L("Speed of the bottommost support top contact layer (furthest from the model).");
     def->sidetext = "mm/s";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat { 80. });
+    def->set_default_value(new ConfigOptionFloats { 80. });
 
-    def = this->add("support_top_contact_speed_middle", coFloat);
+    def = this->add("support_top_contact_speed_middle", coFloats);
     def->label = L("Middle layer contact speed");
     def->category = L("Speed");
     def->tooltip = L("Speed of the middle support top contact layers.");
     def->sidetext = "mm/s";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat { 80. }));
+    def->set_default_value(new ConfigOptionFloats { 80. });
 
-    def = this->add("support_top_contact_speed_top", coFloat);
+    def = this->add("support_top_contact_speed_top", coFloats);
     def->label = L("Top layer contact speed");
     def->category = L("Speed");
     def->tooltip = L("Speed of the topmost support top contact layer (closest to the model).");
     def->sidetext = "mm/s";
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(80));
+    def->set_default_value(new ConfigOptionFloats { 80. });
 
     def = this->add("support_base_pattern", coEnum);
     def->label = L("Base pattern");
@@ -5771,14 +5771,14 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
-    def = this->add("support_transition_speed", coFloat);
+    def = this->add("support_transition_speed", coFloats);
     def->label = L("Support transition speed");
     def->category = L("Speed");
     def->tooltip = L("Independent printing speed for support transition layers. Lower speed improves layer adhesion. Different from bridge_speed which is for bridging over gaps.");
     def->sidetext = L("mm/s");
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(50));
+    def->set_default_value(new ConfigOptionFloats { 50. });
 
     def = this->add("support_transition_flow_ratio", coFloatOrPercent);
     def->label = L("Support transition flow ratio");

@@ -5412,23 +5412,12 @@ LayerResult GCode::process_layer(const Print& print,
 
         // Reset TRAVEL acceleration and jerk at second layer
         if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0
-            && this->process_flow_value(m_config.first_layer_travel_acceleration) > 0) {
+            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
             gcode += m_writer.set_travel_acceleration(
                 (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5));
         }
         if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0
-            && this->process_flow_value(m_config.first_layer_travel_jerk) > 0) {
-            gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.travel_jerk));
-        }
-
-        // Reset TRAVEL acceleration and jerk at second layer
-        if (this->process_flow_value(m_config.default_acceleration)> 0 && this->process_flow_value(m_config.travel_acceleration) > 0
-            && this->process_flow_value(m_config.first_layer_travel_acceleration) > 0) {
-            gcode += m_writer.set_travel_acceleration(
-                (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5));
-        }
-        if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0
-            && this->process_flow_value(m_config.first_layer_travel_jerk) > 0) {
+            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
             gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.travel_jerk));
         }
 
@@ -6757,7 +6746,7 @@ LayerResult GCode::process_layer(const Print& print,
                     this->set_origin(0., 0.);
                     m_avoid_crossing_perimeters.use_external_mp();
                     for (const ExtrusionEntity* ee : brim_map_it->second.entities) {
-                        gcode += this->extrude_entity(*ee, "brim", m_config.support_speed.value);
+                        gcode += this->extrude_entity(*ee, "brim", this->process_flow_value(m_config.support_speed));
                     }
                     m_avoid_crossing_perimeters.use_external_mp(false);
                     m_avoid_crossing_perimeters.disable_once();
@@ -6954,7 +6943,7 @@ LayerResult GCode::process_layer(const Print& print,
                             this->set_origin(0., 0.);
                             m_avoid_crossing_perimeters.use_external_mp();
                             for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
-                                gcode += this->extrude_entity(*ee, "brim", this->process_flow_value(m_config.support_speed.value));
+                                gcode += this->extrude_entity(*ee, "brim", this->process_flow_value(m_config.support_speed));
                             }
                             m_avoid_crossing_perimeters.use_external_mp(false);
                             // Allow a straight travel move to the first object point.
@@ -8033,7 +8022,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                    path.role() == erSupportMaterialInterfaceTop) {
             const double support_speed           = this->process_flow_value(m_config.support_speed);
             const double support_interface_speed = this->process_flow_value(m_config.support_interface_speed);
-            const bool   split_enabled           = m_config.support_top_contact_speed_split.value;
+            const bool   split_enabled           = this->process_flow_value(m_config.support_top_contact_speed_split);
             if (path.role() == erSupportMaterial) {
                 speed = support_speed;
             } else if (path.role() == erSupportMaterialInterfaceFirst) {
@@ -8064,7 +8053,8 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         // Subtract raft layers so the slow-down count starts from the first model layer
         const int raft_layers = int(m_layer->object()->slicing_parameters().raft_layers());
         const int _layer      = layer_id() - raft_layers;
-        if (_layer >= 0 && _layer < m_config.slow_down_layers) {
+        const int slow_down_layers = this->process_flow_value(m_config.slow_down_layers);
+        if (_layer >= 0 && _layer < slow_down_layers) {
             const auto first_layer_speed = is_perimeter(path.role()) ? m_config.get_abs_value("initial_layer_speed") :
                                                                        m_config.get_abs_value("initial_layer_infill_speed");
             if (first_layer_speed < speed) {
@@ -8734,11 +8724,11 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        auto first_layer_travel_accel = this->process_flow_value(m_config.first_layer_travel_acceleration);
+        auto first_layer_travel_accel = m_config.get_abs_value("first_layer_travel_acceleration");
         if (this->process_flow_value(m_config.default_acceleration) > 0 && first_layer_travel_accel > 0) {
             acceleration_to_set = (unsigned int) floor(first_layer_travel_accel + 0.5);
         }
-        auto first_layer_travel_jerk_val = this->process_flow_value(m_config.first_layer_travel_jerk);
+        auto first_layer_travel_jerk_val = m_config.get_abs_value("first_layer_travel_jerk");
         if (this->process_flow_value(m_config.default_jerk) > 0 && first_layer_travel_jerk_val > 0) {
             jerk_to_set = first_layer_travel_jerk_val;
         }

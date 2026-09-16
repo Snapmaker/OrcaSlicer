@@ -2364,7 +2364,7 @@ void TreeSupport::draw_circles()
                         double brim_width = tree_brim_width >= 0.f ? tree_brim_width : 0.;
                         for (const ExPolygon &expoly : area) {
                             brim_width = std::max(brim_width,
-                                expoly.map_moment_to_expansion(config.support_speed.value, node.dist_mm_to_top));
+                                expoly.map_moment_to_expansion(get_value_at(config, config.support_speed, ConfigFlowDomain::Process), node.dist_mm_to_top));
                         }
                         area = safe_offset_inc(area, scale_(brim_width), get_collision(false),
                                                scale_(MIN_BRANCH_RADIUS * 0.5), 0, 1);

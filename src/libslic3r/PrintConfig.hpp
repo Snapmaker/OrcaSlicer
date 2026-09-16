@@ -921,7 +921,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_interface_bottom_layers))
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
-    ((ConfigOptionFloats,               support_interface_min_area))
+    ((ConfigOptionFloat,                support_interface_min_area))
     ((ConfigOptionFloats,               support_interface_speed))
     // Support top contact speed split
     ((ConfigOptionBools,                support_top_contact_speed_split))
@@ -992,7 +992,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Snapmaker: Support transition layer parameters
     ((ConfigOptionInt,                tree_support_transition_layers))
     ((ConfigOptionBool,               support_transition_perimeter))
-    ((ConfigOptionFloat,              support_transition_speed))
+    ((ConfigOptionFloats,             support_transition_speed))
     ((ConfigOptionFloatOrPercent,     support_transition_flow_ratio))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))

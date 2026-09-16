@@ -753,7 +753,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("support_speed", have_support_material || have_skirt_height);
     toggle_line("support_interface_speed", have_support_material && have_support_interface);
 
-    bool have_support_speed_split = have_support_material && have_support_interface && config->opt_bool("support_top_contact_speed_split");
+    bool have_support_speed_split = have_support_material && have_support_interface && config->opt_bool("support_top_contact_speed_split", 0);
     toggle_line("support_top_contact_speed_split", have_support_material && have_support_interface);
     toggle_line("support_top_contact_speed_first", have_support_speed_split);
     toggle_line("support_top_contact_speed_middle", have_support_speed_split);

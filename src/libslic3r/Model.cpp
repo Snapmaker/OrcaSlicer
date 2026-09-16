@@ -3081,11 +3081,11 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
     // Support top contact speed split: fold the per-layer top contact speeds into the
     // support speed so the max print speed reflects them as well.
     if (config.has("support_top_contact_speed_first"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_first"));
+        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_first", 0));
     if (config.has("support_top_contact_speed_middle"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_middle"));
+        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_middle", 0));
     if (config.has("support_top_contact_speed_top"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_top"));
+        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_top", 0));
     if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
         printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
 
@@ -3321,19 +3321,24 @@ double Model::findMaxSpeed(const ModelObject* object) {
         if (objectKey == "top_surface_speed")
             topSolidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "support_speed")
-            supportSpeedObj = object->config.opt_float(objectKey);
+            supportSpeedObj = object->config.get().opt_float(objectKey, 0);
         // Support top contact speed split: fold the per-layer top contact speeds into the
         // support speed so the object max speed reflects them as well.
         if (objectKey == "support_top_contact_speed_first")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
+            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
         if (objectKey == "support_top_contact_speed_middle")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
+            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
         if (objectKey == "support_top_contact_speed_top")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
+            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
         if (objectKey == "outer_wall_speed")
             externalPerimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
-        if (objectKey == "small_perimeter_speed")
-            smallPerimeterSpeedObj = object->config.opt_float(objectKey);
+        if (objectKey == "small_perimeter_speed") {
+            const auto *small_perimeter_opt = object->config.get().option<ConfigOptionFloatsOrPercents>(objectKey);
+            if (small_perimeter_opt != nullptr && !small_perimeter_opt->values.empty()) {
+                const FloatOrPercent &small_perimeter = small_perimeter_opt->get_at(0);
+                smallPerimeterSpeedObj = small_perimeter.percent ? (perimeterSpeedObj * small_perimeter.value / 100.) : small_perimeter.value;
+            }
+        }
     }
     objMaxSpeed = std::max(perimeterSpeedObj, std::max(externalPerimeterSpeedObj, std::max(infillSpeedObj, std::max(solidInfillSpeedObj, std::max(topSolidInfillSpeedObj, std::max(supportSpeedObj, std::max(smallPerimeterSpeedObj, objMaxSpeed)))))));
     if (objMaxSpeed <= 0) objMaxSpeed = 250.;

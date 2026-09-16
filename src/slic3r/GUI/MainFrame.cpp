@@ -4057,6 +4057,17 @@ void MainFrame::load_printer_url()
     }
 }
 
+void MainFrame::reload_gateway_pages()
+{
+    wxString home_url = wxGetApp().gateway_web_url("home_page");
+    if (m_webview != nullptr && wxGetApp().is_gateway_url(home_url))
+        m_webview->load_url(wxGetApp().get_international_url(home_url));
+
+    wxString device_url = wxGetApp().gateway_web_url("device_control");
+    if (wxGetApp().is_gateway_url(device_url))
+        load_printer_url(wxGetApp().get_international_url(device_url));
+}
+
 bool MainFrame::is_printer_view() const { return m_tabpanel->GetSelection() == TabPosition::tpMonitor; }
 
 

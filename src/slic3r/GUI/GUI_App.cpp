@@ -2566,7 +2566,7 @@ bool GUI_App::on_init_inner()
     // If load_language() fails, the application closes.
     load_language(wxString(), true);
     if (!start_gateway_service())
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway was not ready during application startup";
+        BOOST_LOG_TRIVIAL(warning) << "failed to start connection gateway during application startup";
     profiler.mark("gateway_service.start");
 #ifdef _MSW_DARK_MODE
 
@@ -5493,7 +5493,7 @@ std::string GUI_App::gateway_locale() const
 bool GUI_App::start_gateway_service(bool restart)
 {
     if (m_gateway_service && !restart)
-        return m_gateway_service->is_connected() || m_gateway_service->wait_for_connected(std::chrono::milliseconds{8000});
+        return true;
 
     if (restart)
         stop_gateway_service();
@@ -5524,11 +5524,7 @@ bool GUI_App::start_gateway_service(bool restart)
         BOOST_LOG_TRIVIAL(info) << "starting connection gateway with locale " << locale;
         if (!m_gateway_service->start(locale))
             return false;
-        if (!m_gateway_service->wait_for_connected(std::chrono::milliseconds{8000})) {
-            BOOST_LOG_TRIVIAL(warning) << "connection gateway was not ready after 8000ms";
-            return false;
-        }
-        BOOST_LOG_TRIVIAL(info) << "connection gateway ready at " << m_gateway_service->base_url();
+        BOOST_LOG_TRIVIAL(info) << "connection gateway startup requested";
         return true;
     } catch (const std::exception& exception) {
         BOOST_LOG_TRIVIAL(error) << "failed to start connection gateway: " << exception.what();
@@ -5753,16 +5749,7 @@ void GUI_App::register_gateway_notifications()
             }
 
             if (endpoint_changed && mainframe != nullptr) {
-                wxString home_url = gateway_web_url("home_page");
-                if (!home_url.empty() && mainframe->m_webview != nullptr) {
-                    home_url = get_international_url(home_url);
-                    mainframe->m_webview->load_url(home_url);
-                }
-
-                wxString device_url = gateway_web_url("device_control");
-                if (!device_url.empty())
-                    mainframe->load_printer_url(get_international_url(device_url));
-
+                mainframe->reload_gateway_pages();
                 if (WebPreprintDialog* preprint_dialog = dynamic_cast<WebPreprintDialog*>(get_web_preprint_dialog()))
                     preprint_dialog->refresh_gateway_urls();
             }

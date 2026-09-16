@@ -359,6 +359,7 @@ public:
     void        load_url(wxString url);
     void        load_printer_url(wxString url, wxString apikey = "");
     void        load_printer_url();
+    void        reload_gateway_pages();
     bool        is_printer_view() const;
     void        refresh_plugin_tips();
     void        RunScript(wxString js);

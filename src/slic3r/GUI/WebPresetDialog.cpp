@@ -499,7 +499,6 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 std::lock_guard<std::mutex> lock(m_ProfileJson_mutex);
                 oldregion = m_ProfileJson["region"];
             }
-            bool        bLogin    = false;
             if (m_Region != oldregion) {
                 AppConfig*    config       = GUI::wxGetApp().app_config;
                 std::string   country_code = config->get_country_code();
@@ -507,7 +506,6 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
                 if (agent) {
                     agent->set_country_code(country_code);
                     if (wxGetApp().is_user_login()) {
-                        bLogin = true;
                         agent->user_logout();
                     }
                 }
@@ -518,8 +516,6 @@ void WebPresetDialog::OnScriptMessage(wxWebViewEvent& evt)
             if (InstallNetplugin)
                 GUI::wxGetApp().CallAfter([this] { GUI::wxGetApp().ShowDownNetPluginDlg(); });
 
-            if (bLogin)
-                GUI::wxGetApp().CallAfter([this] { login(); });
         } else if (strCmd == "user_guide_cancel") {
             this->EndModal(wxID_CANCEL);
             this->Close();

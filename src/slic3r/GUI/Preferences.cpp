@@ -342,36 +342,17 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
         // snapmaker
         AppConfig* config = GUI::wxGetApp().app_config;
         combobox->SetSelection(region_index);
-        auto info = wxGetApp().sm_get_userinfo();
-        if (info && info->is_user_login()) {
-            MessageDialog msg_wingow(this, _L("Changing the region will log out your account and restart.\n") + "\n" + _L("Do you want to continue?"),
-                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
-
-            if (msg_wingow.ShowModal() == wxID_CANCEL) {
-                combobox->SetSelection(current_region);
-                return;
-            } else {
-                wxGetApp().sm_request_user_logout();
-                config->set("region", region.ToStdString());
-                EndModal(wxID_CANCEL);
-            }
-
-            Close();
-            GetParent()->RemoveChild(this);
-            wxGetApp().recreate_GUI(_L("Change Region"));
-        } else {
-            MessageDialog msg_wingow(nullptr,
-                                     _L("Switching the region requires application restart.\n") + "\n" + _L("Do you want to continue?"),
-                                     L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
-            if (msg_wingow.ShowModal() == wxID_CANCEL) {
-                combobox->SetSelection(current_region);
-                return;
-            }
-            config->set("region", region.ToStdString());
-            Close();
-            GetParent()->RemoveChild(this);
-            wxGetApp().recreate_GUI(_L("Change Region"));
+        MessageDialog msg_wingow(nullptr,
+                                 _L("Switching the region requires application restart.\n") + "\n" + _L("Do you want to continue?"),
+                                 L("Region selection"), wxICON_QUESTION | wxOK | wxCANCEL);
+        if (msg_wingow.ShowModal() == wxID_CANCEL) {
+            combobox->SetSelection(current_region);
+            return;
         }
+        config->set("region", region.ToStdString());
+        Close();
+        GetParent()->RemoveChild(this);
+        wxGetApp().recreate_GUI(_L("Change Region"));
 
         wxGetApp().update_publish_status();
         e.Skip();

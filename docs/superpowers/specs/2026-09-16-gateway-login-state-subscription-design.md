@@ -58,6 +58,11 @@
 - `nickname`/`account`/`email`:字符串直接取,缺失为空;
 - 字段类型不符按缺失处理;顶层非对象解析失败。
 
+实现备注:当前 CLI 构建(V2.4.0)的 `GET /api/account` 实际返回旧包装结构
+`{"code":<0|200|-1>,"data":{...云档案,id 为数字,token 在 accessToken}}`。解析器需同时兼容
+两种形状;包装帧以 `code==0/200` 且 `token`/`userid` 非空判定在线。若
+`notify.account.changed` 只带档案不带 token,则回源 HTTP 补拉一次。
+
 ## 新增 GatewayAccount
 
 新文件 `src/slic3r/Utils/GatewayAccount.hpp/.cpp`(构建注册与 `GatewayDevice` 相同:

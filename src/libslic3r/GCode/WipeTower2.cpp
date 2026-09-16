@@ -9,6 +9,7 @@
 #include <limits>
 #include <sstream>
 #include <iomanip>
+#include <unordered_set>
 
 #include "ClipperUtils.hpp"
 #include "GCodeProcessor.hpp"

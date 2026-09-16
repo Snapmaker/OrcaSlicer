@@ -24,9 +24,7 @@
     "during_print_exhaust_fan_speed": [
         "70"
     ],
-    "enable_pressure_advance": [
-        "0"
-    ],
+    "enable_pressure_advance": ["0", "1"],
     "eng_plate_temp": [
         "60"
     ],
@@ -145,10 +143,7 @@
     "pellet_flow_coefficient": [
         "0.4157"
     ],
-    "pressure_advance": [
-        "0.02",
-        "0.02"
-    ],
+    "pressure_advance": ["0.02", "0.024"],
     "required_nozzle_HRC": [
         "0"
     ],
@@ -177,10 +172,7 @@
     "graphic_effect_plate_temp_initial_layer": [
         "65"
     ],
-    "filament_flow_support": [
-        "standard",
-        "high_flow"
-    ],
+    "filament_flow_support": ["standard", "high_flow"],
     "supertack_plate_temp": [
         "40"
     ],

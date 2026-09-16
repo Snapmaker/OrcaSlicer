@@ -576,8 +576,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/Timelapse/TimelapseDownloadPopup.hpp
     GUI/WebPresetDialog.hpp
     GUI/WebPresetDialog.cpp
-    GUI/WebSMUserLoginDialog.cpp
-    GUI/WebSMUserLoginDialog.hpp
     GUI/WebDeviceDialog.cpp
     GUI/WebDeviceDialog.hpp
     GUI/WebPreprintDialog.hpp
@@ -629,6 +627,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/GatewayProtocol.hpp
     Utils/GatewayDevice.cpp
     Utils/GatewayDevice.hpp
+    Utils/GatewayAccount.cpp
+    Utils/GatewayAccount.hpp
     Utils/GatewayService.cpp
     Utils/GatewayService.hpp
     Utils/HexFile.cpp

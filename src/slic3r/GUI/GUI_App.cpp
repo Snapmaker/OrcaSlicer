@@ -2054,6 +2054,10 @@ GUI_App::~GUI_App()
         m_silent_refresh_timeout_timer->Stop();
         m_silent_refresh_timeout_timer.reset();
     }
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
     if (app_config != nullptr) {
@@ -3984,7 +3988,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = build_flutter_web_url("2");
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                                                   "/web/flutter_web/index.html?path=2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {
@@ -4386,6 +4391,47 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::start_flutter_wcp_timeout_watch()
+{
+    if (m_flutter_wcp_reported || m_flutter_wcp_timeout_timer)
+        return;
+
+    m_flutter_wcp_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+    Bind(wxEVT_TIMER, &GUI_App::on_flutter_wcp_timeout, this, m_flutter_wcp_timeout_timer->GetId());
+    m_flutter_wcp_timeout_timer->Start(FLUTTER_WCP_TIMEOUT_MS, wxTIMER_ONE_SHOT);
+}
+
+void GUI_App::on_flutter_wcp_received()
+{
+    report_flutter_run_result_once(true);
+}
+
+void GUI_App::on_flutter_wcp_timeout(wxTimerEvent &event)
+{
+    report_flutter_run_result_once(false);
+}
+
+void GUI_App::report_flutter_run_result_once(bool success)
+{
+    if (m_flutter_wcp_reported)
+        return;
+
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
+
+    m_flutter_wcp_reported = true;
+
+    if (success) {
+        SNAP_LOG_BATCH_FORCE(Info, "flutter run success",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "true"});
+    } else {
+        SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
     }
 }
 
@@ -5412,12 +5458,6 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
-wxString GUI_App::build_flutter_web_url(const wxString& path)
-{
-    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
-                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()) +
-                              "&version=" + Snapmaker_VERSION);
-}
 
 std::string GUI_App::format_display_version()
 {

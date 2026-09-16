@@ -13,7 +13,7 @@
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/GUI/WebViewDialog.hpp"
 #include "slic3r/GUI/WebUserLoginDialog.hpp"
-#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
+#include "slic3r/Utils/GatewayAccount.hpp"
 #include "slic3r/GUI/WebDeviceDialog.hpp"
 #include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/BindDialog.hpp"
@@ -32,6 +32,7 @@
 #include <wx/msgdlg.h>
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <stack>
 #include <unordered_map>
@@ -328,7 +329,6 @@ private:
 
     // login widget
     ZUserLogin*     login_dlg { nullptr };
-    SMUserLogin*    sm_login_dlg{ nullptr };
 
 
 public:
@@ -544,68 +544,15 @@ private:
 
     wxString get_international_url(const wxString& origin_url);
 
-    // SM
-    struct SMUserInfo
-    {
-    public:
-        bool is_user_login() { return m_login; }
-        void set_user_login(bool login)
-        {
-            m_login = login;
-            notify();
-        }
-
-        std::string get_user_name() { return m_login_user_name; }
-        void     set_user_name(const std::string& name) { m_login_user_name = name; }
-
-        std::string get_user_token() { return m_login_user_token; }
-        void     set_user_token(const std::string& token) { m_login_user_token = token; }
-
-        std::string get_user_icon_url() { return m_login_user_icon_url; }
-        void     set_user_icon_url(const std::string& url) { m_login_user_icon_url = url; }
-
-        std::string get_user_id() { return m_login_user_id; }
-        void        set_user_id(const std::string& id) { m_login_user_id = id; }
-
-        std::string get_user_account() { return m_login_user_account; }
-        void        set_user_account(const std::string& account) { m_login_user_account = account; }
-
-        void clear() {
-            m_login_user_name = "";
-            m_login_user_token = "";
-            m_login_user_icon_url = "";
-            m_login_user_id       = "";
-            m_login_user_account  = "";
-            m_login               = false;
-        }
-
-        void notify();
-    private:
-        std::string m_login_user_name = "";
-        std::string m_login_user_token = "";
-        std::string m_login_user_icon_url = "";
-        std::string m_login_user_id       = "";
-        std::string m_login_user_account  = "";
-        bool     m_login = false;
-    };
-
-    SMUserInfo*     sm_get_userinfo() { return &m_login_userinfo; }
-    void            sm_get_login_info();
-    void            sm_request_login(bool show_user_info = false);
-    void            sm_ShowUserLogin(bool show  =  true);
-    void            sm_request_user_logout();
-    void            start_flutter_wcp_timeout_watch();
-    void            on_flutter_wcp_received();
-    void            report_flutter_run_result_once(bool success);
-
-    // Silent login-token maintenance: the Snapmaker access token expires after
-    // ~24 h; a hidden login webview re-runs the cookie session and picks up a
-    // fresh token without user interaction.
-    void            sm_maybe_refresh_login_token();  // due-check + guards; main thread
-    void            sm_on_token_captured(std::size_t refresh_generation); // call on every token acquisition
-    void            sm_stop_silent_token_refresh();  // drop an in-flight silent refresh
-    bool            sm_is_token_refresh_current(std::size_t refresh_generation) const;
-    std::size_t     sm_token_refresh_generation() const { return m_silent_refresh_generation; }
+    // SM login state is owned by the connection gateway. The app only mirrors
+    // GET /api/account / notify.account.changed frames for native consumers
+    // (currently SnapLog identity and the region-switch hint).
+    const Gateway::AccountSnapshot& gateway_account() const { return m_gateway_account; }
+    void                            apply_gateway_account(const Gateway::AccountSnapshot& snapshot);
+    void                            refresh_gateway_account();
+    void                            start_flutter_wcp_timeout_watch();
+    void                            on_flutter_wcp_received();
+    void                            report_flutter_run_result_once(bool success);
 
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
@@ -884,32 +831,15 @@ private:
     static constexpr int    FLUTTER_WCP_TIMEOUT_MS = 120 * 1000;
     void                    on_flutter_wcp_timeout(wxTimerEvent &event);
     std::string             m_open_method;
-    SMUserInfo m_login_userinfo;
-
-    // --- Silent login-token refresh bookkeeping (see sm_maybe_refresh_login_token) ---
-    static constexpr int SM_TOKEN_REFRESH_INTERVAL_H = 12;           // refresh cadence, well inside the 24 h token lifetime
-    static constexpr int SM_TOKEN_REFRESH_RETRY_MIN  = 30;           // min wait after a failed attempt
-    static constexpr int SM_TOKEN_REFRESH_TIMEOUT_S  = 120;          // give up on a single silent attempt
-    static constexpr int SM_TOKEN_CHECK_INTERVAL_MS  = 5 * 60 * 1000; // periodic due-check tick
-
-    std::chrono::system_clock::time_point m_token_last_refresh_success{};
-    std::chrono::system_clock::time_point m_token_last_refresh_attempt{};
-    std::size_t                           m_silent_refresh_generation     = 0;
-    bool     m_sm_silent_refresh_in_progress = false;
-    bool     m_sm_login_dialog_showing       = false;
-    std::unique_ptr<wxTimer>              m_token_check_timer;
-    std::unique_ptr<wxTimer>              m_silent_refresh_timeout_timer;
-    void     on_token_check_timer(wxTimerEvent &event);
-    void     on_silent_refresh_timeout(wxTimerEvent &event);
+    Gateway::AccountSnapshot   m_gateway_account;
+    std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
-    std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_login_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_page_state_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_foreground_change_subscribers;
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_user_update_privacy_subscribers;
     void recent_file_notify(const json& res);
-    void user_login_notify(const json& res);
     void page_state_notify_webview(wxWebView* webview, const std::string& state);
 
     // Push foreground/background state change to all subscribed webview instances

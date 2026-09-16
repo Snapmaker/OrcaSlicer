@@ -1283,12 +1283,6 @@ void GUI_App::shutdown(bool isRecreate)
         login_dlg = nullptr;
     }
 
-    if (sm_login_dlg != nullptr) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": destroy SMlogin dialog");
-        delete sm_login_dlg;
-        sm_login_dlg = nullptr;
-    }
-
     if (web_device_dialog != nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": web device dialog");
         delete web_device_dialog;
@@ -2032,14 +2026,6 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
-    if (m_token_check_timer) {
-        m_token_check_timer->Stop();
-        m_token_check_timer.reset();
-    }
-    if (m_silent_refresh_timeout_timer) {
-        m_silent_refresh_timeout_timer->Stop();
-        m_silent_refresh_timeout_timer.reset();
-    }
     if (m_flutter_wcp_timeout_timer) {
         m_flutter_wcp_timeout_timer->Stop();
         m_flutter_wcp_timeout_timer.reset();
@@ -4091,106 +4077,43 @@ void GUI_App::import_presets()
     }
 }
 
-// SM
-void GUI_App::sm_get_login_info() {
-    if (!m_login_userinfo.is_user_login() || m_login_userinfo.get_user_name().empty()) {
-        // default
-        json param;
-        param["command"] = "studio_useroffline";
-        param["sequece_id"] = "10001";
-        std::string logout_cmd = param.dump();
-        wxString    strJS      = wxString::Format("window.postMessage(%s)", logout_cmd);
-        GUI::wxGetApp().run_script(strJS);
-    } else {
-        json param;
-        param["command"]    = "studio_userlogin";
-        param["sequece_id"] = "10001";
-        json data;
-        data["avatar"] = m_login_userinfo.get_user_icon_url();
-        data["name"]   = m_login_userinfo.get_user_name();
-        param["data"]  = data;
-        std::string login_cmd = param.dump();
-        wxString    strJS      = wxString::Format("window.postMessage(%s)", login_cmd);
-        GUI::wxGetApp().run_script(strJS);
-    }
-    mainframe->m_webview->SetLoginPanelVisibility(true);
+// SM login state is owned by the connection gateway; mirror its account frames
+// for native consumers (SnapLog identity, region-switch hint).
+void GUI_App::apply_gateway_account(const Gateway::AccountSnapshot& snapshot)
+{
+    const bool login_changed = snapshot.is_login != m_gateway_account.is_login;
+    m_gateway_account         = snapshot;
+    BOOST_LOG_TRIVIAL(info) << "[gateway][account] " << (login_changed ? "login state changed: " : "account updated: ")
+                            << (snapshot.is_login ? "online" : "offline") << ", userid=" << snapshot.userid
+                            << ", nickname=" << snapshot.nickname;
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(snapshot.token);
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.userid);
 }
 
-void GUI_App::sm_request_login(bool show_user_info)
+void GUI_App::refresh_gateway_account()
 {
-    sm_ShowUserLogin(show_user_info);
+    if (!m_gateway_service)
+        return;
 
-    if (show_user_info) {
-        sm_get_login_info();
-    }
-
-}
-
-void GUI_App::sm_ShowUserLogin(bool show)
-{
-    if (show)
-        sm_stop_silent_token_refresh();
-
-    // BBS: User Login Dialog
-    if (show) {
-        try {
-            if (!sm_login_dlg)
-                sm_login_dlg = new SMUserLogin();
-            else {
-                delete sm_login_dlg;
-                sm_login_dlg = new SMUserLogin();
+    // get_account() performs a synchronous HTTP request; keep it off the UI
+    // thread and drop stale responses after reconnect races.
+    const std::uint64_t generation = ++m_gateway_account_refresh_generation;
+    std::thread([this, generation]() {
+        const Gateway::GatewayService::ApiResult result = m_gateway_service->get_account();
+        CallAfter([this, generation, result]() {
+            if (generation != m_gateway_account_refresh_generation.load())
+                return;
+            if (result.error) {
+                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] GET /api/account failed: " << result.error.message;
+                return;
             }
-            m_sm_login_dialog_showing = true;
-            sm_login_dlg->ShowModal();
-            m_sm_login_dialog_showing = false;
-        } catch (std::exception&) {
-            m_sm_login_dialog_showing = false;
-            ;
-        }
-    } else {
-        try {
-            if (!sm_login_dlg)
-                sm_login_dlg = new SMUserLogin();
-            else {
-                delete sm_login_dlg;
-                sm_login_dlg = new SMUserLogin();
-            }
-        }
-        catch (std::exception&) {
-            ;
-        }
-    }
-}
-
-void GUI_App::sm_request_user_logout()
-{
-    sm_stop_silent_token_refresh();
-    if (m_token_check_timer)
-        m_token_check_timer->Stop();
-
-    if (m_login_userinfo.is_user_login()) {
-        m_login_userinfo.set_user_login(false);
-    }
-    SNAP_LOG_BATCH(Info, "user logout",
-        {"eventName", "user_logout"}, {"source", "cpp"});
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token("");
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id("");
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
-    try {
-        wxString region = wxString::FromUTF8(app_config->get_country_code());
-        std::string url    = "";
-        if (region == "CN") {
-            url = "https://api.snapmaker.cn/api/oauth2/revoke";
-        } else {
-            url = "https://id.snapmaker.com/api/oauth2/revoke";
-        }
-
-        Http http = Http::post(url);
-        http.form_add("token", m_login_userinfo.get_user_token()).perform();
-    } catch (std::exception&) {
-        ;
-    }
+            Gateway::AccountSnapshot snapshot;
+            if (Gateway::GatewayAccount::parse(result.value, snapshot))
+                apply_gateway_account(snapshot);
+            else
+                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] invalid /api/account response";
+        });
+    }).detach();
 }
 
 void GUI_App::start_flutter_wcp_timeout_watch()
@@ -4231,94 +4154,6 @@ void GUI_App::report_flutter_run_result_once(bool success)
     } else {
         SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
             {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
-    }
-}
-
-void GUI_App::sm_maybe_refresh_login_token()
-{
-    if (!m_login_userinfo.is_user_login())
-        return;
-    if (m_sm_login_dialog_showing || m_sm_silent_refresh_in_progress)
-        return;
-
-    auto now = std::chrono::system_clock::now();
-    if (now - m_token_last_refresh_success < std::chrono::hours(SM_TOKEN_REFRESH_INTERVAL_H))
-        return;
-    if (now - m_token_last_refresh_attempt < std::chrono::minutes(SM_TOKEN_REFRESH_RETRY_MIN))
-        return;
-
-    m_token_last_refresh_attempt   = now;
-    m_sm_silent_refresh_in_progress = true;
-    ++m_silent_refresh_generation;
-    BOOST_LOG_TRIVIAL(info) << "sm: start silent login-token refresh";
-
-    if (!m_silent_refresh_timeout_timer) {
-        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
-        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, m_silent_refresh_timeout_timer->GetId());
-    }
-    m_silent_refresh_timeout_timer->Start(std::chrono::seconds(SM_TOKEN_REFRESH_TIMEOUT_S).count() * 1000, wxTIMER_ONE_SHOT);
-
-    auto refresh_generation = m_silent_refresh_generation;
-    CallAfter([refresh_generation]() {
-        if (refresh_generation == wxGetApp().sm_token_refresh_generation())
-            wxGetApp().sm_ShowUserLogin(false);
-    });
-}
-
-void GUI_App::on_silent_refresh_timeout(wxTimerEvent &event)
-{
-    if (m_sm_silent_refresh_in_progress) {
-        m_sm_silent_refresh_in_progress = false;
-        BOOST_LOG_TRIVIAL(warning) << "sm: silent login-token refresh timed out, keep old token and retry later";
-    }
-}
-
-void GUI_App::sm_on_token_captured(std::size_t refresh_generation)
-{
-    if (refresh_generation != m_silent_refresh_generation) {
-        BOOST_LOG_TRIVIAL(warning) << "sm: ignore stale login-token capture";
-        return;
-    }
-
-    m_token_last_refresh_success = std::chrono::system_clock::now();
-    if (m_sm_silent_refresh_in_progress) {
-        m_sm_silent_refresh_in_progress = false;
-        if (m_silent_refresh_timeout_timer)
-            m_silent_refresh_timeout_timer->Stop();
-        BOOST_LOG_TRIVIAL(info) << "sm: silent login-token refresh succeeded";
-    }
-
-    if (!m_token_check_timer) {
-        m_token_check_timer = std::make_unique<wxTimer>(this, wxID_ANY);
-        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, m_token_check_timer->GetId());
-    }
-    m_token_check_timer->Start(SM_TOKEN_CHECK_INTERVAL_MS);
-
-    if (!m_sm_login_dialog_showing && sm_login_dlg) {
-        delete sm_login_dlg;
-        sm_login_dlg = nullptr;
-    }
-}
-
-bool GUI_App::sm_is_token_refresh_current(std::size_t refresh_generation) const
-{ return refresh_generation == m_silent_refresh_generation; }
-
-void GUI_App::on_token_check_timer(wxTimerEvent &event)
-{
-    sm_maybe_refresh_login_token();
-}
-
-void GUI_App::sm_stop_silent_token_refresh()
-{
-    ++m_silent_refresh_generation;
-    m_sm_silent_refresh_in_progress = false;
-    if (m_silent_refresh_timeout_timer)
-        m_silent_refresh_timeout_timer->Stop();
-
-    // Drop the hidden login dialog so a late redirect cannot re-login the user.
-    if (!m_sm_login_dialog_showing && sm_login_dlg) {
-        delete sm_login_dlg;
-        sm_login_dlg = nullptr;
     }
 }
 
@@ -5710,6 +5545,19 @@ void GUI_App::register_gateway_notifications()
     if (!m_gateway_service)
         return;
 
+    m_gateway_service->set_notification_handler("notify.account.changed", [this](const nlohmann::json& params) {
+        Gateway::AccountSnapshot snapshot;
+        if (!Gateway::GatewayAccount::parse(params, snapshot)) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][account] ignored invalid notify.account.changed frame";
+            return;
+        }
+        apply_gateway_account(snapshot);
+        // Some CLI builds broadcast the profile without the access token; re-pull
+        // /api/account so SnapLog still receives a usable token.
+        if (snapshot.is_login && snapshot.token.empty())
+            refresh_gateway_account();
+    });
+
     m_gateway_service->set_notification_handler("machine.snapshot_changed", [this](const nlohmann::json& snapshot) {
         if (m_gateway_machine_snapshot != nullptr)
             m_gateway_machine_snapshot->apply(snapshot);
@@ -5864,6 +5712,10 @@ void GUI_App::register_gateway_notifications()
 
             if (!m_gateway_service)
                 return;
+
+            // The gateway owns the login session; refresh the local mirror after
+            // every (re)connect because notifications are not replayed.
+            refresh_gateway_account();
 
             const Gateway::HealthInfo health = m_gateway_service->health();
             const std::string base_url = m_gateway_service->base_url();
@@ -7425,9 +7277,6 @@ void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& s
 
 void GUI_App::notify_foreground_change(const bool active)
 {
-    if (active)
-        sm_maybe_refresh_login_token();
-
     json data;
     data["state"] = active;
 
@@ -7457,17 +7306,6 @@ void GUI_App::user_update_privacy_notify(const bool& res)
         }
     }
 
-}
-
-void GUI_App::user_login_notify(const json& res)
-{
-    for (const auto& instance : m_user_login_subscribers) {
-        auto ptr = instance.second.lock();
-        if (ptr) {
-            ptr->m_res_data = res;
-            ptr->send_to_js();
-        }
-    }
 }
 
 bool GUI_App::config_wizard_startup()
@@ -7775,22 +7613,6 @@ void GUI_App::start_download(std::string url)
 
 }
 
-void GUI_App::SMUserInfo::notify() {
-    json data;
-    if (m_login) {
-        data["status"]   = "online";
-        data["nickname"] = m_login_user_name;
-        data["icon"]     = m_login_user_icon_url;
-        data["token"]    = m_login_user_token;
-        data["userid"]   = m_login_user_id;
-        data["account"]  = m_login_user_account;
-    } else {
-        data["status"] = "offline";
-    }
-
-    wxGetApp().user_login_notify(data);
-
-}
 bool is_support_filament(int extruder_id)
 {
     auto &filament_presets = Slic3r::GUI::wxGetApp().preset_bundle->filament_presets;

@@ -46,7 +46,6 @@
 
 #include "slic3r/GUI/SMPhysicalPrinterDialog.hpp"
 #include "slic3r/GUI/WebUrlDialog.hpp"
-#include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/FilamentGroupDialog.hpp"
 #include "slic3r/GUI/FlowTypeHelper.hpp"
 
@@ -1204,7 +1203,6 @@ void SSWCP_Instance::on_mqtt_msg_arrived(std::shared_ptr<SSWCP_Instance> obj, co
 
 void SSWCP_Instance::sw_UnsubscribeAll() {
     wxGetApp().m_recent_file_subscribers.clear();
-    wxGetApp().m_user_login_subscribers.clear();
     wxGetApp().m_user_update_privacy_subscribers.clear();
     wxGetApp().m_foreground_change_subscribers.clear();
 
@@ -1213,15 +1211,6 @@ void SSWCP_Instance::sw_UnsubscribeAll() {
 }
 
 void SSWCP_Instance::sw_Webview_Unsubscribe() {
-    auto& login_map = wxGetApp().m_user_login_subscribers;
-    for (auto iter = login_map.begin(); iter != login_map.end();) {
-        if (iter->first == m_webview) {
-            iter = login_map.erase(iter);
-        } else {
-            iter++;
-        }
-    }
-
     auto& recent_file_map = wxGetApp().m_recent_file_subscribers;
     for (auto iter = recent_file_map.begin(); iter != recent_file_map.end();) {
         if (iter->first == m_webview) {
@@ -1263,7 +1252,6 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
             return;
         }
 
-        auto&       login_map  = wxGetApp().m_user_login_subscribers;
         auto&       privacy_map     = wxGetApp().m_user_update_privacy_subscribers;
         auto&       recent_file_map = wxGetApp().m_recent_file_subscribers;
         if (cmd == "sw_SubscribeRecentFiles") {
@@ -1278,23 +1266,6 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
                         }
                     } else {
                         iter = recent_file_map.erase(iter);
-                    }
-                } else {
-                    iter++;
-                }
-            }
-        } else if (cmd == "sw_SubscribeUserLoginState") {
-            for (auto iter = login_map.begin(); iter != login_map.end();) {
-                if (iter->first == m_webview) {
-                    auto ptr = iter->second.lock();
-                    if (ptr) {
-                        if (event_id == "" || (event_id != "" && event_id == ptr->m_event_id)) {
-                            iter = login_map.erase(iter);
-                        } else {
-                            iter++;
-                        }
-                    } else {
-                        iter = login_map.erase(iter);
                     }
                 } else {
                     iter++;
@@ -4306,18 +4277,7 @@ void SSWCP_UserLogin_Instance::process()
         m_header.clear();
         m_header["event_id"] = m_event_id;
     }
-    if (m_cmd == "sw_UserLogin") {
-        sw_UserLogin();
-    } else if (m_cmd == "sw_AskUserLogin") {
-        sw_AskUserLogin();
-    } else if (m_cmd == "sw_UserLogout") {
-        sw_UserLogout();
-    } else if (m_cmd == "sw_GetUserLoginState") {
-        sw_GetUserLoginState();
-    } else if (m_cmd == "sw_SubscribeUserLoginState") {
-        sw_SubscribeUserLoginState();
-    }
-    else if (m_cmd == UPDATE_PRIVACY_STATUS) {
+    if (m_cmd == UPDATE_PRIVACY_STATUS) {
         sw_SubUserUpdatePrivacy();
     } else if (m_cmd == GET_PRIVACY_STATUS) {
         sw_GetUserUpdatePrivacy();
@@ -4341,128 +4301,6 @@ void SSWCP_UserLogin_Instance::process()
         sw_NotifyUploadTimelaspe();
     }
     else {
-        handle_general_fail();
-    }
-}
-void SSWCP_UserLogin_Instance::sw_UserLogin()
-{
-    try {
-        send_to_js();
-        finish_job();
-        bool show = m_param_data.count("show") ? m_param_data["show"].get<bool>() : true;
-
-        wxGetApp().CallAfter([show]() {
-            wxGetApp().sm_request_login(show);
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_UserLogin_Instance::sw_AskUserLogin()
-{
-    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-    wxGetApp().CallAfter([weak_self]() {
-        auto self = weak_self.lock();
-        if (!self)
-            return;
-
-        if (s_ask_dialog_showing) {
-            auto already_queued = [&self](const std::weak_ptr<SSWCP_Instance>& waiter) {
-                auto locked = waiter.lock();
-                return locked && locked.get() == self.get();
-            };
-            if (!std::any_of(s_ask_waiters.begin(), s_ask_waiters.end(), already_queued))
-                s_ask_waiters.push_back(self);
-            return;
-        }
-
-        struct AskLoginDialogStateGuard
-        {
-            bool active = true;
-
-            ~AskLoginDialogStateGuard()
-            {
-                if (active) {
-                    s_ask_dialog_showing = false;
-                    s_ask_waiters.clear();
-                }
-            }
-        };
-
-        bool                     login = false;
-        AskLoginDialogStateGuard state_guard;
-        s_ask_dialog_showing = true;
-        s_ask_waiters.push_back(self);
-
-        SMAskUserLoginDialog dlg(wxGetApp().mainframe);
-        dlg.SetKeepAliveCallback([]() {
-            for (auto& weak : s_ask_waiters)
-                if (auto alive = weak.lock())
-                    SSWCP::renew_instance_timeout(alive.get());
-        });
-        login = (dlg.ShowModal() == wxID_OK);
-
-        s_ask_dialog_showing = false;
-        json data;
-        data["result"] = login ? "login" : "cancel";
-        for (auto& weak : s_ask_waiters) {
-            auto waiter = weak.lock();
-            if (!waiter)
-                continue;
-            waiter->m_res_data = data;
-            waiter->send_to_js();
-            waiter->finish_job();
-        }
-        s_ask_waiters.clear();
-        state_guard.active = false;
-
-        if (login)
-            wxGetApp().sm_request_login(true);
-    });
-}
-
-bool SSWCP_UserLogin_Instance::s_ask_dialog_showing = false;
-std::vector<std::weak_ptr<SSWCP_Instance>> SSWCP_UserLogin_Instance::s_ask_waiters;
-
-void SSWCP_UserLogin_Instance::sw_UserLogout()
-{
-    try {
-        send_to_js();
-        wxGetApp().sm_request_user_logout();
-        finish_job();
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_UserLogin_Instance::sw_GetUserLoginState()
-{
-    try {
-        json data;
-        auto pInfo = wxGetApp().sm_get_userinfo();
-        if (pInfo) {
-            bool islogin = pInfo->is_user_login();
-            if (islogin) {
-                data["status"] = "online";
-                data["nickname"] = pInfo->get_user_name();
-                data["icon"]     = pInfo->get_user_icon_url();
-                data["token"]    = pInfo->get_user_token();
-                data["userid"]   = pInfo->get_user_id();
-                data["account"]  = pInfo->get_user_account();
-            } else {
-                data["status"] = "offline";
-            }
-
-            m_res_data = data;
-            send_to_js();
-            finish_job();
-        } else {
-            handle_general_fail();
-        }
-    }
-    catch (std::exception& e) {
         handle_general_fail();
     }
 }
@@ -4503,7 +4341,7 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
 
         // WebView script message runs inside the webview event handler; calling ShowModal() synchronously
         // (via GenericDownloadDialog in downloadOpenProject) causes re-entrancy / crashes on Windows.
-        // Defer to the next event-loop iteration — same pattern as sw_UserLogin().
+        // Defer to the next event-loop iteration to avoid webview event re-entrancy.
         std::shared_ptr<SSWCP_UserLogin_Instance> self =
             std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this());
         wxGetApp().CallAfter([self, fileUrl, fileName]() {
@@ -5845,17 +5683,6 @@ void SSWCP_UserLogin_Instance::sw_SubUserUpdatePrivacy()
 
 }
 
-void SSWCP_UserLogin_Instance::sw_SubscribeUserLoginState()
-{
-    try {
-        std::weak_ptr<SSWCP_Instance> weak_ptr = shared_from_this();
-        wxGetApp().m_user_login_subscribers[m_webview]  = weak_ptr;
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
 void SSWCP_PageStateChange_Instance::process()
 {
     if (m_event_id != "") {
@@ -6016,8 +5843,7 @@ std::unordered_set<std::string> SSWCP::m_project_cmd_list = {
     "sw_NewProject", "sw_OpenProject", "sw_GetRecentProjects", "sw_OpenRecentFile", "sw_DeleteRecentFiles", "sw_SubscribeRecentFiles",
 };
 
-std::unordered_set<std::string> SSWCP::m_login_cmd_list = {"sw_UserLogin", "sw_AskUserLogin", "sw_UserLogout", "sw_GetUserLoginState", "sw_SubscribeUserLoginState",
-                                                           UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
+std::unordered_set<std::string> SSWCP::m_login_cmd_list = {UPDATE_PRIVACY_STATUS,  GET_PRIVACY_STATUS,
                                                            FILE_VIEW, OPEN_TIMELAPSE_FOLDER, CANCEL_DOWNLOAD, DOWNLOAD_FILE_AND_OPEN, DOWN_LOAD_FILE, SUBSCRIBE_DOWNLOAD_STATE, UNSUBSCRIBE_DOWNLOAD_STATE, NOTIFY_UPLOAD_TIMELASPE, GET_FILES_FROM_DIR};
 
 std::unordered_set<std::string> SSWCP::m_page_state_cmd_list = {
@@ -6175,15 +6001,6 @@ void SSWCP::on_webview_delete(wxWebView* view)
         auto instance_ptr = m_instance_list.get(instance);
         if (instance_ptr) {
             (*instance_ptr)->set_Instance_illegal();
-        }
-    }
-
-    auto& login_map = wxGetApp().m_user_login_subscribers;
-    for (auto iter = login_map.begin(); iter != login_map.end();) {
-        if (iter->first == view) {
-            iter = login_map.erase(iter);
-        } else {
-            iter++;
         }
     }
 

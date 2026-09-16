@@ -428,9 +428,6 @@ void WebViewPanel::OnClose(wxCloseEvent& evt)
 
 void WebViewPanel::OnFreshLoginStatus(wxTimerEvent &event)
 {
-    /*auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
-    if (mainframe && mainframe->m_webview == this)
-        Slic3r::GUI::wxGetApp().sm_get_login_info();*/
 }
 
 void WebViewPanel::SetLoginPanelVisibility(bool bshow)

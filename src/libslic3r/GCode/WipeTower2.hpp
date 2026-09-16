@@ -9,6 +9,7 @@
 #include <utility>
 #include <algorithm>
 
+#include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "WipeTower.hpp"

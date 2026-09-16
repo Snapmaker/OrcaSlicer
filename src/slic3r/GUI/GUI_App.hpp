@@ -555,9 +555,6 @@ private:
     const Gateway::AccountSnapshot& gateway_account() const { return m_gateway_account; }
     void                            apply_gateway_account(const Gateway::AccountSnapshot& snapshot);
     void                            refresh_gateway_account();
-    void                            start_flutter_wcp_timeout_watch();
-    void                            on_flutter_wcp_received();
-    void                            report_flutter_run_result_once(bool success);
 
     void            request_user_logout();
     int             request_user_unbind(std::string dev_id);
@@ -831,10 +828,6 @@ private:
     std::string             m_older_data_dir_path;
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
-    bool                    m_flutter_wcp_reported{false};
-    std::unique_ptr<wxTimer> m_flutter_wcp_timeout_timer;
-    static constexpr int    FLUTTER_WCP_TIMEOUT_MS = 120 * 1000;
-    void                    on_flutter_wcp_timeout(wxTimerEvent &event);
     std::string             m_open_method;
     Gateway::AccountSnapshot   m_gateway_account;
     std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};

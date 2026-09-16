@@ -10345,6 +10345,9 @@ struct Plater::priv
         return false;
 #endif
     }
+    bool is_slicing_in_progress() const {
+        return m_is_slicing || background_process.running();
+    }
     void update_print_volume_state();
     void schedule_background_process();
     // Update background processing thread from the current config and Model.
@@ -16750,7 +16753,7 @@ bool Plater::priv::can_add_plate() const
 
 bool Plater::priv::can_delete_plate() const
 {
-    return q->get_partplate_list().get_plate_count() > 1;
+    return q->get_partplate_list().get_plate_count() > 1 && !is_slicing_in_progress();
 }
 
 bool Plater::priv::can_fix_through_netfabb() const
@@ -24168,6 +24171,9 @@ int Plater::duplicate_plate(int plate_index)
 int Plater::delete_plate(int plate_index)
 {
     int index = plate_index, ret;
+
+    if (p->is_slicing_in_progress())
+        return -1;
 
     if (plate_index == -1)
         index = p->partplate_list.get_curr_plate_index();

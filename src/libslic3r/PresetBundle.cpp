@@ -1265,6 +1265,9 @@ int PresetBundle::validate_presets(const std::string &file_name, DynamicPrintCon
     for(unsigned int index = 0; index < filament_count; index ++)
     {
         std::string filament_preset = filament_preset_name[index];
+        // An empty name marks an unused filament slot (3mf arrays are padded to the machine's slot count), not a customized preset
+        if (filament_preset.empty())
+            continue;
         std::string filament_inherits = inherits_values[index+1];
 
         validated = this->filaments.validate_preset(filament_preset, filament_inherits);

@@ -24,6 +24,12 @@ class ConfigManipulation
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
     bool                is_BBL_Printer{false};
+    // Last penetration values that passed the <= shell layers check. Used to tell
+    // "the user just edited the penetration value" from "the shell layers were just
+    // edited below an unchanged penetration value" (the latter must NOT touch the
+    // penetration value, see QA case PEN-016).
+    int                 m_last_valid_top_penetration{ -1 };
+    int                 m_last_valid_bottom_penetration{ -1 };
 
     // function to loading of changed configuration 
     std::function<void()>                                       load_config = nullptr;

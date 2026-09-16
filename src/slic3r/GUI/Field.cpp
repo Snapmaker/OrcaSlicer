@@ -1546,7 +1546,23 @@ void Choice::set_value(const boost::any& value, bool change_event)
 			++idx;
 		}
         if (m_list)
-			field->SetSelection(m_list->index_of(text_value));
+        {
+            const int index      = m_list->index_of(text_value);
+            const int item_count = int(field->GetCount());
+
+            if (index >= 0 && index < item_count) {
+                field->SetSelection(index);
+            }
+            else {
+                // Mirror filament deletion: rebuild the dynamic choices, keep the
+                // combo box unselected with the default drop-down icon, and display
+                // the first item label as the placeholder text.
+                m_list->update();
+                field->SetSelection(-1);
+                if (field->GetCount() > 0)
+                    field->SetLabel(field->GetString(0));
+            }
+        }
         else if (idx == enums.size()) {
             // For editable Combobox under OSX is needed to set selection to -1 explicitly,
             // otherwise selection doesn't be changed

@@ -8616,6 +8616,27 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         wxGetApp().plater()->get_partplate_list().on_filament_deleted(
             pb.filament_presets.size(), filament_id);
 
+        // The early on_filaments_delete() call synchronized Plater config before the
+        // physical filament was removed. Resynchronize filament_colour from the
+        // post-deletion project config; GLCanvas3D reads this config when updating
+        // GLVolume colors.
+        wxGetApp().plater()->update_filament_colors_in_full_config();
+
+
+        // on_filaments_delete() above refreshed the sidebar before this physical
+        // filament was removed from PresetBundle, so those controls read the old
+        // preset list. Refresh them from the post-deletion bundle state before
+        // leaving this early-return merge path.
+        for (size_t idx = filament_id; idx < p->combos_filament.size(); ++idx) {
+            if (p->combos_filament[idx])
+                p->combos_filament[idx]->update();
+        }
+        obj_list()->update_objects_list_filament_column(pb.filament_presets.size());
+        update_dynamic_filament_list();
+        update_mixed_filament_panel(false);
+        update_color_mix_panel();
+        Layout();
+
         BOOST_LOG_TRIVIAL(info) << "Physical to mixed merge completed using custom remap mechanism";
 
         // Update UI

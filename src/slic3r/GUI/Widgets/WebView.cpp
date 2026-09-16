@@ -2,6 +2,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
 
+#include <algorithm>
 #include <boost/log/trivial.hpp>
 
 #include <wx/webviewarchivehandler.h>
@@ -342,6 +343,12 @@ public:
         assert(iter != g_webviews.end());
         if (iter != g_webviews.end())
             g_webviews.erase(iter);
+        // Drop pending handler installs so a later g_delay_webviews flush never
+        // calls AddScriptMessageHandler() on a destroyed view.
+        // See bambulab/BambuStudio #11004 and #10968.
+        auto diter = std::find(g_delay_webviews.begin(), g_delay_webviews.end(), m_webView);
+        if (diter != g_delay_webviews.end())
+            g_delay_webviews.erase(diter);
     }
     wxWebView *m_webView;
 };
@@ -425,6 +432,11 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         };
 #ifndef __WIN32__
         webView->CallAfter([webView, addScriptMessageHandler] {
+            // CallAfter can run after this webView has been destroyed (macOS 26.5+).
+            // g_webviews holds only live views; skip dangling pointers.
+            // See bambulab/BambuStudio #11004 and #10968.
+            if (std::find(g_webviews.begin(), g_webviews.end(), webView) == g_webviews.end())
+                return;
 #endif
             if (Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
                 g_delay_webviews.push_back(webView);
@@ -432,8 +444,11 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                 addScriptMessageHandler(webView);
                 while (!g_delay_webviews.empty()) {
                     auto views = std::move(g_delay_webviews);
-                    for (auto wv : views)
+                    for (auto wv : views) {
+                        if (std::find(g_webviews.begin(), g_webviews.end(), wv) == g_webviews.end())
+                            continue;
                         addScriptMessageHandler(wv);
+                    }
                 }
             }
 #ifndef __WIN32__

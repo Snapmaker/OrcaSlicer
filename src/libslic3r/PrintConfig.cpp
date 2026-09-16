@@ -977,6 +977,19 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    // Migrated from BambuStudio commit c782fbb8. See the top_color_penetration_layers
+    // comment above for the default-value policy and the min = 0 clamp semantics.
+    def = this->add("bottom_color_penetration_layers", coInt);
+    def->label = L("Bottom paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("The number of layers painted with the bottom surface color into the bottom shell, including the "
+                     "bottom surface layer itself. Each penetration layer shrinks inwards by one line width. "
+                     "Increase this value to reduce color bleeding at the bottom surface in multi-material printing. "
+                     "0 behaves the same as 1 (only the surface layer is painted).");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(3));
+
     def = this->add("gap_fill_target", coEnum);
     def->label = L("Apply gap fill");
     def->category = L("Strength");
@@ -5861,6 +5874,25 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
 
+    // Migrated from BambuStudio commit c782fbb8 ("Separate the number of color bleed
+    // layers from top_shell_layers"). Key name keeps the upstream internal spelling.
+    // Default 5 per product requirement (0.4mm nozzle, 0.2mm layer height); process
+    // presets mirror their own top_shell_layers, final defaults TBD by process team.
+    // min = 0 per requirement, but the engine clamps the effective value to >= 1
+    // because the MMU projection gate requires a positive layer count; 0 therefore
+    // behaves like 1 (only the surface layer is painted).
+    def = this->add("top_color_penetration_layers", coInt);
+    def->label = L("Top paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("The number of layers painted with the top surface color into the top shell, including the "
+                     "top surface layer itself. Each penetration layer shrinks inwards by one line width. "
+                     "Increase this value to reduce color bleeding at the top surface in multi-material printing. "
+                     "0 behaves the same as 1 (only the surface layer is painted).");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(5));
+
+
     def = this->add("top_surface_density", coPercent);
     def->label = L("Top surface density");
     def->category = L("Strength");
@@ -7769,6 +7801,14 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     }
     if (cfg.bottom_shell_layers < 0) {
         error_message.emplace("bottom_shell_layers", L("invalid value ") + std::to_string(cfg.bottom_shell_layers));
+    }
+    // Negative penetration layers would wrap to SIZE_MAX in the MMU bottom penetration
+    // loop (int -> size_t) and paint the whole object; reject them the same way.
+    if (cfg.top_color_penetration_layers < 0) {
+        error_message.emplace("top_color_penetration_layers", L("invalid value ") + std::to_string(cfg.top_color_penetration_layers));
+    }
+    if (cfg.bottom_color_penetration_layers < 0) {
+        error_message.emplace("bottom_color_penetration_layers", L("invalid value ") + std::to_string(cfg.bottom_color_penetration_layers));
     }
 
     if (cfg.use_firmware_retraction.value &&

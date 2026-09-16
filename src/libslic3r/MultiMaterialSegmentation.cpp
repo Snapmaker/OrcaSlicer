@@ -1195,9 +1195,15 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     int granularity = 1;
     for (size_t i = 0; i < print_object.num_printing_regions(); ++ i) {
         const PrintRegionConfig &config = print_object.printing_region(i).config();
-        max_top_layers    = std::max(max_top_layers, config.top_shell_layers.value);
-        max_bottom_layers = std::max(max_bottom_layers, config.bottom_shell_layers.value);
-        granularity       = std::max(granularity, std::max(config.top_shell_layers.value, config.bottom_shell_layers.value) - 1);
+        // Effective penetration counts are clamped to at least 1: a configured value of 0
+        // means "only the surface layer is painted", and the slice_mesh_slabs gate below
+        // requires a positive count to keep the surface projection alive. The clamp also
+        // guards the bottom penetration loop against a negative value wrapping to SIZE_MAX.
+        const int top_penetration    = std::max(1, config.top_color_penetration_layers.value);
+        const int bottom_penetration = std::max(1, config.bottom_color_penetration_layers.value);
+        max_top_layers    = std::max(max_top_layers, top_penetration);
+        max_bottom_layers = std::max(max_bottom_layers, bottom_penetration);
+        granularity       = std::max(granularity, std::max(top_penetration, bottom_penetration) - 1);
     }
 
     // Project upwards pointing painted triangles over top surfaces,
@@ -1332,16 +1338,17 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
         float   extrusion_width         { 0.f };
         // Minimum radius of a region to be printable. Used to filter regions by morphological opening.
         float   small_region_threshold  { 0.f };
-        // Maximum number of top layers for a queried color.
-        int     top_shell_layers        { 0 };
-        // Maximum number of bottom layers for a queried color.
-        int     bottom_shell_layers     { 0 };
+        // Maximum number of top paint penetration layers for a queried color.
+        int     top_color_penetration_layers    { 0 };
+        // Maximum number of bottom paint penetration layers for a queried color.
+        int     bottom_color_penetration_layers { 0 };
         //BBS: spacing according to width and layer height
         float   extrusion_spacing{ 0.f };
     };
     auto layer_color_stat = [&layers = std::as_const(layers), &print_object](const size_t layer_idx, const size_t color_idx) -> LayerColorStat {
         LayerColorStat out;
         const Layer &layer = *layers[layer_idx];
+        int cfg_top_logged = -1, cfg_bottom_logged = -1;
         for (const LayerRegion *region : layer.regions())
             if (const PrintRegionConfig &config = region->region().config();
                 // color_idx == 0 means "don't know" extruder aka the underlying extruder.
@@ -1351,8 +1358,8 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                 const double nozzle_diameter = print_object.print()->config().nozzle_diameter.get_at(0);
                 double outer_wall_line_width = config.get_abs_value("outer_wall_line_width", nozzle_diameter);
                 out.extrusion_width     = std::max<float>(out.extrusion_width, outer_wall_line_width);
-                out.top_shell_layers    = std::max<int>(out.top_shell_layers, config.top_shell_layers);
-                out.bottom_shell_layers = std::max<int>(out.bottom_shell_layers, config.bottom_shell_layers);
+                out.top_color_penetration_layers    = std::max<int>(out.top_color_penetration_layers, std::max(1, config.top_color_penetration_layers.value));
+                out.bottom_color_penetration_layers = std::max<int>(out.bottom_color_penetration_layers, std::max(1, config.bottom_color_penetration_layers.value));
                 out.small_region_threshold = config.gap_infill_speed.value > 0 ?
                                              // Gap fill enabled. Enable a single line of 1/2 extrusion width.
                                              0.5f * outer_wall_line_width :
@@ -1360,11 +1367,21 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                                              outer_wall_line_width + 0.7f * Flow::rounded_rectangle_extrusion_spacing(outer_wall_line_width, float(layer.height));
                 out.small_region_threshold = scaled<float>(out.small_region_threshold * 0.5f);
                 out.extrusion_spacing = Flow::rounded_rectangle_extrusion_spacing(float(outer_wall_line_width), float(layer.height));
+                cfg_top_logged = config.top_color_penetration_layers.value;
+                cfg_bottom_logged = config.bottom_color_penetration_layers.value;
                 ++ out.num_regions;
             }
         assert(out.num_regions > 0);
         out.extrusion_width = scaled<float>(out.extrusion_width);
         out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
+        // Temporary instrumentation for QA off-by-one report ("N=1 paints 2 layers"):
+        // logs the configured vs effective penetration counts per layer/color.
+        BOOST_LOG_TRIVIAL(info) << "penetration_stat: layer " << layer_idx << " color " << color_idx
+                                 << " cfg_top " << cfg_top_logged
+                                 << " cfg_bottom " << cfg_bottom_logged
+                                 << " stat_top " << out.top_color_penetration_layers
+                                 << " stat_bottom " << out.bottom_color_penetration_layers
+                                 << " regions " << out.num_regions;
         return out;
     };
 
@@ -1385,7 +1402,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                             append(triangles_by_color_top[color_idx][layer_idx + layer_idx_offset], top_ex);
                             float offset = 0.f;
                             ExPolygons layer_slices_trimmed = input_expolygons[layer_idx];
-                            for (int last_idx = int(layer_idx) - 1; last_idx > std::max(int(layer_idx - stat.top_shell_layers), int(0)); --last_idx) {
+                            for (int last_idx = int(layer_idx) - 1; last_idx > std::max(int(layer_idx - stat.top_color_penetration_layers), int(0)); --last_idx) {
                                 //BBS: offset width should be 2*spacing to avoid too narrow area which has overlap of wall line
                                 //offset -= stat.extrusion_width ;
                                 offset -= (stat.extrusion_spacing + stat.extrusion_width);
@@ -1405,7 +1422,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                             append(triangles_by_color_bottom[color_idx][layer_idx + layer_idx_offset], bottom_ex);
                             float offset = 0.f;
                             ExPolygons layer_slices_trimmed = input_expolygons[layer_idx];
-                            for (size_t last_idx = layer_idx + 1; last_idx < std::min(layer_idx + stat.bottom_shell_layers, num_layers); ++last_idx) {
+                            for (size_t last_idx = layer_idx + 1; last_idx < std::min(layer_idx + stat.bottom_color_penetration_layers, num_layers); ++last_idx) {
                                 //BBS: offset width should be 2*spacing to avoid too narrow area which has overlap of wall line
                                 //offset -= stat.extrusion_width;
                                 offset -= (stat.extrusion_spacing + stat.extrusion_width);

@@ -73,7 +73,7 @@ jobs:
             cd ${{ github.workspace }}/deps/build
 
       - name: Free disk space mac
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
@@ -96,7 +96,7 @@ jobs:
           df -h
 
       - name: Build on Mac ${{ inputs.arch }}
-        if: inputs.os == 'macos-26'
+        if: inputs.os == 'macos-15'
         working-directory: ${{ github.workspace }}
         run: |
             brew install automake texinfo libtool
@@ -139,7 +139,7 @@ jobs:
 
       # Upload Artifacts (commented out to reduce artifact storage usage)
       # - name: Upload Mac ${{ inputs.arch }} artifacts
-      #   if: inputs.os == 'macos-26'
+      #   if: inputs.os == 'macos-15'
       #   uses: actions/upload-artifact@v4
       #   with:
       #     name: OrcaSlicer_dep_mac_${{ env.date }}
@@ -181,6 +181,6 @@ jobs:
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      dsym-artifact-name: ${{ inputs.os == 'macos-26' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-15' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
       release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

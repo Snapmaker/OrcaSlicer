@@ -3640,7 +3640,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    url = wxGetApp().build_flutter_web_url("3");
+                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                             "/web/flutter_web/index.html?path=3");
                 }
             }
             
@@ -3667,7 +3668,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                wxString url = wxGetApp().build_flutter_web_url("2");
+                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                                  "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
                 if (!is_sm_page && reload_printer_view) {
@@ -10345,6 +10347,9 @@ struct Plater::priv
         return false;
 #endif
     }
+    bool is_slicing_in_progress() const {
+        return m_is_slicing || background_process.running();
+    }
     void update_print_volume_state();
     void schedule_background_process();
     // Update background processing thread from the current config and Model.
@@ -16750,7 +16755,7 @@ bool Plater::priv::can_add_plate() const
 
 bool Plater::priv::can_delete_plate() const
 {
-    return q->get_partplate_list().get_plate_count() > 1;
+    return q->get_partplate_list().get_plate_count() > 1 && !is_slicing_in_progress();
 }
 
 bool Plater::priv::can_fix_through_netfabb() const
@@ -24175,6 +24180,9 @@ int Plater::duplicate_plate(int plate_index)
 int Plater::delete_plate(int plate_index)
 {
     int index = plate_index, ret;
+
+    if (p->is_slicing_in_progress())
+        return -1;
 
     if (plate_index == -1)
         index = p->partplate_list.get_curr_plate_index();

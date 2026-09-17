@@ -1075,7 +1075,6 @@ void GUI_App::post_init()
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "Found glcontext not ready, postpone the init";
         }
 //#endif
-        mainframe->Thaw();
         // Defer the final tab selection to after pending events are
         // processed. During GL init, the PAGE_CHANGED handler posts
         // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
@@ -1085,6 +1084,7 @@ void GUI_App::post_init()
                 mainframe->select_tab(size_t(0));
             else if (app_config->get("default_page") == "1")
                 mainframe->select_tab(size_t(1));
+            mainframe->Thaw();
         });
         plater_->trigger_restore_project(1);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";

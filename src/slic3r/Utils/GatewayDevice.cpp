@@ -56,13 +56,13 @@ bool GatewayDevice::query_machine_info(const std::shared_ptr<GatewayService>& ga
     if (gateway == nullptr)
         return false;
 
-    // GET /api/device is the gateway's read-only full snapshot of the current device, so the
+    // GET /api/cache/all is the gateway's read-only full snapshot of the current device, so the
     // firmware passthrough machine.system_info is no longer needed for these fields.
     const GatewayService::ApiResult result = gateway->get_device();
     if (result.error) {
         // NotConnected (gateway process not ready yet) is an expected answer; anything else is worth a log line.
         if (result.error.code != GatewayErrorCode::NotConnected)
-            BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/device failed: " << result.error.message;
+            BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/cache/all failed: " << result.error.message;
         return false;
     }
 
@@ -106,7 +106,7 @@ bool GatewayDevice::query_machine_info(const std::shared_ptr<GatewayService>& ga
     // An answer without a machine type is not usable: callers gate on it (e.g. the
     // "Snapmaker U1" whitelist), so treat a malformed payload as a failed query.
     if (model.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/device returned no machine_type";
+        BOOST_LOG_TRIVIAL(warning) << "GatewayDevice::query_machine_info: GET /api/cache/all returned no machine_type";
         return false;
     }
 

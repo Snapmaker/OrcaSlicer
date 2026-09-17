@@ -2192,7 +2192,7 @@ Sidebar::Sidebar(Plater *parent)
                 std::vector<std::string> nozzle_volume_types;
                 std::string              device_name = "";
                 // The gateway device snapshot doubles as the connected-guard: a successful
-                // GET /api/device proves a live device channel (avoids probe + query serial waits).
+                // GET /api/cache/all proves a live device channel (avoids probe + query serial waits).
                 const bool got_machine_info = Gateway::GatewayDevice::query_machine_info(gateway, machine_type, nozzle_diameters, nozzle_volume_types,
                                                                                           device_name);
 
@@ -9183,7 +9183,7 @@ void Sidebar::show_sync_filament_dialog()
     std::vector<std::string> nozzle_diameters;
     std::vector<std::string> nozzle_volume_types;
     // The gateway device snapshot doubles as the connected-guard: a successful
-    // GET /api/device proves a live device channel (avoids probe + query serial waits).
+    // GET /api/cache/all proves a live device channel (avoids probe + query serial waits).
     bool got_machine_info = Gateway::GatewayDevice::query_machine_info(wxGetApp().gateway_service(), machine_type, nozzle_diameters, nozzle_volume_types, device_name);
 
     if (!got_machine_info) {

@@ -92,7 +92,13 @@ std::vector<std::string> ConnectionProcessManager::build_arguments(const std::st
 std::string_view ConnectionProcessManager::cli_executable_name()
 {
 #if defined(_WIN32)
-    return "snapmaker_connection.exe";
+#if defined(_M_X64) || defined(__x86_64__)
+    return "snapmaker_connection_windows_x64.exe";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    return "snapmaker_connection_windows_arm64.exe";
+#else
+#error "unsupported Windows architecture for the snapmaker_connection CLI"
+#endif
 #elif defined(__APPLE__)
 #if defined(__x86_64__)
     return "snapmaker_connection_macos_x64";

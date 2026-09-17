@@ -11,15 +11,55 @@
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <clocale>
+#include <cstdio>
 #include <cstdint>
+#include <locale>
 #include <set>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 using namespace Slic3r;
 
 namespace {
+
+#ifdef _WIN32
+static BOOL CALLBACK collect_system_locale(LPWSTR name, DWORD, LPARAM context)
+{
+    const std::wstring locale_name(name);
+    reinterpret_cast<std::vector<std::string>*>(context)->emplace_back(locale_name.begin(), locale_name.end());
+    return TRUE;
+}
+#endif
+
+static std::vector<std::string> installed_numeric_locales()
+{
+    std::vector<std::string> names;
+#ifdef _WIN32
+    // Some builds use WINVER declarations predating the locale-name enumeration API.
+    using EnumLocales    = BOOL(WINAPI*)(decltype(&collect_system_locale), DWORD, LPARAM, LPVOID);
+    const auto enumerate = reinterpret_cast<EnumLocales>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "EnumSystemLocalesEx"));
+    REQUIRE(enumerate != nullptr);
+    REQUIRE(enumerate(collect_system_locale, 0 /* LOCALE_ALL */, reinterpret_cast<LPARAM>(&names), nullptr));
+#else
+    FILE* locales = popen("locale -a", "r");
+    REQUIRE(locales != nullptr);
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), locales)) {
+        std::string name(buffer);
+        name.erase(name.find_last_not_of("\r\n") + 1);
+        if (!name.empty())
+            names.emplace_back(std::move(name));
+    }
+    REQUIRE(pclose(locales) == 0);
+#endif
+    return names;
+}
 
 static std::vector<std::string> split_rows(const std::string &serialized)
 {
@@ -1680,6 +1720,99 @@ TEST_CASE("Mixed filament gradient serialization round-trip with r1 token", "[Mi
     CHECK(loaded_mf.gradient_enabled);
     CHECK(loaded_mf.gradient_component_ids == "12");
     CHECK(loaded_mf.gradient_component_weights == "60/40");
+}
+
+TEST_CASE("Mixed filament gradient metadata is locale invariant", "[MixedFilament][Gradient][Locale]")
+{
+    struct LocaleGuard
+    {
+        std::string numeric = std::setlocale(LC_NUMERIC, nullptr);
+        std::locale cpp     = std::locale();
+        ~LocaleGuard()
+        {
+            std::locale::global(cpp);
+            std::setlocale(LC_NUMERIC, numeric.c_str());
+        }
+    } guard;
+
+    const auto check_metadata = [] {
+        const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
+        MixedFilamentManager           mgr;
+        mgr.add_custom_filament(1, 2, 50, colors);
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        auto& mf                      = mgr.mixed_filaments().front();
+        mf.stable_id                  = 1234567;
+        mf.gradient_enabled           = true;
+        mf.gradient_start             = 0.85f;
+        mf.gradient_end               = 0.15f;
+        mf.component_a_surface_offset = 0.125f;
+        mf.component_b_surface_offset = -0.25f;
+
+        const std::string serialized = mgr.serialize_custom_entries();
+        CHECK(serialized.find(",r1/0.8500/0.1500") != std::string::npos);
+        CHECK(serialized.find(",u1234567") != std::string::npos);
+        CHECK(serialized.find(",xa0.125,xb-0.25,") != std::string::npos);
+
+        // Load independently authored metadata as well as the writer's output.
+        for (const std::string& row :
+             {serialized, std::string("1,2,1,1,50,0,g12,w50/50,m2,z2,xa+0.125,xb-0.25,d0,o0,u1234567,r1/+0.8500/0.1500")}) {
+            MixedFilamentManager loaded;
+            loaded.load_custom_entries(row, colors);
+            REQUIRE(loaded.mixed_filaments().size() == 1);
+            const auto& result = loaded.mixed_filaments().front();
+            CHECK(result.gradient_enabled);
+            CHECK(std::abs(result.gradient_start - 0.85f) < 0.0001f);
+            CHECK(std::abs(result.gradient_end - 0.15f) < 0.0001f);
+            CHECK(result.component_a_surface_offset == 0.125f);
+            CHECK(result.component_b_surface_offset == -0.25f);
+            CHECK(result.stable_id == 1234567);
+        }
+    };
+
+    SECTION("Every installed C locale with a non-dot decimal separator")
+    {
+        size_t tested = 0;
+        for (const std::string& name : installed_numeric_locales()) {
+            if (std::setlocale(LC_NUMERIC, name.c_str()) == nullptr)
+                continue;
+            const std::string decimal_point = std::localeconv()->decimal_point;
+            if (decimal_point == ".")
+                continue;
+            ++tested;
+            DYNAMIC_SECTION("Numeric locale: " << name << "; decimal separator: " << decimal_point)
+            {
+                char localized[32] = {};
+                std::snprintf(localized, sizeof(localized), "%.1f", 0.5);
+                REQUIRE(std::string(localized) == "0" + decimal_point + "5");
+                check_metadata();
+            }
+        }
+        if (tested == 0)
+            SKIP("No locale with a non-dot decimal separator is installed");
+    }
+
+    SECTION("C++ decimal comma and digit grouping")
+    {
+        struct CommaPunct : std::numpunct<char>
+        {
+            char        do_decimal_point() const override { return ','; }
+            char        do_thousands_sep() const override { return '.'; }
+            std::string do_grouping() const override { return "\3"; }
+        };
+        std::locale::global(std::locale(std::locale::classic(), new CommaPunct));
+        check_metadata();
+    }
+}
+
+TEST_CASE("Mixed filament gradient metadata rejects malformed numbers", "[MixedFilament][Gradient][Locale]")
+{
+    for (const std::string& value : {"0.85garbage", "inf", "nan", "1e100", "+", "+-0.85", "++0.85"}) {
+        MixedFilamentManager mgr;
+        mgr.load_custom_entries("1,2,1,1,50,0,g12,w50/50,m2,z2,xa" + value + ",r1/" + value + "/0.15", {"#FF0000", "#00FF00"});
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        CHECK_FALSE(mgr.mixed_filaments().front().gradient_enabled);
+        CHECK(mgr.mixed_filaments().front().component_a_surface_offset == 0.f);
+    }
 }
 
 TEST_CASE("Mixed filament gradient auto-disables when range too small", "[MixedFilament][Gradient]")

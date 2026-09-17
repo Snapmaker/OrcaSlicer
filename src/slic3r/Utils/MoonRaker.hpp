@@ -161,8 +161,19 @@ protected:
     std::string m_cafile;
     bool        m_ssl_revoke_best_effort;
 
-    // Time synchronization manager
+    // Time synchronization manager.
+    // The member itself is guarded: disconnect() (any thread) resets it while
+    // Paho receive-thread callbacks and async_* APIs on arbitrary threads
+    // read it. Always access through time_sync_manager_snapshot(); never
+    // touch the member directly outside the mutex.
     std::shared_ptr<TimeSyncManager> time_sync_manager_;
+    mutable std::mutex               m_time_sync_manager_mtx;
+
+    std::shared_ptr<TimeSyncManager> time_sync_manager_snapshot() const
+    {
+        std::lock_guard<std::mutex> lock(m_time_sync_manager_mtx);
+        return time_sync_manager_;
+    }
 
     // Helper methods
     virtual void set_auth(Http &http) const;

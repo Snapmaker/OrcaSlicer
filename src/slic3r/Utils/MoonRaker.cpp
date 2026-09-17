@@ -1040,7 +1040,7 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
     }
 
     BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] setting message callback";
-    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
+    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_snapshot();
     engine->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
         if (weak_tsm.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTTS message";
@@ -1048,9 +1048,9 @@ bool Moonraker_Mqtt::set_engine(const std::shared_ptr<MqttClient>& engine, std::
         }
         this->on_mqtt_tls_message_arrived(topic, payload);
     });
-    
-    if (time_sync_manager_) {
-        time_sync_manager_->reset();
+
+    if (auto time_sync_manager = time_sync_manager_snapshot()) {
+        time_sync_manager->reset();
         BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] time sync state reset";
     }
 
@@ -1091,7 +1091,7 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
     if (!response_subscribed) {
         return false;
     }
-    std::weak_ptr<TimeSyncManager> weak_tsm_mqtt = time_sync_manager_;
+    std::weak_ptr<TimeSyncManager> weak_tsm_mqtt = time_sync_manager_snapshot();
     client->SetMessageCallback([this, weak_tsm_mqtt](const std::string& topic, const std::string& payload) {
         if (weak_tsm_mqtt.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTT message";
@@ -1153,9 +1153,9 @@ bool Moonraker_Mqtt::ask_for_tls_info(const nlohmann::json& cn_params)
             return false;
     }
     body["id"] = seq_id;
-    
-    if (time_sync_manager_) {
-        time_sync_manager_->addTimeFields(body);
+
+    if (auto time_sync_manager = time_sync_manager_snapshot()) {
+        time_sync_manager->addTimeFields(body);
     }
 
     std::string pub_msg = "";
@@ -1337,8 +1337,8 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     wcp_loger.add_log("MQTTS connected successfully", false, "", "Moonraker_Mqtt", "info");
 
     // Reset time sync state
-    if (time_sync_manager_) {
-        time_sync_manager_->reset();
+    if (auto time_sync_manager = time_sync_manager_snapshot()) {
+        time_sync_manager->reset();
     }
 
     m_sn_mtx.lock();
@@ -1362,7 +1362,7 @@ bool Moonraker_Mqtt::connect(wxString& msg, const nlohmann::json& params) {
     BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] topic subscription result - notification topic: " << (notification_subscribed ? "success" : "failed")
                            << ", response topic: " << (response_subscribed ? "success" : "failed");
     wcp_loger.add_log("topic subscription result - notification topic: " + std::string((notification_subscribed ? "success" : "failed")) + ", response topic: " + (response_subscribed ? "success" : "failed"), false, "", "Moonraker_Mqtt", "info");
-    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_;
+    std::weak_ptr<TimeSyncManager> weak_tsm = time_sync_manager_snapshot();
     new_client->SetMessageCallback([this, weak_tsm](const std::string& topic, const std::string& payload) {
         if (weak_tsm.expired()) {
             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] object destroyed, ignoring MQTTS message";
@@ -1401,9 +1401,11 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] MQTTS disconnect result: " << (flag ? "success" : "failed");
     wcp_loger.add_log("MQTTS disconnect result: " + std::string((flag ? "success" : "failed")), false, "", "Moonraker_Mqtt", "info");
 
-    // Release time_sync_manager_ first so weak_ptr in callbacks expires immediately,
-    // ensuring no callback thread accesses a destroyed object
-    time_sync_manager_.reset();
+    // Stop delivering messages to this object BEFORE releasing time_sync_manager_:
+    // already-dispatched handlers read the manager through a locked snapshot
+    // (safe), but stopping the callback first means no NEW dispatch can start
+    // once the manager is dropped, and the weak_ptr sentinels above expire.
+    client->SetMessageCallback(nullptr);
 
     if (flag) {
         std::lock_guard<std::mutex> cbs_lock(m_cbs_mtx);
@@ -1416,10 +1418,11 @@ bool Moonraker_Mqtt::disconnect(wxString& msg, const nlohmann::json& params) {
     m_sn_mtx.unlock();
     BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] SN reset";
     wcp_loger.add_log("SN reset", false, "", "Moonraker_Mqtt", "info");
-    
-    // Stop delivering messages to this object before teardown: late
-    // message_arrived() calls on the Paho thread become no-ops.
-    client->SetMessageCallback(nullptr);
+
+    {
+        std::lock_guard<std::mutex> tsm_lock(m_time_sync_manager_mtx);
+        time_sync_manager_.reset();
+    }
 
     // Detach the global pointer (only if we still own this client — another
     // thread may already have reconnected), then drop our reference OUTSIDE
@@ -2803,8 +2806,8 @@ bool Moonraker_Mqtt::send_to_request(
         wcp_loger.add_log("publishing to topic: " + topic, false, "", "Moonraker_Mqtt", "info");
 
         // add time sync fields
-        if (time_sync_manager_) {
-            time_sync_manager_->addTimeFields(body);
+        if (auto time_sync_manager = time_sync_manager_snapshot()) {
+            time_sync_manager->addTimeFields(body);
         }
 
         std::string pub_msg = "success";
@@ -2945,8 +2948,8 @@ void Moonraker_Mqtt::on_auth_arrived(const std::string& payload) {
         return;
     }
 
-    if (time_sync_manager_) {
-        time_sync_manager_->updateFromResponse(body);
+    if (auto time_sync_manager = time_sync_manager_snapshot()) {
+        time_sync_manager->updateFromResponse(body);
     }
 
     if (!body.count("id")) {
@@ -2976,8 +2979,8 @@ void Moonraker_Mqtt::on_response_arrived(const std::string& payload)
         return;
     }
 
-    if (time_sync_manager_) {
-        time_sync_manager_->updateFromResponse(body);
+    if (auto time_sync_manager = time_sync_manager_snapshot()) {
+        time_sync_manager->updateFromResponse(body);
     }
 
     if (!body.count("id")) {

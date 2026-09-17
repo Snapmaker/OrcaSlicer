@@ -7,7 +7,7 @@
 
 #include "libslic3r/Platform.hpp"
 
-#include <GL/glew.h>
+#include <glad/gl.h>
 
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
@@ -15,6 +15,7 @@
 
 #include <wx/glcanvas.h>
 #include <wx/msgdlg.h>
+#include <wx/log.h>
 
 #ifdef __APPLE__
 // Part of hack to remove crash when closing the application on OSX 10.9.5 when building against newer wxWidgets
@@ -110,7 +111,7 @@ void OpenGLManager::GLInfo::detect() const
     if (Slic3r::total_physical_memory() / (1024 * 1024 * 1024) < 6)
         *max_tex_size /= 2;
 
-    if (GLEW_EXT_texture_filter_anisotropic) {
+    if (GLAD_GL_EXT_texture_filter_anisotropic) {
         float* max_anisotropy = const_cast<float*>(&m_max_anisotropy);
         glsafe(::glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, max_anisotropy));
     }
@@ -241,23 +242,27 @@ OpenGLManager::~OpenGLManager()
 bool OpenGLManager::init_gl(bool popup_error)
 {
     if (!m_gl_initialized) {
-        GLenum result = glewInit();
-        if (result != GLEW_OK) {
-            BOOST_LOG_TRIVIAL(error) << "Unable to init glew library";
+        // Load GL functions via GLAD (replaces GLEW). GLEW's glewInit() fails
+        // with "Missing GL version" on modern GL contexts with some drivers
+        // (e.g. NVIDIA) even though the context is valid; GLAD loads through
+        // glXGetProcAddress and works. This matches OrcaSlicer.
+        int version = gladLoaderLoadGL();
+        if (version == 0) {
+            BOOST_LOG_TRIVIAL(error) << "Unable to init GLAD OpenGL loader";
             return false;
         }
-	//BOOST_LOG_TRIVIAL(info) << "glewInit Success."<< std::endl;
+        BOOST_LOG_TRIVIAL(info) << "GLAD loaded OpenGL " << GLAD_VERSION_MAJOR(version) << "." << GLAD_VERSION_MINOR(version);
         m_gl_initialized = true;
-        if (GLEW_EXT_texture_compression_s3tc)
+        if (GLAD_GL_EXT_texture_compression_s3tc)
             s_compressed_textures_supported = true;
         else
             s_compressed_textures_supported = false;
 
-        if (GLEW_ARB_framebuffer_object) {
+        if (GLAD_GL_ARB_framebuffer_object) {
             s_framebuffers_type = EFramebufferType::Arb;
             BOOST_LOG_TRIVIAL(info) << "Found Framebuffer Type ARB."<< std::endl;
         }
-        else if (GLEW_EXT_framebuffer_object) {
+        else if (GLAD_GL_EXT_framebuffer_object) {
             BOOST_LOG_TRIVIAL(info) << "Found Framebuffer Type Ext."<< std::endl;
             s_framebuffers_type = EFramebufferType::Ext;
         }
@@ -319,7 +324,24 @@ bool OpenGLManager::init_gl(bool popup_error)
 wxGLContext* OpenGLManager::init_glcontext(wxGLCanvas& canvas)
 {
     if (m_context == nullptr) {
-        m_context = new wxGLContext(&canvas);
+        // Request an explicit compatibility-profile context. The fork's renderer
+        // relies on compatibility-profile GL, and an explicitly attributed
+        // context is more robust than a bare `new wxGLContext(&canvas)`.
+        {
+            wxLogNull logNo; // silence wx error dialog if context creation fails
+            wxGLContextAttrs attrs;
+            attrs.PlatformDefaults().CompatibilityProfile();
+            attrs.EndList();
+            m_context = new wxGLContext(&canvas, nullptr, &attrs);
+            if (m_context->IsOK())
+                BOOST_LOG_TRIVIAL(info) << "init_glcontext: created compatibility profile context";
+            else {
+                delete m_context;
+                m_context = nullptr;
+            }
+        }
+        if (m_context == nullptr)
+            m_context = new wxGLContext(&canvas);
 
 #ifdef __APPLE__
         // Part of hack to remove crash when closing the application on OSX 10.9.5 when building against newer wxWidgets

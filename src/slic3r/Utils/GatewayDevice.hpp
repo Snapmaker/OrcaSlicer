@@ -17,7 +17,7 @@ class GatewayDevice
 {
 public:
     // Replacement for SSWCP::query_machine_info. Fresh values via the gateway's
-    // read-only device snapshot GET /api/device (data.info.product for the model,
+    // read-only device snapshot GET /api/cache/all (data.info.product for the model,
     // data.objects.extruder* for the per-extruder nozzle_volume_type).
     // Returns false when the gateway is down or no device is connected.
     static bool query_machine_info(const std::shared_ptr<GatewayService>& gateway,
@@ -27,7 +27,7 @@ public:
                                    std::string&                           device_name);
 
     // True when the gateway exposes a product snapshot for the current device
-    // through GET /api/device.
+    // through GET /api/cache/all.
     static bool is_device_connected(const std::shared_ptr<GatewayService>& gateway);
 };
 

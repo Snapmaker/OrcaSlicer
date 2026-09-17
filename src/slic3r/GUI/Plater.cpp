@@ -12138,30 +12138,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
                     }
                     if (!silence) wxGetApp().app_config->update_config_dir(path.parent_path().string());
-
-                    // BBS: Check for Snapmaker U1 + Print by Object warning after loading 3mf config
-                    if (load_config && is_project_file) {
-                        auto print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-
-                        auto print_seq_opt = print_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-                        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-
-                        if (print_seq_opt && printer_model_opt &&
-                            print_seq_opt->value == PrintSequence::ByObject &&
-                            !printer_model_opt->value.empty()) {
-                            std::string printer_model = printer_model_opt->value;
-                            bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") &&
-                                                   boost::icontains(printer_model, "U1");
-
-                            if (is_snapmaker_u1) {
-                                if (q->get_notification_manager()) {
-                                    wxString warning_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-                                    q->get_notification_manager()->push_plater_error_notification(warning_text.ToStdString());
-                                }
-                            }
-                        }
-                    }
                 }
             } else {
                 // BBS: add plate data related logic
@@ -22865,17 +22841,43 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
+void Plater::check_seq_print_caution()
+{
+    const wxString caution_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
+
+    const auto printer_model_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config
+                                      .option<ConfigOptionString>("printer_model");
+    const bool is_snapmaker_u1 = printer_model_opt &&
+        boost::icontains(printer_model_opt->value, "Snapmaker") &&
+        boost::icontains(printer_model_opt->value, "U1");
+
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    const bool by_object = is_snapmaker_u1 && curr_plate &&
+        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+
+    // Close-then-push keeps a single notification even when slicing is
+    // retriggered; close on the non-caution path clears the stale one.
+    if (by_object) {
+        get_notification_manager()->close_plater_error_notification(caution_text.ToStdString());
+        get_notification_manager()->push_plater_error_notification(caution_text.ToStdString());
+    } else {
+        get_notification_manager()->close_plater_error_notification(caution_text.ToStdString());
+    }
+}
+
 bool Plater::guard_before_slice_plate()
 {
     sync_filament_temp_mixing_notification();
     sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
+    check_seq_print_caution();
     return confirm_filament_temp_mixing_before_slice();
 }
 
 bool Plater::guard_before_slice_all()
 {
     sync_flow_ratio_zero_notification();
+    check_seq_print_caution();
     return confirm_filament_temp_mixing_before_slice_all();
 }
 

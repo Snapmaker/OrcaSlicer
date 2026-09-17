@@ -370,6 +370,8 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
     }
     double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
 
+    this->collect_local_z_layers(object);
+
     // Collect extruders reuqired to print the layers.
     this->collect_extruders(object, std::vector<std::pair<double, unsigned int>>());
 
@@ -462,6 +464,10 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
         const size_t num_filaments = (m_mixed_mgr == nullptr) ? num_physical : m_mixed_mgr->total_filaments(num_physical);
         per_layer_extruder_switches = custom_tool_changes(print.model().get_curr_plate_custom_gcodes(), num_filaments);
 	}
+
+    // Mark every object's Local-Z layers before considering any purge overrides.
+    for (auto object : print.objects())
+        this->collect_local_z_layers(*object);
 
     // Collect extruders reuqired to print the layers.
     for (auto object : print.objects())
@@ -647,6 +653,27 @@ void ToolOrdering::initialize_layers(std::vector<coordf_t> &zs)
         // Assign an average print_z to the set of layers with nearly equal print_z.
         m_layer_tools.emplace_back(LayerTools(0.5 * (zs[i] + zs[j-1])));
         i = j;
+    }
+}
+
+void ToolOrdering::collect_local_z_layers(const PrintObject& object)
+{
+    const auto& intervals = object.local_z_intervals();
+    const auto& plans     = object.local_z_sublayer_plan();
+    if (intervals.empty() || plans.empty())
+        return;
+
+    for (const Layer* layer : object.layers()) {
+        const auto interval = std::find_if(intervals.begin(), intervals.end(),
+                                           [layer](const LocalZInterval& candidate) { return candidate.layer_id == size_t(layer->id()); });
+        if (interval == intervals.end() || !interval->has_mixed_paint || interval->sublayer_count <= 1 ||
+            interval->first_sublayer_idx >= plans.size())
+            continue;
+
+        const size_t first = interval->first_sublayer_idx;
+        const size_t count = std::min(interval->sublayer_count, plans.size() - first);
+        if (std::any_of(plans.begin() + first, plans.begin() + first + count, [](const SubLayerPlan& plan) { return plan.split_interval; }))
+            this->tools_for_layer(layer->print_z).has_local_z_subdivision = true;
     }
 }
 
@@ -1400,6 +1427,9 @@ int WipingExtrusions::last_nonsoluble_extruder_on_layer(const PrintConfig& print
 // Decides whether this entity could be overridden
 bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, const PrintConfig& print_config, const PrintObject& object, const PrintRegion& region) const
 {
+    if (m_layer_tools->has_local_z_subdivision)
+        return false;
+
     if (print_config.filament_soluble.get_at(m_layer_tools->extruder(eec, region)))
         return false;
 
@@ -1415,6 +1445,9 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
 // BBS
 bool WipingExtrusions::is_support_overriddable(const ExtrusionRole role, const PrintObject& object) const
 {
+    if (m_layer_tools->has_local_z_subdivision)
+        return false;
+
     if (!object.config().flush_into_support)
         return false;
 

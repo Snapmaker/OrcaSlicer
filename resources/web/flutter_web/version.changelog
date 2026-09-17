@@ -1,9 +1,9 @@
  #  Changelog
  
- ## 2026-08-24
+ ## 2026-09-05
  ###Features
-  * Added device control capabilities. 
-  * Added support for more official consumables.
+  * Added support for high-flow hotends  
+  * Added gradient filament display
  ### Bug Fixes
-  * Fixed IP input issue in the German language environment.
+  * Fixed UI adaptation issues on some pages.
   * Fixed other known issues.

@@ -1078,17 +1078,26 @@ void GUI_App::post_init()
         }
 //#endif
         mainframe->Thaw();
-        // Defer the final tab selection to after pending events are
-        // processed. During GL init, the PAGE_CHANGED handler posts
-        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
-        // select_tab(0) and switch back to the Prepare tab.
-        CallAfter([this] {
-            if (is_editor() && app_config->get("default_page") != "1")
-                mainframe->select_tab(size_t(0));
-            else if (app_config->get("default_page") == "1")
-                mainframe->select_tab(size_t(1));
-        });
-        plater_->trigger_restore_project(1);
+        // A URL open already in flight loads its own project and has already selected the 3D
+        // view. Sending the user to the home page and starting a blank project would undo both.
+        // On macOS the URL arrives through MacOpenURL after launch, so it is never visible in
+        // init_params->input_files and switch_to_3d above cannot account for it. This mirrors
+        // what switch_to_3d already does on platforms that receive the URL as a launch argument.
+        if (m_url_open_pending) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view and skipping the blank project";
+        } else {
+            // Defer the final tab selection to after pending events are
+            // processed. During GL init, the PAGE_CHANGED handler posts
+            // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+            // select_tab(0) and switch back to the Prepare tab.
+            CallAfter([this] {
+                if (is_editor() && app_config->get("default_page") != "1")
+                    mainframe->select_tab(size_t(0));
+                else if (app_config->get("default_page") == "1")
+                    mainframe->select_tab(size_t(1));
+            });
+            plater_->trigger_restore_project(1);
+        }
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
 //#endif
@@ -2053,6 +2062,10 @@ GUI_App::~GUI_App()
     if (m_silent_refresh_timeout_timer) {
         m_silent_refresh_timeout_timer->Stop();
         m_silent_refresh_timeout_timer.reset();
+    }
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
@@ -3984,7 +3997,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = build_flutter_web_url("2");
+            wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
+                                                   "/web/flutter_web/index.html?path=2");
             auto     real_url = wxGetApp().get_international_url(url);
             mainframe->load_printer_url(real_url);
         } else {
@@ -4386,6 +4400,47 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::start_flutter_wcp_timeout_watch()
+{
+    if (m_flutter_wcp_reported || m_flutter_wcp_timeout_timer)
+        return;
+
+    m_flutter_wcp_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+    Bind(wxEVT_TIMER, &GUI_App::on_flutter_wcp_timeout, this, m_flutter_wcp_timeout_timer->GetId());
+    m_flutter_wcp_timeout_timer->Start(FLUTTER_WCP_TIMEOUT_MS, wxTIMER_ONE_SHOT);
+}
+
+void GUI_App::on_flutter_wcp_received()
+{
+    report_flutter_run_result_once(true);
+}
+
+void GUI_App::on_flutter_wcp_timeout(wxTimerEvent &event)
+{
+    report_flutter_run_result_once(false);
+}
+
+void GUI_App::report_flutter_run_result_once(bool success)
+{
+    if (m_flutter_wcp_reported)
+        return;
+
+    if (m_flutter_wcp_timeout_timer) {
+        m_flutter_wcp_timeout_timer->Stop();
+        m_flutter_wcp_timeout_timer.reset();
+    }
+
+    m_flutter_wcp_reported = true;
+
+    if (success) {
+        SNAP_LOG_BATCH_FORCE(Info, "flutter run success",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "true"});
+    } else {
+        SNAP_LOG_BATCH_FORCE(Error, "flutter run failed",
+            {"eventName", "flutter_run_result"}, {"source", "cpp"}, {"success", "false"});
     }
 }
 
@@ -5412,18 +5467,6 @@ void GUI_App::no_new_version()
 }
 
 std::string GUI_App::version_display = "";
-wxString GUI_App::flutter_web_base_url(const wxString& path)
-{
-    return wxString::FromUTF8(LOCALHOST_URL + std::to_string(get_page_http_port()) +
-                              "/web/flutter_web/index.html?path=" + std::string(path.utf8_str()));
-}
-
-// Full launch url: base plus &version= of the embedding desktop client, so the
-// flutter side can identify which app build it is talking to.
-wxString GUI_App::build_flutter_web_url(const wxString& path)
-{
-    return flutter_web_base_url(path) + wxString::Format("&version=%s", Snapmaker_VERSION);
-}
 
 std::string GUI_App::format_display_version()
 {
@@ -6729,6 +6772,10 @@ void GUI_App::MacOpenURL(const wxString& url)
 {
     if (url.empty())
         return;
+    // post_init() decides whether to start a blank project based on init_params->input_files,
+    // which is always empty here: macOS launches the app first and delivers the URL afterwards.
+    // Without this flag post_init resets the project that this download is about to load.
+    m_url_open_pending = true;
     start_download(into_u8(url));
 }
 

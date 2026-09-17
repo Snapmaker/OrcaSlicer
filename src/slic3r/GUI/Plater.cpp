@@ -3619,9 +3619,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         const auto& edit_preset = preset_bundle.printers.get_edited_preset();
 
-        static bool is_sm_page = false;
+        const bool showing_u1_device = p_mainframe->m_printer_view && p_mainframe->m_printer_view->is_u1_device_page();
+        // Non-U1: always leave path=2 for missing_connection / print_host. Keep skipping
+        // when use_new_connect already sits on the GIF (connect flow loads path=2 afterwards).
+        const bool load_non_u1_page = !is_snapmaker_u1 && reload_printer_view && (!use_new_connection || showing_u1_device);
 
-        if (!use_new_connection && !is_snapmaker_u1 && reload_printer_view) {
+        if (load_non_u1_page) {
 
             p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
@@ -3640,12 +3643,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                                  MainFrame::PrintSelectType::eSendGcode;
 
                 if (url.find("127.0.0.1") != std::string::npos) {
-                    url = wxGetApp().build_flutter_web_url("3");
+                    url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                             "/web/flutter_web/index.html?path=3");
                 }
             }
             
             p_mainframe->load_printer_url(url, apikey);
-            is_sm_page = false;
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -3667,12 +3670,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if(hasOnlineMachine)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
-                wxString url = wxGetApp().build_flutter_web_url("2");
+                wxString url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                                  "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
-                if (!is_sm_page && reload_printer_view) {
+                if (reload_printer_view && !showing_u1_device) {
                     wxGetApp().mainframe->load_printer_url(real_url); 
-                    is_sm_page = true;
                 }                   
             }
 
@@ -15691,6 +15694,30 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
                 // It's missing_connection page, reload so that we can replay the gif image
                 // main_frame->m_printer_view->reload();
             }
+            // Device WKWebView is hidden on Prepare/Preview; GIF LoadURL may never settle,
+            // so a queued path=2 never runs. Sync once the tab is shown.
+            if (main_frame->m_printer_view) {
+                auto printer_model_opt = cfg.option<ConfigOptionString>("printer_model");
+                bool is_snapmaker_u1   = false;
+                if (printer_model_opt) {
+                    const std::string &printer_model = printer_model_opt->value;
+                    is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+                }
+                const bool showing_u1 = main_frame->m_printer_view->is_u1_device_page();
+                if (is_snapmaker_u1 && !showing_u1) {
+                    wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                                         "/web/flutter_web/index.html?path=2");
+                    main_frame->load_printer_url(wxGetApp().get_international_url(u1_url));
+                } else if (!is_snapmaker_u1 && showing_u1) {
+                    wxString non_u1 = url;
+                    if (non_u1.empty()) {
+                        std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+                        non_u1               = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
+                    } else if (!non_u1.Lower().starts_with("http"))
+                        non_u1 = wxString::Format("http://%s", non_u1);
+                    main_frame->load_printer_url(non_u1);
+                }
+            }
         }
     }
 }
@@ -18634,7 +18661,7 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
     filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(max_speed_variants, 200.));
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
-    obj_cfg.set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
+    obj_cfg.set_key_value("enable_overhang_speed", new ConfigOptionBools { false });
     obj_cfg.set_key_value("wall_loops", new ConfigOptionInt(1));
     obj_cfg.set_key_value("alternate_extra_wall", new ConfigOptionBool(false));
     obj_cfg.set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -18733,7 +18760,7 @@ void Plater::calib_VFA(const Calib_Params& params)
     auto printer_config  = &wxGetApp().preset_bundle->printers.get_edited_preset().config;
     printer_config->set_key_value("resonance_avoidance", new ConfigOptionBool{false});
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats { 0.0 });
-    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
+    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBools { false });
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config->set_key_value("alternate_extra_wall", new ConfigOptionBool(false));
@@ -18784,7 +18811,7 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     filament_config->set_key_value("pressure_advance", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("adaptive_pressure_advance", new ConfigOptionBools{false});
     print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
-    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
+    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBools { false });
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config->set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -18797,7 +18824,7 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
     print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
-    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
+    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloats { 0.25 });
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
     model().objects[0]->config.set_key_value("brim_object_gap", new ConfigOptionFloat(0.0));
@@ -18832,7 +18859,7 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     filament_config->set_key_value("pressure_advance", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("adaptive_pressure_advance", new ConfigOptionBools{false});
     print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
-    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
+    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config->set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -18845,7 +18872,7 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
     print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
-    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.25));
+    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloats { 0.25 });
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
     model().objects[0]->config.set_key_value("brim_object_gap", new ConfigOptionFloat(0.0));
@@ -18885,7 +18912,7 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     filament_config->set_key_value("pressure_advance", new ConfigOptionFloats { 0.0 });
     filament_config->set_key_value("adaptive_pressure_advance", new ConfigOptionBools{false});
     print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
-    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
+    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBools{false});
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config->set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -18898,7 +18925,7 @@ void Plater::calib_junction_deviation(const Calib_Params& params)
     print_config->set_key_value("outer_wall_speed", new ConfigOptionFloats { 200. });
     print_config->set_key_value("default_acceleration", new ConfigOptionFloats { 2000. });
     print_config->set_key_value("outer_wall_acceleration", new ConfigOptionFloats { 2000. });
-    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloat(0.0));
+    print_config->set_key_value("default_junction_deviation", new ConfigOptionFloats { 0.0 });
     model().objects[0]->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterOnly));
     model().objects[0]->config.set_key_value("brim_width", new ConfigOptionFloat(3.0));
     model().objects[0]->config.set_key_value("brim_object_gap", new ConfigOptionFloat(0.0));

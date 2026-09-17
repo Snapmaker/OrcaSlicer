@@ -103,7 +103,7 @@ private:
     void on_left_down(wxMouseEvent &)
     {
         wxTextDataObject data(wxString(DRAG_PREFIX) + wxString::Format("%zu", m_idx));
-        wxDropSource     source(data, this);
+        wxDropSource     source(data, GetParent());
         source.DoDragDrop(wxDrag_CopyOnly);
     }
 

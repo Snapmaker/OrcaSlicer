@@ -251,6 +251,11 @@ public:
 private:
     bool            m_initialized { false };
     bool            m_post_initialized { false };
+    // Set when a snapmaker-orca:// URL is handed to us after launch (macOS delivers these
+    // through MacOpenURL rather than argv, so post_init cannot see them in input_files).
+    // post_init must not start a blank project in that case, or it discards the model the
+    // URL is in the middle of loading.
+    bool            m_url_open_pending { false };
     bool            m_app_conf_exists{ false };
     EAppMode        m_app_mode{ EAppMode::Editor };
     bool            m_is_recreating_gui{ false };
@@ -539,8 +544,6 @@ private:
     bool            is_user_login();
 
     wxString get_international_url(const wxString& origin_url);
-    wxString flutter_web_base_url(const wxString& path);
-    wxString build_flutter_web_url(const wxString& path);
 
     // SM
     struct SMUserInfo
@@ -592,6 +595,9 @@ private:
     void            sm_request_login(bool show_user_info = false);
     void            sm_ShowUserLogin(bool show  =  true);
     void            sm_request_user_logout();
+    void            start_flutter_wcp_timeout_watch();
+    void            on_flutter_wcp_received();
+    void            report_flutter_run_result_once(bool success);
 
     // Silent login-token maintenance: the Snapmaker access token expires after
     // ~24 h; a hidden login webview re-runs the cookie session and picks up a
@@ -870,6 +876,10 @@ private:
     bool                    m_config_corrupted { false };
     FlutterWebCopyStatus    m_flutter_web_copy_status{ FlutterWebCopyStatus::Ok };
     bool                    m_flutter_web_copy_notified{ false };
+    bool                    m_flutter_wcp_reported{false};
+    std::unique_ptr<wxTimer> m_flutter_wcp_timeout_timer;
+    static constexpr int    FLUTTER_WCP_TIMEOUT_MS = 120 * 1000;
+    void                    on_flutter_wcp_timeout(wxTimerEvent &event);
     std::string             m_open_method;
     SMUserInfo m_login_userinfo;
 

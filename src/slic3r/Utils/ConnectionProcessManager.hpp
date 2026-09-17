@@ -4,8 +4,10 @@
 #include <boost/filesystem/path.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>

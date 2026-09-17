@@ -15,6 +15,39 @@ TEST_CASE("ConnectionProcessManager builds the Orca launch arguments", "[gateway
     REQUIRE(arguments == std::vector<std::string>{"--locale=zh-CN", "--orca"});
 }
 
+TEST_CASE("ConnectionProcessManager selects the platform-specific CLI executable", "[gateway][process]")
+{
+#if defined(_WIN32)
+#if defined(_M_X64) || defined(__x86_64__)
+    constexpr std::string_view expected = "snapmaker_connection_windows_x64.exe";
+#elif defined(_M_ARM64) || defined(__aarch64__)
+    constexpr std::string_view expected = "snapmaker_connection_windows_arm64.exe";
+#else
+#error "unsupported Windows architecture for the snapmaker_connection CLI"
+#endif
+#elif defined(__APPLE__)
+#if defined(__x86_64__)
+    constexpr std::string_view expected = "snapmaker_connection_macos_x64";
+#elif defined(__arm64__) || defined(__aarch64__)
+    constexpr std::string_view expected = "snapmaker_connection_macos_arm64";
+#else
+#error "unsupported macOS architecture for the snapmaker_connection CLI"
+#endif
+#elif defined(__linux__)
+#if defined(__x86_64__)
+    constexpr std::string_view expected = "snapmaker_connection_linux_x64";
+#elif defined(__aarch64__) || defined(__arm64__)
+    constexpr std::string_view expected = "snapmaker_connection_linux_arm64";
+#else
+#error "unsupported Linux architecture for the snapmaker_connection CLI"
+#endif
+#else
+#error "unsupported platform for the snapmaker_connection CLI"
+#endif
+
+    REQUIRE(ConnectionProcessManager::cli_executable_name() == expected);
+}
+
 TEST_CASE("ConnectionProcessManager parses one PORT frame after noise", "[gateway][process]")
 {
     std::uint16_t     port   = 0;

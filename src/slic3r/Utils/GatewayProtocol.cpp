@@ -107,7 +107,7 @@ std::optional<nlohmann::json> parse_json_object(const std::string& body)
     const nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object())
         return std::nullopt;
-    return parsed;
+    return std::optional<nlohmann::json>{std::in_place, parsed};
 }
 
 GatewayError parse_health(const std::string& body, HealthInfo& health)

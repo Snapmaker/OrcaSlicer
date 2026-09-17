@@ -1272,6 +1272,10 @@ void GUI_App::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << "GUI_App::shutdown enter";
 
+    if (!m_is_recreating_gui)
+        m_is_closing = true;
+    stop_gateway_service();
+
 	if (m_removable_drive_manager) {
 		removable_drive_manager()->shutdown();
 	}
@@ -5434,7 +5438,14 @@ bool GUI_App::start_gateway_service(bool restart)
             std::make_shared<Gateway::ConnectionProcessManager>(Gateway::ConnectionProcessManager::Config{connection_cli_path});
         dependencies.http      = std::make_shared<Gateway::LibcurlHttpTransport>();
         dependencies.websocket = std::make_shared<Gateway::GatewayWebSocketTransport>();
-        dependencies.dispatcher = [this](std::function<void()> task) { CallAfter(std::move(task)); };
+        dependencies.dispatcher = [this](std::function<void()> task) {
+            // A task may still be pending when shutdown starts; do not touch dying GUI windows.
+            CallAfter([this, task = std::move(task)]() mutable {
+                if (m_is_closing)
+                    return;
+                task();
+            });
+        };
 
         m_gateway_service = std::make_shared<Gateway::GatewayService>(Gateway::GatewayService::Config{}, std::move(dependencies));
         m_gateway_machine_snapshot = std::make_unique<GatewayMachineSnapshot>();

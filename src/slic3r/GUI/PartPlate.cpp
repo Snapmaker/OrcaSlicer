@@ -1823,7 +1823,7 @@ void PartPlate::clear(bool clear_sliced_result)
 		m_ready_for_slice = true;
 		update_slice_result_valid_state(false);
 	}
-	m_name_texture.reset();
+	invalidate_plate_name_texture();
 	return;
 }
 
@@ -1913,6 +1913,10 @@ Vec3d PartPlate::get_center_origin()
 
 void PartPlate::generate_plate_name_texture()
 {
+	auto canvas = (m_partplate_list != nullptr && m_partplate_list->m_plater != nullptr) ? m_partplate_list->m_plater->get_view3D_canvas3D() : nullptr;
+	if (canvas == nullptr)
+		return;
+
     m_plate_name_icon.reset();
 
 	// generate m_name_texture texture from m_name with generate_from_text_string
@@ -1950,11 +1954,22 @@ void PartPlate::generate_plate_name_texture()
     if (!init_model_from_poly(m_plate_name_icon, poly, GROUND_Z))
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "Unable to generate geometry buffers for icons\n";
 
-	auto canvas = this->m_partplate_list->m_plater->get_view3D_canvas3D();
     canvas->remove_raycasters_for_picking(SceneRaycaster::EType::Bed, picking_id_component(6));
     calc_vertex_for_plate_name_edit_icon(&m_name_texture, 0, m_plate_name_edit_icon);
     register_model_for_picking(*canvas, m_plate_name_edit_icon, picking_id_component(6));
 }
+
+void PartPlate::invalidate_plate_name_texture()
+{
+	m_plate_name_edit_icon.mesh_raycaster.reset();
+
+	auto canvas = (m_plater != nullptr) ? m_plater->get_view3D_canvas3D() : nullptr;
+	if (canvas != nullptr) {
+		canvas->remove_raycasters_for_picking(SceneRaycaster::EType::Bed, picking_id_component(6));
+		canvas->set_as_dirty();
+	}
+}
+
 void PartPlate::set_plate_name(const std::string& name) 
 { 
 	// compare if name equal to m_name, case sensitive
@@ -1965,7 +1980,7 @@ void PartPlate::set_plate_name(const std::string& name)
     if (m_print != nullptr)
         m_print->set_plate_name(name);
 
-	generate_plate_name_texture();
+	invalidate_plate_name_texture();
 }
 
 //get the print's object, result and index
@@ -2689,43 +2704,43 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 
 		calc_bounding_boxes();
 
-		ExPolygon logo_poly;
-		generate_logo_polygon(logo_poly);
-		m_logo_triangles.reset();
-		if (!init_model_from_poly(m_logo_triangles, logo_poly, GROUND_Z + 0.02f))
-			BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":Unable to create logo triangles\n";
+		if (m_plater != nullptr) {
+			ExPolygon logo_poly;
+			generate_logo_polygon(logo_poly);
+			m_logo_triangles.reset();
+			if (!init_model_from_poly(m_logo_triangles, logo_poly, GROUND_Z + 0.02f))
+				BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":Unable to create logo triangles\n";
 
-		ExPolygon poly;
-		/*for (const Vec2d& p : m_shape) {
-			poly.contour.append({ scale_(p(0)), scale_(p(1)) });
-		}*/
-		generate_print_polygon(poly);
-		calc_triangles(poly);
-        init_raycaster_from_model(m_triangles);
+			ExPolygon poly;
+			/*for (const Vec2d& p : m_shape) {
+				poly.contour.append({ scale_(p(0)), scale_(p(1)) });
+			}*/
+			generate_print_polygon(poly);
+			calc_triangles(poly);
+			init_raycaster_from_model(m_triangles);
 
-		ExPolygon exclude_poly;
-		/*for (const Vec2d& p : m_exclude_area) {
-			exclude_poly.contour.append({ scale_(p(0)), scale_(p(1)) });
-		}*/
-		generate_exclude_polygon(exclude_poly);
-		calc_exclude_triangles(exclude_poly);
+			ExPolygon exclude_poly;
+			/*for (const Vec2d& p : m_exclude_area) {
+				exclude_poly.contour.append({ scale_(p(0)), scale_(p(1)) });
+			}*/
+			generate_exclude_polygon(exclude_poly);
+			calc_exclude_triangles(exclude_poly);
 
-		const BoundingBox& pp_bbox = poly.contour.bounding_box();
-		calc_gridlines(poly, pp_bbox);
+			const BoundingBox& pp_bbox = poly.contour.bounding_box();
+			calc_gridlines(poly, pp_bbox);
 
-		//calc_vertex_for_icons_background(5, m_del_and_background_icon);
-		//calc_vertex_for_icons(4, m_del_icon);
-		calc_vertex_for_icons(0, m_del_icon);
-        calc_vertex_for_icons(1, m_orient_icon);
-        calc_vertex_for_icons(2, m_arrange_icon);
-        calc_vertex_for_icons(3, m_lock_icon);
-        calc_vertex_for_icons(4, m_plate_settings_icon);
-        calc_vertex_for_icons(5, m_move_front_icon);
-        // ORCA also change bed_icon_count number in calc_vertex_for_icons() after adding or removing icons for circular shaped beds that uses vertical alingment for icons
+			//calc_vertex_for_icons_background(5, m_del_and_background_icon);
+			//calc_vertex_for_icons(4, m_del_icon);
+			calc_vertex_for_icons(0, m_del_icon);
+			calc_vertex_for_icons(1, m_orient_icon);
+			calc_vertex_for_icons(2, m_arrange_icon);
+			calc_vertex_for_icons(3, m_lock_icon);
+			calc_vertex_for_icons(4, m_plate_settings_icon);
+			calc_vertex_for_icons(5, m_move_front_icon);
+			// ORCA also change bed_icon_count number in calc_vertex_for_icons() after adding or removing icons for circular shaped beds that uses vertical alingment for icons
 
-		//calc_vertex_for_number(0, (m_plate_index < 9), m_plate_idx_icon);
-		calc_vertex_for_number(0, false, m_plate_idx_icon);
-		if (m_plater) {
+			//calc_vertex_for_number(0, (m_plate_index < 9), m_plate_idx_icon);
+			calc_vertex_for_number(0, false, m_plate_idx_icon);
 			// calc vertex for plate name
 			generate_plate_name_texture();
 		}

@@ -40,8 +40,6 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     wxString url = wxGetApp().gateway_web_url("home_page");
     // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
-    url = wxGetApp().get_international_url(url);
-
     // test
     // url = "http://localhost:13619/web/flutter_web/1.html";
 
@@ -253,7 +251,7 @@ void WebViewPanel::reload() {
 void WebViewPanel::load_url(wxString& url)
 {
 
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     wxGetApp().fltviews().add_webview_panel(this, url);
 

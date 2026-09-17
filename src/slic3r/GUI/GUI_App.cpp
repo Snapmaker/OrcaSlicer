@@ -3790,9 +3790,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
 
     if (!preset_bundle->is_bbl_vendor()) {
         if (is_snapmaker_u1) {
-            wxString url      = wxGetApp().gateway_web_url("device_control");
-            auto     real_url = wxGetApp().get_international_url(url);
-            mainframe->load_printer_url(real_url);
+            wxString url = wxGetApp().gateway_web_url("device_control");
+            mainframe->load_printer_url(url);
         } else {
             std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
             auto url = wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url));
@@ -4146,32 +4145,6 @@ void GUI_App::get_login_info()
         }
         mainframe->m_webview->SetLoginPanelVisibility(true);
     }
-}
-
-wxString GUI_App::get_international_url(const wxString& origin_url) {
-
-    wxString baseUrl = origin_url;
-    if (baseUrl.find("?locale=") != std::string::npos) {
-        baseUrl = baseUrl.substr(0, baseUrl.find("?locale="));
-    } else if (baseUrl.find("&locale=") != std::string::npos) {
-        baseUrl = baseUrl.substr(0, baseUrl.find("&locale="));
-    }
-    wxString lang = wxString::FromUTF8(app_config->get_language_code());
-    wxString region = wxString::FromUTF8(app_config->get_country_code());
-    if (region == "Others") {
-        region = "US";
-    }
-
-    string dark_mode = wxGetApp().app_config->get("dark_color_mode");
-
-    if (baseUrl.find("?") != std::string::npos) {
-        return baseUrl + wxString::FromUTF8("&locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
-    } else {
-        return baseUrl + wxString::FromUTF8("?locale=") + lang + wxString::FromUTF8("-") + region +
-               wxString::FromUTF8("&dark_mode=" + dark_mode);
-    }
-
 }
 
 bool GUI_App::is_user_login()
@@ -5440,8 +5413,18 @@ std::string GUI_App::gateway_locale() const
     std::string locale = app_config != nullptr ? app_config->get("language") : std::string{};
     if (locale.empty())
         locale = into_u8(current_language_code_safe());
-    std::replace(locale.begin(), locale.end(), '_', '-');
-    return locale;
+
+    const std::size_t separator = locale.find_first_of("-_");
+    std::string       language  = separator == std::string::npos ? locale : locale.substr(0, separator);
+    std::transform(language.begin(), language.end(), language.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (language != "zh")
+        language = "en";
+
+    std::string region = app_config != nullptr ? app_config->get_country_code() : "US";
+    if (region != "CN")
+        region = "US";
+
+    return language + "-" + region;
 }
 
 bool GUI_App::start_gateway_service(bool restart)

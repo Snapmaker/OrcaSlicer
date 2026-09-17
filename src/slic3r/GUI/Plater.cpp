@@ -3564,10 +3564,10 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                     p->combo_printer->set_show_machine_connecting_button(true);
     
                 wxString url = wxGetApp().gateway_web_url("device_control");
-                auto real_url = wxGetApp().get_international_url(url);
                 
                 if (reload_printer_view && !showing_u1_device) {
-                    wxGetApp().mainframe->load_printer_url(real_url); 
+                    wxGetApp().mainframe->load_printer_url(url);
+                }
                 }                   
             }
 

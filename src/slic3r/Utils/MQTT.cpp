@@ -376,12 +376,14 @@ bool MqttClient::Publish(const std::string& topic, const std::string& payload, i
 // @param callback: Function to be called when a message arrives
 void MqttClient::SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback)
 {
+    std::lock_guard<std::mutex> lock(cb_mtx_);
     message_callback1_ = nullptr;
     message_callback_ = callback;
 }
 
 void MqttClient::SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload, void* this_)> callback)
 {
+    std::lock_guard<std::mutex> lock(cb_mtx_);
     message_callback_  = nullptr;
     message_callback1_ = callback;
 }
@@ -436,23 +438,45 @@ void MqttClient::connection_lost(const std::string& cause)
     }
 
     connected_.store(false, std::memory_order_release);
-        
+
+    // ~MqttClient nulls the callbacks and disconnects; a connection_lost that
+    // races destruction must not spawn the reconnect checker below (its
+    // shared_from_this() would throw bad_weak_ptr once the last owner is gone,
+    // and the exception escapes through Paho's C callback into terminate()).
+    if (tearing_down_.load(std::memory_order_acquire)) {
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] MQTT client is being destroyed, ignoring connection_lost";
+        return;
+    }
+
     if (!ever_connected_.load(std::memory_order_acquire)) {
         BOOST_LOG_TRIVIAL(error) << "The first connection failed. Since no successful connection has been made before, automatic reconnection remains disabled";
-        if (connection_failure_callback_) {
-            connection_failure_callback_();
+        std::function<void()> failure_cb;
+        {
+            std::lock_guard<std::mutex> lock(cb_mtx_);
+            failure_cb = connection_failure_callback_;
+        }
+        if (failure_cb) {
+            failure_cb();
         }
         return;
     }
     
     if (!is_reconnecting.load(std::memory_order_acquire)) {
+        // self_ is cached by create() while the client is owned, so reading it
+        // can never throw (unlike shared_from_this(), which throws
+        // bad_weak_ptr once the last owner has started destruction). An
+        // expired/empty weak_ptr means no owner: auto-reconnect is impossible
+        // for this client.
+        std::weak_ptr<MqttClient> weak_self = self_;
+        if (weak_self.expired()) {
+            BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT client has no shared_ptr owner (or is being destroyed); automatic reconnection skipped";
+            return;
+        }
+
         is_reconnecting.store(true, std::memory_order_release);
         pending_reconnect_checks.fetch_add(1, std::memory_order_release);
-        
-        
+
         {
-            std::weak_ptr<MqttClient> weak_self = shared_from_this();
-        
             std::thread([weak_self]() {
                 
                 std::this_thread::sleep_for(std::chrono::seconds(20));
@@ -469,8 +493,13 @@ void MqttClient::connection_lost(const std::string& cause)
                                 BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] MQTT connection not restored after 20 seconds";
                                 std::string dc_msg = "";
                                 self->Disconnect(dc_msg);
-                                if (self->connection_failure_callback_) {
-                                    self->connection_failure_callback_();
+                                std::function<void()> failure_cb;
+                                {
+                                    std::lock_guard<std::mutex> lock(self->cb_mtx_);
+                                    failure_cb = self->connection_failure_callback_;
+                                }
+                                if (failure_cb) {
+                                    failure_cb();
                                 }
                             }
                             
@@ -491,12 +520,22 @@ void MqttClient::connection_lost(const std::string& cause)
 // @param msg: Pointer to the received message
 void MqttClient::message_arrived(mqtt::const_message_ptr msg)
 {
-    if (message_callback_) {
-        message_callback_(msg->get_topic(), msg->to_string());
+    // Copy the callbacks under the lock and invoke the copies outside it:
+    // the setters (and ~MqttClient) may run concurrently on another thread.
+    std::function<void(const std::string&, const std::string&)> cb;
+    std::function<void(const std::string&, const std::string&, void*)> cb1;
+    {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
+        cb  = message_callback_;
+        cb1 = message_callback1_;
     }
 
-    if (message_callback1_) {
-        message_callback1_(msg->get_topic(), msg->to_string(), this);
+    if (cb) {
+        cb(msg->get_topic(), msg->to_string());
+    }
+
+    if (cb1) {
+        cb1(msg->get_topic(), msg->to_string(), this);
     }
 }
 
@@ -522,10 +561,15 @@ void MqttClient::on_failure(const mqtt::token& tok)
         
         connected_.store(false, std::memory_order_release);
                 
-        if (connection_failure_callback_) {
-            connection_failure_callback_();
+        std::function<void()> failure_cb;
+        {
+            std::lock_guard<std::mutex> lock(cb_mtx_);
+            failure_cb = connection_failure_callback_;
         }
-    } else {        
+        if (failure_cb) {
+            failure_cb();
+        }
+    } else {
         BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Operation failed for token: " << tok.get_message_id();
         if (tok.get_reason_code() != 0) {
             BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] Reason code: " << tok.get_reason_code();
@@ -557,11 +601,22 @@ void MqttClient::connected(const std::string& cause)
 }
 
 void MqttClient::resubscribe_topics() {
-    if (topics_to_resubscribe_.empty() || !client_) {
+    if (!client_) {
         return;
     }
 
-    for (const auto& topic_pair : topics_to_resubscribe_) {
+    // Snapshot the map: subscribing can block for seconds per topic, so the
+    // lock must not be held while waiting on the broker.
+    std::map<std::string, int> topics;
+    {
+        std::lock_guard<std::mutex> lock(topics_mtx_);
+        topics = topics_to_resubscribe_;
+    }
+    if (topics.empty()) {
+        return;
+    }
+
+    for (const auto& topic_pair : topics) {
         try {
             auto tok = client_->subscribe(topic_pair.first, topic_pair.second, nullptr,  subListener_);
             if (!tok->wait_for(std::chrono::seconds(5))) {
@@ -578,11 +633,13 @@ void MqttClient::resubscribe_topics() {
 }
 
 void MqttClient::add_topic_to_resubscribe(const std::string& topic, int qos) {
+    std::lock_guard<std::mutex> lock(topics_mtx_);
     topics_to_resubscribe_[topic] = qos;
     BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] Added topic to resubscribe list: " << topic;
 }
 
 void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
+    std::lock_guard<std::mutex> lock(topics_mtx_);
     auto it = topics_to_resubscribe_.find(topic);
     if (it != topics_to_resubscribe_.end()) {
         topics_to_resubscribe_.erase(it);
@@ -592,38 +649,60 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
 
 MqttClient::~MqttClient()
 {
-    {        
-        connected_.store(false, std::memory_order_release);
-        is_reconnecting.store(false, std::memory_order_release);
-                
-        int timeout_count = 0;
-        const int max_timeout = 20; // max 5s (50 * 100ms)
-        while (pending_reconnect_checks.load(std::memory_order_acquire) > 0 && timeout_count < max_timeout) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            timeout_count++;
-        }
-        
-        if (timeout_count >= max_timeout) {
-            BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] timeout waiting for reconnect checks, forcing destruction";
-        }
-                
-        if (client_) {
-            // Reuse Disconnect: soft-catches already-disconnected and clears shouldBeConnected.
-            std::string dc_msg;
-            Disconnect(dc_msg);
-        }
-     
-        topics_to_resubscribe_.clear();             
-        message_callback_ = nullptr;
+    // 0. Mark teardown before anything else: connection_lost() checks this
+    //    before calling shared_from_this(), which would otherwise throw
+    //    bad_weak_ptr (the last owner is the one running this destructor) and
+    //    kill the process from Paho's C callback thread.
+    tearing_down_.store(true, std::memory_order_release);
+
+    // 1. Null the callbacks FIRST so any Paho callback that is still in flight
+    //    (or fires during teardown below) becomes a no-op instead of touching
+    //    members being destroyed. Without this, message_arrived() could run on
+    //    the Paho receive thread while these std::function members are being
+    //    torn apart — one of the sources of STATUS_HEAP_CORRUPTION crashes.
+    {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
+        message_callback_            = nullptr;
         message_callback1_           = nullptr;
         connection_failure_callback_ = nullptr;
-
-        if (client_)
-            client_.reset();             
-
-        cleanup_temp_files();        
-        BOOST_LOG_TRIVIAL(info) << "[MQTT_INFO] MQTT client resources freed";
     }
+
+    connected_.store(false, std::memory_order_release);
+    is_reconnecting.store(false, std::memory_order_release);
+
+    // 2. Wait briefly for the detached reconnect-check threads to finish so
+    //    they do not call Disconnect() on a client being destroyed.
+    int timeout_count = 0;
+    const int max_timeout = 20; // max 2s (20 * 100ms)
+    while (pending_reconnect_checks.load(std::memory_order_acquire) > 0 && timeout_count < max_timeout) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        timeout_count++;
+    }
+
+    if (timeout_count >= max_timeout) {
+        BOOST_LOG_TRIVIAL(warning) << "[MQTT_INFO] timeout waiting for reconnect checks, forcing destruction";
+    }
+
+    // 3. Disconnect: clears shouldBeConnected in the C lib, stopping the
+    //    auto-reconnect cycle before the client is destroyed.
+    if (client_) {
+        // Reuse Disconnect: soft-catches already-disconnected and clears shouldBeConnected.
+        std::string dc_msg;
+        Disconnect(dc_msg);
+    }
+
+    // 4. Destroy the async client. ~async_client calls MQTTAsync_destroy(),
+    //    which stops the Paho send/receive threads; doing this BEFORE our own
+    //    members are destroyed (end of destructor) closes the window in which
+    //    a Paho thread could call back into this object after teardown.
+    client_.reset();
+
+    {
+        std::lock_guard<std::mutex> lock(topics_mtx_);
+        topics_to_resubscribe_.clear();
+    }
+
+    cleanup_temp_files();
 }
 
 void MqttClient::cleanup_temp_files()

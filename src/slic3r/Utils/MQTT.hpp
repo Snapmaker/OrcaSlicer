@@ -8,6 +8,8 @@
 #include <boost/log/trivial.hpp>
 #include <memory>
 #include <atomic>
+#include <mutex>
+#include <utility>
 #include <boost/filesystem.hpp>
 
 // Number of retries for connection and subscription attempts
@@ -70,6 +72,19 @@ public:
                const std::string& password = "",
                bool clean_session = false);
 
+    // Factory: the supported way to create a MqttClient. It caches the
+    // client's own weak reference (self_) exactly when shared ownership is
+    // established, so Paho callbacks can arm the reconnect checker from the
+    // cached weak_ptr instead of calling shared_from_this() — which throws
+    // bad_weak_ptr once the last owner has started destruction (and always
+    // threw for raw `new`-ed clients).
+    template<typename... Args>
+    static std::shared_ptr<MqttClient> create(Args&&... args) {
+        std::shared_ptr<MqttClient> p(new MqttClient(std::forward<Args>(args)...));
+        p->self_ = p;
+        return p;
+    }
+
     // Destructor
     ~MqttClient();
 
@@ -91,9 +106,16 @@ public:
     // Set callback for handling incoming messages
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload)> callback);
     void SetMessageCallback(std::function<void(const std::string& topic, const std::string& payload, void* this_)> callback);
+    // Resolves ambiguity of SetMessageCallback(nullptr) between the two overloads above
+    void SetMessageCallback(std::nullptr_t) {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
+        message_callback_  = nullptr;
+        message_callback1_ = nullptr;
+    }
 
     //  add set connect callback
     void SetConnectionFailureCallback(std::function<void()> callback) {
+        std::lock_guard<std::mutex> lock(cb_mtx_);
         connection_failure_callback_ = callback;
     }
 
@@ -115,20 +137,32 @@ private:
     std::string server_address_;     // MQTT broker address
     std::string client_id_;          // Unique client identifier
     std::unique_ptr<mqtt::async_client> client_;      // Async MQTT client instance
+    // Guards message_callback_ / message_callback1_ / connection_failure_callback_,
+    // which are read on the Paho callback threads and written from owner threads
+    // (including being nulled at the start of ~MqttClient).
+    mutable std::mutex cb_mtx_;
     std::function<void(const std::string& topic, const std::string& payload)> message_callback_;  // Message handler
     std::function<void(const std::string& topic, const std::string& payload, void* this_)> message_callback1_;  // Message handler
 
     mqtt::connect_options connOpts_; // Connection options
     std::atomic<bool> connected_;    // Connection status flag
+    mutable std::mutex topics_mtx_;  // Guards topics_to_resubscribe_
     std::map<std::string, int> topics_to_resubscribe_;  // Topics to resubscribe after reconnection
     action_listener subListener_;    // Subscription listener
     int connect_retry_time_;         // Connection retry counter
     int subscribe_retry_time_;       // Subscription retry counter
     std::function<void()> connection_failure_callback_; 
 
-    std::atomic<bool> is_reconnecting; 
-    std::atomic<int> pending_reconnect_checks;  
-    std::atomic<bool> ever_connected_;  
+    std::atomic<bool> is_reconnecting;
+    std::atomic<int> pending_reconnect_checks;
+    std::atomic<bool> ever_connected_;
+    // Set as the very first step of ~MqttClient. Paho callbacks (esp.
+    // connection_lost) check it before touching any other member.
+    std::atomic<bool> tearing_down_{false};
+    // Cached by create() while the client is owned; connection_lost() reads
+    // this instead of calling shared_from_this() (which throws bad_weak_ptr
+    // once the last owner has started destruction).
+    std::weak_ptr<MqttClient> self_;
 
     // tmp path
     boost::filesystem::path temp_ca_path_;

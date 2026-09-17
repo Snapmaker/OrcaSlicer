@@ -117,7 +117,7 @@ void WebPreprintDialog::refresh_gateway_urls()
     if (!wxGetApp().is_gateway_url(m_prePrint_url) || !wxGetApp().is_gateway_url(m_preSend_url) || m_browser == nullptr)
         return;
 
-    wxString real_url = wxGetApp().get_international_url(m_send_page ? m_preSend_url : m_prePrint_url);
+    wxString real_url = m_send_page ? m_preSend_url : m_prePrint_url;
     if (!m_store_id.empty())
         real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
     load_url(real_url);
@@ -126,7 +126,7 @@ void WebPreprintDialog::refresh_gateway_urls()
 void WebPreprintDialog::load_url(wxString &url)
 {
     wxGetApp().fltviews().add_view(m_browser, url);
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     Layout();
 }
@@ -137,7 +137,7 @@ bool WebPreprintDialog::run()
     SSWCP::update_display_filename(m_display_file_name);
 
     auto base_url = m_send_page ? m_preSend_url : m_prePrint_url;
-    auto real_url = wxGetApp().get_international_url(base_url);
+    auto real_url = base_url;
     if (!m_store_id.empty())
         real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
     if(m_send_page){

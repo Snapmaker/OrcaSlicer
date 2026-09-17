@@ -1075,7 +1075,6 @@ void GUI_App::post_init()
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << "Found glcontext not ready, postpone the init";
         }
 //#endif
-        mainframe->Thaw();
         // A URL open already in flight loads its own project and has already selected the 3D
         // view. Sending the user to the home page and starting a blank project would undo both.
         // On macOS the URL arrives through MacOpenURL after launch, so it is never visible in
@@ -1083,6 +1082,9 @@ void GUI_App::post_init()
         // what switch_to_3d already does on platforms that receive the URL as a launch argument.
         if (m_url_open_pending) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view and skipping the blank project";
+            CallAfter([this] {
+                mainframe->Thaw();
+            });
         } else {
             // Defer the final tab selection to after pending events are
             // processed. During GL init, the PAGE_CHANGED handler posts
@@ -1093,6 +1095,7 @@ void GUI_App::post_init()
                     mainframe->select_tab(size_t(0));
                 else if (app_config->get("default_page") == "1")
                     mainframe->select_tab(size_t(1));
+                mainframe->Thaw();
             });
             plater_->trigger_restore_project(1);
         }

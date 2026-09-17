@@ -80,7 +80,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     }
 
     m_browser->Show();
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     UpdateState();
 }

@@ -95,7 +95,7 @@ public:
         std::string                     host{"127.0.0.1"};
         std::string                     health_path{"/health"};
         std::string                     websocket_path{"/ws"};
-        std::string                     device_path{"/api/device"};
+        std::string                     device_path{"/api/cache/all"};
         std::string                     account_path{"/api/account"};
         std::string                     store_path{"/api/store"};
         std::chrono::milliseconds       health_poll_interval{std::chrono::milliseconds{100}};

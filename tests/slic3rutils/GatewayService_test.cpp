@@ -35,7 +35,7 @@ struct FakeHttp final : public HttpTransport
                     R"("server_url":{"base_url":"http://127.0.0.1:8080/","home_page":"/index","device_control":""}})",
                     {}};
         }
-        if (url.find("/api/device") != std::string::npos)
+        if (url.find("/api/cache/all") != std::string::npos)
             return {200, R"({"devices":[{"sn":"A1"}]})", {}};
         if (url.find("/api/account") != std::string::npos)
             return {200, R"({"user":"u"})", {}};

@@ -28,10 +28,9 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
 
-    wxString url      = wxGetApp().gateway_web_url("device_control");
-    auto     real_url = wxGetApp().get_international_url(url);
+    wxString url = wxGetApp().gateway_web_url("device_control");
       // Create the webview
-    m_browser = WebView::CreateWebView(this, real_url);
+    m_browser = WebView::CreateWebView(this, url);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -80,7 +79,7 @@ void PrinterWebView::load_url(wxString& url, wxString apikey)
     }
 
     m_browser->Show();
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
 
     UpdateState();
 }

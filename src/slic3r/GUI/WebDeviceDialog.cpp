@@ -22,10 +22,7 @@ WebDeviceDialog::WebDeviceDialog()
 
     // Create the webview
 
-    // 语言判断
-    wxString target_url = wxGetApp().get_international_url(m_device_url);
-
-    m_browser = WebView::CreateWebView(this, target_url);
+    m_browser = WebView::CreateWebView(this, m_device_url);
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
         return;
@@ -60,13 +57,12 @@ WebDeviceDialog::~WebDeviceDialog()
 
 void WebDeviceDialog::reload()
 {
-    wxString target_url = wxGetApp().get_international_url(m_device_url);
-    load_url(target_url);
+    load_url(m_device_url);
 }
 
 void WebDeviceDialog::load_url(wxString &url)
 {
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
     m_browser->Show();
     Layout();
 }

@@ -542,8 +542,6 @@ private:
     void            get_login_info();
     bool            is_user_login();
 
-    wxString get_international_url(const wxString& origin_url);
-
     // SM login state is owned by the connection gateway. The app only mirrors
     // GET /api/account / notify.account.changed frames for native consumers
     // (currently SnapLog identity and the region-switch hint).
@@ -893,20 +891,19 @@ public:
         void reload_all() {
             for (const auto& view : webviews) {
                 auto ptr = view.first;
-                wxString new_url = app->get_international_url(view.second);
-                ptr->LoadURL(new_url);
+                ptr->LoadURL(view.second);
             }
 
             for (const auto& panel : webview_panels) {
                 auto ptr = panel.first;
-                wxString new_url = app->get_international_url(panel.second);
-                ptr->load_url(new_url);
+                wxString url = panel.second;
+                ptr->load_url(url);
             }
 
             for (const auto& prview : printerviews) {
                 auto ptr = prview.first;
-                wxString new_url = app->get_international_url(prview.second.first);
-                ptr->load_url(new_url, prview.second.second);
+                auto     url  = prview.second.first;
+                ptr->load_url(url, prview.second.second);
             }
         }
     };

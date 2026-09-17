@@ -683,6 +683,8 @@ GatewayError GatewayService::wait_for_health(std::uint16_t port, HealthInfo& hea
 
         const HttpResponse response = dependencies_.http->get(make_url(config_.host, port, config_.health_path));
         if (response.error.empty() && response.status >= 200 && response.status < 300) {
+            BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
+                                    << ", body=" << response.body;
             if (const GatewayError health_error = parse_health(response.body, health))
                 return health_error;
             return {};

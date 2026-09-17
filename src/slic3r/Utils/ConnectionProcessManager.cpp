@@ -5,6 +5,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/streambuf.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/process.hpp>
 #ifdef _WIN32
 #include <boost/process/windows.hpp>
@@ -36,6 +37,17 @@ std::size_t find_next_line_port(const std::string& data, std::size_t from)
     while (position != std::string::npos && !starts_line_at(data, position))
         position = data.find("PORT:", position + 1);
     return position;
+}
+
+std::string format_arguments(const std::vector<std::string>& arguments)
+{
+    std::string formatted;
+    for (const std::string& argument : arguments) {
+        if (!formatted.empty())
+            formatted += " ";
+        formatted += argument;
+    }
+    return formatted;
 }
 
 } // namespace
@@ -197,6 +209,9 @@ ConnectionProcessManager::ProcessRunner ConnectionProcessManager::default_runner
         boost::process::async_pipe stdout_pipe(io_context);
         boost::process::child      child;
         std::error_code            launch_error;
+
+        BOOST_LOG_TRIVIAL(info) << "connection cli launch: executable=" << config.executable
+                                << ", arguments=" << format_arguments(arguments);
 
         try {
 #ifdef _WIN32

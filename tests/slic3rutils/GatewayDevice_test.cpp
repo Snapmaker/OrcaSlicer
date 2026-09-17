@@ -18,7 +18,7 @@ namespace {
 
 struct DeviceFakeHttp final : public HttpTransport
 {
-    // Serialized body of GET /api/device. Empty means the device endpoint answers 404.
+    // Serialized body of GET /api/cache/all. Empty means the device endpoint answers 404.
     std::string device_response;
 
     HttpResponse get(const std::string& url) override
@@ -29,7 +29,7 @@ struct DeviceFakeHttp final : public HttpTransport
                     R"("server_url":{"base_url":"http://127.0.0.1:8080/","home_page":"/index","device_control":""}})",
                     {}};
         }
-        if (url.find("/api/device") != std::string::npos) {
+        if (url.find("/api/cache/all") != std::string::npos) {
             if (device_response.empty())
                 return {404, {}, "not found"};
             return {200, device_response, {}};
@@ -99,7 +99,7 @@ struct ServiceFixture
     ~ServiceFixture() { service->stop(); }
 };
 
-// Mirrors the GET /api/device 200 contract from the snapmaker_connection API doc.
+// Mirrors the GET /api/cache/all 200 contract from the snapmaker_connection API doc.
 const nlohmann::json valid_device_snapshot{{"ok", true},
                                            {"data",
                                             {{"schema", 1},
@@ -227,7 +227,7 @@ TEST_CASE("GatewayDevice query_machine_info reports http errors", "[gateway][dev
 {
     ServiceFixture fixture;
     REQUIRE(fixture.service->is_connected());
-    // Default DeviceFakeHttp answers 404 on /api/device (no device snapshot available).
+    // Default DeviceFakeHttp answers 404 on /api/cache/all (no device snapshot available).
 
     std::string              model;
     std::vector<std::string> nozzles;

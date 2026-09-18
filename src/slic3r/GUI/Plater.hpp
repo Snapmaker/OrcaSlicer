@@ -229,6 +229,8 @@ public:
     const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
 
 private:
+    void continue_sync_filament_dialog(bool got_machine_info, const std::string& machine_type);
+
     // Applies a nozzle sync query result on the UI thread (async sync-button path).
     void apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
                                   std::vector<std::string> nozzle_diameters,

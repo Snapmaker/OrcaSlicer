@@ -35,6 +35,7 @@
 #include <cstdint>
 #include <mutex>
 #include <stack>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
@@ -829,6 +830,7 @@ private:
     std::string             m_open_method;
     Gateway::AccountSnapshot   m_gateway_account;
     std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
+    std::vector<std::thread>   m_gateway_account_refresh_workers;
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;

@@ -1,5 +1,4 @@
-#ifndef slic3r_Utils_GatewayProtocol_hpp_
-#define slic3r_Utils_GatewayProtocol_hpp_
+#pragma once
 
 #include <nlohmann/json.hpp>
 
@@ -123,5 +122,3 @@ private:
 } // namespace detail
 
 }} // namespace Slic3r::Gateway
-
-#endif // slic3r_Utils_GatewayProtocol_hpp_

@@ -3,12 +3,27 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "SSWCP.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include "NotificationManager.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
+
+namespace {
+
+wxString append_store_id(const wxString& base_url, const std::string& store_id)
+{
+    if (store_id.empty())
+        return base_url;
+
+    wxString url = base_url;
+    url += (url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + Http::url_encode(store_id));
+    return url;
+}
+
+} // namespace
 
 BEGIN_EVENT_TABLE(WebPreprintDialog, wxDialog)
     EVT_CLOSE(WebPreprintDialog::OnClose)
@@ -117,9 +132,7 @@ void WebPreprintDialog::refresh_gateway_urls()
     if (!wxGetApp().is_gateway_url(m_prePrint_url) || !wxGetApp().is_gateway_url(m_preSend_url) || m_browser == nullptr)
         return;
 
-    wxString real_url = m_send_page ? m_preSend_url : m_prePrint_url;
-    if (!m_store_id.empty())
-        real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
+    wxString real_url = build_web_url();
     load_url(real_url);
 }
 
@@ -136,10 +149,7 @@ bool WebPreprintDialog::run()
     SSWCP::update_active_filename(m_gcode_file_name);
     SSWCP::update_display_filename(m_display_file_name);
 
-    auto base_url = m_send_page ? m_preSend_url : m_prePrint_url;
-    auto real_url = base_url;
-    if (!m_store_id.empty())
-        real_url += (real_url.Contains("?") ? "&" : "?") + wxString::FromUTF8("id=" + m_store_id);
+    auto real_url = build_web_url();
     if(m_send_page){
         this->SetTitle(_L("Pretreat the uploaded content"));
     }else{
@@ -159,6 +169,11 @@ bool WebPreprintDialog::run()
         return m_finish;
     }
     return false;
+}
+
+wxString WebPreprintDialog::build_web_url() const
+{
+    return append_store_id(m_send_page ? m_preSend_url : m_prePrint_url, m_store_id);
 }
 
 void WebPreprintDialog::RunScript(const wxString &javascript)

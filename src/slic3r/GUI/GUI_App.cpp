@@ -4095,7 +4095,7 @@ void GUI_App::apply_gateway_account(const Gateway::AccountSnapshot& snapshot)
     m_gateway_account         = snapshot;
     BOOST_LOG_TRIVIAL(info) << "[gateway][account] " << (login_changed ? "login state changed: " : "account updated: ")
                             << (snapshot.is_login ? "online" : "offline") << ", userid=" << snapshot.userid
-                            << ", nickname=" << snapshot.nickname;
+                            << ", nickname_present=" << std::boolalpha << !snapshot.nickname.empty();
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(snapshot.token);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.userid);
 }
@@ -4105,13 +4105,12 @@ void GUI_App::refresh_gateway_account()
     if (!m_gateway_service)
         return;
 
-    // get_account() performs a synchronous HTTP request; keep it off the UI
-    // thread and drop stale responses after reconnect races.
+    const auto gateway = m_gateway_service;
     const std::uint64_t generation = ++m_gateway_account_refresh_generation;
-    std::thread([this, generation]() {
-        const Gateway::GatewayService::ApiResult result = m_gateway_service->get_account();
+    m_gateway_account_refresh_workers.emplace_back([this, gateway, generation]() {
+        const Gateway::GatewayService::ApiResult result = gateway->get_account();
         CallAfter([this, generation, result]() {
-            if (generation != m_gateway_account_refresh_generation.load())
+            if (m_is_closing || generation != m_gateway_account_refresh_generation.load())
                 return;
             if (result.error) {
                 BOOST_LOG_TRIVIAL(warning) << "[gateway][account] GET /api/account failed: " << result.error.message;
@@ -4123,7 +4122,7 @@ void GUI_App::refresh_gateway_account()
             else
                 BOOST_LOG_TRIVIAL(warning) << "[gateway][account] invalid /api/account response";
         });
-    }).detach();
+    });
 }
 
 //BBS
@@ -5486,6 +5485,12 @@ bool GUI_App::start_gateway_service(bool restart)
 
 void GUI_App::stop_gateway_service()
 {
+    ++m_gateway_account_refresh_generation;
+    for (std::thread& worker : m_gateway_account_refresh_workers)
+        if (worker.joinable())
+            worker.join();
+    m_gateway_account_refresh_workers.clear();
+
     if (m_gateway_service)
         m_gateway_service->stop();
     m_gateway_service.reset();
@@ -5679,8 +5684,7 @@ void GUI_App::register_gateway_notifications()
             m_gateway_loaded_base_url = base_url;
             BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] websocket connected, base_url=" << base_url
                                     << ", health_has_device_state=" << health.has_device_state
-                                    << ", health_connected=" << health.device_connected
-                                    << ", health_sn=" << health.device_sn;
+                                    << ", health_connected=" << health.device_connected;
 
             if (health.has_device_state && !health.device_sn.empty()) {
                 GatewayActiveDeviceState active_device;
@@ -5734,7 +5738,14 @@ bool GUI_App::is_gateway_url(const wxString& url) const
     if (base_url.empty())
         return false;
     const std::string candidate = into_u8(url);
-    return candidate.rfind(base_url, 0) == 0;
+    if (candidate.rfind(base_url, 0) != 0)
+        return false;
+    if (candidate.size() == base_url.size())
+        return true;
+    switch (candidate[base_url.size()]) {
+    case '/': case '?': case '#': return true;
+    default: return false;
+    }
 }
 void GUI_App::stop_page_http_server()
 {

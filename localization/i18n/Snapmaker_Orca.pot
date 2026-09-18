@@ -13262,12 +13262,12 @@ msgstr ""
 
 msgid ""
 "Top paint penetration layers cannot exceed top shell layers.\n"
-"The value will be reset to %d."
+"Top paint penetration layers will be reset to %d."
 msgstr ""
 
 msgid ""
 "Bottom paint penetration layers cannot exceed bottom shell layers.\n"
-"The value will be reset to %d."
+"Bottom paint penetration layers will be reset to %d."
 msgstr ""
 
 msgid ""

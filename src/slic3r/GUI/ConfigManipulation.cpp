@@ -171,6 +171,44 @@ void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
     }
 }
 
+void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top)
+{
+    const char* pen_key   = is_top ? "top_color_penetration_layers" : "bottom_color_penetration_layers";
+    const char* shell_key = is_top ? "top_shell_layers" : "bottom_shell_layers";
+    const int   cur_shell = config->opt_int(shell_key);
+    const int   cur_pen   = config->opt_int(pen_key);
+
+    // Both fields of the pair highlight together, no matter which of the two
+    // values was edited.
+    const bool is_invalid = cur_pen > cur_shell;
+    if (cb_highlight_field) {
+        cb_highlight_field(pen_key, is_invalid);
+        cb_highlight_field(shell_key, is_invalid);
+    }
+    if (!is_invalid)
+        return;
+
+    const wxString msg_text = is_top ?
+        wxString::Format(_L("Top paint penetration layers cannot exceed top shell layers.\n"
+                           "Top paint penetration layers will be reset to %d."), cur_shell) :
+        wxString::Format(_L("Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+                           "Bottom paint penetration layers will be reset to %d."), cur_shell);
+    MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+    DynamicPrintConfig new_conf = *config;
+    is_msg_dlg_already_exist = true;
+    dialog.ShowModal();
+    new_conf.set_key_value(pen_key, new ConfigOptionInt(cur_shell));
+    apply(config, &new_conf);
+    is_msg_dlg_already_exist = false;
+    // apply() re-ran the update with the corrected value; make sure the
+    // highlights reflect the post-reset state.
+    if (cb_highlight_field) {
+        const bool still_invalid = config->opt_int(pen_key) > config->opt_int(shell_key);
+        cb_highlight_field(pen_key, still_invalid);
+        cb_highlight_field(shell_key, still_invalid);
+    }
+}
+
 void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, const bool is_global_config, const bool is_plate_config)
 {
     // #ys_FIXME_to_delete
@@ -294,44 +332,9 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
     }
 
     // Paint penetration layers must not exceed the corresponding shell layers
-    // (product requirement). The options-group framework has no cross-field
-    // highlight API, so use a warning dialog that resets the penetration value
-    // ONLY when the penetration value itself was just edited. When the shell
-    // layer count is edited below an unchanged penetration value, the check is
-    // skipped silently (QA PEN-016: no auto-adjustment of the penetration value);
-    // the slicing-time validation still reports the invalid combination.
-    {
-        const int cur_top_shell = config->opt_int("top_shell_layers");
-        const int cur_top_pen   = config->opt_int("top_color_penetration_layers");
-        if (cur_top_pen > cur_top_shell && cur_top_pen != m_last_valid_top_penetration) {
-            const wxString msg_text = wxString::Format(_L("Top paint penetration layers cannot exceed top shell layers.\n"
-                                                          "The value will be reset to %d."), cur_top_shell);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            DynamicPrintConfig new_conf = *config;
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            new_conf.set_key_value("top_color_penetration_layers", new ConfigOptionInt(cur_top_shell));
-            apply(config, &new_conf);
-            is_msg_dlg_already_exist = false;
-        }
-        m_last_valid_top_penetration = config->opt_int("top_color_penetration_layers");
-    }
-    {
-        const int cur_bottom_shell = config->opt_int("bottom_shell_layers");
-        const int cur_bottom_pen   = config->opt_int("bottom_color_penetration_layers");
-        if (cur_bottom_pen > cur_bottom_shell && cur_bottom_pen != m_last_valid_bottom_penetration) {
-            const wxString msg_text = wxString::Format(_L("Bottom paint penetration layers cannot exceed bottom shell layers.\n"
-                                                          "The value will be reset to %d."), cur_bottom_shell);
-            MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
-            DynamicPrintConfig new_conf = *config;
-            is_msg_dlg_already_exist = true;
-            dialog.ShowModal();
-            new_conf.set_key_value("bottom_color_penetration_layers", new ConfigOptionInt(cur_bottom_shell));
-            apply(config, &new_conf);
-            is_msg_dlg_already_exist = false;
-        }
-        m_last_valid_bottom_penetration = config->opt_int("bottom_color_penetration_layers");
-    }
+    // (product requirement): highlight both fields red, warn, reset.
+    validate_paint_penetration_layers(config, true);
+    validate_paint_penetration_layers(config, false);
 
     double sparse_infill_density = config->option<ConfigOptionPercent>("sparse_infill_density")->value;
     int    fill_multiline        = config->option<ConfigOptionInt>("fill_multiline")->value;

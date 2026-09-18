@@ -20,23 +20,25 @@ namespace GUI {
 
 class ConfigManipulation
 {
+    /// Cross-field check "paint penetration layers <= shell layers" for one side
+    /// of the shell. On violation highlights BOTH fields red, warns and resets
+    /// the penetration value to the shell layer count.
+    void    validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top);
+
     bool                is_msg_dlg_already_exist{ false };
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
     bool                is_BBL_Printer{false};
-    // Last penetration values that passed the <= shell layers check. Used to tell
-    // "the user just edited the penetration value" from "the shell layers were just
-    // edited below an unchanged penetration value" (the latter must NOT touch the
-    // penetration value, see QA case PEN-016).
-    int                 m_last_valid_top_penetration{ -1 };
-    int                 m_last_valid_bottom_penetration{ -1 };
 
     // function to loading of changed configuration 
     std::function<void()>                                       load_config = nullptr;
     std::function<void (const std::string&, bool toggle, int opt_index)>   cb_toggle_field = nullptr;
     std::function<void (const std::string&, bool toggle)>   cb_toggle_line = nullptr;
-    // callback to propagation of changed value, if needed 
+    // callback to propagation of changed value, if needed
     std::function<void(const std::string&, const boost::any&)>  cb_value_change = nullptr;
+    // callback to toggle the red invalid highlight of a field (label + input
+    // window); wired by the UI owning the option groups
+    std::function<void(const std::string&, bool invalid)>       cb_highlight_field = nullptr;
     //BBS: change local config to const DynamicPrintConfig
     const DynamicPrintConfig* local_config = nullptr;
     //ModelConfig* local_config = nullptr;
@@ -65,7 +67,11 @@ public:
         cb_toggle_field = nullptr;
         cb_toggle_line = nullptr;
         cb_value_change = nullptr;
+        cb_highlight_field = nullptr;
     }
+
+    void    set_highlight_field_cb(std::function<void(const std::string&, bool invalid)> cb)
+        { cb_highlight_field = cb; }
 
     bool    is_applying() const;
 

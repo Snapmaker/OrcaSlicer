@@ -221,6 +221,65 @@ void Field::on_edit_value()
 
 void Field::toggle(bool en) { en && !m_opt.readonly ? enable() : disable(); }
 
+void Field::init_invalid_highlight_from_config(const DynamicPrintConfig* config, const std::string& opt_id)
+{
+    if (config == nullptr)
+        return;
+    // Both fields of a penetration/shell pair highlight together, so look up
+    // the pair from either side.
+    const bool is_top_pair    = opt_id == "top_color_penetration_layers" || opt_id == "top_shell_layers";
+    const bool is_bottom_pair = opt_id == "bottom_color_penetration_layers" || opt_id == "bottom_shell_layers";
+    if (!is_top_pair && !is_bottom_pair)
+        return;
+    const ConfigOptionInt* pen   = config->option<ConfigOptionInt>(is_top_pair ? "top_color_penetration_layers"
+                                                                              : "bottom_color_penetration_layers");
+    const ConfigOptionInt* shell = config->option<ConfigOptionInt>(is_top_pair ? "top_shell_layers"
+                                                                              : "bottom_shell_layers");
+    if (pen != nullptr && shell != nullptr && pen->value > shell->value)
+        set_invalid_highlight(true);
+}
+
+void Field::set_invalid_highlight(bool invalid)
+{
+    if (m_invalid_highlight == invalid)
+        return;
+    m_invalid_highlight = invalid;
+
+    // Red pair registered in StateColor's dark-mode map ("#D01B1B" / "#BB2A3A").
+    static const wxColour invalid_label_clr = StateColor::darkModeColorFor(wxColour("#D01B1B"));
+
+    if (wxWindow* input = getWindow()) {
+        if (auto spin = dynamic_cast<SpinInput*>(input)) {
+            // Single-entry StateColor applies to every widget state (normal,
+            // hovered, disabled); colorForStates dark-mode-maps it on render.
+            if (invalid) {
+                m_input_border_clr = spin->borderColor();
+                spin->SetBorderColor(StateColor(wxColour("#D01B1B")));
+            } else {
+                spin->SetBorderColor(m_input_border_clr);
+            }
+        }
+        // In tab pages the label is painted by the owning OG_CustomCtrl;
+        // repaint it so it picks up has_invalid_highlight().
+        for (wxWindow* parent = input->GetParent(); parent != nullptr; parent = parent->GetParent()) {
+            if (auto ctrl = dynamic_cast<OG_CustomCtrl*>(parent)) {
+                ctrl->Refresh();
+                break;
+            }
+        }
+    }
+
+    if (m_label_win != nullptr) {
+        if (invalid) {
+            m_label_win_fg_clr = m_label_win->GetForegroundColour();
+            m_label_win->SetForegroundColour(invalid_label_clr);
+        } else {
+            m_label_win->SetForegroundColour(m_label_win_fg_clr);
+        }
+        m_label_win->Refresh();
+    }
+}
+
 wxString Field::get_tooltip_text(const wxString &default_string)
 {
 	wxString tooltip_text("");

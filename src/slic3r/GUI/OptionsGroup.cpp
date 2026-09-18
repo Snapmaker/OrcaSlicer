@@ -375,11 +375,16 @@ void OptionsGroup::activate_line(Line& line)
     auto sizer = custom_ctrl ? nullptr : new wxBoxSizer(wxHORIZONTAL);
     if (!custom_ctrl)
         grid_sizer->Add(sizer, 0, wxEXPAND | (staticbox ? wxALL : wxBOTTOM | wxTOP | wxLEFT), staticbox ? 0 : 1);
-    // If we have a single option with no sidetext just add it directly to the grid sizer
+	// If we have a single option with no sidetext just add it directly to the grid sizer
     if (option_set.size() == 1 && option_set.front().opt.sidetext.size() == 0 &&
 		option_set.front().side_widget == nullptr && line.get_extra_widgets().size() == 0) {
 		const auto& option = option_set.front();
 		const auto& field = build_field(option);
+		if (label != nullptr)
+			// remember the label widget so cross-field validation can recolor it
+			field->set_label_window(label);
+		// derive cross-field validation state (pages build lazily / get rebuilt)
+		field->init_invalid_highlight_from_config(get_config(), option.opt_id);
 
         if (!custom_ctrl) {
             if (is_window_field(field))
@@ -396,6 +401,7 @@ void OptionsGroup::activate_line(Line& line)
 		ConfigOptionDef option = opt.opt;
         wxSizer* sizer_tmp = sizer;
 		// add label if any
+		wxStaticText* opt_label = nullptr;
 		if ((is_multioption_line || line.label.IsEmpty()) && !option.label.empty() && !custom_ctrl) {
 //!			To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
 			wxString str_label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ?
@@ -406,11 +412,17 @@ void OptionsGroup::activate_line(Line& line)
 			label->SetBackgroundStyle(wxBG_STYLE_PAINT);
             label->SetFont(wxGetApp().normal_font());
 			sizer_tmp->Add(label, 0, wxALIGN_CENTER_VERTICAL, 0);
+			opt_label = label;
 		}
 
 		// add field
 		const Option& opt_ref = opt;
 		auto& field = build_field(opt_ref);
+		if (opt_label != nullptr)
+			// remember the label widget so cross-field validation can recolor it
+			field->set_label_window(opt_label);
+		// derive cross-field validation state (pages build lazily / get rebuilt)
+		field->init_invalid_highlight_from_config(get_config(), opt_ref.opt_id);
         if (!custom_ctrl) {
             if (option_set.size() == 1 && option_set.front().opt.full_width)
             {

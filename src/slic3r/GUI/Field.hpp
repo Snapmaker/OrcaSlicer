@@ -206,10 +206,19 @@ public:
 	/// Callback function to edit field value
 	t_back_to_init	m_fn_edit_value{ nullptr };
 
-	// This is used to avoid recursive invocation of the field change/update by wxWidgets.
+    // This is used to avoid recursive invocation of the field change/update by wxWidgets.
     bool			m_disable_change_event {false};
     bool			m_is_modified_value {false};
 	bool			m_is_nonsys_value {true};
+
+    // Cross-field validation highlight (e.g. paint penetration layers vs shell
+    // layers). While set, the label renders in red and the input border turns
+    // red; the original colors are cached and restored when the highlight is
+    // cleared.
+    bool            m_invalid_highlight { false };
+    wxStaticText*   m_label_win { nullptr };
+    wxColour        m_label_win_fg_clr;
+    StateColor      m_input_border_clr;
 
     /// Copy of ConfigOption for deduction purposes
     const ConfigOptionDef			m_opt {ConfigOptionDef()};
@@ -249,6 +258,23 @@ public:
     /// If you don't know what you are getting back, check both methods for nullptr. 
     virtual wxSizer*	getSizer()  { return nullptr; }
     virtual wxWindow*	getWindow() { return nullptr; }
+
+    /// Registers the label widget shown next to the input window
+    /// (non-custom-ctrl mode) so validation can recolor it.
+    void            set_label_window(wxStaticText* label) { m_label_win = label; }
+
+    /// Derives the cross-field validation state from the option group's own
+    /// config. Option pages are built lazily and rebuilt on mode/visibility
+    /// changes, so the live highlight push would otherwise get lost. Per-group
+    /// derivation also keeps independent config surfaces (plate panel, preset
+    /// editor, object settings) from clobbering each other's state.
+    void            init_invalid_highlight_from_config(const DynamicPrintConfig* config, const std::string& opt_id);
+
+    /// Toggles the cross-field validation highlight: the label and the input
+    /// border turn red while the flag is set, original colors are restored on
+    /// clear. Safe to call repeatedly with the same state.
+    void            set_invalid_highlight(bool invalid);
+    bool            has_invalid_highlight() const { return m_invalid_highlight; }
 
 	bool				is_matched(const std::string& string, const std::string& pattern);
 	void				get_value_by_opt_type(wxString& str, const bool check_value = true);

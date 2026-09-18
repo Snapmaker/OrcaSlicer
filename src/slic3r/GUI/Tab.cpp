@@ -7264,7 +7264,16 @@ ConfigManipulation Tab::get_config_manipulation()
         return on_value_change(opt_key, value);
     };
 
-    return ConfigManipulation(load_config, cb_toggle_field, cb_toggle_line, cb_value_change, nullptr, this);
+    auto cb_highlight_field = [this](const t_config_option_key& opt_key, bool invalid) {
+        Page* page = nullptr;
+        Field* field = get_field(opt_key, &page);
+        if (field)
+            field->set_invalid_highlight(invalid);
+    };
+
+    ConfigManipulation config_manipulation(load_config, cb_toggle_field, cb_toggle_line, cb_value_change, nullptr, this);
+    config_manipulation.set_highlight_field_cb(cb_highlight_field);
+    return config_manipulation;
 }
 
 

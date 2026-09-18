@@ -8455,6 +8455,13 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     
     // Build remap table using PresetBundle method
     pb.build_merge_filament_remap(from_id, to_id, total_filaments);
+    // The remap is 1-based and also accounts for a mixed target shifting down
+    // when it follows the deleted source.
+    const std::vector<unsigned int> merge_remap = pb.last_filament_id_remap();
+    const int merged_target_id =
+        merge_remap.size() > from_id + 1 && merge_remap[from_id + 1] > 0
+            ? int(merge_remap[from_id + 1] - 1)
+            : -1;
     
     // Mark source mixed filament as deleted
     mfs[source_mixed_idx].deleted = true;
@@ -8471,9 +8478,11 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     if (auto* opt = pb.project_config.option<ConfigOptionBools>("filament_is_mixed"))
         is_mixed_snapshot = opt->values;
     
-    // Update objects to use new filament IDs
+    // Pass the remapped target instead of -1 so ObjectList writes the selected
+    // physical/mixed target to config-level extruder assignments rather than
+    // falling back to filament 1.
     size_t total_after = pb.mixed_filaments.total_filaments(num_physical);
-    wxGetApp().plater()->on_filaments_delete(total_after, from_id, -1, is_mixed_snapshot);
+    wxGetApp().plater()->on_filaments_delete(total_after, from_id, merged_target_id, is_mixed_snapshot);
     
     BOOST_LOG_TRIVIAL(info) << "Mixed filament merge completed. Total filaments after: " << total_after;
     

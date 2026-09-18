@@ -56,19 +56,29 @@ else()
   set(_curl_static ON)
 endif()
 
+# On non-Apple platforms, __builtin_available(macOS ...) is invalid C syntax.
+# Pre-define HAVE_BUILTIN_AVAILABLE=0 to skip curl's try_compile test.
+# curl_internal_test() checks `if(NOT DEFINED "...")` before running the test,
+# so pre-defining the cache variable skips CurlTests.c compilation entirely.
+# On macOS, this feature is valid — let curl detect it normally.
+if (APPLE)
+  set(_curl_apple_flags "")
+else()
+  set(_curl_apple_flags -DHAVE_BUILTIN_AVAILABLE:INTERNAL=0)
+endif()
+
 Snapmaker_Orca_add_cmake_project(CURL
   # GIT_REPOSITORY      https://github.com/curl/curl.git
   # GIT_TAG             curl-7_75_0
   URL                 https://github.com/curl/curl/archive/refs/tags/curl-7_75_0.zip
   URL_HASH            SHA256=a63ae025bb0a14f119e73250f2c923f4bf89aa93b8d4fafa4a9f5353a96a765a
   DEPENDS             ${ZLIB_PKG}
-  # PATCH_COMMAND       ${GIT_EXECUTABLE} checkout -f -- . && git clean -df && 
-  #                     ${GIT_EXECUTABLE} apply --whitespace=fix ${CMAKE_CURRENT_LIST_DIR}/curl-mods.patch
   CMAKE_ARGS
     -DBUILD_TESTING:BOOL=OFF
     -DBUILD_CURL_EXE:BOOL=OFF
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DCURL_STATICLIB=${_curl_static}
+    ${_curl_apple_flags}
     ${_curl_platform_flags}
 )
 

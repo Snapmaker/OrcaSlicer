@@ -443,13 +443,29 @@ int SSLSocket_initialize(void)
 {
 	int rc = 0;
 	/*int prc;*/
+/* OpenSSL 1.1 and later manage locking internally. */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	int i;
 	int lockMemSize;
+#endif
 
 	FUNC_ENTRY;
 
 	if (handle_openssl_init)
 	{
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+		if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, NULL) != 1) {
+			rc = -1;
+			goto exit;
+		}
+		rc = 1;
+#elif OPENSSL_VERSION_NUMBER >= 0x10100000L
+		if (OPENSSL_init_ssl(0, NULL) != 1) {
+			rc = -1;
+			goto exit;
+		}
+		rc = 1;
+#else
 		if ((rc = SSL_library_init()) != 1)
 			rc = -1;
 
@@ -461,7 +477,9 @@ int SSLSocket_initialize(void)
 		OpenSSL_add_all_algorithms() as well. */
 
 		OpenSSL_add_all_algorithms();
+#endif
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		lockMemSize = CRYPTO_num_locks() * sizeof(ssl_mutex_type);
 
 		sslLocks = malloc(lockMemSize);
@@ -484,7 +502,7 @@ int SSLSocket_initialize(void)
 		CRYPTO_set_id_callback(SSLThread_id);
 #endif
 		CRYPTO_set_locking_callback(SSLLocks_callback);
-
+#endif
 	}
 
 	SSL_create_mutex(&sslCoreMutex);
@@ -502,6 +520,7 @@ void SSLSocket_terminate(void)
 
 	if (handle_openssl_init)
 	{
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 		CRYPTO_set_locking_callback(NULL);
 		ERR_free_strings();
 		EVP_cleanup();
@@ -515,6 +534,7 @@ void SSLSocket_terminate(void)
 			}
 			free(sslLocks);
 		}
+#endif
 	}
 
 	SSL_destroy_mutex(&sslCoreMutex);
@@ -1033,7 +1053,6 @@ int SSLSocket_putdatas(SSL* ssl, SOCKET socket, char* buf0, size_t buf0len, Pack
 		free(iovec.iov_base);
 	else
 	{
-		int i;
 		free(buf0);
 		for (i = 0; i < bufs.count; ++i)
 		{

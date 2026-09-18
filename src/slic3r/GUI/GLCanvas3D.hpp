@@ -2,6 +2,7 @@
 #define slic3r_GLCanvas3D_hpp_
 
 #include <stddef.h>
+#include <array>
 #include <memory>
 #include <chrono>
 #include <cstdint>
@@ -509,6 +510,44 @@ public:
     int GetHoverId();
 
 private:
+    /** @brief Rendering paths available for the selected-object highlight. */
+    enum class ESelectionHighlightMode : unsigned char
+    {
+        Disabled,
+        UnifiedFramebuffer,
+        StencilFallback
+    };
+
+    /** @brief GPU resources shared by the selection Mask, Edge, Glow and Composite passes. */
+    struct SelectionHighlightResources
+    {
+        unsigned int fullResolutionMaskFramebuffer{ 0 };
+        unsigned int fullResolutionMaskTexture{ 0 };
+        unsigned int maskFramebuffer{ 0 };
+        unsigned int maskTexture{ 0 };
+        unsigned int edgeBlurPingPongFramebuffer{ 0 };
+        unsigned int edgeBlurPingPongTexture{ 0 };
+        unsigned int edgeFramebuffer{ 0 };
+        unsigned int edgeTexture{ 0 };
+        unsigned int glowBlurPingPongFramebuffer{ 0 };
+        unsigned int glowBlurPingPongTexture{ 0 };
+        unsigned int glowFramebuffer{ 0 };
+        unsigned int glowTexture{ 0 };
+        unsigned int fullResolutionWidth{ 0 };
+        unsigned int fullResolutionHeight{ 0 };
+        unsigned int width{ 0 };
+        unsigned int height{ 0 };
+    };
+
+    /** @brief Data-driven symmetric samples for one Gaussian blur pass. */
+    struct GaussianSampleKernel
+    {
+        float centerWeight{ 1.0f };
+        std::array<float, 4> sampleOffsets{};
+        std::array<float, 4> sampleWeights{};
+        int symmetricSampleCount{ 0 };
+    };
+
     bool m_is_dark = false;
     wxGLCanvas* m_canvas;
     wxGLContext* m_context;
@@ -571,6 +610,8 @@ private:
     bool m_moving_enabled;
     bool m_dynamic_background_enabled;
     bool m_multisample_allowed;
+    bool m_selectionFramebufferAvailable{ false };
+    bool m_stencilFallbackAvailable{ false };
     bool m_moving;
     bool m_tab_down;
     bool m_camera_movement;
@@ -606,6 +647,8 @@ private:
     Tooltip m_tooltip;
     bool m_tooltip_enabled{ true };
     Slope m_slope;
+
+    SelectionHighlightResources m_selectionHighlightResources;
 
     OrientSettings m_orient_settings_fff, m_orient_settings_sla;
 
@@ -960,8 +1003,8 @@ public:
     std::vector<CustomGCode::Item>& get_custom_gcode_per_print_z() { return m_gcode_viewer.get_custom_gcode_per_print_z(); }
     size_t get_gcode_extruders_count() { return m_gcode_viewer.get_extruders_count(); }
 
-    std::vector<int> load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs);
-    std::vector<int> load_object(const Model& model, int obj_idx);
+    std::vector<int> load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs, bool lodEnabled = true);
+    std::vector<int> load_object(const Model& model, int obj_idx, bool lodEnabled = true);
 
     void mirror_selection(Axis axis);
 
@@ -1163,6 +1206,55 @@ public:
 
 private:
     bool _is_shown_on_screen() const;
+
+    /** @brief Selects and prepares the selection highlight path for the current frame. */
+    ESelectionHighlightMode ResolveSelectionHighlightMode();
+
+    /**
+     * @brief Creates or resizes the selection highlight framebuffer resources.
+     * @param canvasSize Physical framebuffer dimensions in pixels.
+     * @return true when the Mask, Edge and Glow framebuffers are ready.
+     */
+    bool EnsureSelectionHighlightResources(const Size& canvasSize);
+
+    /** @brief Renders selected volumes at full resolution and downscales the selection Mask. */
+    bool RenderSelectionHighlightMask();
+
+    /**
+     * @brief Builds a normalized Gaussian kernel expressed in source-texture texels.
+     * @param blurRadius Blur radius in target-framebuffer pixels.
+     * @param sourceExtent Source texture width or height along the blur direction.
+     * @param targetExtent Target framebuffer width or height along the blur direction.
+     * @param outputKernel Generated kernel used by RenderSelectionGaussianPass().
+     * @return true when a valid normalized kernel was generated.
+     */
+    static bool BuildGaussianSampleKernel(float blurRadius, unsigned int sourceExtent,
+                                          unsigned int targetExtent, GaussianSampleKernel& outputKernel);
+
+    /**
+     * @brief Renders one alpha-channel Gaussian blur pass using the currently bound Gaussian shader.
+     * @param targetFramebuffer Framebuffer that receives the blurred texture.
+     * @param sourceTexture Texture whose alpha channel is blurred.
+     * @param renderSize Physical dimensions of the target framebuffer.
+     * @param sampleStepUv Normalized UV distance of one source-texture texel along the blur direction.
+     * @param kernel Normalized symmetric Gaussian samples generated for this pass.
+     * @return true when the pass was rendered successfully.
+     */
+    bool RenderSelectionGaussianPass(unsigned int targetFramebuffer, unsigned int sourceTexture,
+                                     const Size& renderSize, const Vec2f& sampleStepUv,
+                                     const GaussianSampleKernel& kernel);
+
+    /** @brief Generates the main selection edge and its outer Glow from the selection Mask. */
+    bool RenderSelectionOutlineTextures();
+
+    /** @brief Composites the linearly upsampled selection Fill and Outline over the main scene. */
+    void CompositeSelectionHighlight();
+
+    /** @brief Renders an occlusion-independent selection Outline through the default framebuffer stencil. */
+    void RenderSelectionStencilFallback();
+
+    /** @brief Releases all selection highlight framebuffer resources. */
+    void ReleaseSelectionHighlightResources();
 
     void _switch_toolbars_icon_filename();
     bool _init_toolbars();

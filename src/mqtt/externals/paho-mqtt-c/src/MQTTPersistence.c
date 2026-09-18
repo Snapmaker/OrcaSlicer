@@ -187,7 +187,7 @@ int MQTTPersistence_restorePackets(Clients *c)
 	int rc = 0;
 	char **msgkeys = NULL,
 		 *buffer = NULL;
-	int nkeys, buflen;
+	int nkeys = 0, buflen;
 	int i = 0;
 	int msgs_sent = 0;
 	int msgs_rcvd = 0;
@@ -353,7 +353,6 @@ int MQTTPersistence_restorePackets(Clients *c)
 exit:
 	if (msgkeys)
 	{
-		int i = 0;
 		for (i = 0; i < nkeys; ++i)
 		{
 			if (msgkeys[i])

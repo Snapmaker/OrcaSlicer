@@ -39,6 +39,13 @@ src/Snapmaker_Orca-doc/
 resources/profiles/user/default
 *.code-workspace
 deps_src/build/
+deps_src_github/
+gitlab_deps_src/
+gitlab_deps/
+gitlab_vendor/
+gitlab_build*/
+Orca-deps-wxWidgets/
+sentry-native/
 .claude/
 .hermes/
 CLAUDE.md

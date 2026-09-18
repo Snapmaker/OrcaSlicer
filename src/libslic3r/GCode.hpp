@@ -81,11 +81,15 @@ public:
         const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
         const std::vector<std::vector<WipeTower::ToolChangeResult>> &local_z_tool_changes,
         const std::vector<std::vector<WipeTower::box_coordinates>>  &local_z_reserve_boxes,
-        const WipeTower::ToolChangeResult                           &final_purge) :
+        const WipeTower::ToolChangeResult                           &final_purge,
+        const float                                                  wipe_tower_depth,
+        const BoundingBoxf                                           &wipe_tower_bbx) :
         m_left(/*float(print_config.wipe_tower_x.value)*/ 0.f),
         m_right(float(/*print_config.wipe_tower_x.value +*/ print_config.prime_tower_width.value)),
         m_wipe_tower_pos(float(print_config.wipe_tower_x.get_at(plate_idx)), float(print_config.wipe_tower_y.get_at(plate_idx))),
         m_wipe_tower_rotation(float(print_config.wipe_tower_rotation_angle)),
+        m_wipe_tower_depth(wipe_tower_depth),
+        m_wipe_tower_bbx(wipe_tower_bbx),
         m_extruder_offsets(print_config.extruder_offset.values),
         m_priming(priming),
         m_tool_changes(tool_changes),
@@ -122,15 +126,20 @@ public:
     void set_is_first_print(bool is) { m_is_first_print = is; }
 
     bool enable_timelapse_print() const { return m_enable_timelapse_print; }
+    void set_wipe_tower_bbx(const BoundingBoxf& bbx) { m_wipe_tower_bbx = bbx; }
+    void set_rib_offset(const Vec2f& rib_offset) { m_rib_offset = rib_offset; }
 
 private:
     WipeTowerIntegration& operator=(const WipeTowerIntegration&);
     std::string append_tcr(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
     std::string append_tcr2(GCode &gcodegen, const WipeTower::ToolChangeResult &tcr, int new_extruder_id, double z = -1.) const;
+    Polyline detour_around_wipe_tower(const Point &start_pos, 
+        const Point &target_pos, const BoundingBox &avoid_bbx) const;
+    Polyline generate_path_to_wipe_tower(const Point& start_pos, const Point& end_pos, 
+        const BoundingBox& avoid_polygon, const BoundingBox& printer_bbx) const;
 
     // Postprocesses gcode: rotates and moves G1 extrusions and returns result
     std::string post_process_wipe_tower_moves(const WipeTower::ToolChangeResult& tcr, const Vec2f& translation, float angle) const;
-    // Left / right edges of the wipe tower, for the planning of wipe moves.
 
     Vec2d extruder_offset_at(size_t extruder_id) const;
 
@@ -139,6 +148,7 @@ private:
     const float                                                  m_right;
     const Vec2f                                                  m_wipe_tower_pos;
     const float                                                  m_wipe_tower_rotation;
+    const float                                                  m_wipe_tower_depth;
     const std::vector<Vec2d>                                     m_extruder_offsets;
 
     // Reference to cached values at the Printer class.
@@ -159,6 +169,8 @@ private:
     bool                                                         m_single_extruder_multi_material;
     bool                                                         m_enable_timelapse_print;
     bool                                                         m_is_first_print;
+    BoundingBoxf m_wipe_tower_bbx;
+    Vec2f m_rib_offset{ Vec2f(0, 0) };
 };
 
 class ColorPrintColors
@@ -248,7 +260,7 @@ public:
     std::string     travel_to(const Point& point, ExtrusionRole role, std::string comment, double z = DBL_MAX);
     bool            needs_retraction(const Polyline& travel, ExtrusionRole role, LiftType& lift_type);
     std::string     retract(bool toolchange = false, bool is_last_retraction = false, LiftType lift_type = LiftType::NormalLift, ExtrusionRole role = erNone);
-    std::string     unretract() { return m_writer.unlift() + m_writer.unretract(); }
+    std::string     unretract(float extra_retract = 0.f) { return m_writer.unlift() + m_writer.unretract(extra_retract); }
     std::string     set_extruder(unsigned int extruder_id, double print_z, bool by_object=false);
     bool is_BBL_Printer();
 
@@ -376,6 +388,13 @@ private:
 
     //BBS
     void check_placeholder_parser_failed();
+
+    /*
+     * Build scalar process options for custom G-code evaluation.
+     * Flow-variant vectors are resolved for current_extruder_id, and explicit overrides take precedence.
+    */
+    DynamicConfig build_placeholder_process_config(unsigned int current_extruder_id,
+                                                   const DynamicConfig *config_override) const;
 
     void            set_last_pos(const Point &pos) { m_last_pos = pos; m_last_pos_defined = true; }
     bool            last_pos_defined() const { return m_last_pos_defined; }
@@ -634,6 +653,15 @@ private:
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);
+
+    // Snapmaker: flow variant — read a process-domain vector option
+    template<typename VectorOption>
+    auto process_flow_value(const VectorOption &opt) const -> decltype(opt.get_at(0))
+    {
+        return get_value_at(m_config, opt, ConfigFlowDomain::Process,
+                            m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0);
+    }
+
     void print_machine_envelope(GCodeOutputStream &file, Print &print);
     void _print_first_layer_bed_temperature(GCodeOutputStream &file, Print &print, const std::string &gcode, bool wait);
     void _print_first_layer_extruder_temperatures(GCodeOutputStream &file, Print &print, const std::string &gcode, unsigned int first_printing_extruder_id, bool wait);

@@ -140,8 +140,10 @@ wxBitmap ModelNode::get_bitmap(const wxString& color)
 // option node
 ModelNode::ModelNode(ModelNode* parent, const wxString& text, const wxString& old_value, const wxString& new_value) :
     m_parent(parent),
-    m_old_color(old_value.StartsWith("#") ? old_value : ""),
-    m_new_color(new_value.StartsWith("#") ? new_value : ""),
+    // A joined multi-value string ("#FF0000, #00FF00") starts with '#' too,
+    // so only take the color-swatch path when the value decodes as one color.
+    m_old_color(old_value.StartsWith("#") && can_decode_color(into_u8(old_value)) ? old_value : ""),
+    m_new_color(new_value.StartsWith("#") && can_decode_color(into_u8(new_value)) ? new_value : ""),
     m_icon_name("empty"),
     m_text(text),
     m_old_value(old_value),
@@ -1158,8 +1160,16 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
     const std::vector<std::string>& names = def.enum_labels;//ConfigOptionEnum<T>::get_enum_names();
     int val = 0;
 
-    if (idx >= 0)
-        val = dynamic_cast<const ConfigOptionInts*>(config.option(opt_key))->get_at(idx);
+    if (idx >= 0) {
+        const auto* values = dynamic_cast<const ConfigOptionInts*>(config.option(opt_key));
+        if (values == nullptr || size_t(idx) >= values->size())
+            return _L("Undef");
+        val = values->values[idx];
+        // A nil entry of a nullable enum array (e.g. an unchecked retraction
+        // override) is not a valid index into enum_labels.
+        if (values->nullable() && val == ConfigOptionInts::nil_value())
+            return _L("Undef");
+    }
     else
         val = config.option(opt_key)->getInt();
 
@@ -1175,7 +1185,8 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
             }
         return _L("Undef");
     }
-    return from_u8(_utf8(names[val]));
+    // Unknown int values (older presets, stray entries) must not index out of enum_labels.
+    return (val >= 0 && size_t(val) < names.size()) ? from_u8(_utf8(names[val])) : _L("Undef");
 }
 
 // BBS
@@ -1203,6 +1214,33 @@ static wxString get_full_label(std::string opt_key, const DynamicPrintConfig& co
     if (opt == nullptr)
         return from_u8(opt_key);
     return opt->full_label.empty() ? opt->label : opt->full_label;
+}
+
+// Multi-value (array) options, e.g. the per-flow-variant presets, hold several
+// values per key. Join every element so a differing element is actually shown
+// instead of silently displaying only the first one.
+template<typename Vec, typename Format>
+static wxString join_vector_values(const Vec* values, Format format_element)
+{
+    if (values == nullptr || values->empty())
+        return _L("Undef");
+
+    std::string out;
+    for (size_t i = 0; i < values->size(); ++i) {
+        if (i > 0)
+            out += ", ";
+        out += format_element(values->get_at(i));
+    }
+    return from_u8(out);
+}
+
+static std::string format_int_value(int value)        { return (boost::format("%1%") % value).str(); }
+static std::string format_float_value(double value)   { return into_u8(double_to_string(value)); }
+static std::string format_percent_value(double value) { return into_u8(double_to_string(value)) + "%"; }
+static std::string format_bool_value(bool value)      { return value ? "true" : "false"; }
+static std::string format_float_or_percent_value(const FloatOrPercent& value)
+{
+    return into_u8(double_to_string(value.value)) + (value.percent ? "%" : "");
 }
 
 static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& config)
@@ -1237,71 +1275,56 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
     case coInts: {
         if (is_nullable) {
             auto values = config.opt<ConfigOptionIntsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%") % values->get_at(opt_idx)).str());
+            if (orig_opt_idx >= 0)
+                return opt_idx < values->size() ? from_u8(format_int_value(values->get_at(opt_idx))) : _L("Undef");
+            return join_vector_values(values, format_int_value);
         }
-        else {
-            auto values = config.opt<ConfigOptionInts>(opt_key);
-            if (orig_opt_idx >= 0 && orig_opt_idx < values->size()) {
-                return from_u8((boost::format("%1%") % values->get_at(opt_idx)).str());
-            }
-            else {
-                std::string value_str;
-                for (int i = 0; i < values->size(); i++) {
-                    value_str += std::to_string(values->get_at(i));
-                    if (i != values->size() - 1) {
-                        value_str += ",";
-                    }
-                }
-                return from_u8(value_str);
-            }
-        }
-        return _L("Undef");
+        auto values = config.opt<ConfigOptionInts>(opt_key);
+        if (orig_opt_idx >= 0)
+            return orig_opt_idx < values->size() ? from_u8(format_int_value(values->get_at(opt_idx))) : _L("Undef");
+        return join_vector_values(values, format_int_value);
     }
     case coBool:
         return config.opt_bool(opt_key) ? "true" : "false";
     case coBools: {
         if (is_nullable) {
             auto values = config.opt<ConfigOptionBoolsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return values->get_at(opt_idx) ? "true" : "false";
+            if (orig_opt_idx >= 0)
+                return opt_idx < values->size() ? wxString(values->get_at(opt_idx) ? "true" : "false") : _L("Undef");
+            return join_vector_values(values, format_bool_value);
         }
-        else {
-            auto values = config.opt<ConfigOptionBools>(opt_key);
-            if (opt_idx < values->size())
-                return values->get_at(opt_idx) ? "true" : "false";
-        }
-        return _L("Undef");
+        auto values = config.opt<ConfigOptionBools>(opt_key);
+        if (orig_opt_idx >= 0)
+            return opt_idx < values->size() ? wxString(values->get_at(opt_idx) ? "true" : "false") : _L("Undef");
+        return join_vector_values(values, format_bool_value);
     }
     case coPercent:
         return from_u8((boost::format("%1%%%") % int(config.optptr(opt_key)->getFloat())).str());
     case coPercents: {
         if (is_nullable) {
             auto values = config.opt<ConfigOptionPercentsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%%%") % values->get_at(opt_idx)).str());
+            if (orig_opt_idx >= 0)
+                return opt_idx < values->size() ? from_u8(format_percent_value(values->get_at(opt_idx))) : _L("Undef");
+            return join_vector_values(values, format_percent_value);
         }
-        else {
-            auto values = config.opt<ConfigOptionPercents>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%%%") % values->get_at(opt_idx)).str());
-        }
-        return _L("Undef");
+        auto values = config.opt<ConfigOptionPercents>(opt_key);
+        if (orig_opt_idx >= 0)
+            return opt_idx < values->size() ? from_u8(format_percent_value(values->get_at(opt_idx))) : _L("Undef");
+        return join_vector_values(values, format_percent_value);
     }
     case coFloat:
         return double_to_string(config.opt_float(opt_key));
     case coFloats: {
         if (is_nullable) {
             auto values = config.opt<ConfigOptionFloatsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return double_to_string(values->get_at(opt_idx));
+            if (orig_opt_idx >= 0)
+                return opt_idx < values->size() ? from_u8(format_float_value(values->get_at(opt_idx))) : _L("Undef");
+            return join_vector_values(values, format_float_value);
         }
-        else {
-            auto values = config.opt<ConfigOptionFloats>(opt_key);
-            if (opt_idx < values->size())
-                return double_to_string(values->get_at(opt_idx));
-        }
-        return _L("Undef");
+        auto values = config.opt<ConfigOptionFloats>(opt_key);
+        if (orig_opt_idx >= 0)
+            return opt_idx < values->size() ? from_u8(format_float_value(values->get_at(opt_idx))) : _L("Undef");
+        return join_vector_values(values, format_float_value);
     }
     case coString:
         return from_u8(config.opt_string(opt_key));
@@ -1316,8 +1339,11 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
                 out.RemoveLast(1);
                 return out;
             }
-            if (!strings->empty() && opt_idx < strings->values.size())
-                return from_u8(strings->get_at(opt_idx));
+            if (!strings->empty()) {
+                if (orig_opt_idx >= 0)
+                    return opt_idx < strings->values.size() ? from_u8(strings->get_at(opt_idx)) : _L("Undef");
+                return join_vector_values(strings, [](const std::string& value) { return value; });
+            }
         }
         break;
         }
@@ -1326,6 +1352,18 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
         if (opt)
             out = double_to_string(opt->value) + (opt->percent ? "%" : "");
         return out;
+    }
+    case coFloatsOrPercents: {
+        // The nullable and non-nullable variants are distinct template
+        // instantiations; address them through their common base.
+        const ConfigOptionVector<FloatOrPercent>* values = dynamic_cast<const ConfigOptionFloatsOrPercents*>(raw_opt);
+        if (values == nullptr)
+            values = dynamic_cast<const ConfigOptionFloatsOrPercentsNullable*>(raw_opt);
+        if (values == nullptr)
+            break;
+        if (orig_opt_idx >= 0)
+            return orig_opt_idx < values->size() ? from_u8(format_float_or_percent_value(values->get_at(orig_opt_idx))) : _L("Undef");
+        return join_vector_values(values, format_float_or_percent_value);
     }
     case coEnum: {
         return get_string_from_enum(opt_key, config,
@@ -1340,16 +1378,27 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
             ;
     }
     case coEnums: {
-        return get_string_from_enum(opt_key, config,
-            opt_key == "top_surface_pattern" ||
-            opt_key == "bottom_surface_pattern" ||
-            opt_key == "internal_solid_infill_pattern" ||
-            opt_key == "sparse_infill_pattern" ||
-            opt_key == "ironing_pattern" ||
-            opt_key == "support_ironing_pattern" ||
-            opt_key == "support_pattern" ||
-            opt_key == "support_interface_pattern"
-            , opt_idx);
+        const bool is_infill = opt_key == "top_surface_pattern" ||
+                               opt_key == "bottom_surface_pattern" ||
+                               opt_key == "internal_solid_infill_pattern" ||
+                               opt_key == "sparse_infill_pattern" ||
+                               opt_key == "ironing_pattern" ||
+                               opt_key == "support_ironing_pattern" ||
+                               opt_key == "support_pattern" ||
+                               opt_key == "support_interface_pattern";
+        if (orig_opt_idx < 0) {
+            const auto* values = dynamic_cast<const ConfigOptionInts*>(raw_opt);
+            if (values != nullptr && !values->empty()) {
+                std::string joined;
+                for (size_t i = 0; i < values->size(); ++i) {
+                    if (i > 0)
+                        joined += ", ";
+                    joined += into_u8(get_string_from_enum(opt_key, config, is_infill, int(i)));
+                }
+                return from_u8(joined);
+            }
+        }
+        return get_string_from_enum(opt_key, config, is_infill, orig_opt_idx);
     }
     case coPoint: {
         Vec2d val = config.opt<ConfigOptionPoint>(opt_key)->value;
@@ -1632,6 +1681,32 @@ std::string UnsavedChangesDialog::subreplace(std::string resource_str, std::stri
     return dst_str;
 }
 
+static wxString get_flow_variant_string_value(const std::string& opt_key,
+                                              const DynamicPrintConfig& config,
+                                              const DynamicPrintConfig& edited_config,
+                                              ConfigFlowDomain domain)
+{
+    const size_t separator = opt_key.find('#');
+    if (separator == std::string::npos)
+        return get_string_value(opt_key, config);
+
+    const auto* edited_modes = edited_config.option<ConfigOptionStrings>(flow_support_key(domain));
+    const size_t edited_index = static_cast<size_t>(atoi(opt_key.c_str() + separator + 1));
+    if (edited_modes == nullptr || edited_index >= edited_modes->values.size())
+        return get_string_value(opt_key, config);
+
+    const auto* modes = config.option<ConfigOptionStrings>(flow_support_key(domain));
+    if (modes == nullptr)
+        return _L("N/A");
+
+    const auto mode = std::find(modes->values.begin(), modes->values.end(), edited_modes->values[edited_index]);
+    if (mode == modes->values.end())
+        return _L("N/A");
+
+    const size_t config_index = size_t(std::distance(modes->values.begin(), mode));
+    return get_string_value(get_pure_opt_key(opt_key) + "#" + std::to_string(config_index), config);
+}
+
 void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* presets_)
 {
     Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
@@ -1665,6 +1740,28 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         // Collect dirty options.
         const bool deep_compare = (type == Preset::TYPE_PRINTER || type == Preset::TYPE_SLA_MATERIAL);
         auto dirty_options = presets->current_dirty_options(deep_compare);
+        const std::vector<std::string>* flow_options = nullptr;
+        ConfigFlowDomain flow_domain = ConfigFlowDomain::Process;
+        if (type == Preset::TYPE_FILAMENT)
+        {
+            flow_domain = ConfigFlowDomain::Filament;
+            flow_options = &filament_flow_variant_options();
+        }
+        else if (type == Preset::TYPE_PRINT)
+        {
+            flow_options = &process_flow_variant_options();
+        }
+
+        if (flow_options != nullptr)
+        {
+            dirty_options.erase(std::remove_if(dirty_options.begin(), dirty_options.end(), [flow_options](const std::string& key) {
+                return std::find(flow_options->begin(), flow_options->end(), key) != flow_options->end();
+            }), dirty_options.end());
+
+            const std::vector<std::string> flow_dirty_options =
+                presets->current_flow_variant_dirty_options(flow_domain, *flow_options);
+            dirty_options.insert(dirty_options.end(), flow_dirty_options.begin(), flow_dirty_options.end());
+        }
 
         // process changes of extruders count
         if (type == Preset::TYPE_PRINTER && old_pt == ptFFF &&
@@ -1684,31 +1781,38 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         }
 
         for (const std::string& opt_key : dirty_options) {
-            const Search::Option& option = searcher.get_option(opt_key, type);
-            if (option.opt_key() != opt_key) {
+            const std::string pure_opt_key = get_pure_opt_key(opt_key);
+            const Search::Option& option = searcher.get_option(pure_opt_key, type);
+            const bool flow_variant = flow_options != nullptr && pure_opt_key != opt_key &&
+                std::find(flow_options->begin(), flow_options->end(), pure_opt_key) != flow_options->end();
+            const wxString old_value = flow_variant ?
+                get_flow_variant_string_value(opt_key, old_config, new_config, flow_domain) :
+                get_string_value(opt_key, old_config);
+            const wxString new_value = get_string_value(opt_key, new_config);
+            if (option.opt_key() != pure_opt_key) {
                 // Only show the fallback for user-facing option types
                 // (bool/float/int/enum). Internal keys like IDs and
                 // serialized blobs are coString — skip those silently.
-                const ConfigOption* o = old_config.option(opt_key);
-                if (!o) o = new_config.option(opt_key);
+                const ConfigOption* o = old_config.option(pure_opt_key);
+                if (!o) o = new_config.option(pure_opt_key);
                 if (!o || o->type() == coString || o->type() == coStrings)
                     continue;
-                wxString label = from_u8(opt_key);
+                wxString label = from_u8(pure_opt_key);
                 if (old_config.def()) {
-                    const ConfigOptionDef* def = old_config.def()->get(opt_key);
+                    const ConfigOptionDef* def = old_config.def()->get(pure_opt_key);
                     if (def && !def->label.empty())
                         label = def->label;
                 }
                 PresetItem pi = {type, opt_key,
                     _L("Other"), wxEmptyString,
                     label,
-                    get_string_value(opt_key, old_config),
-                    get_string_value(opt_key, new_config)};
+                    old_value,
+                    new_value};
                 m_presetitems.push_back(pi);
                 continue;
             }
 
-            PresetItem pi = {type, opt_key, option.category_local, option.group_local, option.label_local, get_string_value(opt_key, old_config), get_string_value(opt_key, new_config)};
+            PresetItem pi = {type, opt_key, option.category_local, option.group_local, option.label_local, old_value, new_value};
             m_presetitems.push_back(pi);
 
         }
@@ -2226,7 +2330,19 @@ void DiffPresetDialog::update_tree()
 
         m_tree->model->AddPreset(type, "\"" + from_u8(left_preset->name) + "\" vs \"" + from_u8(right_preset->name) + "\"", left_pt);
 
-        const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
+        // No tab is registered for some preset types (e.g. TYPE_SLA_PRINT) - the
+        // map may not exist at all.
+        static const std::map<wxString, std::string> no_category_icons;
+        Tab* type_tab = wxGetApp().get_tab(type);
+        const std::map<wxString, std::string>& category_icon_map = type_tab ? type_tab->get_category_icon_map() : no_category_icons;
+        // The map is keyed by the tab's page titles, which don't always contain the
+        // keys used below (the printer tab's "General" page is named "Basic
+        // information", and an option's category need not be a page title at all) -
+        // a missing entry must not throw out_of_range.
+        auto category_icon = [&category_icon_map](const wxString& category) {
+            const auto it = category_icon_map.find(category);
+            return it == category_icon_map.end() ? std::string() : it->second;
+        };
 
         // process changes of extruders count
         if (type == Preset::TYPE_PRINTER && left_pt == ptFFF &&
@@ -2235,7 +2351,10 @@ void DiffPresetDialog::update_tree()
             wxString left_val = from_u8((boost::format("%1%") % left_config.opt<ConfigOptionStrings>("extruder_colour")->values.size()).str());
             wxString right_val = from_u8((boost::format("%1%") % right_congig.opt<ConfigOptionStrings>("extruder_colour")->values.size()).str());
 
-            m_tree->Append("extruders_count", type, "General", "Capabilities", local_label, left_val, right_val, category_icon_map.at("General"));
+            std::string extruders_icon = category_icon("Basic information");
+            if (extruders_icon.empty())
+                extruders_icon = category_icon("General");
+            m_tree->Append("extruders_count", type, "General", "Capabilities", local_label, left_val, right_val, extruders_icon);
         }
 
         for (const std::string& opt_key : dirty_options) {
@@ -2252,7 +2371,7 @@ void DiffPresetDialog::update_tree()
                 continue;
             }
             m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
-                left_val, right_val, category_icon_map.at(option.category));
+                left_val, right_val, category_icon(option.category));
         }
     }
 

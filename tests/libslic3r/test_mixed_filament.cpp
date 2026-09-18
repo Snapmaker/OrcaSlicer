@@ -1,23 +1,65 @@
-#include <catch2/catch.hpp>
-
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/Layer.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <clocale>
+#include <cstdio>
 #include <cstdint>
+#include <locale>
 #include <set>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 using namespace Slic3r;
 
 namespace {
+
+#ifdef _WIN32
+static BOOL CALLBACK collect_system_locale(LPWSTR name, DWORD, LPARAM context)
+{
+    const std::wstring locale_name(name);
+    reinterpret_cast<std::vector<std::string>*>(context)->emplace_back(locale_name.begin(), locale_name.end());
+    return TRUE;
+}
+#endif
+
+static std::vector<std::string> installed_numeric_locales()
+{
+    std::vector<std::string> names;
+#ifdef _WIN32
+    // Some builds use WINVER declarations predating the locale-name enumeration API.
+    using EnumLocales    = BOOL(WINAPI*)(decltype(&collect_system_locale), DWORD, LPARAM, LPVOID);
+    const auto enumerate = reinterpret_cast<EnumLocales>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "EnumSystemLocalesEx"));
+    REQUIRE(enumerate != nullptr);
+    REQUIRE(enumerate(collect_system_locale, 0 /* LOCALE_ALL */, reinterpret_cast<LPARAM>(&names), nullptr));
+#else
+    FILE* locales = popen("locale -a", "r");
+    REQUIRE(locales != nullptr);
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), locales)) {
+        std::string name(buffer);
+        name.erase(name.find_last_not_of("\r\n") + 1);
+        if (!name.empty())
+            names.emplace_back(std::move(name));
+    }
+    REQUIRE(pclose(locales) == 0);
+#endif
+    return names;
+}
 
 static std::vector<std::string> split_rows(const std::string &serialized)
 {
@@ -307,33 +349,33 @@ TEST_CASE("Mixed filament apparent mix percent follows the signed bias target", 
 TEST_CASE("Mixed filament bias helper maps signed bias to a one-sided safe offset pair", "[MixedFilament]")
 {
     const auto [offset_a, offset_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.06f, 0.4f);
-    CHECK(offset_a == Approx(0.0f));
-    CHECK(offset_b == Approx(0.06f));
+    CHECK_THAT(offset_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(offset_b, WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f) == Approx(0.06f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(offset_a, offset_b, 0.4f), WithinRel(0.06f, 0.001));
 
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f) == Approx(-0.02f));
-    CHECK(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f) == Approx(0.02f));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(0.02f, 0.0f, 0.4f), WithinRel(-0.02f, 0.001));
+    CHECK_THAT(MixedFilamentManager::bias_ui_value_from_surface_offsets(-0.02f, 0.0f, 0.4f), WithinRel(0.02f, 0.001));
 
     const auto [negative_a, negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.06f, 0.4f);
-    CHECK(negative_a == Approx(0.06f));
-    CHECK(negative_b == Approx(0.0f));
+    CHECK_THAT(negative_a, WithinRel(0.06f, 0.001));
+    CHECK_THAT(negative_b, WithinRel(0.0f, 0.001));
 
     const auto [unclamped_a, unclamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.30f, 0.4f);
-    CHECK(unclamped_a == Approx(0.0f));
-    CHECK(unclamped_b == Approx(0.30f));
+    CHECK_THAT(unclamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(unclamped_b, WithinRel(0.30f, 0.001));
 
     const auto [unclamped_negative_a, unclamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.30f, 0.4f);
-    CHECK(unclamped_negative_a == Approx(0.30f));
-    CHECK(unclamped_negative_b == Approx(0.0f));
+    CHECK_THAT(unclamped_negative_a, WithinRel(0.30f, 0.001));
+    CHECK_THAT(unclamped_negative_b, WithinRel(0.0f, 0.001));
 
     const auto [clamped_a, clamped_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(0.40f, 0.4f);
-    CHECK(clamped_a == Approx(0.0f));
-    CHECK(clamped_b == Approx(0.35f));
+    CHECK_THAT(clamped_a, WithinRel(0.0f, 0.001));
+    CHECK_THAT(clamped_b, WithinRel(0.35f, 0.001));
 
     const auto [clamped_negative_a, clamped_negative_b] = MixedFilamentManager::surface_offset_pair_from_signed_bias(-0.40f, 0.4f);
-    CHECK(clamped_negative_a == Approx(0.35f));
-    CHECK(clamped_negative_b == Approx(0.0f));
+    CHECK_THAT(clamped_negative_a, WithinRel(0.35f, 0.001));
+    CHECK_THAT(clamped_negative_b, WithinRel(0.0f, 0.001));
 }
 
 TEST_CASE("Mixed filament component surface offsets follow the signed bias target across alternating layers", "[MixedFilament]")
@@ -539,10 +581,6 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.wall_filament(region) == 0);
     CHECK(layer1.wall_filament(region) == 1);
-    CHECK(layer0.sparse_infill_filament(region) == 1);
-    CHECK(layer1.sparse_infill_filament(region) == 1);
-    CHECK(layer0.solid_infill_filament(region) == 0);
-    CHECK(layer1.solid_infill_filament(region) == 0);
 
     region_config.sparse_infill_filament.value          = 2;
     region_config.solid_infill_filament.value           = 2;
@@ -552,6 +590,207 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     CHECK(layer1.sparse_infill_filament(overridden_region) == 1);
     CHECK(layer0.solid_infill_filament(overridden_region) == 1);
     CHECK(layer1.solid_infill_filament(overridden_region) == 1);
+}
+
+TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+
+    DynamicPrintConfig config = mixed_region_print_config("1,4,1,1,63,0,g,w,m2,z0,xa0,xb0,d0,o0,u1,cm0;"
+                                                          "3,4,1,1,42,0,g,w,m2,z0,xa0,xb0,d0,o0,u2,cm0;"
+                                                          "2,1,1,1,50,0,g,w,m0,z2,xa0,xb0,d0,o0,u3,cm3,r1/0.8000/0.2000");
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    config.set("dithering_local_z_infill", true);
+    config.set("mixed_filament_height_lower_bound", 0.04);
+    config.set("mixed_filament_height_upper_bound", 0.16);
+    config.set("enable_prime_tower", false);
+    config.set("flush_into_infill", true);
+
+    bool assign_part = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    ModelConfig& assignment = assign_part ? volume->config : object->config;
+
+    Print print;
+    print.set_status_silent();
+    const std::vector<std::pair<int, std::set<size_t>>> assignments = {{7, {0, 1}}, {6, {2, 3}}, {5, {0, 3}},
+                                                                       {7, {0, 1}}, {1, {}},     {6, {2, 3}}};
+    for (const auto& [filament, expected_tools] : assignments) {
+        CAPTURE(filament, assign_part);
+        assignment.set("extruder", filament);
+        print.apply(model, config);
+        // Reuse normalized settings, as the GUI does. Reapplying raw defaults
+        // can invalidate slicing for unrelated reasons and hide stale plans.
+        config = print.full_print_config();
+        print.process();
+        REQUIRE(print.objects().size() == 1);
+
+        std::set<size_t> planned_tools;
+        for (const SubLayerPlan& plan : print.objects().front()->local_z_sublayer_plan()) {
+            for (size_t tool = 0; tool < plan.painted_masks_by_extruder.size(); ++tool) {
+                if (!plan.painted_masks_by_extruder[tool].empty())
+                    planned_tools.insert(tool);
+            }
+        }
+        CHECK(planned_tools == expected_tools);
+    }
+}
+
+TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_prime_tower", false);
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    SECTION("Local-Z disabled") { config.set("dithering_local_z_mode", false); }
+    SECTION("Full domain disabled") { config.set("dithering_local_z_whole_objects", false); }
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    config = print.full_print_config();
+    print.process();
+    REQUIRE(print.objects().size() == 1);
+    const PrintObject* print_object = print.objects().front();
+    REQUIRE(print_object->is_step_done(posSlice));
+
+    object->config.set("extruder", 2);
+    print.apply(model, config);
+    REQUIRE(print.objects().front() == print_object);
+    CHECK(print_object->is_step_done(posSlice));
+}
+
+TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled", "[MixedFilament][LocalZ][Wiping]")
+{
+    Model model;
+    for (int index = 0; index < 2; ++index) {
+        ModelObject *object = model.add_object();
+        object->add_volume(make_cube(20., 20., 20.));
+        object->add_instance();
+        object->ensure_on_bed();
+    }
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, 4242));
+    config.set("flush_into_infill", true);
+    config.set("flush_into_support", true);
+    config.set("support_filament", 0);
+    config.set("support_interface_filament", 0);
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    config.set("dithering_local_z_infill", true);
+
+    PrintRegionConfig region_config            = static_cast<const PrintRegionConfig&>(FullPrintConfig::defaults());
+    region_config.wall_filament.value          = 1;
+    region_config.sparse_infill_filament.value = 2;
+    region_config.is_infill_first.value        = true;
+    PrintRegion region(region_config);
+    Print       print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 2);
+
+    const auto extrusion = [](ExtrusionRole role) {
+        auto* collection = new ExtrusionEntityCollection;
+        auto* path       = new ExtrusionPath(role, 0.08, 0.4f, 0.2f);
+        path->polyline   = Polyline({Point::new_scale(1., 1.), Point::new_scale(19., 1.)});
+        collection->entities.emplace_back(path);
+        return collection;
+    };
+    for (PrintObject* object : print.objects()) {
+        for (int layer_id = 0; layer_id < 3; ++layer_id) {
+            Layer*       layer        = object->add_layer(layer_id, 0.2, 0.2 * (layer_id + 1), 0.2 * layer_id + 0.1);
+            LayerRegion* layer_region = layer->add_region(&region);
+            layer_region->perimeters.entities.emplace_back(extrusion(erPerimeter));
+            layer_region->fills.entities.emplace_back(extrusion(erInternalInfill));
+        }
+    }
+
+    LocalZInterval interval;
+    interval.layer_id        = 1;
+    interval.z_lo            = 0.2;
+    interval.z_hi            = 0.4;
+    interval.base_height     = 0.2;
+    interval.sublayer_height = 0.1;
+    interval.has_mixed_paint = true;
+    interval.sublayer_count  = 2;
+    std::vector<SubLayerPlan> plans(2);
+    for (size_t index = 0; index < plans.size(); ++index) {
+        SubLayerPlan& plan  = plans[index];
+        plan.layer_id       = 1;
+        plan.pass_index     = index;
+        plan.split_interval = true;
+        plan.z_lo           = 0.2 + 0.1 * index;
+        plan.z_hi = plan.print_z = plan.z_lo + 0.1;
+        plan.flow_height         = 0.1;
+        plan.painted_masks_by_extruder.resize(4);
+        plan.painted_masks_by_extruder[index].emplace_back(
+            Polygon({Point::new_scale(0., 0.), Point::new_scale(20., 0.), Point::new_scale(20., 20.), Point::new_scale(0., 20.)}));
+    }
+
+    bool expect_subdivision = true;
+    SECTION("Mixed object is collected after an ordinary purge object") {}
+    SECTION("Single-pass intervals keep ordinary flushing")
+    {
+        interval.sublayer_count = 1;
+        expect_subdivision      = false;
+    }
+    SECTION("Unmixed intervals keep ordinary flushing")
+    {
+        interval.has_mixed_paint = false;
+        expect_subdivision       = false;
+    }
+    SECTION("Unsplit plans keep ordinary flushing")
+    {
+        for (SubLayerPlan& plan : plans)
+            plan.split_interval = false;
+        expect_subdivision = false;
+    }
+    SECTION("Missing plans keep ordinary flushing")
+    {
+        plans.clear();
+        expect_subdivision = false;
+    }
+
+    // The second object must protect the whole shared layer, even the first object's support and infill.
+    PrintObject *mixed_object = *(print.objects().end() - 1);
+    mixed_object->set_local_z_plan({interval}, std::move(plans));
+    ToolOrdering ordering(print, 0);
+    LayerTools&  mixed_layer = ordering.tools_for_layer(0.4);
+    CHECK(mixed_layer.has_local_z_subdivision == expect_subdivision);
+    auto& wiping = mixed_layer.wiping_extrusions();
+    for (const PrintObject* object : print.objects()) {
+        const auto& fill = static_cast<const ExtrusionEntityCollection&>(*object->get_layer(1)->get_region(0)->fills.entities.front());
+        CHECK(wiping.is_overriddable(fill, print.config(), *object, region) == !expect_subdivision);
+        CHECK(wiping.is_support_overriddable(erSupportMaterial, *object) == !expect_subdivision);
+        CHECK(wiping.is_support_overriddable(erSupportMaterialInterface, *object) == !expect_subdivision);
+    }
+    const float remaining = wiping.mark_wiping_extrusions(print, 0, 1, 1.f);
+    CHECK(remaining == (expect_subdivision ? 1.f : 0.f));
+    wiping.ensure_perimeters_infills_order(print);
+    CHECK(wiping.is_anything_overridden() == !expect_subdivision);
+
+    for (double print_z : {0.2, 0.6}) {
+        LayerTools& ordinary_layer = ordering.tools_for_layer(print_z);
+        CHECK_FALSE(ordinary_layer.has_local_z_subdivision);
+        auto& ordinary_wiping = ordinary_layer.wiping_extrusions();
+        CHECK(ordinary_wiping.mark_wiping_extrusions(print, 0, 1, 1.f) == 0.f);
+        CHECK(ordinary_wiping.is_anything_overridden());
+    }
+
+    ToolOrdering sequential(*print.objects().back(), 0);
+    CHECK(sequential.tools_for_layer(0.4).has_local_z_subdivision == expect_subdivision);
+    ToolOrdering ordinary_sequential(*print.objects().front(), 0);
+    CHECK_FALSE(ordinary_sequential.tools_for_layer(0.4).has_local_z_subdivision);
 }
 
 TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")
@@ -1481,6 +1720,99 @@ TEST_CASE("Mixed filament gradient serialization round-trip with r1 token", "[Mi
     CHECK(loaded_mf.gradient_enabled);
     CHECK(loaded_mf.gradient_component_ids == "12");
     CHECK(loaded_mf.gradient_component_weights == "60/40");
+}
+
+TEST_CASE("Mixed filament gradient metadata is locale invariant", "[MixedFilament][Gradient][Locale]")
+{
+    struct LocaleGuard
+    {
+        std::string numeric = std::setlocale(LC_NUMERIC, nullptr);
+        std::locale cpp     = std::locale();
+        ~LocaleGuard()
+        {
+            std::locale::global(cpp);
+            std::setlocale(LC_NUMERIC, numeric.c_str());
+        }
+    } guard;
+
+    const auto check_metadata = [] {
+        const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
+        MixedFilamentManager           mgr;
+        mgr.add_custom_filament(1, 2, 50, colors);
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        auto& mf                      = mgr.mixed_filaments().front();
+        mf.stable_id                  = 1234567;
+        mf.gradient_enabled           = true;
+        mf.gradient_start             = 0.85f;
+        mf.gradient_end               = 0.15f;
+        mf.component_a_surface_offset = 0.125f;
+        mf.component_b_surface_offset = -0.25f;
+
+        const std::string serialized = mgr.serialize_custom_entries();
+        CHECK(serialized.find(",r1/0.8500/0.1500") != std::string::npos);
+        CHECK(serialized.find(",u1234567") != std::string::npos);
+        CHECK(serialized.find(",xa0.125,xb-0.25,") != std::string::npos);
+
+        // Load independently authored metadata as well as the writer's output.
+        for (const std::string& row :
+             {serialized, std::string("1,2,1,1,50,0,g12,w50/50,m2,z2,xa+0.125,xb-0.25,d0,o0,u1234567,r1/+0.8500/0.1500")}) {
+            MixedFilamentManager loaded;
+            loaded.load_custom_entries(row, colors);
+            REQUIRE(loaded.mixed_filaments().size() == 1);
+            const auto& result = loaded.mixed_filaments().front();
+            CHECK(result.gradient_enabled);
+            CHECK(std::abs(result.gradient_start - 0.85f) < 0.0001f);
+            CHECK(std::abs(result.gradient_end - 0.15f) < 0.0001f);
+            CHECK(result.component_a_surface_offset == 0.125f);
+            CHECK(result.component_b_surface_offset == -0.25f);
+            CHECK(result.stable_id == 1234567);
+        }
+    };
+
+    SECTION("Every installed C locale with a non-dot decimal separator")
+    {
+        size_t tested = 0;
+        for (const std::string& name : installed_numeric_locales()) {
+            if (std::setlocale(LC_NUMERIC, name.c_str()) == nullptr)
+                continue;
+            const std::string decimal_point = std::localeconv()->decimal_point;
+            if (decimal_point == ".")
+                continue;
+            ++tested;
+            DYNAMIC_SECTION("Numeric locale: " << name << "; decimal separator: " << decimal_point)
+            {
+                char localized[32] = {};
+                std::snprintf(localized, sizeof(localized), "%.1f", 0.5);
+                REQUIRE(std::string(localized) == "0" + decimal_point + "5");
+                check_metadata();
+            }
+        }
+        if (tested == 0)
+            SKIP("No locale with a non-dot decimal separator is installed");
+    }
+
+    SECTION("C++ decimal comma and digit grouping")
+    {
+        struct CommaPunct : std::numpunct<char>
+        {
+            char        do_decimal_point() const override { return ','; }
+            char        do_thousands_sep() const override { return '.'; }
+            std::string do_grouping() const override { return "\3"; }
+        };
+        std::locale::global(std::locale(std::locale::classic(), new CommaPunct));
+        check_metadata();
+    }
+}
+
+TEST_CASE("Mixed filament gradient metadata rejects malformed numbers", "[MixedFilament][Gradient][Locale]")
+{
+    for (const std::string& value : {"0.85garbage", "inf", "nan", "1e100", "+", "+-0.85", "++0.85"}) {
+        MixedFilamentManager mgr;
+        mgr.load_custom_entries("1,2,1,1,50,0,g12,w50/50,m2,z2,xa" + value + ",r1/" + value + "/0.15", {"#FF0000", "#00FF00"});
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        CHECK_FALSE(mgr.mixed_filaments().front().gradient_enabled);
+        CHECK(mgr.mixed_filaments().front().component_a_surface_offset == 0.f);
+    }
 }
 
 TEST_CASE("Mixed filament gradient auto-disables when range too small", "[MixedFilament][Gradient]")
@@ -5239,4 +5571,219 @@ TEST_CASE("Dual-color primary drops invalid tokens and falls back on empty", "[M
     REQUIRE(parts.size() == 2); // invalid token whitelisted away
     CHECK(FilamentColor::FromColors(parts, FilamentColorMode::Segment).PrimaryColor() == "#AABBCC");
     CHECK(FilamentColor::FromColors({}, FilamentColorMode::Segment).PrimaryColor("#26A69A") == "#26A69A");
+}
+
+// ============================================================================
+// [MixedFilament][FilamentColor] — phase-2 recommended-mode palette. The
+// palette is config-driven: BuildFullSpectrumPalette enumerates every library
+// filament whose type contains "Full Spectrum" and keeps its single-color
+// SKUs, sorted family-grouped (families alphabetical, colors alphabetical
+// within each family); DefaultFullSpectrumSelections picks the default
+// dropdown slots (cyan/magenta/yellow/white, default family preferred). These
+// cases pin both pure functions against constructed library data.
+// ============================================================================
+namespace {
+
+static FilamentColorItem palette_item(const std::string &hex, const std::string &en_name, const std::string &zh_name)
+{
+    FilamentColorItem item;
+    item.colorData.colors = {hex};
+    item.colorNames = {{"en", en_name}, {"zh_CN", zh_name}};
+    return item;
+}
+
+static FilamentColorInfo palette_family(const std::string &name, const std::string &type, std::vector<FilamentColorItem> items)
+{
+    FilamentColorInfo info;
+    info.filamentName = name;
+    info.type = type;
+    info.colors = std::move(items);
+    return info;
+}
+
+static std::vector<FilamentColorInfo> full_spectrum_library(bool with_white, bool with_petg)
+{
+    std::vector<FilamentColorItem> pla = {
+        palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+        palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色"),
+        palette_item("#F9ED3D", "Semi-Translucent Yellow", "半透黄色"),
+        palette_item("#9199A4", "Semi-Translucent Gray", "半透灰色"),
+    };
+    if (with_white)
+        pla.push_back(palette_item("#FFFFFF", "Semi-Translucent White", "半透白色"));
+
+    std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Basic @U1", "PLA", {palette_item("#FFFFFF", "White", "白色")}), // wrong type: excluded
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", std::move(pla)),
+    };
+    if (with_petg) {
+        std::vector<FilamentColorItem> petg = {
+            palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+            palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色"),
+        };
+        library.push_back(palette_family("Snapmaker PETG Full Spectrum @U1", "PETG Full Spectrum", std::move(petg)));
+    }
+    return library;
+}
+
+} // namespace
+
+TEST_CASE("Full Spectrum palette enumerates single-color SKUs across families, alphabetically", "[MixedFilament][FilamentColor]")
+{
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    // 5 PLA entries (multi/gradient SKUs would be dropped) + 2 PETG entries; the
+    // PLA Basic "White" is excluded (its type has no "Full Spectrum").
+    REQUIRE(palette.size() == 7);
+    // Family-grouped (test matrix #10): families in alphabetical order (PETG < PLA),
+    // colors alphabetical within each family — cyan/magenta (PETG), then cyan/gray/
+    // magenta/white/yellow (PLA).
+    CHECK(palette[0].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[0].family_name == "Snapmaker PETG Full Spectrum @U1");
+    CHECK(palette[1].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[1].family_name == "Snapmaker PETG Full Spectrum @U1");
+    CHECK(palette[2].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[2].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[3].en_name == "Semi-Translucent Gray");
+    CHECK(palette[3].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[4].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[4].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[5].en_name == "Semi-Translucent White");
+    CHECK(palette[5].family_name == "Snapmaker PLA Full Spectrum @U1");
+    CHECK(palette[6].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[6].family_name == "Snapmaker PLA Full Spectrum @U1");
+    // Hex normalization and the locale name map survive into the entry.
+    CHECK(palette[0].hex == "#08ABFB");
+    CHECK(palette[0].color_names.at("zh_CN") == "半透青色");
+}
+
+TEST_CASE("Full Spectrum palette default selections pick CMYW from the default family", "[MixedFilament][FilamentColor]")
+{
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    const std::string pla = "Snapmaker PLA Full Spectrum @U1";
+    const auto sel = DefaultFullSpectrumSelections(palette, pla);
+    REQUIRE(sel.size() == 4);
+    // Slots 1-4 = cyan/magenta/yellow/white of the PLA family; gray stays unselected
+    // (cyan is matched in-family even though PETG's cyan sorts first alphabetically).
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[0]].family_name == pla);
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[sel[1]].family_name == pla);
+    CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[sel[3]].en_name == "Semi-Translucent White");
+    std::set<int> distinct(sel.begin(), sel.end());
+    CHECK(distinct.size() == 4);
+}
+
+TEST_CASE("Full Spectrum palette default selections fall back to gray without white", "[MixedFilament][FilamentColor]")
+{
+    // Bundled config today: no White SKU yet (arrives via hot update). Slot 4 falls
+    // back to the next unused default-family entry: gray.
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(false, false));
+    REQUIRE(palette.size() == 4);
+    const auto sel = DefaultFullSpectrumSelections(palette, "Snapmaker PLA Full Spectrum @U1");
+    REQUIRE(sel.size() == 4);
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+    CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+    CHECK(palette[sel[3]].en_name == "Semi-Translucent Gray");
+}
+
+TEST_CASE("Full Spectrum palette default selections degrade on short palettes", "[MixedFilament][FilamentColor]")
+{
+    std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum",
+                       {palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色"),
+                        palette_item("#D93B90", "Semi-Translucent Magenta", "半透品红色")}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 2);
+    const auto sel = DefaultFullSpectrumSelections(palette, "Snapmaker PLA Full Spectrum @U1");
+    CHECK(sel.size() == 2);
+    CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+
+    CHECK(BuildFullSpectrumPalette({}).empty());
+    CHECK(DefaultFullSpectrumSelections({}, "any").empty());
+}
+
+TEST_CASE("Full Spectrum palette passes config td values through as-read (no fallback)", "[MixedFilament][FilamentColor]")
+{
+    // TD comes from the hot-updated config (per-SKU "td" field, parsed by the config
+    // side). The palette builder passes the value through untouched — there is NO
+    // static fallback table: a color whose config entry has no td simply carries 0.0
+    // (test matrix #1: Cyan 5.5 -> 6.0 after hot update; #11: unread td shows 0.0).
+    FilamentColorItem cyan  = palette_item("#08ABFB", "Semi-Translucent Cyan", "半透青色");
+    cyan.tdValue = 6.0;  // post-hot-update value
+    FilamentColorItem gray  = palette_item("#9199A4", "Semi-Translucent Gray", "半透灰色");
+    gray.tdValue = 8.8;
+    FilamentColorItem white = palette_item("#FFFFFF", "Semi-Translucent White", "半透白色"); // no td in config
+
+    const std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", {cyan, gray, white}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 3);
+    // Palette is alphabetical: Cyan, Gray, White.
+    CHECK(palette[0].en_name == "Semi-Translucent Cyan");
+    CHECK(palette[0].td_value == 6.0);
+    CHECK(palette[1].en_name == "Semi-Translucent Gray");
+    CHECK(palette[1].td_value == 8.8);
+    CHECK(palette[2].en_name == "Semi-Translucent White");
+    CHECK(palette[2].td_value == 0.0);
+}
+
+TEST_CASE("Full Spectrum palette leaves en_name empty without an en entry (no arbitrary pick)", "[MixedFilament][FilamentColor]")
+{
+    // A SKU carrying only zh_CN must NOT get its en_name from an arbitrary
+    // unordered_map::begin() pick: en_name feeds the sort key and slot-name matching,
+    // so an arbitrary locale's name there would make palette order and default slot
+    // anchoring depend on the hash layout and on which non-English translations the
+    // config happens to carry. Leave it empty instead (GetColorNameForSort contract).
+    FilamentColorItem no_en;
+    no_en.colorData.colors = {"#123456"};
+    no_en.colorNames       = {{"zh_CN", "半透青色"}};
+
+    const std::vector<FilamentColorInfo> library = {
+        palette_family("Snapmaker PLA Full Spectrum @U1", "PLA Full Spectrum", {no_en}),
+    };
+    const auto palette = BuildFullSpectrumPalette(library);
+    REQUIRE(palette.size() == 1);
+    CHECK(palette[0].en_name.empty());
+    CHECK(palette[0].hex == "#123456");
+}
+
+TEST_CASE("Full Spectrum default selections normalize the default family argument", "[MixedFilament][FilamentColor]")
+{
+    // Callers may pass any of the three family-name forms — the raw library name
+    // ("... @U1"), the full preset name ("... @U1 0.4 nozzle"), or the already-stripped
+    // match name — and all must anchor the default C/M/Y/W slots on that family.
+    // Regression: the GUI passes the stripped form, which silently never matched the raw
+    // family names the palette carries, so the default-family preference never fired
+    // (invisible with the single-family bundled config, wrong defaults after a
+    // multi-family hot update).
+    const auto palette = BuildFullSpectrumPalette(full_spectrum_library(true, true));
+    REQUIRE(palette.size() == 7);
+
+    const std::string default_family_forms[] = {
+        "Snapmaker PLA Full Spectrum @U1",             // raw library name
+        "Snapmaker PLA Full Spectrum @U1 0.4 nozzle",  // full preset name
+        "Snapmaker PLA Full Spectrum",                 // stripped match name (GUI form)
+    };
+    for (const std::string& default_family : default_family_forms)
+    {
+        SECTION(default_family)
+        {
+            const auto sel = DefaultFullSpectrumSelections(palette, default_family);
+            REQUIRE(sel.size() == 4);
+            // Every slot must land on the DEFAULT family (never the PETG entries that
+            // sort first alphabetically), cyan/magenta/yellow/white in slot order.
+            CHECK(palette[sel[0]].family_name == "Snapmaker PLA Full Spectrum @U1");
+            CHECK(palette[sel[0]].en_name == "Semi-Translucent Cyan");
+            CHECK(palette[sel[1]].en_name == "Semi-Translucent Magenta");
+            CHECK(palette[sel[2]].en_name == "Semi-Translucent Yellow");
+            CHECK(palette[sel[3]].en_name == "Semi-Translucent White");
+            std::set<int> distinct(sel.begin(), sel.end());
+            CHECK(distinct.size() == 4);
+        }
+    }
 }

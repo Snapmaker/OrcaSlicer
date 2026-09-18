@@ -737,6 +737,7 @@ private:
     const GCodeProcessorResult* m_gcode_result;
     //BBS: add only gcode mode
     bool m_only_gcode_in_preview {false};
+    bool m_loading{ false };
     std::vector<size_t> m_ssid_to_moveid_map;
 
     std::vector<TBuffer> m_buffers{ static_cast<size_t>(EMoveType::Extrude) };
@@ -898,7 +899,7 @@ private:
     //void load_shells(const Print& print);
     void refresh_render_paths(bool keep_sequential_current_first, bool keep_sequential_current_last) const;
     void render_toolpaths();
-    void render_shells(int canvas_width, int canvas_height);
+    void render_shells();
 
     //BBS: GUI refactor: add canvas size
     void render_legend(float &legend_height, int canvas_width, int canvas_height, int right_margin);

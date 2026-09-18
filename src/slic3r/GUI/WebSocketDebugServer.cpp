@@ -186,8 +186,10 @@ void WebSocketDebugServer::session_loop(tcp::socket socket)
     // Clean up
     {
         std::lock_guard<std::mutex> lock(m_client_mutex);
-        m_ws_stream.reset();
-        m_has_client.store(false);
+        if (m_ws_stream == ws) {
+            m_ws_stream.reset();
+            m_has_client.store(false);
+        }
     }
 
     BOOST_LOG_TRIVIAL(info) << " Flutter Web client disconnected";

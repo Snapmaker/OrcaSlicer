@@ -8958,32 +8958,6 @@ msgstr "隙間インフィル"
 
 msgid "Support interface"
 msgstr "サポート接触面"
-msgid "Support top contact speed"
-msgstr "サポート上部接触速度"
-
-msgid "Enable to set first, middle, and top support top contact layer speeds separately."
-msgstr "サポート上部接触層の最初、中間、上部の各層に異なる速度を設定できます。"
-
-msgid "First layer contact speed"
-msgstr "最初の接触層の速度"
-
-msgid "Speed of the bottommost support top contact layer (furthest from the model)."
-msgstr "サポート最下部接触層の速度（モデルから最も遠い）。"
-
-msgid "Middle layer contact speed"
-msgstr "中間接触層の速度"
-
-msgid "Speed of the middle support top contact layers."
-msgstr "サポート中間接触層の速度。"
-
-msgid "Top layer contact speed"
-msgstr "上部接触層の速度"
-
-msgid "Speed of the topmost support top contact layer (closest to the model)."
-msgstr "サポート最上部接触層の速度（モデルに最も近い）。"
-
-msgid "Support transition speed"
-msgstr "サポート遷移速度"
 
 msgid "Support transition"
 msgstr "サポート変換層"
@@ -12509,7 +12483,7 @@ msgstr "ラフト或はサポートの1層目の密度です。"
 msgid "Initial layer expansion"
 msgstr "1層目拡張"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 "この設定により、ラフト或はサポートの1層目を拡大します。ベッドとの接着性が良く"
 "なります。"
@@ -13340,12 +13314,6 @@ msgstr "底部接触面間隔"
 
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr "底部接触面を造形時に線の距離です。0はソリッド接触面です。"
-
-msgid "Minimum Support Contact Area"
-msgstr "サポート接触面積の最小値"
-
-msgid "Lower values generate more support contact surfaces."
-msgstr "値を小さくすると、より多くのサポート接触面が生成されます。"
 
 msgid "Speed of support interface."
 msgstr "サポート接触面の造形速度です。"

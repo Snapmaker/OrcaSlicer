@@ -9685,32 +9685,6 @@ msgstr "Lückenfüllung"
 
 msgid "Support interface"
 msgstr "Stützstruktur-Schnittstelle"
-msgid "Support top contact speed"
-msgstr "Stutz-Oberkontaktgeschwindigkeit"
-
-msgid "Enable to set first, middle, and top support top contact layer speeds separately."
-msgstr "Ermoglicht das Festlegen unterschiedlicher Geschwindigkeiten fur die erste, mittlere und obere Stutzkontaktschicht."
-
-msgid "First layer contact speed"
-msgstr "Geschwindigkeit der ersten Kontaktschicht"
-
-msgid "Speed of the bottommost support top contact layer (furthest from the model)."
-msgstr "Geschwindigkeit der untersten Stutzkontaktschicht (am weitesten vom Modell entfernt)."
-
-msgid "Middle layer contact speed"
-msgstr "Geschwindigkeit der mittleren Kontaktschicht"
-
-msgid "Speed of the middle support top contact layers."
-msgstr "Geschwindigkeit der mittleren Stutzkontaktschichten."
-
-msgid "Top layer contact speed"
-msgstr "Geschwindigkeit der oberen Kontaktschicht"
-
-msgid "Speed of the topmost support top contact layer (closest to the model)."
-msgstr "Geschwindigkeit der obersten Stutzkontaktschicht (dem Modell am nachsten)."
-
-msgid "Support transition speed"
-msgstr "Stutz-Ubergangsgeschwindigkeit"
 
 msgid "Support transition"
 msgstr "Stützenübergang"
@@ -14202,7 +14176,7 @@ msgstr "Dichte der ersten Schicht der Druckbasis oder Support"
 msgid "Initial layer expansion"
 msgstr "Ausdehnung der ersten Schicht"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 "Ausdehnung der ersten Druckbasis oder Support-Schicht um die "
 "Druckplattenhaftung zu verbessern"
@@ -15222,12 +15196,6 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Abstand der unteren Trennschichtlinien der Stützstrukturen. Null bedeutet "
 "eine solide Schnittstelle."
-
-msgid "Minimum Support Contact Area"
-msgstr "Minimale Kontaktfläche der Stützstruktur"
-
-msgid "Lower values generate more support contact surfaces."
-msgstr "Niedrigere Werte erzeugen mehr Kontaktflächen der Stützstruktur."
 
 msgid "Speed of support interface."
 msgstr "Geschwindigkeit der Stützstruktur-Schnittstellen."

@@ -1,5 +1,4 @@
-#ifndef slic3r_Utils_GatewayDevice_hpp_
-#define slic3r_Utils_GatewayDevice_hpp_
+#pragma once
 
 #include <memory>
 #include <string>
@@ -32,5 +31,3 @@ public:
 };
 
 }} // namespace Slic3r::Gateway
-
-#endif // slic3r_Utils_GatewayDevice_hpp_

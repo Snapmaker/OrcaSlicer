@@ -1,5 +1,4 @@
-#ifndef slic3r_GUI_GatewayMachineSnapshot_hpp_
-#define slic3r_GUI_GatewayMachineSnapshot_hpp_
+#pragma once
 
 #include <nlohmann/json.hpp>
 
@@ -44,5 +43,3 @@ private:
 
 } // namespace GUI
 } // namespace Slic3r
-
-#endif // slic3r_GUI_GatewayMachineSnapshot_hpp_

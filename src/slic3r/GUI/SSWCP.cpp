@@ -12,9 +12,11 @@
 #include "sentry_wrapper/SentryWrapper.hpp"
 #include "slic3r/Utils/SnapLogClient.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <iterator>
 #include <exception>
 #include <cstdlib>
+#include <cmath>
 #include <iomanip>
 #include <regex>
 #include <thread>
@@ -61,6 +63,47 @@ namespace pt = boost::property_tree;
 using namespace nlohmann;
 
 namespace Slic3r { namespace GUI {
+
+namespace {
+
+long long preprint_color_to_int(const std::string& color)
+{
+    auto hex_digit = [](char digit) {
+        if (digit >= '0' && digit <= '9')
+            return digit - '0';
+        if (digit >= 'a' && digit <= 'f')
+            return digit - 'a' + 10;
+        if (digit >= 'A' && digit <= 'F')
+            return digit - 'A' + 10;
+        return -1;
+    };
+
+    if ((color.size() != 7 && color.size() != 9) || color.front() != '#')
+        return 0;
+
+    long long result = 0;
+    for (size_t index = 1; index < color.size(); ++index) {
+        const int digit = hex_digit(color[index]);
+        if (digit < 0)
+            return 0;
+        result = result * 16 + digit;
+    }
+    return result;
+}
+
+bool parse_thumbnail_dimension(const std::string& value, double& result)
+{
+    if (value.empty())
+        return false;
+
+    errno             = 0;
+    char* end         = nullptr;
+    result            = std::strtod(value.c_str(), &end);
+    const bool consumed_value = end == value.c_str() + value.size();
+    return consumed_value && errno != ERANGE && std::isfinite(result) && result > 0.0;
+}
+
+} // namespace
 
 // WCP_Logger
 WCP_Logger::WCP_Logger() {
@@ -2745,29 +2788,24 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename)
         if (filename.empty() || !boost::filesystem::exists(filename) || !boost::filesystem::is_regular_file(filename))
             return response;
 
-        auto* print = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print();
+        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        if (current_plate == nullptr)
+            return response;
+
+        auto* print = current_plate->fff_print();
+        if (print == nullptr)
+            return response;
+
         auto& config = print->config();
         auto full_config = print->full_print_config();
-        auto& result = *(wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_slice_result());
-        response["estimated_time"] = wxGetApp()
-            .mainframe->plater()
-            ->get_partplate_list()
-            .get_curr_plate()
-            ->get_slice_result()
-            ->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)]
-            .time;
+        auto* slice_result = current_plate->get_slice_result();
+        if (slice_result == nullptr)
+            return response;
 
-        auto color_to_int = [](const std::string& original_color) -> long long {
-            long long result = 0;
-            if ((original_color.size() != 7 && original_color.size() != 9) || original_color[0] != '#')
-                return 0;
-            for (auto i = 1; i < original_color.size(); ++i) {
-                const int digit = original_color[original_color.size() - i] - '0';
-                const int value = digit >= 0 && digit <= 9 ? digit : original_color[original_color.size() - i] - 'A' + 10;
-                result += static_cast<long long>(std::pow(16, i - 1)) * value;
-            }
-            return result;
-        };
+        auto& result = *slice_result;
+        response["estimated_time"] = result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+
+        auto color_to_int = [](const std::string& original_color) -> long long { return preprint_color_to_int(original_color); };
 
         if (config.has("filament_colour")) {
             std::vector<std::string> filament_color = config.option<ConfigOptionStrings>("filament_colour")->values;
@@ -2864,9 +2902,9 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename)
             response["filament_extruder_map"] = object;
         }
 
-        PartPlate* current_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
         if (current_plate) {
-            auto* nozzle_opt = current_plate->fff_print()->config().option<ConfigOptionFloats>("nozzle_diameter");
+            auto* current_print = current_plate->fff_print();
+            auto* nozzle_opt = current_print ? current_print->config().option<ConfigOptionFloats>("nozzle_diameter") : nullptr;
             if (nozzle_opt) {
                 std::vector<std::string> nozzle_list;
                 for (float diameter : nozzle_opt->values) {
@@ -2910,7 +2948,11 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename)
                 const size_t x = item.find("x");
                 if (x == std::string::npos)
                     break;
-                thumbnail_sizes.emplace_back(std::stod(item.substr(0, x)), std::stod(item.substr(x + 1)));
+                double width  = 0.0;
+                double height = 0.0;
+                if (!parse_thumbnail_dimension(item.substr(0, x), width) || !parse_thumbnail_dimension(item.substr(x + 1), height))
+                    break;
+                thumbnail_sizes.emplace_back(width, height);
             } while (!thumbnail_description.empty());
 
             auto thumbnail_list = load_thumbnails(filename, int(thumbnail_sizes.size()));
@@ -2952,42 +2994,36 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             return;
         }
 
-        auto* print = wxGetApp().plater()->get_partplate_list().get_curr_plate()->fff_print();
+        auto* current_plate = wxGetApp().plater() ? wxGetApp().plater()->get_partplate_list().get_curr_plate() : nullptr;
+        if (current_plate == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
+        auto* print = current_plate->fff_print();
+        if (print == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
         auto& config = print->config();
         auto full_config = print->full_print_config();
-        auto& result = *(wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_slice_result());
+        auto* slice_result = current_plate->get_slice_result();
+        if (slice_result == nullptr) {
+            handle_general_fail();
+            return;
+        }
+
+        auto& result = *slice_result;
         /*GCodeProcessor processor;
         processor.process_file(filename.data());
         auto& result = processor.result();
         auto& config = processor.current_dynamic_config();*/
 
-        auto time = wxGetApp()
-            .mainframe->plater()
-            ->get_partplate_list()
-            .get_curr_plate()
-            ->get_slice_result()
-            ->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)]
-            .time;
+        auto time = result.print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
         response["estimated_time"] = time;
 
-        auto color_to_int = [](const std::string& oriclr) -> long long {
-
-            long long res = 0;
-            if ((oriclr.size() != 7 && oriclr.size() != 9) || oriclr[0] != '#') {
-                return 0;
-            }
-
-            auto colorSize = oriclr.size();//7 or 9
-            for (auto i = 1; i < colorSize; i++)
-            {
-                if (oriclr[colorSize - i] - '0' >= 0 && oriclr[colorSize - i] - '0' <= 9) {
-                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - '0');
-                } else {
-                    res += std::pow(16, i - 1) * (oriclr[colorSize - i] - 'A' + 10);
-                }
-            }
-            return res;
-        };
+        auto color_to_int = [](const std::string& oriclr) -> long long { return preprint_color_to_int(oriclr); };
 
         // filament colour
         if (config.has("filament_colour")) {

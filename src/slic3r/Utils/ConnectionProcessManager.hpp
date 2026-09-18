@@ -1,5 +1,4 @@
-#ifndef slic3r_Utils_ConnectionProcessManager_hpp_
-#define slic3r_Utils_ConnectionProcessManager_hpp_
+#pragma once
 
 #include <boost/filesystem/path.hpp>
 
@@ -83,5 +82,3 @@ private:
 };
 
 }} // namespace Slic3r::Gateway
-
-#endif // slic3r_Utils_ConnectionProcessManager_hpp_

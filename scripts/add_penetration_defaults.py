@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """One-shot migration: insert top/bottom_color_penetration_layers into every
-Snapmaker process preset, mirroring min(product default, effective shell layers)
+U1 process preset, mirroring min(product default, effective shell layers)
 of each preset (inherits chain resolved). Text-level insertion keeps the original
-file formatting byte-identical outside the two inserted lines."""
+file formatting byte-identical outside the two inserted lines.
+
+Review decision (MR #15): only U1 presets carry explicit values; other machines
+fall back to the PrintConfig code defaults, so their JSONs stay untouched."""
 import json
 import os
 import re
@@ -18,6 +21,8 @@ BOTTOM_SHELL_FALLBACK = 3
 
 
 def load_all():
+    # Load the full preset graph: inherits chains of U1 presets run through
+    # non-U1 bases (e.g. fdm_process_common), so resolution needs them all.
     by_name, paths = {}, {}
     for fn in os.listdir(PROFILE_DIR):
         if not fn.endswith(".json"):
@@ -45,6 +50,10 @@ def main():
     changed, skipped = 0, 0
     report = []
     for name, d in sorted(by_name.items()):
+        # Review decision (MR #15): only U1 presets carry explicit values;
+        # other machines fall back to the PrintConfig code defaults.
+        if "U1" not in os.path.basename(paths[name]):
+            continue
         top_shell = effective(d, by_name, "top_shell_layers", {name})
         bottom_shell = effective(d, by_name, "bottom_shell_layers", {name})
         if top_shell is None:

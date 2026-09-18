@@ -1,7 +1,6 @@
 {
   "type": "process",
   "from": "system",
-  "top_color_penetration_layers": "4",
   "instantiation": "true",
   "name": "0.20 Strength @Snapmaker J1 (0.4 nozzle)",
   "setting_id": "563165128",
@@ -12,6 +11,5 @@
   "elefant_foot_compensation": "0.15",
   "wall_loops": "6",
   "bottom_shell_layers": "4",
-  "bottom_color_penetration_layers": "3",
   "sparse_infill_density": "25%"
 }

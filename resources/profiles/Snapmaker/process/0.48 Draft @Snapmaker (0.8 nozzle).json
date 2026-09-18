@@ -1,7 +1,6 @@
 {
   "type": "process",
   "from": "system",
-  "bottom_color_penetration_layers": "3",
   "instantiation": "true",
   "name": "0.48 Draft @Snapmaker (0.8 nozzle)",
   "setting_id": "2532073691",
@@ -28,7 +27,6 @@
   "initial_layer_print_height": "0.4",
   "wall_loops": "2",
   "top_shell_layers": "3",
-  "top_color_penetration_layers": "3",
   "bridge_speed": "30",
   "line_width": "0.82",
   "outer_wall_line_width": "0.82",

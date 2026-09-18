@@ -1140,6 +1140,30 @@ FunctionEnd
         [=[  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"
   DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@"]=]
         _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    string(REPLACE
+        [=[  ; Remove the registry entries.
+  DeleteRegKey SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"
+]=]
+        "" _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    string(REPLACE
+        [=[  StrCpy $MUI_TEMP "$START_MENU"
+  Delete "$SMPROGRAMS\$MUI_TEMP\Uninstall.lnk"
+@CPACK_NSIS_DELETE_ICONS_EXTRA@]=]
+        [=[  StrCpy $MUI_TEMP "$START_MENU"
+  StrCmp $MUI_TEMP "" secondStartMenuDeleteLoopDone
+  Delete "$SMPROGRAMS\$MUI_TEMP\Uninstall.lnk"
+@CPACK_NSIS_DELETE_ICONS@
+@CPACK_NSIS_DELETE_ICONS_EXTRA@]=]
+        _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
+    string(REPLACE
+        [=[  secondStartMenuDeleteLoopDone:
+
+  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"]=]
+        [=[  secondStartMenuDeleteLoopDone:
+
+  DeleteRegKey SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"
+  DeleteRegKey /ifempty SHCTX "Software\@CPACK_PACKAGE_VENDOR@\@CPACK_PACKAGE_INSTALL_REGISTRY_KEY@"]=]
+        _snapmaker_nsis_tpl "${_snapmaker_nsis_tpl}")
     set(_snapmaker_nsis_tpl_dir "${CMAKE_BINARY_DIR}/cmake/cpack")
     file(MAKE_DIRECTORY "${_snapmaker_nsis_tpl_dir}")
     set(_snapmaker_uninst_confirm_in "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerUninstallConfirm.nsh.in")

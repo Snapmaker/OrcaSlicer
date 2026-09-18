@@ -1,5 +1,4 @@
-#ifndef slic3r_Utils_GatewayAccount_hpp_
-#define slic3r_Utils_GatewayAccount_hpp_
+#pragma once
 
 #include <string>
 
@@ -35,5 +34,3 @@ public:
 };
 
 }} // namespace Slic3r::Gateway
-
-#endif // slic3r_Utils_GatewayAccount_hpp_

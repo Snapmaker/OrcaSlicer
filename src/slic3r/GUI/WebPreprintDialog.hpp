@@ -42,6 +42,8 @@ public:
     void SafeEndModal(int returnCode);
 
 private:
+    wxString build_web_url() const;
+
     void OnClose(wxCloseEvent& evt);
     void OnNavigationRequest(wxWebViewEvent &evt);
     void OnNavigationComplete(wxWebViewEvent &evt);

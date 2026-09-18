@@ -137,14 +137,15 @@ ProcessDiscoveryError ConnectionProcessManager::parse_port_frame(const std::stri
         !std::all_of(value.begin(), value.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; }))
         return ProcessDiscoveryError::InvalidPortFrame;
 
-    try {
-        const unsigned long parsed = std::stoul(value);
-        if (parsed == 0 || parsed > 65535)
+    unsigned long parsed = 0;
+    for (const char digit : value) {
+        parsed = parsed * 10 + static_cast<unsigned long>(digit - '0');
+        if (parsed > 65535)
             return ProcessDiscoveryError::InvalidPortFrame;
-        port = static_cast<std::uint16_t>(parsed);
-    } catch (...) {
-        return ProcessDiscoveryError::InvalidPortFrame;
     }
+    if (parsed == 0)
+        return ProcessDiscoveryError::InvalidPortFrame;
+    port = static_cast<std::uint16_t>(parsed);
 
     if (find_next_line_port(output, terminator + 4) != std::string::npos)
         return ProcessDiscoveryError::MultiplePortFrames;

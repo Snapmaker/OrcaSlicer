@@ -40,26 +40,27 @@ class SMUserLogin : public wxDialog
 public:
     SMUserLogin(bool isLogout = false);
     virtual ~SMUserLogin();
+    int ShowModal() override;
 
-    void load_url(wxString &url);
+    void load_url(wxString& url);
 
     std::string w2s(wxString sSrc);
 
     void UpdateState();
-    void OnIdle(wxIdleEvent &evt);
+    void OnIdle(wxIdleEvent& evt);
     // void OnClose(wxCloseEvent &evt);
 
-    void OnNavigationRequest(wxWebViewEvent &evt);
-    void OnNavigationComplete(wxWebViewEvent &evt);
-    void OnDocumentLoaded(wxWebViewEvent &evt);
-    void OnNewWindow(wxWebViewEvent &evt);
-    void OnError(wxWebViewEvent &evt);
-    void OnTitleChanged(wxWebViewEvent &evt);
-    void OnFullScreenChanged(wxWebViewEvent &evt);
-    void OnScriptMessage(wxWebViewEvent &evt);
+    void OnNavigationRequest(wxWebViewEvent& evt);
+    void OnNavigationComplete(wxWebViewEvent& evt);
+    void OnDocumentLoaded(wxWebViewEvent& evt);
+    void OnNewWindow(wxWebViewEvent& evt);
+    void OnError(wxWebViewEvent& evt);
+    void OnTitleChanged(wxWebViewEvent& evt);
+    void OnFullScreenChanged(wxWebViewEvent& evt);
+    void OnScriptMessage(wxWebViewEvent& evt);
 
-    void OnScriptResponseMessage(wxCommandEvent &evt);
-    void RunScript(const wxString &javascript);
+    void OnScriptResponseMessage(wxCommandEvent& evt);
+    void RunScript(const wxString& javascript);
     void try_complete_oauth_callback();
 
     bool m_networkOk;
@@ -68,31 +69,31 @@ public:
     bool run();
 
     static int web_sequence_id;
-private:
-    wxTimer *m_timer { nullptr };
-    void     OnTimer(wxTimerEvent &event);
-    void     OnCallbackPollTimer(wxTimerEvent &event);
 
-    wxTimer *m_callback_timer { nullptr };
-    bool     m_callback_handled = false;
+private:
+    wxTimer* m_timer{nullptr};
+    void     OnTimer(wxTimerEvent& event);
+    void     OnCallbackPollTimer(wxTimerEvent& event);
+
+    wxTimer* m_callback_timer{nullptr};
+    bool     m_callback_handled  = false;
     int      m_callback_attempts = 0;
 
 private:
-
     wxString   TargetUrl     = "https://id.snapmaker.cn?from=orca";
     wxString   LogoutUrl     = "https://id.snapmaker.cn/logout?from=orca";
     wxString   m_hostUrl     = "https://id.snapmaker.cn";
     wxString   m_accountUrl  = "https://api.snapmaker.cn";
     wxString   m_userInfoUrl = "https://api.snapmaker.cn/api/common/accounts/current";
     wxString   m_home_url    = "https://www.snapmaker.cn/";
-    wxWebView *m_browser;
+    wxWebView* m_browser;
 
     std::string m_AutotestToken;
 
 #if wxUSE_WEBVIEW_IE
-    wxMenuItem *m_script_object_el;
-    wxMenuItem *m_script_date_el;
-    wxMenuItem *m_script_array_el;
+    wxMenuItem* m_script_object_el;
+    wxMenuItem* m_script_date_el;
+    wxMenuItem* m_script_array_el;
 #endif
     // Last executed JavaScript snippet, for convenience.
     wxString m_javascript;
@@ -106,19 +107,19 @@ private:
 class SMAskUserLoginDialog : public DPIDialog
 {
 public:
-    SMAskUserLoginDialog(wxWindow *parent);
+    SMAskUserLoginDialog(wxWindow* parent);
     ~SMAskUserLoginDialog();
 
     void SetKeepAliveCallback(std::function<void()> fn);
 
 protected:
-    void on_dpi_changed(const wxRect &suggested_rect) override {}
+    void on_dpi_changed(const wxRect& suggested_rect) override {}
 
 private:
     std::unique_ptr<wxTimer> m_keepalive_timer;
-    std::function<void()> m_keepalive_fn;
+    std::function<void()>    m_keepalive_fn;
 };
 
 }} // namespace Slic3r::GUI
 
-#endif 
+#endif

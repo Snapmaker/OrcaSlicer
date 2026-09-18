@@ -39,7 +39,7 @@ using namespace nlohmann;
 namespace Slic3r { namespace GUI {
 
 #define NETWORK_OFFLINE_TIMER_ID 10001
-#define CALLBACK_POLL_TIMER_ID   10002
+#define CALLBACK_POLL_TIMER_ID 10002
 
 BEGIN_EVENT_TABLE(SMUserLogin, wxDialog)
 EVT_TIMER(NETWORK_OFFLINE_TIMER_ID, SMUserLogin::OnTimer)
@@ -48,8 +48,10 @@ END_EVENT_TABLE()
 
 int SMUserLogin::web_sequence_id = 20000;
 
-SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
+SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow*) (wxGetApp().mainframe), wxID_ANY, "Snapmaker Orca")
 {
+    m_networkOk = false;
+
     // url
     auto region = wxGetApp().app_config->get_country_code();
     if (region.find("CN") == std::string::npos) {
@@ -82,8 +84,12 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
         wxLogError("Could not init m_browser");
         return;
     }
+
+    wxBoxSizer* topsizer = new wxBoxSizer(wxVERTICAL);
+    SetSizer(topsizer);
+    topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
+
     m_browser->Hide();
-    m_browser->SetSize(0, 0);
 
     // Log backend information
     // wxLogMessage(wxWebView::GetBackendVersionInfo().ToString());
@@ -99,7 +105,7 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     Bind(wxEVT_WEBVIEW_NEWWINDOW, &SMUserLogin::OnNewWindow, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_TITLE_CHANGED, &SMUserLogin::OnTitleChanged, this, m_browser->GetId());
     Bind(wxEVT_WEBVIEW_FULLSCREEN_CHANGED, &SMUserLogin::OnFullScreenChanged, this, m_browser->GetId());
-    //Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
+    // Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &SMUserLogin::OnScriptMessage, this, m_browser->GetId());
 
     // Connect the idle events
     // Bind(wxEVT_IDLE, &SMUserLogin::OnIdle, this);
@@ -110,6 +116,10 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     // dialog via ShowModal() directly, run() is not used.
     m_callback_timer = new wxTimer(this, CALLBACK_POLL_TIMER_ID);
     m_callback_timer->Start(500);
+
+    // Arm the offline fallback only when the dialog is actually shown: the
+    // silent token refresh constructs this dialog without showing it.
+    m_timer = new wxTimer(this, NETWORK_OFFLINE_TIMER_ID);
 
     // UI
     SetTitle(isLogout ? _L("Log out") : _L("Login"));
@@ -122,10 +132,12 @@ SMUserLogin::SMUserLogin(bool isLogout) : wxDialog((wxWindow *) (wxGetApp().main
     int     MaxY         = (screenheight - pSize.y) > 0 ? (screenheight - pSize.y) / 2 : 0;
     wxPoint tmpPT((screenwidth - pSize.x) / 2, MaxY);
     Move(tmpPT);
+    Layout();
     wxGetApp().UpdateDlgDarkUI(this);
 }
 
-SMUserLogin::~SMUserLogin() {
+SMUserLogin::~SMUserLogin()
+{
     if (m_callback_timer != NULL) {
         m_callback_timer->Stop();
         delete m_callback_timer;
@@ -138,9 +150,7 @@ SMUserLogin::~SMUserLogin() {
     }
 }
 
-void SMUserLogin::OnCallbackPollTimer(wxTimerEvent &event) {
-    try_complete_oauth_callback();
-}
+void SMUserLogin::OnCallbackPollTimer(wxTimerEvent& event) { try_complete_oauth_callback(); }
 
 // The third-party oauth callback endpoint may answer 200 with the raw token
 // json as the page body instead of redirecting to a url containing "token=",
@@ -148,7 +158,8 @@ void SMUserLogin::OnCallbackPollTimer(wxTimerEvent &event) {
 // have a fire-and-forget script smuggle the body out through document.title;
 // wxWebView::RunScript is avoided because it busy-pumps the event loop on
 // every backend and freezes the app when the web process is dead.
-void SMUserLogin::try_complete_oauth_callback() {
+void SMUserLogin::try_complete_oauth_callback()
+{
     if (m_callback_handled || m_browser == NULL)
         return;
     if (!m_browser->GetCurrentURL().Contains("/api/oauth2/callback/"))
@@ -160,34 +171,40 @@ void SMUserLogin::try_complete_oauth_callback() {
     RunScript("document.title='SMOAUTH:'+(document.body?document.body.innerText:'')");
 }
 
-void SMUserLogin::OnTimer(wxTimerEvent &event) {
+void SMUserLogin::OnTimer(wxTimerEvent& event)
+{
     m_timer->Stop();
 
-    if (m_networkOk == false)
-    {
+    if (m_networkOk == false) {
+        BOOST_LOG_TRIVIAL(warning) << "sm login webview: offline fallback, browser_size=" << m_browser->GetSize().x << "x"
+                                   << m_browser->GetSize().y;
         ShowErrorPage();
     }
 }
 
-bool SMUserLogin::run() {
-    m_timer = new wxTimer(this, NETWORK_OFFLINE_TIMER_ID);
-    m_timer->Start(8000);
-
-    if (this->ShowModal() == wxID_OK) {
+bool SMUserLogin::run()
+{
+    if (ShowModal() == wxID_OK) {
         return true;
     } else {
         return false;
     }
 }
 
+int SMUserLogin::ShowModal()
+{
+    if (m_timer != nullptr)
+        m_timer->Start(8000);
 
-void SMUserLogin::load_url(wxString &url)
+    return wxDialog::ShowModal();
+}
+
+void SMUserLogin::load_url(wxString& url)
 {
     m_browser->LoadURL(url);
     m_browser->SetFocus();
     UpdateState();
 }
-
 
 /**
  * Method that retrieves the current state from the web control and updates
@@ -198,7 +215,7 @@ void SMUserLogin::UpdateState()
     // SetTitle(m_browser->GetCurrentTitle());
 }
 
-void SMUserLogin::OnIdle(wxIdleEvent &WXUNUSED(evt))
+void SMUserLogin::OnIdle(wxIdleEvent& WXUNUSED(evt))
 {
     if (m_browser->IsBusy()) {
         wxSetCursor(wxCURSOR_ARROWWAIT);
@@ -216,14 +233,14 @@ void SMUserLogin::OnIdle(wxIdleEvent &WXUNUSED(evt))
  * Callback invoked when there is a request to load a new page (for instance
  * when the user clicks a link)
  */
-void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
-{   
+void SMUserLogin::OnNavigationRequest(wxWebViewEvent& evt)
+{
     wxString tmpUrl = evt.GetURL();
-    
+
     size_t start = tmpUrl.find("token=");
     if (start != std::string::npos) {
         std::string token;
-        
+
         start += std::string("token=").size(); // 跳过"token="的长度
         size_t end = tmpUrl.find_first_of("?&#", start);
         if (end != std::string::npos) {
@@ -235,22 +252,22 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
         if (this->IsModal())
             this->EndModal(wxID_OK);
 
-        std::string info_url = m_userInfoUrl.ToStdString();
+        std::string info_url           = m_userInfoUrl.ToStdString();
         std::size_t refresh_generation = wxGetApp().sm_token_refresh_generation();
         wxGetApp().CallAfter([token, info_url, refresh_generation]() {
             if (!wxGetApp().sm_is_token_refresh_current(refresh_generation))
                 return;
 
             std::string url  = info_url;
-            auto http = Http::get(url);
-            http.header("Authorization",token);
+            auto        http = Http::get(url);
+            http.header("Authorization", token);
             http.on_complete([&](std::string body, unsigned status) {
                     if (!wxGetApp().sm_is_token_refresh_current(refresh_generation))
                         return;
 
                     if (status == 200) {
-                        std::string user_id = "";
-                        json response = json::parse(body, nullptr, false);
+                        std::string user_id  = "";
+                        json        response = json::parse(body, nullptr, false);
                         if (response.is_discarded() || !response.is_object() || !response.contains("data")) {
                             BOOST_LOG_TRIVIAL(error) << "login userinfo response format is invalid"
                                                      << ", body_size=" << body.size();
@@ -288,9 +305,8 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                             ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(consent);
                         }
 
-                        SNAP_LOG_BATCH(Info, "user login success",
-                            {"eventName", "user_login_result"}, {"source", "cpp"},
-                            {"success", "true"}, {"userId", user_id});
+                        SNAP_LOG_BATCH(Info, "user login success", {"eventName", "user_login_result"}, {"source", "cpp"},
+                                       {"success", "true"}, {"userId", user_id});
                     }
                 })
                 .on_error([&](std::string body, std::string, unsigned status) {
@@ -300,9 +316,8 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                     std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) +
                                             ", body_size=" + std::to_string(body.size());
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
-                    SNAP_LOG_BATCH(Error, "user login failed",
-                        {"eventName", "user_login_result"}, {"source", "cpp"},
-                        {"success", "false"}, {"httpStatus", std::to_string(status)});
+                    SNAP_LOG_BATCH(Error, "user login failed", {"eventName", "user_login_result"}, {"source", "cpp"}, {"success", "false"},
+                                   {"httpStatus", std::to_string(status)});
                 })
                 .perform_sync();
         });
@@ -313,9 +328,10 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
 /**
  * Callback invoked when a navigation request was accepted
  */
-void SMUserLogin::OnNavigationComplete(wxWebViewEvent &evt)
+void SMUserLogin::OnNavigationComplete(wxWebViewEvent& evt)
 {
-    // wxLogMessage("%s", "Navigation complete; url='" + evt.GetURL() + "'");
+    BOOST_LOG_TRIVIAL(warning) << "sm login webview: navigated, url=" << evt.GetURL().ToStdString()
+                               << ", browser_size=" << m_browser->GetSize().x << "x" << m_browser->GetSize().y;
     m_browser->Show();
     Layout();
     UpdateState();
@@ -324,13 +340,12 @@ void SMUserLogin::OnNavigationComplete(wxWebViewEvent &evt)
 /**
  * Callback invoked when a page is finished loading
  */
-void SMUserLogin::OnDocumentLoaded(wxWebViewEvent &evt)
+void SMUserLogin::OnDocumentLoaded(wxWebViewEvent& evt)
 {
     // Only notify if the document is the main frame, not a subframe
     wxString tmpUrl = evt.GetURL();
-    std::string strHost = "https://id.snapmaker.com";
 
-    if ( tmpUrl.Contains(strHost) ) {
+    if (tmpUrl.Contains(m_hostUrl)) {
         m_networkOk = true;
         // wxLogMessage("%s", "Document loaded; url='" + evt.GetURL() + "'");
     }
@@ -342,11 +357,13 @@ void SMUserLogin::OnDocumentLoaded(wxWebViewEvent &evt)
 /**
  * On new window, we veto to stop extra windows appearing
  */
-void SMUserLogin::OnNewWindow(wxWebViewEvent &evt)
+void SMUserLogin::OnNewWindow(wxWebViewEvent& evt)
 {
     wxString flag = " (other)";
 
-    if (evt.GetNavigationAction() == wxWEBVIEW_NAV_ACTION_USER) { flag = " (user)"; }
+    if (evt.GetNavigationAction() == wxWEBVIEW_NAV_ACTION_USER) {
+        flag = " (user)";
+    }
 
     // wxLogMessage("%s", "New window; url='" + evt.GetURL() + "'" + flag);
 
@@ -357,7 +374,7 @@ void SMUserLogin::OnNewWindow(wxWebViewEvent &evt)
     UpdateState();
 }
 
-void SMUserLogin::OnTitleChanged(wxWebViewEvent &evt)
+void SMUserLogin::OnTitleChanged(wxWebViewEvent& evt)
 {
     // Body smuggled out by try_complete_oauth_callback(); feed the token to
     // the existing "token=" capture path in OnNavigationRequest.
@@ -380,13 +397,13 @@ void SMUserLogin::OnTitleChanged(wxWebViewEvent &evt)
     m_browser->LoadURL(m_hostUrl + "/?token=" + from_u8(data["access_token"].get<std::string>()));
 }
 
-void SMUserLogin::OnFullScreenChanged(wxWebViewEvent &evt)
+void SMUserLogin::OnFullScreenChanged(wxWebViewEvent& evt)
 {
     // wxLogMessage("Full screen changed; status = %d", evt.GetInt());
     ShowFullScreen(evt.GetInt() != 0);
 }
 
-void SMUserLogin::OnScriptMessage(wxWebViewEvent &evt)
+void SMUserLogin::OnScriptMessage(wxWebViewEvent& evt)
 {
     wxString str_input = evt.GetString();
     try {
@@ -394,66 +411,63 @@ void SMUserLogin::OnScriptMessage(wxWebViewEvent &evt)
 
         wxString strCmd = j["command"];
 
-        if (strCmd == "autotest_token")
-        {
+        if (strCmd == "autotest_token") {
             m_AutotestToken = j["data"]["token"];
         }
         if (strCmd == "user_login") {
             j["data"]["autotest_token"] = m_AutotestToken;
             Close();
-        }
-        else if (strCmd == "get_localhost_url") {
+        } else if (strCmd == "get_localhost_url") {
             BOOST_LOG_TRIVIAL(info) << "thirdparty_login: get_localhost_url";
-            //wxGetApp().start_http_server();
+            // wxGetApp().start_http_server();
             std::string sequence_id = j["sequence_id"].get<std::string>();
             CallAfter([this, sequence_id] {
                 json ack_j;
-                ack_j["command"] = "get_localhost_url";
+                ack_j["command"]              = "get_localhost_url";
                 ack_j["response"]["base_url"] = std::string(LOCALHOST_URL) + std::to_string(LOCALHOST_PORT);
-                ack_j["response"]["result"] = "success";
-                ack_j["sequence_id"] = sequence_id;
-                wxString str_js = wxString::Format("window.postMessage(%s)", ack_j.dump());
+                ack_j["response"]["result"]   = "success";
+                ack_j["sequence_id"]          = sequence_id;
+                wxString str_js               = wxString::Format("window.postMessage(%s)", ack_j.dump());
                 this->RunScript(str_js);
             });
-        }
-        else if (strCmd == "thirdparty_login") {
+        } else if (strCmd == "thirdparty_login") {
             BOOST_LOG_TRIVIAL(info) << "thirdparty_login: thirdparty_login";
             if (j["data"].contains("url")) {
                 std::string jump_url = j["data"]["url"].get<std::string>();
                 CallAfter([this, jump_url] {
                     wxString url = wxString::FromUTF8(jump_url);
                     wxLaunchDefaultBrowser(url);
-                    });
+                });
             }
-        }
-        else if (strCmd == "new_webpage") {
+        } else if (strCmd == "new_webpage") {
             if (j["data"].contains("url")) {
                 std::string jump_url = j["data"]["url"].get<std::string>();
                 CallAfter([this, jump_url] {
                     wxString url = wxString::FromUTF8(jump_url);
                     wxLaunchDefaultBrowser(url);
-                    });
+                });
             }
             return;
         }
-    } catch (std::exception &e) {
+    } catch (std::exception& e) {
         wxMessageBox(e.what(), "parse json failed", wxICON_WARNING);
         Close();
     }
 }
 
-void SMUserLogin::RunScript(const wxString &javascript)
+void SMUserLogin::RunScript(const wxString& javascript)
 {
     // Remember the script we run in any case, so the next time the user opens
     // the "Run Script" dialog box, it is shown there for convenient updating.
     m_javascript = javascript;
 
-    if (!m_browser) return;
+    if (!m_browser)
+        return;
 
     WebView::RunScript(m_browser, javascript);
 }
 #if wxUSE_WEBVIEW_IE
-void SMUserLogin::OnRunScriptObjectWithEmulationLevel(wxCommandEvent &WXUNUSED(evt))
+void SMUserLogin::OnRunScriptObjectWithEmulationLevel(wxCommandEvent& WXUNUSED(evt))
 {
     wxWebViewIE::MSWSetModernEmulationLevel();
     RunScript("function f(){var person = new Object();person.name = 'Foo'; \
@@ -461,7 +475,7 @@ void SMUserLogin::OnRunScriptObjectWithEmulationLevel(wxCommandEvent &WXUNUSED(e
     wxWebViewIE::MSWSetModernEmulationLevel(false);
 }
 
-void SMUserLogin::OnRunScriptDateWithEmulationLevel(wxCommandEvent &WXUNUSED(evt))
+void SMUserLogin::OnRunScriptDateWithEmulationLevel(wxCommandEvent& WXUNUSED(evt))
 {
     wxWebViewIE::MSWSetModernEmulationLevel();
     RunScript("function f(){var d = new Date('10/08/2017 21:30:40'); \
@@ -470,7 +484,7 @@ void SMUserLogin::OnRunScriptDateWithEmulationLevel(wxCommandEvent &WXUNUSED(evt
     wxWebViewIE::MSWSetModernEmulationLevel(false);
 }
 
-void SMUserLogin::OnRunScriptArrayWithEmulationLevel(wxCommandEvent &WXUNUSED(evt))
+void SMUserLogin::OnRunScriptArrayWithEmulationLevel(wxCommandEvent& WXUNUSED(evt))
 {
     wxWebViewIE::MSWSetModernEmulationLevel();
     RunScript("function f(){ return [\"foo\", \"bar\"]; }f();");
@@ -481,7 +495,7 @@ void SMUserLogin::OnRunScriptArrayWithEmulationLevel(wxCommandEvent &WXUNUSED(ev
 /**
  * Callback invoked when a loading error occurs
  */
-void SMUserLogin::OnError(wxWebViewEvent &event)
+void SMUserLogin::OnError(wxWebViewEvent& event)
 {
     auto e = "unknown error";
     switch (event.GetInt()) {
@@ -494,11 +508,12 @@ void SMUserLogin::OnError(wxWebViewEvent &event)
     case wxWEBVIEW_NAV_ERR_USER_CANCELLED: e = "wxWEBVIEW_NAV_ERR_USER_CANCELLED"; break;
     case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
-    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__<< boost::format(":SMUserLogin error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e % event.GetString();
-    
+    BOOST_LOG_TRIVIAL(fatal) << __FUNCTION__
+                             << boost::format(":SMUserLogin error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() % e %
+                                    event.GetString();
 }
 
-void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
+void SMUserLogin::OnScriptResponseMessage(wxCommandEvent& WXUNUSED(evt))
 {
     // if (!m_response_js.empty())
     //{
@@ -509,10 +524,10 @@ void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
     // RunScript("postMessage(\"AABBCCDD\");");
 }
 
-bool  SMUserLogin::ShowErrorPage()
+bool SMUserLogin::ShowErrorPage()
 {
     wxString ErrorUrl = from_u8((boost::filesystem::path(resources_dir()) / "web\\login\\error.html").make_preferred().string());
-    wxString strlang   = wxGetApp().current_language_code_safe();
+    wxString strlang  = wxGetApp().current_language_code_safe();
     if (strlang != "")
         ErrorUrl = wxString::Format("file://%s/web/login/error.html?lang=%s", from_u8(resources_dir()), strlang);
     load_url(ErrorUrl);
@@ -533,7 +548,7 @@ SMAskUserLoginDialog::SMAskUserLoginDialog(wxWindow* parent)
     msg_text->SetBackgroundColour(background_colour);
     msg_text->SetFont(Label::Body_14);
 
-    auto style_btn = [](Button *b) {
+    auto style_btn = [](Button* b) {
         b->SetPaddingSize(b->FromDIP(wxSize(8, 3)));
         b->SetMinSize(b->FromDIP(wxSize(96, 30)));
         b->SetSize(b->FromDIP(wxSize(96, 30)));
@@ -547,21 +562,21 @@ SMAskUserLoginDialog::SMAskUserLoginDialog(wxWindow* parent)
     cancel_btn->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
     style_btn(cancel_btn);
 
-    wxBoxSizer *btn_sizer = new wxBoxSizer(wxHORIZONTAL);
+    wxBoxSizer* btn_sizer = new wxBoxSizer(wxHORIZONTAL);
     btn_sizer->AddStretchSpacer(1);
     btn_sizer->Add(login_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(12));
     btn_sizer->Add(cancel_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 0);
 
-    wxBoxSizer *main_sizer = new wxBoxSizer(wxVERTICAL);
+    wxBoxSizer* main_sizer = new wxBoxSizer(wxVERTICAL);
     main_sizer->AddSpacer(FromDIP(16));
     main_sizer->Add(msg_text, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(30));
     main_sizer->AddSpacer(FromDIP(16));
     main_sizer->Add(btn_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(30));
 
-    login_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_OK); });
-    cancel_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_CANCEL); });
+    login_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    cancel_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
 
-    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent &e) {
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& e) {
         if (e.GetKeyCode() == WXK_RETURN)
             EndModal(wxID_OK);
         else
@@ -577,8 +592,9 @@ SMAskUserLoginDialog::SMAskUserLoginDialog(wxWindow* parent)
     wxGetApp().UpdateDlgDarkUI(this);
 
     m_keepalive_timer = std::make_unique<wxTimer>(this, wxID_ANY);
-    Bind(wxEVT_TIMER, [this](wxTimerEvent &) {
-        if (m_keepalive_fn) m_keepalive_fn();
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (m_keepalive_fn)
+            m_keepalive_fn();
     });
     m_keepalive_timer->Start(30000);
 }
@@ -589,10 +605,6 @@ SMAskUserLoginDialog::~SMAskUserLoginDialog()
         m_keepalive_timer->Stop();
 }
 
-void SMAskUserLoginDialog::SetKeepAliveCallback(std::function<void()> fn)
-{
-    m_keepalive_fn = std::move(fn);
-}
+void SMAskUserLoginDialog::SetKeepAliveCallback(std::function<void()> fn) { m_keepalive_fn = std::move(fn); }
 
 }} // namespace Slic3r::GUI
-

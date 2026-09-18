@@ -538,7 +538,7 @@ GatewayService::ApiResult GatewayService::request_sync(const std::string& method
 std::int64_t GatewayService::watch_device(const nlohmann::json& params, RpcCallback callback)
 {
     const nlohmann::json request_params = params.is_null() ? nlohmann::json::object() : params;
-    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] requesting action.device.watch, params=" << request_params.dump();
+    BOOST_LOG_TRIVIAL(info) << "[gateway][device-status] requesting action.device.watch, params=" << request_params.dump();
     return request("action.device.watch", request_params, std::move(callback));
 }
 
@@ -683,10 +683,11 @@ GatewayError GatewayService::wait_for_health(std::uint16_t port, HealthInfo& hea
 
         const HttpResponse response = dependencies_.http->get(make_url(config_.host, port, config_.health_path));
         if (response.error.empty() && response.status >= 200 && response.status < 300) {
-            BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
-                                    << ", body=" << response.body;
             if (const GatewayError health_error = parse_health(response.body, health))
                 return health_error;
+            BOOST_LOG_TRIVIAL(info) << "connection gateway health response: status=" << response.status
+                                    << ", device_connected=" << health.device_connected
+                                    << ", has_device_state=" << health.has_device_state;
             return {};
         }
         std::this_thread::sleep_for(config_.health_poll_interval);
@@ -736,7 +737,7 @@ void GatewayService::handle_websocket_message(const std::string& message)
     if (frame.type != RpcFrameType::Notification)
         return;
 
-    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] notification received: " << frame.method;
+    BOOST_LOG_TRIVIAL(info) << "[gateway][device-status] notification received: " << frame.method;
 
     NotificationCallback callback;
     {

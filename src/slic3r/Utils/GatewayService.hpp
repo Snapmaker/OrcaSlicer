@@ -1,5 +1,4 @@
-#ifndef slic3r_Utils_GatewayService_hpp_
-#define slic3r_Utils_GatewayService_hpp_
+#pragma once
 
 #include "ConnectionProcessManager.hpp"
 #include "GatewayProtocol.hpp"
@@ -195,5 +194,3 @@ private:
 };
 
 }} // namespace Slic3r::Gateway
-
-#endif // slic3r_Utils_GatewayService_hpp_

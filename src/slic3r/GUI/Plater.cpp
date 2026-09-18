@@ -15479,6 +15479,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (!has_error && !evt.cancelled() && evt.success()) {
             SNAP_LOG_BATCH(Info, "slice completed", {"eventName","slice_completed"});
         }
+        m_slice_all = false;
         m_is_slicing = false;
         this->preview->reload_print(false);
         /* BBS if in publishing progress */

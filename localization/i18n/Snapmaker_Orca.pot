@@ -12162,7 +12162,7 @@ msgstr ""
 msgid "Initial layer expansion"
 msgstr ""
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 
 msgid "Raft layers"
@@ -12948,12 +12948,6 @@ msgid "Bottom interface spacing"
 msgstr ""
 
 msgid "Spacing of bottom interface lines. Zero means solid interface."
-msgstr ""
-
-msgid "Minimum Support Contact Area"
-msgstr ""
-
-msgid "Lower values generate more support contact surfaces."
 msgstr ""
 
 msgid "Speed of support interface."

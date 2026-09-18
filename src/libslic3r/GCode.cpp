@@ -8124,56 +8124,40 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         auto oh2_fop = this->process_flow_value(m_config.overhang_2_4_speed);
         auto oh3_fop = this->process_flow_value(m_config.overhang_3_4_speed);
         auto oh4_fop = this->process_flow_value(m_config.overhang_4_4_speed);
+        auto ohT_fop = this->process_flow_value(m_config.overhang_totally_speed);
         double oh1_abs = oh1_fop.percent ? (oh1_fop.value * 0.01 * ref_speed) : oh1_fop.value;
         double oh2_abs = oh2_fop.percent ? (oh2_fop.value * 0.01 * ref_speed) : oh2_fop.value;
         double oh3_abs = oh3_fop.percent ? (oh3_fop.value * 0.01 * ref_speed) : oh3_fop.value;
         double oh4_abs = oh4_fop.percent ? (oh4_fop.value * 0.01 * ref_speed) : oh4_fop.value;
+        double ohT_abs = ohT_fop.percent ? (ohT_fop.value * 0.01 * ref_speed) : ohT_fop.value;
 
-        ConfigOptionPercents overhang_overlap_levels({90, 75, 50, 25, 13, 0});
+        // Snapmaker: align overhang bands with bbs. bbs non_uniform_degree_map = {0,10,25,50,75,100}
+        // (overhang %), equivalent to overlap % = {100,90,75,50,25,0}. The 0% (fully floating) band maps
+        // to overhang_totally_speed; bridge paths stay capped at bridge_speed via the original_speed clamp.
+        ConfigOptionPercents overhang_overlap_levels({100, 90, 75, 50, 25, 0});
+        ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
+            {FloatOrPercent{100, true},
+             (oh1_abs < 0.5) ?
+                 FloatOrPercent{100, true} :
+                 FloatOrPercent{oh1_abs * 100 / ref_speed, true},
+             (oh2_abs < 0.5) ?
+                 FloatOrPercent{100, true} :
+                 FloatOrPercent{oh2_abs * 100 / ref_speed, true},
+             (oh3_abs < 0.5) ?
+                 FloatOrPercent{100, true} :
+                 FloatOrPercent{oh3_abs * 100 / ref_speed, true},
+             (oh4_abs < 0.5) ?
+                 FloatOrPercent{100, true} :
+                 FloatOrPercent{oh4_abs * 100 / ref_speed, true},
+             (ohT_abs > 0.5) ?
+                 FloatOrPercent{ohT_abs * 100 / ref_speed, true} :
+             (oh4_abs < 0.5) ?
+                 FloatOrPercent{100, true} :
+                 FloatOrPercent{oh4_abs * 100 / ref_speed, true}});
 
-        if (this->process_flow_value(m_config.slowdown_for_curled_perimeters)) {
-            ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
-                {FloatOrPercent{100, true},
-                 (oh1_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh1_abs * 100 / ref_speed, true},
-                 (oh2_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh2_abs * 100 / ref_speed, true},
-                 (oh3_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh3_abs * 100 / ref_speed, true},
-                 (oh4_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh4_abs * 100 / ref_speed, true},
-                 (oh4_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh4_abs * 100 / ref_speed, true}});
-
-            new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                                  ref_speed, speed,
-                                                                                  this->process_flow_value(m_config.slowdown_for_curled_perimeters));
-        } else {
-            ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
-                {FloatOrPercent{100, true},
-                 (oh1_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh1_abs * 100 / ref_speed, true},
-                 (oh2_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh2_abs * 100 / ref_speed, true},
-                 (oh3_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh3_abs * 100 / ref_speed, true},
-                 (oh4_abs < 0.5) ?
-                     FloatOrPercent{100, true} :
-                     FloatOrPercent{oh4_abs * 100 / ref_speed, true},
-                 FloatOrPercent{this->process_flow_value(m_config.bridge_speed) * 100 / ref_speed, true}});
-
-            new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                                  ref_speed, speed,
-                                                                                  this->process_flow_value(m_config.slowdown_for_curled_perimeters));
-        }
+        new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
+                                                                              ref_speed, speed,
+                                                                              this->process_flow_value(m_config.slowdown_for_curled_perimeters));
         variable_speed = std::any_of(new_points.begin(), new_points.end(), [speed](const ProcessedPoint& p) {
             return fabs(double(p.speed) - speed) > 1;
         }); // Ignore small speed variations (under 1mm/sec)
@@ -8318,7 +8302,24 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
 
     std::string comment;
     if (m_enable_cooling_markers) {
-        comment = ";_EXTRUDE_SET_SPEED";
+        auto overhang_boundary_for_cooling = EXTRUDER_CONFIG(overhang_threshold_participating_cooling);
+        float min_overlap = std::numeric_limits<float>::max();
+        for (const ProcessedPoint &pp : new_points)
+            min_overlap = std::min(min_overlap, pp.overlap);
+        bool cooling_extrude = false;
+        if (!is_bridge(path.role())) {
+            switch (overhang_boundary_for_cooling) {
+            case (int) Overhang_threshold_participating_cooling_none: cooling_extrude = min_overlap > 0.9f; break;
+            case (int) Overhang_threshold_participating_cooling_1_4: cooling_extrude = min_overlap > 0.75f; break;
+            case (int) Overhang_threshold_participating_cooling_2_4: cooling_extrude = min_overlap > 0.5f; break;
+            case (int) Overhang_threshold_participating_cooling_3_4: cooling_extrude = min_overlap > 0.25f; break;
+            case (int) Overhang_threshold_participating_cooling_4_4: cooling_extrude = min_overlap > 0.05f; break;
+            case (int) Overhang_threshold_participating_cooling_bridge:
+            default: cooling_extrude = true; break;
+            }
+        }
+        if (cooling_extrude)
+            comment = ";_EXTRUDE_SET_SPEED";
         if (is_external_perimeter(path.role()))
             comment += ";_EXTERNAL_PERIMETER";
     }
@@ -8726,7 +8727,13 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
             jerk_to_set = first_layer_travel_jerk_val;
         }
     } else {
-        if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0) {
+        // use a lower acceleration for short travel moves near external perimeters to reduce ringing / VFA (vertical fine artifacts).
+        double short_travel_accel   = this->process_flow_value(m_config.travel_short_distance_acceleration);
+        bool use_short_travel_accel = short_travel_accel > 0.5 &&  (role == erExternalPerimeter || role == erOverhangPerimeter) &&
+                                      unscaled(travel.length()) < EXTRUDER_CONFIG(retraction_minimum_travel);
+        if (use_short_travel_accel) {
+            acceleration_to_set = (unsigned int) floor(short_travel_accel + 0.5);
+        } else if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0) {
             acceleration_to_set = (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5);
         }
         if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0) {

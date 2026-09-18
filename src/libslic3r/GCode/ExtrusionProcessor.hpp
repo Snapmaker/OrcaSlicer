@@ -363,7 +363,7 @@ public:
                                                                 (path.polyline.points,
                                                                  prev_layer_boundaries[current_object],
                                                                  path.width,
-                                                                 -1,
+                                                                 found ? 2.0f : -1.0f,
                                                                  smallest_distance_with_lower_speed);
         const auto width_inv = 1.0f / path.width;
         std::vector<ProcessedPoint> processed_points;
@@ -441,7 +441,11 @@ public:
                 return round(final_speed);
             };
             
-            float extrusion_speed = std::min(calculate_speed(curr.distance), calculate_speed(next.distance));
+            float extrusion_speed = 0.f;
+            if ((next.position - curr.position).norm() > 2.0 * path.width)
+                extrusion_speed = calculate_speed(curr.distance);
+            else
+                extrusion_speed = std::min(calculate_speed(curr.distance), calculate_speed(next.distance));
             // ORCA: Clamp resulting speed to lowest of calculated speed based on the overhang values and the current speed
             // Fixes bug where resulting overhang speed is higher than the current speed due to (for example) volumetric flow limits.
             extrusion_speed = std::min(extrusion_speed, original_speed);

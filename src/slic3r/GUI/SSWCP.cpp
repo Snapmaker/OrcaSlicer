@@ -1186,8 +1186,10 @@ void SSWCP_Instance::sw_SwitchTab() {
 
         if (m_param_data.count("target")) {
             std::string target_tab = m_param_data["target"].get<std::string>();
-            if (SSWCP::m_tab_map.count(target_tab)) {
-                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(SSWCP::m_tab_map[target_tab]));
+            auto tab_item = std::find_if(SSWCP::m_tab_map.begin(), SSWCP::m_tab_map.end(),
+                                         [&target_tab](const auto& tab) { return boost::iequals(tab.first, target_tab); });
+            if (tab_item != SSWCP::m_tab_map.end()) {
+                wxGetApp().mainframe->request_select_tab(MainFrame::TabPosition(tab_item->second));
                 send_to_js();
                 finish_job();
                 return;

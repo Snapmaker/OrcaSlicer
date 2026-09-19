@@ -1,7 +1,10 @@
 // #include "libslic3r/GCodeSender.hpp"
 #include "ConfigManipulation.hpp"
+#include <numeric>
+#include <limits>
 #include "I18N.hpp"
 #include "GUI_App.hpp"
+#include "GUI.hpp"
 #include "format.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
@@ -16,6 +19,10 @@
 #include <sstream>
 
 #include <wx/msgdlg.h>
+#include <wx/combobox.h>
+#include <wx/dialog.h>
+#include <wx/sizer.h>
+#include <wx/stattext.h>
 
 namespace Slic3r {
 namespace GUI {
@@ -48,6 +55,18 @@ void ConfigManipulation::apply(DynamicPrintConfig* config, DynamicPrintConfig* n
 }
 
 bool ConfigManipulation::is_applying() const { return is_msg_dlg_already_exist; }
+
+// ORCA: printers whose extruders have differing nozzle diameters.
+bool ConfigManipulation::printer_has_mixed_nozzle_sizes()
+{
+    const auto *diameters = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (diameters == nullptr || diameters->values.empty())
+        return false;
+    for (double d : diameters->values)
+        if (std::abs(d - diameters->values.front()) > EPSILON)
+            return true;
+    return false;
+}
 
 t_config_option_keys const &ConfigManipulation::applying_keys() const
 {
@@ -284,6 +303,62 @@ bool ConfigManipulation::check_layer_height(DynamicPrintConfig* config)
     if (min_layer_height > EPSILON && layer_height < min_layer_height - EPSILON)
         return layer_height_out_of_range_dialog(config, min_layer_height);
     return false;
+}
+
+bool ConfigManipulation::check_layer_height_divides_extruder_heights(DynamicPrintConfig* config)
+{
+    const double layer_height = config->opt_float("layer_height");
+    if (layer_height <= EPSILON)
+        return false;
+    const DynamicPrintConfig &printer_config = GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const auto *heights = printer_config.option<ConfigOptionFloats>("extruder_layer_height");
+    if (heights == nullptr)
+        return false;
+    bool        nonconforming = false;
+    long        common        = 0;
+    std::string list;
+    for (double h : heights->values) {
+        if (h <= EPSILON)
+            continue;
+        common = std::gcd(common, std::lround(h / 0.005));
+        const double n = std::round(h / layer_height);
+        if (n < 1. || std::abs(h - n * layer_height) > 1e-4)
+            nonconforming = true;
+        list += (list.empty() ? "" : " / ") + into_u8(wxString::Format("%g", h));
+    }
+    if (!nonconforming || common == 0)
+        return false;
+    // The object layer height also prints the Default extruders: it must fit through every nozzle.
+    double min_bore = std::numeric_limits<double>::max();
+    if (const auto *nd = printer_config.option<ConfigOptionFloats>("nozzle_diameter"))
+        for (double d : nd->values)
+            if (d > EPSILON)
+                min_bore = std::min(min_bore, d);
+    double suggested = 0.;
+    for (long k = 1; k <= common; ++k)
+        if (common % k == 0 && (common / k) * 0.005 <= min_bore + EPSILON) {
+            suggested = std::round((common / k) * 0.005 * 1e6) / 1e6;
+            break;
+        }
+    if (suggested <= EPSILON)
+        return false;
+
+    wxString msg_text = wxString::Format(_L("A layer height of %g mm is not a divisor of the extruders' preferred layer heights (%s mm); "
+                                            "parts printed by those extruders need whole multiples of the object layer height."),
+                                         layer_height, wxString::FromUTF8(list.c_str()));
+    msg_text += "\n\n" + wxString::Format(_L("Adjust it to %g mm, the coarsest layer height every preferred height is a whole multiple of?"), suggested);
+    MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
+    dialog.SetButtonLabel(wxID_YES, _L("Adjust"));
+    dialog.SetButtonLabel(wxID_NO, _L("Ignore"));
+    is_msg_dlg_already_exist = true;
+    const bool adjust = dialog.ShowModal() == wxID_YES;
+    if (adjust) {
+        DynamicPrintConfig new_conf = *config;
+        new_conf.set_key_value("layer_height", new ConfigOptionFloat(suggested));
+        apply(config, &new_conf);
+    }
+    is_msg_dlg_already_exist = false;
+    return adjust;
 }
 
 bool ConfigManipulation::layer_height_out_of_range_dialog(DynamicPrintConfig* config, double clamp_to)
@@ -717,6 +792,19 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     const GCodeFlavor gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
     const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
 
+    // ORCA multi-nozzle-size: while a preferred layer height is set for any extruder, the object
+    // layer height is derived from the preferred heights (the finest one; the sidebar and the
+    // Printer tab reconcile it) and a value typed here could only be reconciled back or leave
+    // heights that are no whole multiples of it. Lock the global field; the preferred layer
+    // heights are the place to change it.
+    if (is_global_config) {
+        bool derived = false;
+        if (const auto *heights = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("extruder_layer_height"))
+            for (double h : heights->values)
+                derived = derived || h > EPSILON;
+        toggle_field("layer_height", !derived);
+    }
+
     // Orca: use booleans to avoid repeated comparisons with enum values
     const bool gcf_is_marlin_firmware = gcflavor == GCodeFlavor::gcfMarlinFirmware;
     const bool gcf_is_klipper = gcflavor == GCodeFlavor::gcfKlipper;
@@ -739,6 +827,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
         toggle_field(el, have_perimeters);
     for (auto el : { "inner_wall_speed", "outer_wall_speed", "small_perimeter_speed", "small_perimeter_threshold" })
         toggle_field(el, have_perimeters, variant_index);
+
+    // ORCA: split wall layer heights - the adjustment target and direction only matter while
+    // the adjustment itself is enabled.
+    const bool split_wall_adjust = config->opt_bool("split_wall_adjust");
+    toggle_line("split_wall_adjust_filament", split_wall_adjust);
+    toggle_line("split_wall_adjust_direction", split_wall_adjust);
 
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
     // sparse_infill_filament_id uses the same logic as in Print::extruders()
@@ -950,6 +1044,13 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // ORCA: Independent support layer height is not compatible with organic tree supports,
     // as they rely on the support layers being the same as the object layers to determine where to place branches.
     toggle_line("independent_support_layer_height", have_support_material && !support_is_organic);
+    // With the prime tower only tree supports keep independent (grid-aligned) heights; the classic
+    // generator synchronizes to the object layers (SupportMaterial::synchronize_layers()).
+    toggle_field("independent_support_layer_height", have_support_material && (support_is_tree || !config->opt_bool("enable_prime_tower")));
+    // The step only has an effect for non-organic tree supports with independent layer heights
+    // under the prime tower; single-extruder multi-material keeps whole steps.
+    toggle_line("support_layer_height_step", support_is_normal_tree && config->opt_bool("independent_support_layer_height") &&
+                                                 config->opt_bool("enable_prime_tower") && !bSEMM);
 
     toggle_field("tree_support_brim_width", support_is_tree && !config->opt_bool("tree_support_auto_brim"));
     // tree support use max_bridge_length instead of bridge_no_support
@@ -984,6 +1085,18 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     toggle_field("inner_wall_line_width", have_perimeters || have_skirt || have_brim);
     toggle_field("support_filament", have_support_material || have_skirt);
+
+    // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing
+    // nozzle diameters; the material options serve any multi-filament setup and stay visible
+    // like the other support rows. The legacy base/interface selectors show only while the
+    // "Show legacy filament selection" toggle is on; opening a 3mf project with an assigned
+    // selector switches the toggle on (see Plater's project loading).
+    toggle_line("support_nozzle_diameter", have_support_material && printer_has_mixed_nozzle_sizes());
+    toggle_field("support_base_material", have_support_material || have_skirt);
+    toggle_field("support_interface_material", have_support_material);
+    const bool legacy_support_selectors = wxGetApp().app_config->get_bool("show_legacy_support_filament");
+    toggle_line("support_filament", legacy_support_selectors);
+    toggle_line("support_interface_filament", legacy_support_selectors);
 
     toggle_line("raft_contact_distance", have_raft && !have_support_soluble);
 
@@ -1260,6 +1373,91 @@ void ConfigManipulation::toggle_print_sla_options(DynamicPrintConfig* config)
     toggle_field("pad_object_connector_stride", zero_elev);
     toggle_field("pad_object_connector_width", zero_elev);
     toggle_field("pad_object_connector_penetration", zero_elev);
+}
+
+// ORCA: dialog raised when the user enables support on a printer with differing nozzle sizes:
+// the nozzle size that prints the support, and the loaded filament types used for the raft/base
+// and the interface. Writes support_nozzle_diameter and the two support material options, which
+// exclude extruders of other types at slice time; the legacy selectors stay untouched.
+int ConfigManipulation::show_support_filament_dialog(DynamicPrintConfig* config, DynamicPrintConfig* new_conf)
+{
+    PresetBundle &bundle = *wxGetApp().preset_bundle;
+    const auto *nozzle_opt = bundle.printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (nozzle_opt == nullptr || nozzle_opt->values.empty())
+        return wxID_CANCEL;
+    const std::vector<double> &nozzles = nozzle_opt->values;
+
+    // The distinct nozzle sizes and the loaded filaments' types, keeping extruder / slot order.
+    std::vector<double> sizes;
+    for (double d : nozzles)
+        if (std::find_if(sizes.begin(), sizes.end(), [d](double s) { return std::abs(s - d) < EPSILON; }) == sizes.end())
+            sizes.emplace_back(d);
+    std::vector<std::string> types;
+    for (const std::string &name : bundle.filament_presets) {
+        const Preset *preset = bundle.filaments.find_preset(name);
+        const std::string type = preset != nullptr ? preset->config.opt_string("filament_type", 0u) : std::string();
+        if (! type.empty() && std::find(types.begin(), types.end(), type) == types.end())
+            types.emplace_back(type);
+    }
+
+    wxDialog dlg(m_msg_dlg_parent, wxID_ANY, _(L("Support for mixed nozzle sizes")));
+    auto *sizer = new wxBoxSizer(wxVERTICAL);
+    auto *intro = new wxStaticText(&dlg, wxID_ANY,
+        _(L("This printer uses different nozzle sizes. Select the nozzle size that prints the "
+            "support, and the filament types used for the raft and the support interface.")));
+    intro->Wrap(dlg.FromDIP(400));
+    sizer->Add(intro, 0, wxALL, 10);
+    auto add_choice = [&dlg, sizer](const wxString &label, const wxArrayString &items, int selection) {
+        auto *row = new wxBoxSizer(wxHORIZONTAL);
+        row->Add(new wxStaticText(&dlg, wxID_ANY, label), 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+        auto *choice = new wxComboBox(&dlg, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, items, wxCB_READONLY);
+        choice->SetSelection(selection);
+        row->Add(choice, 1, wxALIGN_CENTER_VERTICAL);
+        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 10);
+        return choice;
+    };
+
+    wxArrayString size_items;
+    int size_selection = 0;
+    for (size_t i = 0; i < sizes.size(); ++ i) {
+        size_items.Add(wxString::Format("%g mm", sizes[i]));
+        if (std::abs(sizes[i] - config->opt_float("support_nozzle_diameter")) < EPSILON)
+            size_selection = int(i);
+    }
+    wxArrayString type_items;
+    type_items.Add(_(L("Default")));
+    for (const std::string &type : types)
+        type_items.Add(wxString::FromUTF8(type));
+    // Preselect the currently configured materials.
+    auto type_selection = [&](const char *key) {
+        const std::string &material = config->opt_string(key);
+        for (size_t i = 0; i < types.size(); ++ i)
+            if (types[i] == material)
+                return int(i) + 1;
+        return 0;
+    };
+    auto *size_choice      = add_choice(_(L("Support nozzle size")),    size_items, size_selection);
+    auto *base_choice      = add_choice(_(L("Raft and support base")),  type_items, type_selection("support_base_material"));
+    auto *interface_choice = add_choice(_(L("Support interface")),      type_items, type_selection("support_interface_material"));
+    sizer->Add(dlg.CreateSeparatedButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxALL, 10);
+    if (wxWindow *btn = dlg.FindWindow(wxID_OK); btn != nullptr)
+        btn->SetLabel(_(L("OK")));
+    if (wxWindow *btn = dlg.FindWindow(wxID_CANCEL); btn != nullptr)
+        btn->SetLabel(_(L("Cancel")));
+    dlg.SetSizerAndFit(sizer);
+    dlg.CentreOnScreen();
+    const int answer = dlg.ShowModal();
+    if (answer != wxID_OK)
+        return answer;
+
+    const double size = sizes[std::max(0, size_choice->GetSelection())];
+    auto material_of = [&types](int choice) {
+        return choice <= 0 ? std::string() : types[choice - 1];
+    };
+    new_conf->set_key_value("support_nozzle_diameter", new ConfigOptionFloat(size));
+    new_conf->set_key_value("support_base_material", new ConfigOptionString(material_of(base_choice->GetSelection())));
+    new_conf->set_key_value("support_interface_material", new ConfigOptionString(material_of(interface_choice->GetSelection())));
+    return answer;
 }
 
 int ConfigManipulation::show_spiral_mode_settings_dialog(bool is_object_config)

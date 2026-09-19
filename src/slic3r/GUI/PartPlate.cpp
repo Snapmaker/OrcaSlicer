@@ -1539,6 +1539,9 @@ int PartPlate::picking_id_component(int idx) const
 
 static void expand_plate_extruders(std::vector<int>& ids)
 {
+	// No GUI application on the command line (wxTheApp is null there): nothing to expand.
+	if (wxTheApp == nullptr)
+		return;
 	const size_t num_physical = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
 	if (num_physical > 0) {
 		wxGetApp().preset_bundle->mixed_filaments.expand_virtual_extruder_ids(ids, num_physical);

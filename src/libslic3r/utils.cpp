@@ -1950,7 +1950,7 @@ std::set<std::string> vendor_names_in(const boost::filesystem::path& dir)
 // be read is no installation at all — and the vendor is installed the way it was
 // before caches existed, as its profile and the preset JSONs it points at. Returns
 // the version the cache is stamped with, invalid when it is not the form to install.
-static Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor)
+Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor)
 {
     const auto cache_ver = Semver::parse(VendorCacheFile::peek_version((dir / (vendor + ".opc")).string(), vendor));
     if (! cache_ver)

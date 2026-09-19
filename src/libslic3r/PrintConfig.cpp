@@ -410,6 +410,19 @@ static t_config_enum_values s_keys_map_EnsureVerticalShellThickness{
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(EnsureVerticalShellThickness)
 
+// ORCA: split wall layer heights ("split_wall_adjust").
+static t_config_enum_values s_keys_map_WallSplitFilament{
+    { "outer_wall", int(WallSplitFilament::wsfOuterWall) },
+    { "inner_wall", int(WallSplitFilament::wsfInnerWall) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitFilament)
+
+static t_config_enum_values s_keys_map_WallSplitDirection{
+    { "decrease", int(WallSplitDirection::wsdDecrease) },
+    { "increase", int(WallSplitDirection::wsdIncrease) },
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(WallSplitDirection)
+
 // Orca
 static t_config_enum_values s_keys_map_InternalBridgeFilter {
     { "disabled",        ibfDisabled },
@@ -470,6 +483,15 @@ static const t_config_enum_values s_keys_map_TimelapseType = {
     {"1",       tlSmooth}
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(TimelapseType)
+
+static const t_config_enum_values s_keys_map_SupportLayerHeightStep = {
+    {"whole",   slhsWholeLayer},
+    {"half",    slhsHalfLayer},
+    {"quarter", slhsQuarterLayer},
+    {"auto",    slhsAuto},
+    {"max",     slhsMaxHeight}
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(SupportLayerHeightStep)
 
 static const t_config_enum_values s_keys_map_SkirtType = {
     { "combined", stCombined },
@@ -940,7 +962,9 @@ void PrintConfigDef::init_common_params()
     def = this->add("layer_height", coFloat);
     def->label = L("Layer height");
     def->category = L("Quality");
-    def->tooltip = L("This is the height for each layer. Smaller layer heights give greater accuracy but longer printing time.");
+    def->tooltip = L("This is the height for each layer. Smaller layer heights give greater accuracy but longer printing time.\n"
+                     "While a preferred layer height is set for any extruder (printer settings), the object layer height is "
+                     "derived from the preferred layer heights - the finest one - and the global value is locked here.");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(INITIAL_LAYER_HEIGHT));
@@ -5455,11 +5479,47 @@ void PrintConfigDef::init_fff_params()
     def = this->add("min_layer_height", coFloats);
     def->label = L("Min");
     def->tooltip = L("The lowest printable layer height for the extruder. "
-                     "Used to limit the minimum layer height when enable adaptive layer height.");
+                     "Used to limit the minimum layer height when enable adaptive layer height. "
+                     "Parts printed with a thicker preferred extruder layer height never fall back "
+                     "below this height either (the first layer excepted).");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0.07 });
+
+    def = this->add("extruder_layer_height", coFloats);
+    def->label = L("Preferred layer height");
+    def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
+                     "different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest "
+                     "height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the "
+                     "finest preferred height down to a quarter of it), and the preferred heights are rounded to those "
+                     "multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. "
+                     "A part whose features all follow this extruder prints only on every Nth layer with "
+                     "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
+                     "falls back to the object layer height. When the rest of the part cannot follow, "
+                     "walls assigned to this extruder still combine to this height on their own, "
+                     "full-density top surfaces absorb the solid layers below them, and sparse or 100% "
+                     "dense infill combines to this height where the part prints every layer; inside a "
+                     "part printing on every Nth layer the infill follows that part's layers. 0 means to "
+                     "use the object layer height.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 0. });
+
+    // ORCA multi-nozzle-size: experimental exact preferred layer heights.
+    def = this->add("extruder_layer_height_exact", coBool);
+    def->label = L("Exact preferred layer heights");
+    def->category = L("Extruders");
+    def->tooltip = L("Experimental. Keep every preferred layer height exactly as entered: the object layer height "
+                     "becomes the coarsest height all of them are whole multiples of, which can be very fine "
+                     "(0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers "
+                     "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
+                     "printing can take much longer; the prime tower prints one slab per tool change instead, but "
+                     "those slabs can fall below the extruders' minimum layer height. Off: the preferred heights "
+                     "are rounded to the coarsest grid on which they land within 0.01 mm.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("slow_down_min_speed", coFloats);
     def->label = L("Min print speed");
@@ -5660,6 +5720,54 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
+
+    // ORCA: split wall layer heights. When the outer and inner wall filaments print at their own
+    // preferred layer heights and one is an integer multiple of the other, the walls always split:
+    // the finer walls print every time their height is reached and the coarser walls once per
+    // multiple, so their tops stay flush. The options below additionally allow adjusting one wall
+    // filament's wall-only layer height so the split also happens when the preferred heights do
+    // not divide evenly.
+    def = this->add("split_wall_adjust", coBool);
+    def->label = L("Adjust wall layer height");
+    def->category = L("Extruders");
+    def->tooltip = L("Outer and inner walls automatically print at their own preferred layer heights when "
+                     "one height is an integer multiple of the other. When the heights do not divide evenly, "
+                     "this option adjusts the wall layer height of one of the two wall filaments (chosen "
+                     "below) to the nearest multiple or divisor of the other, so the walls can still split. "
+                     "The adjusted height only applies to that filament's walls; other features keep the "
+                     "preferred layer height. Adjustments never leave the filament's layer height limits: "
+                     "if no allowed height exists in the chosen direction, the walls print together at the "
+                     "lower height as usual.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("split_wall_adjust_filament", coEnum);
+    def->label = L("Adjusted walls");
+    def->category = L("Extruders");
+    def->tooltip = L("Which of the two wall filaments gets its wall layer height adjusted when the "
+                     "preferred layer heights do not divide evenly.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitFilament>::get_enum_values();
+    def->enum_values.push_back("outer_wall");
+    def->enum_values.push_back("inner_wall");
+    def->enum_labels.push_back(L("Outer walls"));
+    def->enum_labels.push_back(L("Inner walls"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitFilament>(wsfOuterWall));
+
+    def = this->add("split_wall_adjust_direction", coEnum);
+    def->label = L("Adjustment direction");
+    def->category = L("Extruders");
+    def->tooltip = L("Whether the adjusted wall filament's wall layer height is decreased or increased to "
+                     "reach a height compatible with the other wall filament. Heights outside the adjusted "
+                     "filament's layer height limits are never used: if no allowed height exists in this "
+                     "direction, the walls print together at the lower height as usual.");
+    def->enum_keys_map = &ConfigOptionEnum<WallSplitDirection>::get_enum_values();
+    def->enum_values.push_back("decrease");
+    def->enum_values.push_back("increase");
+    def->enum_labels.push_back(L("Decrease"));
+    def->enum_labels.push_back(L("Increase"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<WallSplitDirection>(wsdDecrease));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -7164,6 +7272,45 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("support_nozzle_diameter", coFloat);
+    def->label    = L("Support nozzle diameter");
+    def->category = L("Support");
+    def->tooltip = L("On printers whose extruders have different nozzle diameters, only filaments of this "
+                     "nozzle diameter are used to print support, raft and support interface. This keeps "
+                     "filaments of other nozzle sizes - with their different line widths and layer height "
+                     "limits - out of the support. Support filaments set to a non-default value must match "
+                     "this diameter. Value 0 allows any filament to print support.");
+    def->sidetext = "mm";	// milimeters, don't need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("support_base_material", coString);
+    def->label    = L("Support/raft base material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft base only with filaments of this material type; "
+                      "extruders loaded with other types are not used for it. Combines with the "
+                      "support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft base filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("support_interface_material", coString);
+    def->label    = L("Support/raft interface material");
+    def->category = L("Support");
+    def->tooltip  = L("Print the support and raft interface only with filaments of this material "
+                      "type; extruders loaded with other types are not used for it. Combines with "
+                      "the support nozzle diameter restriction. Leave empty for no restriction; an "
+                      "explicitly selected support/raft interface filament still takes precedence.");
+    def->gui_type = ConfigOptionDef::GUIType::select_open;
+    def->mode     = comSimple;
+    for (const char *material : { "PLA", "PETG", "ABS", "ASA", "TPU", "PC", "PA", "PVA", "HIPS" })
+        def->enum_values.emplace_back(material);
+    def->set_default_value(new ConfigOptionString(""));
+
     def = this->add("support_line_width", coFloatOrPercent);
     def->label = L("Support");
     def->category = L("Quality");
@@ -7353,11 +7500,47 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SupportMaterialStyle>(smsDefault));
 
+    def = this->add("support_layer_height_step", coEnum);
+    def->label = L("Support layer height step");
+    def->category = L("Support");
+    def->tooltip = L("Step granularity for independent tree support layer heights while the prime tower is enabled "
+                     "(classic supports print on the object's layers with the prime tower). "
+                     "Automatic picks the coarsest step whose multiples reach the tallest support layer the support "
+                     "nozzle allows (e.g. quarter steps for a 0.14 mm maximum on a 0.08 mm object layer height); "
+                     "every support layer under an overhang contact still ends exactly one support gap below it. "
+                     "Maximum uses the same step but lets every support layer be as tall as possible: the support "
+                     "top under each contact is then the nearest support layer, so the gap varies by up to half a "
+                     "support layer above the configured value. "
+                     "With whole layers, support layer heights are multiples of the object layer height. "
+                     "Half or quarter steps also allow multiples like 1.5x or 1.25x, which helps when the support "
+                     "nozzle's maximum layer height sits between two whole multiples. Support boundaries may then "
+                     "fall between object layers; such support-only layers print without a prime tower layer: the "
+                     "switch to the support filament happens directly (any residue ends up in the support) and the "
+                     "switch back purges on the next full prime tower layer. With smooth timelapse the sub-layer "
+                     "boundaries get their own prime tower layers instead and are only used where those stay at or "
+                     "above the nozzles' minimum layer height. Not used with single-extruder multi-material, which "
+                     "keeps whole layers.");
+    def->enum_keys_map = &ConfigOptionEnum<SupportLayerHeightStep>::get_enum_values();
+    // Entry order must follow the enum's numeric order: the choice field maps by position.
+    def->enum_values.emplace_back("whole");
+    def->enum_values.emplace_back("half");
+    def->enum_values.emplace_back("quarter");
+    def->enum_values.emplace_back("auto");
+    def->enum_values.emplace_back("max");
+    def->enum_labels.emplace_back(L("100% (whole layers)"));
+    def->enum_labels.emplace_back(L("50%"));
+    def->enum_labels.emplace_back(L("25%"));
+    def->enum_labels.emplace_back(L("Automatic (exact gap)"));
+    def->enum_labels.emplace_back(L("Maximum (gap rounded to support layers)"));
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionEnum<SupportLayerHeightStep>(slhsMaxHeight));
+
     def = this->add("independent_support_layer_height", coBool);
     def->label = L("Independent support layer height");
     def->category = L("Support");
     def->tooltip = L("Support layer uses layer height independent with object layer. This is to support customizing Z-gap and save print time. "
-                     "This option will be invalid when the prime tower is enabled.");
+                     "With the prime tower enabled, tree supports keep independent heights aligned to the object layer grid "
+                     "(see Support layer height step); classic supports then print on the object's layers.");
     def->mode = comAdvanced;
     // Mainline default. The Snapmaker process profiles either set this to 1
     // explicitly or (U1) leave it unset; with the old false default, loading a
@@ -8571,6 +8754,7 @@ void PrintConfigDef::init_extruder_option_keys()
         "default_nozzle_volume_type",
         "deretraction_speed",
         "extruder_colour",
+        "extruder_layer_height",
         "extruder_offset",
         "extruder_printable_height",
         "extruder_type",
@@ -9897,24 +10081,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             this->option("wipe_tower_filament")->setInt(0);
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // Note: no cross-propagation between the per-feature filament selectors here. Filling one
+    // selector from another (sparse -> internal solid, internal solid <-> top/bottom) silently
+    // overwrote "Default" (0), which means "use the part's filament", with an unrelated feature's
+    // explicit filament - e.g. assigning internal solid infill dragged the top/bottom surfaces along.
+    // Each selector resolves its own "Default" at slicing time (PrintRegion::extruder()).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
@@ -9950,12 +10121,11 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
             ept_opt->value = false;
         }
 
-        if (ept_opt->value) {
-            if (islh_opt)
-                islh_opt->value = false;
-            //if (alh_opt)
-            //    alh_opt->value = false;
-        }
+        // With the prime tower enabled, independent support layer heights are no longer
+        // forced off: tree supports plan grid-aligned thick layers (whole multiples of
+        // object layers) so every toolchange still lands on a tower layer, and the
+        // classic support generator falls back to synchronized layers on its own.
+        (void) islh_opt;
         /* BBS: MusangKing - not sure if this is still valid, just comment it out cause "Independent support layer height" is re-opened.
         else {
             if (islh_opt)
@@ -9994,24 +10164,7 @@ void DynamicPrintConfig::normalize_fdm_1()
         }
     }
 
-    if (this->has("sparse_infill_filament_id")) {
-        int sparse_infill_filament_id = this->option("sparse_infill_filament_id")->getInt();
-        if (sparse_infill_filament_id > 0 && (!this->has("internal_solid_filament_id") || this->option("internal_solid_filament_id")->getInt() == 0))
-            this->option("internal_solid_filament_id", true)->setInt(sparse_infill_filament_id);
-    }
-
-    const int internal_solid = this->has("internal_solid_filament_id") ? this->option("internal_solid_filament_id")->getInt() : 0;
-    const int top_surface    = this->has("top_surface_filament_id") ? this->option("top_surface_filament_id")->getInt() : 0;
-    const int bottom_surface = this->has("bottom_surface_filament_id") ? this->option("bottom_surface_filament_id")->getInt() : 0;
-
-    if (internal_solid == 0 && top_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(top_surface);
-    if (internal_solid == 0 && bottom_surface > 0)
-        this->option("internal_solid_filament_id", true)->setInt(bottom_surface);
-    if (top_surface == 0 && internal_solid > 0)
-        this->option("top_surface_filament_id", true)->setInt(internal_solid);
-    if (bottom_surface == 0 && internal_solid > 0)
-        this->option("bottom_surface_filament_id", true)->setInt(internal_solid);
+    // No cross-propagation between the per-feature filament selectors (see normalize_fdm() above).
 
     if (this->has("spiral_mode") && this->opt<ConfigOptionBool>("spiral_mode", true)->value) {
         {
@@ -10069,13 +10222,9 @@ t_config_option_keys DynamicPrintConfig::normalize_fdm_2(int num_objects, int us
         }
 
         if (ept_opt->value) {
-            if (islh_opt) {
-                if (islh_opt->value) {
-                    islh_opt->value = false;
-                    changed_keys.push_back("independent_support_layer_height");
-                }
-                //islh_opt->value = false;
-            }
+            // Independent support layer heights stay enabled with the prime tower (see
+            // normalize_fdm()); supports print grid-aligned thick layers instead.
+            (void) islh_opt;
             //if (alh_opt) {
             //    if (alh_opt->value) {
             //        alh_opt->value = false;
@@ -12152,7 +12301,13 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
         for (size_t i = 0; i < sizeof(widths) / sizeof(widths[i]); ++ i) {
             std::string key(widths[i]);
             double abs_width = cfg.get_abs_value(key, max_nozzle_diameter);
-            double allowed_max = (key == "bridge_line_width") ? min_nozzle_diameter : MAX_LINE_WIDTH_MULTIPLIER * max_nozzle_diameter;
+            // A percentage bridge width is relative to the nozzle it prints with, so it fits every
+            // nozzle of a multi-nozzle printer as long as it stays within 100 %; an absolute width
+            // has to fit the smallest nozzle.
+            const ConfigOptionFloatOrPercent *bridge_width_opt = key == "bridge_line_width" ? cfg.option<ConfigOptionFloatOrPercent>(key) : nullptr;
+            double allowed_max = (key == "bridge_line_width") ?
+                ((bridge_width_opt != nullptr && bridge_width_opt->percent) ? max_nozzle_diameter : min_nozzle_diameter) :
+                MAX_LINE_WIDTH_MULTIPLIER * max_nozzle_diameter;
             if (abs_width > allowed_max) {
                 if (key == "bridge_line_width")
                     error_message.emplace(key, L("Bridge line width must not exceed nozzle diameter: ") + std::to_string(abs_width));

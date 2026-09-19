@@ -243,6 +243,20 @@ public:
     void update_dynamic_filament_list();
 
     void update_nozzle_settings(bool switch_machine = false);
+    // Sets only nozzle `nozzle_idx`'s diameter (`variant` as the profiles name it, "0.4"),
+    // keeping the printer preset; see Plater.cpp.
+    void apply_nozzle_diameter(size_t nozzle_idx, const wxString &diameter_label);
+    // Re-derives the object layer height from the per-extruder layer heights (see Plater.cpp).
+    void derive_object_layer_height();
+    // Fixes a configuration whose preferred layer heights are no whole multiples of the object
+    // layer height (after a project load, preset switch or nozzle change); no-op when it conforms.
+    void reconcile_layer_heights();
+    void schedule_layer_height_reconcile();
+    // After the user edited the object layer height: offers to adjust the preferred layer heights
+    // to whole multiples of it or to use the derived value instead. Returns true if it changed anything.
+    bool confirm_object_layer_height_edit();
+    // Refresh the nozzle tabs' combo values in place; rebuilds (deferred) on extruder count change.
+    void update_nozzle_values();
 
     PlaterPresetComboBox *  printer_combox();
     ObjectList*             obj_list();
@@ -767,6 +781,14 @@ public:
     /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
     /// @return True if slice-all can continue; otherwise false.
     bool confirm_filament_temp_mixing_before_slice_all();
+    /// @brief ORCA: ask before slicing the current plate when that would take very long (see
+    /// long_slice_layer_threshold in Plater.cpp). explicit_request = the user pressed Slice (or
+    /// selected the plate): always ask; otherwise (preview switch) a decline that was given for the
+    /// same estimate is honoured silently.
+    /// @return True if slicing can proceed; false if the user aborted.
+    bool confirm_long_slice_before_slice(bool explicit_request);
+    /// @brief ORCA: the same question for every plate a slice-all would slice.
+    bool confirm_long_slice_before_slice_all();
     /// Queue a single UI sync after filament preset/assignment/plate usage changes.
     void notify_filament_usage_changed();
     void force_filament_colors_update();

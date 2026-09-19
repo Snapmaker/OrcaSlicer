@@ -87,6 +87,9 @@ public:
     void    check_chamber_temperature(DynamicPrintConfig* config);
     void    check_chamber_minimal_temperature(DynamicPrintConfig* config);
     bool    check_layer_height(DynamicPrintConfig* config);
+    // ORCA multi-nozzle-size: a per-object layer height must divide every explicit extruder
+    // layer height; offers the coarsest value that does. Returns true when it adjusted the value.
+    bool    check_layer_height_divides_extruder_heights(DynamicPrintConfig* config);
     bool    layer_height_out_of_range_dialog(DynamicPrintConfig* config, double clamp_to);
     void    layer_height_limits(double& min_layer_height, double& max_layer_height) const;
     void    set_is_BBL_Printer(bool is_bbl_printer) { is_BBL_Printer = is_bbl_printer; };
@@ -102,6 +105,9 @@ public:
         m_support_material_overhangs_queried = queried;
     }
     int    show_spiral_mode_settings_dialog(bool is_object_config = false);
+    // ORCA: support filament dialog for printers with differing nozzle sizes.
+    int    show_support_filament_dialog(DynamicPrintConfig* config, DynamicPrintConfig* new_conf);
+    static bool printer_has_mixed_nozzle_sizes();
 
 private:
     bool get_temperature_range(DynamicPrintConfig *config, int &range_low, int &range_high);

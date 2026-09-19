@@ -71,6 +71,8 @@ struct SlicingParameters
     coordf_t    min_layer_height { 0 };
     coordf_t    max_layer_height { 0 };
     coordf_t    max_suport_layer_height { 0 };
+    // The support extruders' own minimum, not clamped to the object layer height.
+    coordf_t    min_suport_layer_height { 0 };
 
     // First layer height of the print, this may be used for the first layer of the raft
     // or for the first layer of the print.
@@ -206,6 +208,36 @@ int generate_layer_height_texture(
     const SlicingParameters     &slicing_params,
     const std::vector<coordf_t> &layers,
     void *data, int rows, int cols, bool level_of_detail_2nd_level);
+
+// ORCA multi-nozzle-size: per-extruder preferred layer heights ("extruder_layer_height") and the
+// object layer height they print on. The engine prints an extruder in runs of whole object
+// layers, so every explicit preferred height must be a whole multiple of the object layer height
+// (the grid). Heights are taken in 5 um quanta.
+struct ExtruderLayerHeightPlan
+{
+    double              grid = 0.;             // object layer height (0 = nothing to derive)
+    std::vector<double> heights;               // adjusted preferred heights (0 = Default)
+    std::vector<size_t> rounded;               // extruders whose preferred height was rounded
+    std::vector<size_t> pinned;                // Default extruders pinned to the previous height
+};
+
+// The coarsest object layer height every explicit height is a whole multiple of; with
+// `include_base` the given base joins in, so the result can only be finer than it. Capped to
+// `max_height` (largest divisor that fits) when that is > 0. 0 when nothing constrains it.
+double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height);
+
+// The object layer height for a set of preferred heights and the heights made whole multiples of
+// it. `exact` (experimental): the grid is the coarsest height every preferred height is a whole
+// multiple of, so every entered value prints exactly - possibly a very fine grid, which the
+// Default extruders, supports and the prime tower's fallback slabs print at. Otherwise the grid
+// is the coarsest height, from the finest preferred height down to a quarter of it (never below
+// 0.02 mm), on which every preferred height lands within `tolerance` of a whole multiple; when
+// none does, the finest preferred height. Either way the grid must fit through the smallest
+// nozzle (`min_nozzle`, 0 = unconstrained), preferred heights are snapped to whole multiples
+// within their nozzle bore, and Default extruders keep their current height (`base`, rounded to
+// the grid) when the grid gets finer than it.
+ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
+                                                    double min_nozzle, bool exact, double tolerance = 0.01);
 
 namespace Slicing {
 	// Minimum layer height for the variable layer height algorithm. Nozzle index is 1 based.

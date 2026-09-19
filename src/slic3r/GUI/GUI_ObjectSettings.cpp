@@ -404,8 +404,10 @@ void ObjectSettings::update_config_values(ModelConfig* config, const std::string
 
     main_config.apply(config->get(), true);
 
-    if (printer_technology == ptFFF && changed_opt_key == "layer_height")
+    if (printer_technology == ptFFF && changed_opt_key == "layer_height") {
         config_manipulation.check_layer_height(&main_config);
+        config_manipulation.check_layer_height_divides_extruder_heights(&main_config);
+    }
 
     printer_technology == ptFFF  ?  config_manipulation.update_print_fff_config(&main_config) :
                                     config_manipulation.update_print_sla_config(&main_config) ;

@@ -2649,7 +2649,7 @@ TEST_CASE("MERGE-REGRESS-04: merge_mixed_filament marks source deleted and seria
 // [MixedFilament][Delete] — DELETE-PRIORITY resolution order tests
 // ============================================================================
 
-TEST_CASE("DELETE-PRIORITY-01: resolve-order — manual_pattern blocks pair/gradient check", "[MixedFilament][Delete]")
+TEST_CASE("DELETE-PRIORITY-01: resolve-order - manual_pattern blocks pair/gradient check", "[MixedFilament][Delete]")
 {
     // Verify that when a mixed filament has a non-empty manual_pattern, the
     // component_a/component_b pair check and gradient check are skipped (both
@@ -2819,7 +2819,7 @@ TEST_CASE("DELETE-GROUP-01: comma-separated group adjustment after deletion", "[
 // [MixedFilament][Gradient] — GRAD-DEL regression tests
 // ============================================================================
 
-TEST_CASE("GRAD-DEL-01: gradient with partial component survival — matching ID removes entry", "[MixedFilament][Gradient]")
+TEST_CASE("GRAD-DEL-01: gradient with partial component survival - matching ID removes entry", "[MixedFilament][Gradient]")
 {
     // Setup: 6 physical.  Create a custom entry with gradient_component_ids="123"
     // (IDs 1, 2, 3).  Delete physical #2.  The gradient check (step 2 in
@@ -2853,7 +2853,7 @@ TEST_CASE("GRAD-DEL-01: gradient with partial component survival — matching ID
     CHECK(gradient_entries == 0);
 }
 
-TEST_CASE("GRAD-DEL-02: gradient partial survival — no matching component, IDs adjusted", "[MixedFilament][Gradient]")
+TEST_CASE("GRAD-DEL-02: gradient partial survival - no matching component, IDs adjusted", "[MixedFilament][Gradient]")
 {
     // Setup: 6 physical.  Create a custom entry with gradient_component_ids="345"
     // (IDs 3, 4, 5).  Delete physical #2.  None of the gradient IDs match #2,

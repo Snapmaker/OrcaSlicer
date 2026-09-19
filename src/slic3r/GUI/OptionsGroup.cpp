@@ -177,10 +177,10 @@ void OptionsGroup::set_max_win_width(int max_win_width)
 void OptionsGroup::remove_option_if(std::function<bool(std::string const&)> const& comp)
 {
     // m_options_mode parallels only the lines that carried options when appended:
-    // append_line() skips the mode push for full-width widget lines, and append_separator()
-    // adds an optionless line directly. Walk the two structures in step - indexing
-    // m_options_mode with the m_lines index reads and erases out of bounds as soon as one
-    // such line exists.
+    // append_line() skips the mode push for full-width widget lines and optionless
+    // (widget-only) lines, e.g. the legacy support selection toggle. Walk the two
+    // structures in step - indexing m_options_mode with the m_lines index reads and
+    // erases out of bounds as soon as one such line exists.
     size_t mode_idx = 0;
     for (auto& l : m_lines) {
         auto& opts = const_cast<std::vector<Option>&>(l.get_options());
@@ -272,6 +272,8 @@ void OptionsGroup::append_line(const Line& line)
 // BBS: get line for opt_key
 Line* OptionsGroup::get_line(const std::string& opt_key)
 {
+    // ORCA: widget-only lines (e.g. the legacy support selection toggle) carry no options; the
+    // per-option scan below simply skips them.
     for (int index = 0; index < m_lines.size(); index++) {
         for (auto& opt : m_lines[index].get_options())
             if (opt.opt_id == opt_key)

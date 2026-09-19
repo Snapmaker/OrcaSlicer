@@ -139,6 +139,8 @@ private:
     bool        m_bridge { false };
 };
 
+// ORCA: nozzle driving support / raft flows: the configured filament's, or the support_nozzle_diameter restriction when the filament is left at "default" (0).
+extern float support_material_nozzle_diameter(const PrintObject *object, int configured_filament);
 extern Flow support_material_flow(const PrintObject* object, float layer_height = 0.f);
 extern Flow support_transition_flow(const PrintObject *object); //BBS
 extern Flow support_material_1st_layer_flow(const PrintObject *object, float layer_height = 0.f);

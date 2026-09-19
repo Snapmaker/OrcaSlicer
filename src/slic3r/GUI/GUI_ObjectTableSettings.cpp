@@ -403,8 +403,10 @@ void ObjectTableSettings::update_config_values(bool is_object, ModelObject* obje
 
     config_manipulation.set_is_BBL_Printer(wxGetApp().preset_bundle->is_bbl_vendor());
 
-    if (printer_technology == ptFFF && changed_opt_key == "layer_height")
+    if (printer_technology == ptFFF && changed_opt_key == "layer_height") {
         config_manipulation.check_layer_height(&main_config);
+        config_manipulation.check_layer_height_divides_extruder_heights(&main_config);
+    }
 
     printer_technology == ptFFF  ?  config_manipulation.update_print_fff_config(&main_config) :
                                     config_manipulation.update_print_sla_config(&main_config) ;

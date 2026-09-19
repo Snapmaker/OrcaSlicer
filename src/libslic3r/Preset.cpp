@@ -1195,7 +1195,7 @@ static std::vector<std::string> s_Preset_print_options{
     // BBS
     "print_extruder_id",
     "print_extruder_variant",
-    "independent_support_layer_height",
+    "independent_support_layer_height", "support_layer_height_step",
     "support_angle",
     "support_interface_top_layers",
     "support_interface_bottom_layers",
@@ -1223,6 +1223,9 @@ static std::vector<std::string> s_Preset_print_options{
     "top_surface_filament_id",
     "bottom_surface_filament_id",
     "support_filament",
+    "support_nozzle_diameter",
+    "support_base_material",
+    "support_interface_material",
     "support_interface_filament",
     "support_interface_not_for_body",
     "ooze_prevention",
@@ -1286,6 +1289,10 @@ static std::vector<std::string> s_Preset_print_options{
     "precise_z_height",
     "infill_combination",
     "infill_combination_max_layer_height", /*"adaptive_layer_height",*/
+    // ORCA: per-extruder layer height ("extruder_layer_height").
+    "split_wall_adjust",
+    "split_wall_adjust_filament",
+    "split_wall_adjust_direction",
     "support_bottom_interface_spacing",
     "enable_overhang_speed",
     "slowdown_for_curled_perimeters",
@@ -1518,7 +1525,7 @@ static std::vector<std::string> s_Preset_printer_options {
     "printer_technology",
     "printable_area", "extruder_printable_area", "support_parallel_printheads", "parallel_printheads_count", "parallel_printheads_bed_exclude_areas", "bed_exclude_area","bed_custom_texture", "bed_custom_model", "gcode_flavor",
      "gcode_skip_config_block", "fan_kickstart", "part_cooling_fan_min_pwm", "fan_speedup_time", "fan_speedup_overhangs",
-    "single_extruder_multi_material", "manual_filament_change", "file_start_gcode", "machine_start_gcode", "machine_end_gcode", "before_layer_change_gcode", "printing_by_object_gcode", "layer_change_gcode", "time_lapse_gcode", "wrapping_detection_gcode", "change_filament_gcode", "change_extrusion_role_gcode",
+    "single_extruder_multi_material", "extruder_layer_height_exact", "manual_filament_change", "file_start_gcode", "machine_start_gcode", "machine_end_gcode", "before_layer_change_gcode", "printing_by_object_gcode", "layer_change_gcode", "time_lapse_gcode", "wrapping_detection_gcode", "change_filament_gcode", "change_extrusion_role_gcode",
     "printer_model", "printer_variant", "printer_extruder_id", "printer_extruder_variant", "extruder_variant_list", "default_nozzle_volume_type",
     "printable_height", "extruder_printable_height", "extruder_clearance_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
     "nozzle_height", "master_extruder_id",
@@ -4009,17 +4016,17 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection &&othe
             }
             m_presets.emplace(it, std::move(preset));
         } else {
+            // Take the name first: the Snapmaker-wins branch moves the preset away.
+            std::string preset_name = preset.name;
             std::string default_vendor = std::string(PresetBundle::SM_BUNDLE);
-            if (preset.vendor->name == default_vendor) {
-                if (preset.vendor != nullptr) {
-                    // Re-assign a pointer to the vendor structure in the new PresetBundle.
-                    auto it = new_vendors.find(preset.vendor->id);
-                    assert(it != new_vendors.end());
-                    preset.vendor = &it->second;
-                }
+            if (preset.vendor != nullptr && preset.vendor->name == default_vendor) {
+                // Re-assign a pointer to the vendor structure in the new PresetBundle.
+                auto it_vendor = new_vendors.find(preset.vendor->id);
+                assert(it_vendor != new_vendors.end());
+                preset.vendor = &it_vendor->second;
                 m_presets.emplace(it, std::move(preset));
             }
-            duplicates.emplace_back(std::move(preset.name));
+            duplicates.emplace_back(std::move(preset_name));
         }
             
     }

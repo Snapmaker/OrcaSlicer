@@ -175,7 +175,9 @@ jobs:
       - name: Pack unit tests mac
         if: runner.os == 'macOS' && !inputs.macos-combine-only && inputs.arch == 'arm64'
         working-directory: ${{ github.workspace }}
-        run: tar -cvf build_tests.tar build/arm64/tests
+        # The test binaries load libsentry.dylib through an rpath into the deps
+        # prefix; ship it at that path so the unit-test runner can resolve it.
+        run: tar -cvf build_tests.tar build/arm64/tests deps/build/arm64/OrcaSlicer_dep/usr/local/lib/libsentry.dylib
 
       - name: Upload Test Artifact mac
         if: runner.os == 'macOS' && !inputs.macos-combine-only && inputs.arch == 'arm64'
@@ -193,7 +195,7 @@ jobs:
         shell: bash
         # The bundle was already packed from resources/, so the caches have to be
         # installed into it here; the source tree keeps its JSONs for later jobs.
-        run: ./scripts/build_preset_cache.sh -b build/${{ inputs.arch }} build/${{ inputs.arch }}/OrcaSlicer/OrcaSlicer.app/Contents/Resources/profiles
+        run: ./scripts/build_preset_cache.sh -b build/${{ inputs.arch }} "build/${{ inputs.arch }}/Snapmaker_Orca/Snapmaker Orca.app/Contents/Resources/profiles"
 
       - name: Pack macOS app bundle ${{ inputs.arch }}
         if: runner.os == 'macOS' && !inputs.macos-combine-only
@@ -461,7 +463,7 @@ jobs:
         shell: cmd
         # Shipped into both the already-installed tree (portable zip, MSIX) and
         # the checkout cpack re-installs from when it builds the NSIS installer.
-        run: scripts\build_preset_cache.bat --prune-source "%BUILD_DIR%" "resources\profiles" "%BUILD_DIR%\OrcaSlicer\resources\profiles"
+        run: scripts\build_preset_cache.bat --prune-source "%BUILD_DIR%" "resources\profiles" "%BUILD_DIR%\Snapmaker_Orca\resources\profiles"
 
       - name: Pack unit tests Win
         if: runner.os == 'Windows'
@@ -513,7 +515,7 @@ jobs:
           name: Snapmaker_Orca_Windows_${{ env.ver }}${{ env.ARCH_SUFFIX }}
           path: ${{ github.workspace }}/${{ env.BUILD_DIR }}/Snapmaker_Orca*.exe
 
-      # sentry_cli.yml consumes this artifact name (via build_deps.yml).
+      # sentry_cli.yml consumes this artifact name (via build_all.yml).
       - name: Upload artifacts Win PDB
         if: runner.os == 'Windows' && inputs.arch != 'arm64'
         uses: actions/upload-artifact@v7
@@ -583,6 +585,27 @@ jobs:
           chmod +x "$appimage"
           tar -cvf build_tests.tar build/tests
 
+        # The unstripped build-tree binary carries the symtab Sentry needs; the
+        # AppImage ships the same build (same ELF build-id). Arch subdir keeps the
+        # two Linux legs from colliding in the unified symbol upload.
+      - name: Pack Linux symbols
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          arch=${{ inputs.arch == 'aarch64' && 'aarch64' || 'x86_64' }}
+          mkdir -p symbols_linux/$arch
+          cp build/src/Release/snapmaker-orca symbols_linux/$arch/
+
+      - name: Upload Linux symbols artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Linux_symbols_${{ inputs.arch == 'aarch64' && 'aarch64' || 'x86_64' }}
+          overwrite: true
+          path: symbols_linux
+          retention-days: 5
+          if-no-files-found: error
+
         # Use tar because upload-artifacts won't always preserve directory structure
         # and doesn't preserve file permissions
       - name: Upload Test Artifact
@@ -602,7 +625,7 @@ jobs:
           # Both were packed from resources/ before the caches existed, so the
           # AppImage is unpacked first and the caches shipped into it and into
           # the package tree; the source tree keeps its JSONs for later steps.
-          appimage=$(find build -maxdepth 1 -name "OrcaSlicer_Linux_AppImage*.AppImage" | head -1)
+          appimage=$(find build -maxdepth 1 -name "Snapmaker_Orca_Linux_AppImage*.AppImage" | head -1)
           chmod +x "$appimage"
           "$appimage" --appimage-extract
           ./scripts/build_preset_cache.sh -b build build/package/resources/profiles squashfs-root/resources/profiles

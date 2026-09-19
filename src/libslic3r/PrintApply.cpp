@@ -790,6 +790,26 @@ int  print_region_ref_cnt(const PrintRegion &r) { return r.m_ref_cnt; }
 // Verify whether the PrintRegions of a PrintObject are still valid, possibly after updating the region configs.
 // Before region configs are updated, callback_invalidate() is called to possibly stop background processing.
 // Returns false if this object needs to be resliced because regions were merged or split.
+// ORCA: the region config of an area painted with `painted_extruder_id`. The paint replaces the
+// part's own filament wherever a per-feature selector follows it (Default, resolved to the part's
+// extruder), while a selector the user pointed at another filament - e.g. all sparse infill with
+// filament 4 - keeps that filament inside painted areas as well.
+static PrintRegionConfig painted_region_config(const PrintRegionConfig &parent, int base_extruder, unsigned int painted_extruder_id)
+{
+    PrintRegionConfig cfg = parent;
+    auto paint = [base_extruder, painted_extruder_id](ConfigOptionInt &selector) {
+        if (base_extruder <= 0 || selector.value <= 0 || selector.value == base_extruder)
+            selector.value = int(painted_extruder_id);
+    };
+    paint(cfg.outer_wall_filament_id);
+    paint(cfg.inner_wall_filament_id);
+    paint(cfg.internal_solid_filament_id);
+    paint(cfg.top_surface_filament_id);
+    paint(cfg.bottom_surface_filament_id);
+    paint(cfg.sparse_infill_filament_id);
+    return cfg;
+}
+
 bool verify_update_print_object_regions(
     ModelVolumePtrs                     model_volumes,
     const PrintRegionConfig            &default_region_config,
@@ -874,13 +894,7 @@ bool verify_update_print_object_regions(
             if (!mm_paint_applies_to_parent_region(layer_range, region.parent))
                 return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
-            PrintRegionConfig                       cfg             = parent_region.region->config();
-            cfg.outer_wall_filament_id.value = region.extruder_id;
-            cfg.inner_wall_filament_id.value = region.extruder_id;
-            cfg.internal_solid_filament_id.value = region.extruder_id;
-            cfg.top_surface_filament_id.value = region.extruder_id;
-            cfg.bottom_surface_filament_id.value = region.extruder_id;
-            cfg.sparse_infill_filament_id.value       = region.extruder_id;
+            PrintRegionConfig                       cfg             = painted_region_config(parent_region.region->config(), parent_region.model_volume->extruder_id(), region.extruder_id);
             if (cfg != region.region->config()) {
                 // Region configuration changed.
                 if (print_region_ref_cnt(*region.region) == 0) {
@@ -1186,22 +1200,17 @@ static PrintObjectRegions* generate_print_object_regions(
                 if (const PrintObjectRegions::VolumeRegion &parent_region = layer_range.volume_regions[parent_region_id];
                     (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
                     mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
-                    PrintRegionConfig cfg = parent_region.region->config();
-                    cfg.outer_wall_filament_id.value = painted_extruder_id;
-                    cfg.inner_wall_filament_id.value = painted_extruder_id;
-                    cfg.internal_solid_filament_id.value = painted_extruder_id;
-                    cfg.top_surface_filament_id.value = painted_extruder_id;
-                    cfg.bottom_surface_filament_id.value = painted_extruder_id;
-                    cfg.sparse_infill_filament_id.value       = painted_extruder_id;
+                    PrintRegionConfig       cfg    = painted_region_config(parent_region.region->config(), parent_region.model_volume->extruder_id(), painted_extruder_id);
+                    const PrintRegionConfig wanted = cfg;
                     // Keep PrintRegion config-interned. If a painted target resolves to the same
                     // config as its parent, alias it instead of creating a duplicate PrintRegion.
                     PrintRegion *painted_region = get_create_region(std::move(cfg));
-                    if (painted_region->config().outer_wall_filament_id.value != painted_extruder_id ||
-                        painted_region->config().inner_wall_filament_id.value != painted_extruder_id ||
-                        painted_region->config().internal_solid_filament_id.value != painted_extruder_id ||
-                        painted_region->config().top_surface_filament_id.value != painted_extruder_id ||
-                        painted_region->config().bottom_surface_filament_id.value != painted_extruder_id ||
-                        painted_region->config().sparse_infill_filament_id.value != painted_extruder_id) {
+                    if (painted_region->config().outer_wall_filament_id.value != wanted.outer_wall_filament_id.value ||
+                        painted_region->config().inner_wall_filament_id.value != wanted.inner_wall_filament_id.value ||
+                        painted_region->config().internal_solid_filament_id.value != wanted.internal_solid_filament_id.value ||
+                        painted_region->config().top_surface_filament_id.value != wanted.top_surface_filament_id.value ||
+                        painted_region->config().bottom_surface_filament_id.value != wanted.bottom_surface_filament_id.value ||
+                        painted_region->config().sparse_infill_filament_id.value != wanted.sparse_infill_filament_id.value) {
                         BOOST_LOG_TRIVIAL(warning) << "Painted region filament mismatch"
                                                    << " requested_extruder_id=" << painted_extruder_id
                                                    << " outer_wall_filament_id=" << painted_region->config().outer_wall_filament_id.value

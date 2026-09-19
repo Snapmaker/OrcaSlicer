@@ -1,4 +1,5 @@
 #include <limits>
+#include <numeric>
 
 #include "libslic3r.h"
 #include "Slicing.hpp"
@@ -74,8 +75,16 @@ SlicingParameters SlicingParameters::create_from_config(
     // which is consistent with the requirement that if support_filament == 0 resp. support_interface_filament == 0,
     // support will not trigger tool change, but it will use the current nozzle instead.
     // In that case all the nozzles have to be of the same diameter.
-    coordf_t support_material_extruder_dmr           = print_config.nozzle_diameter.get_at(object_config.support_filament.value - 1);
-    coordf_t support_material_interface_extruder_dmr = print_config.nozzle_diameter.get_at(object_config.support_interface_filament.value - 1);
+    // Support_nozzle_diameter restricts which extruders / nozzle diameter may print support ("default" = no restriction)
+    auto restricted_default = [&object_config](int configured) {
+        return configured == 0 && object_config.support_nozzle_diameter.value > 0.;
+    };
+    coordf_t support_material_extruder_dmr           = restricted_default(object_config.support_filament.value) ?
+        object_config.support_nozzle_diameter.value :
+        print_config.nozzle_diameter.get_at(object_config.support_filament.value - 1);
+    coordf_t support_material_interface_extruder_dmr = restricted_default(object_config.support_interface_filament.value) ?
+        object_config.support_nozzle_diameter.value :
+        print_config.nozzle_diameter.get_at(object_config.support_interface_filament.value - 1);
 
     // ORCA: store Z distance
     const coordf_t support_top_z_gap    = object_config.support_top_z_distance.value;
@@ -123,13 +132,49 @@ SlicingParameters SlicingParameters::create_from_config(
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
+        auto support_layer_height_limit = [&print_config, &object_config, &object_extruders, &restricted_default](int configured, bool min_limit) -> coordf_t {
+            auto from_nozzle = [&print_config, min_limit](int filament) {
+                return min_limit ? min_layer_height_from_nozzle(print_config, filament) : max_layer_height_from_nozzle(print_config, filament);
+            };
+            if (restricted_default(configured)) {
+                // Combine the limits of all filaments the restriction allows.
+                coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
+                bool found = false;
+                for (size_t i = 0; i < print_config.nozzle_diameter.values.size(); ++ i)
+                    if (std::abs(print_config.nozzle_diameter.values[i] - object_config.support_nozzle_diameter.value) < EPSILON) {
+                        coordf_t l = from_nozzle(int(i + 1));
+                        limit = min_limit ? std::max(limit, l) : std::min(limit, l);
+                        found = true;
+                    }
+                if (found)
+                    return limit;
+            }
+            if (configured == 0 && !object_extruders.empty()) {
+                // Unrestricted "default" support filament: supports print with the object's own
+                // extruder(s), so combine those limits. from_nozzle(0) would read the FIRST
+                // extruder's limits instead, capping support heights by an unrelated fine nozzle
+                // on mixed-diameter machines.
+                coordf_t limit = min_limit ? 0. : std::numeric_limits<coordf_t>::max();
+                for (unsigned int extruder_id : object_extruders) {
+                    coordf_t l = from_nozzle(int(extruder_id + 1));
+                    limit = min_limit ? std::max(limit, l) : std::min(limit, l);
+                }
+                return limit;
+            }
+            return from_nozzle(configured);
+        };
         params.min_layer_height = std::max(
-            min_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            min_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+            support_layer_height_limit(object_config.support_filament.value, true),
+            support_layer_height_limit(object_config.support_interface_filament.value, true));
         params.max_layer_height = std::min(
-            max_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            max_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+            support_layer_height_limit(object_config.support_filament.value, false),
+            support_layer_height_limit(object_config.support_interface_filament.value, false));
         params.max_suport_layer_height = params.max_layer_height;
+        // The support extruders' own (unclamped) minimum matters only when supports are pinned
+        // to their own filaments or nozzle; with the object's filaments the object's clamped
+        // minimum applies as before.
+        if (object_config.support_filament.value != 0 || object_config.support_interface_filament.value != 0 || restricted_default(0))
+            params.min_suport_layer_height = params.min_layer_height;
     }
 
     if (object_extruders.empty()) {
@@ -137,8 +182,9 @@ SlicingParameters SlicingParameters::create_from_config(
         params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, 0));
     } else {
         for (unsigned int extruder_id : object_extruders) {
-            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, extruder_id));
-            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, extruder_id));
+            // object_extruders holds zero based extruder indices, from_nozzle indices are one based.
+            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
+            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, int(extruder_id + 1)));
         }
     }
 
@@ -154,7 +200,7 @@ SlicingParameters SlicingParameters::create_from_config(
         params.gap_raft_object = 0.0;
     } else {
         params.gap_raft_object = raft_z_gap;
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_raft_object =
                 std::round(params.gap_raft_object / object_config.layer_height + EPSILON)
                 * object_config.layer_height;
@@ -167,7 +213,7 @@ SlicingParameters SlicingParameters::create_from_config(
     } else {
         params.gap_object_support = support_bottom_z_gap;
 
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_object_support =
                 std::round(params.gap_object_support / object_config.layer_height + EPSILON)
                 * object_config.layer_height;
@@ -180,7 +226,7 @@ SlicingParameters SlicingParameters::create_from_config(
     } else {
         params.gap_support_object = support_top_z_gap;
 
-        if (!print_config.independent_support_layer_height) {
+        if (!print_config.independent_support_layer_height || print_config.enable_prime_tower) {
             params.gap_support_object =
                 std::round(params.gap_support_object / object_config.layer_height + EPSILON)
                 * object_config.layer_height;
@@ -1010,6 +1056,95 @@ int generate_layer_height_texture(
 
     // Returns number of cells of the 0th LOD level.
     return ncells;
+}
+
+// ORCA multi-nozzle-size: see Slicing.hpp.
+double conforming_object_layer_height(const std::vector<double> &heights, double base, bool include_base, double max_height)
+{
+    auto quanta = [](double height) { return std::lround(height / 0.005); };
+    long common = 0;
+    for (double height : heights)
+        if (height > EPSILON)
+            common = std::gcd(common, quanta(height));
+    if ((include_base || common == 0) && base > EPSILON)
+        common = std::gcd(common, quanta(base));
+    for (long k = 1; common > 0 && k <= common; ++ k)
+        if (common % k == 0 && (max_height <= EPSILON || (common / k) * 0.005 <= max_height + EPSILON))
+            return std::round((common / k) * 0.005 * 1e6) / 1e6;
+    return 0.;
+}
+
+ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
+                                                    double min_nozzle, bool exact, double tolerance)
+{
+    ExtruderLayerHeightPlan plan;
+    auto snap = [](double v) { return std::round(v * 1e6) / 1e6; };
+    double finest = 0.;
+    for (double h : heights)
+        if (h > EPSILON && (finest <= 0. || h < finest))
+            finest = h;
+    if (finest <= 0.) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    double grid = 0.;
+    if (exact) {
+        // Every entered value prints exactly: the grid is what they all are whole multiples of.
+        grid = conforming_object_layer_height(heights, base, false, min_nozzle);
+    } else {
+        // The coarsest grid on which every entered value lands within the tolerance of a whole
+        // multiple; candidates run from the finest value (or the smallest nozzle, if that is
+        // finer) down to a quarter of the finest value, never below 0.02 mm, in 5 um steps.
+        const double top   = min_nozzle > EPSILON ? std::min(finest, min_nozzle) : finest;
+        const double floor = std::max(0.02, snap(finest / 4.));
+        const long   q_top = std::lround(top / 0.005), q_floor = std::lround(floor / 0.005);
+        for (long q = q_top; q >= q_floor && grid <= 0.; -- q) {
+            const double g  = snap(q * 0.005);
+            bool         ok = true;
+            for (size_t j = 0; j < heights.size() && ok; ++ j) {
+                if (heights[j] <= EPSILON)
+                    continue;
+                const long   n       = std::max(1L, std::lround(heights[j] / g));
+                const double snapped = snap(n * g);
+                const double bore    = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
+                ok = std::abs(snapped - heights[j]) <= tolerance + EPSILON && snapped <= bore + EPSILON;
+            }
+            if (ok)
+                grid = g;
+        }
+        if (grid <= EPSILON) {
+            // Nothing coarse enough fits within the tolerance: the finest value is the grid (a
+            // grid that fine is what the user asked for), capped to the smallest nozzle.
+            grid = finest;
+            if (min_nozzle > EPSILON && grid > min_nozzle + EPSILON)
+                grid = conforming_object_layer_height(heights, base, false, min_nozzle);
+        }
+    }
+    if (grid <= EPSILON) {
+        plan.heights = std::move(heights);
+        return plan;
+    }
+    auto multiple_of_grid = [&](double h, double bore) {
+        long n = std::max(1L, std::lround(h / grid));
+        while (n > 1 && n * grid > bore + EPSILON)
+            -- n;
+        return snap(n * grid);
+    };
+    for (size_t j = 0; j < heights.size(); ++ j) {
+        const double bore = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
+        if (heights[j] > EPSILON) {
+            const double snapped = multiple_of_grid(heights[j], bore);
+            if (std::abs(snapped - heights[j]) > 1e-6)
+                plan.rounded.push_back(j);
+            heights[j] = snapped;
+        } else if (base > EPSILON && grid < base - EPSILON && bore >= grid - EPSILON) {
+            heights[j] = multiple_of_grid(base, bore);
+            plan.pinned.push_back(j);
+        }
+    }
+    plan.grid    = grid;
+    plan.heights = std::move(heights);
+    return plan;
 }
 
 }; // namespace Slic3r

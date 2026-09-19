@@ -209,18 +209,3 @@ jobs:
       os: ${{ inputs.os }}
       arch: ${{ inputs.arch }}
     secrets: inherit
-
-  # Only the Windows x64 leg produces a PDB artifact (see build_orca.yml: "Pack
-  # PDB"/"Upload artifacts Win PDB" skip arm64). The macOS dSYM is produced by the
-  # universal *combine* leg, which build_all.yml calls directly rather than through
-  # this workflow -- build_all.yml's upload_symbols_macos job handles that.
-  upload_symbols:
-    name: Upload Debug Symbols to Sentry
-    needs: [build_orca]
-    if: ${{ !cancelled() && needs.build_orca.result == 'success' && (startsWith(inputs.os, 'windows') || inputs.os == 'orca-win-server') && inputs.arch != 'arm64' }}
-    uses: ./.github/workflows/sentry_cli.yml
-    with:
-      os: ${{ inputs.os }}
-      pdb-artifact-name: PDB
-      release: ${{ needs.build_orca.outputs.release || github.sha }}
-    secrets: inherit

@@ -191,6 +191,8 @@ public:
         float               max_e_speed = std::numeric_limits<float>::max();
         std::vector<float>  ramming_speed;
         float               nozzle_diameter;
+        // ORCA: tower line width this tool extrudes (nozzle_diameter * Width_To_Nozzle_Ratio).
+        float               perimeter_width = 0.f;
         float               filament_area;
 		bool			    multitool_ramming;
 		float               multitool_ramming_time = 0.f;
@@ -219,6 +221,10 @@ private:
     const float WT_EPSILON            = 1e-3f;
     float filament_area() const {
         return m_filpar[0].filament_area; // all extruders are assumed to have the same filament diameter at this point
+    }
+    // Line width the given tool extrudes on the tower; m_perimeter_width (widest nozzle) keeps the geometric layout: line spacing, box sizes, depth planning.
+    float tool_perimeter_width(size_t tool) const {
+        return tool < m_filpar.size() && m_filpar[tool].perimeter_width > 0.f ? m_filpar[tool].perimeter_width : m_perimeter_width;
     }
 
 	bool   m_change_pressure         = true;
@@ -350,12 +356,13 @@ private:
         return pos;
     }
 
-	// Calculates extrusion flow needed to produce required line width for given layer height
+	// Calculates extrusion flow needed to produce required line width for given layer height.
+	// ORCA: uses the current tool's own line width, matching its nozzle.
 	float extrusion_flow(float layer_height = -1.f) const	// negative layer_height - return current m_extrusion_flow
 	{
 		if ( layer_height < 0 )
 			return m_extrusion_flow;
-		return layer_height * ( m_perimeter_width - layer_height * (1.f-float(M_PI)/4.f)) / filament_area();
+		return layer_height * ( tool_perimeter_width(m_current_tool) - layer_height * (1.f-float(M_PI)/4.f)) / filament_area();
 	}
 
 
@@ -391,6 +398,10 @@ private:
 
 		std::vector<ToolChange> tool_changes;
         std::vector<ToolChange> local_z_tool_changes;
+        // Tool loaded when this layer starts (-1 = unknown). Toolchanges may happen off
+        // the tower between layers (fractional support layers), so the tower cannot infer
+        // it from its own toolchange chain.
+        int start_tool = -1;
 
 		WipeTowerInfo(float z_par, float layer_height_par)
 			: z{z_par}, height{layer_height_par}, depth{0} {}

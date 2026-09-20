@@ -8,6 +8,7 @@
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "libnest2d/common.hpp"
 
+#include <algorithm>
 #include <numeric>
 
 namespace Slic3r {
@@ -238,16 +239,65 @@ void FillBedJob::process(Ctl &ctl)
     params.do_final_align = false;
 
     if (m_selected.size() > 100){
-        // too many items, just find grid empty cells to put them
-        Vec2f step = unscaled<float>(get_extents(m_selected.front().poly).size()) + Vec2f(m_selected.front().brim_width, m_selected.front().brim_width);
-        std::vector<Vec2f> empty_cells = Plater::get_empty_cells(step);
-        size_t n=std::min(m_selected.size(), empty_cells.size());
-        for (size_t i = 0; i < n; i++) {
-            m_selected[i].translation = scaled<coord_t>(empty_cells[i]);
-            m_selected[i].bed_idx= 0;
+        // too many items, just find grid empty cells to put them.
+        // The footprint has to be measured on the rotated outline, and every copy is
+        // centered on its cell by that footprint: ArrangePolygon::translation is the
+        // instance offset, and the instance origin is not necessarily the center of
+        // the object's convex hull.
+        std::vector<BoundingBox> footprints;
+        footprints.reserve(m_selected.size());
+        Point cell_size(0, 0);
+        for (const ArrangePolygon &ap : m_selected) {
+            ExPolygon rotated = ap.poly;
+            rotated.rotate(ap.rotation);
+            footprints.emplace_back(get_extents(rotated));
+            const Point sz = footprints.back().size();
+            cell_size = Point(std::max(cell_size.x(), sz.x()), std::max(cell_size.y(), sz.y()));
         }
-        for (size_t i = n; i < m_selected.size(); i++) {
+
+        Vec2f step = unscaled<float>(cell_size) + Vec2f(m_selected.front().brim_width, m_selected.front().brim_width);
+        std::vector<Vec2f> empty_cells = Plater::get_empty_cells(step);
+
+        // get_empty_cells() grids the raw build volume, so it knows neither the
+        // skirt/brim margin nor the objects already sitting on the plate. Drop every
+        // cell a copy would not fully fit into instead of laying it over the plate
+        // boundary or on top of an existing object.
+        // It also works in the current plate's coordinates, while m_bedpts and
+        // m_unselected are normalized to the first plate, so shift those over first.
+        const int   plate_cols   = std::max(1, partplate_list.get_plate_cols());
+        const int   plate_idx    = partplate_list.get_curr_plate_index();
+        const Point plate_offset(coord_t( bed_stride_x(m_plater) * (plate_idx % plate_cols)),
+                                 coord_t(-bed_stride_y(m_plater) * (plate_idx / plate_cols)));
+
+        BoundingBox bed_bb(m_bedpts);
+        bed_bb.translate(plate_offset);
+
+        std::vector<BoundingBox> blockers;
+        blockers.reserve(m_unselected.size());
+        for (const ArrangePolygon &ap : m_unselected) {
+            BoundingBox bb = get_extents(ap.transformed_poly());
+            bb.offset(ap.inflation);
+            bb.translate(plate_offset);
+            blockers.emplace_back(bb);
+        }
+
+        size_t next_cell = 0;
+        for (size_t i = 0; i < m_selected.size(); i++) {
             m_selected[i].bed_idx = -1;
+            while (next_cell < empty_cells.size()) {
+                const Point t = scaled<coord_t>(empty_cells[next_cell++]) - footprints[i].center();
+                BoundingBox placed = footprints[i];
+                placed.translate(t);
+                placed.offset(m_selected[i].inflation);
+                if (!bed_bb.contains(placed))
+                    continue;
+                if (std::any_of(blockers.begin(), blockers.end(),
+                                [&placed](const BoundingBox &bb) { return bb.overlap(placed); }))
+                    continue;
+                m_selected[i].translation = t;
+                m_selected[i].bed_idx     = 0;
+                break;
+            }
         }
     }
     else

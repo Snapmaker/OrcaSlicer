@@ -3078,16 +3078,6 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
         if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
     }
-    // Support top contact speed split: fold the per-layer top contact speeds into the
-    // support speed so the max print speed reflects them as well.
-    if (config.has("support_top_contact_speed_first"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_first", 0));
-    if (config.has("support_top_contact_speed_middle"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_middle", 0));
-    if (config.has("support_top_contact_speed_top"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_top", 0));
-    if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
-        printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
 
 
     //auto& print = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
@@ -3322,14 +3312,6 @@ double Model::findMaxSpeed(const ModelObject* object) {
             topSolidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "support_speed")
             supportSpeedObj = object->config.get().opt_float(objectKey, 0);
-        // Support top contact speed split: fold the per-layer top contact speeds into the
-        // support speed so the object max speed reflects them as well.
-        if (objectKey == "support_top_contact_speed_first")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
-        if (objectKey == "support_top_contact_speed_middle")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
-        if (objectKey == "support_top_contact_speed_top")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.get().opt_float(objectKey, 0));
         if (objectKey == "outer_wall_speed")
             externalPerimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "small_perimeter_speed") {

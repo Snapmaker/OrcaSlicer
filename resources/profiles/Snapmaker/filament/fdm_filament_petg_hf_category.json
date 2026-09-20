@@ -55,6 +55,7 @@
     "enable_overhang_bridge_fan": [
         "1"
     ],
+    "filament_adhesiveness_category": ["300"],
     "filament_cooling_final_speed": [
         "3.4"
     ],

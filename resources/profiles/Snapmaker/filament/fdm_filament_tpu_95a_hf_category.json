@@ -64,6 +64,7 @@
     "eng_plate_temp_initial_layer": [
         "30"
     ],
+    "filament_adhesiveness_category": ["600"],
     "filament_cooling_final_speed": [
         "3.4"
     ],

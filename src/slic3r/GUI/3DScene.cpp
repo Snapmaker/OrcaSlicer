@@ -1343,6 +1343,12 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, Mo
     BuildVolume                       plate_build_volume(pp_bed_shape, build_volume.printable_height());
     const std::vector<BoundingBoxf3>& exclude_areas = curr_plate->get_exclude_areas();
 
+    // Snapmaker: only a Z hop that spirals sweeps outside the object footprint, so the
+    // boundary warning below is meaningless - and unactionable - for anyone printing
+    // with a normal or slope lift. Resolved once here rather than per volume.
+    const DynamicPrintConfig* print_cfg          = GUI::wxGetApp().plater()->config();
+    const bool                spiral_lift_active = print_cfg != nullptr && any_filament_uses_spiral_lift(*print_cfg);
+
     for (GLVolume* volume : this->volumes) {
         // Snapmaker: 初始化螺旋抬升边界状态（在循环开始时就清除所有标志）
         if (volume != nullptr)
@@ -1381,7 +1387,7 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, Mo
             // Snapmaker: 检测模型是否距离床边界太近（螺旋抬升风险）
             // 只对矩形床进行检测（Snapmaker U1），只检测可打印的对象
             // 只检测完全在床内的对象（state == Inside），避免对跨越边界的对象误报
-            if (plate_build_volume.type() == BuildVolume_Type::Rectangle && volume->composite_id.volume_id >= 0 &&
+            if (spiral_lift_active && plate_build_volume.type() == BuildVolume_Type::Rectangle && volume->composite_id.volume_id >= 0 &&
                 state == BuildVolume::ObjectState::Inside && volume->printable) {
                 const BoundingBoxf3& bb                        = volume_bbox(*volume);
                 const BoundingBoxf3& bed_bb                    = plate_build_volume.bounding_volume();

@@ -2926,30 +2926,7 @@ void GLCanvas3D::render(bool only_init)
     if (only_init)
         return;
 
-    // Per-frame check: warn if PLA and PETG are both used on the current plate.
-    if (wxGetApp().plater() != nullptr && wxGetApp().preset_bundle != nullptr) {
-        bool has_pla = false;
-        bool has_petg = false;
-        PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
-        if (cur_plate != nullptr) {
-            const DynamicPrintConfig &full_config = wxGetApp().preset_bundle->full_config();
-            const ConfigOptionStrings *ft_opt = full_config.option<ConfigOptionStrings>("filament_type");
-            if (ft_opt != nullptr) {
-                std::vector<int> used_filaments = cur_plate->get_extruders(true);
-                for (int filament_idx : used_filaments) {
-                    int filament_id = filament_idx - 1;
-                    if (filament_id >= 0 && filament_id < static_cast<int>(ft_opt->values.size())) {
-                        const std::string &filament_type = ft_opt->values[filament_id];
-                        if (filament_type == "PLA")
-                            has_pla = true;
-                        else if (filament_type == "PETG")
-                            has_petg = true;
-                    }
-                }
-            }
-        }
-        _set_warning_notification(EWarning::MixUsePLAAndPETG, has_pla && has_petg);
-    }
+    _update_pla_petg_mix_warning();
 
 #if ENABLE_ENVIRONMENT_MAP
     if (wxGetApp().is_editor())
@@ -10944,6 +10921,58 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
     }
 
     _set_warning_notification(warning, show);
+}
+
+// Per-frame PLA/PETG mix check. Reads filament types from the slot presets
+// directly -- full_config() is expensive per-frame and can crash on a
+// half-updated preset state while a printer switch is in flight.
+// Slot semantics mirror PresetBundle::full_fff_config().
+void GLCanvas3D::_update_pla_petg_mix_warning()
+{
+    bool has_pla = false;
+    bool has_petg = false;
+    if (wxGetApp().plater() != nullptr && wxGetApp().preset_bundle != nullptr) {
+        const PresetBundle &bundle = *wxGetApp().preset_bundle;
+        if (bundle.printers.get_edited_preset().printer_technology() == ptFFF) {
+            std::vector<std::string> filament_types;
+            const size_t num_filaments = bundle.filament_presets.size();
+            if (num_filaments <= 1) {
+                const DynamicPrintConfig &filament_cfg = bundle.filaments.get_edited_preset().config;
+                const ConfigOptionStrings *ft_opt = filament_cfg.option<ConfigOptionStrings>("filament_type");
+                if (ft_opt != nullptr)
+                    filament_types = ft_opt->values;
+            } else {
+                filament_types.reserve(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const Preset *preset = bundle.filaments.find_preset(bundle.filament_presets[i], true);
+                    const ConfigOptionStrings *ft_opt = nullptr;
+                    if (preset != nullptr) {
+                        const DynamicPrintConfig &slot_cfg = preset->config;
+                        ft_opt = slot_cfg.option<ConfigOptionStrings>("filament_type");
+                    }
+                    // Slots with no value keep the FullPrintConfig default ("PLA"),
+                    // same as the defaults-backed vector in full_fff_config().
+                    bool has_type = (ft_opt != nullptr && !ft_opt->values.empty());
+                    filament_types.push_back(has_type ? ft_opt->values.front() : std::string("PLA"));
+                }
+            }
+            PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+            if (cur_plate != nullptr) {
+                std::vector<int> used_filaments = cur_plate->get_extruders(true);
+                for (int filament_idx : used_filaments) {
+                    int filament_id = filament_idx - 1;
+                    if (filament_id >= 0 && filament_id < static_cast<int>(filament_types.size())) {
+                        const std::string &filament_type = filament_types[filament_id];
+                        if (filament_type == "PLA")
+                            has_pla = true;
+                        else if (filament_type == "PETG")
+                            has_petg = true;
+                    }
+                }
+            }
+        }
+    }
+    _set_warning_notification(EWarning::MixUsePLAAndPETG, has_pla && has_petg);
 }
 
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)

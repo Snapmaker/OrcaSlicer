@@ -1550,7 +1550,7 @@ void TreeSupport::generate_toolpaths()
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
     coordf_t nozzle_diameter = m_print_config->nozzle_diameter.get_at(object_config.support_filament - 1);
     coordf_t layer_height = object_config.layer_height.value;
-    const size_t wall_count = object_config.tree_support_wall_count.value;
+    const size_t wall_count = tree_support_effective_wall_count(m_support_params.support_style, object_config.tree_support_wall_count.value);
 
     // Check if set to zero, use default if so.
     if (support_extrusion_width <= 0.0)

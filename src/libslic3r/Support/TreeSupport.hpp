@@ -352,6 +352,20 @@ struct LineHash {
 };
 
 /*!
+ * \brief Effective number of tree-support perimeter walls to draw in toolpaths.
+ *
+ * Hybrid tree support prints its trunk like normal support (grid/rectilinear infill plus a
+ * perimeter wall). With tree_support_wall_count == 0 (auto), the auto logic draws the trunk
+ * with no perimeter wall, so the infill pattern reaches the surface and damages the trunk.
+ * For hybrid support only, treat "auto" as an explicit single wall, leaving the "auto"
+ * behavior of normal, organic tree and grid support unchanged.
+ */
+inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int wall_count)
+{
+    return (style == smsTreeHybrid && wall_count == 0) ? size_t(1) : size_t(wall_count);
+}
+
+/*!
  * \brief Generates a tree structure to support your models.
  */
 class TreeSupport

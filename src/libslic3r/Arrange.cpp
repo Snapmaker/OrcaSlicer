@@ -95,6 +95,14 @@ void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* prin
         params.bed_shrink_x -= params.clearance_radius / 2;
         params.bed_shrink_y -= params.clearance_radius / 2;
     }
+    // Snapmaker: keep models out of the band along the bed edge that a spiral lift
+    // sweeps through, so arrange and fill bed cannot produce a layout that raises the
+    // "Model too close to bed boundary" warning the moment it is applied. Sequential
+    // printing is left alone: its clearance_radius model governs the spacing there.
+    else if (any_filament_uses_spiral_lift(*print_cfg)) {
+        params.bed_shrink_x = std::max(params.bed_shrink_x, float(SPIRAL_LIFT_SAFETY_MARGIN));
+        params.bed_shrink_y = std::max(params.bed_shrink_y, float(SPIRAL_LIFT_SAFETY_MARGIN));
+    }
 }
 
 void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPrintConfig* print_cfg, ArrangeParams& params) {

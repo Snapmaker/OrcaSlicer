@@ -1383,7 +1383,6 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, Mo
             // 只检测完全在床内的对象（state == Inside），避免对跨越边界的对象误报
             if (plate_build_volume.type() == BuildVolume_Type::Rectangle && volume->composite_id.volume_id >= 0 &&
                 state == BuildVolume::ObjectState::Inside && volume->printable) {
-                constexpr double     SPIRAL_LIFT_SAFETY_MARGIN = 3.5; // mm
                 const BoundingBoxf3& bb                        = volume_bbox(*volume);
                 const BoundingBoxf3& bed_bb                    = plate_build_volume.bounding_volume();
 

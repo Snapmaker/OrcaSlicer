@@ -5569,40 +5569,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 80. });
 
-    def = this->add("support_top_contact_speed_split", coBools);
-    def->label = L("Support top contact speed");
-    def->category = L("Speed");
-    def->tooltip = L("Enable to set first, middle, and top support top contact layer speeds separately.");
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBools { false });
-
-    def = this->add("support_top_contact_speed_first", coFloats);
-    def->label = L("First layer contact speed");
-    def->category = L("Speed");
-    def->tooltip = L("Speed of the bottommost support top contact layer (furthest from the model).");
-    def->sidetext = "mm/s";
-    def->min = 1;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 80. });
-
-    def = this->add("support_top_contact_speed_middle", coFloats);
-    def->label = L("Middle layer contact speed");
-    def->category = L("Speed");
-    def->tooltip = L("Speed of the middle support top contact layers.");
-    def->sidetext = "mm/s";
-    def->min = 1;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 80. });
-
-    def = this->add("support_top_contact_speed_top", coFloats);
-    def->label = L("Top layer contact speed");
-    def->category = L("Speed");
-    def->tooltip = L("Speed of the topmost support top contact layer (closest to the model).");
-    def->sidetext = "mm/s";
-    def->min = 1;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 80. });
-
     def = this->add("support_base_pattern", coEnum);
     def->label = L("Base pattern");
     def->category = L("Support");

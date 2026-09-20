@@ -298,6 +298,20 @@ ObjectList::ObjectList(wxWindow* parent) :
 
         m_accel = accel;
     }
+
+    // The accelerator table above is not reliably delivered on macOS (the native keyDown of
+    // wxDataViewCtrl may never reach it), so intercept the delete keys through the char hook,
+    // which is dispatched to this window first and propagates up the parent chain.
+    // On Mac keyboards the "delete" key sends WXK_BACK, while fn+delete sends WXK_DELETE.
+    // While an item name is being edited, the accelerator table is reset to an empty one
+    // (IsOk() == false): let the key through to the text editor.
+    Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& evt) {
+        if (!evt.HasAnyModifiers() && (evt.GetKeyCode() == WXK_BACK || evt.GetKeyCode() == WXK_DELETE) && GetAcceleratorTable()->IsOk()) {
+            remove();
+            return;
+        }
+        evt.Skip();
+    });
 #else //__WXOSX__
     Bind(wxEVT_CHAR, [this](wxKeyEvent& event) { key_event(event); }); // doesn't work on OSX
 #endif

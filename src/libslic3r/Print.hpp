@@ -640,6 +640,7 @@ struct FakeWipeTower
     float rotation_angle;
     float cone_angle;
     Vec2d plate_origin;
+    Vec2f rib_offset{0.f, 0.f};
     std::map<float, Polylines> outer_wall;
 
     void set_fake_extrusion_data(Vec2f p, float w, float h, float lh, float d, float bd, Vec2d o)
@@ -665,8 +666,7 @@ struct FakeWipeTower
         cone_angle = ca;
         plate_origin = o;
     }
-    void set_pos(Vec2f p) { pos = p; }
-    void set_pos_and_rotation(const Vec2f& p, float rotation) { pos = p; rotation_angle = rotation; }
+    void set_pos(Vec2f p) { pos = p + rib_offset; }
 
     std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower() const
     {

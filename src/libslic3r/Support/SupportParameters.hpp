@@ -120,12 +120,15 @@ struct SupportParameters {
             this->contact_fill_pattern = ipGrid;
         else if (object_config.support_interface_pattern == smipRectilinearInterlaced)
             this->contact_fill_pattern = ipRectilinear;
-        else
+        else {
+            const bool interface_filament_soluble = object_config.support_interface_filament.value > 0 &&
+                print_config.filament_soluble.get_at(object_config.support_interface_filament.value - 1);
             this->contact_fill_pattern =
-            (object_config.support_interface_pattern == smipAuto && slicing_params.soluble_interface) ||
+            (object_config.support_interface_pattern == smipAuto && interface_filament_soluble) ||
             object_config.support_interface_pattern == smipConcentric ?
             ipConcentric :
             (this->interface_density > 0.95 ? ipRectilinear : ipSupportBase);
+        }
 
         this->raft_angle_1st_layer  = 0.f;
         this->raft_angle_base       = 0.f;

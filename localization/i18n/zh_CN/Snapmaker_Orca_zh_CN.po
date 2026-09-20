@@ -12241,6 +12241,7 @@ msgstr "顶部壳体实心层层数，包括顶面。当由该层数计算的厚
 msgid "Top solid layers"
 msgstr "顶部壳体层数"
 
+
 msgid "Top shell thickness"
 msgstr "顶部壳体厚度"
 
@@ -15626,3 +15627,15 @@ msgstr "启用擦拭塔接触层功能"
 
 msgid "Enable optimized prime tower interface behavior when different materials meet."
 msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"切换到直线图案？\n"
+"是 - 自动切换到直线图案\n"
+"否 - 自动将密度重置为默认的非100%值"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "%1% 填充图案不支持 100%% 密度。"

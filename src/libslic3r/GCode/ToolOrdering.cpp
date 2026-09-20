@@ -727,33 +727,6 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         layer_tools.current_object           = &object;
     }
 
-    // Collect the support extruders.
-    for (auto support_layer : object.support_layers()) {
-        LayerTools   &layer_tools = this->tools_for_layer(support_layer->print_z);
-        layer_tools.layer_height = support_layer->height;
-        ExtrusionRole role = support_layer->support_fills.role();
-        bool         has_support        = role == erMixed || role == erSupportMaterial || role == erSupportTransition;
-        bool         has_interface      = role == erMixed || role == erSupportMaterialInterface;
-        unsigned int extruder_support   = resolve_mixed(object.config().support_filament.value,
-                                                        layer_tools.layer_index,
-                                                        float(support_layer->print_z),
-                                                        float(support_layer->height),
-                                                        &object);
-        unsigned int extruder_interface = resolve_mixed(object.config().support_interface_filament.value,
-                                                        layer_tools.layer_index,
-                                                        float(support_layer->print_z),
-                                                        float(support_layer->height),
-                                                        &object);
-        if (has_support)
-            layer_tools.extruders.push_back(extruder_support);
-        if (has_interface)
-            layer_tools.extruders.push_back(extruder_interface);
-        if (has_support || has_interface) {
-            layer_tools.has_support = true;
-            layer_tools.wiping_extrusions().is_support_overriddable_and_mark(role, object);
-        }
-    }
-
     // Extruder overrides are ordered by print_z.
     std::vector<std::pair<double, unsigned int>>::const_iterator it_per_layer_extruder_override;
 	it_per_layer_extruder_override = per_layer_extruder_switches.begin();
@@ -869,6 +842,64 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 layer_tools.has_object = true;
         }
         layerCount++;
+    }
+
+    // Collect the support extruders.
+    for (auto support_layer : object.support_layers()) {
+        LayerTools &layer_tools = this->tools_for_layer(support_layer->print_z);
+        layer_tools.layer_height = support_layer->height;
+        ExtrusionRole role = support_layer->support_fills.role();
+        bool has_support = role == erMixed || role == erSupportMaterial || role == erSupportTransition;
+        bool has_interface = role == erMixed || role == erSupportMaterialInterface;
+        unsigned int extruder_support = resolve_mixed(object.config().support_filament.value,
+            layer_tools.layer_index, float(support_layer->print_z), float(support_layer->height), &object);
+        unsigned int extruder_interface = resolve_mixed(object.config().support_interface_filament.value,
+            layer_tools.layer_index, float(support_layer->print_z), float(support_layer->height), &object);
+
+        if (has_support && extruder_support == 0 && extruder_interface != 0) {
+            bool interface_not_for_body = object.config().support_interface_not_for_body;
+            const PrintConfig &print_config = object.print()->config();
+            auto has_reusable_layer_extruder = [&]() -> bool {
+                for (unsigned int extruder_id : layer_tools.extruders) {
+                    if (extruder_id == 0) continue;
+                    if (interface_not_for_body && extruder_id == extruder_interface) continue;
+                    if (print_config.filament_soluble.get_at(extruder_id - 1)) continue;
+                    return true;
+                }
+                return false;
+            };
+            if (!has_reusable_layer_extruder()) {
+                auto all_extruders = object.print()->extruders();
+                auto get_next_extruder = [&](int current_extruder, const std::vector<unsigned int> &extruders) {
+                    std::vector<float> flush_matrix(cast<float>(print_config.flush_volumes_matrix.values));
+                    const unsigned int number_of_extruders = (unsigned int) (sqrt(flush_matrix.size()) + EPSILON);
+                    // Extract purging volumes for each extruder pair:
+                    std::vector<std::vector<float>> wipe_volumes;
+                    for (unsigned int i = 0; i < number_of_extruders; ++i)
+                        wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders,
+                                                                 flush_matrix.begin() + (i + 1) * number_of_extruders));
+                    int next_extruder = current_extruder;
+                    float min_flush = std::numeric_limits<float>::max();
+                    for (auto extruder_id : extruders) {
+                        if (print_config.filament_soluble.get_at(extruder_id) || extruder_id == current_extruder) continue;
+                        if (wipe_volumes[extruder_interface - 1][extruder_id] < min_flush) {
+                            next_extruder = extruder_id;
+                            min_flush = wipe_volumes[extruder_interface - 1][extruder_id];
+                        }
+                    }
+                    return next_extruder;
+                };
+                layer_tools.extruders.push_back(get_next_extruder(interface_not_for_body ? extruder_interface - 1 : -1, all_extruders) + 1);
+            }
+        }
+        if (has_support)
+            layer_tools.extruders.push_back(extruder_support);
+        if (has_interface)
+            layer_tools.extruders.push_back(extruder_interface);
+        if (has_support || has_interface) {
+            layer_tools.has_support = true;
+            layer_tools.wiping_extrusions().is_support_overriddable_and_mark(role, object);
+        }
     }
 
     sort_remove_duplicates(firstLayerExtruders);

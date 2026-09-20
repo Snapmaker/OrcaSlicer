@@ -1,4 +1,5 @@
 #include <assert.h>
+#include "AABBTreeLines.hpp"
 #include <stdio.h>
 #include <memory>
 

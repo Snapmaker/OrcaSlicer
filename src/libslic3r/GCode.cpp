@@ -5913,28 +5913,7 @@ LayerResult GCode::process_layer(const Print& print,
                        layer.lslices[i].contour.contains(point);
             };
             auto entity_matches_surface = [&point_inside_surface](const size_t i, const ExtrusionEntity& entity) {
-                if (point_inside_surface(i, entity.first_point()))
-                    return true;
-
-                Polylines polylines;
-                entity.collect_polylines(polylines);
-                for (const Polyline& polyline : polylines) {
-                    if (polyline.points.size() >= 2) {
-                        const Point midpoint = (polyline.points.front() + polyline.points[1]) / 2;
-                        if (point_inside_surface(i, midpoint))
-                            return true;
-                    }
-                }
-
-                Points points;
-                entity.collect_points(points);
-                if (!points.empty()) {
-                    BoundingBox bbox(points);
-                    if (bbox.defined && point_inside_surface(i, bbox.center()))
-                        return true;
-                }
-
-                return false;
+                return point_inside_surface(i, entity.first_point());
             };
             LocalZLoopSeamPlacer local_z_loop_seam_placer =
                 [this, &layer](const ExtrusionLoop& src_loop, ExtrusionLoop& seam_loop, Point& seam_anchor) -> bool {

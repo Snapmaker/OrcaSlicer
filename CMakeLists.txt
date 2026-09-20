@@ -998,13 +998,17 @@ set (CPACK_NSIS_DEFINES "!define MUI_STARTMENUPAGE_DEFAULTFOLDER \"${CPACK_PACKA
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_install.nsh" CPACK_NSIS_EXTRA_INSTALL_COMMANDS)
 file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerURLProtocols_uninstall.nsh" _snapmaker_nsis_uninst_url)
 set(_snapmaker_nsis_uninst_kill [=[
-  nsExec::Exec 'taskkill /F /IM snapmaker-orca.exe /T'
+  nsExec::Exec 'taskkill /F /IM snapmaker-orca.exe'
   Pop $0
-  nsExec::Exec 'taskkill /F /IM Snapmaker_Orca.exe /T'
+  nsExec::Exec 'taskkill /F /IM Snapmaker_Orca.exe'
   Pop $0
 ]=])
 string(CONCAT CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
        "${_snapmaker_nsis_uninst_kill}" "${_snapmaker_nsis_uninst_url}")
+# Wait for the shared connect CLI's no-client self-exit before generated files
+# are removed. Exact installed paths only; no CLI process enumeration or kill.
+file(READ "${CMAKE_SOURCE_DIR}/cmake/nsis/SnapmakerConnect_uninstall.nsh" _snapmaker_connect_uninstall)
+string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "\n${_snapmaker_connect_uninstall}")
 # Auto-close the uninstall details page so the wizard advances to the custom
 # finish page as soon as the uninstall section finishes (no extra click).
 string(APPEND CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "  SetAutoClose true\n")

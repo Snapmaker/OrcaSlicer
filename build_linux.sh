@@ -244,6 +244,24 @@ if [[ -n "${BUILD_DEPS}" ]] ; then
 fi
 
 if [[ -n "${BUILD_ORCA}" ]] ; then
+    echo "Staging snapmaker_connect..."
+    case "$(uname -m)" in
+        x86_64)
+            CONNECT_BUNDLE_PLATFORM="linux-x64"
+            ;;
+        aarch64|arm64)
+            CONNECT_BUNDLE_PLATFORM="linux-arm64"
+            ;;
+        *)
+            echo "Error: unsupported architecture $(uname -m) for snapmaker_connect."
+            exit 1
+            ;;
+    esac
+    python3 ./scripts/packaging/stage_connect_bundle.py \
+        --lock .github/connect-bundle.lock.json \
+        --platform "${CONNECT_BUNDLE_PLATFORM}" \
+        --resources-dir "${SCRIPT_PATH}/resources"
+
     echo "Configuring Snapmaker_Orca..."
     if [[ -n "${CLEAN_BUILD}" ]] ; then
         rm -fr build

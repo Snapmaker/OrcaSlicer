@@ -76,6 +76,18 @@ jobs:
       run:
         rm -rf /usr/local/lib/android/* /usr/share/dotnet/* /opt/ghc1/* "/usr/local/share/boost1/*"
     - uses: actions/checkout@v5
+    - name: "Stage connect bundle"
+      shell: bash
+      run: |
+        case "${{ matrix.variant.arch }}" in
+          x86_64) platform="linux-x64" ;;
+          aarch64) platform="linux-arm64" ;;
+          *) echo "Unsupported Flatpak architecture: ${{ matrix.variant.arch }}" >&2; exit 1 ;;
+        esac
+        python3 scripts/packaging/stage_connect_bundle.py \
+          --lock .github/connect-bundle.lock.json \
+          --platform "$platform" \
+          --resources-dir resources
     - name: Get the version and date
       run: |
         ver_pure=$(grep 'set(Snapmaker_VERSION' version.inc | cut -d '"' -f2)

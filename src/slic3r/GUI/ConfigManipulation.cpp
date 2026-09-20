@@ -191,6 +191,42 @@ void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
     }
 }
 
+void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top)
+{
+    const char* pen_key   = is_top ? "top_color_penetration_layers" : "bottom_color_penetration_layers";
+    const char* shell_key = is_top ? "top_shell_layers" : "bottom_shell_layers";
+    const int   cur_shell = config->opt_int(shell_key);
+    const int   cur_pen   = config->opt_int(pen_key);
+
+    // Both fields of the pair highlight together, whichever value was edited.
+    const bool is_invalid = cur_pen > cur_shell;
+    if (cb_highlight_field) {
+        cb_highlight_field(pen_key, is_invalid);
+        cb_highlight_field(shell_key, is_invalid);
+    }
+    if (!is_invalid)
+        return;
+
+    const wxString msg_text = is_top ?
+        wxString::Format(_L("Top paint penetration layers cannot exceed top shell layers.\n"
+                           "Top paint penetration layers will be reset to %d."), cur_shell) :
+        wxString::Format(_L("Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+                           "Bottom paint penetration layers will be reset to %d."), cur_shell);
+    MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+    DynamicPrintConfig new_conf = *config;
+    is_msg_dlg_already_exist = true;
+    dialog.ShowModal();
+    new_conf.set_key_value(pen_key, new ConfigOptionInt(cur_shell));
+    apply(config, &new_conf);
+    is_msg_dlg_already_exist = false;
+    // apply() re-ran the update; re-sync the highlights with the post-reset state.
+    if (cb_highlight_field) {
+        const bool still_invalid = config->opt_int(pen_key) > config->opt_int(shell_key);
+        cb_highlight_field(pen_key, still_invalid);
+        cb_highlight_field(shell_key, still_invalid);
+    }
+}
+
 void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, const bool is_global_config, const bool is_plate_config)
 {
     // #ys_FIXME_to_delete
@@ -312,6 +348,10 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
+
+    // Penetration must not exceed shell layers: highlight both fields red, warn, reset.
+    validate_paint_penetration_layers(config, true);
+    validate_paint_penetration_layers(config, false);
 
     double sparse_infill_density = config->option<ConfigOptionPercent>("sparse_infill_density")->value;
     int    fill_multiline        = config->option<ConfigOptionInt>("fill_multiline")->value;

@@ -1026,6 +1026,7 @@ PRINT_CONFIG_CLASS_DEFINE(
 
     ((ConfigOptionInt,                  bottom_shell_layers))
     ((ConfigOptionFloat,                bottom_shell_thickness))
+    ((ConfigOptionInt,                  bottom_color_penetration_layers))
     ((ConfigOptionFloat,                bridge_angle))
     ((ConfigOptionFloat,                internal_bridge_angle)) // ORCA: Internal bridge angle override
     ((ConfigOptionFloat,                bridge_flow))
@@ -1105,6 +1106,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt, top_shell_layers))
     ((ConfigOptionFloat, top_shell_thickness))
     ((ConfigOptionFloats, top_surface_speed))
+    ((ConfigOptionInt, top_color_penetration_layers))
     //BBS
     ((ConfigOptionBools,                enable_overhang_speed))
     ((ConfigOptionFloatsOrPercents,      overhang_1_4_speed))

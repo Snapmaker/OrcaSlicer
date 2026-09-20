@@ -2642,9 +2642,11 @@ void TabPrint::build()
         optgroup->append_single_option_line("top_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
         optgroup->append_single_option_line("top_shell_layers");
         optgroup->append_single_option_line("top_shell_thickness");
+        optgroup->append_single_option_line("top_color_penetration_layers");
         optgroup->append_single_option_line("bottom_surface_pattern", "fill-patterns#Infill of the top surface and bottom surface");
         optgroup->append_single_option_line("bottom_shell_layers");
         optgroup->append_single_option_line("bottom_shell_thickness");
+        optgroup->append_single_option_line("bottom_color_penetration_layers");
         optgroup->append_single_option_line("top_bottom_infill_wall_overlap");
 
         optgroup = page->new_optgroup(L("Infill"), L"param_infill");
@@ -7607,7 +7609,16 @@ ConfigManipulation Tab::get_config_manipulation()
         return on_value_change(opt_key, value);
     };
 
-    return ConfigManipulation(load_config, cb_toggle_field, cb_toggle_line, cb_value_change, nullptr, this);
+    auto cb_highlight_field = [this](const t_config_option_key& opt_key, bool invalid) {
+        Page* page = nullptr;
+        Field* field = get_field(opt_key, &page);
+        if (field)
+            field->set_invalid_highlight(invalid);
+    };
+
+    ConfigManipulation config_manipulation(load_config, cb_toggle_field, cb_toggle_line, cb_value_change, nullptr, this);
+    config_manipulation.set_highlight_field_cb(cb_highlight_field);
+    return config_manipulation;
 }
 
 

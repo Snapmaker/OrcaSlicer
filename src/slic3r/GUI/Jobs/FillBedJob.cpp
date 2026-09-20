@@ -231,7 +231,11 @@ void FillBedJob::process(Ctl &ctl)
         do_stop = ap.bed_idx > 0 && ap.priority == 0;
     };
     // final align用的是凸包，在有fixed item的情况下可能找到的参考点位置是错的，这里就不做了。见STUDIO-3265
-    params.do_final_align = !is_bbl;
+    // This holds for every vendor, not just BBL: filling the bed always leaves fixed
+    // items around (other objects, wipe tower, excluded regions), so re-centering the
+    // packed pile on its convex hull shifts copies over the plate boundary. Keeping
+    // the alignment off also makes the placer check bin containment strictly.
+    params.do_final_align = false;
 
     if (m_selected.size() > 100){
         // too many items, just find grid empty cells to put them

@@ -3568,7 +3568,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 if (reload_printer_view && !showing_u1_device) {
                     wxGetApp().mainframe->load_printer_url(url);
                 }
-                }                   
             }
 
             if (!p->combo_printer->get_show_machine_connecting_button() && !is_snapmaker_u1) {
@@ -15721,9 +15720,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
                 }
                 const bool showing_u1 = main_frame->m_printer_view->is_u1_device_page();
                 if (is_snapmaker_u1 && !showing_u1) {
-                    wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                                         "/web/flutter_web/index.html?path=2");
-                    main_frame->load_printer_url(wxGetApp().get_international_url(u1_url));
+                    main_frame->load_printer_url(wxGetApp().gateway_web_url("device_control"));
                 } else if (!is_snapmaker_u1 && showing_u1) {
                     wxString non_u1 = url;
                     if (non_u1.empty()) {

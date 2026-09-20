@@ -136,6 +136,33 @@ SnapmakerOrcaPre_do_trim_slash:
   Goto SnapmakerOrcaPre_trim_inst_slash
 SnapmakerOrcaPre_trim_slash_done:
   IfFileExists "$0" 0 SnapmakerOrcaPre_uninst_launch_failed
+  ; The app has stopped, but the shared connect CLI may still be within its
+  ; no-client self-exit window. Wait on the exact installed files only.
+  StrCpy $4 40
+SnapmakerOrcaPre_connect_wait:
+  Delete "$3\resources\snapmaker_connection_windows_x64.exe"
+  Delete "$3\resources\snapmaker_connection_windows_arm64.exe"
+  IfFileExists "$3\resources\snapmaker_connection_windows_x64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_connection_windows_arm64.exe" SnapmakerOrcaPre_connect_retry
+  Goto SnapmakerOrcaPre_connect_done
+SnapmakerOrcaPre_connect_retry:
+  Sleep 1000
+  IntOp $4 $4 - 1
+  IntCmp $4 0 SnapmakerOrcaPre_connect_timeout SnapmakerOrcaPre_connect_timeout SnapmakerOrcaPre_connect_wait
+SnapmakerOrcaPre_connect_timeout:
+  IfSilent SnapmakerOrcaPre_connect_silent SnapmakerOrcaPre_connect_failed
+SnapmakerOrcaPre_connect_silent:
+  SetErrorLevel 8
+  Quit
+SnapmakerOrcaPre_connect_failed:
+  StrCmp $LANGUAGE ${LANG_SIMPCHINESE} 0 SnapmakerOrcaPre_connect_failed_en
+  MessageBox MB_OK|MB_ICONSTOP "Snapmaker Connect 仍在退出。请关闭 Snapmaker Orca，最多等待 40 秒后重新运行安装程序。"
+  Abort
+SnapmakerOrcaPre_connect_failed_en:
+  MessageBox MB_OK|MB_ICONSTOP "Snapmaker Connect is still shutting down. Close Snapmaker Orca, wait up to 40 seconds, then run the installer again."
+  Abort
+SnapmakerOrcaPre_connect_done:
+  ClearErrors
   ; Same as CMake CPack NSIS.template.in and NSIS maintainer guidance: use _?=$DIR with NO
   ; extra quotes around the directory. _?="C:\Program Files\..." breaks parsing (log shows
   ; _?="C:\Program Fil...) and causes uninstall failure. See NSIS forums t-212468.

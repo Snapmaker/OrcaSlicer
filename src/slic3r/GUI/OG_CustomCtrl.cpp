@@ -803,8 +803,7 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
                 break;
             }
         }
-        // Cross-field validation highlight wins over the modified/blink colors
-        // so the invalid state stays visible.
+        // The validation highlight wins over the modified/blink colors.
         for (const Option& opt : option_set) {
             Field* field = ctrl->opt_group->get_field(opt.opt_id);
             if (field && field->has_invalid_highlight()) {

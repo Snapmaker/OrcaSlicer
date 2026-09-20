@@ -979,8 +979,7 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.));
 
-    // Migrated from BambuStudio commit c782fbb8. See the top_color_penetration_layers
-    // comment above for the default-value policy and the min = 0 clamp semantics.
+    // Migrated from BambuStudio c782fbb8; same default/clamp policy as the top key.
     def = this->add("bottom_color_penetration_layers", coInt);
     def->label = L("Bottom paint penetration layers");
     def->category = L("Strength");
@@ -5986,13 +5985,7 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
 
-    // Migrated from BambuStudio commit c782fbb8 ("Separate the number of color bleed
-    // layers from top_shell_layers"). Key name keeps the upstream internal spelling.
-    // Default 5 per product requirement (0.4mm nozzle, 0.2mm layer height); process
-    // presets mirror their own top_shell_layers, final defaults TBD by process team.
-    // min = 0 per requirement, but the engine clamps the effective value to >= 1
-    // because the MMU projection gate requires a positive layer count; 0 therefore
-    // behaves like 1 (only the surface layer is painted).
+    // Migrated from BambuStudio c782fbb8; default 5, engine clamps 0 to act as 1.
     def = this->add("top_color_penetration_layers", coInt);
     def->label = L("Top paint penetration layers");
     def->category = L("Strength");
@@ -8177,8 +8170,7 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     if (cfg.bottom_shell_layers < 0) {
         error_message.emplace("bottom_shell_layers", L("invalid value ") + std::to_string(cfg.bottom_shell_layers));
     }
-    // Negative penetration layers would wrap to SIZE_MAX in the MMU bottom penetration
-    // loop (int -> size_t) and paint the whole object; reject them the same way.
+    // Negative penetration wraps to SIZE_MAX in the MMU loop; reject like the shell keys.
     if (cfg.top_color_penetration_layers < 0) {
         error_message.emplace("top_color_penetration_layers", L("invalid value ") + std::to_string(cfg.top_color_penetration_layers));
     }

@@ -1642,13 +1642,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.config().precise_z_height.value);
             !layers.empty()) {
 
-            // Paint penetration layers may not exceed the object's total layer count
-            // (product requirement + QA case PEN-015: applies to any object, painted
-            // or not). Mirrors the out-of-bed error interaction: returning the object
-            // pointer and the option key drives the red banner with a "Jump to" link
-            // and blocks slicing.
-            // generate_object_layers returns pairs of low/high layer boundaries
-            // (2 entries per layer, see Slicing.cpp), so the layer count is half the size.
+            // PEN-015: penetration may not exceed the total layer count (halved, see Slicing.cpp).
             const int total_layers = int(layers.size() / 2);
             {
                 int max_top_penetration = 0, max_bottom_penetration = 0;

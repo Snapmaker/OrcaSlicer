@@ -198,8 +198,7 @@ void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* c
     const int   cur_shell = config->opt_int(shell_key);
     const int   cur_pen   = config->opt_int(pen_key);
 
-    // Both fields of the pair highlight together, no matter which of the two
-    // values was edited.
+    // Both fields of the pair highlight together, whichever value was edited.
     const bool is_invalid = cur_pen > cur_shell;
     if (cb_highlight_field) {
         cb_highlight_field(pen_key, is_invalid);
@@ -220,8 +219,7 @@ void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* c
     new_conf.set_key_value(pen_key, new ConfigOptionInt(cur_shell));
     apply(config, &new_conf);
     is_msg_dlg_already_exist = false;
-    // apply() re-ran the update with the corrected value; make sure the
-    // highlights reflect the post-reset state.
+    // apply() re-ran the update; re-sync the highlights with the post-reset state.
     if (cb_highlight_field) {
         const bool still_invalid = config->opt_int(pen_key) > config->opt_int(shell_key);
         cb_highlight_field(pen_key, still_invalid);
@@ -351,8 +349,7 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         is_msg_dlg_already_exist = false;
     }
 
-    // Paint penetration layers must not exceed the corresponding shell layers
-    // (product requirement): highlight both fields red, warn, reset.
+    // Penetration must not exceed shell layers: highlight both fields red, warn, reset.
     validate_paint_penetration_layers(config, true);
     validate_paint_penetration_layers(config, false);
 

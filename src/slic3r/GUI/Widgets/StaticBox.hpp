@@ -31,8 +31,7 @@ public:
 
     void SetBorderColorNormal(wxColor const &color);
 
-    /// Read back the current border colors so callers can cache and restore
-    /// them after a temporary override (e.g. validation highlighting).
+    /// Read back the current border colors so callers can cache and restore them after an override.
     StateColor const & borderColor() const { return border_color; }
 
     void SetBackgroundColor(StateColor const &color);

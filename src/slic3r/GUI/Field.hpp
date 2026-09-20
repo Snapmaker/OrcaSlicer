@@ -211,10 +211,7 @@ public:
     bool			m_is_modified_value {false};
 	bool			m_is_nonsys_value {true};
 
-    // Cross-field validation highlight (e.g. paint penetration layers vs shell
-    // layers). While set, the label renders in red and the input border turns
-    // red; the original colors are cached and restored when the highlight is
-    // cleared.
+    // Cross-field validation highlight: red label + red input border while set.
     bool            m_invalid_highlight { false };
     wxStaticText*   m_label_win { nullptr };
     wxColour        m_label_win_fg_clr;
@@ -259,20 +256,13 @@ public:
     virtual wxSizer*	getSizer()  { return nullptr; }
     virtual wxWindow*	getWindow() { return nullptr; }
 
-    /// Registers the label widget shown next to the input window
-    /// (non-custom-ctrl mode) so validation can recolor it.
+    /// Registers the label widget (non-custom-ctrl mode) so validation can recolor it.
     void            set_label_window(wxStaticText* label) { m_label_win = label; }
 
-    /// Derives the cross-field validation state from the option group's own
-    /// config. Option pages are built lazily and rebuilt on mode/visibility
-    /// changes, so the live highlight push would otherwise get lost. Per-group
-    /// derivation also keeps independent config surfaces (plate panel, preset
-    /// editor, object settings) from clobbering each other's state.
+    /// Derives the validation state from the group's own config (pages build lazily and get rebuilt).
     void            init_invalid_highlight_from_config(const DynamicPrintConfig* config, const std::string& opt_id);
 
-    /// Toggles the cross-field validation highlight: the label and the input
-    /// border turn red while the flag is set, original colors are restored on
-    /// clear. Safe to call repeatedly with the same state.
+    /// Toggles the red label/border highlight; original colors are restored on clear.
     void            set_invalid_highlight(bool invalid);
     bool            has_invalid_highlight() const { return m_invalid_highlight; }
 

@@ -1195,10 +1195,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     int granularity = 1;
     for (size_t i = 0; i < print_object.num_printing_regions(); ++ i) {
         const PrintRegionConfig &config = print_object.printing_region(i).config();
-        // Effective penetration counts are clamped to at least 1: a configured value of 0
-        // means "only the surface layer is painted", and the slice_mesh_slabs gate below
-        // requires a positive count to keep the surface projection alive. The clamp also
-        // guards the bottom penetration loop against a negative value wrapping to SIZE_MAX.
+        // Clamp to >= 1: 0 means "surface layer only"; negatives would wrap to SIZE_MAX.
         const int top_penetration    = std::max(1, config.top_color_penetration_layers.value);
         const int bottom_penetration = std::max(1, config.bottom_color_penetration_layers.value);
         max_top_layers    = std::max(max_top_layers, top_penetration);
@@ -1348,7 +1345,6 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     auto layer_color_stat = [&layers = std::as_const(layers), &print_object](const size_t layer_idx, const size_t color_idx) -> LayerColorStat {
         LayerColorStat out;
         const Layer &layer = *layers[layer_idx];
-        int cfg_top_logged = -1, cfg_bottom_logged = -1;
         for (const LayerRegion *region : layer.regions())
             if (const PrintRegionConfig &config = region->region().config();
                 // color_idx == 0 means "don't know" extruder aka the underlying extruder.
@@ -1367,21 +1363,11 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                                              outer_wall_line_width + 0.7f * Flow::rounded_rectangle_extrusion_spacing(outer_wall_line_width, float(layer.height));
                 out.small_region_threshold = scaled<float>(out.small_region_threshold * 0.5f);
                 out.extrusion_spacing = Flow::rounded_rectangle_extrusion_spacing(float(outer_wall_line_width), float(layer.height));
-                cfg_top_logged = config.top_color_penetration_layers.value;
-                cfg_bottom_logged = config.bottom_color_penetration_layers.value;
                 ++ out.num_regions;
             }
         assert(out.num_regions > 0);
         out.extrusion_width = scaled<float>(out.extrusion_width);
         out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
-        // Temporary instrumentation for QA off-by-one report ("N=1 paints 2 layers"):
-        // logs the configured vs effective penetration counts per layer/color.
-        BOOST_LOG_TRIVIAL(info) << "penetration_stat: layer " << layer_idx << " color " << color_idx
-                                 << " cfg_top " << cfg_top_logged
-                                 << " cfg_bottom " << cfg_bottom_logged
-                                 << " stat_top " << out.top_color_penetration_layers
-                                 << " stat_bottom " << out.bottom_color_penetration_layers
-                                 << " regions " << out.num_regions;
         return out;
     };
 

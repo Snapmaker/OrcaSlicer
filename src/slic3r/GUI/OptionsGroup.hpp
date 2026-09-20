@@ -186,8 +186,7 @@ public:
 
     void            hide_labels() { label_width = 0; }
 
-    // Config backing this group (null for non-config groups); used to derive
-    // cross-field validation state when fields are (re)built.
+    // Config backing this group (null for non-config groups), used when fields are (re)built.
     virtual const DynamicPrintConfig* get_config() const { return nullptr; }
 
 	OptionsGroup(wxWindow *_parent, const wxString &title, const wxString &icon, bool is_tab_opt = false,

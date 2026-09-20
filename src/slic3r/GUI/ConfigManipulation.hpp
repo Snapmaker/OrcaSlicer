@@ -20,9 +20,7 @@ namespace GUI {
 
 class ConfigManipulation
 {
-    /// Cross-field check "paint penetration layers <= shell layers" for one side
-    /// of the shell. On violation highlights BOTH fields red, warns and resets
-    /// the penetration value to the shell layer count.
+    /// Checks "penetration <= shell layers"; on violation highlights both fields, warns and resets.
     void    validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top);
 
     bool                is_msg_dlg_already_exist{ false };
@@ -36,8 +34,7 @@ class ConfigManipulation
     std::function<void (const std::string&, bool toggle)>   cb_toggle_line = nullptr;
     // callback to propagation of changed value, if needed
     std::function<void(const std::string&, const boost::any&)>  cb_value_change = nullptr;
-    // callback to toggle the red invalid highlight of a field (label + input
-    // window); wired by the UI owning the option groups
+    // callback to toggle the red invalid highlight of a field; wired by the UI owning the option groups
     std::function<void(const std::string&, bool invalid)>       cb_highlight_field = nullptr;
     //BBS: change local config to const DynamicPrintConfig
     const DynamicPrintConfig* local_config = nullptr;

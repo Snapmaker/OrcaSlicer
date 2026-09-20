@@ -226,8 +226,7 @@ void Field::init_invalid_highlight_from_config(const DynamicPrintConfig* config,
 {
     if (config == nullptr)
         return;
-    // Both fields of a penetration/shell pair highlight together, so look up
-    // the pair from either side.
+    // Both fields of a pair highlight together, so resolve the pair from either side.
     const bool is_top_pair    = opt_id == "top_color_penetration_layers" || opt_id == "top_shell_layers";
     const bool is_bottom_pair = opt_id == "bottom_color_penetration_layers" || opt_id == "bottom_shell_layers";
     if (!is_top_pair && !is_bottom_pair)
@@ -251,8 +250,7 @@ void Field::set_invalid_highlight(bool invalid)
 
     if (wxWindow* input = getWindow()) {
         if (auto spin = dynamic_cast<SpinInput*>(input)) {
-            // Single-entry StateColor applies to every widget state (normal,
-            // hovered, disabled); colorForStates dark-mode-maps it on render.
+            // A single-entry StateColor applies to every widget state and is dark-mode-mapped on render.
             if (invalid) {
                 m_input_border_clr = spin->borderColor();
                 spin->SetBorderColor(StateColor(wxColour("#D01B1B")));
@@ -260,8 +258,7 @@ void Field::set_invalid_highlight(bool invalid)
                 spin->SetBorderColor(m_input_border_clr);
             }
         }
-        // In tab pages the label is painted by the owning OG_CustomCtrl;
-        // repaint it so it picks up has_invalid_highlight().
+        // In tab pages the label is painted by the owning OG_CustomCtrl; force a repaint.
         for (wxWindow* parent = input->GetParent(); parent != nullptr; parent = parent->GetParent()) {
             if (auto ctrl = dynamic_cast<OG_CustomCtrl*>(parent)) {
                 ctrl->Refresh();

@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_marchingsquares.cpp
 	test_timeutils.cpp
 	test_tree_support_wall.cpp
+	test_tree_support_holes.cpp
 	test_voronoi.cpp
     test_optimizers.cpp
     test_png_io.cpp

@@ -3,6 +3,8 @@
 
 #include <forward_list>
 #include <unordered_set>
+#include <vector>
+#include "ClipperUtils.hpp"
 #include "ExPolygon.hpp"
 #include "Point.hpp"
 #include "Slicing.hpp"
@@ -363,6 +365,73 @@ struct LineHash {
 inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int wall_count)
 {
     return (style == smsTreeHybrid && wall_count == 0) ? size_t(1) : size_t(wall_count);
+}
+
+/*!
+ * \brief Sliver-hole cleanup for tree support area groups, guarded by hole ownership.
+ *
+ * draw_circles() carves the per-layer area polygons against each other
+ * (roof_areas -= roof_1st_layer, base_areas -= roofs). Since 5f02f3ed5d the diff
+ * direction is roof_areas = diff(roof_areas, roof_1st_layer), so a whole transition
+ * strip or roof fragment regularly ends up as a hole smaller than 2mm in both
+ * dimensions inside the polygon of another group. Erasing such a hole (the plain
+ * sliver cleanup inherited from Bambu Studio, same 2mm box threshold) re-expands the
+ * owner polygon over the other group's area, so two support roles get printed on top
+ * of each other at the same print_z -- observed as support interface fill crossing
+ * support transition strips. Holes overlapping the solid area of another group at
+ * this layer are therefore kept; all other sub-2mm holes are erased as before.
+ *
+ * \param expoly          group polygon whose small holes are filtered.
+ * \param all_group_areas polygons of every area group at this layer, this one included;
+ *                        it is excluded by identity, not by area.
+ */
+inline void erase_small_area_group_holes(ExPolygon &expoly, const std::vector<const ExPolygon*> &all_group_areas)
+{
+    // 2mm box filter inherited from Bambu Studio (TreeSupport area_groups hole cleanup).
+    const double small_hole_edge = scale_(2.);
+    // Intersections below this area are boundary-touching degeneracies, not overlaps.
+    // The area groups are exact complements after the diff pass (integer clipper), so a
+    // real carve hole either overlaps another group with (almost) its full area or not
+    // at all; 0.02mm^2 filters only degenerate slivers.
+    const double degenerate_overlap_area = Slic3r::sqr(scale_(0.02));
+
+    bool has_small_hole = false;
+    for (const Polygon &hole : expoly.holes) {
+        const auto bbox_size = get_extents(hole).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            has_small_hole = true;
+            break;
+        }
+    }
+    if (!has_small_hole)
+        return;
+
+    ExPolygons other_solids;
+    other_solids.reserve(all_group_areas.size());
+    for (const ExPolygon *group_area : all_group_areas)
+        if (group_area != &expoly)
+            other_solids.emplace_back(*group_area);
+
+    for (auto hole_it = expoly.holes.begin(); hole_it != expoly.holes.end();) {
+        const auto bbox_size = get_extents(*hole_it).size();
+        if (bbox_size[0] < small_hole_edge && bbox_size[1] < small_hole_edge) {
+            Polygon hole_outer = *hole_it;
+            // Holes are stored clockwise; clipper subjects must be counter-clockwise.
+            hole_outer.make_counter_clockwise();
+            const ExPolygons overlap    = intersection_ex({ExPolygon(std::move(hole_outer))}, other_solids);
+            double         overlap_area = 0.;
+            for (const ExPolygon &island : overlap)
+                overlap_area += island.area();
+            if (overlap_area > degenerate_overlap_area) {
+                // The hole is the carve-out of another area group (e.g. a transition
+                // strip inside an interface polygon). Keep it.
+                ++hole_it;
+                continue;
+            }
+            hole_it = expoly.holes.erase(hole_it);
+        } else
+            ++hole_it;
+    }
 }
 
 /*!

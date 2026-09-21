@@ -22,7 +22,7 @@ SCENARIO("Placeholder parser scripting", "[PlaceholderParser]") {
     config.option<ConfigOptionFloatOrPercent>("initial_layer_line_width")->percent = false;
     config.option<ConfigOptionFloatOrPercent>("support_line_width")->value = 0.675;
     config.option<ConfigOptionFloatOrPercent>("support_line_width")->percent = false;
-    config.option<ConfigOptionFloat>("initial_layer_speed")->value = 50.;
+    config.option<ConfigOptionFloats>("initial_layer_speed")->values = {50., 50., 50., 50.};
 
     parser.apply_config(config);
 	parser.set("foo", 0);
@@ -72,10 +72,10 @@ SCENARIO("Placeholder parser scripting", "[PlaceholderParser]") {
     SECTION("outer_wall_line_width") { REQUIRE_THAT(std::stod(parser.process("{outer_wall_line_width}")), WithinRel(0.67500001192092896, 0.001)); }
     SECTION("initial_layer_line_width") { REQUIRE_THAT(std::stod(parser.process("{initial_layer_line_width}")), WithinRel(0.9, 0.001)); }
     SECTION("support_line_width") { REQUIRE_THAT(std::stod(parser.process("{support_line_width}")), WithinRel(0.67500001192092896, 0.001)); }
-    // small_perimeter_speed over outer_wall_speed
-    SECTION("small_perimeter_speed") { REQUIRE_THAT(std::stod(parser.process("{small_perimeter_speed}")), WithinRel(30., 0.001)); }
+    // coFloatsOrPercents vectors are not addressable by the scalar placeholder engine.
+    SECTION("small_perimeter_speed") { REQUIRE_THROWS_WITH(parser.process("{small_perimeter_speed[foo]}"), Catch::Matchers::ContainsSubstring("Unsupported vector variable type")); }
     SECTION("infill_wall_overlap") { REQUIRE_THAT(std::stod(parser.process("{infill_wall_overlap}")), WithinRel(15., 0.001)); }
-    SECTION("initial_layer_speed") { REQUIRE_THAT(std::stod(parser.process("{initial_layer_speed}")), WithinRel(50., 0.001)); }
+    SECTION("initial_layer_speed") { REQUIRE_THAT(std::stod(parser.process("{initial_layer_speed[foo]}")), WithinRel(50., 0.001)); }
 
     // Test the boolean expression parser.
     auto boolean_expression = [&parser](const std::string& templ) { return parser.evaluate_boolean_expression(templ, parser.config()); };

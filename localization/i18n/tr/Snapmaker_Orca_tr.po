@@ -9602,7 +9602,7 @@ msgstr ""
 "meydana gelebilir."
 
 msgid "Prime Tower"
-msgstr "Başbakan Kulesi"
+msgstr "Prime Kulesi"
 
 msgid " is too close to others, and collisions may be caused.\n"
 msgstr " başkalarına çok yakın olduğundan çarpışmalara neden olabilir.\n"

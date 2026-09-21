@@ -15241,11 +15241,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     //BBS: add project slice logic
     bool is_finished = !m_slice_all || (m_cur_slice_plate == (partplate_list.get_plate_count() - 1));
 
+    long long slice_duration_ms = 0;
     {
         if (m_slice_timing_active) {
             auto end_time    = std::chrono::steady_clock::now();
             auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - m_slice_start_time).count();
             auto timess      = duration_ms;
+            slice_duration_ms = duration_ms;
             if (evt.cancelled()) {
                 BOOST_LOG_TRIVIAL(info) << "Slicing cancelled after " << duration_ms << " ms";
                 m_slice_start_time    = {};
@@ -15437,6 +15439,7 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         // success (not when is_finished was forced true by error/cancel above).
         if (!has_error && !evt.cancelled() && evt.success()) {
             SNAP_LOG_BATCH(Info, "slice completed", {"eventName","slice_completed"});
+            q->log_slice_success(slice_duration_ms);
         }
         m_is_slicing = false;
         this->preview->reload_print(false);
@@ -15628,6 +15631,7 @@ void Plater::priv::on_action_print_plate(SimpleEvent&)
 {
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print plate event\n" ;
+        q->log_print_start();
     }
 
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
@@ -15731,6 +15735,7 @@ void Plater::priv::on_action_print_all(SimpleEvent&)
 {
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print all event\n" ;
+        q->log_print_start();
     }
 
     PresetBundle& preset_bundle = *wxGetApp().preset_bundle;
@@ -23201,6 +23206,133 @@ wxString Plater::get_export_gcode_filename(const wxString & extension, bool only
 void Plater::set_project_filename(const wxString& filename)
 {
     p->set_project_filename(filename);
+}
+
+// --- Snapmaker Lab funnel analytics (SnapLog) ---------------------------------
+
+namespace {
+// Read a string field from space_info.json's "extendInfo" JSON object (raw text).
+std::string extend_info_value(const Model& model, const char* key)
+{
+    const std::string& raw = model.space_info.extend_info;
+    if (raw.empty())
+        return {};
+    try {
+        const nlohmann::json j = nlohmann::json::parse(raw);
+        if (j.is_object() && j.contains(key) && j[key].is_string())
+            return j[key].get<std::string>();
+    } catch (const nlohmann::json::exception&) {
+        // malformed extendInfo — ignore
+    }
+    return {};
+}
+
+// source comes from space_info.json's "extendInfo" (which generator produced the model
+std::string source_from(const Model& model)
+{
+    const std::string src = extend_info_value(model, "source");
+    return src;
+}
+
+// nozzle_size
+std::string current_nozzle_size()
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle == nullptr)
+        return {};
+    const ConfigOptionFloats* opt = bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (opt == nullptr || opt->values.empty())
+        return {};
+
+    // Multiple nozzles (e.g. 4 heads) are joined with a comma, like the material list.
+    std::vector<std::string> parts;
+    for (double v : opt->values)
+        parts.push_back((boost::format("%1%") % v).str());
+    return boost::algorithm::join(parts, ",");
+}
+
+// Filament material(s) from the in-memory filament list (the same list the sidebar "耗材丝" shows).
+std::string current_material()
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle == nullptr)
+        return {};
+
+    std::vector<std::string> parts;
+    for (const std::string& preset_name : bundle->filament_presets) {
+        Preset* preset = bundle->filaments.find_preset(preset_name);
+        if (preset == nullptr)
+            continue;
+        std::string type;
+        preset->get_filament_type(type);
+        if (!type.empty())
+            parts.push_back(type);
+    }
+    return boost::algorithm::join(parts, ",");
+}
+
+// Estimated normal print time (seconds) from a slice result (empty if none).
+std::string print_time_from_result(const GCodeProcessorResult* result)
+{
+    if (result == nullptr)
+        return {};
+    float seconds = result->print_statistics.modes[static_cast<size_t>(PrintEstimatedStatistics::ETimeMode::Normal)].time;
+    return (boost::format("%1%") % seconds).str();
+}
+
+// project_id comes from space_info.json ("project_id") carried in the 3mf.
+std::string project_id_from(const Model& model)
+{
+    return model.space_info.project_id;
+}
+
+// export_id comes from space_info.json ("export_id") carried in the 3mf.
+std::string export_id_from(const Model& model)
+{
+    return model.space_info.export_id;
+}
+} // namespace
+
+void Plater::log_model_import_from_lab() const
+{
+    SNAP_LOG_BATCH(Info, "model import from lab",
+        {"eventName", "orca_model_import_from_lab"},
+        {"project_id", project_id_from(p->model)},
+        {"export_id", export_id_from(p->model)},
+        {"source", source_from(p->model)},
+        {"nozzle_size", current_nozzle_size()});
+}
+
+void Plater::log_slice_start() const
+{
+    SNAP_LOG_BATCH(Info, "slice start",
+        {"eventName", "orca_slice_start"},
+        {"project_id", project_id_from(p->model)},
+        {"export_id", export_id_from(p->model)});
+}
+
+void Plater::log_slice_success(long long duration_ms) const
+{
+    SNAP_LOG_BATCH(Info, "slice success",
+        {"eventName", "orca_slice_success"},
+        {"project_id", project_id_from(p->model)},
+        {"export_id", export_id_from(p->model)},
+        {"duration_ms", std::to_string(duration_ms)});
+}
+
+void Plater::log_print_start() const
+{
+    const GCodeProcessorResult* result = nullptr;
+    PartPlate* plate = p->partplate_list.get_curr_plate();
+    if (plate != nullptr)
+        result = plate->get_slice_result();
+
+    SNAP_LOG_BATCH(Info, "print start",
+        {"eventName", "orca_print_start"},
+        {"project_id", project_id_from(p->model)},
+        {"export_id", export_id_from(p->model)},
+        {"material", current_material()},
+        {"estimated_print_time", print_time_from_result(result)});
 }
 
 bool Plater::is_export_gcode_scheduled() const

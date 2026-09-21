@@ -4507,6 +4507,21 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         Transform3d transform = bbs_get_transform_from_3mf_specs_string(bbs_get_attribute_value_string(attributes, num_attributes, TRANSFORM_ATTR));
         Vec3d ofs2ass = bbs_get_offset_from_3mf_specs_string(bbs_get_attribute_value_string(attributes, num_attributes, OFFSET_ATTR));
+        // BBS: drop corrupted assemble data. The feedback-amplification defect of
+        // Model::InitializeAssemblyPositions once produced translations up to
+        // ~1e15 mm, which blanked the assembly view (astronomic scene bbox broke
+        // camera fitting and float32 vertex transforms). Leaving the instance
+        // uninitialized lets the load path fall back to the (clean) plate
+        // transformation, so damaged projects self-heal on load.
+        if (!assemble_transform_is_sane(transform) || !ofs2ass.allFinite() ||
+            ofs2ass.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                << ": dropped insane assemble_item, object_id=" << object_id
+                << ", instance_id=" << instance_id
+                << ", tx=" << transform.translation().x()
+                << ", ofs2ass_x=" << ofs2ass.x();
+            return true;
+        }
         if (object_id < m_model->objects.size()) {
             if (instance_id < m_model->objects[object_id]->instances.size()) {
                 m_model->objects[object_id]->instances[instance_id]->set_assemble_from_transform(transform);
@@ -7799,6 +7814,22 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             if (obj != nullptr) {
                 for (int instance_idx = 0; instance_idx < obj->instances.size(); ++instance_idx) {
                     if (obj->instances[instance_idx]->is_assemble_initialized()) {
+                        // BBS: never persist corrupted assemble data. Skipping the item
+                        // equals "not initialized", so the next load re-initializes the
+                        // instance from its (clean) plate transformation.
+                        if (!assemble_transform_is_sane(obj->instances[instance_idx]->get_assemble_transformation().get_matrix())) {
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                                << ": skipped writing insane assemble_item, object_id=" << object_data.object_id
+                                << ", instance_id=" << instance_idx;
+                            continue;
+                        }
+                        const Vec3d ofs2ass_check = obj->instances[instance_idx]->get_offset_to_assembly();
+                        if (!ofs2ass_check.allFinite() || ofs2ass_check.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                            BOOST_LOG_TRIVIAL(error) << __FUNCTION__
+                                << ": skipped writing insane offset_to_assembly, object_id=" << object_data.object_id
+                                << ", instance_id=" << instance_idx;
+                            continue;
+                        }
                         stream << "   <" << ASSEMBLE_ITEM_TAG << " " << OBJECT_ID_ATTR << "=\"" << object_data.object_id << "\" ";
                         stream << INSTANCEID_ATTR << "=\"" << instance_idx << "\" " << TRANSFORM_ATTR << "=\"";
                             for (unsigned c = 0; c < 4; ++c) {

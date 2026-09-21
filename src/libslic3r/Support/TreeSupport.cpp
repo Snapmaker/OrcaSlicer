@@ -2496,9 +2496,12 @@ void TreeSupport::draw_circles()
                 std::vector<const ExPolygon *> area_group_polys;
                 area_group_polys.reserve(area_groups.size());
                 for (const auto &group : area_groups)
-                    area_group_polys.emplace_back(group.area);
+                    if (group.area != nullptr)
+                        area_group_polys.emplace_back(group.area);
 
                 for (auto &area_group : area_groups) {
+                    if (area_group.area == nullptr)
+                        continue;
                     auto& expoly = area_group.area;
                     erase_small_area_group_holes(*expoly, area_group_polys);
 

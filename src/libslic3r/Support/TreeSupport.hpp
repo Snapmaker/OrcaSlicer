@@ -383,7 +383,8 @@ inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int 
  *
  * \param expoly          group polygon whose small holes are filtered.
  * \param all_group_areas polygons of every area group at this layer, this one included;
- *                        it is excluded by identity, not by area.
+ *                        it is excluded by identity, not by area. Entries must be
+ *                        non-null; the caller filters empty area slots.
  */
 inline void erase_small_area_group_holes(ExPolygon &expoly, const std::vector<const ExPolygon*> &all_group_areas)
 {

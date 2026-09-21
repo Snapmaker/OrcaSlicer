@@ -2541,6 +2541,15 @@ void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
             }
         }
     }
+
+    // A scene reload while measuring or assembling copies visibility into the
+    // picking state. Keep both in sync when restoring the other volumes too.
+    // Use the volume ID because multiple instances may share a mesh raycaster.
+    for (const auto& raycaster : *get_raycasters_for_picking(SceneRaycaster::EType::Volume)) {
+        const int volume_idx = SceneRaycaster::decode_id(SceneRaycaster::EType::Volume, raycaster->get_id());
+        if (volume_idx >= 0 && static_cast<size_t>(volume_idx) < m_volumes.volumes.size())
+            raycaster->set_active(m_volumes.volumes[volume_idx]->is_active);
+    }
 }
 
 void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObject *mo, int instance_idx)

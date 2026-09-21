@@ -12262,11 +12262,36 @@ msgstr "顶面实心填充的速度"
 msgid "Top shell layers"
 msgstr "顶部壳体层数"
 
+msgid "Top paint penetration layers"
+msgstr "顶部涂色渗透层数"
+
+msgid "The number of layers painted with the top surface color into the top shell, including the top surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the top surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
+msgstr "顶部表面颜色渗入顶部壳体的层数，包含顶面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印顶面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+
+msgid "Bottom paint penetration layers"
+msgstr "底部涂色渗透层数"
+
+msgid "The number of layers painted with the bottom surface color into the bottom shell, including the bottom surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the bottom surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
+msgstr "底部表面颜色渗入底部壳体的层数，包含底面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印底面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+
+msgid "Top paint penetration layers cannot exceed top shell layers.\nTop paint penetration layers will be reset to %d."
+msgstr "顶部涂色渗透层数不能超过顶部壳体层数。\n“顶部涂色渗透层数”将被重置为 %d。"
+
+msgid "Bottom paint penetration layers cannot exceed bottom shell layers.\nBottom paint penetration layers will be reset to %d."
+msgstr "底部涂色渗透层数不能超过底部壳体层数。\n“底部涂色渗透层数”将被重置为 %d。"
+
+msgid "The top paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. Please reduce the top paint penetration layers."
+msgstr "对象 %2% 的顶部涂色渗透层数（%1%）超过了该对象的总层数（%3%）。请减小顶部涂色渗透层数。"
+
+msgid "The bottom paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. Please reduce the bottom paint penetration layers."
+msgstr "对象 %2% 的底部涂色渗透层数（%1%）超过了该对象的总层数（%3%）。请减小底部涂色渗透层数。"
+
 msgid "This is the number of solid layers of top shell, including the top surface layer. When the thickness calculated by this value is thinner than top shell thickness, the top shell layers will be increased."
 msgstr "顶部壳体实心层层数，包括顶面。当由该层数计算的厚度小于顶部壳体厚度，切片时会增加顶部壳体的层数"
 
 msgid "Top solid layers"
 msgstr "顶部壳体层数"
+
 
 msgid "Top shell thickness"
 msgstr "顶部壳体厚度"
@@ -15653,6 +15678,18 @@ msgstr "启用擦拭塔接触层功能"
 
 msgid "Enable optimized prime tower interface behavior when different materials meet."
 msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"切换到直线图案？\n"
+"是 - 自动切换到直线图案\n"
+"否 - 自动将密度重置为默认的非100%值"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "%1% 填充图案不支持 100%% 密度。"
 
 # Snapmaker: PLA/PETG support material detection strings
 msgid ""

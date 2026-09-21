@@ -6,19 +6,60 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/Layer.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <clocale>
+#include <cstdio>
 #include <cstdint>
+#include <locale>
 #include <set>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 using namespace Slic3r;
 
 namespace {
+
+#ifdef _WIN32
+static BOOL CALLBACK collect_system_locale(LPWSTR name, DWORD, LPARAM context)
+{
+    const std::wstring locale_name(name);
+    reinterpret_cast<std::vector<std::string>*>(context)->emplace_back(locale_name.begin(), locale_name.end());
+    return TRUE;
+}
+#endif
+
+static std::vector<std::string> installed_numeric_locales()
+{
+    std::vector<std::string> names;
+#ifdef _WIN32
+    // Some builds use WINVER declarations predating the locale-name enumeration API.
+    using EnumLocales    = BOOL(WINAPI*)(decltype(&collect_system_locale), DWORD, LPARAM, LPVOID);
+    const auto enumerate = reinterpret_cast<EnumLocales>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "EnumSystemLocalesEx"));
+    REQUIRE(enumerate != nullptr);
+    REQUIRE(enumerate(collect_system_locale, 0 /* LOCALE_ALL */, reinterpret_cast<LPARAM>(&names), nullptr));
+#else
+    FILE* locales = popen("locale -a", "r");
+    REQUIRE(locales != nullptr);
+    char buffer[512];
+    while (std::fgets(buffer, sizeof(buffer), locales)) {
+        std::string name(buffer);
+        name.erase(name.find_last_not_of("\r\n") + 1);
+        if (!name.empty())
+            names.emplace_back(std::move(name));
+    }
+    REQUIRE(pclose(locales) == 0);
+#endif
+    return names;
+}
 
 static std::vector<std::string> split_rows(const std::string &serialized)
 {
@@ -549,6 +590,207 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     CHECK(layer1.sparse_infill_filament(overridden_region) == 1);
     CHECK(layer0.solid_infill_filament(overridden_region) == 1);
     CHECK(layer1.solid_infill_filament(overridden_region) == 1);
+}
+
+TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+
+    DynamicPrintConfig config = mixed_region_print_config("1,4,1,1,63,0,g,w,m2,z0,xa0,xb0,d0,o0,u1,cm0;"
+                                                          "3,4,1,1,42,0,g,w,m2,z0,xa0,xb0,d0,o0,u2,cm0;"
+                                                          "2,1,1,1,50,0,g,w,m0,z2,xa0,xb0,d0,o0,u3,cm3,r1/0.8000/0.2000");
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    config.set("dithering_local_z_infill", true);
+    config.set("mixed_filament_height_lower_bound", 0.04);
+    config.set("mixed_filament_height_upper_bound", 0.16);
+    config.set("enable_prime_tower", false);
+    config.set("flush_into_infill", true);
+
+    bool assign_part = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    ModelConfig& assignment = assign_part ? volume->config : object->config;
+
+    Print print;
+    print.set_status_silent();
+    const std::vector<std::pair<int, std::set<size_t>>> assignments = {{7, {0, 1}}, {6, {2, 3}}, {5, {0, 3}},
+                                                                       {7, {0, 1}}, {1, {}},     {6, {2, 3}}};
+    for (const auto& [filament, expected_tools] : assignments) {
+        CAPTURE(filament, assign_part);
+        assignment.set("extruder", filament);
+        print.apply(model, config);
+        // Reuse normalized settings, as the GUI does. Reapplying raw defaults
+        // can invalidate slicing for unrelated reasons and hide stale plans.
+        config = print.full_print_config();
+        print.process();
+        REQUIRE(print.objects().size() == 1);
+
+        std::set<size_t> planned_tools;
+        for (const SubLayerPlan& plan : print.objects().front()->local_z_sublayer_plan()) {
+            for (size_t tool = 0; tool < plan.painted_masks_by_extruder.size(); ++tool) {
+                if (!plan.painted_masks_by_extruder[tool].empty())
+                    planned_tools.insert(tool);
+            }
+        }
+        CHECK(planned_tools == expected_tools);
+    }
+}
+
+TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_prime_tower", false);
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    SECTION("Local-Z disabled") { config.set("dithering_local_z_mode", false); }
+    SECTION("Full domain disabled") { config.set("dithering_local_z_whole_objects", false); }
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    config = print.full_print_config();
+    print.process();
+    REQUIRE(print.objects().size() == 1);
+    const PrintObject* print_object = print.objects().front();
+    REQUIRE(print_object->is_step_done(posSlice));
+
+    object->config.set("extruder", 2);
+    print.apply(model, config);
+    REQUIRE(print.objects().front() == print_object);
+    CHECK(print_object->is_step_done(posSlice));
+}
+
+TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled", "[MixedFilament][LocalZ][Wiping]")
+{
+    Model model;
+    for (int index = 0; index < 2; ++index) {
+        ModelObject *object = model.add_object();
+        object->add_volume(make_cube(20., 20., 20.));
+        object->add_instance();
+        object->ensure_on_bed();
+    }
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, 4242));
+    config.set("flush_into_infill", true);
+    config.set("flush_into_support", true);
+    config.set("support_filament", 0);
+    config.set("support_interface_filament", 0);
+    config.set("dithering_local_z_mode", true);
+    config.set("dithering_local_z_whole_objects", true);
+    config.set("dithering_local_z_infill", true);
+
+    PrintRegionConfig region_config            = static_cast<const PrintRegionConfig&>(FullPrintConfig::defaults());
+    region_config.wall_filament.value          = 1;
+    region_config.sparse_infill_filament.value = 2;
+    region_config.is_infill_first.value        = true;
+    PrintRegion region(region_config);
+    Print       print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 2);
+
+    const auto extrusion = [](ExtrusionRole role) {
+        auto* collection = new ExtrusionEntityCollection;
+        auto* path       = new ExtrusionPath(role, 0.08, 0.4f, 0.2f);
+        path->polyline   = Polyline({Point::new_scale(1., 1.), Point::new_scale(19., 1.)});
+        collection->entities.emplace_back(path);
+        return collection;
+    };
+    for (PrintObject* object : print.objects()) {
+        for (int layer_id = 0; layer_id < 3; ++layer_id) {
+            Layer*       layer        = object->add_layer(layer_id, 0.2, 0.2 * (layer_id + 1), 0.2 * layer_id + 0.1);
+            LayerRegion* layer_region = layer->add_region(&region);
+            layer_region->perimeters.entities.emplace_back(extrusion(erPerimeter));
+            layer_region->fills.entities.emplace_back(extrusion(erInternalInfill));
+        }
+    }
+
+    LocalZInterval interval;
+    interval.layer_id        = 1;
+    interval.z_lo            = 0.2;
+    interval.z_hi            = 0.4;
+    interval.base_height     = 0.2;
+    interval.sublayer_height = 0.1;
+    interval.has_mixed_paint = true;
+    interval.sublayer_count  = 2;
+    std::vector<SubLayerPlan> plans(2);
+    for (size_t index = 0; index < plans.size(); ++index) {
+        SubLayerPlan& plan  = plans[index];
+        plan.layer_id       = 1;
+        plan.pass_index     = index;
+        plan.split_interval = true;
+        plan.z_lo           = 0.2 + 0.1 * index;
+        plan.z_hi = plan.print_z = plan.z_lo + 0.1;
+        plan.flow_height         = 0.1;
+        plan.painted_masks_by_extruder.resize(4);
+        plan.painted_masks_by_extruder[index].emplace_back(
+            Polygon({Point::new_scale(0., 0.), Point::new_scale(20., 0.), Point::new_scale(20., 20.), Point::new_scale(0., 20.)}));
+    }
+
+    bool expect_subdivision = true;
+    SECTION("Mixed object is collected after an ordinary purge object") {}
+    SECTION("Single-pass intervals keep ordinary flushing")
+    {
+        interval.sublayer_count = 1;
+        expect_subdivision      = false;
+    }
+    SECTION("Unmixed intervals keep ordinary flushing")
+    {
+        interval.has_mixed_paint = false;
+        expect_subdivision       = false;
+    }
+    SECTION("Unsplit plans keep ordinary flushing")
+    {
+        for (SubLayerPlan& plan : plans)
+            plan.split_interval = false;
+        expect_subdivision = false;
+    }
+    SECTION("Missing plans keep ordinary flushing")
+    {
+        plans.clear();
+        expect_subdivision = false;
+    }
+
+    // The second object must protect the whole shared layer, even the first object's support and infill.
+    PrintObject *mixed_object = *(print.objects().end() - 1);
+    mixed_object->set_local_z_plan({interval}, std::move(plans));
+    ToolOrdering ordering(print, 0);
+    LayerTools&  mixed_layer = ordering.tools_for_layer(0.4);
+    CHECK(mixed_layer.has_local_z_subdivision == expect_subdivision);
+    auto& wiping = mixed_layer.wiping_extrusions();
+    for (const PrintObject* object : print.objects()) {
+        const auto& fill = static_cast<const ExtrusionEntityCollection&>(*object->get_layer(1)->get_region(0)->fills.entities.front());
+        CHECK(wiping.is_overriddable(fill, print.config(), *object, region) == !expect_subdivision);
+        CHECK(wiping.is_support_overriddable(erSupportMaterial, *object) == !expect_subdivision);
+        CHECK(wiping.is_support_overriddable(erSupportMaterialInterface, *object) == !expect_subdivision);
+    }
+    const float remaining = wiping.mark_wiping_extrusions(print, 0, 1, 1.f);
+    CHECK(remaining == (expect_subdivision ? 1.f : 0.f));
+    wiping.ensure_perimeters_infills_order(print);
+    CHECK(wiping.is_anything_overridden() == !expect_subdivision);
+
+    for (double print_z : {0.2, 0.6}) {
+        LayerTools& ordinary_layer = ordering.tools_for_layer(print_z);
+        CHECK_FALSE(ordinary_layer.has_local_z_subdivision);
+        auto& ordinary_wiping = ordinary_layer.wiping_extrusions();
+        CHECK(ordinary_wiping.mark_wiping_extrusions(print, 0, 1, 1.f) == 0.f);
+        CHECK(ordinary_wiping.is_anything_overridden());
+    }
+
+    ToolOrdering sequential(*print.objects().back(), 0);
+    CHECK(sequential.tools_for_layer(0.4).has_local_z_subdivision == expect_subdivision);
+    ToolOrdering ordinary_sequential(*print.objects().front(), 0);
+    CHECK_FALSE(ordinary_sequential.tools_for_layer(0.4).has_local_z_subdivision);
 }
 
 TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")
@@ -1478,6 +1720,99 @@ TEST_CASE("Mixed filament gradient serialization round-trip with r1 token", "[Mi
     CHECK(loaded_mf.gradient_enabled);
     CHECK(loaded_mf.gradient_component_ids == "12");
     CHECK(loaded_mf.gradient_component_weights == "60/40");
+}
+
+TEST_CASE("Mixed filament gradient metadata is locale invariant", "[MixedFilament][Gradient][Locale]")
+{
+    struct LocaleGuard
+    {
+        std::string numeric = std::setlocale(LC_NUMERIC, nullptr);
+        std::locale cpp     = std::locale();
+        ~LocaleGuard()
+        {
+            std::locale::global(cpp);
+            std::setlocale(LC_NUMERIC, numeric.c_str());
+        }
+    } guard;
+
+    const auto check_metadata = [] {
+        const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
+        MixedFilamentManager           mgr;
+        mgr.add_custom_filament(1, 2, 50, colors);
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        auto& mf                      = mgr.mixed_filaments().front();
+        mf.stable_id                  = 1234567;
+        mf.gradient_enabled           = true;
+        mf.gradient_start             = 0.85f;
+        mf.gradient_end               = 0.15f;
+        mf.component_a_surface_offset = 0.125f;
+        mf.component_b_surface_offset = -0.25f;
+
+        const std::string serialized = mgr.serialize_custom_entries();
+        CHECK(serialized.find(",r1/0.8500/0.1500") != std::string::npos);
+        CHECK(serialized.find(",u1234567") != std::string::npos);
+        CHECK(serialized.find(",xa0.125,xb-0.25,") != std::string::npos);
+
+        // Load independently authored metadata as well as the writer's output.
+        for (const std::string& row :
+             {serialized, std::string("1,2,1,1,50,0,g12,w50/50,m2,z2,xa+0.125,xb-0.25,d0,o0,u1234567,r1/+0.8500/0.1500")}) {
+            MixedFilamentManager loaded;
+            loaded.load_custom_entries(row, colors);
+            REQUIRE(loaded.mixed_filaments().size() == 1);
+            const auto& result = loaded.mixed_filaments().front();
+            CHECK(result.gradient_enabled);
+            CHECK(std::abs(result.gradient_start - 0.85f) < 0.0001f);
+            CHECK(std::abs(result.gradient_end - 0.15f) < 0.0001f);
+            CHECK(result.component_a_surface_offset == 0.125f);
+            CHECK(result.component_b_surface_offset == -0.25f);
+            CHECK(result.stable_id == 1234567);
+        }
+    };
+
+    SECTION("Every installed C locale with a non-dot decimal separator")
+    {
+        size_t tested = 0;
+        for (const std::string& name : installed_numeric_locales()) {
+            if (std::setlocale(LC_NUMERIC, name.c_str()) == nullptr)
+                continue;
+            const std::string decimal_point = std::localeconv()->decimal_point;
+            if (decimal_point == ".")
+                continue;
+            ++tested;
+            DYNAMIC_SECTION("Numeric locale: " << name << "; decimal separator: " << decimal_point)
+            {
+                char localized[32] = {};
+                std::snprintf(localized, sizeof(localized), "%.1f", 0.5);
+                REQUIRE(std::string(localized) == "0" + decimal_point + "5");
+                check_metadata();
+            }
+        }
+        if (tested == 0)
+            SKIP("No locale with a non-dot decimal separator is installed");
+    }
+
+    SECTION("C++ decimal comma and digit grouping")
+    {
+        struct CommaPunct : std::numpunct<char>
+        {
+            char        do_decimal_point() const override { return ','; }
+            char        do_thousands_sep() const override { return '.'; }
+            std::string do_grouping() const override { return "\3"; }
+        };
+        std::locale::global(std::locale(std::locale::classic(), new CommaPunct));
+        check_metadata();
+    }
+}
+
+TEST_CASE("Mixed filament gradient metadata rejects malformed numbers", "[MixedFilament][Gradient][Locale]")
+{
+    for (const std::string& value : {"0.85garbage", "inf", "nan", "1e100", "+", "+-0.85", "++0.85"}) {
+        MixedFilamentManager mgr;
+        mgr.load_custom_entries("1,2,1,1,50,0,g12,w50/50,m2,z2,xa" + value + ",r1/" + value + "/0.15", {"#FF0000", "#00FF00"});
+        REQUIRE(mgr.mixed_filaments().size() == 1);
+        CHECK_FALSE(mgr.mixed_filaments().front().gradient_enabled);
+        CHECK(mgr.mixed_filaments().front().component_a_surface_offset == 0.f);
+    }
 }
 
 TEST_CASE("Mixed filament gradient auto-disables when range too small", "[MixedFilament][Gradient]")

@@ -13241,6 +13241,48 @@ msgstr ""
 msgid "Top shell layers"
 msgstr ""
 
+msgid "Top paint penetration layers"
+msgstr ""
+
+msgid ""
+"The number of layers painted with the top surface color into the top shell, "
+"including the top surface layer itself. Each penetration layer shrinks inwards "
+"by one line width. Increase this value to reduce color bleeding at the top "
+"surface in multi-material printing. 0 behaves the same as 1 (only the surface "
+"layer is painted)."
+msgstr ""
+
+msgid "Bottom paint penetration layers"
+msgstr ""
+
+msgid ""
+"The number of layers painted with the bottom surface color into the bottom "
+"shell, including the bottom surface layer itself. Each penetration layer "
+"shrinks inwards by one line width. Increase this value to reduce color "
+"bleeding at the bottom surface in multi-material printing. 0 behaves the same "
+"as 1 (only the surface layer is painted)."
+msgstr ""
+
+msgid ""
+"Top paint penetration layers cannot exceed top shell layers.\n"
+"Top paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+"Bottom paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"The top paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the top paint penetration layers."
+msgstr ""
+
+msgid ""
+"The bottom paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the bottom paint penetration layers."
+msgstr ""
+
 msgid ""
 "This is the number of solid layers of top shell, including the top surface "
 "layer. When the thickness calculated by this value is thinner than top shell "

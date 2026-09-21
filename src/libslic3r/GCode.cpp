@@ -1867,14 +1867,9 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         bool has_extrusions = (layer_to_print.object_layer && layer_to_print.object_layer->has_extrusions()) ||
                               (layer_to_print.support_layer && layer_to_print.support_layer->has_extrusions());
 
-        // Check that there are extrusions on the very first layer. The case with empty
-        // first layer may result in skirt/brim in the air and maybe other issues.
-        if (layers_to_print.size() == 1u) {
-            if (!has_extrusions)
-                throw Slic3r::SlicingError(
-                    _(L("One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports.")),
-                    object.id().id);
-        }
+        // Defer the first-layer empty check: leading layers may be too narrow
+        // to accommodate an extrusion line (e.g. a cube rotated 45° around Y),
+        // but valid layers further up can still print correctly.
 
         // In case there are extrusions on this layer, check there is a layer to lay it on.
         if ((layer_to_print.object_layer && layer_to_print.object_layer->has_extrusions())
@@ -1910,6 +1905,24 @@ std::vector<GCode::LayerToPrint> GCode::collect_layers_to_print(const PrintObjec
         // Remember last layer with extrusions.
         if (has_extrusions)
             last_extrusion_layer = &layers_to_print.back();
+    }
+
+    // Strip leading empty layers that are too narrow for extrusion
+    // (e.g. first few layers of a cube rotated 45° around Y).
+    // Only throw if all layers are empty.
+
+    while (!layers_to_print.empty()) {
+        const LayerToPrint& ltp = layers_to_print.front();
+        bool ltp_has_extrusions = (ltp.object_layer && ltp.object_layer->has_extrusions()) ||
+                                  (ltp.support_layer && ltp.support_layer->has_extrusions());
+        if (ltp_has_extrusions)
+            break;
+        layers_to_print.erase(layers_to_print.begin());
+    }
+    if (layers_to_print.empty()) {
+        throw Slic3r::SlicingError(
+            _(L("One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports.")),
+            object.id().id);
     }
 
     if (!warning_ranges.empty()) {
@@ -3207,6 +3220,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write(this->set_extruder(initial_extruder_id, 0.));
     }
     // BBS: set that indicates objs with brim
+    this->m_objsWithBrim.clear();
+    this->m_objSupportsWithBrim.clear();
+    m_object_skirt_done.clear();
     for (auto iter = print.m_brimMap.begin(); iter != print.m_brimMap.end(); ++iter) {
         if (!iter->second.empty())
             this->m_objsWithBrim.insert(iter->first);
@@ -5065,7 +5081,8 @@ std::string GCode::generate_skirt(const Print&                     print,
                                   const float                      skirt_start_angle,
                                   const LayerTools&                layer_tools,
                                   const Layer&                     layer,
-                                  unsigned int                     extruder_id)
+                                  unsigned int                     extruder_id,
+                                  std::vector<coordf_t>&           skirt_done)
 {
     bool        first_layer = (layer.id() == 0 && abs(layer.bottom_z()) < EPSILON);
     std::string gcode;
@@ -5073,8 +5090,8 @@ std::string GCode::generate_skirt(const Print&                     print,
     // not at the print_z of the interlaced support material layers.
     // Map from extruder ID to <begin, end> index of skirt loops to be extruded with that extruder.
     std::map<unsigned int, std::pair<size_t, size_t>> skirt_loops_per_extruder;
-    skirt_loops_per_extruder = first_layer ? Skirt::make_skirt_loops_per_extruder_1st_layer(print, skirt, layer_tools, m_skirt_done) :
-                                             Skirt::make_skirt_loops_per_extruder_other_layers(print, skirt, layer_tools, m_skirt_done);
+    skirt_loops_per_extruder = first_layer ? Skirt::make_skirt_loops_per_extruder_1st_layer(print, skirt, layer_tools, skirt_done) :
+                                             Skirt::make_skirt_loops_per_extruder_other_layers(print, skirt, layer_tools, skirt_done);
 
     if (auto loops_it = skirt_loops_per_extruder.find(extruder_id); loops_it != skirt_loops_per_extruder.end()) {
         const std::pair<size_t, size_t> loops = loops_it->second;
@@ -5083,7 +5100,7 @@ std::string GCode::generate_skirt(const Print&                     print,
 
         m_avoid_crossing_perimeters.use_external_mp();
         Flow layer_skirt_flow = print.skirt_flow().with_height(
-            float(m_skirt_done.back() - (m_skirt_done.size() == 1 ? 0. : m_skirt_done[m_skirt_done.size() - 2])));
+            float(skirt_done.back() - (skirt_done.size() == 1 ? 0. : skirt_done[skirt_done.size() - 2])));
         double mm3_per_mm = layer_skirt_flow.mm3_per_mm();
         // Decide where to start looping:
         // - If it’s the first layer or if we do NOT want a single-wall skirt/draft shield,
@@ -5911,28 +5928,7 @@ LayerResult GCode::process_layer(const Print& print,
                        layer.lslices[i].contour.contains(point);
             };
             auto entity_matches_surface = [&point_inside_surface](const size_t i, const ExtrusionEntity& entity) {
-                if (point_inside_surface(i, entity.first_point()))
-                    return true;
-
-                Polylines polylines;
-                entity.collect_polylines(polylines);
-                for (const Polyline& polyline : polylines) {
-                    if (polyline.points.size() >= 2) {
-                        const Point midpoint = (polyline.points.front() + polyline.points[1]) / 2;
-                        if (point_inside_surface(i, midpoint))
-                            return true;
-                    }
-                }
-
-                Points points;
-                entity.collect_points(points);
-                if (!points.empty()) {
-                    BoundingBox bbox(points);
-                    if (bbox.defined && point_inside_surface(i, bbox.center()))
-                        return true;
-                }
-
-                return false;
+                return point_inside_surface(i, entity.first_point());
             };
             LocalZLoopSeamPlacer local_z_loop_seam_placer =
                 [this, &layer](const ExtrusionLoop& src_loop, ExtrusionLoop& seam_loop, Point& seam_anchor) -> bool {
@@ -6696,7 +6692,7 @@ LayerResult GCode::process_layer(const Print& print,
     for (unsigned int extruder_id : layer_extruders) {
         if (print.config().skirt_type == stCombined && !print.skirt().empty())
             gcode += generate_skirt(print, print.skirt(), Point(0, 0), layer.object()->config().skirt_start_angle, layer_tools, layer,
-                                    extruder_id);
+                                    extruder_id, m_skirt_done);
 
         std::string gcode_toolchange;
         if (has_wipe_tower) {
@@ -6802,15 +6798,19 @@ LayerResult GCode::process_layer(const Print& print,
                 if (this->m_objsWithBrim.find(instance_to_print.print_object.id()) != this->m_objsWithBrim.end() &&
                     print.m_brimMap.at(instance_to_print.print_object.id()).entities.size() > 0)
                     continue;
-                if (first_layer)
-                    m_skirt_done.clear();
 
-                if (layer.id() == 1 && m_skirt_done.size() > 1)
-                    m_skirt_done.erase(m_skirt_done.begin() + 1, m_skirt_done.end());
+                std::vector<coordf_t>& object_skirt_done =
+                    m_object_skirt_done[{instance_to_print.print_object.id(), instance_to_print.instance_id}];
+                if (first_layer)
+                    object_skirt_done.clear();
 
                 const Point& offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
+                LayerTools object_skirt_tools = layer_tools;
+                object_skirt_tools.extruders.assign(1, extruder_id);
+                object_skirt_tools.has_skirt  = true;
                 gcode += generate_skirt(print, instance_to_print.print_object.object_skirt(), offset,
-                                        instance_to_print.print_object.config().skirt_start_angle, layer_tools, layer, extruder_id);
+                                        instance_to_print.print_object.config().skirt_start_angle, object_skirt_tools, layer, extruder_id,
+                                        object_skirt_done);
             }
         }
 
@@ -6822,16 +6822,26 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += "; PURGING FINISHED\n";
 
             for (InstanceToPrint& instance_to_print : instances_to_print) {
-                if (print.config().skirt_type == stPerObject && !instance_to_print.print_object.object_skirt().empty() &&
+                const bool extruder_prints_object = !instance_to_print.object_by_extruder.islands.empty() ||
+                    (instance_to_print.object_by_extruder.support != nullptr &&
+                     !instance_to_print.object_by_extruder.support->empty());
+                if (extruder_prints_object &&
+                    print.config().skirt_type == stPerObject && !instance_to_print.print_object.object_skirt().empty() &&
                     print.config().print_sequence == PrintSequence::ByLayer &&
                     (layer.id() < print.config().skirt_height || print.config().draft_shield == DraftShield::dsEnabled)) {
+                    // BBS: per-object-instance skirt ledger, see the ByObject path above.
+                    std::vector<coordf_t>& object_skirt_done =
+                        m_object_skirt_done[{instance_to_print.print_object.id(), instance_to_print.instance_id}];
                     if (first_layer)
-                        m_skirt_done.clear();
+                        object_skirt_done.clear();
                     const Point& offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
+                    // BBS: emit the object skirt with the extruder printing this object.
+                    LayerTools object_skirt_tools = layer_tools;
+                    object_skirt_tools.extruders.assign(1, extruder_id);
+                    object_skirt_tools.has_skirt  = true;
                     gcode += generate_skirt(print, instance_to_print.print_object.object_skirt(), offset,
-                                            instance_to_print.print_object.config().skirt_start_angle, layer_tools, layer, extruder_id);
-                    if (instances_to_print.size() > 1 && &instance_to_print != &*(instances_to_print.end() - 1))
-                        m_skirt_done.pop_back();
+                                            instance_to_print.print_object.config().skirt_start_angle, object_skirt_tools, layer, extruder_id,
+                                            object_skirt_done);
                 }
 
                 const auto&         inst           = instance_to_print.print_object.instances()[instance_to_print.instance_id];

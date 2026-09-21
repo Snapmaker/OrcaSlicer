@@ -791,6 +791,8 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
 
     wxString label = og_line.label;
     wxColour blink_color = StateColor::darkModeColorFor("#009688");
+    // Red pair registered in StateColor's dark-mode map ("#D01B1B" / "#BB2A3A")
+    wxColour invalid_color = StateColor::darkModeColorFor("#D01B1B");
     bool is_url_string = false;
     if (ctrl->opt_group->label_width != 0 && !label.IsEmpty()) {
         const wxColour* text_clr = field ? field->label_color() : og_line.label_color();
@@ -798,6 +800,14 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
             Field* field = ctrl->opt_group->get_field(opt.opt_id);
             if (field && field->blink()) {
                 text_clr = &blink_color;
+                break;
+            }
+        }
+        // The validation highlight wins over the modified/blink colors.
+        for (const Option& opt : option_set) {
+            Field* field = ctrl->opt_group->get_field(opt.opt_id);
+            if (field && field->has_invalid_highlight()) {
+                text_clr = &invalid_color;
                 break;
             }
         }

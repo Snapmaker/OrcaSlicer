@@ -985,6 +985,7 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
 {
     std::vector<unsigned int> extruders = this->object_extruders();
     append(extruders, this->support_material_extruders());
+    sort_remove_duplicates(extruders);
 
     if (conside_custom_gcode) {
         //BBS
@@ -1664,6 +1665,33 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
         //FIXME It is quite expensive to generate object layers just to get the print height!
         if (auto layers = generate_object_layers(print_object.slicing_parameters(), layer_height_profile(print_object_idx), print_object.config().precise_z_height.value);
             !layers.empty()) {
+
+            // PEN-015: penetration may not exceed the total layer count (halved, see Slicing.cpp).
+            const int total_layers = int(layers.size() / 2);
+            {
+                int max_top_penetration = 0, max_bottom_penetration = 0;
+                for (size_t region_idx = 0; region_idx < print_object.num_printing_regions(); ++ region_idx) {
+                    const PrintRegionConfig &region_config = print_object.printing_region(region_idx).config();
+                    max_top_penetration    = std::max(max_top_penetration, region_config.top_color_penetration_layers.value);
+                    max_bottom_penetration = std::max(max_bottom_penetration, region_config.bottom_color_penetration_layers.value);
+                }
+                if (max_top_penetration > total_layers)
+                    return StringObjectException{
+                        Slic3r::format(_u8L("The top paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. "
+                                            "Please reduce the top paint penetration layers."),
+                            max_top_penetration, print_object.model_object()->name, total_layers),
+                        print_object.model_object(),
+                        "top_color_penetration_layers"
+                    };
+                if (max_bottom_penetration > total_layers)
+                    return StringObjectException{
+                        Slic3r::format(_u8L("The bottom paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. "
+                                            "Please reduce the bottom paint penetration layers."),
+                            max_bottom_penetration, print_object.model_object()->name, total_layers),
+                        print_object.model_object(),
+                        "bottom_color_penetration_layers"
+                    };
+            }
 
             Vec3d test =this->shrinkage_compensation();
             const double shrinkage_compensation_z = this->shrinkage_compensation().z();
@@ -2630,6 +2658,9 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
         }
         this->set_done(psWipeTower);
     }
+    if (this->has_wipe_tower()) {
+        m_fake_wipe_tower.set_pos({ m_config.wipe_tower_x.get_at(m_plate_index), m_config.wipe_tower_y.get_at(m_plate_index) });
+    }
     if (this->set_started(psSkirtBrim)) {
         this->set_status(70, L("Generating skirt & brim"));
 
@@ -3495,12 +3526,13 @@ void Print::_make_wipe_tower()
         m_wipe_tower_data.construct_mesh(wipe_tower.width(), wipe_tower.get_depth(), wipe_tower.get_wipe_tower_height(), 
             wipe_tower.get_brim_width(), wipe_tower.get_is_rib_wall(),
             wipe_tower.get_rib_width(), wipe_tower.get_rib_length(), config().wipe_tower_fillet_wall.value);
-        const Vec3d origin                      = Vec3d::Zero();
-        m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position(), wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
-                                                  config().initial_layer_print_height, m_wipe_tower_data.depth,
-                                                  m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
-                                                  config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
-                                                  {scale_(origin.x()), scale_(origin.y())});
+        const Vec3d origin = this->get_plate_origin();
+        m_fake_wipe_tower.rib_offset = wipe_tower.get_rib_offset();
+        m_fake_wipe_tower.set_fake_extrusion_data(wipe_tower.position() + m_fake_wipe_tower.rib_offset, wipe_tower.width(), wipe_tower.get_wipe_tower_height(),
+            config().initial_layer_print_height, m_wipe_tower_data.depth,
+            m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
+            config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
+            { scale_(origin.x()), scale_(origin.y()) });
         m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
 }

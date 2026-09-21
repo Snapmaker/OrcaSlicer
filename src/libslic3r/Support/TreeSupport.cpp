@@ -2490,14 +2490,20 @@ void TreeSupport::draw_circles()
                     area_groups.emplace_back(&expoly, SupportLayer::Roof1stLayer, max_layers_above_roof1);
                 }
 
+                // Snapmaker: collect the polygons of all area groups at this layer so the
+                // small-hole cleanup below can tell slivers from carve holes that another
+                // group owns (transition strip carved into an interface polygon etc.).
+                std::vector<const ExPolygon *> area_group_polys;
+                area_group_polys.reserve(area_groups.size());
+                for (const auto &group : area_groups)
+                    if (group.area != nullptr)
+                        area_group_polys.emplace_back(group.area);
+
                 for (auto &area_group : area_groups) {
+                    if (area_group.area == nullptr)
+                        continue;
                     auto& expoly = area_group.area;
-                    expoly->holes.erase(std::remove_if(expoly->holes.begin(), expoly->holes.end(),
-                                                       [](auto &hole) {
-                                                           auto bbox_size = get_extents(hole).size();
-                                                           return bbox_size[0] < scale_(2) && bbox_size[1] < scale_(2);
-                                                       }),
-                                        expoly->holes.end());
+                    erase_small_area_group_holes(*expoly, area_group_polys);
 
                     if (layer_nr < brim_skirt_layers)
                         ts_layer->lslices.emplace_back(*expoly);

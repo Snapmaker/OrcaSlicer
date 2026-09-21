@@ -7,6 +7,7 @@
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/GCode/WipeTower2.hpp"
 #include "libslic3r/Geometry/ConvexHull.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Layer.hpp"
@@ -3880,17 +3881,28 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 const DynamicPrintConfig &print_cfg   = wxGetApp().preset_bundle->prints.get_edited_preset().config;
                 Vec3d wipe_tower_size = ppl.get_plate(plate_id)->estimate_wipe_tower_size(print_cfg, w, wipe_tower_data.depth);
 
-                const float   margin     = WIPE_TOWER_MARGIN + tower_brim_width;
+                // Keep the tower's whole first layer on the plate. Every non-BBL printer is sliced
+                // with WipeTower2, whose stabilization cone widens with the tower's height; checking
+                // only the rectangle let a tall tower spill over the plate edge once it was sliced.
+                // With no cone this is exactly the old rectangle-plus-brim bound.
+                const ConfigOptionFloat* cone_angle_opt = m_config->option<ConfigOptionFloat>("wipe_tower_cone_angle");
+                const double cone_angle = (wxGetApp().preset_bundle->is_bbl_vendor() || cone_angle_opt == nullptr) ? 0. : cone_angle_opt->value;
+                const BoundingBoxf footprint = WipeTower2::get_first_layer_footprint(wipe_tower_size(0), wipe_tower_size(1), wipe_tower_size(2),
+                                                                                     cone_angle, tower_brim_width);
                 BoundingBoxf3 plate_bbox = wxGetApp().plater()->get_partplate_list().get_plate(plate_id)->get_bounding_box();
                 coordf_t plate_bbox_x_max_local_coord = plate_bbox.max(0) - plate_origin(0);
                 coordf_t plate_bbox_y_max_local_coord = plate_bbox.max(1) - plate_origin(1);
+                const coordf_t x_min = WIPE_TOWER_MARGIN - footprint.min.x();
+                const coordf_t x_max = plate_bbox_x_max_local_coord - WIPE_TOWER_MARGIN - footprint.max.x();
+                const coordf_t y_min = WIPE_TOWER_MARGIN - footprint.min.y();
+                const coordf_t y_max = plate_bbox_y_max_local_coord - WIPE_TOWER_MARGIN - footprint.max.y();
                 bool need_update = false;
-                if (x + margin + wipe_tower_size(0) > plate_bbox_x_max_local_coord) {
-                    x = plate_bbox_x_max_local_coord - wipe_tower_size(0) - margin;
+                if (x > x_max) {
+                    x = x_max;
                     need_update = true;
                 }
-                else if (x < margin) {
-                    x = margin;
+                else if (x < x_min) {
+                    x = x_min;
                     need_update = true;
                 }
                 if (need_update) {
@@ -3899,12 +3911,12 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                     need_update = false;
                 }
 
-                if (y + margin + wipe_tower_size(1) > plate_bbox_y_max_local_coord) {
-                    y = plate_bbox_y_max_local_coord - wipe_tower_size(1) - margin;
+                if (y > y_max) {
+                    y = y_max;
                     need_update = true;
                 }
-                else if (y < margin) {
-                    y = margin;
+                else if (y < y_min) {
+                    y = y_min;
                     need_update = true;
                 }
                 if (need_update) {
@@ -6298,11 +6310,22 @@ GLCanvas3D::WipeTowerInfo GLCanvas3D::get_wipe_tower_info(int plate_idx) const
             float brim_width = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_float("prime_tower_brim_width");
             wti.m_bb.offset((brim_width));
 
+            // Arrange and fill bed keep objects clear of this box, so on non-BBL printers it has
+            // to cover WipeTower2's stabilization cone as well, not just the preview rectangle.
+            if (!wxGetApp().preset_bundle->is_bbl_vendor()) {
+                const ConfigOptionFloat* cone_angle_opt = preset.config.option<ConfigOptionFloat>("wipe_tower_cone_angle");
+                if (cone_angle_opt != nullptr)
+                    wti.m_bb.merge(WipeTower2::get_first_layer_footprint(bb.size().x(), bb.size().y(), bb.size().z(),
+                                                                         cone_angle_opt->value, brim_width));
+            }
+
             // BBS: the wipe tower pos might be outside bed
+            // m_bb is relative to m_pos and reaches below it (brim, cone), so bound m_pos by the
+            // box's own min/max rather than by its size.
             PartPlate* plate = wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
             Vec2d plate_size = plate->get_size();
-            wti.m_pos.x() = std::clamp(wti.m_pos.x(), 0.0, plate_size(0) - wti.m_bb.size().x());
-            wti.m_pos.y() = std::clamp(wti.m_pos.y(), 0.0, plate_size(1) - wti.m_bb.size().y());
+            wti.m_pos.x() = std::max(-wti.m_bb.min.x(), std::min(wti.m_pos.x(), plate_size(0) - wti.m_bb.max.x()));
+            wti.m_pos.y() = std::max(-wti.m_bb.min.y(), std::min(wti.m_pos.y(), plate_size(1) - wti.m_bb.max.y()));
 
             // BBS: add partplate logic
             wti.m_plate_idx = plate_idx;

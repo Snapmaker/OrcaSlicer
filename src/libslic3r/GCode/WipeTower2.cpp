@@ -2397,6 +2397,23 @@ std::pair<double, double> WipeTower2::get_wipe_tower_cone_base(double width, dou
     return std::make_pair(R, support_scale);
 }
 
+BoundingBoxf WipeTower2::get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width)
+{
+    BoundingBoxf footprint(Vec2d(-brim_width, -brim_width), Vec2d(width + brim_width, depth + brim_width));
+
+    // The cone's radius grows with the tower's height, so on a tall print it reaches well past
+    // the rectangle. Same circle as Print::first_layer_wipe_tower_corners(): centred on the
+    // tower and squashed along x by the support scale.
+    const auto [R, x_scale] = get_wipe_tower_cone_base(width, height, depth, cone_angle_deg);
+    if (R > 0.) {
+        const Vec2d center(width / 2., depth / 2.);
+        const Vec2d radius((R + brim_width) / x_scale, R + brim_width);
+        footprint.merge(center - radius);
+        footprint.merge(center + radius);
+    }
+    return footprint;
+}
+
 // Static method to extract wipe_volumes[from][to] from the configuration.
 std::vector<std::vector<float>> WipeTower2::extract_wipe_volumes(const PrintConfig& config)
 {

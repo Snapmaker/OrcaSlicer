@@ -11988,6 +11988,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         this->model.plates_custom_gcodes = model.plates_custom_gcodes;
                         this->model.design_info = model.design_info;
                         this->model.model_info = model.model_info;
+                        // space info (project_id / export_id / extendInfo) carried by the project for telemetry reporting
+                        this->model.space_info = model.space_info;
                     }
                 }
 
@@ -13161,6 +13163,8 @@ void Plater::priv::reset(bool apply_presets_change)
     //BBS
     model.calib_pa_pattern.reset();
     model.plates_custom_gcodes.clear();
+    // space info belongs to the closed project; clear it so its ids never leak into the next one
+    model.space_info.clear();
 
     // BBS
     m_saved_timestamp = m_backup_timestamp = size_t(-1);

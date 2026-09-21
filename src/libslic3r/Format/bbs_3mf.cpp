@@ -168,6 +168,7 @@ const std::string BBS_PROJECT_CONFIG_FILE = "Metadata/project_settings.config";
 const std::string BBS_MODEL_CONFIG_FILE = "Metadata/model_settings.config";
 const std::string BBS_MODEL_CONFIG_RELS_FILE = "Metadata/_rels/model_settings.config.rels";
 const std::string SLICE_INFO_CONFIG_FILE = "Metadata/slice_info.config";
+const std::string SPACE_INFO_FILE = "Metadata/space_info.json";
 const std::string BBS_LAYER_HEIGHTS_PROFILE_FILE = "Metadata/layer_heights_profile.txt";
 const std::string LAYER_CONFIG_RANGES_FILE = "Metadata/layer_config_ranges.xml";
 const std::string BRIM_EAR_POINTS_FILE = "Metadata/brim_ear_points.txt";
@@ -1139,6 +1140,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         void _extract_sla_support_points_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
         void _extract_sla_drain_holes_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
         void _extract_brim_ear_points_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
+        void _extract_space_info_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
 
         void _extract_custom_gcode_per_print_z_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
 
@@ -1522,6 +1524,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     _extract_xml_from_archive(archive, stat, _handle_start_config_xml_element, _handle_end_config_xml_element);
                     m_parsing_slice_info = false;
                 }
+                else if (boost::algorithm::iequals(name, SPACE_INFO_FILE)) {
+                    //extract space info for telemetry reporting
+                    _extract_space_info_from_archive(archive, stat);
+                }
             }
         }
 
@@ -1892,6 +1898,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     //extract slice info from archive
                     _extract_xml_from_archive(archive, stat, _handle_start_config_xml_element, _handle_end_config_xml_element);
                     m_parsing_slice_info = false;
+                }
+                else if (boost::algorithm::iequals(name, SPACE_INFO_FILE)) {
+                    //extract space info for telemetry reporting
+                    _extract_space_info_from_archive(archive, stat);
                 }
                 else if (boost::algorithm::istarts_with(name, AUXILIARY_DIR)) {
                     // extract auxiliary directory to temp directory, do nothing for restore
@@ -2719,6 +2729,31 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
         }
         return;
+    }
+
+    void _BBS_3MF_Importer::_extract_space_info_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat)
+    {
+        if (stat.m_uncomp_size > 0) {
+            std::string buffer((size_t)stat.m_uncomp_size, 0);
+            if (!mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, (void*)buffer.data(), (size_t)stat.m_uncomp_size, 0)) {
+                add_error("Error while reading space info data to buffer");
+                return;
+            }
+
+            try {
+                nlohmann::json j = nlohmann::json::parse(buffer);
+                if (j.is_object()) {
+                    if (j.contains("project_id") && j["project_id"].is_string())
+                        m_model->space_info.project_id = j["project_id"].get<std::string>();
+                    if (j.contains("export_id") && j["export_id"].is_string())
+                        m_model->space_info.export_id = j["export_id"].get<std::string>();
+                    if (j.contains("extendInfo"))
+                        m_model->space_info.extend_info = j["extendInfo"].dump();
+                }
+            } catch (const std::exception&) {
+                // malformed json: keep what was parsed so far, don't fail the whole load
+            }
+        }
     }
 
     void _BBS_3MF_Importer::_extract_layer_heights_profile_config_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat)
@@ -5674,6 +5709,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         bool _add_model_config_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config, int export_plate_idx = -1, bool save_gcode = true, bool use_loaded_id = false);
         bool _add_cut_information_file_to_archive(mz_zip_archive &archive, Model &model);
         bool _add_slice_info_config_file_to_archive(mz_zip_archive &archive, const Model &model, PlateDataPtrs &plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config);
+        bool _add_space_info_file_to_archive(mz_zip_archive &archive, const Model &model);
         bool _add_gcode_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, Export3mfProgressFn proFn = nullptr);
         bool _add_custom_gcode_per_print_z_file_to_archive(mz_zip_archive& archive, Model& model, const DynamicPrintConfig* config);
         bool _add_auxiliary_dir_to_archive(mz_zip_archive &archive, const std::string &aux_dir, PackingTemporaryData &data);
@@ -6199,6 +6235,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         // This file contains all sliced info of all plates
         if (!_add_slice_info_config_file_to_archive(archive, model, plate_data_list, objects_data, *config)) {
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format(", _add_slice_info_config_file_to_archive failed\n");
+            return false;
+        }
+
+        // Adds space info file ("Metadata/space_info.json")
+        // Carries project_id / export_id / extendInfo for telemetry reporting, preserved on save-as.
+        if (!_add_space_info_file_to_archive(archive, model)) {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format(", _add_space_info_file_to_archive failed\n");
             return false;
         }
 
@@ -7940,6 +7983,36 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         if (!mz_zip_writer_add_mem(&archive, SLICE_INFO_CONFIG_FILE.c_str(), (const void*)out.data(), out.length(), MZ_DEFAULT_COMPRESSION)) {
             add_error("Unable to add model config file to archive");
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format(", store  slice-info to 3mf,  length %1%, failed\n") % out.length();
+            return false;
+        }
+
+        return true;
+    }
+    bool _BBS_3MF_Exporter::_add_space_info_file_to_archive(mz_zip_archive& archive, const Model& model)
+    {
+        // Skip writing the file when there is no space info, so freshly created projects stay clean.
+        if (model.space_info.empty())
+            return true;
+
+        nlohmann::json j;
+        j["project_id"] = model.space_info.project_id;
+        j["export_id"] = model.space_info.export_id;
+        if (model.space_info.extend_info.empty()) {
+            j["extendInfo"] = nlohmann::json::object();
+        } else {
+            // extend_info is kept as raw JSON; embed it as an object when it parses, otherwise keep the raw text.
+            try {
+                j["extendInfo"] = nlohmann::json::parse(model.space_info.extend_info);
+            } catch (const std::exception&) {
+                j["extendInfo"] = model.space_info.extend_info;
+            }
+        }
+
+        std::string out = j.dump(4);
+
+        if (!mz_zip_writer_add_mem(&archive, SPACE_INFO_FILE.c_str(), (const void*)out.data(), out.length(), MZ_DEFAULT_COMPRESSION)) {
+            add_error("Unable to add space info file to archive");
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format(", store space_info to 3mf failed\n");
             return false;
         }
 

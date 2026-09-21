@@ -47,6 +47,17 @@ public:
     PackingTemporaryData() {}
 };
 
+// Space info carried in the "Metadata/space_info.json" file of a u1 3mf.
+struct SpaceInfo
+{
+    std::string project_id;   // "project_id" in space_info.json
+    std::string export_id;    // "export_id" in space_info.json
+    std::string extend_info;  // raw JSON text of "extendInfo" (may be empty)
+
+    bool empty() const { return project_id.empty() && export_id.empty() && extend_info.empty(); }
+    void clear() { project_id.clear(); export_id.clear(); extend_info.clear(); }
+};
+
 
 //BBS: define plate data list related structures
 struct PlateData

@@ -13648,6 +13648,7 @@ msgstr ""
 msgid "Top solid layers"
 msgstr ""
 
+
 msgid "Top shell thickness"
 msgstr ""
 
@@ -17282,3 +17283,17 @@ msgstr ""
 #~ "It is not recommend for bed temperature of other layers to be lower than "
 #~ "the first layer by more than this threshold. Too low bed temperature of "
 #~ "other layer may cause the model to break free from the build plate."
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
+msgstr ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern\n"
+"No  - reset density to default non 100% value"
+
+#, boost-format
+msgid "%1% infill pattern doesn't support 100%% density."
+msgstr "%1% infill pattern doesn't support 100%% density."
+

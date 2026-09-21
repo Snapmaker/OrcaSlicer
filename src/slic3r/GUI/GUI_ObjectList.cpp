@@ -2934,6 +2934,13 @@ void ObjectList::merge(bool to_multipart_object)
                 const Transform3d& volume_matrix = new_volume->get_matrix();
                 Transform3d new_matrix = transformation_matrix * volume_matrix;
                 new_volume->set_transformation(new_matrix);
+
+                // Remember which source object this volume came from, so that a later
+                // "split to objects" restores non-solid volumes (e.g. negative volumes)
+                // to the object they belonged to before the assembly. Keep an inherited label
+                // (re-assembly of an already assembled object) to preserve the original grouping.
+                if (!new_volume->merged_group_id().valid())
+                    new_volume->set_merged_group_id(object->id());
                 //set rotation
                 /*const Vec3d vol_rot = new_volume->get_rotation() + rotation;
                 new_volume->set_rotation(vol_rot);

@@ -4,6 +4,8 @@
     "renamed_from": "0.40 Standard @Snapmaker U1 (0.8 nozzle);0.48 Standard @Snapmaker U1 (0.8 nozzle);0.56 Standard @Snapmaker U1 (0.8 nozzle)",
     "inherits": "fdm_process_U1_0.40_nozzle_0.8",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "3",
     "setting_id": "GP009",
     "instantiation": "true",
     "description": "It has a very big layer height, and results in very apparent layer lines, low printing quality and general printing time.",

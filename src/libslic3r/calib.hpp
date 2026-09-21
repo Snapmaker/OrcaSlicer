@@ -2,15 +2,17 @@
 #include <string>
 #define calib_pressure_advance_dd
 
-#include "GCode.hpp"
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"
+#include "CustomGCode.hpp"
+#include "Flow.hpp"
 
 namespace Slic3r {
 
 class GCode;
 class Model;
+class ModelObject;
 
 enum class CalibMode : int {
     Calib_None = 0,

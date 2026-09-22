@@ -142,8 +142,6 @@ enum class NotificationType
 	BBLNeedSupportON,
 	// BBL: Gcode overlap
 	BBLGcodeOverlap,
-	//BBL: sequence print info
-	BBLSeqPrintInfo,
 	//BBL: plugin install hint
 	BBLPluginInstallHint,
 	BBLPluginUpdateAvailable,
@@ -327,9 +325,6 @@ public:
 	//BBS--Objects Info
 	void bbl_show_objectsinfo_notification(const std::string &text, bool is_warning, bool is_hidden);
     void bbl_close_objectsinfo_notification();
-
-    void bbl_show_seqprintinfo_notification(const std::string &text);
-    void bbl_close_seqprintinfo_notification();
 
 	//BBS--EmptyLayer
 	void bbl_show_slice_emptylayer_notification(const std::string &text, bool bOverride = true);

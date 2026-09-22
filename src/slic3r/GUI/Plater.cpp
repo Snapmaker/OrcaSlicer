@@ -22162,24 +22162,6 @@ bool Plater::update_filament_colors_in_full_config()
     return true;
 }
 
-void Plater::config_change_notification(const DynamicPrintConfig &config, const std::string& key)
-{
-    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
-    if (key == std::string("print_sequence")) {
-        auto seq_print = config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-        if (seq_print && view3d_canvas && view3d_canvas->is_initialized() && view3d_canvas->is_rendering_enabled()) {
-            NotificationManager* notify_manager = get_notification_manager();
-            if (seq_print->value == PrintSequence::ByObject) {
-                std::string info_text = _u8L("Print By Object: \nSuggest to use auto-arrange to avoid collisions when printing.");
-                notify_manager->bbl_show_seqprintinfo_notification(info_text);
-            }
-            else
-                notify_manager->bbl_close_seqprintinfo_notification();
-        }
-    }
-    // notification for more options
-}
-
 bool Plater::check_filament_temp_mixing(int plate_index)
 {
     FilamentTempMixingDetail unused;
@@ -22816,7 +22798,7 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
-void Plater::check_seq_print_caution()
+void Plater::check_seq_print_caution(bool all_plates)
 {
     const wxString caution_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
 
@@ -22826,9 +22808,24 @@ void Plater::check_seq_print_caution()
         boost::icontains(printer_model_opt->value, "Snapmaker") &&
         boost::icontains(printer_model_opt->value, "U1");
 
-    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
-    const bool by_object = is_snapmaker_u1 && curr_plate &&
-        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+    bool by_object = false;
+    if (is_snapmaker_u1) {
+        if (all_plates) {
+            PartPlateList& plate_list = get_partplate_list();
+            const int plate_count = plate_list.get_plate_count();
+            for (int plate_index = 0; plate_index < plate_count; ++plate_index) {
+                PartPlate* plate = plate_list.get_plate(plate_index);
+                if (plate != nullptr && plate->get_real_print_seq() == PrintSequence::ByObject) {
+                    by_object = true;
+                    break;
+                }
+            }
+        } else {
+            PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+            by_object = curr_plate != nullptr &&
+                curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+        }
+    }
 
     // Close-then-push keeps a single notification even when slicing is
     // retriggered; close on the non-caution path clears the stale one.
@@ -22845,14 +22842,14 @@ bool Plater::guard_before_slice_plate()
     sync_filament_temp_mixing_notification();
     sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
-    check_seq_print_caution();
+    check_seq_print_caution(false);
     return confirm_filament_temp_mixing_before_slice();
 }
 
 bool Plater::guard_before_slice_all()
 {
     sync_flow_ratio_zero_notification();
-    check_seq_print_caution();
+    check_seq_print_caution(true);
     return confirm_filament_temp_mixing_before_slice_all();
 }
 
@@ -23016,8 +23013,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 
     if (bed_shape_changed)
         set_bed_shape();
-
-    config_change_notification(config, std::string("print_sequence"));
 
     if (update_scheduled)
         update();
@@ -23948,8 +23943,6 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         update_project_dirty_from_presets();
         set_plater_dirty(true);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("select print sequence %1% for plate %2% at plate side") % ps_sel % plate_index;
-        auto plate_config = *(curr_plate->config());
-        wxGetApp().plater()->config_change_notification(plate_config, std::string("print_sequence"));
         update();
         wxGetApp().obj_list()->update_selections();
         });

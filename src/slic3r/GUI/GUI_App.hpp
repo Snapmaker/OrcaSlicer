@@ -631,6 +631,8 @@ private:
     void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
+    // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
+    void            request_version_from_config(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);

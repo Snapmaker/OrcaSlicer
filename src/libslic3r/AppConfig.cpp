@@ -46,6 +46,11 @@ static const std::string MODELS_STR = "models";
 #define APP_UPDATE_URL_BASE_CN "https://meta-cfg.snapmaker.cn"
 #define APP_UPDATE_URL_BASE_EN "https://meta-cfg.snapmaker.com"
 
+// snapmaker-config gray release API (POST /config/get). prod is not online yet, so the
+// default points to the dev environment; switch the default to CONFIG_API_URL_PROD once prod is live.
+#define CONFIG_API_URL_DEV  "http://gateway.s.com/api/config/get"
+#define CONFIG_API_URL_PROD "https://api.snapmaker.com/api/config/get"
+
 #if defined(_WIN32)
 static const std::string APP_UPDATE_URL = std::string("/upgrade/orca/win/");
 #elif defined(__APPLE__)
@@ -1494,6 +1499,15 @@ std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/)
         url = APP_UPDATE_URL_BASE_CN + APP_UPDATE_URL + localLanguage + std::string("/version.json");
 
     return url; 
+}
+
+std::string AppConfig::get_config_api_url()
+{
+    std::string overrideUrl = get("orca_config_api_url");
+    if (!overrideUrl.empty())
+        return overrideUrl;
+
+    return CONFIG_API_URL_DEV;
 }
 
 std::string AppConfig::version_check_url(bool stable_only/* = false*/) const

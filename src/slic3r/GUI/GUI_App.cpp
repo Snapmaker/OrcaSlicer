@@ -1157,7 +1157,7 @@ void GUI_App::post_init()
             bool        sys_preset  = app_config->get("sync_system_preset") == "true";
             this->preset_updater->sync(http_url, language, network_ver, sys_preset ? preset_bundle : nullptr);
             this->preset_updater->sync_web_async(true);
-            this->check_new_version_sf(false, false);
+            this->request_version_from_config(false, false);
 
         });
     }
@@ -5416,6 +5416,191 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
             std::string errorMsg = ex.what();
             BOOST_LOG_TRIVIAL(fatal) << "request server soft update data error:" << errorMsg;
           }
+        })
+        .perform();
+}
+
+void GUI_App::request_version_from_config(bool show_tips, bool by_user)
+{
+    std::string url = app_config->get_config_api_url();
+
+    json req;
+    // appName encodes the platform (server contract): the config backend hosts two apps,
+    // snapmaker-orca-win / snapmaker-orca-mac, each with its own default + gray configs.
+#if defined(_WIN32)
+    req["appName"] = "snapmaker-orca-win";
+#elif defined(__APPLE__)
+    req["appName"] = "snapmaker-orca-mac";
+#else
+    req["appName"] = "snapmaker-orca";
+#endif
+    // Three numeric segments (e.g. "2.4.0"): the server compares version levels numerically
+    // (versionInRange), so the zero-padded four-segment form must not be sent here.
+    req["version"] = std::string(Snapmaker_VERSION);
+    // Same source as the global X-BBL-Device-ID header (slicer_uuid), the gray bucketing key.
+    // The body carries no userId by contract: the gateway derives it from the Authorization
+    // token below and injects it into rule evaluation server-side.
+    req["deviceId"]   = app_config->get("slicer_uuid");
+    std::string req_body = req.dump();
+
+    // Type-guarded readers: unlike value(), a wrong-typed field is treated as missing
+    // instead of raising type_error.302 (e.g. a string "200" where a number is expected).
+    auto str_field  = [](const json& j, const char* key) -> std::string {
+        auto it = j.find(key);
+        return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    auto flag_field = [](const json& j, const char* key) -> bool {
+        auto it = j.find(key);
+        return it != j.end() && it->is_boolean() ? it->get<bool>() : false;
+    };
+    auto obj_field  = [](const json& j, const char* key) -> json {
+        auto it = j.find(key);
+        return it != j.end() && it->is_object() ? *it : json::object();
+    };
+
+    auto http = Http::post(url);
+    http.header("Content-Type", "application/json");
+    // Gateway auth (snapmaker-config): the SM account JWT goes in Authorization as a raw
+    // token, no "Bearer " prefix — same convention as the SM login requests. The gateway
+    // resolves the gray-rule variable userId from it; anonymous requests stay valid
+    // (update check must work without login) and rules evaluate with userId = nil.
+    bool with_auth = false;
+    if (sm_get_userinfo()->is_user_login()) {
+        std::string auth_token = sm_get_userinfo()->get_user_token();
+        if (!auth_token.empty()) {
+            http.header("Authorization", auth_token);
+            with_auth = true;
+        }
+    }
+    // Warning level on purpose: release builds log at warning and above, and this marker
+    // (gray-release request diagnostics) must survive in the field logs.
+    BOOST_LOG_TRIVIAL(warning) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
+    http.set_post_body(req_body)
+        .timeout_connect(TIMEOUT_CONNECT)
+        .on_error([this, show_tips, by_user](std::string body, std::string error, unsigned http_status) {
+            (void)body;
+            BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
+            check_new_version_sf(show_tips, by_user);
+        })
+        .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field](std::string body, unsigned http_status) {
+            if (http_status != 200) {
+                BOOST_LOG_TRIVIAL(warning) << format("status not 200 with: `%1%`: HTTP %2%, fallback to static version.json", "config/get", http_status);
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+            // allow_exceptions = false: a malformed or non-UTF-8 body yields a discarded value
+            // (never an exception) and degrades to the static check. A document that parses
+            // successfully is valid UTF-8 by construction, so every string below is FromUTF8-safe.
+            json jsonObj = json::parse(body, nullptr, false);
+            if (jsonObj.is_discarded() || !jsonObj.is_object()) {
+                BOOST_LOG_TRIVIAL(warning) << "config/get body is not valid JSON/UTF-8, fallback to static version.json";
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+
+            // Server contract: 40001 = no default config, 604001 = bad params, 50001 = internal error
+            int  errCode = 0;
+            auto code_it = jsonObj.find("code");
+            if (code_it != jsonObj.end() && code_it->is_number_integer())
+                errCode = code_it->get<int>();
+            if (errCode != 200 || !jsonObj.contains("data") || !jsonObj["data"].is_object()) {
+                BOOST_LOG_TRIVIAL(warning) << format("config/get rejected: code %1%, msg %2%, fallback to static version.json", errCode, str_field(jsonObj, "msg"));
+                check_new_version_sf(show_tips, by_user);
+                return;
+            }
+
+            // The payload mirrors the data object of the static version.json
+            const json dataObj = jsonObj["data"];
+
+            bool isForceUpgrade         = flag_field(dataObj, "is_force_upgrade");
+            version_info.force_upgrade  = isForceUpgrade;
+            version_info.version_str    = str_field(dataObj, "version");
+
+            std::string releaseType = str_field(dataObj, "release_type");
+            if (releaseType != RELEASE_TYPE_STABLE)
+            {
+                if (by_user)
+                    this->no_new_version();
+                return;
+            }
+
+            std::string platformType = str_field(dataObj, "platform_type");
+
+            // win x86_x64,  mac arm/x86_64  universal
+            json fullObj      = obj_field(dataObj, "full");
+            json defaultObj   = obj_field(fullObj, "default");
+            json armObj       = obj_field(fullObj, "arm");
+            json intelObj     = obj_field(fullObj, "intel");
+            version_info.description = str_field(fullObj, "file_describe");
+
+            if (platformType == "win") {
+                version_info.url         = str_field(defaultObj, "file_url");
+            }
+            else if (platformType == "mac")
+            {
+                bool isArm64 = false;
+#if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+                isArm64 = true;
+#else
+                isArm64 = false;
+#endif
+                json platformObj = defaultObj;
+                if (isArm64) {
+                    if (!armObj.empty()) {
+                        platformObj = armObj;
+                    }
+                }
+                else
+                {
+                    if (!intelObj.empty()) {
+                        platformObj = intelObj;
+                    }
+                }
+
+                version_info.url = str_field(platformObj, "file_url");
+            }
+            else
+            {
+                BOOST_LOG_TRIVIAL(warning) << "don't support linux upgrade";
+                return;
+            }
+
+            // A payload without file_url must not open the update dialog:
+            // clicking download would launch the browser with an empty address.
+            if (version_info.url.empty()) {
+                BOOST_LOG_TRIVIAL(error) << format("upgrade payload missing file_url (platform %1%, version %2%)", platformType, version_info.version_str);
+                if (by_user)
+                    this->no_new_version();
+                return;
+            }
+
+            std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+            Semver     current_version = get_version(Snapmaker_VERSION, matcher);
+
+            Semver server_version = get_version(version_info.version_str, matcher);
+
+            if (current_version >= server_version) {
+                if(by_user)
+                    this->no_new_version();
+                return;
+            }
+
+            if (isForceUpgrade)
+            {
+                wxGetApp().app_config->set_bool("force_upgrade", version_info.force_upgrade);
+                wxGetApp().app_config->set("upgrade", "force_upgrade", true);
+                wxGetApp().app_config->set("upgrade", "description", version_info.description);
+                wxGetApp().app_config->set("upgrade", "version", version_info.version_str);
+                wxGetApp().app_config->set("upgrade", "url", version_info.url);
+                GUI::wxGetApp().enter_force_upgrade();
+                return;
+            }
+
+            wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+            evt->SetString(version_info.url);
+            if (by_user)
+                evt->SetInt(UPDATE_BY_USER);
+            GUI::wxGetApp().QueueEvent(evt);
         })
         .perform();
 }

@@ -382,6 +382,8 @@ public:
 	std::string 		get_version_upgrade_url(bool stable_only = false);
 	std::string 		get_preset_upgrade_url();
 	std::string 		get_web_resource_upgrade_url();
+	// snapmaker-config gray release API endpoint; can be overridden by "orca_config_api_url" (debug/testing)
+	std::string 		get_config_api_url();
 
 	// Returns the original Slic3r version found in the ini file before it was overwritten
 	// by the current version

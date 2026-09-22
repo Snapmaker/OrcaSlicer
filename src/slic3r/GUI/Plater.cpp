@@ -22067,21 +22067,64 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // update UI
     sidebar().on_filaments_delete(filament_id);
 
+    // With an explicit old-to-new remap, use it for config-level filament IDs too.
+    // The naive delete path only knows how to decrement IDs greater than the deleted
+    // physical slot; it cannot represent a cascade-deleted mixed row falling back
+    // to the default filament.
+    auto remap_old_filament_id = [&](int old_id) -> unsigned int {
+        if (old_id <= 0 || size_t(old_id) >= id_remap.size())
+            return 0;
+        return id_remap[size_t(old_id)];
+    };
+    auto remap_config_extruder = [&](ModelConfig &cfg) {
+        if (!cfg.has("extruder"))
+            return;
+        const int old_id = cfg.extruder();
+        if (old_id <= 0)
+            return;
+        const unsigned int mapped = remap_old_filament_id(old_id);
+        if (mapped == 0) {
+            // Reuse the established mixed-filament cleanup semantics: explicit 0
+            // means default (rendered as physical filament 1) and avoids readers
+            // dereferencing a missing "extruder" option.
+            cfg.set("extruder", 0);
+        } else {
+            cfg.set_key_value("extruder", new ConfigOptionInt(int(mapped)));
+        }
+    };
+
     // update global feature filament selections
     static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
                                  "support_filament", "support_interface_filament"};
     for (auto key : keys)
         if (p->config->has(key)) {
-            if (p->config->opt_int(key) == filament_id + 1)
-                (*(p->config)).erase(key);
-            else {
+            if (should_remap_states) {
+                const unsigned int mapped = remap_old_filament_id(p->config->opt_int(key));
+                if (mapped == 0)
+                    p->config->erase(key);
+                else
+                    p->config->set_key_value(key, new ConfigOptionInt(int(mapped)));
+            } else if (p->config->opt_int(key) == filament_id + 1) {
+                p->config->erase(key);
+            } else {
                 int new_value = p->config->opt_int(key) > filament_id ? p->config->opt_int(key) - 1 : p->config->opt_int(key);
-                (*(p->config)).set_key_value(key, new ConfigOptionInt(new_value));
+                p->config->set_key_value(key, new ConfigOptionInt(new_value));
             }
         }
 
     // update object/volume/support(object and volume) filament id
-    sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
+    if (should_remap_states) {
+        for (ModelObject* mo : wxGetApp().model().objects) {
+            remap_config_extruder(mo->config);
+            for (ModelVolume* mv : mo->volumes)
+                remap_config_extruder(mv->config);
+            for (auto &layer_range : mo->layer_config_ranges)
+                remap_config_extruder(layer_range.second);
+        }
+        sidebar().obj_list()->update_objects_list_filament_column(num_filaments);
+    } else {
+        sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
+    }
 
     // update customize gcode
     for (auto item = p->model.plates_custom_gcodes.begin(); item != p->model.plates_custom_gcodes.end(); ++item) {

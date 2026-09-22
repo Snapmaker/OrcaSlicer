@@ -75,6 +75,8 @@ std::optional<arrangement::ArrangePolygon> get_wipe_tower_arrangepoly(const Plat
 // its arrange polygon there, so filling the plate packs around a tower that splits the
 // free area as little as possible.
 std::optional<arrangement::ArrangePolygon> move_wipe_tower_to_nearest_corner(Plater &);
+// The current plate's prime tower as it would stand in that corner, without moving it.
+std::optional<arrangement::ArrangePolygon> get_wipe_tower_corner_arrangepoly(Plater &);
 
 // The gap between logical beds in the x axis expressed in ratio of
 // the current bed width.

@@ -6,6 +6,8 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
 #include "libnest2d/common.hpp"
 
 #include <algorithm>
@@ -387,6 +389,195 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
 
         m_plater->update();
     }
+}
+
+FillBedOptionsJob::FillBedOptionsJob() : m_plater{wxGetApp().plater()}
+{
+    // Support room is never traded away: every gap below sits on top of the brim / support
+    // aware inflation the arranger gives each copy anyway.
+    m_variants = {
+        {_u8L("A Max"),      true,  0., 0.},
+        {_u8L("B Balanced"), false, 3., 2.},
+        {_u8L("C Safe"),     false, 8., 5.},
+    };
+}
+
+void FillBedOptionsJob::prepare()
+{
+    m_fixed.clear();
+    m_tower_pos.reset();
+
+    m_object_idx = m_plater->get_selected_object_idx();
+    if (m_object_idx == -1)
+        return;
+
+    ModelObject *mo = m_plater->model().objects[m_object_idx];
+    m_instance_idx  = std::max(m_plater->get_selection().get_instance_idx(), 0);
+    if (m_instance_idx >= int(mo->instances.size()))
+        m_instance_idx = 0;
+
+    m_params = init_arrange_params(m_plater);
+
+    const Slic3r::DynamicPrintConfig &global_config = wxGetApp().preset_bundle->full_config();
+    m_template          = get_instance_arrange_poly(mo->instances[m_instance_idx], global_config);
+    m_template.setter   = nullptr; // copies are made in finalize(); the source stays put
+    m_template.priority = 0;
+
+    // The new plates start out empty but for their excluded regions and, on a multi-material
+    // print, the prime tower - pushed into a corner, as fill bed does.
+    PartPlateList &plate_list = m_plater->get_partplate_list();
+    plate_list.preprocess_exclude_areas(m_params.excluded_regions, 1, scale_(1));
+    plate_list.preprocess_exclude_areas(m_fixed, 1);
+    if (auto wt = get_wipe_tower_corner_arrangepoly(*m_plater)) {
+        m_tower_pos = unscaled(wt->translation);
+        m_fixed.emplace_back(std::move(*wt));
+    }
+}
+
+void FillBedOptionsJob::process(Ctl &ctl)
+{
+    ctl.call_on_main_thread([this] { prepare(); }).wait();
+    if (m_object_idx == -1)
+        return;
+
+    const DynamicPrintConfig *print_cfg = m_plater->config();
+    const std::string         status    = _u8L("Preparing plate options");
+
+    for (size_t v = 0; v < m_variants.size(); ++v) {
+        if (ctl.was_canceled())
+            return;
+
+        Variant &variant = m_variants[v];
+        variant.placed.clear();
+        ctl.update_status(int(v * 100 / m_variants.size()), status + " " + variant.label);
+
+        arrangement::ArrangeParams params = m_params;
+        params.allow_rotations  = variant.rotations;
+        params.min_obj_distance = 0; // brim / support aware spacing; the variant's gap goes on top
+        params.do_final_align   = false;
+
+        ArrangePolygons probe{m_template};
+        update_arrange_params(params, print_cfg, probe);
+        params.bed_shrink_x += float(variant.edge_mm);
+        params.bed_shrink_y += float(variant.edge_mm);
+        const Points bedpts = get_shrink_bedpts(print_cfg, params);
+
+        update_selected_items_inflation(probe, print_cfg, params);
+        const coord_t inflation = probe.front().inflation + scaled(variant.gap_mm / 2.);
+
+        // An upper bound on the copies that fit; the packer stops as soon as the plate is full.
+        const ExPolygons grown     = offset_ex(m_template.poly, float(inflation));
+        const double     item_area = grown.empty() ? m_template.poly.area() : grown.front().area();
+        const double     bed_area  = std::abs(Polygon{bedpts}.area());
+        const int        count     = std::clamp(int(bed_area / std::max(item_area, 1.)) + 1, 1, MAX_COPIES_PER_OPTION);
+
+        ArrangePolygons items(count, m_template);
+        for (int i = 0; i < count; ++i) {
+            items[i].itemid    = i;
+            items[i].bed_idx   = PartPlateList::MAX_PLATES_COUNT;
+            items[i].inflation = inflation;
+        }
+        ArrangePolygons fixed = m_fixed;
+        update_unselected_items_inflation(fixed, print_cfg, params);
+
+        bool plate_full = false;
+        params.stopcondition = [&ctl, &plate_full]() { return ctl.was_canceled() || plate_full; };
+        params.on_packed     = [&plate_full](const ArrangePolygon &ap) { plate_full = ap.bed_idx > 0; };
+        params.progressind   = [](unsigned, std::string) {};
+
+        arrangement::arrange(items, fixed, bedpts, params);
+
+        for (const ArrangePolygon &ap : items)
+            if (ap.bed_idx == 0)
+                variant.placed.emplace_back(ap);
+        variant.capped = int(variant.placed.size()) == MAX_COPIES_PER_OPTION;
+    }
+
+    ctl.update_status(100, ctl.was_canceled() ? _u8L("Bed filling canceled.") : _u8L("Bed filling done."));
+}
+
+void FillBedOptionsJob::finalize(bool canceled, std::exception_ptr &eptr)
+{
+    if (canceled || eptr || m_object_idx == -1)
+        return;
+
+    NotificationManager *notifications = m_plater->get_notification_manager();
+    if (std::all_of(m_variants.begin(), m_variants.end(), [](const Variant &v) { return v.placed.empty(); })) {
+        notifications->push_notification(NotificationType::BBLPlateInfo, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                         _u8L("Not a single copy of the selected object fits on an empty plate."));
+        return;
+    }
+
+    // Create every plate before placing anything: a new plate can re-flow the plate grid,
+    // which moves the origins of the plates already there.
+    PartPlateList   &plate_list = m_plater->get_partplate_list();
+    std::vector<int> plate_idxs(m_variants.size(), -1);
+    bool             out_of_plates = false;
+    for (size_t v = 0; v < m_variants.size(); ++v) {
+        if (m_variants[v].placed.empty())
+            continue;
+        plate_idxs[v] = plate_list.create_plate();
+        if (plate_idxs[v] < 0) {
+            out_of_plates = true;
+            break;
+        }
+    }
+
+    Model       &model       = m_plater->model();
+    const size_t old_count   = model.objects.size();
+    int          first_plate = -1;
+    for (size_t v = 0; v < m_variants.size(); ++v) {
+        const int plate_idx = plate_idxs[v];
+        if (plate_idx < 0)
+            continue;
+        if (first_plate < 0)
+            first_plate = plate_idx;
+
+        const Variant &variant = m_variants[v];
+        PartPlate     *plate   = plate_list.get_plate(plate_idx);
+        const Vec3d    origin  = plate->get_origin();
+        const Vec2d    shift(scale_(origin.x()), scale_(origin.y()));
+        for (const ArrangePolygon &ap : variant.placed) {
+            // add_object() can reallocate model.objects, so the source is looked up each time.
+            ModelObject *src = model.objects[m_object_idx];
+            ModelObject *obj = model.add_object(*src);
+            obj->clear_instances();
+            ModelInstance *inst = obj->add_instance(*src->instances[m_instance_idx]);
+            inst->apply_arrange_result(ap.translation.cast<double>() + shift, ap.rotation);
+            plate_list.add_to_plate(int(model.objects.size()) - 1, 0, plate_idx);
+        }
+
+        const std::string count = std::to_string(variant.placed.size()) + (variant.capped ? "+" : "");
+        plate->set_plate_name((boost::format(_u8L("%1% - %2% copies")) % variant.label % count).str());
+
+        if (m_tower_pos) {
+            DynamicConfig    &proj_cfg = wxGetApp().preset_bundle->project_config;
+            ConfigOptionFloat wipe_tower_x(m_tower_pos->x());
+            ConfigOptionFloat wipe_tower_y(m_tower_pos->y());
+            proj_cfg.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&wipe_tower_x, plate_idx, 0);
+            proj_cfg.option<ConfigOptionFloats>("wipe_tower_y", true)->set_at(&wipe_tower_y, plate_idx, 0);
+        }
+    }
+
+    const size_t new_count = model.objects.size();
+    if (new_count > old_count) {
+        ModelObjectPtrs new_objects(model.objects.begin() + old_count, model.objects.end());
+        model.InitializeAssemblyPositions(new_objects);
+
+        auto obj_list = m_plater->sidebar().obj_list();
+        for (size_t i = old_count; i < new_count; ++i) {
+            obj_list->add_object_to_list(i, true, true, false);
+            obj_list->update_printable_state(i, 0);
+        }
+    }
+
+    if (out_of_plates)
+        notifications->push_notification(NotificationType::BBLPlateInfo, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                         _u8L("The maximum number of plates was reached, so not every option could be added."));
+
+    m_plater->update();
+    if (first_plate >= 0)
+        m_plater->select_plate(first_plate);
 }
 
 }} // namespace Slic3r::GUI

@@ -21110,3 +21110,30 @@ msgstr ""
 #~ "Lütfen geçerli değerleri girin:\n"
 #~ "başlangıç > 10 adım >= 0\n"
 #~ "bitiş > başlangıç + adım)"
+
+msgid "Fill bed: 3 options"
+msgstr "Tablayı doldur: 3 seçenek"
+
+msgid "Fill three new plates with copies of the selected object, each packed differently, so you can print the one you prefer"
+msgstr "Seçili nesnenin kopyalarıyla her biri farklı yerleşimde üç yeni tabla doldurur, beğendiğini basarsın"
+
+msgid "A Max"
+msgstr "A Maks"
+
+msgid "B Balanced"
+msgstr "B Dengeli"
+
+msgid "C Safe"
+msgstr "C Güvenli"
+
+msgid "%1% - %2% copies"
+msgstr "%1% - %2% adet"
+
+msgid "Preparing plate options"
+msgstr "Tabla seçenekleri hazırlanıyor"
+
+msgid "Not a single copy of the selected object fits on an empty plate."
+msgstr "Seçili nesnenin tek bir kopyası bile boş bir tablaya sığmıyor."
+
+msgid "The maximum number of plates was reached, so not every option could be added."
+msgstr "Tabla sayısı sınırına ulaşıldı, bu yüzden seçeneklerin hepsi eklenemedi."

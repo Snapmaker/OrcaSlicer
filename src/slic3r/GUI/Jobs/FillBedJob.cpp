@@ -544,7 +544,9 @@ void FillBedOptionsJob::finalize(bool canceled, std::exception_ptr &eptr)
             obj->clear_instances();
             ModelInstance *inst = obj->add_instance(*src->instances[m_instance_idx]);
             inst->apply_arrange_result(ap.translation.cast<double>() + shift, ap.rotation);
-            plate_list.add_to_plate(int(model.objects.size()) - 1, 0, plate_idx);
+            // Register the copy with the plate it now stands on. add_to_plate() would move it to
+            // the plate centre first, stacking every copy on one spot.
+            plate_list.notify_instance_update(int(model.objects.size()) - 1, 0, true);
         }
 
         const std::string count = std::to_string(variant.placed.size()) + (variant.capped ? "+" : "");

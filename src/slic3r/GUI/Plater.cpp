@@ -22071,10 +22071,14 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // The naive delete path only knows how to decrement IDs greater than the deleted
     // physical slot; it cannot represent a cascade-deleted mixed row falling back
     // to the default filament.
+    static const char* feature_filament_keys[] = {
+        "wall_filament", "sparse_infill_filament", "solid_infill_filament",
+        "support_filament", "support_interface_filament"};
     auto remap_old_filament_id = [&](int old_id) -> unsigned int {
         if (old_id <= 0 || size_t(old_id) >= id_remap.size())
             return 0;
-        return id_remap[size_t(old_id)];
+        const unsigned int mapped = id_remap[size_t(old_id)];
+        return mapped > num_filaments ? 0 : mapped;
     };
     auto remap_config_extruder = [&](ModelConfig &cfg) {
         if (!cfg.has("extruder"))
@@ -22092,11 +22096,23 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
             cfg.set_key_value("extruder", new ConfigOptionInt(int(mapped)));
         }
     };
+    auto remap_config_feature_filaments = [&](ModelConfig &cfg) {
+        for (const char* key : feature_filament_keys) {
+            if (!cfg.has(key))
+                continue;
+            const int old_id = cfg.opt_int(key);
+            if (old_id <= 0)
+                continue;
+            const unsigned int mapped = remap_old_filament_id(old_id);
+            if (mapped == 0)
+                cfg.erase(key);
+            else
+                cfg.set_key_value(key, new ConfigOptionInt(int(mapped)));
+        }
+    };
 
     // update global feature filament selections
-    static const char* keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
-                                 "support_filament", "support_interface_filament"};
-    for (auto key : keys)
+    for (auto key : feature_filament_keys)
         if (p->config->has(key)) {
             if (should_remap_states) {
                 const unsigned int mapped = remap_old_filament_id(p->config->opt_int(key));
@@ -22116,12 +22132,16 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     if (should_remap_states) {
         for (ModelObject* mo : wxGetApp().model().objects) {
             remap_config_extruder(mo->config);
-            for (ModelVolume* mv : mo->volumes)
+            remap_config_feature_filaments(mo->config);
+            for (ModelVolume* mv : mo->volumes) {
                 remap_config_extruder(mv->config);
+                remap_config_feature_filaments(mv->config);
+            }
             for (auto &layer_range : mo->layer_config_ranges)
                 remap_config_extruder(layer_range.second);
         }
-        sidebar().obj_list()->update_objects_list_filament_column(num_filaments);
+        sidebar().obj_list()->update_objects_list_filament_column(
+            std::max<size_t>(sidebar().combos_filament().size(), 1));
     } else {
         sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
     }

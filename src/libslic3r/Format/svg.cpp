@@ -1,5 +1,6 @@
 #define NANOSVG_IMPLEMENTATION
 #include "../libslic3r.h"
+#include "../ClipperUtils.hpp"
 #include "../Model.hpp"
 #include "../TriangleMesh.hpp"
 

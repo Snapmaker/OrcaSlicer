@@ -37,7 +37,13 @@ public:
     virtual bool less(const FilamentSortItem &left, const FilamentSortItem &right) const;
 
 protected:
-    bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const;
+    virtual bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const;
+};
+
+class ClassedNameFilamentSorter : public FilamentSorter
+{
+protected:
+    bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const override;
 };
 
 // Vendor sorters operate only on vendor names. Keeping this contract separate
@@ -63,10 +69,16 @@ public:
     bool less(const std::string &left, const std::string &right) const override;
 };
 
-class SystemFilamentSorter final : public FilamentSorter
+class SystemFilamentSorter : public FilamentSorter
 {
 public:
     bool less(const FilamentSortItem &left, const FilamentSortItem &right) const override;
+};
+
+class SystemClassedNameFilamentSorter final : public SystemFilamentSorter
+{
+protected:
+    bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const override;
 };
 
 // Filament-only presentation layer. PresetBundle, PresetCollection and the
@@ -80,8 +92,9 @@ public:
     void update() override;
     void msw_rescale() override;
 
-    // A null project/user sorter preserves the row order produced by the base
-    // combo box. A null system sorter restores the corresponding default.
+    // Project and user rows use ClassedNameFilamentSorter by default; a null
+    // sorter preserves the row order produced by the base combo box. A null
+    // system sorter restores the corresponding default.
     void set_project_sorter(std::unique_ptr<FilamentSorter> sorter);
     void set_user_sorter(std::unique_ptr<FilamentSorter> sorter);
     void set_system_vendor_sorter(std::unique_ptr<FilamentVendorSorter> sorter);

@@ -19,6 +19,7 @@
 #include <string>
 #include <utility>
 
+#include <boost/locale.hpp>
 #include <boost/log/trivial.hpp>
 
 namespace Slic3r {
@@ -184,6 +185,81 @@ int system_vendor_rank(const std::string &vendor)
     return 2;
 }
 
+constexpr int g_name_class_digit = 0;
+constexpr int g_name_class_upper = 1;
+constexpr int g_name_class_lower = 2;
+constexpr int g_name_class_cjk   = 3;
+constexpr int g_name_class_other = 4;
+
+int name_class(const wxString &name)
+{
+    if (name.IsEmpty())
+        return g_name_class_other;
+
+    const wxUint32 cp = name[0].GetValue();
+    if (cp >= '0' && cp <= '9')
+        return g_name_class_digit;
+    if (cp >= 'A' && cp <= 'Z')
+        return g_name_class_upper;
+    if (cp >= 'a' && cp <= 'z')
+        return g_name_class_lower;
+    if ((cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF))
+        return g_name_class_cjk;
+
+    return g_name_class_other;
+}
+
+const boost::locale::collator<char> *pinyin_collator()
+{
+    static const boost::locale::collator<char> *collator = []() -> const boost::locale::collator<char> * {
+        try {
+            static std::locale chinese(boost::locale::generator().generate("zh_CN.UTF-8"));
+            return &std::use_facet<boost::locale::collator<char>>(chinese);
+        } catch (...) {
+            return nullptr;
+        }
+    }();
+    return collator;
+}
+
+int compare_cjk_pinyin(const wxString &left, const wxString &right)
+{
+    const boost::locale::collator<char> *collator = pinyin_collator();
+    if (collator == nullptr)
+        return 0;
+
+    try {
+        return collator->compare(boost::locale::collate_level::primary, into_u8(left), into_u8(right));
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
+{
+    const int name_compare = left.display_name.CmpNoCase(right.display_name);
+    if (name_compare != 0)
+        return name_compare < 0;
+    return left.original_index < right.original_index;
+}
+
+bool classed_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
+{
+    const int left_class  = name_class(left.display_name);
+    const int right_class = name_class(right.display_name);
+    if (left_class != right_class)
+        return left_class < right_class;
+
+    if (left_class == g_name_class_cjk) {
+        const int pinyin_compare = compare_cjk_pinyin(left.display_name, right.display_name);
+        if (pinyin_compare != 0)
+            return pinyin_compare < 0;
+        return left.original_index < right.original_index;
+    }
+
+    return default_name_less(left, right);
+}
+
 } // namespace
 
 bool FilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
@@ -193,10 +269,17 @@ bool FilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &
 
 bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
 {
-    const int name_compare = left.display_name.CmpNoCase(right.display_name);
-    if (name_compare != 0)
-        return name_compare < 0;
-    return left.original_index < right.original_index;
+    return default_name_less(left, right);
+}
+
+bool ClassedNameFilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
+{
+    return classed_name_less(left, right);
+}
+
+bool SystemClassedNameFilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
+{
+    return classed_name_less(left, right);
 }
 
 bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
@@ -241,7 +324,9 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     // query this immutable in-memory order and never perform file I/O.
     FilamentTopNOrder::instance();
     m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
-    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>();
+    m_system_filament_sorter = std::make_unique<SystemClassedNameFilamentSorter>();
+    m_project_sorter         = std::make_unique<ClassedNameFilamentSorter>();
+    m_user_sorter            = std::make_unique<ClassedNameFilamentSorter>();
 
     m_popup = new FilamentDropDown(this, m_popup_items);
     m_popup->SetUseContentWidth(true, true);
@@ -284,7 +369,7 @@ void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVe
 void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
 {
     if (sorter == nullptr)
-        sorter = std::make_unique<SystemFilamentSorter>();
+        sorter = std::make_unique<SystemClassedNameFilamentSorter>();
     m_system_filament_sorter = std::move(sorter);
     rebuild_popup_rows();
 }

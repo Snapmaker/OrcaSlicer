@@ -366,6 +366,27 @@ public:
     LayerPtrs&                   layers()               { return m_layers; }
     SupportLayerPtrs&            support_layers()       { return m_support_layers; }
 
+    /*!
+     * \brief Remove short bridges from the overhang contact regions so that they are
+     * printed without support.
+     *
+     * Bridges detected on the current layer (straight overhanging perimeter segments
+     * supported at both ends, and short bottom-bridge surfaces) are subtracted in place
+     * from overhang_regions.
+     *
+     * \param lower_layer Layer below the current one; used to test whether the ends of
+     * straight overhanging perimeter segments are supported.
+     * \param current_layer Layer whose bridges are detected.
+     * \param extrusion_width Scaled extrusion width.
+     * \param overhang_regions Overhang regions to filter, updated in place.
+     * \param max_bridge_length Scaled max length of bridges that don't need support.
+     * \param break_bridge Split bridges longer than max_bridge_length into supported
+     * segments; unused by tree supports (poor interface quality, see #4318).
+     * \param overhang_regions_with_type Optional typed overhang list. When non-null it
+     * is kept in sync with overhang_regions by subtracting the same bridge set, and
+     * each diff fragment inherits the type tag of its source region. When null, the
+     * call behaves exactly as if this parameter did not exist.
+     */
     template<typename PolysType>
     static void remove_bridges_from_contacts(
         const Layer* lower_layer,
@@ -373,7 +394,8 @@ public:
         float extrusion_width,
         PolysType* overhang_regions,
         float max_bridge_length = scale_(10),
-        bool break_bridge=false);
+        bool break_bridge=false,
+        std::vector<std::pair<ExPolygon, int>>* overhang_regions_with_type = nullptr);
 
     // Bounding box is used to align the object infill patterns, and to calculate attractor for the rear seam.
     // The bounding box may not be quite snug.

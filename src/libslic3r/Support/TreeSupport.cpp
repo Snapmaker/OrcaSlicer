@@ -1305,10 +1305,13 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
         if (max_bridge_length > 0 && layer->loverhangs.size() > 0 && lower_layer) {
             // do not break bridge as the interface will be poor, see #4318
             bool break_bridge = false;
-            m_object->remove_bridges_from_contacts(lower_layer, layer, extrusion_width_scaled, &layer->loverhangs, max_bridge_length, break_bridge);
+            m_object->remove_bridges_from_contacts(
+                lower_layer, layer, extrusion_width_scaled,
+                &layer->loverhangs, max_bridge_length, break_bridge,
+                &layer->loverhangs_with_type);
         }
-        // Note: loverhangs_with_type is intentionally NOT synced after bridge removal.
-        // generate_initial_nodes iterates loverhangs_with_type, not loverhangs. (Bambu 976b5062c)
+        // loverhangs_with_type must stay in sync with loverhangs here: generate_initial_nodes
+        // iterates loverhangs_with_type, so an unsynced list would make bridge removal invisible to node generation.
 
         if (!layer->loverhangs_with_type.empty()) {
             layers_with_overhangs++;
@@ -3835,7 +3838,6 @@ void TreeSupport::generate_contact_points()
 #endif
         }}
     ); // end tbb::parallel_for
-
 
 
     int nNodes = all_nodes.size();

@@ -20,8 +20,6 @@ struct FilamentSortItem {
     size_t      original_index{0};
 };
 
-// Default sorter for popup rows. Specialized sorters may extend the ordering
-// without depending on the popup or preset collection.
 class FilamentSorter
 {
 public:
@@ -46,8 +44,6 @@ protected:
     bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const override;
 };
 
-// Vendor sorters operate only on vendor names. Keeping this contract separate
-// from FilamentSorter prevents row fields from being mixed in one comparator.
 class FilamentVendorSorter
 {
 public:
@@ -81,8 +77,7 @@ protected:
     bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const override;
 };
 
-// Filament-only presentation layer. PresetBundle, PresetCollection and the
-// existing Plater selection pipeline remain owned by PlaterPresetComboBox.
+// Filament-only presentation layer; preset/selection pipeline stays in PlaterPresetComboBox.
 class PlaterFilamentComboBox : public PlaterPresetComboBox
 {
 public:
@@ -92,9 +87,7 @@ public:
     void update() override;
     void msw_rescale() override;
 
-    // Project and user rows use ClassedNameFilamentSorter by default; a null
-    // sorter preserves the row order produced by the base combo box. A null
-    // system sorter restores the corresponding default.
+    // Null sorters preserve base order (project/user) or restore the default (system).
     void set_project_sorter(std::unique_ptr<FilamentSorter> sorter);
     void set_user_sorter(std::unique_ptr<FilamentSorter> sorter);
     void set_system_vendor_sorter(std::unique_ptr<FilamentVendorSorter> sorter);

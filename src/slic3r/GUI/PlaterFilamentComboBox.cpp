@@ -320,8 +320,7 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     if (preset_type != Preset::TYPE_FILAMENT)
         return;
 
-    // Load once while the filament GUI is initialized. Popup refreshes only
-    // query this immutable in-memory order and never perform file I/O.
+    // Preload the TopN order once; popup refreshes never perform file I/O.
     FilamentTopNOrder::instance();
     m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
     m_system_filament_sorter = std::make_unique<SystemClassedNameFilamentSorter>();
@@ -333,9 +332,7 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     m_popup->Bind(wxEVT_COMBOBOX, &PlaterFilamentComboBox::on_popup_selection, this);
     m_popup->Bind(EVT_DISMISS, &PlaterFilamentComboBox::on_popup_dismiss, this);
 
-    // Keyboard events originating from the child text control do not reach
-    // this window's static event table. Mouse and window-level key events are
-    // intercepted by the derived event table before ComboBox's flat popup.
+    // Text-ctrl key events don't reach this window's static table; bind them separately.
     if (GetTextCtrl() != nullptr)
         GetTextCtrl()->Bind(wxEVT_KEY_DOWN, &PlaterFilamentComboBox::on_key_down, this);
 
@@ -395,9 +392,7 @@ void PlaterFilamentComboBox::update()
     close_popup(true);
     m_rebuilding = true;
 
-    // Keep all existing Snapmaker behavior (color picker, AMS/machine
-    // filament rows, compatibility, tooltip, selection and Add/Remove row).
-    // The derived class only changes how the resulting rows are presented.
+    // Parent update() first; this class only changes how rows are presented.
     PlaterPresetComboBox::update();
     rebuild_popup_rows();
 
@@ -458,7 +453,7 @@ std::string PlaterFilamentComboBox::preset_filament_product(const Preset *preset
 
     wxString vendor = from_u8(preset_vendor(preset));
     vendor.Trim(true).Trim(false);
-    if (vendor.empty()) {
+    if (vendor.empty() || vendor == wxString::FromUTF8("(Undefined)")) {
         wxStringTokenizer words(product);
         if (words.HasMoreTokens())
             vendor = words.GetNextToken();
@@ -535,10 +530,7 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
         row.sort_item.display_name   = text;
         row.sort_item.original_index = combo_index;
 
-        // Rows inside the AMS or machine-filament sections are auxiliary
-        // selections even when their backing preset is also a system preset.
-        // Keep them outside Project/User/System instead of inferring their
-        // section from the preset flags.
+        // AMS/machine rows stay outside Project/User/System even for system presets.
         if (current_section != Section::Other) {
             const std::string alias = Preset::remove_suffix_modified(into_u8(text));
             const std::string &resolved_name = m_collection->get_preset_name_by_alias(alias);
@@ -558,17 +550,11 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
             }
         }
 
-        // Most filament profile JSON files do not define Preset::description,
-        // which is the tooltip source used by the flat ComboBox item. Always
-        // provide a useful fallback for popup rows whose preset cannot be
-        // resolved or whose generated tooltip is empty.
+        // Fall back to the item text when no tooltip was resolved.
         if (row.item.tip.IsEmpty())
             row.item.tip = row.item.text;
 
-        // Vendor is presentation metadata only. When a system profile leaves
-        // it empty (or keeps the schema placeholder), group the row by the
-        // first word of its displayed name. Keep this outside the preset
-        // lookup so a stale alias still follows the same display rule.
+        // Group placeholder/empty system vendors by the display name's first word.
         if (row.section == Section::System && is_missing_vendor(row.sort_item.vendor)) {
             row.sort_item.vendor = vendor_from_display_name(row.item.text);
             if (row.sort_item.vendor.empty())
@@ -584,9 +570,7 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
         m_rows.push_back(std::move(row));
     }
 
-    // A system row may have been omitted because neither its vendor nor its
-    // display name yields a usable group. Do not leave an empty section header
-    // visible in the popup.
+    // Drop a system header that has no rows left.
     for (auto it = m_rows.begin(); it != m_rows.end();) {
         if (!it->header || it->section != Section::System) {
             ++it;
@@ -600,9 +584,7 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
             ++it;
     }
 
-    // Null project/user sorters intentionally preserve the base ComboBox
-    // order. Callers may install another FilamentSorter without changing the
-    // popup data model or selection mapping.
+    // Null project/user sorters preserve base order.
     sort_section_rows(Section::Project, m_project_sorter.get());
     sort_section_rows(Section::User, m_user_sorter.get());
     sort_system_rows();
@@ -649,9 +631,7 @@ void PlaterFilamentComboBox::sort_section_rows(Section section, const FilamentSo
 
 void PlaterFilamentComboBox::sort_system_rows()
 {
-    // Compose two strict weak orderings lexicographically: vendor equivalence
-    // is resolved by the filament sorter, so the combined comparator remains
-    // valid for every conforming replacement strategy.
+    // Vendor-equivalent rows delegate to the filament sorter (keeps a strict weak ordering).
     for (size_t i = 0; i < m_rows.size(); ++i) {
         if (!is_system_row(m_rows[i]))
             continue;
@@ -669,8 +649,7 @@ void PlaterFilamentComboBox::sort_system_rows()
                                  return false;
                              return m_system_filament_sorter->less(left.sort_item, right.sort_item);
                          });
-        // Let the loop increment land on the first row after this system
-        // section; do not skip a following header or action row.
+        // Land on the first row after this system section.
         i = end > 0 ? end - 1 : end;
     }
 }
@@ -680,8 +659,7 @@ void PlaterFilamentComboBox::show_popup()
     if (m_popup == nullptr || !IsEnabled())
         return;
 
-    // Defensive cleanup for a flat popup opened before this derived handler
-    // took ownership of the input event.
+    // Dismiss a flat popup opened before this handler took ownership.
     if (GetDropDown().IsShown())
         GetDropDown().Dismiss();
 
@@ -766,8 +744,7 @@ void PlaterFilamentComboBox::on_mouse_down(wxMouseEvent &event)
     SetFocus();
     show_popup();
 
-    // A StateHandler may already have marked this event as skipped. Reset the
-    // flag so wxWidgets does not continue into ComboBox's static event table.
+    // Reset the skip flag so wxWidgets doesn't reach ComboBox's static table.
     event.Skip(false);
     event.StopPropagation();
 }

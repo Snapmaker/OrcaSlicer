@@ -1,9 +1,7 @@
 #ifndef slic3r_GUI_FilamentDropDown_hpp_
 #define slic3r_GUI_FilamentDropDown_hpp_
 
-// Forked for the filament menu: based on Widgets/DropDown (upstream e700c93d81) plus the
-// grouping/two-level drill-down of BambuStudio's DropDown (77b9dd94d). Widgets/DropDown and
-// Widgets/ComboBox are intentionally left untouched, so this copy is the single sync point.
+// Fork of Widgets/DropDown (e700c93d81) + BambuStudio DropDown grouping (77b9dd94d); Widgets/* untouched.
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <wx/stattext.h>

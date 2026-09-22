@@ -208,7 +208,7 @@ int FilamentDropDown::group_row_of(const wxString &target) const
 
 bool FilamentDropDown::openSelectionGroup()
 {
-    if (!group.IsEmpty() || subDropDown == nullptr || selection < 0 || selection >= (int) items.size())
+    if (!group.IsEmpty() || subDropDown == nullptr || selection < 0 || selection >= static_cast<int>(items.size()))
         return false;
 
     const wxString target = items[selection].group;

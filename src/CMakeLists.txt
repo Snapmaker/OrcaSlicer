@@ -374,19 +374,27 @@ if (WIN32)
     endif()
 
     
-    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
+    # bury_cfg/bury_point.cpp is compiled in (with BURY_EXPORTS, mirroring the
+    # Snapmaker_Orca DLL target) so the shim resolves its bury-point helpers
+    # locally instead of importing them from Snapmaker_Orca.dll. The shim must
+    # NOT statically depend on Snapmaker_Orca.dll: that DLL statically imports
+    # opengl32.dll, which the loader maps BEFORE wmain runs - the system
+    # opengl32.dll could then never be released and would forever shadow the
+    # MESA opengl32.dll the shim loads for the software-OpenGL fallback
+    # (see Snapmaker_Orca_app_msvc.cpp).
+    add_executable(Snapmaker_Orca_app_gui WIN32 Snapmaker_Orca_app_msvc.cpp sentry_wrapper/SentryWrapper.cpp common_func/common_func.cpp bury_cfg/bury_point.cpp ${CMAKE_CURRENT_BINARY_DIR}/Snapmaker_Orca.rc)
     # Generate debug symbols even in release mode.
     if(MSVC)
         target_link_options(Snapmaker_Orca_app_gui PUBLIC "$<$<CONFIG:RELEASE>:/DEBUG>")
     endif()
-    target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE)
+    target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE -DSLIC3R_WRAPPER_NOCONSOLE BURY_EXPORTS)
     add_dependencies(Snapmaker_Orca_app_gui Snapmaker_Orca)
     set_target_properties(Snapmaker_Orca_app_gui PROPERTIES OUTPUT_NAME "snapmaker-orca")
-    
+
     if (SLIC3R_SENTRY)
-        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json Snapmaker_Orca)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly sentry::sentry nlohmann_json)
     else()
-        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly nlohmann_json Snapmaker_Orca)
+        target_link_libraries(Snapmaker_Orca_app_gui PRIVATE boost_headeronly nlohmann_json)
     endif()
     if (SLIC3R_SENTRY)
         target_compile_definitions(Snapmaker_Orca_app_gui PRIVATE SLIC3R_SENTRY)
@@ -552,6 +560,15 @@ if (WIN32)
         install(TARGETS Snapmaker_Orca_app_gui RUNTIME DESTINATION ".")
     endif ()
     install(FILES ${output_dlls_${build_type}} DESTINATION ".")
+    # MESA llvmpipe software-OpenGL fallback: the snapmaker-orca.exe shim loads
+    # <install>/mesa/opengl32.dll before Snapmaker_Orca.dll whenever the system
+    # OpenGL driver is unusable (< 2.0, e.g. disabled GPU -> GDI generic 1.1),
+    # see src/Snapmaker_Orca_app_msvc.cpp and deps/mesa/README.md.
+    if (EXISTS "${CMAKE_SOURCE_DIR}/deps/mesa/x64/opengl32.dll")
+        install(FILES "${CMAKE_SOURCE_DIR}/deps/mesa/x64/opengl32.dll" DESTINATION "mesa")
+    else ()
+        message(WARNING "deps/mesa/x64/opengl32.dll not found: the MESA software OpenGL fallback will NOT be packaged (see deps/mesa/README.md).")
+    endif ()
 else ()
     install(TARGETS Snapmaker_Orca RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" BUNDLE DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()

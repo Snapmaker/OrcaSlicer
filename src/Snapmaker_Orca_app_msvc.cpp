@@ -68,16 +68,21 @@ public:
         return this->success;
     }
 
-    void unload_opengl_dll()
+    bool unload_opengl_dll()
     {
-        if (this->hOpenGL) {
-            BOOL released = FreeLibrary(this->hOpenGL);
-            if (released)
-                printf("System OpenGL library released\n");
-            else
+        if (this->hOpenGL != nullptr) {
+            if (::FreeLibrary(this->hOpenGL) != FALSE) {
+                if (::GetModuleHandle(L"opengl32.dll") == nullptr) {
+                    printf("System OpenGL library successfully released\n");
+                    this->hOpenGL = nullptr;
+                    return true;
+                } else
+                    printf("System OpenGL library released but not removed\n");
+            } else
                 printf("System OpenGL library NOT released\n");
-            this->hOpenGL = nullptr;
+            return false;
         }
+        return true;
     }
 
     bool is_version_greater_or_equal_to(unsigned int major, unsigned int minor) const
@@ -242,10 +247,18 @@ int wmain(int argc, wchar_t** argv)
 #endif /* SLIC3R_GUI */
     for (int i = 1; i < argc; ++i) {
 #ifdef SLIC3R_GUI
-        if (wcscmp(argv[i], L"--sw-renderer") == 0)
+        // These flags are consumed by this wrapper: they select the OpenGL
+        // backend before Snapmaker_Orca.dll is even loaded. Do not forward
+        // them - the main application's CLI parser does not know them and
+        // aborts with "setup params error" (Snapmaker_Orca.cpp).
+        if (wcscmp(argv[i], L"--sw-renderer") == 0) {
             force_mesa = true;
-        else if (wcscmp(argv[i], L"--no-sw-renderer") == 0)
+            continue;
+        }
+        if (wcscmp(argv[i], L"--no-sw-renderer") == 0) {
             force_mesa = false;
+            continue;
+        }
 #endif /* SLIC3R_GUI */
         argv_extended.emplace_back(argv[i]);
     }
@@ -273,14 +286,34 @@ int wmain(int argc, wchar_t** argv)
     // https://wiki.qt.io/Cross_compiling_Mesa_for_Windows
     // http://download.qt.io/development_releases/prebuilt/llvmpipe/windows/
     if (load_mesa) {
-        opengl_version_check.unload_opengl_dll();
+        // The system opengl32.dll must be fully unloaded before loading MESA:
+        // the Windows loader resolves later "opengl32.dll" references by module
+        // NAME, so a still-resident system library would shadow the MESA one
+        // and leave the application in a half-broken OpenGL 1.1 state.
+        if (!opengl_version_check.unload_opengl_dll()) {
+            MessageBoxW(nullptr,
+                L"Snapmaker Orca was unable to automatically switch to the MESA software OpenGL library.\n"
+                L"Please re-enable your graphics adapter (or install/upgrade its driver) and start the application again.",
+                L"Snapmaker Orca", MB_OK | MB_ICONERROR);
+            auto        soft_end_time = get_time_timestamp();
+            std::string softEndTime   = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);
+            sentryReportLog(SENTRY_LOG_ERROR, softEndTime, BP_START_SOFT);
+            exitSentry();
+            return -1;
+        }
         wchar_t path_to_mesa[MAX_PATH + 1] = {0};
         wcscpy(path_to_mesa, path_to_exe);
         wcscat(path_to_mesa, L"mesa\\opengl32.dll");
         printf("Loading MESA OpenGL library: %S\n", path_to_mesa);
         HINSTANCE hInstance_OpenGL = LoadLibraryExW(path_to_mesa, nullptr, 0);
         if (hInstance_OpenGL == nullptr) {
-            printf("MESA OpenGL library was not loaded\n");
+            // The software-renderer fallback payload is missing or not loadable
+            // (e.g. mesa\opengl32.dll not shipped with this installation).
+            // Do not fail silently here: without it the application would run on
+            // OpenGL 1.1 - no shaders, unusable 3D view. Make it diagnosable.
+            printf("MESA OpenGL library was not loaded, error=%d\n", (int) GetLastError());
+            OutputDebugStringW(L"Snapmaker Orca: failed to load mesa\\opengl32.dll (software OpenGL fallback unavailable)\r\n");
+            sentryReportLog(SENTRY_LOG_ERROR, "failed to load mesa\\opengl32.dll (software OpenGL fallback unavailable)", BP_START_SOFT);
         } else
             printf("MESA OpenGL library was loaded sucessfully\n");
     }

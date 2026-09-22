@@ -322,7 +322,6 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         // (layered .icon with icns fallback) instead. The right-click "New
         // Window" menu is unaffected: it is attached by the wxTaskBarIcon
         // constructor, not by SetIcon.
-        // m_taskbar_icon->SetIcon(wxIcon(Slic3r::var("Snapmaker_Orca-mac_256px.ico"), wxBITMAP_TYPE_ICO), "Snapmaker Orca");
         break;
     case GUI_App::EAppMode::GCodeViewer:
         break;

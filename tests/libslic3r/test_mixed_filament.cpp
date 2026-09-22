@@ -3,6 +3,7 @@
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
+#include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
@@ -5451,4 +5452,39 @@ TEST_CASE("Full Spectrum default selections normalize the default family argumen
             CHECK(distinct.size() == 4);
         }
     }
+}
+
+TEST_CASE("Mixed filament config remap shifts object feature overrides", "[MixedFilament][ConfigRemap]")
+{
+    // Six physical filaments; deleting old ID 2 shifts old IDs 3..6 to 2..5.
+    const std::vector<unsigned int> id_remap = {0, 1, 0, 2, 3, 4, 5};
+
+    DynamicPrintConfig global_config = DynamicPrintConfig::full_print_config();
+    global_config.set("wall_filament", 5, true);
+    remap_dynamic_config_feature_filament_ids(global_config, id_remap, 5);
+    CHECK(global_config.opt_int("wall_filament") == 4);
+
+    ModelConfig object_config;
+    object_config.set("extruder", 5);
+    object_config.set("wall_filament", 5);
+    object_config.set("sparse_infill_filament", 6);
+    remap_model_config_filament_ids(object_config, id_remap, 5);
+    CHECK(object_config.extruder() == 4);
+    CHECK(object_config.opt_int("wall_filament") == 4);
+    CHECK(object_config.opt_int("sparse_infill_filament") == 5);
+}
+
+TEST_CASE("Mixed filament config remap sends deleted mixed rows to default", "[MixedFilament][ConfigRemap]")
+{
+    // Old mixed ID 5 was cascade-deleted; old mixed ID 6 survives as new ID 5.
+    const std::vector<unsigned int> id_remap = {0, 1, 2, 3, 0, 0, 5};
+
+    ModelConfig object_config;
+    object_config.set("extruder", 5);
+    object_config.set("wall_filament", 5);
+    object_config.set("solid_infill_filament", 6);
+    remap_model_config_filament_ids(object_config, id_remap, 6);
+    CHECK(object_config.extruder() == 0);
+    CHECK_FALSE(object_config.has("wall_filament"));
+    CHECK(object_config.opt_int("solid_infill_filament") == 5);
 }

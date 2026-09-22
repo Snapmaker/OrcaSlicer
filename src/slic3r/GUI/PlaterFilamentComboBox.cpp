@@ -110,7 +110,7 @@ private:
             Order values;
             for (const auto &value : vendor_order.value()) {
                 if (!value.is_string() || value.get_ref<const std::string &>().empty()) {
-                    BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has an invalid filament type: " << path.u8string();
+                    BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has an invalid filament product: " << path.u8string();
                     return;
                 }
                 values.emplace_back(value.get_ref<const std::string &>());
@@ -145,7 +145,7 @@ bool is_missing_vendor(const std::string &vendor)
 {
     wxString label = from_u8(vendor);
     label.Trim(true).Trim(false);
-    return label.empty() || label == _L("(Undefined)");
+    return label.empty() || label == wxString::FromUTF8("(Undefined)");
 }
 
 std::string vendor_from_display_name(const wxString &display_name)
@@ -184,19 +184,52 @@ int system_vendor_rank(const std::string &vendor)
     return 2;
 }
 
-int compare_system_vendors(const std::string &left, const std::string &right)
+} // namespace
+
+bool FilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
+{
+    return less_by_name(left, right);
+}
+
+bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
+{
+    const int name_compare = left.display_name.CmpNoCase(right.display_name);
+    if (name_compare != 0)
+        return name_compare < 0;
+    return left.original_index < right.original_index;
+}
+
+bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
+{
+    return system_vendor_label(left).CmpNoCase(system_vendor_label(right)) < 0;
+}
+
+bool SystemFilamentVendorSorter::less(const std::string &left, const std::string &right) const
 {
     const int left_rank  = system_vendor_rank(left);
     const int right_rank = system_vendor_rank(right);
     if (left_rank != right_rank)
-        return left_rank < right_rank ? -1 : 1;
-
-    // Display labels, not raw config values, determine the alphabetical
-    // order. An empty vendor is displayed as "System".
-    return left_rank == 2 ? system_vendor_label(left).CmpNoCase(system_vendor_label(right)) : 0;
+        return left_rank < right_rank;
+    return FilamentVendorSorter::less(left, right);
 }
 
-} // namespace
+bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
+{
+    if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor)) {
+        const auto  &topn_order = FilamentTopNOrder::instance();
+        const size_t left_rank  = topn_order.rank(left.vendor, left.filament_product);
+        const size_t right_rank = topn_order.rank(right.vendor, right.filament_product);
+        if (left_rank != right_rank)
+            return left_rank < right_rank;
+    }
+
+    static const std::array<const char *, 4> first_types = {"PLA", "PETG", "ABS", "TPU"};
+    const size_t left_type  = rank_of(left.filament_type, first_types);
+    const size_t right_type = rank_of(right.filament_type, first_types);
+    if (left_type != right_type)
+        return left_type < right_type;
+    return less_by_name(left, right);
+}
 
 PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type preset_type)
     : PlaterPresetComboBox(parent, preset_type)
@@ -207,6 +240,8 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     // Load once while the filament GUI is initialized. Popup refreshes only
     // query this immutable in-memory order and never perform file I/O.
     FilamentTopNOrder::instance();
+    m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
+    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>();
 
     m_popup = new FilamentDropDown(this, m_popup_items);
     m_popup->SetUseContentWidth(true, true);
@@ -224,6 +259,34 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
         m_top_level->Bind(wxEVT_MOVE, &PlaterFilamentComboBox::on_top_level_move, this);
         m_top_level->Bind(wxEVT_SIZE, &PlaterFilamentComboBox::on_top_level_size, this);
     }
+}
+
+void PlaterFilamentComboBox::set_project_sorter(std::unique_ptr<FilamentSorter> sorter)
+{
+    m_project_sorter = std::move(sorter);
+    rebuild_popup_rows();
+}
+
+void PlaterFilamentComboBox::set_user_sorter(std::unique_ptr<FilamentSorter> sorter)
+{
+    m_user_sorter = std::move(sorter);
+    rebuild_popup_rows();
+}
+
+void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVendorSorter> sorter)
+{
+    if (sorter == nullptr)
+        sorter = std::make_unique<SystemFilamentVendorSorter>();
+    m_system_vendor_sorter = std::move(sorter);
+    rebuild_popup_rows();
+}
+
+void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
+{
+    if (sorter == nullptr)
+        sorter = std::make_unique<SystemFilamentSorter>();
+    m_system_filament_sorter = std::move(sorter);
+    rebuild_popup_rows();
 }
 
 PlaterFilamentComboBox::~PlaterFilamentComboBox()
@@ -389,6 +452,8 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
         row.item.style      = marker == LABEL_ITEM_DISABLED ? DD_ITEM_STYLE_DISABLED : 0;
         row.combo_index     = static_cast<int>(combo_index);
         row.section         = current_section;
+        row.sort_item.display_name   = text;
+        row.sort_item.original_index = combo_index;
 
         // Rows inside the AMS or machine-filament sections are auxiliary
         // selections even when their backing preset is also a system preset.
@@ -406,10 +471,10 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
                 else
                     row.section = Section::User;
 
-                row.vendor           = preset_vendor(preset);
-                row.filament_type    = preset_filament_type(preset);
-                row.filament_product = preset_filament_product(preset);
-                row.item.tip         = get_tooltip(*preset);
+                row.sort_item.vendor           = preset_vendor(preset);
+                row.sort_item.filament_type    = preset_filament_type(preset);
+                row.sort_item.filament_product = preset_filament_product(preset);
+                row.item.tip                    = get_tooltip(*preset);
             }
         }
 
@@ -424,16 +489,16 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
         // it empty (or keeps the schema placeholder), group the row by the
         // first word of its displayed name. Keep this outside the preset
         // lookup so a stale alias still follows the same display rule.
-        if (row.section == Section::System && is_missing_vendor(row.vendor)) {
-            row.vendor = vendor_from_display_name(row.item.text);
-            if (row.vendor.empty())
+        if (row.section == Section::System && is_missing_vendor(row.sort_item.vendor)) {
+            row.sort_item.vendor = vendor_from_display_name(row.item.text);
+            if (row.sort_item.vendor.empty())
                 continue;
         }
 
         if (current_section == Section::Other) {
             row.item.group.clear();
         } else {
-            row.item.group = popup_group(row.section, row.vendor);
+            row.item.group = popup_group(row.section, row.sort_item.vendor);
         }
 
         m_rows.push_back(std::move(row));
@@ -455,43 +520,12 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
             ++it;
     }
 
-    // System vendor groups are ordered Snapmaker, Generic, then alphabetically
-    // by their visible vendor label. Within a vendor, prioritize common
-    // filament types and then use the visible name for a stable ordering.
-    for (size_t i = 0; i < m_rows.size(); ++i) {
-        if (!is_system_row(m_rows[i]))
-            continue;
-
-        size_t end = i;
-        while (end < m_rows.size() && is_system_row(m_rows[end]))
-            ++end;
-
-        std::stable_sort(m_rows.begin() + static_cast<std::ptrdiff_t>(i),
-                         m_rows.begin() + static_cast<std::ptrdiff_t>(end),
-                         [](const PopupRow &left, const PopupRow &right) {
-                              const int vendor_compare = compare_system_vendors(left.vendor, right.vendor);
-                              if (vendor_compare != 0)
-                                  return vendor_compare < 0;
-
-                              if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor)) {
-                                  const auto &topn_order = FilamentTopNOrder::instance();
-                                  const size_t left_snapmaker_rank  = topn_order.rank(left.vendor, left.filament_product);
-                                  const size_t right_snapmaker_rank = topn_order.rank(right.vendor, right.filament_product);
-                                  if (left_snapmaker_rank != right_snapmaker_rank)
-                                      return left_snapmaker_rank < right_snapmaker_rank;
-                              }
-
-                              static const std::array<const char *, 4> first_types = {"PLA", "PETG", "ABS", "TPU"};
-                             const size_t left_type  = rank_of(left.filament_type, first_types);
-                             const size_t right_type = rank_of(right.filament_type, first_types);
-                             if (left_type != right_type)
-                                 return left_type < right_type;
-                             return left.item.text < right.item.text;
-                         });
-        // Let the loop increment land on the first row after this system
-        // section; do not skip a following header or action row.
-        i = end > 0 ? end - 1 : end;
-    }
+    // Null project/user sorters intentionally preserve the base ComboBox
+    // order. Callers may install another FilamentSorter without changing the
+    // popup data model or selection mapping.
+    sort_section_rows(Section::Project, m_project_sorter.get());
+    sort_section_rows(Section::User, m_user_sorter.get());
+    sort_system_rows();
 
     m_popup_items.reserve(m_rows.size());
     m_popup_to_combo.reserve(m_rows.size());
@@ -509,6 +543,56 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
             break;
         }
     m_popup->SetSelection(popup_selection);
+}
+
+void PlaterFilamentComboBox::sort_section_rows(Section section, const FilamentSorter *sorter)
+{
+    if (sorter == nullptr)
+        return;
+
+    for (size_t begin = 0; begin < m_rows.size();) {
+        while (begin < m_rows.size() && (m_rows[begin].header || m_rows[begin].section != section))
+            ++begin;
+        size_t end = begin;
+        while (end < m_rows.size() && !m_rows[end].header && m_rows[end].section == section)
+            ++end;
+        if (begin != end) {
+            std::stable_sort(m_rows.begin() + static_cast<std::ptrdiff_t>(begin),
+                             m_rows.begin() + static_cast<std::ptrdiff_t>(end),
+                             [sorter](const PopupRow &left, const PopupRow &right) {
+                                 return sorter->less(left.sort_item, right.sort_item);
+                             });
+        }
+        begin = end;
+    }
+}
+
+void PlaterFilamentComboBox::sort_system_rows()
+{
+    // Compose two strict weak orderings lexicographically: vendor equivalence
+    // is resolved by the filament sorter, so the combined comparator remains
+    // valid for every conforming replacement strategy.
+    for (size_t i = 0; i < m_rows.size(); ++i) {
+        if (!is_system_row(m_rows[i]))
+            continue;
+
+        size_t end = i;
+        while (end < m_rows.size() && is_system_row(m_rows[end]))
+            ++end;
+
+        std::stable_sort(m_rows.begin() + static_cast<std::ptrdiff_t>(i),
+                         m_rows.begin() + static_cast<std::ptrdiff_t>(end),
+                         [this](const PopupRow &left, const PopupRow &right) {
+                             if (m_system_vendor_sorter->less(left.sort_item.vendor, right.sort_item.vendor))
+                                 return true;
+                             if (m_system_vendor_sorter->less(right.sort_item.vendor, left.sort_item.vendor))
+                                 return false;
+                             return m_system_filament_sorter->less(left.sort_item, right.sort_item);
+                         });
+        // Let the loop increment land on the first row after this system
+        // section; do not skip a following header or action row.
+        i = end > 0 ? end - 1 : end;
+    }
 }
 
 void PlaterFilamentComboBox::show_popup()
@@ -609,6 +693,12 @@ void PlaterFilamentComboBox::on_mouse_down(wxMouseEvent &event)
 
 void PlaterFilamentComboBox::on_key_down(wxKeyEvent &event)
 {
+    // Alt combinations (e.g. Alt+Space system menu) must not be consumed here.
+    if (event.AltDown()) {
+        event.Skip();
+        return;
+    }
+
     switch (event.GetKeyCode()) {
     case WXK_RETURN:
     case WXK_SPACE:

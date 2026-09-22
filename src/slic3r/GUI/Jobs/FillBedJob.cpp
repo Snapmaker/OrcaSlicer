@@ -141,7 +141,9 @@ void FillBedJob::prepare()
 
                 m_unselected.emplace_back(ap);
             }*/
-    if (auto wt = get_wipe_tower_arrangepoly(*m_plater))
+    // Filling is about fitting as many copies as possible, so the tower goes into a corner
+    // first instead of staying wherever it was left, possibly mid-plate.
+    if (auto wt = move_wipe_tower_to_nearest_corner(*m_plater))
         m_unselected.emplace_back(std::move(*wt));
 
     double sc = scaled<double>(1.) * scaled(1.);

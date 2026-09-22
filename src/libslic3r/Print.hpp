@@ -13,6 +13,7 @@
 #include "TriangleMeshSlicer.hpp"
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
+#include "GCode/WipeTower2.hpp"
 #include "GCode/ThumbnailData.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"

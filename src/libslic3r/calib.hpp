@@ -2,6 +2,7 @@
 #include <string>
 #define calib_pressure_advance_dd
 
+#include "GCode.hpp"
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"

@@ -3,6 +3,7 @@
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 #include "format.hpp"
+#include "I18N.hpp"
 
 #include "GCode/Thumbnails.hpp"
 #include <set>

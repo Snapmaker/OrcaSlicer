@@ -15154,8 +15154,10 @@ void Plater::priv::on_export_finished(wxCommandEvent& evt)
 
 void Plater::priv::on_slicing_began()
 {
-    if(!m_slice_timing_active)
+    if(!m_slice_timing_active) {
         m_slice_start_time    = std::chrono::steady_clock::now();
+        q->log_slice_start();
+    }
     m_slice_timing_active = true;
     clear_warnings();
     notification_manager->close_notification_of_type(NotificationType::SignDetected);
@@ -23227,7 +23229,7 @@ std::string extend_info_value(const Model& model, const char* key)
     return {};
 }
 
-// source comes from space_info.json's "extendInfo" (which generator produced the model
+// The field name "generate_source" in the tracking protocol corresponds to "extendInfo.source" in 3MF.
 std::string source_from(const Model& model)
 {
     const std::string src = extend_info_value(model, "source");
@@ -23295,6 +23297,9 @@ std::string export_id_from(const Model& model)
 
 void Plater::log_model_import_from_lab() const
 {
+    if (p->model.space_info.empty())
+        return;
+
     SNAP_LOG_BATCH(Info, "model import from lab",
         {"source", "cpp"},
         {"eventName", "orca_model_import_from_lab"},
@@ -23306,6 +23311,9 @@ void Plater::log_model_import_from_lab() const
 
 void Plater::log_slice_start() const
 {
+    if (p->model.space_info.empty())
+        return;
+
     SNAP_LOG_BATCH(Info, "slice start",
         {"source", "cpp"},
         {"eventName", "orca_slice_start"},
@@ -23315,6 +23323,9 @@ void Plater::log_slice_start() const
 
 void Plater::log_slice_success(long long duration_ms) const
 {
+    if (p->model.space_info.empty())
+        return;
+
     SNAP_LOG_BATCH(Info, "slice success",
         {"source", "cpp"},
         {"eventName", "orca_slice_success"},
@@ -23325,6 +23336,9 @@ void Plater::log_slice_success(long long duration_ms) const
 
 void Plater::log_print_start() const
 {
+    if (p->model.space_info.empty())
+        return;
+
     const GCodeProcessorResult* result = nullptr;
     PartPlate* plate = p->partplate_list.get_curr_plate();
     if (plate != nullptr)

@@ -273,7 +273,8 @@ void Downloader::on_complete(wxCommandEvent& event)
     // metadata (project_id / export_id) is available.
     for (const auto& download : m_downloads) {
         if (download->get_id() == event.GetInt() && download->is_lab_import()) {
-            wxGetApp().plater()->log_model_import_from_lab();
+            if (boost::algorithm::iends_with(into_u8(event.GetString()), ".3mf"))
+                wxGetApp().plater()->log_model_import_from_lab();
             break;
         }
     }

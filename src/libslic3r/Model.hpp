@@ -1545,6 +1545,9 @@ public:
     std::vector<std::string> md_name;
     std::vector<std::string> md_value;
 
+    // space info carried in "Metadata/space_info.json"
+    SpaceInfo space_info;
+
     void SetDesigner(std::string designer, std::string designer_user_id) {
         if (design_info == nullptr) {
             design_info = std::make_shared<ModelDesignInfo>();

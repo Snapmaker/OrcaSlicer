@@ -7,6 +7,7 @@
     "max_travel_detour_distance": "0",
     "bottom_surface_pattern": "monotonic",
     "bottom_shell_layers": "3",
+    "bottom_color_penetration_layers": "3",
     "bottom_shell_thickness": "0",
     "bridge_speed": "50",
     "brim_object_gap": "0.1",
@@ -64,11 +65,13 @@
     "top_surface_acceleration": "2000",
     "top_surface_speed": "200",
     "top_shell_layers": "3",
+    "top_color_penetration_layers": "3",
     "top_shell_thickness": "0.8",
     "travel_speed": "500",
     "enable_prime_tower": "1",
     "wipe_tower_no_sparse_layers": "0",
     "prime_tower_width": "35",
     "wall_generator": "classic",
-    "compatible_printers": []
+    "compatible_printers": [],
+    "exclude_object": "1"
 }

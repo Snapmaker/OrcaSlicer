@@ -13,7 +13,6 @@
 #include "TriangleMeshSlicer.hpp"
 #include "GCode/ToolOrdering.hpp"
 #include "GCode/WipeTower.hpp"
-#include "GCode/WipeTower2.hpp"
 #include "GCode/ThumbnailData.hpp"
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"
@@ -367,6 +366,27 @@ public:
     LayerPtrs&                   layers()               { return m_layers; }
     SupportLayerPtrs&            support_layers()       { return m_support_layers; }
 
+    /*!
+     * \brief Remove short bridges from the overhang contact regions so that they are
+     * printed without support.
+     *
+     * Bridges detected on the current layer (straight overhanging perimeter segments
+     * supported at both ends, and short bottom-bridge surfaces) are subtracted in place
+     * from overhang_regions.
+     *
+     * \param lower_layer Layer below the current one; used to test whether the ends of
+     * straight overhanging perimeter segments are supported.
+     * \param current_layer Layer whose bridges are detected.
+     * \param extrusion_width Scaled extrusion width.
+     * \param overhang_regions Overhang regions to filter, updated in place.
+     * \param max_bridge_length Scaled max length of bridges that don't need support.
+     * \param break_bridge Split bridges longer than max_bridge_length into supported
+     * segments; unused by tree supports (poor interface quality, see #4318).
+     * \param overhang_regions_with_type Optional typed overhang list. When non-null it
+     * is kept in sync with overhang_regions by subtracting the same bridge set, and
+     * each diff fragment inherits the type tag of its source region. When null, the
+     * call behaves exactly as if this parameter did not exist.
+     */
     template<typename PolysType>
     static void remove_bridges_from_contacts(
         const Layer* lower_layer,
@@ -374,7 +394,8 @@ public:
         float extrusion_width,
         PolysType* overhang_regions,
         float max_bridge_length = scale_(10),
-        bool break_bridge=false);
+        bool break_bridge=false,
+        std::vector<std::pair<ExPolygon, int>>* overhang_regions_with_type = nullptr);
 
     // Bounding box is used to align the object infill patterns, and to calculate attractor for the rear seam.
     // The bounding box may not be quite snug.
@@ -641,6 +662,7 @@ struct FakeWipeTower
     float rotation_angle;
     float cone_angle;
     Vec2d plate_origin;
+    Vec2f rib_offset{0.f, 0.f};
     std::map<float, Polylines> outer_wall;
 
     void set_fake_extrusion_data(Vec2f p, float w, float h, float lh, float d, float bd, Vec2d o)
@@ -666,8 +688,7 @@ struct FakeWipeTower
         cone_angle = ca;
         plate_origin = o;
     }
-    void set_pos(Vec2f p) { pos = p; }
-    void set_pos_and_rotation(const Vec2f& p, float rotation) { pos = p; rotation_angle = rotation; }
+    void set_pos(Vec2f p) { pos = p + rib_offset; }
 
     std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower() const
     {
@@ -694,87 +715,19 @@ struct FakeWipeTower
         return paths;
     }
 
-    std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower2() const
-    {
-        float h = height;
-        float lh = layer_height;
-        int   d = scale_(depth);
-        int   w = scale_(width);
-        int   bd = scale_(brim_width);
-        Point minCorner = { -bd, -bd };
-        Point maxCorner = { minCorner.x() + w + bd, minCorner.y() + d + bd };
-
-        const auto [cone_base_R, cone_scale_x] = WipeTower2::get_wipe_tower_cone_base(width, height, depth, cone_angle);
-
-        std::vector<ExtrusionPaths> paths;
-        for (float hh = 0.f; hh < h; hh += lh) {
-            
-            if (hh != 0.f) {
-                // The wipe tower may be getting smaller. Find the depth for this layer.
-                size_t i = 0;
-                for (i=0; i<z_and_depth_pairs.size()-1; ++i)
-                    if (hh >= z_and_depth_pairs[i].first && hh < z_and_depth_pairs[i+1].first)
-                        break;
-                d = scale_(z_and_depth_pairs[i].second);
-                minCorner = {0.f, -d/2 + scale_(z_and_depth_pairs.front().second/2.f)};
-                maxCorner = { minCorner.x() + w, minCorner.y() + d };
-            }
-
-
-            ExtrusionPath path(ExtrusionRole::erWipeTower, 0.0, 0.0, lh);
-            path.polyline = { minCorner, {maxCorner.x(), minCorner.y()}, maxCorner, {minCorner.x(), maxCorner.y()}, minCorner };
-            paths.push_back({ path });
-
-            // We added the border, now add several parallel lines so we can detect an object that is fully inside the tower.
-            // For now, simply use fixed spacing of 3mm.
-            for (coord_t y=minCorner.y()+scale_(3.); y<maxCorner.y(); y+=scale_(3.)) {
-                path.polyline = { {minCorner.x(), y}, {maxCorner.x(), y} };
-                paths.back().emplace_back(path);
-            }
-
-            // And of course the stabilization cone and its base...
-            if (cone_base_R > 0.) {
-                path.polyline.clear();
-                double r = cone_base_R * (1 - hh/height);
-                for (double alpha=0; alpha<2.01*M_PI; alpha+=2*M_PI/20.)
-                    path.polyline.points.emplace_back(Point::new_scale(width/2. + r * std::cos(alpha)/cone_scale_x, depth/2. + r * std::sin(alpha)));
-                paths.back().emplace_back(path);
-                if (hh == 0.f) { // Cone brim.
-                    for (float bw=brim_width; bw>0.f; bw-=3.f) {
-                        path.polyline.clear();
-                        for (double alpha=0; alpha<2.01*M_PI; alpha+=2*M_PI/20.) // see load_wipe_tower_preview, where the same is a bit clearer
-                            path.polyline.points.emplace_back(Point::new_scale(
-                                width/2. + cone_base_R * std::cos(alpha)/cone_scale_x * (1. + cone_scale_x*bw/cone_base_R),
-                                depth/2. + cone_base_R * std::sin(alpha) * (1. + bw/cone_base_R))
-                            );
-                        paths.back().emplace_back(path);
-                    }
-                }
-            }
-
-            // Only the first layer has brim.
-            if (hh == 0.f) {
-                minCorner = minCorner + Point(bd, bd);
-                maxCorner = maxCorner - Point(bd, bd);
-            }
-        }
-
-        // Rotate and translate the tower into the final position.
-        for (ExtrusionPaths& ps : paths) {
-            for (ExtrusionPath& p : ps) {
-                p.polyline.rotate(Geometry::deg2rad(rotation_angle));
-                p.polyline.translate(scale_(pos.x()), scale_(pos.y()));
-            }
-        }
-
-        return paths;
-    }
+    std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower2() const;
 
     ExtrusionLayers getTrueExtrusionLayersFromWipeTower() const;
 };
 
 struct WipeTowerData
 {
+    struct WipeTowerMeshData
+    {
+        Polygon bottom;
+        TriangleMesh real_wipe_tower_mesh;
+        TriangleMesh real_brim_mesh;
+    };
     // Following section will be consumed by the GCodeGenerator.
     // Tool ordering of a non-sequential print has to be known to calculate the wipe tower.
     // Cache it here, so it does not need to be recalculated during the G-code generation.
@@ -793,6 +746,9 @@ struct WipeTowerData
     std::vector<std::vector<WipeTower::box_coordinates>>  local_z_reserve_boxes;
     float                                                 brim_width;
     float                                                 height;
+    BoundingBoxf bbx;
+    Vec2f rib_offset;
+    std::optional<WipeTowerMeshData> wipe_tower_mesh_data;
 
     void clear() {
         priming.reset(nullptr);
@@ -804,7 +760,11 @@ struct WipeTowerData
         depth = 0.f;
         local_z_reserve_boxes.clear();
         brim_width = 0.f;
+        wipe_tower_mesh_data = std::nullopt;
     }
+
+    void construct_mesh(float width, float depth, float height, 
+        float brim_width, bool is_rib_wipe_tower, float rib_width, float rib_length, bool fillet_wall);
 
 private:
 	// Only allow the WipeTowerData to be instantiated internally by Print, 
@@ -1013,6 +973,8 @@ public:
     const PrintRegion&          get_print_region(size_t idx) const  { return *m_print_regions[idx]; }
     const ToolOrdering&         get_tool_ordering() const { return m_wipe_tower_data.tool_ordering; }
     const FakeWipeTower& get_fake_wipe_tower() const { return m_fake_wipe_tower; }
+    BoundingBoxf get_wipe_tower_bbx() const { return m_wipe_tower_data.bbx; }
+    Vec2f get_rib_offset() const { return m_wipe_tower_data.rib_offset; }
 
     //BBS: plate's origin related functions
     void set_plate_origin(Vec3d origin) { m_origin = origin; }

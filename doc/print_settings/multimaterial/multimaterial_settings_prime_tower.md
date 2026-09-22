@@ -12,18 +12,6 @@ Width of the prime tower.
 
 Width of the brim around the prime tower.
 
-<a id="brim-chamfer"></a>
-
-## Brim chamfer
-
-Chamfer applied to the prime tower brim.
-
-<a id="brim-chamfer-max-width"></a>
-
-## Brim chamfer max width
-
-Maximum width of the prime tower brim chamfer.
-
 ## Wipe Tower Rotation Angle
 
 Wipe tower rotation angle with respect to x-axis.
@@ -51,12 +39,6 @@ For the wipe tower external perimeters the internal perimeter speed is used rega
 ## Wall type
 
 Wipe tower outer wall type.
-
-<a id="wall-gap"></a>
-
-## Wall gap
-
-Gap between wipe tower wall paths.
 
 ### Rectangle
 

@@ -1305,10 +1305,13 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
         if (max_bridge_length > 0 && layer->loverhangs.size() > 0 && lower_layer) {
             // do not break bridge as the interface will be poor, see #4318
             bool break_bridge = false;
-            m_object->remove_bridges_from_contacts(lower_layer, layer, extrusion_width_scaled, &layer->loverhangs, max_bridge_length, break_bridge);
+            m_object->remove_bridges_from_contacts(
+                lower_layer, layer, extrusion_width_scaled,
+                &layer->loverhangs, max_bridge_length, break_bridge,
+                &layer->loverhangs_with_type);
         }
-        // Note: loverhangs_with_type is intentionally NOT synced after bridge removal.
-        // generate_initial_nodes iterates loverhangs_with_type, not loverhangs. (Bambu 976b5062c)
+        // loverhangs_with_type must stay in sync with loverhangs here: generate_initial_nodes
+        // iterates loverhangs_with_type, so an unsynced list would make bridge removal invisible to node generation.
 
         if (!layer->loverhangs_with_type.empty()) {
             layers_with_overhangs++;
@@ -1524,7 +1527,12 @@ static void make_perimeter_and_infill(ExtrusionEntitiesPtr& dst, const ExPolygon
             dst = std::move(loops_entities);
         }
     }
-    dst.erase(std::remove_if(dst.begin(), dst.end(), [](ExtrusionEntity *entity) { return static_cast<ExtrusionEntityCollection *>(entity)->empty(); }), dst.end());
+
+    // Orca: Some entities are direct paths, so check the type before testing for an empty collection.
+    dst.erase(std::remove_if(dst.begin(), dst.end(), [](ExtrusionEntity *entity) {
+        return entity != nullptr && entity->is_collection() && static_cast<ExtrusionEntityCollection *>(entity)->empty();
+    }), dst.end());
+
     if (infill_first) {
         // sort regions to reduce travel
         Points ordering_points;
@@ -1545,7 +1553,7 @@ void TreeSupport::generate_toolpaths()
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
     coordf_t nozzle_diameter = m_print_config->nozzle_diameter.get_at(object_config.support_filament - 1);
     coordf_t layer_height = object_config.layer_height.value;
-    const size_t wall_count = object_config.tree_support_wall_count.value;
+    const size_t wall_count = tree_support_effective_wall_count(m_support_params.support_style, object_config.tree_support_wall_count.value);
 
     // Check if set to zero, use default if so.
     if (support_extrusion_width <= 0.0)
@@ -1767,9 +1775,28 @@ void TreeSupport::generate_toolpaths()
                         bool need_infill = with_infill;
                         if(m_object_config->support_base_pattern==smpDefault)
                             need_infill &= area_group.need_infill;
-                        std::shared_ptr<Fill> filler_support = std::shared_ptr<Fill>(Fill::new_from_type(layer_id == 0 ? ipConcentric : m_support_params.base_fill_pattern));
+                        // Ported from upstream OrcaSlicer d2ca5d3a1e.
+                        //
+                        // The bed-contacting support base (layer 0, no raft) previously forced
+                        // ipConcentric and computed spacing as
+                        //   support_base_pattern_spacing * support_density.
+                        // When the effective support_base_pattern_spacing is 0 (per-object override
+                        // or global default), spacing becomes 0, which makes FillConcentric's
+                        // while(!last.empty()) convergence loop spin forever: distance=0 means
+                        // offset2_ex(last, -(0+0), +0) is a no-op, so the polygon never shrinks.
+                        //
+                        // Fix: on the bed-contacting base layer, use ipRectilinear (which has no
+                        // offset-convergence loop) and real flow spacing (always > 0).
+                        const bool support_base_on_bed = (layer_id == 0 && m_raft_layers == 0);
+                        const InfillPattern base_fill_pattern = support_base_on_bed
+                            ? ipRectilinear
+                            : m_support_params.base_fill_pattern;
+                        std::shared_ptr<Fill> filler_support =
+                            std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
                         filler_support->set_bounding_box(bbox_object);
-                        filler_support->spacing = object_config.support_base_pattern_spacing.value * support_density;// constant spacing to align support infill lines
+                        filler_support->spacing = support_base_on_bed
+                            ? flow.spacing()
+                            : (object_config.support_base_pattern_spacing.value * support_density);
                         filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);
@@ -2340,7 +2367,7 @@ void TreeSupport::draw_circles()
                         double brim_width = tree_brim_width >= 0.f ? tree_brim_width : 0.;
                         for (const ExPolygon &expoly : area) {
                             brim_width = std::max(brim_width,
-                                expoly.map_moment_to_expansion(config.support_speed.value, node.dist_mm_to_top));
+                                expoly.map_moment_to_expansion(get_value_at(config, config.support_speed, ConfigFlowDomain::Process), node.dist_mm_to_top));
                         }
                         area = safe_offset_inc(area, scale_(brim_width), get_collision(false),
                                                scale_(MIN_BRANCH_RADIUS * 0.5), 0, 1);
@@ -2466,14 +2493,20 @@ void TreeSupport::draw_circles()
                     area_groups.emplace_back(&expoly, SupportLayer::Roof1stLayer, max_layers_above_roof1);
                 }
 
+                // Snapmaker: collect the polygons of all area groups at this layer so the
+                // small-hole cleanup below can tell slivers from carve holes that another
+                // group owns (transition strip carved into an interface polygon etc.).
+                std::vector<const ExPolygon *> area_group_polys;
+                area_group_polys.reserve(area_groups.size());
+                for (const auto &group : area_groups)
+                    if (group.area != nullptr)
+                        area_group_polys.emplace_back(group.area);
+
                 for (auto &area_group : area_groups) {
+                    if (area_group.area == nullptr)
+                        continue;
                     auto& expoly = area_group.area;
-                    expoly->holes.erase(std::remove_if(expoly->holes.begin(), expoly->holes.end(),
-                                                       [](auto &hole) {
-                                                           auto bbox_size = get_extents(hole).size();
-                                                           return bbox_size[0] < scale_(2) && bbox_size[1] < scale_(2);
-                                                       }),
-                                        expoly->holes.end());
+                    erase_small_area_group_holes(*expoly, area_group_polys);
 
                     if (layer_nr < brim_skirt_layers)
                         ts_layer->lslices.emplace_back(*expoly);
@@ -2715,8 +2748,11 @@ void TreeSupport::drop_nodes()
     const size_t top_interface_layers = config.support_interface_top_layers.value;
     const size_t bottom_interface_layers = config.support_interface_bottom_layers.value < 0 ? top_interface_layers : config.support_interface_bottom_layers.value;
     SupportNode::diameter_angle_scale_factor = diameter_angle_scale_factor;
-    float        DO_NOT_MOVER_UNDER_MM       = is_slim ? 0 : 5;                     // do not move contact points under 5mm
-    const bool   bottom_expand_enabled      = config.tree_support_wall_count > 1 || config.tree_support_wall_count < 0;
+    // Ported from BambuStudio d61ebefa2: bottom expansion grows branch radius in the first
+    // DO_NOT_MOVER_UNDER_MM above the bed so tree bases fill cavities/grooves instead of spilling
+    // out of them. Bambu gates it on wall_count > 1 || < 0 (their auto is -1); here the range is
+    // [0,2] with 0 meaning auto, so the gate is every value except an explicit single wall.
+    const bool bottom_expand_enabled = config.tree_support_wall_count != 1;
 
     auto get_max_move_dist = [this, &config, tan_angle, wall_count, support_extrusion_width](const SupportNode *node, int power = 1) {
         if (node->max_move_dist == 0) {
@@ -3175,6 +3211,12 @@ void TreeSupport::drop_nodes()
 
                 Point  to_outside         = projection_onto(avoidance_next, node.position);
                 Point  direction_to_outer = to_outside - node.position;
+                // Ported from BambuStudio 976b5062c: a sharp tail within 3 mm of its tip steers both
+                // directions along the skin, so the tip keeps growing down the slanted surface
+                // instead of being flung to the avoidance border.
+                if (node.skin_direction != Point(0, 0) && node.dist_mm_to_top < 3) {
+                    direction_to_outer = move_to_neighbor_center = normal(node.skin_direction, scale_(max_move_distance));
+                }
                 double dist2_to_outer     = vsize2_with_unscale(direction_to_outer);
                 // don't move if
                 // 1) line of node and to_outside is cut by contour (means supports may intersect with object)
@@ -3196,18 +3238,26 @@ void TreeSupport::drop_nodes()
                 }
                 // move to the averaged direction of neighbor center and contour edge if they are roughly same direction
                 Point movement(0, 0);
-                if (support_on_buildplate_only)
-                    // Under build-plate-only an escape run must not lose speed to neighbour
-                    // convergence: the avoidance cone grows at max_move per layer, so any
-                    // lateral component lets a flaring wall catch the branch and the whole
-                    // chain is pruned. Push purely outward while an escape direction exists
-                    // (pre-a78168c2e8 behaviour, same as the strong blend); converge only
-                    // when safely outside the avoidance.
-                    movement = (dist2_to_outer > EPSILON) ? normal(direction_to_outer, scale_(get_max_move_dist(&node)))
-                                                          : move_to_neighbor_center;
-                else if (!is_strong)
-                    movement = move_to_neighbor_center*2 + (dist2_to_outer > EPSILON ? direction_to_outer * (1 / dist2_to_outer) : Point(0, 0));
-                else {
+                if (support_on_buildplate_only) {
+                    // With "support on build plate only" a branch has to reach the plate or its whole area goes
+                    // unsupported, so keep the full-speed escape semantics: outward when touching the
+                    // avoidance area, otherwise converge to the neighbor center (normalized, so branches in the
+                    // middle of a cavity still converge at node speed and can escape closed openings).
+                    // Sharp tails keep following their skin for the first layers.
+                    if (node.is_sharp_tail && node.dist_mm_to_top < 3 && node.skin_direction != Point(0, 0))
+                        movement = normal(node.skin_direction, scale_(get_max_move_dist(&node)));
+                    else if (dist2_to_outer > EPSILON)
+                        movement = normal(direction_to_outer, scale_(get_max_move_dist(&node)));
+                    else
+                        movement = normal(move_to_neighbor_center, scale_(get_max_move_dist(&node)));
+                } else {
+                    // The dot() reads movement before any assignment in the ported BambuStudio code too; zero
+                    // initializing it keeps that check deterministic (always false), so a branch follows the
+                    // neighbor center whenever one exists and only a lone branch falls outward.
+                    // Deliberate deviation from BambuStudio 976b5062c: upstream keeps a blended outward
+                    // escape term for the non-strong styles whose weight (1/dist2_to_outer) dominates once a
+                    // branch grazes a wall, which still walks slim/hybrid branches out of cavities. Pin every
+                    // 2D tree style to the neighbor-center skeleton the same way strong trees already are.
                     if (movement.dot(move_to_neighbor_center) >= 0.2 || move_to_neighbor_center == Point(0, 0))
                         movement = direction_to_outer + move_to_neighbor_center;
                     else
@@ -3220,8 +3270,6 @@ void TreeSupport::drop_nodes()
                 // component whenever dist2_to_outer > 0 (the common case), so branches
                 // only ever moved away from the object and never toward their neighbours.
                 // Only sharp-tail nodes keep a fixed skin_direction for their first layers.
-                if (node.is_sharp_tail && node.dist_mm_to_top < 3 && node.skin_direction != Point(0, 0))
-                    movement = normal(node.skin_direction, scale_(get_max_move_dist(&node)));
                 if (vsize2_with_unscale(movement) > get_max_move_dist(&node, 2))
                     movement = normal(movement, scale_(get_max_move_dist(&node)));
 
@@ -3245,7 +3293,11 @@ void TreeSupport::drop_nodes()
                 to_outside             = projection_onto(next_collision, next_node->position);
                 direction_to_outer     = to_outside - node.position;
                 double dist_to_outer   = unscale_(direction_to_outer.cast<double>().norm());
-                next_node->radius      = std::max(node.radius, std::min(next_node->radius, dist_to_outer));
+                // Near the bed the branch keeps the full radius lineage and grows by half an extrusion
+                // width per layer (bottom expansion), which widens the base instead of dodging outward.
+                next_node->radius      = (bottom_expand_enabled && next_node->print_z < DO_NOT_MOVER_UNDER_MM && node.dist_mm_to_top > DO_NOT_MOVER_UNDER_MM) ?
+                                             node.radius + support_extrusion_width / 2. :
+                                             std::max(node.radius, std::min(next_node->radius, dist_to_outer));
                 get_max_move_dist(next_node);
                 m_ts_data->m_mutex.lock();
                 contact_nodes[layer_nr_next].push_back(next_node);
@@ -3786,7 +3838,6 @@ void TreeSupport::generate_contact_points()
 #endif
         }}
     ); // end tbb::parallel_for
-
 
 
     int nNodes = all_nodes.size();

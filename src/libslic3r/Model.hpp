@@ -444,6 +444,11 @@ public:
     const BoundingBoxf3&    bounding_box_approx() const;
     // Returns an exact bounding box of the transformed instances. The result it is being cached.
     const BoundingBoxf3&    bounding_box_exact() const;
+    /**
+     * @brief Calculates the bounding box of all instances in assembly-view coordinates.
+     * @return The merged assembly-view bounding box.
+     */
+    BoundingBoxf3           CalculateAssemblyBoundingBox() const;
     // Return minimum / maximum of a printable object transformed into the world coordinate system.
     // All instances share the same min / max Z.
     double                  min_z() const;
@@ -1010,7 +1015,14 @@ public:
     bool is_seam_painted() const { return !this->seam_facets.empty(); }
     bool is_mm_painted() const { return !this->mmu_segmentation_facets.empty(); }
     bool is_fuzzy_skin_painted() const { return !this->fuzzy_skin_facets.empty(); }
-    
+
+    // Id of the source ModelObject this volume was cloned from when objects were
+    // assembled (merged) into a multi-part object. Opaque group label only compared for
+    // equality by ModelObject::split() to re-attach non-solid volumes (e.g. negative
+    // volumes) to the objects they originally belonged to before the assembly.
+    void     set_merged_group_id(ObjectID id) { m_merged_group_id = id; }
+    ObjectID merged_group_id() const { return m_merged_group_id; }
+
     // Orca: Implement prusa's filament shrink compensation approach
     // Returns 0-based indices of extruders painted by multi-material painting gizmo.
      std::vector<size_t> get_extruders_from_multi_material_painting() const;
@@ -1037,6 +1049,7 @@ private:
     // Is it an object to be printed, or a modifier volume?
     ModelVolumeType                 	m_type;
     t_model_material_id             	m_material_id;
+    mutable bool m_mmuseg_extruders_has_0_extruder{ true };
     // The convex hull of this model's mesh.
     std::shared_ptr<const TriangleMesh> m_convex_hull;
     //BBS: add convex hull 2d related logic
@@ -1053,6 +1066,9 @@ private:
     //      0   ->   is not splittable
     //      1   ->   is splittable
     mutable int               		m_is_splittable{ -1 };
+    // See set_merged_group_id(). Invalid (0) when the volume did not come
+    // from an "Assemble" merge.
+    ObjectID                        m_merged_group_id{};
 
 	ModelVolume(ModelObject *object, const TriangleMesh &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) : m_mesh(new TriangleMesh(mesh)), m_type(type), object(object)
     {
@@ -1105,7 +1121,8 @@ private:
         name(other.name), source(other.source), m_mesh(other.m_mesh), m_convex_hull(other.m_convex_hull),
         config(other.config), m_type(other.m_type), object(object), m_transformation(other.m_transformation),
         supported_facets(other.supported_facets), seam_facets(other.seam_facets), mmu_segmentation_facets(other.mmu_segmentation_facets),
-        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration),
+        emboss_shape(other.emboss_shape), m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1128,7 +1145,8 @@ private:
     // Providing a new mesh, therefore this volume will get a new unique ID assigned.
     ModelVolume(ModelObject *object, const ModelVolume &other, TriangleMesh &&mesh) :
         name(other.name), source(other.source), config(other.config), object(object), m_mesh(new TriangleMesh(std::move(mesh))), m_type(other.m_type), m_transformation(other.m_transformation),
-        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape),
+        m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1178,7 +1196,8 @@ private:
         // BBS: add backup, check modify
         bool mesh_changed = false;
         auto tr = m_transformation;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         mesh_changed |= !(tr == m_transformation);
         auto t = supported_facets.timestamp();
         cereal::load_by_value(ar, supported_facets);
@@ -1207,7 +1226,8 @@ private:
 	}
 	template<class Archive> void save(Archive &ar) const {
 		bool has_convex_hull = m_convex_hull.get() != nullptr;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         cereal::save_by_value(ar, supported_facets);
         cereal::save_by_value(ar, seam_facets);
         cereal::save_by_value(ar, mmu_segmentation_facets);
@@ -1281,7 +1301,11 @@ public:
         m_assemble_transformation.set_matrix(transform);
     }
     Vec3d get_assemble_offset() const {return m_assemble_transformation.get_offset(); }
-    void set_assemble_offset(const Vec3d& offset) { m_assemble_transformation.set_offset(offset); }
+    void set_assemble_offset(const Vec3d& offset)
+    {
+        m_assemble_initialized = true;
+        m_assemble_transformation.set_offset(offset);
+    }
     void set_assemble_rotation(const Vec3d &rotation) { m_assemble_transformation.set_rotation(rotation); }
     void rotate_assemble(double angle, const Vec3d& axis) {
         m_assemble_transformation.set_rotation(m_assemble_transformation.get_rotation() + Geometry::extract_euler_angles(Eigen::Quaterniond(Eigen::AngleAxisd(angle, axis)).toRotationMatrix()));
@@ -1616,6 +1640,12 @@ public:
     ModelObject* add_object(const char *name, const char *path, const TriangleMesh &mesh);
     ModelObject* add_object(const char *name, const char *path, TriangleMesh &&mesh);
     ModelObject* add_object(const ModelObject &other);
+    /**
+     * @brief Initializes newly created objects as one assembly-view layout batch.
+     * @param modelObjects Objects owned by this model, in their desired layout order.
+     *        Invalid objects and instances are skipped.
+     */
+    void InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects);
     void         delete_object(size_t idx);
     bool         delete_object(ObjectID id);
     bool         delete_object(ModelObject* object);
@@ -1640,6 +1670,12 @@ public:
     BoundingBoxf3 bounding_box_approx() const;
     // Returns exact axis aligned bounding box of this model.
     BoundingBoxf3 bounding_box_exact() const;
+    /**
+     * @brief Calculates the assembly-view bounding box for this model.
+     * @param excludedObjects Objects to exclude from the result.
+     * @return The merged assembly-view bounding box.
+     */
+    BoundingBoxf3 CalculateAssemblyBoundingBox(const ModelObjectPtrs& excludedObjects = {}) const;
     // Return maximum height of all printable objects.
     double        max_z() const;
     // Set the print_volume_state of PrintObject::instances,

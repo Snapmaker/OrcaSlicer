@@ -30,26 +30,52 @@ APP_NAME="Snapmaker_Orca"
 APP_NAME_EX="Snapmaker Orca"
 DMG_NAME="Snapmaker_Orca_${ARCH}.dmg"
 
-# 证书配置
-CERTIFICATE_ID="Developer ID Application: Shenzhen Snapmaker Technologies Co., Ltd. (5NGD3B3V37)"
 ENTITLEMENTS="$PROJECT_DIR/scripts/disable_validation.entitlements"
 
-# ============================================
-# 公证凭据配置（已设置）
-# ============================================
-NOTARY_APPLE_ID="snapmaker-app@snapmaker.com"
-NOTARY_TEAM_ID="5NGD3B3V37"
-#NOTARY_KEYCHAIN_PROFILE="snapmaker"
-NOTARY_PASSWORD="guhi-nuxy-mgnh-cbqs"
+CERTIFICATE_ID="${CERTIFICATE_ID:-}"
+NOTARY_APPLE_ID="${NOTARY_APPLE_ID:-}"
+NOTARY_TEAM_ID="${NOTARY_TEAM_ID:-}"
+NOTARY_PASSWORD="${NOTARY_PASSWORD:-}"
+NOTARY_KEYCHAIN_PROFILE="${NOTARY_KEYCHAIN_PROFILE:-}"
+
+# 无 Developer ID 时仍必须 ad-hoc 重签：install_name_tool 会破坏原签名，
+# 跳过重签会在 macOS 上直接 SIGKILL (Code Signature Invalid)。
+if [ -n "$CERTIFICATE_ID" ]; then
+    SIGN_IDENTITY="$CERTIFICATE_ID"
+    SIGN_MODE="Developer ID"
+else
+    SIGN_IDENTITY="-"
+    SIGN_MODE="ad-hoc"
+fi
+
+ENABLE_NOTARY=0
+if [ "$SIGN_IDENTITY" != "-" ]; then
+    if [ -n "$NOTARY_KEYCHAIN_PROFILE" ]; then
+        ENABLE_NOTARY=1
+    elif [ -n "$NOTARY_APPLE_ID" ] && [ -n "$NOTARY_TEAM_ID" ] && [ -n "$NOTARY_PASSWORD" ]; then
+        ENABLE_NOTARY=1
+    fi
+fi
 
 echo "=========================================="
 echo "macOS 应用签名、打包、公证完整流程"
 echo "=========================================="
 echo "架构: $ARCH"
-echo "证书: $CERTIFICATE_ID"
-echo "TEAM_ID: 5NGD3B3V37"
+echo "证书: ${CERTIFICATE_ID:-未设置，使用 ad-hoc 签名}"
+echo "TEAM_ID: ${NOTARY_TEAM_ID:-未设置}"
+echo "签名: $SIGN_MODE"
+echo "公证: $([ "$ENABLE_NOTARY" -eq 1 ] && echo 启用 || echo 跳过)"
 echo "项目目录: $PROJECT_DIR"
 echo
+
+# codesign 封装：Developer ID 带 timestamp；ad-hoc 不能带 timestamp
+codesign_item() {
+    if [ "$SIGN_IDENTITY" = "-" ]; then
+        codesign --force --verbose --options runtime --sign "$SIGN_IDENTITY" "$@"
+    else
+        codesign --force --verbose --options runtime --timestamp --sign "$SIGN_IDENTITY" "$@"
+    fi
+}
 
 # ============================================
 # 查找应用
@@ -131,7 +157,10 @@ rm -f "$FINAL_APP/Contents/PkgInfo" 2>/dev/null || true
 
 # 清理所有扩展属性（包括 com.apple.quarantine），避免 Gatekeeper 问题
 echo "清理扩展属性..."
-xattr -cr "$FINAL_APP"
+xattr -cr "$FINAL_APP" 2>/dev/null || {
+    echo "  部分文件无法清除 xattr（可忽略）"
+    find "$FINAL_APP" -type f -exec sh -c 'xattr -c "$1" 2>/dev/null || true' _ {} \;
+}
 
 # ============================================
 # 打包外部依赖库
@@ -147,6 +176,16 @@ mkdir -p "$APP_FRAMEWORKS_DIR"
 echo
 echo "检查并打包外部依赖库..."
 
+# GitHub 发布包不携带 Homebrew 的 libzstd*.dylib。
+# 本机构建若链到 /opt/homebrew/.../libzstd.1.5.7.dylib，也不打进 Frameworks：
+# 打进去的是构建机上的特定版本，用户机器没有这份库（或加载路径仍指向 Homebrew）就会崩溃。
+should_skip_bundle_lib() {
+    case "$1" in
+        libzstd*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # 查找所有外部依赖（非系统库）
 EXTERNAL_LIBS=$(otool -L "$EXECUTABLE" | grep -E "opt/homebrew|usr/local|opt/local" | awk '{print $1}')
 
@@ -158,6 +197,10 @@ if [ -n "$EXTERNAL_LIBS" ]; then
     for LIB_PATH in $EXTERNAL_LIBS; do
         if [ -f "$LIB_PATH" ]; then
             LIB_NAME=$(basename "$LIB_PATH")
+            if should_skip_bundle_lib "$LIB_NAME"; then
+                echo "跳过: $LIB_NAME（不打入安装包，与 GitHub 发布包一致）"
+                continue
+            fi
             echo "处理: $LIB_NAME"
 
             # 获取实际的库文件路径（处理符号链接）- macOS 兼容方式
@@ -199,6 +242,9 @@ else
     echo "没有外部依赖需要处理"
 fi
 
+# 清掉历史打包残留，避免 libzstd*.dylib 进入 DMG
+rm -f "$APP_FRAMEWORKS_DIR"/libzstd*.dylib
+
 # 移除不需要的 rpath
 echo
 echo "清理 rpath..."
@@ -220,6 +266,15 @@ echo
 echo "验证最终依赖:"
 otool -L "$EXECUTABLE" | grep -E "@executable|libzstd|libsentry" || echo "无特殊依赖"
 
+if otool -L "$EXECUTABLE" | grep -qE "/opt/homebrew/.*/libzstd|/usr/local/.*/libzstd|/opt/local/.*/libzstd"; then
+    echo ""
+    echo "警告: 可执行文件仍链接到本机 Homebrew/MacPorts 的 libzstd。"
+    echo "      此 DMG 在没有该库的机器上会启动崩溃（Library not loaded）。"
+    echo "      GitHub 包能用，是因为 CI 构建没有链到 Homebrew zstd。"
+    echo "      请在未安装 brew zstd 的环境重新编译，或从链接路径中排除 /opt/homebrew。"
+    echo ""
+fi
+
 # ============================================
 # 步骤 2/6: 签名应用
 # ============================================
@@ -233,6 +288,8 @@ APP_FRAMEWORKS_DIR="$FINAL_APP/Contents/Frameworks"
 APP_MACOS_DIR="$FINAL_APP/Contents/MacOS"
 EXECUTABLE="$APP_MACOS_DIR/$APP_NAME"
 
+echo "签名方式: $SIGN_MODE ($SIGN_IDENTITY)"
+
 # 2.1 移除现有签名
 echo "2.1 移除现有签名..."
 codesign --remove-signature "$FINAL_APP" 2>/dev/null || true
@@ -244,7 +301,7 @@ if [ -d "$APP_FRAMEWORKS_DIR" ]; then
     for framework in "$APP_FRAMEWORKS_DIR"/*.framework; do
         if [ -d "$framework" ]; then
             echo "  - 签名: $(basename "$framework")"
-            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$framework" 2>/dev/null || true
+            codesign_item "$framework" 2>/dev/null || true
         fi
     done
 
@@ -252,7 +309,7 @@ if [ -d "$APP_FRAMEWORKS_DIR" ]; then
     for dylib in "$APP_FRAMEWORKS_DIR"/*.dylib; do
         if [ -f "$dylib" ]; then
             echo "  - 签名: $(basename "$dylib")"
-            codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$dylib"
+            codesign_item "$dylib"
         fi
     done
 
@@ -263,7 +320,7 @@ if [ -d "$APP_FRAMEWORKS_DIR" ]; then
                 *.dylib) ;;  # 已处理，跳过
                 *)
                     echo "  - 签名: $(basename "$lib")"
-                    codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$lib"
+                    codesign_item "$lib"
                     ;;
             esac
         fi
@@ -274,21 +331,18 @@ fi
 echo "2.3 签名辅助工具（使用 runtime 选项）..."
 if [ -f "$APP_MACOS_DIR/crashpad_handler" ]; then
     echo "  - 签名: crashpad_handler"
-    codesign --force --verbose --options runtime --timestamp --sign "$CERTIFICATE_ID" "$APP_MACOS_DIR/crashpad_handler"
+    codesign_item "$APP_MACOS_DIR/crashpad_handler"
 fi
 
 # 2.4 签名整个 app bundle（应用 entitlements）
 echo "2.4 签名整个 app bundle（应用 entitlements）..."
 echo "  这会签名所有组件并将 entitlements 应用到主可执行文件"
-codesign --force --verbose --options runtime --timestamp \
-    --entitlements "$ENTITLEMENTS" \
-    --sign "$CERTIFICATE_ID" \
-    "$FINAL_APP"
+codesign_item --entitlements "$ENTITLEMENTS" "$FINAL_APP"
 
 # 2.5 验证签名和 entitlements
 echo "2.5 验证签名和 entitlements..."
 echo "  检查签名..."
-codesign -vvv "$FINAL_APP" 2>&1 | grep -E "valid on disk|Authority|TeamIdentifier" | head -5
+codesign -vvv "$FINAL_APP" 2>&1 | grep -E "valid on disk|Authority|TeamIdentifier|adhoc" | head -5
 echo ""
 echo "  检查 entitlements..."
 if codesign -d --entitlements - "$FINAL_APP" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
@@ -317,7 +371,10 @@ rm -rf "$DMG_CONTENT_DIR/.fseventsd" 2>/dev/null || true
 echo "准备 DMG 内容..."
 cp -R "$FINAL_APP" "$DMG_CONTENT_DIR/$APP_NAME_EX.app"
 # 清理 DMG 内容中的扩展属性（重要！避免 Gatekeeper 问题）
-xattr -cr "$DMG_CONTENT_DIR/$APP_NAME_EX.app"
+xattr -cr "$DMG_CONTENT_DIR/$APP_NAME_EX.app" 2>/dev/null || {
+    echo "  部分文件无法清除 xattr（可忽略）"
+    find "$DMG_CONTENT_DIR/$APP_NAME_EX.app" -type f -exec sh -c 'xattr -c "$1" 2>/dev/null || true' _ {} \;
+}
 ln -sfn /Applications "$DMG_CONTENT_DIR/Applications"
 
 # 卷名不使用下划线，避免 macOS 安全机制阻止
@@ -375,7 +432,11 @@ fi
 
 # 签名 DMG
 echo "签名 DMG..."
-codesign --force --timestamp --sign "$CERTIFICATE_ID" "$FINAL_DMG_PATH"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --sign "$SIGN_IDENTITY" "$FINAL_DMG_PATH"
+else
+    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$FINAL_DMG_PATH"
+fi
 
 echo "验证 DMG 签名..."
 codesign -vvv "$FINAL_DMG_PATH" 2>&1 | head -3
@@ -384,7 +445,7 @@ rm -rf "$DMG_CONTENT_DIR"
 
 echo ""
 echo "=========================================="
-echo "DMG 创建和签名完成!"
+echo "DMG 创建完成!"
 echo "=========================================="
 echo "DMG: $FINAL_DMG_PATH"
 echo "大小: $(du -h "$FINAL_DMG_PATH" | cut -f1)"
@@ -398,36 +459,42 @@ echo "=========================================="
 echo "步骤 4/6: 公证 DMG"
 echo "=========================================="
 
-# 判断是否可公证：检查密码是否已设置
 echo "检查公证凭据..."
-echo "  Apple ID: $NOTARY_APPLE_ID"
-echo "  Team ID: $NOTARY_TEAM_ID"
+echo "  Apple ID: ${NOTARY_APPLE_ID:-未设置}"
+echo "  Team ID: ${NOTARY_TEAM_ID:-未设置}"
+echo "  Keychain Profile: ${NOTARY_KEYCHAIN_PROFILE:-未设置}"
 
-if [ -z "$NOTARY_PASSWORD" ] || [ "$NOTARY_PASSWORD" = "__PLEASE_ENTER_PASSWORD__" ]; then
+if [ "$ENABLE_NOTARY" -eq 0 ]; then
     echo ""
-    echo "密码未设置！"
-    echo ""
-    echo "请在脚本中设置密码："
-    echo "  NOTARY_PASSWORD=\"your-app-specific-password\""
-    echo ""
-    echo "或者通过环境变量设置："
-    echo "  export NOTARY_PASSWORD=\"your-app-specific-password\""
-    echo ""
-    echo "跳过公证步骤..."
+    if [ "$SIGN_IDENTITY" = "-" ]; then
+        echo "CERTIFICATE_ID 未设置，已使用 ad-hoc 签名；ad-hoc 无法公证，跳过公证"
+    else
+        echo "公证凭据不完整，跳过公证步骤"
+        echo "请在本机或 CI 设置以下环境变量之一:"
+        echo "  1) export NOTARY_KEYCHAIN_PROFILE=\"snapmaker\""
+        echo "  2) 或同时设置 NOTARY_APPLE_ID、NOTARY_TEAM_ID、NOTARY_PASSWORD"
+    fi
 else
-    echo "✓ 密码已配置"
+    echo "✓ 公证凭据已配置"
     echo ""
     echo "=========================================="
     echo "步骤 5/6: 提交公证"
     echo "=========================================="
 
     echo "提交 DMG 到 Apple 公证服务..."
-    xcrun notarytool submit "$FINAL_DMG_PATH" \
-        --apple-id "$NOTARY_APPLE_ID" \
-        --team-id "$NOTARY_TEAM_ID" \
-        --password "$NOTARY_PASSWORD" \
-        --wait \
-        --progress
+    if [ -n "$NOTARY_KEYCHAIN_PROFILE" ]; then
+        xcrun notarytool submit "$FINAL_DMG_PATH" \
+            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+            --wait \
+            --progress
+    else
+        xcrun notarytool submit "$FINAL_DMG_PATH" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" \
+            --wait \
+            --progress
+    fi
 
     echo ""
     echo "=========================================="
@@ -437,7 +504,6 @@ else
     echo "装订公证票据到 DMG..."
     xcrun stapler staple "$FINAL_DMG_PATH"
 
-    # 验证公证结果
     echo ""
     echo "验证公证结果..."
     xcrun stapler validate -v "$FINAL_DMG_PATH"
@@ -456,8 +522,10 @@ echo "=========================================="
 echo "架构: $ARCH"
 echo "应用: $FINAL_APP"
 echo "DMG: $FINAL_DMG_PATH"
-echo "证书: $CERTIFICATE_ID"
-echo "TEAM_ID: 5NGD3B3V37"
+echo "证书: ${CERTIFICATE_ID:-未设置}"
+echo "TEAM_ID: ${NOTARY_TEAM_ID:-未设置}"
+echo "签名: $SIGN_MODE"
+echo "公证: $([ "$ENABLE_NOTARY" -eq 1 ] && echo 已启用 || echo 已跳过)"
 echo ""
 echo "使用方法:"
 echo "  1. 打开 DMG: open $FINAL_DMG_PATH"

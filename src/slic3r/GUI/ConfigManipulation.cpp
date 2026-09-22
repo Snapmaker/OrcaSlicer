@@ -125,22 +125,42 @@ void ConfigManipulation::check_nozzle_temperature_initial_layer_range(DynamicPri
 
 void ConfigManipulation::check_filament_max_volumetric_speed(DynamicPrintConfig *config)
 {
-    //if (is_msg_dlg_already_exist) return;
-    //float max_volumetric_speed = config->opt_float("filament_max_volumetric_speed");
+    auto *max_speeds = config->option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    if (max_speeds == nullptr || max_speeds->values.empty())
+        return;
 
-    float max_volumetric_speed = config->has("filament_max_volumetric_speed") ? config->opt_float("filament_max_volumetric_speed", (float) 0.5) : 0.5;
-    // BBS: limite the min max_volumetric_speed
-    if (max_volumetric_speed < 0.5) {
-        const wxString     msg_text = _(L("Too small max volumetric speed.\nReset to 0.5."));
-        MessageDialog      dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
+    size_t variant_count = max_speeds->values.size();
+    if (const auto *flow_support = config->option<ConfigOptionStrings>("filament_flow_support");
+        flow_support != nullptr && !flow_support->values.empty())
+        variant_count = std::max(variant_count, flow_support->values.size());
+
+    ConfigOptionFloats corrected = *max_speeds;
+    const double fallback = corrected.values.front();
+    corrected.resize(variant_count);
+    for (size_t idx = max_speeds->values.size(); idx < variant_count; ++idx)
+        corrected.values[idx] = fallback;
+    bool needs_correction = corrected.values.size() != max_speeds->values.size();
+    bool has_invalid_value = false;
+    for (size_t idx = 0; idx < variant_count; ++idx) {
+        if (corrected.get_at(idx) < 0.5) {
+            corrected.values[idx] = 0.5;
+            needs_correction = true;
+            has_invalid_value = true;
+        }
+    }
+
+    if (needs_correction) {
         DynamicPrintConfig new_conf = *config;
-        is_msg_dlg_already_exist    = true;
-        dialog.ShowModal();
-        new_conf.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({0.5}));
+        if (has_invalid_value) {
+            const wxString msg_text = _(L("Too small max volumetric speed.\nReset to 0.5."));
+            MessageDialog  dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
+            is_msg_dlg_already_exist = true;
+            dialog.ShowModal();
+        }
+        new_conf.set_key_value("filament_max_volumetric_speed", corrected.clone());
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
-
 }
 
 void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
@@ -168,6 +188,42 @@ void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
                 is_msg_dlg_already_exist = false;
             }
         }
+    }
+}
+
+void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top)
+{
+    const char* pen_key   = is_top ? "top_color_penetration_layers" : "bottom_color_penetration_layers";
+    const char* shell_key = is_top ? "top_shell_layers" : "bottom_shell_layers";
+    const int   cur_shell = config->opt_int(shell_key);
+    const int   cur_pen   = config->opt_int(pen_key);
+
+    // Both fields of the pair highlight together, whichever value was edited.
+    const bool is_invalid = cur_pen > cur_shell;
+    if (cb_highlight_field) {
+        cb_highlight_field(pen_key, is_invalid);
+        cb_highlight_field(shell_key, is_invalid);
+    }
+    if (!is_invalid)
+        return;
+
+    const wxString msg_text = is_top ?
+        wxString::Format(_L("Top paint penetration layers cannot exceed top shell layers.\n"
+                           "Top paint penetration layers will be reset to %d."), cur_shell) :
+        wxString::Format(_L("Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+                           "Bottom paint penetration layers will be reset to %d."), cur_shell);
+    MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+    DynamicPrintConfig new_conf = *config;
+    is_msg_dlg_already_exist = true;
+    dialog.ShowModal();
+    new_conf.set_key_value(pen_key, new ConfigOptionInt(cur_shell));
+    apply(config, &new_conf);
+    is_msg_dlg_already_exist = false;
+    // apply() re-ran the update; re-sync the highlights with the post-reset state.
+    if (cb_highlight_field) {
+        const bool still_invalid = config->opt_int(pen_key) > config->opt_int(shell_key);
+        cb_highlight_field(pen_key, still_invalid);
+        cb_highlight_field(shell_key, still_invalid);
     }
 }
 
@@ -292,6 +348,10 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
+
+    // Penetration must not exceed shell layers: highlight both fields red, warn, reset.
+    validate_paint_penetration_layers(config, true);
+    validate_paint_penetration_layers(config, false);
 
     double sparse_infill_density = config->option<ConfigOptionPercent>("sparse_infill_density")->value;
     int    fill_multiline        = config->option<ConfigOptionInt>("fill_multiline")->value;
@@ -448,6 +508,43 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         }
     }
 
+    if (config->option<ConfigOptionPercent>("sparse_infill_density")->value == 100) {
+        std::string  sparse_infill_pattern = config->option<ConfigOptionEnum<InfillPattern>>("sparse_infill_pattern")->serialize();
+        const auto& top_fill_pattern_values = config->def()->get("top_surface_pattern")->enum_values;
+        bool correct_100p_fill = std::find(top_fill_pattern_values.begin(), top_fill_pattern_values.end(), sparse_infill_pattern) != top_fill_pattern_values.end();
+        if (!correct_100p_fill) {
+            // get sparse_infill_pattern name from enum_labels for using this one at dialog_msg
+            const ConfigOptionDef* fill_pattern_def = config->def()->get("sparse_infill_pattern");
+            assert(fill_pattern_def != nullptr);
+            auto it_pattern = std::find(fill_pattern_def->enum_values.begin(), fill_pattern_def->enum_values.end(), sparse_infill_pattern);
+            assert(it_pattern != fill_pattern_def->enum_values.end());
+            if (it_pattern != fill_pattern_def->enum_values.end()) {
+                wxString msg_text = GUI::format_wxstr(_L("%1% infill pattern doesn't support 100%% density."),
+                    _(fill_pattern_def->enum_labels[it_pattern - fill_pattern_def->enum_values.begin()]));
+                if (is_global_config)
+                    msg_text += "\n" + _L("Switch to rectilinear pattern?\n"
+                        "Yes - switch to rectilinear pattern automatically\n"
+                        "No  - reset density to default non 100% value automatically") + "\n";
+                MessageDialog dialog(m_msg_dlg_parent, msg_text, "",
+                    wxICON_WARNING | (is_global_config ? wxYES | wxNO : wxOK));
+                DynamicPrintConfig new_conf = *config;
+                is_msg_dlg_already_exist = true;
+                auto answer = dialog.ShowModal();
+                if (is_object_config || answer == wxID_YES) {
+                    new_conf.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+                    sparse_infill_density = 100;
+                }
+                else
+                    sparse_infill_density = wxGetApp().preset_bundle->prints.get_selected_preset().config.option<ConfigOptionPercent>("sparse_infill_density")->value;
+                new_conf.set_key_value("sparse_infill_density", new ConfigOptionPercent(sparse_infill_density));
+                apply(config, &new_conf);
+                if (cb_value_change)
+                    cb_value_change("sparse_infill_density", sparse_infill_density);
+                is_msg_dlg_already_exist = false;
+            }
+        }
+    }
+
     // BBS
     static const char* keys[] = { "support_filament", "support_interface_filament"};
     for (int i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
@@ -531,22 +628,29 @@ void ConfigManipulation::apply_null_fff_config(DynamicPrintConfig *config, std::
     }
 }
 
-void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, const bool is_global_config)
+void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, const bool is_global_config, size_t flow_variant_index)
 {
     PresetBundle *preset_bundle  = wxGetApp().preset_bundle;
 
     auto gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
     const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
 
-    bool have_volumetric_extrusion_rate_slope = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope")->value > 0;
-    float have_volumetric_extrusion_rate_slope_segment_length = config->option<ConfigOptionFloat>("max_volumetric_extrusion_rate_slope_segment_length")->value;
+    auto process_flow_float = [config, flow_variant_index](const char *key, double fallback) {
+        const auto *option = config->option<ConfigOptionFloats>(key);
+        if (option == nullptr || option->values.empty())
+            return fallback;
+        return option->get_at(std::min(flow_variant_index, option->values.size() - 1));
+    };
+
+    bool have_volumetric_extrusion_rate_slope = process_flow_float("max_volumetric_extrusion_rate_slope", 0) > 0;
+    float have_volumetric_extrusion_rate_slope_segment_length = process_flow_float("max_volumetric_extrusion_rate_slope_segment_length", 0);
     toggle_field("enable_arc_fitting", !have_volumetric_extrusion_rate_slope);
     toggle_line("max_volumetric_extrusion_rate_slope_segment_length", have_volumetric_extrusion_rate_slope);
     toggle_line("extrusion_rate_smoothing_external_perimeter_only", have_volumetric_extrusion_rate_slope);
     if(have_volumetric_extrusion_rate_slope) config->set_key_value("enable_arc_fitting", new ConfigOptionBool(false));
     if(have_volumetric_extrusion_rate_slope_segment_length < 0.5) {
         DynamicPrintConfig new_conf = *config;
-        new_conf.set_key_value("max_volumetric_extrusion_rate_slope_segment_length", new ConfigOptionFloat(1));
+        new_conf.set_key_value("max_volumetric_extrusion_rate_slope_segment_length", new ConfigOptionFloats { 1. });
         apply(config, &new_conf);
     }
 
@@ -629,14 +733,14 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : { "top_surface_line_width", "top_surface_speed" })
         toggle_field(el, has_top_shell);
 
-    bool have_default_acceleration = config->opt_float("default_acceleration") > 0;
+    bool have_default_acceleration = process_flow_float("default_acceleration", 0) > 0;
 
     for (auto el : {"outer_wall_acceleration", "inner_wall_acceleration", "initial_layer_acceleration",
         "top_surface_acceleration", "travel_acceleration", "first_layer_travel_acceleration",
         "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})
         toggle_field(el, have_default_acceleration);
 
-    bool have_default_jerk = config->opt_float("default_jerk") > 0;
+    bool have_default_jerk = process_flow_float("default_jerk", 0) > 0;
 
     for (auto el : { "outer_wall_jerk", "inner_wall_jerk", "initial_layer_jerk", "top_surface_jerk", "travel_jerk", "first_layer_travel_jerk", "infill_jerk"})
         toggle_field(el, have_default_jerk);
@@ -726,12 +830,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("support_speed", have_support_material || have_skirt_height);
     toggle_line("support_interface_speed", have_support_material && have_support_interface);
 
-    bool have_support_speed_split = have_support_material && have_support_interface && config->opt_bool("support_top_contact_speed_split");
-    toggle_line("support_top_contact_speed_split", have_support_material && have_support_interface);
-    toggle_line("support_top_contact_speed_first", have_support_speed_split);
-    toggle_line("support_top_contact_speed_middle", have_support_speed_split);
-    toggle_line("support_top_contact_speed_top", have_support_speed_split);
-
     // BBS
     //toggle_field("support_material_synchronize_layers", have_support_soluble);
 
@@ -773,6 +871,12 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"wall_filament", "sparse_infill_filament", "solid_infill_filament", "wipe_tower_filament"})
         toggle_line(el, !bSEMM);
 
+    std::string printer_model = wxGetApp().preset_bundle->printers.get_edited_preset().config.opt_string("printer_model");
+    bool is_tower_interface_supported = printer_model.find("Snapmaker U1") != std::string::npos;
+    toggle_line("enable_tower_interface_features", have_prime_tower && is_tower_interface_supported);
+    toggle_line("enable_tower_interface_cooldown_during_tower",
+                have_prime_tower && is_tower_interface_supported && config->opt_bool("enable_tower_interface_features"));
+
     bool purge_in_primetower = preset_bundle->printers.get_edited_preset().config.opt_bool("purge_in_prime_tower");
 
     for (auto el : {"wipe_tower_cone_angle",
@@ -798,6 +902,11 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     
     toggle_field("prime_tower_width", have_prime_tower && wipe_tower_wall_type != WipeTowerWallType::wtwRib);
 
+    toggle_line("wipe_tower_wall_gap", have_prime_tower);
+    toggle_line("prime_tower_enable_framework", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer_max_width", have_prime_tower);
+    toggle_line("prime_tower_brim_chamfer", have_prime_tower);
+
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 
     toggle_line("prime_volume",have_prime_tower && (!purge_in_primetower || !bSEMM));
@@ -808,7 +917,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     bool have_avoid_crossing_perimeters = config->opt_bool("reduce_crossing_wall");
     toggle_line("max_travel_detour_distance", have_avoid_crossing_perimeters);
 
-    bool has_overhang_speed = config->opt_bool("enable_overhang_speed");
+    bool has_overhang_speed = config->opt_bool("enable_overhang_speed", 0);
     for (auto el : {"overhang_1_4_speed", "overhang_2_4_speed", "overhang_3_4_speed", "overhang_4_4_speed"})
         toggle_line(el, has_overhang_speed);
 
@@ -836,7 +945,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     for (auto el : {"accel_to_decel_enable", "accel_to_decel_factor"})
         toggle_line(el, gcflavor == gcfKlipper);
     if(gcflavor == gcfKlipper)
-        toggle_field("accel_to_decel_factor", config->opt_bool("accel_to_decel_enable"));
+        toggle_field("accel_to_decel_factor", config->opt_bool("accel_to_decel_enable", 0));
 
     bool have_make_overhang_printable = config->opt_bool("make_overhang_printable");
     toggle_line("make_overhang_printable_angle", have_make_overhang_printable);

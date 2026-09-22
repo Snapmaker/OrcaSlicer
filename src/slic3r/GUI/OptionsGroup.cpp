@@ -59,6 +59,7 @@ const t_field& OptionsGroup::build_field(const t_config_option_key& id, const Co
     default:
         switch (opt.type) {
             case coFloatOrPercent:
+            case coFloatsOrPercents:
             case coFloat:
             case coFloats:
 			case coPercent:
@@ -85,7 +86,9 @@ const t_field& OptionsGroup::build_field(const t_config_option_key& id, const Co
 				break;
             case coNone:   break;
             default:
-				throw Slic3r::LogicError("This control doesn't exist till now"); break;
+				wxLogError("Unsupported config option type %d for field '%s'; falling back to a text control.",
+                               static_cast<int>(opt.type), wxString::FromUTF8(id));
+                break;
         }
     }
     // Grab a reference to fields for convenience
@@ -233,6 +236,11 @@ Line* OptionsGroup::get_line(const std::string& opt_key)
     {
         if(l.is_separator())
             continue;
+        // A full-width widget-only line (e.g. a custom banner/toggle row) has no
+        // options, so it can never match an opt_key; skip it to avoid dereferencing
+        // an empty option vector in get_first_option_key().
+        if (l.get_options().empty())
+            continue;
         if (l.get_first_option_key() == opt_key)
             return &l;
     }
@@ -375,11 +383,16 @@ void OptionsGroup::activate_line(Line& line)
     auto sizer = custom_ctrl ? nullptr : new wxBoxSizer(wxHORIZONTAL);
     if (!custom_ctrl)
         grid_sizer->Add(sizer, 0, wxEXPAND | (staticbox ? wxALL : wxBOTTOM | wxTOP | wxLEFT), staticbox ? 0 : 1);
-    // If we have a single option with no sidetext just add it directly to the grid sizer
+	// If we have a single option with no sidetext just add it directly to the grid sizer
     if (option_set.size() == 1 && option_set.front().opt.sidetext.size() == 0 &&
 		option_set.front().side_widget == nullptr && line.get_extra_widgets().size() == 0) {
 		const auto& option = option_set.front();
 		const auto& field = build_field(option);
+		if (label != nullptr)
+			// remember the label widget so cross-field validation can recolor it
+			field->set_label_window(label);
+		// derive cross-field validation state (pages build lazily / get rebuilt)
+		field->init_invalid_highlight_from_config(get_config(), option.opt_id);
 
         if (!custom_ctrl) {
             if (is_window_field(field))
@@ -396,6 +409,7 @@ void OptionsGroup::activate_line(Line& line)
 		ConfigOptionDef option = opt.opt;
         wxSizer* sizer_tmp = sizer;
 		// add label if any
+		wxStaticText* opt_label = nullptr;
 		if ((is_multioption_line || line.label.IsEmpty()) && !option.label.empty() && !custom_ctrl) {
 //!			To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
 			wxString str_label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ?
@@ -406,11 +420,17 @@ void OptionsGroup::activate_line(Line& line)
 			label->SetBackgroundStyle(wxBG_STYLE_PAINT);
             label->SetFont(wxGetApp().normal_font());
 			sizer_tmp->Add(label, 0, wxALIGN_CENTER_VERTICAL, 0);
+			opt_label = label;
 		}
 
 		// add field
 		const Option& opt_ref = opt;
 		auto& field = build_field(opt_ref);
+		if (opt_label != nullptr)
+			// remember the label widget so cross-field validation can recolor it
+			field->set_label_window(opt_label);
+		// derive cross-field validation state (pages build lazily / get rebuilt)
+		field->init_invalid_highlight_from_config(get_config(), opt_ref.opt_id);
         if (!custom_ctrl) {
             if (option_set.size() == 1 && option_set.front().opt.full_width)
             {
@@ -618,6 +638,21 @@ Option ConfigOptionsGroup::get_option(const std::string& opt_key, int opt_index 
 	    wxGetApp().sidebar().get_searcher().add_key(opt_id, static_cast<Preset::Type>(this->config_type()), title, this->config_category());
 
 	return Option(*m_config->def()->get(opt_key), opt_id);
+}
+
+bool ConfigOptionsGroup::set_option_index(const std::string& opt_key, int opt_index)
+{
+    bool updated = false;
+    for (auto& option : m_opt_map)
+    {
+        if (option.second.first != opt_key)
+            continue;
+
+        option.second.second = opt_index;
+        updated = true;
+    }
+
+    return updated;
 }
 
 void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const boost::any& value)
@@ -963,7 +998,8 @@ boost::any ConfigOptionsGroup::get_config_value(const DynamicPrintConfig& config
         {
         case coPercents:
         case coFloats: {
-            if (config.option(opt_key)->is_nil())
+            const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(opt_key));
+            if (option != nullptr && option->is_nil(idx))
                 ret = _(L("N/A"));
             else {
                 double val = opt->type == coFloats ?
@@ -988,6 +1024,22 @@ boost::any ConfigOptionsGroup::get_config_value(const DynamicPrintConfig& config
     }
 
 	switch (opt->type) {
+	case coFloatsOrPercents: {
+        const ConfigOptionFloatsOrPercents *values = nullptr;
+        if (config.has(opt_key) && config.option(opt_key) != nullptr)
+            values = config.option<ConfigOptionFloatsOrPercents>(opt_key);
+        else if (opt->default_value)
+            values = dynamic_cast<const ConfigOptionFloatsOrPercents*>(opt->default_value.get());
+
+        if (values != nullptr && !values->values.empty()) {
+            const FloatOrPercent &value = values->values[std::min(idx, values->values.size() - 1)];
+            text_value = double_to_string(value.value);
+            if (value.percent)
+                text_value += "%";
+            ret = text_value;
+        }
+        break;
+    }
 	case coFloatOrPercent:{
         if (!config.has(opt_key) || config.option(opt_key) == nullptr) {
             const auto *defaults = opt->default_value ? dynamic_cast<const ConfigOptionFloatOrPercent*>(opt->default_value.get()) : nullptr;
@@ -1251,7 +1303,8 @@ boost::any ConfigOptionsGroup::get_config_value2(const DynamicPrintConfig& confi
         {
         case coPercents:
         case coFloats: {
-            if (config.option(opt_key)->is_nil())
+            const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(opt_key));
+            if (option != nullptr && option->is_nil(idx))
                 ret = ConfigOptionFloatsNullable::nil_value();
             else {
                 double val = opt->type == coFloats ?
@@ -1273,6 +1326,22 @@ boost::any ConfigOptionsGroup::get_config_value2(const DynamicPrintConfig& confi
     }
 
     switch (opt->type) {
+    case coFloatsOrPercents: {
+        const ConfigOptionFloatsOrPercents *values = nullptr;
+        if (config.has(opt_key) && config.option(opt_key) != nullptr)
+            values = config.option<ConfigOptionFloatsOrPercents>(opt_key);
+        else if (opt->default_value)
+            values = dynamic_cast<const ConfigOptionFloatsOrPercents*>(opt->default_value.get());
+
+        if (values != nullptr && !values->values.empty()) {
+            const FloatOrPercent &value = values->values[std::min(idx, values->values.size() - 1)];
+            wxString text_value = double_to_string(value.value);
+            if (value.percent)
+                text_value += "%";
+            ret = into_u8(text_value);
+        }
+        break;
+    }
     case coFloatOrPercent:{
         if (!config.has(opt_key) || config.option(opt_key) == nullptr) {
             const auto *defaults = opt->default_value ? dynamic_cast<const ConfigOptionFloatOrPercent*>(opt->default_value.get()) : nullptr;

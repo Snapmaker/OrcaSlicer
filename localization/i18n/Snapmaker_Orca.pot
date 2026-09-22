@@ -7610,9 +7610,15 @@ msgstr ""
 msgid "Cool Plate (SuperTack)"
 msgstr ""
 
+msgid "Bed temperature when the Cool Plate (SuperTack) is installed. A value of 0 means the filament does not support printing on the Cool Plate (SuperTack)."
+msgstr ""
+
+msgid "Cool Steel Plate"
+msgstr ""
+
 msgid ""
-"Bed temperature when the Cool Plate SuperTack is installed. A value of 0 "
-"means the filament does not support printing on the Cool Plate SuperTack."
+"Bed temperature when the Cool Steel Plate is installed. A value of 0 "
+"means the filament does not support printing on the Cool Steel Plate."
 msgstr ""
 
 msgid "Cool Plate"
@@ -8640,6 +8646,9 @@ msgstr ""
 msgid "Beta version"
 msgstr ""
 
+msgid "Release"
+msgstr ""
+
 msgid "Updating"
 msgstr ""
 
@@ -9324,7 +9333,12 @@ msgstr ""
 
 msgid ""
 "Bed temperature for layers except the initial one. A value of 0 means the "
-"filament does not support printing on the Cool Plate SuperTack."
+"filament does not support printing on the Cool Steel Plate."
+msgstr ""
+
+msgid ""
+"Bed temperature for layers except the initial one. A value of 0 means the "
+"filament does not support printing on this plate."
 msgstr ""
 
 msgid ""
@@ -9360,7 +9374,12 @@ msgstr ""
 
 msgid ""
 "Bed temperature of the initial layer. A value of 0 means the filament does "
-"not support printing on the Cool Plate SuperTack."
+"not support printing on the Cool Steel Plate."
+msgstr ""
+
+msgid ""
+"Bed temperature of the initial layer. A value of 0 means the filament does "
+"not support printing on this plate."
 msgstr ""
 
 msgid ""
@@ -12143,7 +12162,7 @@ msgstr ""
 msgid "Initial layer expansion"
 msgstr ""
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 
 msgid "Raft layers"
@@ -12931,12 +12950,6 @@ msgstr ""
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 
-msgid "Minimum Support Contact Area"
-msgstr ""
-
-msgid "Lower values generate more support contact surfaces."
-msgstr ""
-
 msgid "Speed of support interface."
 msgstr ""
 
@@ -13226,6 +13239,48 @@ msgid "Speed of top surface infill which is solid."
 msgstr ""
 
 msgid "Top shell layers"
+msgstr ""
+
+msgid "Top paint penetration layers"
+msgstr ""
+
+msgid ""
+"The number of layers painted with the top surface color into the top shell, "
+"including the top surface layer itself. Each penetration layer shrinks inwards "
+"by one line width. Increase this value to reduce color bleeding at the top "
+"surface in multi-material printing. 0 behaves the same as 1 (only the surface "
+"layer is painted)."
+msgstr ""
+
+msgid "Bottom paint penetration layers"
+msgstr ""
+
+msgid ""
+"The number of layers painted with the bottom surface color into the bottom "
+"shell, including the bottom surface layer itself. Each penetration layer "
+"shrinks inwards by one line width. Increase this value to reduce color "
+"bleeding at the bottom surface in multi-material printing. 0 behaves the same "
+"as 1 (only the surface layer is painted)."
+msgstr ""
+
+msgid ""
+"Top paint penetration layers cannot exceed top shell layers.\n"
+"Top paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"Bottom paint penetration layers cannot exceed bottom shell layers.\n"
+"Bottom paint penetration layers will be reset to %d."
+msgstr ""
+
+msgid ""
+"The top paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the top paint penetration layers."
+msgstr ""
+
+msgid ""
+"The bottom paint penetration layers (%1%) of object %2% exceed the total layer "
+"count (%3%) of this object. Please reduce the bottom paint penetration layers."
 msgstr ""
 
 msgid ""

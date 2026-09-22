@@ -20,7 +20,7 @@ struct SupportTransitionConfig
         SupportTransitionConfig c;
         c.layer_count   = cfg.tree_support_transition_layers.value;
         c.use_perimeter = cfg.support_transition_perimeter.value;
-        c.speed         = cfg.support_transition_speed.value;
+        c.speed         = get_value_at(cfg, cfg.support_transition_speed, ConfigFlowDomain::Process);
         c.flow_ratio    = cfg.support_transition_flow_ratio.get_abs_value(1.0f);
         return c;
     }

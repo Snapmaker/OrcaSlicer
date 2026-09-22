@@ -7,6 +7,7 @@
 #include <wx/timer.h>
 
 #include <algorithm>
+#include <array>
 #include <vector>
 
 namespace Slic3r { namespace GUI {

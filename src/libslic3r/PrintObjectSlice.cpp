@@ -298,11 +298,15 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     float z                          = zs[z_idx];
                     int   idx_first_printable_region = -1;
                     bool  complex                    = false;
+                    std::vector<int> printable_region_ids;
                     for (int idx_region = 0; idx_region < int(layer_range.volume_regions.size()); ++ idx_region) {
                         const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_region];
                         if (region.bbox->min().z() <= z && region.bbox->max().z() >= z) {
-                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part())
+                            if (region.model_volume->is_model_part())
+                                printable_region_ids.push_back(idx_region);
+                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part()) {
                                 idx_first_printable_region = idx_region;
+                            }
                             else if (idx_first_printable_region != -1) {
                                 // Test for overlap with some other region.
                                 for (int idx_region2 = idx_first_printable_region; idx_region2 < idx_region; ++ idx_region2) {
@@ -318,8 +322,10 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     if (complex)
                         zs_complex.push_back({ z_idx, z });
                     else if (idx_first_printable_region >= 0) {
-                        const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_first_printable_region];
-                        slices_by_region[region.region->print_object_region_id()][z_idx] = std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]);
+                        for (int printable_region_id : printable_region_ids) {
+                            const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[printable_region_id];
+                            append(slices_by_region[region.region->print_object_region_id()][z_idx], std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]));
+                        }
                     }
                 }
             }
@@ -687,7 +693,6 @@ void reGroupingLayerPolygons(std::vector<groupedVolumeSlices>& gvss, ExPolygons 
     }
 }
 
-/*
 std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std::function<void()> &throw_if_canceled, int &firstLayerReplacedBy)
 {
     std::string error_msg;//BBS
@@ -739,7 +744,6 @@ std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std
                     continue;
                 assert(layer->slicing_errors);
                 // Try to repair the layer surfaces by merging all contours and all holes from neighbor layers.
-                // BOOST_LOG_TRIVIAL(trace) << "Attempting to repair layer" << idx_layer;
                 for (size_t region_id = 0; region_id < layer->region_count(); ++ region_id) {
                     LayerRegion *layerm = layer->get_region(region_id);
                     // Find the first valid layer below / above the current layer.
@@ -809,7 +813,6 @@ std::string fix_slicing_errors(PrintObject* object, LayerPtrs &layers, const std
 
     return error_msg;
 }
-*/
 
 void groupingVolumesForBrim(PrintObject* object, LayerPtrs& layers, int firstLayerReplacedBy)
 {
@@ -852,7 +855,7 @@ void PrintObject::slice()
     m_print->throw_if_canceled();
     int firstLayerReplacedBy = 0;
 
-#if 0
+#if 1
     // Fix the model.
     //FIXME is this the right place to do? It is done repeateadly at the UI and now here at the backend.
     std::string warning = fix_slicing_errors(this, m_layers, [this](){ m_print->throw_if_canceled(); }, firstLayerReplacedBy);
@@ -864,7 +867,6 @@ void PrintObject::slice()
     //    this->active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, warning, PrintStateBase::SlicingReplaceInitEmptyLayers);
     //}
 #endif
-
     // Detect and process holes that should be converted to polyholes
     this->_transform_hole_to_polyholes();
 
@@ -3327,6 +3329,8 @@ static void build_local_z_plan(PrintObject &print_object, const std::vector<std:
         total_mixed_state_layers += mixed_state_count;
         if (!mixed_masks.empty())
             mixed_masks = union_ex(mixed_masks);
+        if (layer_id == 0)
+            interval.has_mixed_paint = false;
         if (interval.has_mixed_paint)
             ++mixed_intervals;
 

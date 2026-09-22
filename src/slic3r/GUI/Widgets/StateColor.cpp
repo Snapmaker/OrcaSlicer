@@ -51,6 +51,7 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#F0F0F0", "#3F3F46"}, // rgb(240, 240, 240)  Card borders, dividers
     {"#F3F4F6", "#3A3A3F"}, // rgb(243, 244, 246)  Internal card dividers
     {"#242424", "#E4E4E7"}, // rgb(36, 36, 36)    Primary text (hex input, cancel btn)
+    {"#18181B", "#E4E4E7"}, // rgb(24, 24, 27)    Login confirmation text
     {"#4A4A4A", "#A1A1AA"}, // rgb(74, 74, 74)    Secondary text (segmented btns)
     {"#8F8F8F", "#8A8A95"}, // rgb(143, 143, 143) Label text (Hex:, Preview, percentages)
     {"#EBEBEB", "#45454B"}, // rgb(235, 235, 235)  Slider track background
@@ -59,6 +60,9 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#FFF3EB", "#452A1A"}, // rgb(255, 243, 235)  Warning banner background
     {"#FF842D", "#FF9F43"}, // rgb(255, 132, 45)   Warning text
     {"#B4B4B4", "#73737D"}, // rgb(180, 180, 180)  Preview/strip border
+    {"#E7E7E7", "#54545B"}, // rgb(231, 231, 231)  MixedFilament preview panel background
+    // NOTE: removed {"#939393","#000000"} — its dark value #000000 collided with
+    // {"#000000","#FFFFFE"} in revert()'s reverse map and broke lightModeColorFor(#000000).
     {"#D1D5DC", "#52525B"}, // rgb(209, 213, 220)  Cancel button border
     {"#FF0000", "#FF5252"}, // rgb(255, 0, 0)      Hex input error border
     {"#019687", "#00675B"}, // rgb(1, 150, 135)    Confirm button bg (near #009688)

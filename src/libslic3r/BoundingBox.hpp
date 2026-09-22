@@ -281,6 +281,8 @@ BoundingBoxBase<Vec<2, T>> unscaled(const BoundingBox &bb) { return {unscaled<T>
 template<class T = double>
 BoundingBox3Base<Vec<3, T>> unscaled(const BoundingBox3 &bb) { return {unscaled<T>(bb.min), unscaled<T>(bb.max)}; }
 
+inline BoundingBoxf unscaled(const BoundingBox& bb) { return { unscaled(bb.min), unscaled(bb.max) }; }
+
 template<class Tout, class Tin>
 auto cast(const BoundingBoxBase<Tin> &b)
 {

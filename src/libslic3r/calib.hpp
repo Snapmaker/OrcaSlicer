@@ -2,15 +2,17 @@
 #include <string>
 #define calib_pressure_advance_dd
 
-#include "GCode.hpp"
 #include "GCodeWriter.hpp"
 #include "PrintConfig.hpp"
 #include "BoundingBox.hpp"
+#include "CustomGCode.hpp"
+#include "Flow.hpp"
 
 namespace Slic3r {
 
 class GCode;
 class Model;
+class ModelObject;
 
 enum class CalibMode : int {
     Calib_None = 0,
@@ -303,9 +305,9 @@ public:
     Vec3d get_start_offset();
 
 protected:
-    double speed_first_layer() const { return m_config.option<ConfigOptionFloat>("initial_layer_speed")->value; };
-    double speed_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_speed")->value; };
-    double accel_perimeter() const { return m_config.option<ConfigOptionFloat>("outer_wall_acceleration")->value; }
+    double speed_first_layer() const { return get_value_at(m_config, *m_config.option<ConfigOptionFloats>("initial_layer_speed"), ConfigFlowDomain::Process); };
+    double speed_perimeter() const { return get_value_at(m_config, *m_config.option<ConfigOptionFloats>("outer_wall_speed"), ConfigFlowDomain::Process); }
+    double accel_perimeter() const { return get_value_at(m_config, *m_config.option<ConfigOptionFloats>("outer_wall_acceleration"), ConfigFlowDomain::Process); }
     double line_width_first_layer() const
     {
         // TODO: FIXME: find out current filament/extruder?

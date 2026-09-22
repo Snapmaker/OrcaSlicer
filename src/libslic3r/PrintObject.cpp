@@ -1,4 +1,5 @@
 #include "Exception.hpp"
+#include "AABBTreeLines.hpp"
 #include "Print.hpp"
 #include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
@@ -126,7 +127,12 @@ PrintBase::ApplyStatus PrintObject::set_instances(PrintInstances &&instances)
     	[](const PrintInstance& lhs, const PrintInstance& rhs) { return lhs.model_instance == rhs.model_instance && lhs.shift == rhs.shift; });
     if (! equal) {
         status = PrintBase::APPLY_STATUS_CHANGED;
-        if (m_print->invalidate_steps({ psSkirtBrim, psGCodeExport }) ||
+        // Tree support branches are routed against the machine border (bed bounds) anchored to the
+        // instance shift, so a pure XY translation makes the cached tree support layers stale and they
+        // have to be regenerated. Regular supports are computed in object coordinates and stay valid
+        // when the instance is translated, so the cheap skirt/gcode-only invalidation is kept for them.
+        if ((is_tree(m_config.support_type.value) && this->invalidate_step(posSupportMaterial)) ||
+            m_print->invalidate_steps({ psSkirtBrim, psGCodeExport }) ||
             (! equal_length && m_print->invalidate_step(psWipeTower)))
             status = PrintBase::APPLY_STATUS_INVALIDATED;
         m_instances = std::move(instances);
@@ -678,13 +684,19 @@ void PrintObject::generate_support_material()
 void PrintObject::estimate_curled_extrusions()
 {
     if (this->set_started(posEstimateCurledExtrusions)) {
-        if ( std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
-                        [](const PrintRegion *region) { return region->config().enable_overhang_speed.getBool(); })) {
+        const DynamicPrintConfig &full_config = this->print()->full_print_config();
+        if (std::any_of(this->print()->m_print_regions.begin(), this->print()->m_print_regions.end(),
+                        [&full_config](const PrintRegion *region) {
+                            return get_value_at(full_config, region->config().enable_overhang_speed,
+                                                ConfigFlowDomain::Process, 0);
+                        })) {
+            const double inner_wall_acceleration = get_value_at(
+                full_config, this->print()->default_object_config().inner_wall_acceleration,
+                ConfigFlowDomain::Process, 0);
 
             // Estimate curling of support material and add it to the malformaition lines of each layer
-            float support_flow_width = support_material_flow(this, this->config().layer_height).width();
             SupportSpotsGenerator::Params params{this->print()->m_config.filament_type.values,
-                                                 float(this->print()->default_object_config().inner_wall_acceleration.getFloat()),
+                                                 float(inner_wall_acceleration),
                                                  this->config().raft_layers.getInt(), this->config().brim_type.value,
                                                  float(this->config().brim_width.getFloat())};
             SupportSpotsGenerator::estimate_malformations(this->layers(), params);
@@ -893,11 +905,8 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "sparse_infill_speed"
             || opt_key == "inner_wall_speed"
             || opt_key == "support_speed"
-            || opt_key == "support_top_contact_speed_split"
             || opt_key == "internal_solid_infill_speed"
             || opt_key == "top_surface_speed") {
-            // support_top_contact_speed_split changes ExtrusionRole assignment,
-            // which affects support toolpaths structurally, not just feedrates.
             // Brim is printed below supports, support invalidates brim and skirt.
             steps.emplace_back(posSupportMaterial);
             if (opt_key == "brim_type") {
@@ -933,11 +942,11 @@ bool PrintObject::invalidate_state_by_config_options(
             // Return true if gap-fill speed has changed from zero value to non-zero or from non-zero value to zero.
             auto is_gap_fill_changed_state_due_to_speed = [&opt_key, &old_config, &new_config]() -> bool {
                 if (opt_key == "gap_infill_speed") {
-                    const auto *old_gap_fill_speed = old_config.option<ConfigOptionFloat>(opt_key);
-                    const auto *new_gap_fill_speed = new_config.option<ConfigOptionFloat>(opt_key);
+                    const auto *old_gap_fill_speed = old_config.option<ConfigOptionFloats>(opt_key);
+                    const auto *new_gap_fill_speed = new_config.option<ConfigOptionFloats>(opt_key);
                     assert(old_gap_fill_speed && new_gap_fill_speed);
-                    return (old_gap_fill_speed->value > 0.f && new_gap_fill_speed->value == 0.f) ||
-                           (old_gap_fill_speed->value == 0.f && new_gap_fill_speed->value > 0.f);
+                    return (old_gap_fill_speed->values.size() != new_gap_fill_speed->values.size()) ||
+                           (old_gap_fill_speed->values != new_gap_fill_speed->values);
                 }
                 return false;
             };
@@ -1072,7 +1081,9 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSupportMaterial);
         } else if (
                opt_key == "bottom_shell_layers"
-            || opt_key == "top_shell_layers") {
+            || opt_key == "top_shell_layers"
+            || opt_key == "bottom_color_penetration_layers"
+            || opt_key == "top_color_penetration_layers") {
 
             steps.emplace_back(posSlice);
 #if (0)
@@ -1179,6 +1190,11 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "precise_outer_wall") {
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posSupportMaterial);
+            // Whole-object Local-Z masks and tool assignments are built during
+            // slicing from the wall filament, not during perimeter generation.
+            if (opt_key == "wall_filament" && m_print->config().dithering_local_z_mode.value &&
+                m_print->config().dithering_local_z_whole_objects.value)
+                steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
             if (m_config.support_top_z_distance > 0.) {
             	// Only invalidate due to bridging if bridging is enabled.
@@ -1212,10 +1228,6 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "seam_slope_inner_walls"
             || opt_key == "support_speed"
             || opt_key == "support_interface_speed"
-            || opt_key == "support_top_contact_speed_split"
-            || opt_key == "support_top_contact_speed_first"
-            || opt_key == "support_top_contact_speed_middle"
-            || opt_key == "support_top_contact_speed_top"
             || opt_key == "overhang_1_4_speed"
             || opt_key == "overhang_2_4_speed"
             || opt_key == "overhang_3_4_speed"
@@ -1251,6 +1263,17 @@ bool PrintObject::invalidate_state_by_config_options(
     sort_remove_duplicates(steps);
     for (PrintObjectStep step : steps)
         invalidated |= this->invalidate_step(step);
+
+    // Changing extruder-related filament options invalidates the local-z plan,
+    // because the plan depends on which extruders are used for each sublayer.
+    // Without this, stale local-z data referencing removed extruders can cause crashes.
+    for (const std::string &opt_key : opt_keys) {
+        if (opt_key == "extruder" || opt_key == "wall_filament" ||
+            opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
+            this->clear_local_z_plan();
+            break;
+        }
+    }
     return invalidated;
 }
 
@@ -3939,7 +3962,11 @@ bool PrintObject::update_layer_height_profile(const ModelObject          &model_
             std::abs(layer_height_profile[layer_height_profile.size() - 2] - slicing_parameters.object_print_z_uncompensated_max + slicing_parameters.object_print_z_min) > 1e-3))
         layer_height_profile.clear();
 
-    if (layer_height_profile.empty() || layer_height_profile[1] != slicing_parameters.first_object_layer_height || has_dithering_ranges) {
+    // A differing first layer height must NOT force regeneration: doing so discards a valid
+    // variable layer height profile (e.g. loaded from a 3MF) and replaces it with a fixed-height
+    // profile. The first layer height is applied separately in generate_object_layers(), which
+    // hard-codes the first layer, so the profile's first segment does not need to match it here.
+    if (layer_height_profile.empty() || has_dithering_ranges) {
         //layer_height_profile = layer_height_profile_adaptive(slicing_parameters, model_object.layer_config_ranges, model_object.volumes);
         layer_height_profile = layer_height_profile_from_ranges(slicing_parameters, *ranges_to_use);
         // The layer height profile is already compressed.
@@ -4425,7 +4452,8 @@ void PrintObject::remove_bridges_from_contacts(
     float extrusion_width,
     PolysType* overhang_regions,
     float max_bridge_length,
-    bool break_bridge)
+    bool break_bridge,
+    std::vector<std::pair<ExPolygon, int>>* overhang_regions_with_type)
 {
     // Extrusion width accounts for the roundings of the extrudates.
     // It is the maximum widh of the extrudate.
@@ -4541,6 +4569,28 @@ void PrintObject::remove_bridges_from_contacts(
     else if (typeid(overhang_regions) == typeid(Polygons*)) {
         *(Polygons*)overhang_regions = diff(*overhang_regions, all_bridges, ApplySafetyOffset::Yes);
     }
+
+    // Keep an optional typed overhang list in sync by diffing against the same bridge set.
+    // Skip items whose bbox doesn't overlap the bridges bbox to avoid unnecessary Clipper calls.
+    if (overhang_regions_with_type != nullptr && !overhang_regions_with_type->empty() && !all_bridges.empty()) {
+        BoundingBox bridges_bbox = get_extents(all_bridges);
+        std::vector<std::pair<ExPolygon, int>> kept;
+        kept.reserve(overhang_regions_with_type->size());
+        bool any_trimmed = false;
+        for (auto &overhang_part : *overhang_regions_with_type) {
+            BoundingBox part_bbox = get_extents(overhang_part.first);
+            if (!bridges_bbox.overlap(part_bbox)) {
+                kept.emplace_back(std::move(overhang_part.first), overhang_part.second);
+                continue;
+            }
+            ExPolygons remaining = diff_ex({overhang_part.first}, all_bridges, ApplySafetyOffset::Yes);
+            any_trimmed = true;
+            for (auto &expoly : remaining)
+                kept.emplace_back(std::move(expoly), overhang_part.second);
+        }
+        if (any_trimmed)
+            *overhang_regions_with_type = std::move(kept);
+    }
 }
 
 template void PrintObject::remove_bridges_from_contacts<ExPolygons>(
@@ -4548,13 +4598,15 @@ template void PrintObject::remove_bridges_from_contacts<ExPolygons>(
     const Layer* current_layer,
     float extrusion_width,
     ExPolygons* overhang_regions,
-    float max_bridge_length, bool break_bridge);
+    float max_bridge_length, bool break_bridge,
+    std::vector<std::pair<ExPolygon, int>>* overhang_regions_with_type);
 template void PrintObject::remove_bridges_from_contacts<Polygons>(
     const Layer* lower_layer,
     const Layer* current_layer,
     float extrusion_width,
     Polygons* overhang_regions,
-    float max_bridge_length, bool break_bridge);
+    float max_bridge_length, bool break_bridge,
+    std::vector<std::pair<ExPolygon, int>>* overhang_regions_with_type);
 
 
 SupportNecessaryType PrintObject::is_support_necessary()

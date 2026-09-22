@@ -20,6 +20,9 @@ namespace GUI {
 
 class ConfigManipulation
 {
+    /// Checks "penetration <= shell layers"; on violation highlights both fields, warns and resets.
+    void    validate_paint_penetration_layers(DynamicPrintConfig* config, const bool is_top);
+
     bool                is_msg_dlg_already_exist{ false };
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
@@ -29,8 +32,10 @@ class ConfigManipulation
     std::function<void()>                                       load_config = nullptr;
     std::function<void (const std::string&, bool toggle, int opt_index)>   cb_toggle_field = nullptr;
     std::function<void (const std::string&, bool toggle)>   cb_toggle_line = nullptr;
-    // callback to propagation of changed value, if needed 
+    // callback to propagation of changed value, if needed
     std::function<void(const std::string&, const boost::any&)>  cb_value_change = nullptr;
+    // callback to toggle the red invalid highlight of a field; wired by the UI owning the option groups
+    std::function<void(const std::string&, bool invalid)>       cb_highlight_field = nullptr;
     //BBS: change local config to const DynamicPrintConfig
     const DynamicPrintConfig* local_config = nullptr;
     //ModelConfig* local_config = nullptr;
@@ -59,7 +64,11 @@ public:
         cb_toggle_field = nullptr;
         cb_toggle_line = nullptr;
         cb_value_change = nullptr;
+        cb_highlight_field = nullptr;
     }
+
+    void    set_highlight_field_cb(std::function<void(const std::string&, bool invalid)> cb)
+        { cb_highlight_field = cb; }
 
     bool    is_applying() const;
 
@@ -70,7 +79,7 @@ public:
 
     // FFF print
     void    update_print_fff_config(DynamicPrintConfig* config, const bool is_global_config = false, const bool is_plate_config = false);
-    void    toggle_print_fff_options(DynamicPrintConfig* config, const bool is_global_config = false);
+    void    toggle_print_fff_options(DynamicPrintConfig* config, const bool is_global_config = false, size_t flow_variant_index = 0);
     void    apply_null_fff_config(DynamicPrintConfig *config, std::vector<std::string> const &keys, std::map<ObjectBase*, ModelConfig*> const & configs);
 
     //BBS: FFF filament nozzle temperature range

@@ -9500,32 +9500,6 @@ msgstr "Wypełnienie szczelin"
 
 msgid "Support interface"
 msgstr "Warstwa łącząca"
-msgid "Support top contact speed"
-msgstr "Predkosc gornego kontaktu podpory"
-
-msgid "Enable to set first, middle, and top support top contact layer speeds separately."
-msgstr "Umozliwia ustawienie roznych predkosci dla pierwszej, srodkowej i gornej warstwy kontaktowej podpory."
-
-msgid "First layer contact speed"
-msgstr "Predkosc pierwszej warstwy kontaktowej"
-
-msgid "Speed of the bottommost support top contact layer (furthest from the model)."
-msgstr "Predkosc najnizszej warstwy kontaktowej podpory (najdalej od modelu)."
-
-msgid "Middle layer contact speed"
-msgstr "Predkosc srodkowej warstwy kontaktowej"
-
-msgid "Speed of the middle support top contact layers."
-msgstr "Predkosc srodkowych warstw kontaktowych podpory."
-
-msgid "Top layer contact speed"
-msgstr "Predkosc gornej warstwy kontaktowej"
-
-msgid "Speed of the topmost support top contact layer (closest to the model)."
-msgstr "Predkosc najwyzszej warstwy kontaktowej podpory (najblizej modelu)."
-
-msgid "Support transition speed"
-msgstr "Predkosc przejscia podpory"
 
 msgid "Support transition"
 msgstr "Przejście podpór"
@@ -13870,7 +13844,7 @@ msgstr "Gęstość pierwszej warstwy raftu lub podpór"
 msgid "Initial layer expansion"
 msgstr "Rozszerzenie pierwszej warstwy"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 "Rozszerz pierwszą warstwę tratwy lub podpory, aby poprawić przyczepność do "
 "płyty grzewczej"
@@ -14863,12 +14837,6 @@ msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Odstęp między liniami dolnej powierzchni warstwy łączącej. Wartość zero "
 "oznacza, że warstwa łącząca jest jednolita i bez przerw"
-
-msgid "Minimum Support Contact Area"
-msgstr "Minimalna powierzchnia kontaktu podpory"
-
-msgid "Lower values generate more support contact surfaces."
-msgstr "Niższe wartości generują więcej powierzchni kontaktowych podpory."
 
 msgid "Speed of support interface."
 msgstr "Prędkość dla warstw łączących"

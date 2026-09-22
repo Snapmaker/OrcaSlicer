@@ -9524,32 +9524,6 @@ msgstr "Заповнення пропусків"
 
 msgid "Support interface"
 msgstr "Інтерфейс підтримки"
-msgid "Support top contact speed"
-msgstr "Швидкicть верхнього контакту пiдтримки"
-
-msgid "Enable to set first, middle, and top support top contact layer speeds separately."
-msgstr "Дозволяє задати рiзнi швидкоcтi для першого, середнього та верхнього контактних шарiв пiдтримки."
-
-msgid "First layer contact speed"
-msgstr "Швидкicть першого контактного шару"
-
-msgid "Speed of the bottommost support top contact layer (furthest from the model)."
-msgstr "Швидкicть найнижчого контактного шару пiдтримки (найдалi вiд моделi)."
-
-msgid "Middle layer contact speed"
-msgstr "Швидкicть середнього контактного шару"
-
-msgid "Speed of the middle support top contact layers."
-msgstr "Швидкicть середнiх контактних шарiв пiдтримки."
-
-msgid "Top layer contact speed"
-msgstr "Швидкicть верхнього контактного шару"
-
-msgid "Speed of the topmost support top contact layer (closest to the model)."
-msgstr "Швидкicть найвищого контактного шару пiдтримки (найближче до моделi)."
-
-msgid "Support transition speed"
-msgstr "Швидкicть переходу пiдтримки"
 
 msgid "Support transition"
 msgstr "Годтримка переходу"
@@ -13870,7 +13844,7 @@ msgstr "Щільність першого шару підкладки або п�
 msgid "Initial layer expansion"
 msgstr "Розширення початкового шару"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgid "Expand the first raft or support layer to improve bed plate adhesion."
 msgstr ""
 "Розширити перший шар підкладки або підтримки, щоб покращити прилипання до "
 "робочої поверхні"
@@ -14851,12 +14825,6 @@ msgstr "Інтервал нижнього шару підтримки"
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "Відстань між нижніми інтерфейсними лініями. Нуль означає суцільнийінтерфейс"
-
-msgid "Minimum Support Contact Area"
-msgstr "Мінімальна площа контакту підтримки"
-
-msgid "Lower values generate more support contact surfaces."
-msgstr "Нижчі значення створюють більше контактних поверхонь підтримки."
 
 msgid "Speed of support interface."
 msgstr "Швидкість друку підтримки"

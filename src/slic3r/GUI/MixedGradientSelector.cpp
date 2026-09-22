@@ -2,6 +2,7 @@
 
 namespace Slic3r { namespace GUI {
 
+
 wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, float t)
 {
     const wxColour safe_left  = left.IsOk()  ? left  : wxColour("#26A69A");

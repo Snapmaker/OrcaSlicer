@@ -504,6 +504,104 @@ ModelObject* Model::add_object(const ModelObject &other)
     return new_object;
 }
 
+void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
+{
+    constexpr double ASSEMBLY_OBJECT_GAP = 10.0;
+
+    if (modelObjects.empty())
+    {
+        return;
+    }
+
+    ModelObjectPtrs validatedObjects;
+    validatedObjects.reserve(modelObjects.size());
+    for (ModelObject* modelObject : modelObjects)
+    {
+        if (modelObject == nullptr || modelObject->instances.empty() ||
+            std::find(objects.begin(), objects.end(), modelObject) == objects.end() ||
+            std::find(validatedObjects.begin(), validatedObjects.end(), modelObject) != validatedObjects.end())
+        {
+            continue;
+        }
+
+        const BoundingBoxf3& rawBox = modelObject->raw_mesh_bounding_box();
+        if (!rawBox.defined)
+        {
+            continue;
+        }
+
+        validatedObjects.push_back(modelObject);
+    }
+
+    BoundingBoxf3 sceneBox = CalculateAssemblyBoundingBox(validatedObjects);
+    for (ModelObject* modelObject : validatedObjects)
+    {
+        const BoundingBoxf3& rawBox = modelObject->raw_mesh_bounding_box();
+        std::vector<BoundingBoxf3> instanceBoxes(modelObject->instances.size());
+
+        double objectWidth = 0.0;
+        bool hasValidInstance = false;
+        for (size_t instanceIndex = 0; instanceIndex < modelObject->instances.size(); ++instanceIndex)
+        {
+            ModelInstance* instance = modelObject->instances[instanceIndex];
+            if (instance == nullptr)
+            {
+                continue;
+            }
+
+            if (!instance->is_assemble_initialized())
+            {
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
+
+            BoundingBoxf3& instanceBox = instanceBoxes[instanceIndex];
+            instanceBox = rawBox.transformed(instance->get_assemble_transformation().get_matrix_no_offset());
+            if (!instanceBox.defined)
+            {
+                continue;
+            }
+
+            objectWidth = std::max(objectWidth, instanceBox.size().x());
+            hasValidInstance = true;
+        }
+
+        if (!hasValidInstance)
+        {
+            continue;
+        }
+
+        const double objectCenterX = sceneBox.defined ? sceneBox.max.x() + ASSEMBLY_OBJECT_GAP + objectWidth * 0.5 : 0.0;
+        const double firstInstanceCenterY = sceneBox.defined ? sceneBox.center().y() : 0.0;
+        double previousInstanceMaxY = 0.0;
+        bool firstValidInstance = true;
+
+        for (size_t instanceIndex = 0; instanceIndex < modelObject->instances.size(); ++instanceIndex)
+        {
+            ModelInstance* instance = modelObject->instances[instanceIndex];
+            if (instance == nullptr)
+            {
+                continue;
+            }
+
+            const BoundingBoxf3& instanceBox = instanceBoxes[instanceIndex];
+            if (!instanceBox.defined)
+            {
+                continue;
+            }
+
+            const double instanceCenterY = firstValidInstance ? firstInstanceCenterY :
+                                           previousInstanceMaxY + ASSEMBLY_OBJECT_GAP + instanceBox.size().y() * 0.5;
+            const Vec3d assemblyOffset(objectCenterX - instanceBox.center().x(),
+                                       instanceCenterY - instanceBox.center().y(), -instanceBox.min.z());
+            instance->set_assemble_offset(assemblyOffset);
+            previousInstanceMaxY = instanceCenterY + instanceBox.size().y() * 0.5;
+            firstValidInstance = false;
+        }
+
+        sceneBox.merge(modelObject->CalculateAssemblyBoundingBox());
+    }
+}
+
 void Model::delete_object(size_t idx)
 {
     ModelObjectPtrs::iterator i = this->objects.begin() + idx;
@@ -661,6 +759,23 @@ BoundingBoxf3 Model::bounding_box_exact() const
     for (ModelObject *o : this->objects)
         bb.merge(o->bounding_box_exact());
     return bb;
+}
+
+BoundingBoxf3 Model::CalculateAssemblyBoundingBox(const ModelObjectPtrs& excludedObjects) const
+{
+    BoundingBoxf3 assemblyBox;
+    for (const ModelObject* modelObject : objects)
+    {
+        if (modelObject == nullptr ||
+            std::find(excludedObjects.begin(), excludedObjects.end(), modelObject) != excludedObjects.end())
+        {
+            continue;
+        }
+
+        assemblyBox.merge(modelObject->CalculateAssemblyBoundingBox());
+    }
+
+    return assemblyBox;
 }
 
 double Model::max_z() const
@@ -1440,6 +1555,26 @@ const BoundingBoxf3& ModelObject::bounding_box_exact() const
     return m_bounding_box_exact;
 }
 
+BoundingBoxf3 ModelObject::CalculateAssemblyBoundingBox() const
+{
+    BoundingBoxf3 assemblyBox;
+    const BoundingBoxf3 rawBox = raw_mesh_bounding_box();
+    if (!rawBox.defined)
+    {
+        return assemblyBox;
+    }
+
+    for (const ModelInstance* instance : instances)
+    {
+        if (instance != nullptr)
+        {
+            assemblyBox.merge(rawBox.transformed(instance->get_assemble_transformation().get_matrix()));
+        }
+    }
+
+    return assemblyBox;
+}
+
 double ModelObject::min_z() const
 {
     const_cast<ModelObject*>(this)->update_min_max_z();
@@ -1956,13 +2091,59 @@ static void invalidate_translations(ModelObject* object, const ModelInstance* sr
     }
 }
 
+// Volume of the intersection of two bounding boxes (0 when they do not overlap).
+// Used by ModelObject::split() to pick the single best target object for a re-attached
+// non-solid volume.
+static double bbox_overlap_volume(const BoundingBoxf3& a, const BoundingBoxf3& b)
+{
+    const Vec3d size(std::min(a.max.x(), b.max.x()) - std::max(a.min.x(), b.min.x()),
+                     std::min(a.max.y(), b.max.y()) - std::max(a.min.y(), b.min.y()),
+                     std::min(a.max.z(), b.max.z()) - std::max(a.min.z(), b.min.z()));
+    return size.x() > 0. && size.y() > 0. && size.z() > 0. ? size.x() * size.y() * size.z() : 0.;
+}
+
 void ModelObject::split(ModelObjectPtrs* new_objects)
 {
     std::vector<TriangleMesh> all_meshes;
     std::vector<Transform3d> all_transfos;
     std::vector<std::pair<int, int>> volume_mesh_counts;
     all_meshes.reserve(this->volumes.size() * 5);
-    bool is_multi_volume_object = (this->volumes.size() > 1);
+
+    // Only count model parts when deciding whether this is a "multi volume" object.
+    // Non-solid volumes (negative volumes, modifiers, support blockers/enforcers) must not
+    // force the multi-volume branch, otherwise a single-part object with e.g. a negative
+    // volume would never be split into its disconnected shells.
+    int model_part_cnt = 0;
+    for (const ModelVolume* volume : this->volumes)
+        if (volume->type() == ModelVolumeType::MODEL_PART)
+            model_part_cnt++;
+    bool is_multi_volume_object = (model_part_cnt > 1);
+
+    // Collect non-solid volumes (negative volumes, modifiers, support blockers/enforcers)
+    // together with their bounding boxes in the object coordinate system, so that they can be
+    // re-attached to the new objects created below. Without this they would be silently dropped
+    // once the caller deletes this object (e.g. negative parts of an assembled object vanished
+    // after "split to objects"). Each of them is attached to exactly ONE new object (never
+    // duplicated), see the re-attachment ladder at the end of this function.
+    std::vector<std::pair<ModelVolume*, BoundingBoxf3>> non_part_volumes;
+    for (ModelVolume* volume : this->volumes) {
+        if (volume->type() == ModelVolumeType::MODEL_PART || volume->mesh().empty())
+            continue;
+        non_part_volumes.emplace_back(volume, volume->mesh().bounding_box().transformed(volume->get_matrix()));
+    }
+    // Bookkeeping of the objects created below, used to re-attach non-solid volumes.
+    struct CreatedObjectInfo
+    {
+        ModelObject*  object;
+        Vec3d         absorbed_offset; // part volume offset that was absorbed into the instances (see below)
+        BoundingBoxf3 part_bbox;       // part bounding box in the object coordinate system
+        ObjectID      group_id;        // merge-source label of the part volume, invalid if it did not come from an "Assemble"
+    };
+    std::vector<CreatedObjectInfo> created_objects;
+    // Re-attachment candidates: for each non-solid volume, the qualifying objects
+    // (intersecting and - when labeled - created from a part of the same source object)
+    // together with the bounding box overlap volume used to pick the single best target.
+    std::vector<std::vector<std::pair<double, size_t>>> reattach_candidates(non_part_volumes.size());
 
     for (int volume_idx = 0; volume_idx < this->volumes.size(); volume_idx++) {
         ModelVolume* volume = this->volumes[volume_idx];
@@ -2016,6 +2197,11 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
             if (mesh.facets_count() < 3)
                 continue;
 
+            // Bounding box of this part in the object coordinate system, needed to decide
+            // which non-solid volumes shall be re-attached to the new object. Computed before the
+            // mesh is moved into the new volume below.
+            const BoundingBoxf3 part_bbox = mesh.bounding_box().transformed(volume->get_matrix());
+
             // XXX: this seems to be the only real usage of m_model, maybe refactor this so that it's not needed?
             ModelObject* new_object = m_model->add_object();
             //BBS: refine the config logic
@@ -2066,10 +2252,81 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
                 model_instance->set_offset_to_assembly(new_vol->get_offset());
             }
 
+            // Register this new object as a re-attachment candidate for the non-solid
+            // volumes intersecting this part. The actual attachment happens once, after all
+            // objects have been created (see the re-attachment ladder below), so that every
+            // non-solid volume ends up on exactly one object and is never duplicated.
+            // Volumes carrying a merge group label (from an "Assemble") only qualify for
+            // objects created from parts of the same source object, so that a negative volume
+            // e.g. is restored to the object it belonged to before the assembly.
+            const Vec3d    absorbed_offset = new_vol->get_offset();
+            const ObjectID part_group_id   = volume->merged_group_id();
+            created_objects.push_back({new_object, absorbed_offset, part_bbox, part_group_id});
+            const size_t object_index = created_objects.size() - 1;
+            for (size_t nv_idx = 0; nv_idx < non_part_volumes.size(); ++nv_idx) {
+                const auto& [nv, nv_bbox] = non_part_volumes[nv_idx];
+                const ObjectID nv_group_id = nv->merged_group_id();
+                if (nv_group_id.valid() && nv_group_id != part_group_id)
+                    // The non-solid volume came from another source object of the assembly.
+                    continue;
+                const double overlap = bbox_overlap_volume(nv_bbox, part_bbox);
+                if (overlap > 0.)
+                    reattach_candidates[nv_idx].emplace_back(overlap, object_index);
+            }
+
             new_vol->set_offset(Vec3d::Zero());
             // reset the source to disable reload from disk
             new_vol->source = ModelVolume::Source();
             new_objects->emplace_back(new_object);
+        }
+    }
+
+    // Re-attach every non-solid volume to exactly one new object (never duplicated):
+    //  1. the qualifying candidate with the largest bounding box overlap (same-group objects
+    //     for labeled volumes, any intersecting object otherwise); ties keep the first created;
+    //  2. a labeled volume whose group produced objects but without geometric contact is
+    //     restored to the first object of its group (the object it belonged to before assembly);
+    //  3. a labeled volume whose whole group is gone falls back to the largest-overlap
+    //     intersecting object of any group;
+    //  4. as a last resort the first object, so that nothing is silently lost by the split.
+    // Each instance of the new object absorbed the part volume offset during creation
+    // (new_instance == old_instance composed with translate(offset)), therefore a re-attached
+    // volume keeps its world position exactly when its new matrix is set to
+    // translate(-offset) * original_matrix.
+    if (!created_objects.empty()) {
+        for (size_t nv_idx = 0; nv_idx < non_part_volumes.size(); ++nv_idx) {
+            auto& [nv, nv_bbox]    = non_part_volumes[nv_idx];
+            const ObjectID nv_group_id = nv->merged_group_id();
+
+            const CreatedObjectInfo* best        = nullptr;
+            double                   best_overlap = 0.;
+            for (const auto& [overlap, object_index] : reattach_candidates[nv_idx]) {
+                if (best == nullptr || overlap > best_overlap) {
+                    best         = &created_objects[object_index];
+                    best_overlap = overlap;
+                }
+            }
+            if (best == nullptr && nv_group_id.valid()) {
+                for (const CreatedObjectInfo& info : created_objects)
+                    if (info.group_id == nv_group_id) {
+                        best = &info;
+                        break;
+                    }
+            }
+            if (best == nullptr) {
+                for (const CreatedObjectInfo& info : created_objects) {
+                    const double overlap = bbox_overlap_volume(nv_bbox, info.part_bbox);
+                    if (overlap > 0. && (best == nullptr || overlap > best_overlap)) {
+                        best         = &info;
+                        best_overlap = overlap;
+                    }
+                }
+            }
+            if (best == nullptr)
+                best = &created_objects.front();
+
+            ModelVolume* new_nv = best->object->add_volume(*nv);
+            new_nv->set_transformation(Geometry::translation_transform(-best->absorbed_offset) * nv->get_matrix());
         }
     }
 }
@@ -2459,15 +2716,22 @@ std::vector<int> ModelVolume::get_extruders() const
 
             mmuseg_extruders.push_back(idx);
         }
+
+        if (its_per_type.size() > 0 && its_per_type[0].indices.size() == 0) {
+            m_mmuseg_extruders_has_0_extruder = false;
+        }
+        else {
+            m_mmuseg_extruders_has_0_extruder = true;
+        }
     }
 
     std::vector<int> volume_extruders = mmuseg_extruders;
-
     int volume_extruder_id = this->extruder_id();
-    if (volume_extruder_id > 0)
-        volume_extruders.push_back(volume_extruder_id);
-    else if (volume_extruder_id == 0)
-        volume_extruders.push_back(volume_extruder_id + 1);
+    if (m_mmuseg_extruders_has_0_extruder) {
+        // extruder_id == 0 means "default", which is equivalent to extruder 1 for statistics.
+        int effective_id = (volume_extruder_id > 0) ? volume_extruder_id : 1;
+        volume_extruders.push_back(effective_id);
+    }
 
     return volume_extruders;
 }
@@ -2907,45 +3171,35 @@ void Model::setPrintSpeedTable(const DynamicPrintConfig& config, const PrintConf
     //Slic3r::DynamicPrintConfig config = wxGetApp().preset_bundle->full_config();
     printSpeedMap.maxSpeed = 0;
     if (config.has("inner_wall_speed")) {
-        printSpeedMap.perimeterSpeed = config.opt_float("inner_wall_speed");
+        printSpeedMap.perimeterSpeed = config.opt_float("inner_wall_speed", 0);
         if (printSpeedMap.perimeterSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.perimeterSpeed;
     }
     if (config.has("outer_wall_speed")) {
-        printSpeedMap.externalPerimeterSpeed = config.opt_float("outer_wall_speed");
+        printSpeedMap.externalPerimeterSpeed = config.opt_float("outer_wall_speed", 0);
         printSpeedMap.maxSpeed = std::max(printSpeedMap.maxSpeed, printSpeedMap.externalPerimeterSpeed);
     }
     if (config.has("sparse_infill_speed")) {
-        printSpeedMap.infillSpeed = config.opt_float("sparse_infill_speed");
+        printSpeedMap.infillSpeed = config.opt_float("sparse_infill_speed", 0);
         if (printSpeedMap.infillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.infillSpeed;
     }
     if (config.has("internal_solid_infill_speed")) {
-        printSpeedMap.solidInfillSpeed = config.opt_float("internal_solid_infill_speed");
+        printSpeedMap.solidInfillSpeed = config.opt_float("internal_solid_infill_speed", 0);
         if (printSpeedMap.solidInfillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.solidInfillSpeed;
     }
     if (config.has("top_surface_speed")) {
-        printSpeedMap.topSolidInfillSpeed = config.opt_float("top_surface_speed");
+        printSpeedMap.topSolidInfillSpeed = config.opt_float("top_surface_speed", 0);
         if (printSpeedMap.topSolidInfillSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.topSolidInfillSpeed;
     }
     if (config.has("support_speed")) {
-        printSpeedMap.supportSpeed = config.opt_float("support_speed");
+        printSpeedMap.supportSpeed = config.opt_float("support_speed", 0);
 
         if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
             printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
     }
-    // Support top contact speed split: fold the per-layer top contact speeds into the
-    // support speed so the max print speed reflects them as well.
-    if (config.has("support_top_contact_speed_first"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_first"));
-    if (config.has("support_top_contact_speed_middle"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_middle"));
-    if (config.has("support_top_contact_speed_top"))
-        printSpeedMap.supportSpeed = std::max(printSpeedMap.supportSpeed, config.opt_float("support_top_contact_speed_top"));
-    if (printSpeedMap.supportSpeed > printSpeedMap.maxSpeed)
-        printSpeedMap.maxSpeed = printSpeedMap.supportSpeed;
 
 
     //auto& print = wxGetApp().plater()->get_partplate_list().get_current_fff_print();
@@ -2980,8 +3234,8 @@ void Model::setExtruderParams(const DynamicPrintConfig& config, int extruders_co
         if (config.has("filament_type")) {
             matName = config.opt_string("filament_type", i);
         }
-        if (config.has("nozzle_temperature")) {
-            endTemp = config.opt_int("nozzle_temperature", i);
+        if (const auto *temperature = config.option<ConfigOptionInts>("nozzle_temperature")) {
+            endTemp = get_value_at(config, *temperature, ConfigFlowDomain::Filament, i);
         }
 
         // FIXME: curr_bed_type is now a plate config rather than a global config.
@@ -3169,29 +3423,26 @@ double Model::findMaxSpeed(const ModelObject* object) {
     double smallPerimeterSpeedObj = Model::printSpeedMap.smallPerimeterSpeed;
     for (std::string objectKey : objectKeys) {
         if (objectKey == "inner_wall_speed"){
-            perimeterSpeedObj = object->config.opt_float(objectKey);
+            perimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
             externalPerimeterSpeedObj = Model::printSpeedMap.externalPerimeterSpeed / Model::printSpeedMap.perimeterSpeed * perimeterSpeedObj;
         }
         if (objectKey == "sparse_infill_speed")
-            infillSpeedObj = object->config.opt_float(objectKey);
+            infillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "internal_solid_infill_speed")
-            solidInfillSpeedObj = object->config.opt_float(objectKey);
+            solidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "top_surface_speed")
-            topSolidInfillSpeedObj = object->config.opt_float(objectKey);
+            topSolidInfillSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "support_speed")
-            supportSpeedObj = object->config.opt_float(objectKey);
-        // Support top contact speed split: fold the per-layer top contact speeds into the
-        // support speed so the object max speed reflects them as well.
-        if (objectKey == "support_top_contact_speed_first")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
-        if (objectKey == "support_top_contact_speed_middle")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
-        if (objectKey == "support_top_contact_speed_top")
-            supportSpeedObj = std::max(supportSpeedObj, object->config.opt_float(objectKey));
+            supportSpeedObj = object->config.get().opt_float(objectKey, 0);
         if (objectKey == "outer_wall_speed")
-            externalPerimeterSpeedObj = object->config.opt_float(objectKey);
-        if (objectKey == "small_perimeter_speed")
-            smallPerimeterSpeedObj = object->config.opt_float(objectKey);
+            externalPerimeterSpeedObj = object->config.get().opt_float(objectKey, 0);
+        if (objectKey == "small_perimeter_speed") {
+            const auto *small_perimeter_opt = object->config.get().option<ConfigOptionFloatsOrPercents>(objectKey);
+            if (small_perimeter_opt != nullptr && !small_perimeter_opt->values.empty()) {
+                const FloatOrPercent &small_perimeter = small_perimeter_opt->get_at(0);
+                smallPerimeterSpeedObj = small_perimeter.percent ? (perimeterSpeedObj * small_perimeter.value / 100.) : small_perimeter.value;
+            }
+        }
     }
     objMaxSpeed = std::max(perimeterSpeedObj, std::max(externalPerimeterSpeedObj, std::max(infillSpeedObj, std::max(solidInfillSpeedObj, std::max(topSolidInfillSpeedObj, std::max(supportSpeedObj, std::max(smallPerimeterSpeedObj, objMaxSpeed)))))));
     if (objMaxSpeed <= 0) objMaxSpeed = 250.;

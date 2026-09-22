@@ -112,12 +112,29 @@ void GCodeReader::update_coordinates(GCodeLine &gline, std::pair<const char*, co
     PROFILE_FUNC();
     if (*command.first == 'G') {
         int cmd_len = int(command.second - command.first);
+        if (cmd_len == 3 && command.first[1] == '9') {
+            if (command.first[2] == '0') {
+                // G90: absolute XYZ mode
+                m_relative_xyz = false;
+                return;
+            } else if (command.first[2] == '1') {
+                // G91: relative XYZ mode
+                m_relative_xyz = true;
+                return;
+            }
+        }
         //BBS: add support of G2 and G3
         if ((cmd_len == 2 && (command.first[1] == '0' || command.first[1] == '1' || command.first[1] == '2' || command.first[1] == '3')) ||
             (cmd_len == 3 &&  command.first[1] == '9' && command.first[2] == '2')) {
+            const bool is_g92 = (cmd_len == 3 && command.first[1] == '9' && command.first[2] == '2');
             for (size_t i = 0; i < NUM_AXES; ++ i)
-                if (gline.has(Axis(i)))
-                    m_position[i] = gline.value(Axis(i));
+                if (gline.has(Axis(i))) {
+                    // In G91 mode G0/G1/G2/G3 X/Y/Z values are increments; G92 always sets the position.
+                    if (m_relative_xyz && !is_g92 && i <= Z)
+                        m_position[i] += gline.value(Axis(i));
+                    else
+                        m_position[i] = gline.value(Axis(i));
+                }
         }
     }
 }
@@ -126,6 +143,15 @@ template<typename ParseLineCallback, typename LineEndCallback>
 bool GCodeReader::parse_file_raw_internal(const std::string &filename, ParseLineCallback parse_line_callback, LineEndCallback line_end_callback)
 {
     FilePtr in{ boost::nowide::fopen(filename.c_str(), "rb") };
+    if (in.f == nullptr) {
+        // fopen failed: file missing, inaccessible, or path invalid.
+        // Returning false here prevents ::fread(buffer.data(), 1, ..., NULL)
+        // below, which would otherwise trigger a CRT invalid-parameter crash
+        // on Windows (and similarly undefined behavior elsewhere).
+        BOOST_LOG_TRIVIAL(error) << "GCodeReader::parse_file_raw_internal: "
+                                 << "failed to open file '" << filename << "'";
+        return false;
+    }
 
     // Read the input stream 64kB at a time, extract lines and process them.
     std::vector<char> buffer(65536 * 10, 0);

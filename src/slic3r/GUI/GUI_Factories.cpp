@@ -136,9 +136,7 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
                     {"support_object_first_layer_gap","",28}
                             }},
-    { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13},
-                    {"support_top_contact_speed_split", "",14}, {"support_top_contact_speed_first", "",15},
-                    {"support_top_contact_speed_middle", "",16}, {"support_top_contact_speed_top", "",17}
+    { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}
 };
 
@@ -146,8 +144,8 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::PART_CAT
 {
     { L("Quality"), {{"ironing_type", "",8},{"ironing_flow", "",9},{"ironing_spacing", "",10},{"ironing_inset", "", 11},{"bridge_flow", "",11},{"make_overhang_printable", "",11},{"bridge_density", "", 1}
                     }},
-    { L("Strength"), {{"wall_loops", "",1},{"top_shell_layers", L("Top Solid Layers"),1},{"top_shell_thickness", L("Top Minimum Shell Thickness"),1},{"top_surface_density", L("Top Surface Density"),1},
-                    {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},{"bottom_surface_density", L("Bottom Surface Density"),1},
+    { L("Strength"), {{"wall_loops", "",1},{"top_shell_layers", L("Top Solid Layers"),1},{"top_shell_thickness", L("Top Minimum Shell Thickness"),1},{"top_surface_density", L("Top Surface Density"),1},{"top_color_penetration_layers", L("Top Paint Penetration Layers"),1},
+                    {"bottom_shell_layers", L("Bottom Solid Layers"),1}, {"bottom_shell_thickness", L("Bottom Minimum Shell Thickness"),1},{"bottom_surface_density", L("Bottom Surface Density"),1},{"bottom_color_penetration_layers", L("Bottom Paint Penetration Layers"),1},
                     {"sparse_infill_density", "",1},{"sparse_infill_pattern", "",1},{"sparse_infill_filament", "",1},{"lateral_lattice_angle_1", "",1},{"lateral_lattice_angle_2", "",1},{"infill_overhang_angle", "",1},{"infill_anchor", "",1},{"infill_anchor_max", "",1},{"top_surface_pattern", "",1},{"bottom_surface_pattern", "",1}, {"internal_solid_infill_pattern", "",1},
                     {"align_infill_direction_to_model", "", 1},
                     {"extra_solid_infills", "", 1},
@@ -601,7 +599,24 @@ wxMenu* MenuFactory::append_submenu_add_handy_model(wxMenu* menu, ModelVolumeTyp
                 } else
                     return;
                 input_files.push_back((boost::filesystem::path(Slic3r::resources_dir()) / "handy_models" / file_name));
-                plater()->load_files(input_files, LoadStrategy::LoadModel);
+                Plater* currentPlater = plater();
+                if (currentPlater == nullptr)
+                {
+                    return;
+                }
+
+                const std::vector<size_t> loadedObjectIndexes = currentPlater->load_files(input_files, LoadStrategy::LoadModel);
+                Model& model = currentPlater->model();
+                ModelObjectPtrs loadedObjects;
+                loadedObjects.reserve(loadedObjectIndexes.size());
+                for (const size_t objectIndex : loadedObjectIndexes)
+                {
+                    if (objectIndex < model.objects.size())
+                    {
+                        loadedObjects.push_back(model.objects[objectIndex]);
+                    }
+                }
+                model.InitializeAssemblyPositions(loadedObjects);
 
                 // Suggest to change settings for stringhell
                 // This serves as mini tutorial for new users

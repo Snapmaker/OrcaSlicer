@@ -12,7 +12,9 @@
 #include "../libslic3r.h"
 #include "../Polygon.hpp"
 #include "SupportCommon.hpp"
+#include "SupportTransitionLayer.hpp"
 
+#include <algorithm>
 #include <string_view>
 
 namespace Slic3r
@@ -89,8 +91,12 @@ struct TreeSupportMeshGroupSettings {
         this->support_tree_branch_diameter = scaled<coord_t>(config.tree_support_branch_diameter_organic.value);
         this->support_tree_branch_diameter_angle  = std::clamp<double>(config.tree_support_branch_diameter_angle * M_PI / 180., 0., 0.5 * M_PI - EPSILON);
         this->support_tree_top_rate       = config.tree_support_top_rate.value; // percent
+        this->minimum_roof_area           = scaled<double>(scaled<double>(config.support_interface_min_area.value));
     //    this->support_tree_tip_diameter = this->support_line_width;
         this->support_tree_tip_diameter = std::clamp(scaled<coord_t>(config.tree_support_tip_diameter.value), (coord_t)0, this->support_tree_branch_diameter);
+
+        // Snapmaker: Load support transition configuration
+        this->transition_config         = SupportTransitionConfig::from_config(config);
     }
 
 /*********************************************************************/
@@ -160,7 +166,7 @@ struct TreeSupportMeshGroupSettings {
     coord_t                         support_floor_layers                    { 2 };
     // Minimum Support Roof Area
     // Minimum area size for the roofs of the support. Polygons which have an area smaller than this value will be printed as normal support.
-    double                          minimum_roof_area                       { scaled<double>(scaled<double>(1.)) };
+    double                          minimum_roof_area                       { scaled<double>(scaled<double>(0.25)) };
     // A list of integer line directions to use. Elements from the list are used sequentially as the layers progress 
     // and when the end of the list is reached, it starts at the beginning again. The list items are separated
     // by commas and the whole list is contained in square brackets. Default is an empty list which means
@@ -252,6 +258,9 @@ struct TreeSupportMeshGroupSettings {
     // The diameter of the top of the tip of the branches of tree support.
     // minimum: min_wall_line_width, minimum warning: min_wall_line_width+0.05, maximum_value: support_tree_branch_diameter, value: support_line_width
     coord_t                         support_tree_tip_diameter               { scaled<coord_t>(0.4) };
+
+    // Snapmaker: Support transition layer configuration
+    SupportTransitionConfig          transition_config;
 
     // Support Interface Priority
     // How support interface and support will interact when they overlap. Currently only implemented for support roof.
@@ -613,19 +622,35 @@ inline double layer_z(const SlicingParameters &slicing_params, const TreeSupport
         slicing_params.object_print_z_min + slicing_params.first_object_layer_height + (layer_idx - config.raft_layers.size()) * slicing_params.layer_height :
         config.raft_layers[layer_idx];
 }
+
+inline double first_object_support_layer_z(const SlicingParameters &slicing_params)
+{
+    return slicing_params.object_print_z_min + slicing_params.first_object_layer_height;
+}
+
+// Orca: Reverse layer_z() for support layers below the first object layer.
+// config.raft_layers may include raft/contact/intermediate support Zs, so do not collapse them to the first object support layer.
 // Lowest collision layer
 inline LayerIndex layer_idx_ceil(const SlicingParameters &slicing_params, const TreeSupportSettings &config, const double z)
 {
-    return 
-        LayerIndex(config.raft_layers.size()) +
-        std::max<LayerIndex>(0, ceil((z - slicing_params.object_print_z_min - slicing_params.first_object_layer_height) / slicing_params.layer_height));
+    const double first_object_z = first_object_support_layer_z(slicing_params);
+    if (!config.raft_layers.empty() && z < first_object_z - EPSILON) {
+        auto it = std::lower_bound(config.raft_layers.begin(), config.raft_layers.end(), z - EPSILON);
+        return LayerIndex(it == config.raft_layers.end() ? config.raft_layers.size() : std::distance(config.raft_layers.begin(), it));
+    }
+    return LayerIndex(config.raft_layers.size()) +
+        std::max<LayerIndex>(0, LayerIndex(std::ceil((z - first_object_z) / slicing_params.layer_height)));
 }
 // Highest collision layer
 inline LayerIndex layer_idx_floor(const SlicingParameters &slicing_params, const TreeSupportSettings &config, const double z)
 {
-    return 
-        LayerIndex(config.raft_layers.size()) + 
-        std::max<LayerIndex>(0, floor((z - slicing_params.object_print_z_min - slicing_params.first_object_layer_height) / slicing_params.layer_height));
+    const double first_object_z = first_object_support_layer_z(slicing_params);
+    if (!config.raft_layers.empty() && z < first_object_z - EPSILON) {
+        auto it = std::upper_bound(config.raft_layers.begin(), config.raft_layers.end(), z + EPSILON);
+        return LayerIndex(it == config.raft_layers.begin() ? 0 : std::distance(config.raft_layers.begin(), it) - 1);
+    }
+    return LayerIndex(config.raft_layers.size()) +
+        std::max<LayerIndex>(0, LayerIndex(std::floor((z - first_object_z) / slicing_params.layer_height)));
 }
 
 inline SupportGeneratorLayer& layer_initialize(

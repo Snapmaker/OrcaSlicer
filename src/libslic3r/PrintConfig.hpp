@@ -921,7 +921,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInt,                 support_interface_bottom_layers))
     // Spacing between interface lines (the hatching distance). Set zero to get a solid interface.
     ((ConfigOptionFloat,               support_interface_spacing))
-    ((ConfigOptionFloats,              support_interface_speed))
+    ((ConfigOptionFloat,                support_interface_min_area))
+    ((ConfigOptionFloats,               support_interface_speed))
     ((ConfigOptionEnum<SupportMaterialPattern>, support_base_pattern))
     ((ConfigOptionEnum<SupportMaterialInterfacePattern>, support_interface_pattern))
     // Spacing between support material lines (the hatching distance).
@@ -983,6 +984,11 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionPercent,            tree_support_top_rate))
     ((ConfigOptionFloat,              tree_support_branch_diameter_organic))
     ((ConfigOptionFloat,              tree_support_branch_angle_organic))
+    // Snapmaker: Support transition layer parameters
+    ((ConfigOptionInt,                tree_support_transition_layers))
+    ((ConfigOptionBool,               support_transition_perimeter))
+    ((ConfigOptionFloats,             support_transition_speed))
+    ((ConfigOptionFloatOrPercent,     support_transition_flow_ratio))
     ((ConfigOptionEnum<GapFillTarget>,gap_fill_target))
     ((ConfigOptionFloat,              min_length_factor))
 
@@ -994,6 +1000,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,             initial_layer_acceleration))
     ((ConfigOptionFloatsOrPercents,   bridge_acceleration))
     ((ConfigOptionFloats,             travel_acceleration))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_acceleration))
     ((ConfigOptionFloatsOrPercents,   sparse_infill_acceleration))
     ((ConfigOptionFloatsOrPercents,   internal_solid_infill_acceleration))
 
@@ -1004,6 +1011,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloats,             top_surface_jerk))
     ((ConfigOptionFloats,             initial_layer_jerk))
     ((ConfigOptionFloats,             travel_jerk))
+    ((ConfigOptionFloatOrPercent,     first_layer_travel_jerk))
     ((ConfigOptionBool,               precise_z_height))
     ((ConfigOptionFloats,             default_junction_deviation))
         

@@ -8994,6 +8994,8 @@ msgstr ""
 
 msgid "Support interface"
 msgstr ""
+msgid "Support transition speed"
+msgstr "Support transition speed"
 
 msgid "Support transition"
 msgstr ""
@@ -12510,8 +12512,8 @@ msgstr "This is the density of the first raft or support layer."
 msgid "Initial layer expansion"
 msgstr "First layer expansion"
 
-msgid "Expand the first raft or support layer to improve bed plate adhesion."
-msgstr "This expands the first raft or support layer to improve bed adhesion."
+msgid "Expand the first raft or support layer to improve bed plate adhesion, -1 means auto"
+msgstr "This expands the first raft or support layer to improve bed adhesion, -1 means auto"
 
 msgid "Raft layers"
 msgstr ""
@@ -13329,6 +13331,12 @@ msgstr ""
 msgid "Spacing of bottom interface lines. Zero means solid interface."
 msgstr ""
 "This is the spacing of bottom interface lines. 0 means solid interface."
+
+msgid "Minimum Support Contact Area"
+msgstr ""
+
+msgid "Lower values generate more support contact surfaces."
+msgstr ""
 
 msgid "Speed of support interface."
 msgstr "This is the speed for support interfaces."

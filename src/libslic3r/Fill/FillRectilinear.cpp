@@ -2748,6 +2748,43 @@ BoundingBox FillRectilinear::extended_object_bounding_box() const {
     return out.scaled(sqrt(2.));
 }
 
+// Snapmaker: dual-side anchored grid for external bridges >= 100% (bridge_edge_anchor):
+// end centres pinned delta inside the inner contour, spacing floor-fitted, never written back.
+static void bridge_edge_anchor_grid(const ExPolygonWithOffset &poly_with_offset,
+                                    coord_t                   flow_width,
+                                    coord_t                  &line_spacing,
+                                    BoundingBox              &bounding_box)
+{
+    const BoundingBox bounding_box_inner = poly_with_offset.bounding_box_inner();
+    // Rebase the grid range onto the admission region (incoming bbox is wider).
+    bounding_box = bounding_box_inner;
+    const coord_t width_inner = bounding_box_inner.size().x();
+    // Admission safety margin for the end centres (0.02mm).
+    const coord_t delta = static_cast<coord_t>(scale_(0.02));
+    const coord_t usable = width_inner - 2 * delta;
+    if (usable < line_spacing) {
+        // Narrower than one spacing: a single centred line (two would coincide).
+        const coord_t half = (line_spacing + static_cast<coord_t>(SCALED_EPSILON)) / 2;
+        const coord_t middle = (bounding_box_inner.min.x() + bounding_box_inner.max.x()) / 2;
+        bounding_box.min.x() = middle - half;
+        bounding_box.max.x() = bounding_box.min.x() + line_spacing - 1;
+    } else {
+        // Floor-fit the interval count, mirroring _adjust_solid_spacing.
+        coord_t n = usable / line_spacing; // >= 1, exact division below restores both edges
+        line_spacing = usable / n;
+        // Cap at the flow width: not written back, so wider gaps would leak air.
+        assert(flow_width > 0);
+        if (line_spacing > flow_width) {
+            n = (usable + flow_width - 1) / flow_width; // ceil
+            line_spacing = usable / n;
+        }
+        // x0 = bb.min + half below, so this lands the first centre on inner_min+delta.
+        const coord_t half = (line_spacing + static_cast<coord_t>(SCALED_EPSILON)) / 2;
+        bounding_box.min.x() += delta - half;
+        bounding_box.max.x() -= delta - half;
+    }
+}
+
 bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillParams &params, float angleBase, float pattern_shift, Polylines &polylines_out)
 {
     // At the end, only the new polylines will be rotated back.
@@ -2764,7 +2801,8 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
         rotate_vector.first += float(M_PI/2.);
     rotate_vector.first += angleBase;
 
-    assert(params.density > 0.0001f && params.density <= 1.f);
+    // Snapmaker: anchored bridges allow bridge_density up to 120%.
+    assert(params.density > 0.0001f && (params.bridge_edge_anchor ? params.density <= 1.25f : params.density <= 1.f));
     coord_t line_spacing = coord_t(scale_(this->spacing) / params.density);
 
     // On the polygons of poly_with_offset, the infill lines will be connected.
@@ -2785,7 +2823,12 @@ bool FillRectilinear::fill_surface_by_lines(const Surface *surface, const FillPa
     BoundingBox bounding_box     = this->has_consistent_pattern() ? this->extended_object_bounding_box() : bounding_box_src;
 
     // define flow spacing according to requested density
-    if (params.full_infill() && !params.dont_adjust) {
+    if (params.bridge_edge_anchor) {
+        bridge_edge_anchor_grid(poly_with_offset,
+                                static_cast<coord_t>(scale_(params.flow.width())),
+                                line_spacing,
+                                bounding_box);
+    } else if (params.full_infill() && !params.dont_adjust) {
         line_spacing = this->_adjust_solid_spacing(bounding_box_src.size().x(), line_spacing);
         this->spacing = unscale<double>(line_spacing);
     } else {

@@ -15774,6 +15774,7 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
+    q->sync_print_seq_warning_notification();
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)
@@ -22798,8 +22799,39 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
+void Plater::sync_print_seq_warning_notification()
+{
+    NotificationManager* notify_manager = get_notification_manager();
+    if (notify_manager == nullptr)
+        return;
+
+    // Suppress during startup / preset loading, before the 3D view is live.
+    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
+    if (view3d_canvas == nullptr || !view3d_canvas->is_initialized() || !view3d_canvas->is_rendering_enabled()) {
+        notify_manager->bbl_close_seqprintinfo_notification();
+        return;
+    }
+
+    // Effective sequence: an explicit per-plate value overrides the global
+    // one (PartPlate::get_real_print_seq falls back to global on ByDefault).
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    const bool by_object = curr_plate != nullptr &&
+        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+
+    if (by_object) {
+        std::string info_text = _u8L("Print By Object: \nSuggest to use auto-arrange to avoid collisions when printing.");
+        notify_manager->bbl_show_seqprintinfo_notification(info_text);
+    } else {
+        notify_manager->bbl_close_seqprintinfo_notification();
+    }
+}
+
 void Plater::check_seq_print_caution(bool all_plates)
 {
+    // The slice action owns the prompt state: the pre-slice red error (below)
+    // supersedes the live yellow warning, so always retire the yellow one.
+    get_notification_manager()->bbl_close_seqprintinfo_notification();
+
     const wxString caution_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
 
     const auto printer_model_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config
@@ -22939,7 +22971,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 {
     bool update_scheduled = false;
     bool bed_shape_changed = false;
-    //bool print_sequence_changed = false;
+    bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
     for (auto opt_key : diff_keys) {
         if (opt_key == "filament_colour") {
@@ -22996,7 +23028,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         else if (opt_key == "print_sequence") {
             update_scheduled = true;
-            //print_sequence_changed = true;
+            print_sequence_changed = true;
         }
         else if (opt_key == "printer_model") {
             p->reset_gcode_toolpaths();
@@ -23021,6 +23053,11 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         this->p->schedule_background_process();
         update_title_dirty_status();
     }
+
+    // Gate on the diff so unrelated option edits never resurrect the yellow
+    // by-object warning once the slice guard has retired it.
+    if (print_sequence_changed)
+        sync_print_seq_warning_notification();
 
     notify_filament_usage_changed();
 }
@@ -23928,6 +23965,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
             curr_plate->set_print_seq(PrintSequence(ps_sel - 1));
         else
             curr_plate->set_print_seq(PrintSequence::ByDefault);
+
+        sync_print_seq_warning_notification();
 
         int spiral_sel = dlg.get_spiral_mode_choice();
         if (spiral_sel == 1) {

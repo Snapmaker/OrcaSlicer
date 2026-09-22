@@ -644,6 +644,10 @@ public:
     bool sync_cold_plate_notification();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
+    /// Live (non-slice) warning: yellow notification when the CURRENT plate's
+    /// effective print sequence is by-object. Re-evaluated on global/per-plate
+    /// print-sequence edits and on plate switch.
+    void sync_print_seq_warning_notification();
     /// Single pre-slice check point: show a red, non-blocking error
     /// notification when the effective print sequence is by-object on a
     /// Snapmaker U1 (print head collision risk during tool switches).

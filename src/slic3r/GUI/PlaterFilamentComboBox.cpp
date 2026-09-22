@@ -185,6 +185,16 @@ int system_vendor_rank(const std::string &vendor)
     return 2;
 }
 
+std::string canonical_vendor(const std::string &vendor)
+{
+    const wxString label = from_u8(vendor);
+    if (label.CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
+        return g_snapmaker_vendor;
+    if (label.CmpNoCase(wxString::FromUTF8("Generic")) == 0)
+        return "Generic";
+    return vendor;
+}
+
 constexpr int g_name_class_digit = 0;
 constexpr int g_name_class_upper = 1;
 constexpr int g_name_class_lower = 2;
@@ -560,6 +570,9 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
             if (row.sort_item.vendor.empty())
                 continue;
         }
+
+        if (row.section == Section::System)
+            row.sort_item.vendor = canonical_vendor(row.sort_item.vendor);
 
         if (current_section == Section::Other) {
             row.item.group.clear();

@@ -343,13 +343,8 @@ PlaterFilamentComboBox::PopupRow PlaterFilamentComboBox::make_header(const wxStr
                                                                       Section section) const
 {
     PopupRow row;
-    switch (section) {
-    case Section::Project: row.item.text = _L("Project-inside presets"); break;
-    case Section::User:    row.item.text = _L("User presets"); break;
-    case Section::System:  row.item.text = _L("System presets"); break;
-    case Section::Other:   row.item.text = text; break;
-    }
-    row.item.style = DD_ITEM_STYLE_SPLIT_ITEM;
+    row.item.text  = text;
+    row.item.style = 0;
     row.section    = section;
     row.header     = true;
     return row;

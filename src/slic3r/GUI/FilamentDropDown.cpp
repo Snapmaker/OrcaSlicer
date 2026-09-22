@@ -189,6 +189,47 @@ void FilamentDropDown::DismissAll()
     Hide();
 }
 
+int FilamentDropDown::group_row_of(const wxString &target) const
+{
+    if (target.IsEmpty())
+        return -1;
+
+    std::set<wxString> seen;
+    int                row = 0;
+    for (const Item &item : items) {
+        if (!item.group.IsEmpty() && !seen.insert(item.group).second)
+            continue;
+        if (item.group == target)
+            return row;
+        ++row;
+    }
+    return -1;
+}
+
+bool FilamentDropDown::openSelectionGroup()
+{
+    if (!group.IsEmpty() || subDropDown == nullptr || selection < 0 || selection >= (int) items.size())
+        return false;
+
+    const wxString target = items[selection].group;
+    const int      row    = group_row_of(target);
+    if (row < 0)
+        return false;
+
+    hover_item = row;
+
+    auto &drop = *subDropDown;
+    if (drop.group != target) {
+        drop.setGroup(target);
+        drop.messureSize();
+    }
+    drop.autoPosition();
+    drop.paintNow();
+    if (!drop.IsShown())
+        drop.Popup(&drop);
+    return true;
+}
+
 void FilamentDropDown::paintEvent(wxPaintEvent &evt)
 {
     // depending on your system you may need to look at double-buffered dcs

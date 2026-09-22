@@ -621,6 +621,7 @@ void PlaterFilamentComboBox::show_popup()
     open_event.SetEventObject(this);
     GetEventHandler()->ProcessEvent(open_event);
     m_popup->PopupForParent();
+    m_popup->openSelectionGroup();
 }
 
 void PlaterFilamentComboBox::close_popup(bool notify)

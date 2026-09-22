@@ -111,6 +111,8 @@ public:
     void PopupForParent();
     void DismissAll();
 
+    bool openSelectionGroup();
+
     int  GetVisibleCount() const { return static_cast<int>(count); }
 
     const std::vector<Item> &GetItems() const { return items; }
@@ -128,6 +130,7 @@ private:
 
     int hoverIndex();
     int selectedItem();
+    int group_row_of(const wxString &target) const;
 
     void messureSize();
     void autoPosition();

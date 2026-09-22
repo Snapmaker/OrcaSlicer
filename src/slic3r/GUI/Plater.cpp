@@ -23296,16 +23296,18 @@ std::string export_id_from(const Model& model)
 void Plater::log_model_import_from_lab() const
 {
     SNAP_LOG_BATCH(Info, "model import from lab",
+        {"source", "cpp"},
         {"eventName", "orca_model_import_from_lab"},
         {"project_id", project_id_from(p->model)},
         {"export_id", export_id_from(p->model)},
-        {"source", source_from(p->model)},
+        {"generate_source", source_from(p->model)},
         {"nozzle_size", current_nozzle_size()});
 }
 
 void Plater::log_slice_start() const
 {
     SNAP_LOG_BATCH(Info, "slice start",
+        {"source", "cpp"},
         {"eventName", "orca_slice_start"},
         {"project_id", project_id_from(p->model)},
         {"export_id", export_id_from(p->model)});
@@ -23314,6 +23316,7 @@ void Plater::log_slice_start() const
 void Plater::log_slice_success(long long duration_ms) const
 {
     SNAP_LOG_BATCH(Info, "slice success",
+        {"source", "cpp"},
         {"eventName", "orca_slice_success"},
         {"project_id", project_id_from(p->model)},
         {"export_id", export_id_from(p->model)},
@@ -23328,6 +23331,7 @@ void Plater::log_print_start() const
         result = plate->get_slice_result();
 
     SNAP_LOG_BATCH(Info, "print start",
+        {"source", "cpp"},
         {"eventName", "orca_print_start"},
         {"project_id", project_id_from(p->model)},
         {"export_id", export_id_from(p->model)},

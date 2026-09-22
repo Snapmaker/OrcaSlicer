@@ -3629,6 +3629,8 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
     wxGetApp().params_panel()->notify_object_config_changed();
     if (k == "curr_bed_type")
         validate_filament_hot_bed_nozzle_relation(parent());
+    if (k == "print_sequence")
+        wxGetApp().plater()->sync_print_seq_warning_notification();
     update();
 }
 

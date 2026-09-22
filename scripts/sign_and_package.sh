@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# macOS 应用签名、打包、公证完整流程脚本
-# 用法: ./scripts/sign_and_package.sh [arm64|x86_64] [app_path]
+# Sign, package, and notarize the macOS app.
+# Usage: ./scripts/sign_and_package.sh [arm64|x86_64] [app_path]
 
 set -e
 
-# 检测架构参数
+# Detect architecture
 ARCH="${1:-$(uname -m)}"
 
-# 标准化架构名称
+# Normalize architecture name
 case "$ARCH" in
     arm64|aarch64)
         ARCH="arm64"
@@ -17,8 +17,8 @@ case "$ARCH" in
         ARCH="x86_64"
         ;;
     *)
-        echo "错误: 不支持的架构 $ARCH"
-        echo "用法: $0 [arm64|x86_64] [app_path]"
+        echo "Error: unsupported architecture $ARCH"
+        echo "Usage: $0 [arm64|x86_64] [app_path]"
         exit 1
         ;;
 esac
@@ -38,8 +38,9 @@ NOTARY_TEAM_ID="${NOTARY_TEAM_ID:-}"
 NOTARY_PASSWORD="${NOTARY_PASSWORD:-}"
 NOTARY_KEYCHAIN_PROFILE="${NOTARY_KEYCHAIN_PROFILE:-}"
 
-# 无 Developer ID 时仍必须 ad-hoc 重签：install_name_tool 会破坏原签名，
-# 跳过重签会在 macOS 上直接 SIGKILL (Code Signature Invalid)。
+# Ad-hoc re-sign is still required without a Developer ID: install_name_tool
+# invalidates the existing signature, and skipping re-sign causes SIGKILL on
+# macOS (Code Signature Invalid).
 if [ -n "$CERTIFICATE_ID" ]; then
     SIGN_IDENTITY="$CERTIFICATE_ID"
     SIGN_MODE="Developer ID"
@@ -58,17 +59,17 @@ if [ "$SIGN_IDENTITY" != "-" ]; then
 fi
 
 echo "=========================================="
-echo "macOS 应用签名、打包、公证完整流程"
+echo "macOS sign, package, and notarize"
 echo "=========================================="
-echo "架构: $ARCH"
-echo "证书: ${CERTIFICATE_ID:-未设置，使用 ad-hoc 签名}"
-echo "TEAM_ID: ${NOTARY_TEAM_ID:-未设置}"
-echo "签名: $SIGN_MODE"
-echo "公证: $([ "$ENABLE_NOTARY" -eq 1 ] && echo 启用 || echo 跳过)"
-echo "项目目录: $PROJECT_DIR"
+echo "Arch: $ARCH"
+echo "Certificate: ${CERTIFICATE_ID:-not set, using ad-hoc signing}"
+echo "TEAM_ID: ${NOTARY_TEAM_ID:-not set}"
+echo "Signing: $SIGN_MODE"
+echo "Notarization: $([ "$ENABLE_NOTARY" -eq 1 ] && echo enabled || echo skipped)"
+echo "Project dir: $PROJECT_DIR"
 echo
 
-# codesign 封装：Developer ID 带 timestamp；ad-hoc 不能带 timestamp
+# codesign wrapper: Developer ID includes --timestamp; ad-hoc must not.
 codesign_item() {
     if [ "$SIGN_IDENTITY" = "-" ]; then
         codesign --force --verbose --options runtime --sign "$SIGN_IDENTITY" "$@"
@@ -78,19 +79,19 @@ codesign_item() {
 }
 
 # ============================================
-# 查找应用
+# Locate the app
 # ============================================
 
-# 如果提供了 app 路径
+# App path provided as the second argument
 if [ -n "$2" ]; then
     SOURCE_APP="$2"
     if [ ! -d "$SOURCE_APP" ]; then
-        echo "错误: 找不到应用: $SOURCE_APP"
+        echo "Error: app not found: $SOURCE_APP"
         exit 1
     fi
-    echo "使用指定应用: $SOURCE_APP"
+    echo "Using specified app: $SOURCE_APP"
 else
-    # 自动查找编译好的 app
+    # Auto-detect a built app
     for possible_path in \
         "$BUILD_DIR/src/Release/$APP_NAME.app" \
         "$BUILD_DIR/src/RelWithDebInfo/$APP_NAME.app" \
@@ -99,12 +100,12 @@ else
     do
         if [ -d "$possible_path" ]; then
             SOURCE_APP="$possible_path"
-            echo "找到应用: $SOURCE_APP"
+            echo "Found app: $SOURCE_APP"
             break
         fi
     done
 
-    # 检查空格版本名称
+    # Also check the display name with a space
     if [ -z "$SOURCE_APP" ]; then
         for possible_path in \
             "$BUILD_DIR/src/Release/Snapmaker Orca.app" \
@@ -112,73 +113,74 @@ else
         do
             if [ -d "$possible_path" ]; then
                 SOURCE_APP="$possible_path"
-                echo "找到应用: $SOURCE_APP"
+                echo "Found app: $SOURCE_APP"
                 break
             fi
         done
     fi
 
     if [ -z "$SOURCE_APP" ]; then
-        echo "错误: 在 $BUILD_DIR 中找不到编译好的 $APP_NAME.app"
-        echo "请先编译 $ARCH 版本: ./build_release_macos.sh -s -a $ARCH"
+        echo "Error: built $APP_NAME.app not found in $BUILD_DIR"
+        echo "Build the $ARCH variant first: ./build_release_macos.sh -s -a $ARCH"
         exit 1
     fi
 fi
 
-# 创建临时工作目录
+# Temporary working directory
 WORK_DIR="$BUILD_DIR/sign_package"
 STAGING_DIR="$WORK_DIR/staging"
 rm -rf "$WORK_DIR"
 mkdir -p "$STAGING_DIR"
 
-# 清理所有可能的残留挂载点（在开始工作前）
-echo "清理可能的残留挂载点..."
+# Detach leftover volumes before work starts
+echo "Cleaning leftover mount points..."
 for mount_point in /Volumes/Snapmaker* /Volumes/Snapmaker*; do
     if [ -d "$mount_point" ]; then
-        echo "  卸载: $mount_point"
+        echo "  Detach: $mount_point"
         hdiutil detach "$mount_point" -force 2>/dev/null || true
     fi
 done
 sleep 1
 
-# 复制应用到工作目录
+# Copy the app into the working directory
 echo
 echo "=========================================="
-echo "步骤 1/6: 复制应用"
+echo "Step 1/6: Copy app"
 echo "=========================================="
-echo "复制应用到工作目录..."
+echo "Copying app to the working directory..."
 cp -R "$SOURCE_APP" "$STAGING_DIR/$APP_NAME.app"
 FINAL_APP="$STAGING_DIR/$APP_NAME.app"
 
-# 删除 .DS_Store 文件
+# Remove .DS_Store files
 find "$FINAL_APP" -name '.DS_Store' -delete
-# 删除 PkgInfo 文件（冗余文件）
+# Remove redundant PkgInfo
 rm -f "$FINAL_APP/Contents/PkgInfo" 2>/dev/null || true
 
-# 清理所有扩展属性（包括 com.apple.quarantine），避免 Gatekeeper 问题
-echo "清理扩展属性..."
+# Strip extended attributes (including com.apple.quarantine) to avoid Gatekeeper issues
+echo "Clearing extended attributes..."
 xattr -cr "$FINAL_APP" 2>/dev/null || {
-    echo "  部分文件无法清除 xattr（可忽略）"
+    echo "  Some xattrs could not be cleared (safe to ignore)"
     find "$FINAL_APP" -type f -exec sh -c 'xattr -c "$1" 2>/dev/null || true' _ {} \;
 }
 
 # ============================================
-# 打包外部依赖库
+# Bundle external dylibs
 # ============================================
 
 APP_MACOS_DIR="$FINAL_APP/Contents/MacOS"
 APP_FRAMEWORKS_DIR="$FINAL_APP/Contents/Frameworks"
 EXECUTABLE="$APP_MACOS_DIR/$APP_NAME"
 
-# 确保 Frameworks 目录存在
+# Ensure Frameworks exists
 mkdir -p "$APP_FRAMEWORKS_DIR"
 
 echo
-echo "检查并打包外部依赖库..."
+echo "Checking and bundling external libraries..."
 
-# GitHub 发布包不携带 Homebrew 的 libzstd*.dylib。
-# 本机构建若链到 /opt/homebrew/.../libzstd.1.5.7.dylib，也不打进 Frameworks：
-# 打进去的是构建机上的特定版本，用户机器没有这份库（或加载路径仍指向 Homebrew）就会崩溃。
+# GitHub release packages do not ship Homebrew libzstd*.dylib.
+# Local builds that link /opt/homebrew/.../libzstd.1.5.7.dylib must not copy
+# it into Frameworks either: that is a builder-specific version, and user
+# machines will crash if the load path still points at Homebrew.
 should_skip_bundle_lib() {
     case "$1" in
         libzstd*) return 0 ;;
@@ -186,11 +188,11 @@ should_skip_bundle_lib() {
     esac
 }
 
-# 查找所有外部依赖（非系统库）
+# Find non-system external dependencies
 EXTERNAL_LIBS=$(otool -L "$EXECUTABLE" | grep -E "opt/homebrew|usr/local|opt/local" | awk '{print $1}')
 
 if [ -n "$EXTERNAL_LIBS" ]; then
-    echo "发现外部依赖:"
+    echo "External dependencies found:"
     echo "$EXTERNAL_LIBS"
     echo
 
@@ -198,128 +200,128 @@ if [ -n "$EXTERNAL_LIBS" ]; then
         if [ -f "$LIB_PATH" ]; then
             LIB_NAME=$(basename "$LIB_PATH")
             if should_skip_bundle_lib "$LIB_NAME"; then
-                echo "跳过: $LIB_NAME（不打入安装包，与 GitHub 发布包一致）"
+                echo "Skip: $LIB_NAME (not bundled, matches GitHub releases)"
                 continue
             fi
-            echo "处理: $LIB_NAME"
+            echo "Processing: $LIB_NAME"
 
-            # 获取实际的库文件路径（处理符号链接）- macOS 兼容方式
+            # Resolve the real library path (follow symlinks) in a macOS-compatible way
             if command -v realpath &> /dev/null; then
                 REAL_LIB=$(realpath "$LIB_PATH" 2>/dev/null || echo "$LIB_PATH")
             else
-                # macOS 不支持 realpath/readlink -f，使用 perl
+                # macOS has no realpath / readlink -f; use perl
                 REAL_LIB=$(perl -MCwd=abs_path -e 'print abs_path(shift)' "$LIB_PATH" 2>/dev/null || echo "$LIB_PATH")
             fi
             REAL_NAME=$(basename "$REAL_LIB")
 
-            # 复制实际的库文件
+            # Copy the real library file
             if [ ! -f "$APP_FRAMEWORKS_DIR/$REAL_NAME" ]; then
                 cp "$REAL_LIB" "$APP_FRAMEWORKS_DIR/$REAL_NAME"
 
-                # 修改库的 ID 为文件名（不带路径）
+                # Set the library ID to the filename (no path)
                 install_name_tool -id "$REAL_NAME" "$APP_FRAMEWORKS_DIR/$REAL_NAME"
 
-                # 删除库中的 rpath（避免问题）
+                # Drop leftover rpaths that can break loading
                 install_name_tool -delete_rpath "@loader_path/../lib" "$APP_FRAMEWORKS_DIR/$REAL_NAME" 2>/dev/null || true
                 install_name_tool -delete_rpath "@loader_path/lib" "$APP_FRAMEWORKS_DIR/$REAL_NAME" 2>/dev/null || true
             fi
 
-            # 注释掉：不创建中间符号链接，避免冗余
+            # Intentionally not creating intermediate symlinks
             # if [ "$LIB_NAME" != "$REAL_NAME" ]; then
             #     (cd "$APP_FRAMEWORKS_DIR" && ln -sf "$REAL_NAME" "$LIB_NAME")
             # fi
 
-            # 更新可执行文件中的依赖引用
+            # Rewrite dependency references in the main executable
             install_name_tool -change "$LIB_PATH" "@executable_path/../Frameworks/$REAL_NAME" "$EXECUTABLE" 2>/dev/null || true
             install_name_tool -change "$REAL_LIB" "@executable_path/../Frameworks/$REAL_NAME" "$EXECUTABLE" 2>/dev/null || true
         fi
     done
 
     echo
-    echo "已打包的依赖库:"
+    echo "Bundled libraries:"
     ls -la "$APP_FRAMEWORKS_DIR/"
 else
-    echo "没有外部依赖需要处理"
+    echo "No external libraries to bundle"
 fi
 
-# 清掉历史打包残留，避免 libzstd*.dylib 进入 DMG
+# Remove leftover libzstd*.dylib from previous packaging runs
 rm -f "$APP_FRAMEWORKS_DIR"/libzstd*.dylib
 
-# 移除不需要的 rpath
+# Remove unused rpaths
 echo
-echo "清理 rpath..."
+echo "Cleaning rpaths..."
 install_name_tool -delete_rpath "/opt/homebrew/lib" "$EXECUTABLE" 2>/dev/null || true
 install_name_tool -delete_rpath "/usr/local/lib" "$EXECUTABLE" 2>/dev/null || true
 install_name_tool -delete_rpath "/opt/local/lib" "$EXECUTABLE" 2>/dev/null || true
 
-# 修复 Resources 符号链接 (如果是符号链接)
+# Replace a Resources symlink with a real copy if needed
 RESOURCES_LINK="$FINAL_APP/Contents/Resources"
 if [ -L "$RESOURCES_LINK" ]; then
-    echo "修复 Resources 符号链接..."
+    echo "Replacing Resources symlink with a real copy..."
     RESOURCES_TARGET=$(readlink "$RESOURCES_LINK")
     rm "$RESOURCES_LINK"
     cp -R "$RESOURCES_TARGET" "$RESOURCES_LINK"
 fi
 
-# 验证依赖
+# Verify dependencies
 echo
-echo "验证最终依赖:"
-otool -L "$EXECUTABLE" | grep -E "@executable|libzstd|libsentry" || echo "无特殊依赖"
+echo "Final dependencies:"
+otool -L "$EXECUTABLE" | grep -E "@executable|libzstd|libsentry" || echo "No special dependencies"
 
 if otool -L "$EXECUTABLE" | grep -qE "/opt/homebrew/.*/libzstd|/usr/local/.*/libzstd|/opt/local/.*/libzstd"; then
     echo ""
-    echo "警告: 可执行文件仍链接到本机 Homebrew/MacPorts 的 libzstd。"
-    echo "      此 DMG 在没有该库的机器上会启动崩溃（Library not loaded）。"
-    echo "      GitHub 包能用，是因为 CI 构建没有链到 Homebrew zstd。"
-    echo "      请在未安装 brew zstd 的环境重新编译，或从链接路径中排除 /opt/homebrew。"
+    echo "Warning: the executable still links Homebrew/MacPorts libzstd."
+    echo "         This DMG will crash on machines without that library (Library not loaded)."
+    echo "         GitHub packages work because CI does not link Homebrew zstd."
+    echo "         Rebuild without brew zstd installed, or drop /opt/homebrew from the link path."
     echo ""
 fi
 
 # ============================================
-# 步骤 2/6: 签名应用
+# Step 2/6: Sign the app
 # ============================================
 
 echo
 echo "=========================================="
-echo "步骤 2/6: 签名应用"
+echo "Step 2/6: Sign app"
 echo "=========================================="
 
 APP_FRAMEWORKS_DIR="$FINAL_APP/Contents/Frameworks"
 APP_MACOS_DIR="$FINAL_APP/Contents/MacOS"
 EXECUTABLE="$APP_MACOS_DIR/$APP_NAME"
 
-echo "签名方式: $SIGN_MODE ($SIGN_IDENTITY)"
+echo "Signing mode: $SIGN_MODE ($SIGN_IDENTITY)"
 
-# 2.1 移除现有签名
-echo "2.1 移除现有签名..."
+# 2.1 Remove existing signature
+echo "2.1 Removing existing signature..."
 codesign --remove-signature "$FINAL_APP" 2>/dev/null || true
 
-# 2.2 签名 Frameworks 和动态库（使用 runtime 选项）
-echo "2.2 签名 Frameworks 和动态库（使用 runtime 选项）..."
+# 2.2 Sign frameworks and dylibs with the runtime option
+echo "2.2 Signing frameworks and dylibs (runtime)..."
 if [ -d "$APP_FRAMEWORKS_DIR" ]; then
-    # 签名所有 .framework
+    # Sign all .framework bundles
     for framework in "$APP_FRAMEWORKS_DIR"/*.framework; do
         if [ -d "$framework" ]; then
-            echo "  - 签名: $(basename "$framework")"
-            codesign_item "$framework" 2>/dev/null || true
+            echo "  - Signing: $(basename "$framework")"
+            codesign_item "$framework"
         fi
     done
 
-    # 签名所有 .dylib
+    # Sign all .dylib files
     for dylib in "$APP_FRAMEWORKS_DIR"/*.dylib; do
         if [ -f "$dylib" ]; then
-            echo "  - 签名: $(basename "$dylib")"
+            echo "  - Signing: $(basename "$dylib")"
             codesign_item "$dylib"
         fi
     done
 
-    # 签名其他可能存在的库文件（如 .so）
+    # Sign any other library files (e.g. .so)
     for lib in "$APP_FRAMEWORKS_DIR"/*.*; do
         if [ -f "$lib" ]; then
             case "$lib" in
-                *.dylib) ;;  # 已处理，跳过
+                *.dylib) ;;  # already handled
                 *)
-                    echo "  - 签名: $(basename "$lib")"
+                    echo "  - Signing: $(basename "$lib")"
                     codesign_item "$lib"
                     ;;
             esac
@@ -327,39 +329,40 @@ if [ -d "$APP_FRAMEWORKS_DIR" ]; then
     done
 fi
 
-# 2.3 签名辅助工具
-echo "2.3 签名辅助工具（使用 runtime 选项）..."
+# 2.3 Sign helper tools
+echo "2.3 Signing helper tools (runtime)..."
 if [ -f "$APP_MACOS_DIR/crashpad_handler" ]; then
-    echo "  - 签名: crashpad_handler"
+    echo "  - Signing: crashpad_handler"
     codesign_item "$APP_MACOS_DIR/crashpad_handler"
 fi
 
-# 2.4 签名整个 app bundle（应用 entitlements）
-echo "2.4 签名整个 app bundle（应用 entitlements）..."
-echo "  这会签名所有组件并将 entitlements 应用到主可执行文件"
+# 2.4 Sign the whole app bundle (apply entitlements)
+echo "2.4 Signing the app bundle (applying entitlements)..."
+echo "  This signs all components and applies entitlements to the main executable"
 codesign_item --entitlements "$ENTITLEMENTS" "$FINAL_APP"
 
-# 2.5 验证签名和 entitlements
-echo "2.5 验证签名和 entitlements..."
-echo "  检查签名..."
+# 2.5 Verify signature and entitlements
+echo "2.5 Verifying signature and entitlements..."
+echo "  Checking signature..."
 codesign -vvv "$FINAL_APP" 2>&1 | grep -E "valid on disk|Authority|TeamIdentifier|adhoc" | head -5
 echo ""
-echo "  检查 entitlements..."
+echo "  Checking entitlements..."
 if codesign -d --entitlements - "$FINAL_APP" 2>&1 | grep -q "com.apple.security.cs.disable-library-validation"; then
-    echo "  ✓ Entitlements 正确嵌入！"
+    echo "  Entitlements embedded correctly"
 else
-    echo "警告: 预期的 entitlements 未找到"
+    echo "Warning: expected entitlements not found"
 fi
 
 # ============================================
-# 步骤 3/6: 创建并签名 DMG
-# 流程与 GitHub Actions 完全一致：准备内容 -> 一步 create UDZO（不挂载）-> 签名 DMG
-# 不挂载可避免本地「操作不被允许」；打开 DMG 后为系统默认图标布局
+# Step 3/6: Create and sign the DMG
+# Same flow as GitHub Actions: prepare contents -> one-shot UDZO create
+# (no mount) -> sign the DMG. Skipping the mount avoids local
+# "operation not permitted" errors; Finder uses the default icon layout.
 # ============================================
 
 echo
 echo "=========================================="
-echo "步骤 3/6: 创建并签名 DMG"
+echo "Step 3/6: Create and sign DMG"
 echo "=========================================="
 
 DMG_CONTENT_DIR="$WORK_DIR/dmg_content"
@@ -367,39 +370,38 @@ rm -rf "$DMG_CONTENT_DIR"
 mkdir -p "$DMG_CONTENT_DIR"
 rm -rf "$DMG_CONTENT_DIR/.fseventsd" 2>/dev/null || true
 
-# 复制应用（显示名 Snapmaker Orca.app）并创建 Applications 符号链接（与 CI 一致）
-echo "准备 DMG 内容..."
+# Copy the app (display name Snapmaker Orca.app) and add an Applications symlink (same as CI)
+echo "Preparing DMG contents..."
 cp -R "$FINAL_APP" "$DMG_CONTENT_DIR/$APP_NAME_EX.app"
-# 清理 DMG 内容中的扩展属性（重要！避免 Gatekeeper 问题）
+# Clear xattrs on DMG contents (important to avoid Gatekeeper issues)
 xattr -cr "$DMG_CONTENT_DIR/$APP_NAME_EX.app" 2>/dev/null || {
-    echo "  部分文件无法清除 xattr（可忽略）"
+    echo "  Some xattrs could not be cleared (safe to ignore)"
     find "$DMG_CONTENT_DIR/$APP_NAME_EX.app" -type f -exec sh -c 'xattr -c "$1" 2>/dev/null || true' _ {} \;
 }
 ln -sfn /Applications "$DMG_CONTENT_DIR/Applications"
 
-# 卷名不使用下划线，避免 macOS 安全机制阻止
 DMG_VOLNAME="Snapmaker_Orca"
 FINAL_DMG_PATH="$BUILD_DIR/$DMG_NAME"
 rm -f "$FINAL_DMG_PATH"
 
-# 再次清理可能残留的挂载点
+# Detach a leftover volume with the same name
 if [ -d "/Volumes/$DMG_VOLNAME" ]; then
-    echo "检测到残留挂载点 /Volumes/$DMG_VOLNAME，正在强制卸载..."
+    echo "Leftover mount /Volumes/$DMG_VOLNAME detected, force-detaching..."
     hdiutil detach "/Volumes/$DMG_VOLNAME" -force 2>/dev/null || true
     sleep 2
 fi
 
-# 检查是否有同名 DMG 已挂载
+# Detach any already-mounted DMG with the same volume name
 MOUNTED_DMG=$(hdiutil info | grep "/Volumes/$DMG_VOLNAME" || true)
 if [ -n "$MOUNTED_DMG" ]; then
-    echo "警告: 发现已挂载的同名卷，尝试卸载..."
+    echo "Warning: a volume with the same name is already mounted, detaching..."
     hdiutil info | grep "/Volumes/$DMG_VOLNAME" | grep -o '/dev/disk[0-9]*' | while read -r disk; do
         hdiutil detach "$disk" -force 2>/dev/null || true
     done
     sleep 2
 fi
 
-echo "创建 DMG: $FINAL_DMG_PATH (卷名: $DMG_VOLNAME)"
+echo "Creating DMG: $FINAL_DMG_PATH (volume: $DMG_VOLNAME)"
 if ! hdiutil create \
     -volname "$DMG_VOLNAME" \
     -srcfolder "$DMG_CONTENT_DIR" \
@@ -408,11 +410,13 @@ if ! hdiutil create \
     -imagekey zlib-level=9 \
     -o "$FINAL_DMG_PATH"; then
     echo ""
-    echo "错误: hdiutil create 失败"
-    echo "尝试使用替代方法创建 DMG..."
+    echo "Error: hdiutil create failed"
+    echo "Retrying with an alternate volume name..."
 
-    # 备用方案：使用 mktemp 创建临时卷名
-    TEMP_VOLNAME="Snapmaker_Orca_$$"
+    # Fallback volume name must not share the Snapmaker prefix with
+    # Snapmaker Orca.app; that prefix triggers the macOS 26.2 restriction
+    # on /Volumes paths.
+    TEMP_VOLNAME="orca_dmg_$$"
     if hdiutil create \
         -volname "$TEMP_VOLNAME" \
         -srcfolder "$DMG_CONTENT_DIR" \
@@ -420,68 +424,68 @@ if ! hdiutil create \
         -format UDZO \
         -imagekey zlib-level=9 \
         -o "$FINAL_DMG_PATH"; then
-        echo "使用临时卷名创建成功"
+        echo "Created DMG with temporary volume name"
     else
-        echo "错误: DMG 创建失败，请手动检查 /Volumes 目录"
-        echo "运行 'ls -la /Volumes/' 查看挂载点"
-        echo "运行 'hdiutil info' 查看所有挂载的磁盘镜像"
+        echo "Error: DMG creation failed; inspect /Volumes manually"
+        echo "Run 'ls -la /Volumes/' to list mount points"
+        echo "Run 'hdiutil info' to list mounted disk images"
         exit 1
     fi
 fi
-[ ! -f "$FINAL_DMG_PATH" ] && echo "错误: 未生成 DMG" && exit 1
+[ ! -f "$FINAL_DMG_PATH" ] && echo "Error: DMG was not created" && exit 1
 
-# 签名 DMG
-echo "签名 DMG..."
+# Sign the DMG
+echo "Signing DMG..."
 if [ "$SIGN_IDENTITY" = "-" ]; then
     codesign --force --sign "$SIGN_IDENTITY" "$FINAL_DMG_PATH"
 else
     codesign --force --timestamp --sign "$SIGN_IDENTITY" "$FINAL_DMG_PATH"
 fi
 
-echo "验证 DMG 签名..."
+echo "Verifying DMG signature..."
 codesign -vvv "$FINAL_DMG_PATH" 2>&1 | head -3
 
 rm -rf "$DMG_CONTENT_DIR"
 
 echo ""
 echo "=========================================="
-echo "DMG 创建完成!"
+echo "DMG created"
 echo "=========================================="
 echo "DMG: $FINAL_DMG_PATH"
-echo "大小: $(du -h "$FINAL_DMG_PATH" | cut -f1)"
+echo "Size: $(du -h "$FINAL_DMG_PATH" | cut -f1)"
 
 # ============================================
-# 步骤 4/6: 公证 DMG
+# Step 4/6: Notarize the DMG
 # ============================================
 
 echo ""
 echo "=========================================="
-echo "步骤 4/6: 公证 DMG"
+echo "Step 4/6: Notarize DMG"
 echo "=========================================="
 
-echo "检查公证凭据..."
-echo "  Apple ID: ${NOTARY_APPLE_ID:-未设置}"
-echo "  Team ID: ${NOTARY_TEAM_ID:-未设置}"
-echo "  Keychain Profile: ${NOTARY_KEYCHAIN_PROFILE:-未设置}"
+echo "Checking notarization credentials..."
+echo "  Apple ID: ${NOTARY_APPLE_ID:-not set}"
+echo "  Team ID: ${NOTARY_TEAM_ID:-not set}"
+echo "  Keychain Profile: ${NOTARY_KEYCHAIN_PROFILE:-not set}"
 
 if [ "$ENABLE_NOTARY" -eq 0 ]; then
     echo ""
     if [ "$SIGN_IDENTITY" = "-" ]; then
-        echo "CERTIFICATE_ID 未设置，已使用 ad-hoc 签名；ad-hoc 无法公证，跳过公证"
+        echo "CERTIFICATE_ID is not set; used ad-hoc signing. Ad-hoc cannot be notarized, skipping notarization"
     else
-        echo "公证凭据不完整，跳过公证步骤"
-        echo "请在本机或 CI 设置以下环境变量之一:"
+        echo "Notarization credentials are incomplete, skipping notarization"
+        echo "Set one of the following on this machine or in CI:"
         echo "  1) export NOTARY_KEYCHAIN_PROFILE=\"snapmaker\""
-        echo "  2) 或同时设置 NOTARY_APPLE_ID、NOTARY_TEAM_ID、NOTARY_PASSWORD"
+        echo "  2) or set NOTARY_APPLE_ID, NOTARY_TEAM_ID, and NOTARY_PASSWORD"
     fi
 else
-    echo "✓ 公证凭据已配置"
+    echo "Notarization credentials configured"
     echo ""
     echo "=========================================="
-    echo "步骤 5/6: 提交公证"
+    echo "Step 5/6: Submit for notarization"
     echo "=========================================="
 
-    echo "提交 DMG 到 Apple 公证服务..."
+    echo "Submitting DMG to Apple notarization..."
     if [ -n "$NOTARY_KEYCHAIN_PROFILE" ]; then
         xcrun notarytool submit "$FINAL_DMG_PATH" \
             --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
@@ -498,37 +502,37 @@ else
 
     echo ""
     echo "=========================================="
-    echo "步骤 6/6: 装订公证票据"
+    echo "Step 6/6: Staple notarization ticket"
     echo "=========================================="
 
-    echo "装订公证票据到 DMG..."
+    echo "Stapling the notarization ticket onto the DMG..."
     xcrun stapler staple "$FINAL_DMG_PATH"
 
     echo ""
-    echo "验证公证结果..."
+    echo "Validating notarization..."
     xcrun stapler validate -v "$FINAL_DMG_PATH"
 
     echo ""
     echo "=========================================="
-    echo "公证完成!"
+    echo "Notarization complete"
     echo "=========================================="
-    echo "此 DMG 已签名并公证，可以在任何 Mac 上无缝运行"
+    echo "This DMG is signed and notarized and can run on any Mac"
 fi
 
 echo ""
 echo "=========================================="
-echo "完成!"
+echo "Done"
 echo "=========================================="
-echo "架构: $ARCH"
-echo "应用: $FINAL_APP"
+echo "Arch: $ARCH"
+echo "App: $FINAL_APP"
 echo "DMG: $FINAL_DMG_PATH"
-echo "证书: ${CERTIFICATE_ID:-未设置}"
-echo "TEAM_ID: ${NOTARY_TEAM_ID:-未设置}"
-echo "签名: $SIGN_MODE"
-echo "公证: $([ "$ENABLE_NOTARY" -eq 1 ] && echo 已启用 || echo 已跳过)"
+echo "Certificate: ${CERTIFICATE_ID:-not set}"
+echo "TEAM_ID: ${NOTARY_TEAM_ID:-not set}"
+echo "Signing: $SIGN_MODE"
+echo "Notarization: $([ "$ENABLE_NOTARY" -eq 1 ] && echo enabled || echo skipped)"
 echo ""
-echo "使用方法:"
-echo "  1. 打开 DMG: open $FINAL_DMG_PATH"
-echo "  2. 将 $APP_NAME_EX.app 拖拽到 Applications 文件夹"
-echo "  3. 从 Applications 运行应用"
+echo "How to use:"
+echo "  1. Open the DMG: open $FINAL_DMG_PATH"
+echo "  2. Drag $APP_NAME_EX.app into Applications"
+echo "  3. Launch the app from Applications"
 echo "=========================================="

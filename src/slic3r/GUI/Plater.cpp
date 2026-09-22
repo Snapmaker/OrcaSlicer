@@ -9049,10 +9049,12 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     if (auto *opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
         opt->value = pb->mixed_filaments.serialize_custom_entries();
 
-    // Rebuild panels once (skipped per-deletion in the loop above).
+    // Rebuild panels once (skipped per-deletion in the loop above). The object-list
+    // refresh performs the single final Plater update through its model sync path.
     update_mixed_filament_panel();
     update_color_mix_panel();
-    wxGetApp().plater()->update();
+    obj_list()->update_objects_list_filament_column(pb->filament_presets.size());
+    obj_list()->refresh_layer_range_filament_items();
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
@@ -22096,8 +22098,13 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
             for (auto &layer_range : mo->layer_config_ranges)
                 remap_model_config_filament_ids(layer_range.second, id_remap, num_filaments);
         }
-        sidebar().obj_list()->update_objects_list_filament_column(
-            std::max<size_t>(sidebar().combos_filament().size(), 1));
+        // Batch physical deletion defers list and scene refresh until its final
+        // composite rebuild; other deletion paths refresh immediately.
+        if (p->m_batch_physical_deletion == 0) {
+            sidebar().obj_list()->update_objects_list_filament_column(
+                std::max<size_t>(sidebar().combos_filament().size(), 1));
+            sidebar().obj_list()->refresh_layer_range_filament_items();
+        }
     } else {
         sidebar().obj_list()->update_objects_list_filament_column_when_delete_filament(filament_id, num_filaments, replace_filament_id);
     }

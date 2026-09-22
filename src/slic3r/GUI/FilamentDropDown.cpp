@@ -1,0 +1,859 @@
+#include "FilamentDropDown.hpp"
+#include "Widgets/Label.hpp"
+
+#include <algorithm>
+#include <set>
+#include <wx/display.h>
+#include <wx/dcbuffer.h>
+#include <wx/dcgraph.h>
+
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif
+
+#ifdef __WIN32__
+#include <wx/msw/private.h>
+#endif
+
+BEGIN_EVENT_TABLE(FilamentDropDown, PopupWindow)
+
+EVT_LEFT_DOWN(FilamentDropDown::mouseDown)
+EVT_LEFT_UP(FilamentDropDown::mouseReleased)
+EVT_MOUSE_CAPTURE_LOST(FilamentDropDown::mouseCaptureLost)
+EVT_MOTION(FilamentDropDown::mouseMove)
+EVT_MOUSEWHEEL(FilamentDropDown::mouseWheelMoved)
+
+// catch paint events
+EVT_PAINT(FilamentDropDown::paintEvent)
+
+END_EVENT_TABLE()
+
+FilamentDropDown::FilamentDropDown(std::vector<Item> &items)
+    : items(items)
+    , state_handler(this)
+    , text_color(0x363636)
+    , border_color(0xDBDBDB)
+    , selector_border_color(std::make_pair(0x009688, (int) StateColor::Hovered),
+                            std::make_pair(*wxWHITE, (int) StateColor::Normal))
+    , selector_background_color(std::make_pair(0xBFE1DE, (int) StateColor::Checked),
+                                std::make_pair(*wxWHITE, (int) StateColor::Normal))
+{
+}
+
+FilamentDropDown::FilamentDropDown(wxWindow *parent, std::vector<Item> &items, long style)
+    : FilamentDropDown(items)
+{
+    Create(parent, style);
+}
+
+void FilamentDropDown::Create(wxWindow *parent, long style)
+{
+    PopupWindow::Create(parent, wxPU_CONTAINS_CONTROLS);
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetBackgroundColour(*wxWHITE);
+    state_handler.attach({&border_color, &text_color, &selector_border_color, &selector_background_color});
+    state_handler.update_binds();
+    if ((style & DD_NO_CHECK_ICON) == 0)
+        check_bitmap = ScalableBitmap(this, "checked", 16);
+    arrow_bitmap = ScalableBitmap(this, "hms_arrow", 16);
+    text_off     = style & DD_NO_TEXT;
+
+    // BBS set default font
+    SetFont(Label::Body_14);
+#ifdef __WXOSX__
+    // PopupWindow releases mouse on idle, which may cause various problems,
+    //  such as losting mouse move, and dismissing soon on first LEFT_DOWN event.
+    Bind(wxEVT_IDLE, [](wxIdleEvent &evt) {});
+#endif
+}
+
+void FilamentDropDown::Invalidate(bool clear)
+{
+    if (clear) {
+        selection = hover_item = -1;
+        offset = wxPoint();
+        SetToolTip(wxString());
+    }
+    if (selection >= (int) items.size())
+        selection = -1;
+    need_sync = true;
+}
+
+void FilamentDropDown::SetItems(const std::vector<Item> &new_items)
+{
+    items = new_items;
+    Invalidate(true);
+    if (subDropDown != nullptr) {
+        subDropDown->setGroup(wxString());
+        subDropDown->SetItems(new_items);
+    }
+}
+
+void FilamentDropDown::SetSelection(int n)
+{
+    if (n < 0 || n >= (int) items.size())
+        n = -1;
+    if (selection == n) return;
+    selection = n;
+    if (need_sync) { // for icon Size
+        messureSize();
+    }
+    if (subDropDown)
+        subDropDown->SetSelection(n);
+    paintNow();
+}
+
+wxString FilamentDropDown::GetValue() const
+{
+    return selection >= 0 ? items[selection].text : wxString();
+}
+
+void FilamentDropDown::SetValue(const wxString &value)
+{
+    auto i    = std::find_if(items.begin(), items.end(), [&value](const Item &item) { return item.text == value; });
+    selection = i == items.end() ? -1 : int(std::distance(items.begin(), i));
+}
+
+void FilamentDropDown::SetCornerRadius(double radius)
+{
+    this->radius = radius;
+    paintNow();
+}
+
+void FilamentDropDown::SetBorderColor(StateColor const &color)
+{
+    border_color = color;
+    state_handler.update_binds();
+    paintNow();
+}
+
+void FilamentDropDown::SetSelectorBorderColor(StateColor const &color)
+{
+    selector_border_color = color;
+    state_handler.update_binds();
+    paintNow();
+}
+
+void FilamentDropDown::SetTextColor(StateColor const &color)
+{
+    text_color = color;
+    state_handler.update_binds();
+    paintNow();
+}
+
+void FilamentDropDown::SetSelectorBackgroundColor(StateColor const &color)
+{
+    selector_background_color = color;
+    state_handler.update_binds();
+    paintNow();
+}
+
+void FilamentDropDown::SetUseContentWidth(bool use, bool limit_max_content_width)
+{
+    if (use_content_width == use)
+        return;
+    use_content_width = use;
+    this->limit_max_content_width = limit_max_content_width;
+    need_sync = true;
+    messureSize();
+}
+
+void FilamentDropDown::SetAlignIcon(bool align) { align_icon = align; }
+
+void FilamentDropDown::Rescale()
+{
+    need_sync = true;
+}
+
+bool FilamentDropDown::HasDismissLongTime()
+{
+    auto now = boost::posix_time::microsec_clock::universal_time();
+    return !IsShown() && (now - dismissTime).total_milliseconds() >= 20;
+}
+
+void FilamentDropDown::PopupForParent()
+{
+    autoPosition();
+    Popup(this);
+}
+
+void FilamentDropDown::DismissAll()
+{
+    if (subDropDown != nullptr) {
+        // The child override intentionally keeps the root open while the
+        // pointer is over it. An owner-driven close must close both windows.
+        subDropDown->PopupWindow::Dismiss();
+        subDropDown->Hide();
+    }
+    PopupWindow::Dismiss();
+    Hide();
+}
+
+void FilamentDropDown::paintEvent(wxPaintEvent &evt)
+{
+    // depending on your system you may need to look at double-buffered dcs
+    wxBufferedPaintDC dc(this);
+    render(dc);
+}
+
+void FilamentDropDown::paintNow()
+{
+    Refresh();
+}
+
+static wxSize GetBmpSize(const wxBitmap &bmp)
+{
+    if (!bmp.IsOk())
+        return wxSize(0, 0);
+#ifdef __APPLE__
+    return bmp.GetScaledSize();
+#else
+    return bmp.GetSize();
+#endif
+}
+
+static wxString strip_group_prefix(const wxString &text, const wxString &group)
+{
+    if (group.EndsWith(' ')) return text;
+    wxString prefix = group.BeforeFirst(' ');
+    if (prefix.IsEmpty()) prefix = group;
+    if (text.StartsWith(prefix))
+        return text.substr(prefix.size()).Trim(false);
+    return text;
+}
+
+static void _DrawSplitItem(const wxWindow *w, wxDC &dc, wxString split_text, wxPoint start_pt, int item_width, int item_height)
+{
+    // save dc
+    auto pre_clr = dc.GetTextForeground();
+    auto pre_pen = dc.GetPen();
+    dc.SetTextForeground(StateColor::darkModeColorFor(wxColour(172, 172, 172)));
+    dc.SetPen(StateColor::darkModeColorFor(wxColour(166, 169, 170)));
+    // miner font
+    auto font = w->GetFont();
+    font.SetPointSize(font.GetPointSize() - 3);
+    dc.SetFont(font);
+
+    int spacing = w->FromDIP(8);
+
+    if (!split_text.empty()) // Paiting: text + spacing + line + spacing
+    {
+        int    max_content_width = item_width - start_pt.x - 2 * spacing;
+        wxSize tSize             = dc.GetMultiLineTextExtent(split_text);
+        if (tSize.x > max_content_width) {
+            split_text = wxControl::Ellipsize(split_text, dc, wxELLIPSIZE_END, max_content_width);
+            tSize      = dc.GetMultiLineTextExtent(split_text);
+        }
+
+        dc.SetFont(font);
+        dc.DrawText(split_text, start_pt);
+
+        int line_width = item_width - start_pt.x - tSize.x - 2 * spacing;
+        int line_y     = start_pt.y + (tSize.GetHeight() / 2);
+        dc.DrawLine(start_pt.x + tSize.x + spacing, line_y, start_pt.x + tSize.x + line_width + spacing, line_y); // draw right line
+    } else // Paiting: line + spacing
+    {
+        int line_y     = start_pt.y + (item_height / 2);
+        int line_width = item_width - start_pt.x - spacing;
+        dc.DrawLine(start_pt.x, line_y, start_pt.x + line_width, line_y); // draw line
+    }
+
+    // restore dc
+    dc.SetTextForeground(pre_clr);
+    dc.SetPen(pre_pen);
+    dc.SetFont(w->GetFont());
+}
+
+void FilamentDropDown::render(wxDC &dc)
+{
+    if (items.empty()) return;
+    int states = state_handler.states();
+    if (subDropDown)
+        states |= subDropDown->state_handler.states();
+    dc.SetPen(wxPen(border_color.colorForStates(states)));
+    dc.SetBrush(wxBrush(StateColor::darkModeColorFor(GetBackgroundColour())));
+
+    // draw background
+    wxSize size = GetSize();
+    if (radius == 0)
+        dc.DrawRectangle(0, 0, size.x, size.y);
+    else
+        dc.DrawRoundedRectangle(0, 0, size.x, size.y, radius);
+
+    int selected_item = selectedItem();
+    int hover_index   = hoverIndex();
+
+    // draw hover rectangle
+    wxRect rcContent = {{0, offset.y}, rowSize};
+    if (hover_item >= 0 && (states & StateColor::Hovered) &&
+        (hover_index < 0 || !(items[hover_index].style & (DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED)))) {
+        rcContent.y += rowSize.y * hover_item;
+        if (rcContent.GetBottom() > 0 && rcContent.y < size.y) {
+            if (selected_item == hover_item)
+                dc.SetBrush(wxBrush(selector_background_color.colorForStates(states | StateColor::Checked)));
+            dc.SetPen(wxPen(selector_border_color.colorForStates(states)));
+            rcContent.Deflate(4, 1);
+            dc.DrawRectangle(rcContent);
+            rcContent.Inflate(4, 1);
+        }
+        rcContent.y = offset.y;
+    }
+    // draw checked rectangle
+    if (selected_item >= 0 && (selected_item != hover_item || (states & StateColor::Hovered) == 0)) {
+        rcContent.y += rowSize.y * selected_item;
+        if (rcContent.GetBottom() > 0 && rcContent.y < size.y) {
+            dc.SetBrush(wxBrush(selector_background_color.colorForStates(states | StateColor::Checked)));
+            dc.SetPen(wxPen(selector_background_color.colorForStates(states)));
+            rcContent.Deflate(4, 1);
+            dc.DrawRectangle(rcContent);
+            rcContent.Inflate(4, 1);
+        }
+        rcContent.y = offset.y;
+    }
+    dc.SetBrush(*wxTRANSPARENT_BRUSH);
+    {
+        wxSize offset = (rowSize - textSize) / 2;
+        rcContent.Deflate(0, offset.y);
+    }
+
+    // draw position bar
+    if (rowSize.y * int(count) > size.y) {
+        int    height = rowSize.y * int(count);
+        wxRect rect   = {size.x - 6, -offset.y * size.y / height, 4, size.y * size.y / height};
+        dc.SetPen(wxPen(border_color.defaultColor()));
+        dc.SetBrush(wxBrush(*wxLIGHT_GREY));
+        dc.DrawRoundedRectangle(rect, 2);
+        rcContent.width -= 6;
+    }
+
+    // draw check icon
+    rcContent.x += 5;
+    rcContent.width -= 5;
+    if (check_bitmap.bmp().IsOk()) {
+        auto szBmp = check_bitmap.GetBmpSize();
+        if (selected_item >= 0) {
+            wxPoint pt = rcContent.GetLeftTop();
+            pt.y += (rcContent.height - szBmp.y) / 2;
+            pt.y += rowSize.y * selected_item;
+            if (pt.y + szBmp.y > 0 && pt.y < size.y)
+                dc.DrawBitmap(check_bitmap.bmp(), pt);
+        }
+        rcContent.x += szBmp.x + 5;
+        rcContent.width -= szBmp.x + 5;
+    }
+
+    std::set<wxString> groups;
+    // draw texts & icons
+    int index = 0;
+    for (int i = 0; i < (int) items.size(); ++i) {
+        auto &item    = items[i];
+        int   states2 = states;
+        bool  is_dimmed = (item.style & DD_ITEM_STYLE_DIMMED) != 0;
+        if ((item.style & DD_ITEM_STYLE_DISABLED) != 0)
+            states2 &= ~StateColor::Enabled;
+        // Skip by group
+        if (group.IsEmpty()) {
+            if (!item.group.IsEmpty()) {
+                if (groups.find(item.group) != groups.end())
+                    continue;
+                groups.insert(item.group);
+                states2 |= StateColor::Enabled;
+            }
+        } else {
+            if (item.group != group)
+                continue;
+        }
+        bool is_hover = index == hover_item;
+        ++index;
+        if (rcContent.GetBottom() < 0) {
+            rcContent.y += rowSize.y;
+            continue;
+        }
+        if (rcContent.y > size.y) break;
+        wxPoint pt = rcContent.GetLeftTop();
+
+        if (item.style & DD_ITEM_STYLE_SPLIT_ITEM) {
+            _DrawSplitItem(this, dc, item.text, pt, rowSize.GetWidth(), rowSize.GetHeight());
+            rcContent.y += rowSize.GetHeight();
+            continue;
+        }
+
+        const bool is_top_level_group = group.IsEmpty() && !item.group.IsEmpty();
+        auto &     icon               = item.icon;
+        auto       size2              = GetBmpSize(icon);
+        if (iconSize.x > 0) {
+            if (!is_top_level_group && icon.IsOk()) {
+                pt.y += (rcContent.height - size2.y) / 2;
+                dc.DrawBitmap(icon, pt);
+            }
+            pt.x += iconSize.x + 5;
+            pt.y = rcContent.y;
+        } else if (!is_top_level_group && icon.IsOk()) {
+            pt.y += (rcContent.height - size2.y) / 2;
+            dc.DrawBitmap(icon, pt);
+            pt.x += size2.x + 5;
+            pt.y = rcContent.y;
+        }
+        // Full-row bitmap (icon height >> text height) already contains the text.
+        const bool icon_fills_row = !is_top_level_group && icon.IsOk() && size2.y > textSize.y * 2;
+        auto       text           = group.IsEmpty() ? (item.group.IsEmpty() ? item.text : item.group)
+                                                    : strip_group_prefix(item.text, group);
+        if (!text_off && !text.IsEmpty() && !icon_fills_row) {
+            wxSize tSize = dc.GetMultiLineTextExtent(text);
+            if (pt.x + tSize.x > rcContent.GetRight()) {
+                if (is_hover && item.tip.IsEmpty())
+                    SetToolTip(text);
+                text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, rcContent.GetRight() - pt.x);
+            }
+            pt.y += (rcContent.height - textSize.y) / 2;
+            dc.SetFont(GetFont());
+            dc.SetTextForeground(is_dimmed ? wxColour(0xCE, 0xCE, 0xCE) : text_color.colorForStates(states2));
+            dc.DrawText(text, pt);
+            if (group.IsEmpty() && !item.group.IsEmpty()) {
+                auto szBmp = arrow_bitmap.GetBmpSize();
+                pt.x       = rcContent.GetRight() - szBmp.x - 5;
+                pt.y       = rcContent.y + (rcContent.height - szBmp.y) / 2;
+                dc.DrawBitmap(arrow_bitmap.bmp(), pt);
+            }
+        }
+        rcContent.y += rowSize.y;
+    }
+}
+
+int FilamentDropDown::hoverIndex()
+{
+    if (hover_item < 0)
+        return -1;
+    if (count == items.size()) {
+        // "count == items.size()" implies no group folded a row, except when a group has
+        // exactly one member; only then keep the shortcut, else the header row would be
+        // reported as a positive index instead of -i-2.
+        bool any_grouped_at_top_level = false;
+        if (group.IsEmpty()) {
+            for (const auto &item : items)
+                if (!item.group.IsEmpty()) {
+                    any_grouped_at_top_level = true;
+                    break;
+                }
+        }
+        if (!any_grouped_at_top_level)
+            return hover_item;
+    }
+    int                index = -1;
+    std::set<wxString> groups;
+    for (int i = 0; i < (int) items.size(); ++i) {
+        auto &item = items[i];
+        // Skip by group
+        if (group.IsEmpty()) {
+            if (!item.group.IsEmpty()) {
+                if (groups.find(item.group) == groups.end())
+                    groups.insert(item.group);
+                else
+                    continue;
+            }
+        } else {
+            if (item.group != group)
+                continue;
+        }
+        if (++index == hover_item)
+            return (item.group.IsEmpty() || !group.IsEmpty()) ? i : -i - 2;
+    }
+    return -1;
+}
+
+int FilamentDropDown::selectedItem()
+{
+    if (selection < 0)
+        return -1;
+    if (count == items.size())
+        return selection;
+    auto &sel = items[selection];
+    if (group.IsEmpty() ? !sel.group.IsEmpty() : sel.group != group)
+        return -1;
+    if (selection == 0)
+        return 0;
+    int                index = 0;
+    std::set<wxString> groups;
+    for (int i = 0; i < selection; ++i) {
+        auto &item = items[i];
+        // Skip by group
+        if (group.IsEmpty()) {
+            if (!item.group.IsEmpty()) {
+                if (groups.find(item.group) == groups.end())
+                    groups.insert(item.group);
+                else
+                    continue;
+            }
+        } else {
+            if (item.group != group)
+                continue;
+        }
+        ++index;
+    }
+    return index;
+}
+
+void FilamentDropDown::messureSize()
+{
+    if (!need_sync) return;
+    textSize = wxSize();
+    iconSize = wxSize();
+    count    = 0;
+    wxClientDC dc(GetParent() ? GetParent() : this);
+    dc.SetFont(GetFont());
+    std::set<wxString> groups;
+    for (int i = 0; i < (int) items.size(); ++i) {
+        auto &item = items[i];
+        // Skip by group
+        if (group.IsEmpty()) {
+            if (!item.group.IsEmpty()) {
+                if (groups.find(item.group) == groups.end())
+                    groups.insert(item.group);
+                else
+                    continue;
+            }
+        } else {
+            if (item.group != group)
+                continue;
+        }
+        ++count;
+        wxSize size1;
+        if (!text_off) {
+            auto text = group.IsEmpty() ? (item.group.IsEmpty() ? item.text : item.group)
+                                        : strip_group_prefix(item.text, group);
+            size1     = dc.GetMultiLineTextExtent(text);
+            if (group.IsEmpty() && !item.group.IsEmpty())
+                size1.x += 5 + arrow_bitmap.GetBmpWidth();
+        }
+        const bool is_top_level_group = group.IsEmpty() && !item.group.IsEmpty();
+        if (!is_top_level_group && item.icon.IsOk()) {
+            wxSize size2 = GetBmpSize(item.icon);
+            if (size2.x > iconSize.x) iconSize = size2;
+            if (!align_icon) {
+                // Full-row bitmap (icon height >> text height): width = bitmap width only.
+                if (size2.y > size1.y * 2)
+                    size1.x = size2.x;
+                else
+                    size1.x += size2.x + (text_off ? 0 : 5);
+            }
+        }
+        if (size1.x > textSize.x) textSize = size1;
+    }
+    if (!align_icon) iconSize.x = 0;
+    wxSize szContent = textSize;
+    szContent.x += 10;
+    if (check_bitmap.bmp().IsOk()) {
+        auto szBmp = check_bitmap.GetBmpSize();
+        szContent.x += szBmp.x + 5;
+    }
+    if (iconSize.x > 0) szContent.x += iconSize.x + (text_off ? 0 : 5);
+    if (iconSize.y > szContent.y) szContent.y = iconSize.y;
+    szContent.y += 10;
+    if (count > (size_t) max_visible_rows) szContent.x += 6;
+    if (GetParent() && group.IsEmpty()) {
+        auto x = GetParent()->GetSize().x;
+        if (x > 0 && (!use_content_width || x > szContent.x))
+            szContent.x = x;
+    }
+    rowSize = szContent;
+    if (limit_max_content_width) {
+        wxSize parent_size = GetParent()->GetSize();
+        if (rowSize.x > parent_size.x * 2) {
+            rowSize.x = 2 * parent_size.x;
+            szContent = rowSize;
+        }
+    }
+    szContent.y *= std::min((size_t) max_visible_rows, std::max(count, (size_t) 1));
+    szContent.y += items.size() > (size_t) max_visible_rows ? rowSize.y / 2 : 0;
+    wxWindow::SetSize(szContent);
+#ifdef __WXGTK__
+    // Gtk has a wrapper window for popup widget
+    // Fix for GNOME Platform 48 X11 backend: ensure size is valid before calling gtk_window_resize
+    int gtk_width  = szContent.x;
+    int gtk_height = szContent.y;
+    if (gtk_width <= 0) gtk_width = 100;
+    if (gtk_height <= 0) gtk_height = 100;
+    gtk_window_resize(GTK_WINDOW(m_widget), gtk_width, gtk_height);
+#endif
+    if (!groups.empty() && subDropDown == nullptr) {
+        subDropDown                          = new FilamentDropDown(items);
+        subDropDown->mainDropDown            = this;
+        subDropDown->check_bitmap            = check_bitmap;
+        subDropDown->text_off                = text_off;
+        subDropDown->use_content_width       = true;
+        subDropDown->limit_max_content_width = true;
+        subDropDown->max_visible_rows        = 8;
+        subDropDown->Create(GetParent());
+        subDropDown->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent &e) {
+            e.SetEventObject(this);
+            e.SetId(GetId());
+            GetEventHandler()->ProcessEvent(e);
+        });
+#ifdef __WXGTK__
+        subDropDown->Bind(wxEVT_IDLE, [this](wxIdleEvent &evt) {
+            if (!subDropDown || !subDropDown->IsShown())
+                return;
+            wxPoint mouse_pos = wxGetMousePosition();
+            wxRect  sub_rect  = subDropDown->GetScreenRect();
+            if (!sub_rect.Contains(mouse_pos)) {
+                wxPoint      local_pt = ScreenToClient(mouse_pos);
+                wxMouseEvent mouse_evt(wxEVT_MOTION);
+                mouse_evt.SetX(local_pt.x);
+                mouse_evt.SetY(local_pt.y);
+                wxPostEvent(this, mouse_evt);
+                evt.RequestMore();
+            }
+        });
+#endif
+    }
+    need_sync = false;
+}
+
+void FilamentDropDown::autoPosition()
+{
+    messureSize();
+    wxPoint pos;
+    wxSize  off;
+    if (mainDropDown) {
+        pos = mainDropDown->ClientToScreen(wxPoint(0, 0));
+        off = mainDropDown->GetSize();
+        pos.x += 6;
+        pos.y += mainDropDown->hover_item * mainDropDown->rowSize.y + mainDropDown->offset.y;
+        off.x -= 12;
+        off.y = 0;
+    } else {
+        pos   = GetParent()->ClientToScreen(wxPoint(0, -6));
+        off   = GetParent()->GetSize();
+        off.x = 0;
+        off.y += 12;
+    }
+    wxPoint old  = GetPosition();
+    wxSize  size = GetSize();
+    Position(pos, off);
+    if (old != GetPosition()) {
+        size   = rowSize;
+        size.y *= std::min((size_t) max_visible_rows, count);
+        size.y += count > (size_t) max_visible_rows ? rowSize.y / 2 : 0;
+#ifdef __WXGTK__
+        if (size.x < 1) size.x = 1;
+        if (size.y < 1) size.y = 1;
+#endif
+        if (size != GetSize()) {
+            wxWindow::SetSize(size);
+            offset = wxPoint();
+            Position(pos, off);
+        }
+    }
+    if (GetPosition().y > pos.y) {
+        // may exceed
+        auto drect = wxDisplay(GetParent()).GetGeometry();
+        if (GetPosition().y + size.y + 10 > drect.GetBottom()) {
+            if (use_content_width && count <= (size_t) max_visible_rows) size.x += 6;
+            size.y = drect.GetBottom() - GetPosition().y - 10;
+#ifdef __WXGTK__
+            if (size.y < 1) size.y = 1;
+            if (size.x < 1) size.x = 1;
+#endif
+            wxWindow::SetSize(size);
+            if (selection >= 0) {
+                if (offset.y + rowSize.y * (selection + 1) > size.y)
+                    offset.y = size.y - rowSize.y * (selection + 1);
+                else if (offset.y + rowSize.y * selection < 0)
+                    offset.y = -rowSize.y * selection;
+            }
+        }
+    }
+}
+
+void FilamentDropDown::setGroup(const wxString &value)
+{
+    if (group == value)
+        return;
+
+    group       = value;
+    hover_item  = -1;
+    offset      = wxPoint();
+    need_sync   = true;
+    SetToolTip(wxString());
+}
+
+void FilamentDropDown::mouseDown(wxMouseEvent &event)
+{
+    // Receivce unexcepted LEFT_DOWN on Mac after OnDismiss
+    if (!IsShown())
+        return;
+    // force calc hover item again
+    mouseMove(event);
+    pressedDown = true;
+    CaptureMouse();
+    dragStart = event.GetPosition();
+}
+
+void FilamentDropDown::mouseReleased(wxMouseEvent &event)
+{
+    if (pressedDown) {
+        dragStart = wxPoint();
+        pressedDown = false;
+        if (HasCapture())
+            ReleaseMouse();
+        if (hover_item < 0)
+            return;
+
+        // A top-level group header opens (or focuses) the drill-down submenu instead of
+        // dismissing, so a narrow one-row group is still reachable by click.
+        int idx = hoverIndex();
+        if (idx < -1 && subDropDown) {
+            const wxString &target_group = items[-idx - 2].group;
+            auto &          drop         = *subDropDown;
+            if (drop.group != target_group) {
+                drop.setGroup(target_group);
+                drop.messureSize();
+                drop.autoPosition();
+                drop.paintNow();
+            }
+            if (!drop.IsShown())
+                drop.Popup(&drop);
+            return;
+        }
+
+        if (hover_item >= 0 && (subDropDown == nullptr || subDropDown->group.empty())) { // not moved
+            sendDropDownEvent();
+            if (mainDropDown)
+                mainDropDown->hover_item = -1; // To Dismiss mainDropDown
+            DismissAndNotify();
+        } else if (subDropDown)
+            subDropDown->Popup(subDropDown);
+    }
+}
+
+void FilamentDropDown::mouseCaptureLost(wxMouseCaptureLostEvent &event)
+{
+    wxMouseEvent evt;
+    mouseReleased(evt);
+}
+
+void FilamentDropDown::mouseMove(wxMouseEvent &event)
+{
+    wxPoint pt = event.GetPosition();
+#ifdef __WXOSX__
+    if (mainDropDown) {
+        auto size = GetSize();
+        if (pt.x < 0 || pt.y < 0 || pt.x >= size.x || pt.y >= size.y) {
+            auto diff = GetPosition() - mainDropDown->GetPosition();
+            event.SetX(pt.x + diff.x);
+            event.SetY(pt.y + diff.y);
+            mainDropDown->mouseMove(event);
+            return;
+        }
+    }
+#endif
+    if (pressedDown) {
+        wxPoint pt2 = offset + pt - dragStart;
+        wxSize  size = GetSize();
+        dragStart    = pt;
+        if (pt2.y > 0)
+            pt2.y = 0;
+        else if (pt2.y + rowSize.y * int(count) < size.y)
+            pt2.y = size.y - rowSize.y * int(count);
+        if (pt2.y != offset.y) {
+            offset     = pt2;
+            hover_item = -1; // moved
+        } else {
+            return;
+        }
+    }
+    if (rowSize.y > 0 && (!pressedDown || hover_item >= 0)) {
+        int hover = (pt.y - offset.y) / rowSize.y;
+        if (hover >= (int) count) hover = -1;
+        if (hover == hover_item) return;
+        hover_item = hover;
+        int index  = hoverIndex();
+        if (index < -1 && subDropDown) {
+            SetToolTip(wxString());
+            auto &drop     = *subDropDown;
+            drop.setGroup(items[-index - 2].group);
+            drop.messureSize();
+            drop.autoPosition();
+            drop.paintNow();
+            if (!drop.IsShown())
+                drop.Popup(&drop);
+        } else if (index >= 0) {
+            if (subDropDown) {
+                subDropDown->setGroup(wxString());
+                if (subDropDown->IsShown())
+                    subDropDown->Dismiss();
+            }
+            SetToolTip(items[index].tip);
+        } else {
+            SetToolTip(wxString());
+        }
+    }
+    paintNow();
+}
+
+void FilamentDropDown::mouseWheelMoved(wxMouseEvent &event)
+{
+    auto    delta = event.GetWheelRotation();
+    wxSize  size  = GetSize();
+    wxPoint pt2   = offset + wxPoint{0, delta};
+    if (pt2.y > 0)
+        pt2.y = 0;
+    else if (pt2.y + rowSize.y * int(count) < size.y)
+        pt2.y = size.y - rowSize.y * int(count);
+    if (pt2.y != offset.y) {
+        offset = pt2;
+    } else {
+        return;
+    }
+    int hover = (event.GetPosition().y - offset.y) / rowSize.y;
+    if (hover >= (int) count) hover = -1;
+    if (hover != hover_item) {
+        hover_item = hover;
+        if (auto index = hoverIndex(); index >= 0)
+            SetToolTip(items[index].tip);
+    }
+    paintNow();
+}
+
+void FilamentDropDown::sendDropDownEvent()
+{
+    int index = hoverIndex();
+    if (index < 0 || (items[index].style & DD_ITEM_STYLE_DISABLED))
+        return;
+    wxCommandEvent event(wxEVT_COMBOBOX, GetId());
+    event.SetEventObject(this);
+    event.SetInt(index);
+    event.SetString(items[index].text);
+    GetEventHandler()->ProcessEvent(event);
+}
+
+void FilamentDropDown::Dismiss()
+{
+    if (subDropDown && subDropDown->IsShown())
+        return;
+    PopupWindow::Dismiss();
+}
+
+void FilamentDropDown::OnDismiss()
+{
+    hover_item = -1;
+    SetToolTip(wxString());
+
+    if (mainDropDown) {
+        const wxPoint &mouse_pos = wxGetMousePosition();
+        if (!mainDropDown->GetScreenRect().Contains(mouse_pos))
+            mainDropDown->DismissAndNotify();
+        else
+#ifdef __WIN32__
+            SetActiveWindow(mainDropDown->GetHandle());
+#else
+            ;
+#endif
+        return;
+    }
+    if (subDropDown && subDropDown->IsShown())
+        return;
+    dismissTime = boost::posix_time::microsec_clock::universal_time();
+    wxCommandEvent e(EVT_DISMISS);
+    GetEventHandler()->ProcessEvent(e);
+}

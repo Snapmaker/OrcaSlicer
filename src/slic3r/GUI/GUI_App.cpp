@@ -5429,10 +5429,13 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
     // snapmaker-orca-win / snapmaker-orca-mac, each with its own default + gray configs.
 #if defined(_WIN32)
     req["appName"] = "snapmaker-orca-win";
+    const std::string client_platform_type = "win";
 #elif defined(__APPLE__)
     req["appName"] = "snapmaker-orca-mac";
+    const std::string client_platform_type = "mac";
 #else
     req["appName"] = "snapmaker-orca";
+    const std::string client_platform_type = "";
 #endif
     // Three numeric segments (e.g. "2.4.0"): the server compares version levels numerically
     // (versionInRange), so the zero-padded four-segment form must not be sent here.
@@ -5483,9 +5486,9 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             }
         }
     }
-    // Warning level on purpose: release builds log at warning and above, and this marker
-    // (gray-release request diagnostics) must survive in the field logs.
-    BOOST_LOG_TRIVIAL(warning) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
+    // Normal-path diagnostics stay at info so the release warning stream is reserved
+    // for anomalies; failure paths log at warning.
+    BOOST_LOG_TRIVIAL(info) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
     http.set_post_body(req_body)
         .timeout_connect(TIMEOUT_CONNECT)
         // Total timeout: a stalled transfer after a successful connect must still
@@ -5496,7 +5499,7 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
             check_new_version_sf(show_tips, by_user);
         })
-        .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field](std::string body, unsigned http_status) {
+        .on_complete([this, show_tips, by_user, str_field, flag_field, obj_field, client_platform_type](std::string body, unsigned http_status) {
             if (http_status != 200) {
                 BOOST_LOG_TRIVIAL(warning) << format("status not 200 with: `%1%`: HTTP %2%, fallback to static version.json", "config/get", http_status);
                 check_new_version_sf(show_tips, by_user);
@@ -5558,6 +5561,11 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
                 return reject_payload("version missing or unparsable");
 
             std::string platformType = str_field(dataObj, "platform_type");
+            // The payload must target the platform this build was compiled for (same
+            // mapping as appName): the server routes by appName, so a mismatched
+            // platform_type would offer the user another platform's installer.
+            if (platformType != client_platform_type)
+                return reject_payload("platform_type mismatch for this build");
 
             // win x86_x64,  mac arm/x86_64  universal
             json fullObj      = obj_field(dataObj, "full");

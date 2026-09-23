@@ -736,12 +736,13 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     bool have_default_acceleration = process_flow_float("default_acceleration", 0) > 0;
 
     for (auto el : {"outer_wall_acceleration", "inner_wall_acceleration", "initial_layer_acceleration",
-        "top_surface_acceleration", "travel_acceleration", "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})
+        "top_surface_acceleration", "travel_acceleration", "first_layer_travel_acceleration",
+        "bridge_acceleration", "sparse_infill_acceleration", "internal_solid_infill_acceleration"})
         toggle_field(el, have_default_acceleration);
 
     bool have_default_jerk = process_flow_float("default_jerk", 0) > 0;
 
-    for (auto el : { "outer_wall_jerk", "inner_wall_jerk", "initial_layer_jerk", "top_surface_jerk", "travel_jerk", "infill_jerk"})
+    for (auto el : { "outer_wall_jerk", "inner_wall_jerk", "initial_layer_jerk", "top_surface_jerk", "travel_jerk", "first_layer_travel_jerk", "infill_jerk"})
         toggle_field(el, have_default_jerk);
 
     toggle_line("default_junction_deviation", gcflavor == gcfMarlinFirmware);
@@ -784,7 +785,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         "support_interface_pattern", "support_interface_top_layers", "support_interface_bottom_layers",
         "bridge_no_support", "max_bridge_length", "support_top_z_distance", "support_bottom_z_distance",
         "support_type", "support_on_build_plate_only", "support_critical_regions_only", "support_interface_not_for_body",
-        "support_object_xy_distance", "support_object_first_layer_gap"/*, "independent_support_layer_height"*/})
+        "support_object_xy_distance", "support_object_first_layer_gap",
+        "support_interface_min_area"/*, "independent_support_layer_height"*/})
         toggle_field(el, have_support_material);
     toggle_field("support_threshold_angle", have_support_material && is_auto(support_type));
     toggle_field("support_threshold_overlap", config->opt_int("support_threshold_angle") == 0 && have_support_material && is_auto(support_type));
@@ -806,9 +808,9 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         toggle_line(el, support_is_organic);
 
     toggle_field("tree_support_brim_width", support_is_tree && !config->opt_bool("tree_support_auto_brim"));
-    // non-organic tree support use max_bridge_length instead of bridge_no_support
-    toggle_line("max_bridge_length", support_is_normal_tree);
-    toggle_line("bridge_no_support", !support_is_normal_tree);
+    // tree support use max_bridge_length instead of bridge_no_support
+    toggle_line("max_bridge_length", support_is_tree);
+    toggle_line("bridge_no_support", !support_is_tree);
     toggle_line("support_critical_regions_only", is_auto(support_type) && support_is_tree);
 
     for (auto el : { "support_interface_filament",
@@ -837,8 +839,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("raft_contact_distance", have_raft && !have_support_soluble);
 
     // Orca: Raft, grid, snug and organic supports use these two parameters to control the size & density of the "brim"/flange
-    for (auto el : { "raft_first_layer_expansion", "raft_first_layer_density"})
-        toggle_field(el, have_support_material && !(support_is_normal_tree && !have_raft));
+    // raft_first_layer_expansion also drives the no-raft normal-tree first-layer expansion
+    // (aligned with BambuStudio), so keep it editable whenever support is enabled, raft or not.
+    toggle_field("raft_first_layer_expansion", have_support_material);
+    toggle_field("raft_first_layer_density", have_support_material && !(support_is_normal_tree && !have_raft));
 
     bool has_ironing = (config->opt_enum<IroningType>("ironing_type") != IroningType::NoIroning);
     for (auto el : { "ironing_pattern", "ironing_flow", "ironing_spacing", "ironing_angle", "ironing_inset"})

@@ -3491,6 +3491,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // Modifies
         print.m_print_statistics));
     print.m_print_statistics.initial_tool = initial_extruder_id;
+    // Debug aid for the file name placeholder filament_type[initial_tool]:
+    // the first extruder actually used by this plate's print.
+    BOOST_LOG_TRIVIAL(debug) << "File name initial_tool: first_extruder=" << initial_extruder_id
+                             << ", first_non_support_extruder=" << initial_non_support_extruder_id;
     if (!is_bbl_printers) {
         file.write_format("; total filament used [g] = %.2lf\n", print.m_print_statistics.total_weight);
         file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
@@ -5427,6 +5431,17 @@ LayerResult GCode::process_layer(const Print& print,
             gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.default_jerk));
         }
 
+        // Reset TRAVEL acceleration and jerk at second layer
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0
+            && m_config.get_abs_value("first_layer_travel_acceleration") > 0) {
+            gcode += m_writer.set_travel_acceleration(
+                (unsigned int) floor(this->process_flow_value(m_config.travel_acceleration) + 0.5));
+        }
+        if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.travel_jerk) > 0
+            && m_config.get_abs_value("first_layer_travel_jerk") > 0) {
+            gcode += m_writer.set_jerk_xy(this->process_flow_value(m_config.travel_jerk));
+        }
+
         // Transition from 1st to 2nd layer. Adjust nozzle temperatures as prescribed by the nozzle dependent
         // nozzle_temperature_initial_layer vs. temperature settings.
         for (const Extruder& extruder : m_writer.extruders()) {
@@ -6719,6 +6734,27 @@ LayerResult GCode::process_layer(const Print& print,
         if (layer_tools.has_wipe_tower && m_wipe_tower)
             m_last_processor_extrusion_role = erWipeTower;
 
+        // BBS: emit object brim for the first extruder on the first layer,
+        // even when Local-Z phase-b has consumed all first-layer extrusions
+        // and by_extruder is empty for this extruder.
+        if (first_layer) {
+            for (std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.begin(); brim_it != this->m_objsWithBrim.end(); ) {
+                std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(*brim_it);
+                if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
+                    this->set_origin(0., 0.);
+                    m_avoid_crossing_perimeters.use_external_mp();
+                    for (const ExtrusionEntity* ee : brim_map_it->second.entities) {
+                        gcode += this->extrude_entity(*ee, "brim", this->process_flow_value(m_config.support_speed));
+                    }
+                    m_avoid_crossing_perimeters.use_external_mp(false);
+                    m_avoid_crossing_perimeters.disable_once();
+                    brim_it = this->m_objsWithBrim.erase(brim_it);
+                } else {
+                    ++brim_it;
+                }
+            }
+        }
+
         auto objects_by_extruder_it = by_extruder.find(extruder_id);
         if (objects_by_extruder_it == by_extruder.end())
             continue;
@@ -6908,18 +6944,14 @@ LayerResult GCode::process_layer(const Print& print,
                     m_layer                  = layer_to_print.layer();
                     m_object_layer_over_raft = object_layer_over_raft;
                 }
-                // FIXME order islands?
-                //  Sequential tool path ordering of multiple parts within the same object, aka. perimeter tracking (#5511)
-                for (ObjectByExtruder::Island& island : instance_to_print.object_by_extruder.islands) {
-                    const auto& by_region_specific = is_anything_overridden ?
-                                                         island.by_region_per_copy(by_region_per_copy_cache,
-                                                                                   static_cast<unsigned int>(instance_to_print.instance_id),
-                                                                                   extruder_id, print_wipe_extrusions != 0) :
-                                                         island.by_region;
-                    // BBS: add brim by obj by extruder
-                    if (first_layer) {
-                        if (this->m_objsWithBrim.find(instance_to_print.print_object.id()) != this->m_objsWithBrim.end() &&
-                            !print_wipe_extrusions) {
+                // BBS: emit object brim before island loop to ensure emission
+                // even when Local-Z phase-b consumes all first-layer extrusions,
+                // leaving the island vector empty.
+                if (first_layer && !print_wipe_extrusions) {
+                    std::set<ObjectID>::iterator brim_it = this->m_objsWithBrim.find(instance_to_print.print_object.id());
+                    if (brim_it != this->m_objsWithBrim.end()) {
+                        std::map<ObjectID, ExtrusionEntityCollection>::const_iterator brim_map_it = print.m_brimMap.find(instance_to_print.print_object.id());
+                        if (brim_map_it != print.m_brimMap.end() && !brim_map_it->second.empty()) {
                             this->set_origin(0., 0.);
                             m_avoid_crossing_perimeters.use_external_mp();
                             for (const ExtrusionEntity* ee : print.m_brimMap.at(instance_to_print.print_object.id()).entities) {
@@ -6928,9 +6960,18 @@ LayerResult GCode::process_layer(const Print& print,
                             m_avoid_crossing_perimeters.use_external_mp(false);
                             // Allow a straight travel move to the first object point.
                             m_avoid_crossing_perimeters.disable_once();
-                            this->m_objsWithBrim.erase(instance_to_print.print_object.id());
+                            this->m_objsWithBrim.erase(brim_it);
                         }
                     }
+                }
+                // FIXME order islands?
+                //  Sequential tool path ordering of multiple parts within the same object, aka. perimeter tracking (#5511)
+                for (ObjectByExtruder::Island& island : instance_to_print.object_by_extruder.islands) {
+                    const auto& by_region_specific = is_anything_overridden ?
+                                                         island.by_region_per_copy(by_region_per_copy_cache,
+                                                                                   static_cast<unsigned int>(instance_to_print.instance_id),
+                                                                                   extruder_id, print_wipe_extrusions != 0) :
+                                                         island.by_region;
                     // When starting a new object, use the external motion planner for the first travel move.
                     const Point& offset = instance_to_print.print_object.instances()[instance_to_print.instance_id].shift;
                     std::pair<const PrintObject*, Point> this_object_copy(&instance_to_print.print_object, offset);
@@ -7686,8 +7727,10 @@ std::string GCode::extrude_support(const ExtrusionEntityCollection& support_fill
         ExtrusionEntitiesPtr extrusions;
         extrusions.reserve(support_fills.entities.size());
         for (ExtrusionEntity* ee : support_fills.entities) {
-            const auto role = ee->role();
-            if ((role == support_extrusion_role) || (support_extrusion_role == erMixed && role != erIroning)) {
+            const ExtrusionRole role = ee->role();
+            if ((role == support_extrusion_role) ||
+                (role == erSupportTransition && support_extrusion_role == erSupportMaterial) ||
+                (support_extrusion_role == erMixed && role != erIroning)) {
                 extrusions.emplace_back(ee);
             }
         }
@@ -7942,6 +7985,9 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         _mm3_per_mm *= m_config.bottom_solid_infill_flow_ratio;
     else if (path.role() == erInternalBridgeInfill)
         _mm3_per_mm *= m_config.internal_bridge_flow;
+    else if (path.role() == erSupportTransition)
+        // Apply independent flow ratio for support transition layers
+        _mm3_per_mm *= m_config.support_transition_flow_ratio.get_abs_value(1.0f);
     else if (sloped)
         _mm3_per_mm *= m_config.scarf_joint_flow_ratio;
     // Effective extrusion length per distance unit = (filament_flow_ratio/cross_section) * mm3_per_mm / print flow ratio
@@ -7965,7 +8011,10 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             const auto   ib_fop  = this->process_flow_value(m_config.internal_bridge_speed);
             const double ib_base = this->process_flow_value(m_config.bridge_speed);
             speed = ib_fop.percent ? (ib_fop.value * 0.01 * ib_base) : ib_fop.value;
-        } else if (path.role() == erOverhangPerimeter || path.role() == erSupportTransition || path.role() == erBridgeInfill) {
+        } else if (path.role() == erSupportTransition) {
+            // Use independent speed for support transition layers (not bridge_speed)
+            speed = this->process_flow_value(m_config.support_transition_speed);
+        } else if (path.role() == erOverhangPerimeter || path.role() == erBridgeInfill) {
             speed = this->process_flow_value(m_config.bridge_speed);
         } else if (path.role() == erInternalInfill) {
             speed = this->process_flow_value(m_config.sparse_infill_speed);
@@ -7998,11 +8047,13 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         if (path.role() != erBottomSurface)
             speed = this->process_flow_value(m_config.initial_layer_speed);
     } else if (this->process_flow_value(m_config.slow_down_layers) > 1) {
-        const auto _layer           = layer_id();
-        const auto slow_down_layers = this->process_flow_value(m_config.slow_down_layers);
-        if (_layer > 0 && _layer < slow_down_layers) {
-            const auto first_layer_speed = is_perimeter(path.role()) ? this->process_flow_value(m_config.initial_layer_speed) :
-                                                                       this->process_flow_value(m_config.initial_layer_infill_speed);
+        // Subtract raft layers so the slow-down count starts from the first model layer
+        const int raft_layers = int(m_layer->object()->slicing_parameters().raft_layers());
+        const int _layer      = layer_id() - raft_layers;
+        const int slow_down_layers = this->process_flow_value(m_config.slow_down_layers);
+        if (_layer >= 0 && _layer < slow_down_layers) {
+            const auto first_layer_speed = is_perimeter(path.role()) ? m_config.get_abs_value("initial_layer_speed") :
+                                                                       m_config.get_abs_value("initial_layer_infill_speed");
             if (first_layer_speed < speed) {
                 speed = std::min(speed, Slic3r::lerp(first_layer_speed, speed, (double) _layer / slow_down_layers));
             }
@@ -8666,11 +8717,13 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
     double       jerk_to_set         = 0.0;
     unsigned int acceleration_to_set = 0;
     if (this->on_first_layer()) {
-        if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.initial_layer_acceleration) > 0) {
-            acceleration_to_set = (unsigned int) floor(this->process_flow_value(m_config.initial_layer_acceleration) + 0.5);
+        auto first_layer_travel_accel = m_config.get_abs_value("first_layer_travel_acceleration");
+        if (this->process_flow_value(m_config.default_acceleration) > 0 && first_layer_travel_accel > 0) {
+            acceleration_to_set = (unsigned int) floor(first_layer_travel_accel + 0.5);
         }
-        if (this->process_flow_value(m_config.default_jerk) > 0 && this->process_flow_value(m_config.initial_layer_jerk) > 0) {
-            jerk_to_set = this->process_flow_value(m_config.initial_layer_jerk);
+        auto first_layer_travel_jerk_val = m_config.get_abs_value("first_layer_travel_jerk");
+        if (this->process_flow_value(m_config.default_jerk) > 0 && first_layer_travel_jerk_val > 0) {
+            jerk_to_set = first_layer_travel_jerk_val;
         }
     } else {
         if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0) {

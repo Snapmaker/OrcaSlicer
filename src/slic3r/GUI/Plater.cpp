@@ -23164,7 +23164,7 @@ void Plater::on_activate()
 // Get vector of extruder colors considering filament color, if extruder color is undefined.
 std::vector<std::string> Plater::get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result, bool include_mixed) const
 {
-    if (wxGetApp().is_gcode_viewer() && result != nullptr)
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode))
         return result->extruder_colors;
     else {
         if (wxGetApp().preset_bundle == nullptr)
@@ -23197,7 +23197,7 @@ std::vector<std::string> Plater::get_colors_for_color_print(const GCodeProcessor
 {
     std::vector<std::string> colors = get_extruder_colors_from_plater_config(result);
 
-    if (wxGetApp().is_gcode_viewer() && result != nullptr) {
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode)) {
         for (const CustomGCode::Item& code : result->custom_gcode_per_print_z) {
             if (code.type == CustomGCode::ColorChange)
                 colors.emplace_back(code.color);

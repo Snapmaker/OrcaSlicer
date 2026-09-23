@@ -92,7 +92,7 @@ public:
     struct Config
     {
         std::string                     host{"127.0.0.1"};
-        std::string                     health_path{"/health"};
+        std::string                     health_path{"/api/health"};
         std::string                     websocket_path{"/ws"};
         std::string                     device_path{"/api/cache/all"};
         std::string                     account_path{"/api/account"};

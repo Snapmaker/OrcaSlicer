@@ -23,7 +23,7 @@ struct DeviceFakeHttp final : public HttpTransport
 
     HttpResponse get(const std::string& url) override
     {
-        if (url.find("/health") != std::string::npos) {
+        if (url.find("/api/health") != std::string::npos) {
             return {200,
                     R"({"status":"ok","cli_version":"1.0","components":{"ipc_server":"ok","web_server":"ok"},)"
                     R"("server_url":{"base_url":"http://127.0.0.1:8080/","home_page":"/index","device_control":""}})",

@@ -27,7 +27,7 @@ struct FakeHttp final : public HttpTransport
     HttpResponse get(const std::string& url) override
     {
         urls.push_back(url);
-        if (url.find("/health") != std::string::npos) {
+        if (url.find("/api/health") != std::string::npos) {
             if (!health_ok.load())
                 return {404, {}, "not ready"};
             return {200,

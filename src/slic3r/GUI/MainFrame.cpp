@@ -2411,7 +2411,7 @@ static wxMenu* generate_help_menu()
     append_menu_item(
         helpMenu, wxID_ANY, _L("Check for Update"), _L("Check for Update"),
         [](wxCommandEvent&) {
-            wxGetApp().check_new_version_sf(true, UPDATE_BUSER);
+            wxGetApp().request_version_from_config(true, UPDATE_BUSER);
         }, "", nullptr, []() {
             return true;
         });

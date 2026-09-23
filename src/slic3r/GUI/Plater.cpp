@@ -109,6 +109,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
 #include "FlowTypeHelper.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Utils.hpp"
@@ -14530,8 +14531,23 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                   this->m_slice_all = false;
-                    slice_cancelled = !(this->q->reslice());
+                    this->m_slice_all = false;
+                    bool grouping_confirmed = true;
+                    if (GUI::FlowType::any_nozzle_high_flow()) {
+                        if (GUI::FlowType::distinct_nozzle_flow_type_count() < 2)
+                            GUI::FlowType::sync_filament_volume_types_for_slice();
+                        GUI::FilamentGroupDialog dlg(q);
+                        grouping_confirmed = dlg.ShowModal() == wxID_OK;
+                    } else {
+                        GUI::FlowType::sync_filament_volume_types_for_slice();
+                    }
+                    if (grouping_confirmed)
+                        slice_cancelled = !(this->q->reslice());
+                    else {
+                        slice_cancelled = true;
+                        if (wxGetApp().mainframe != nullptr)
+                            wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
+                    }
                }
                 else {
                     //reset current plate to the slicing plate

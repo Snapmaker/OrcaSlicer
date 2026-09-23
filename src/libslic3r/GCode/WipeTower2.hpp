@@ -28,7 +28,8 @@ public:
 	// rib wall included. Lets the GUI place the tower, and keep objects clear of it, before
 	// it is sliced, when only the estimated width and depth are known.
 	static BoundingBoxf get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width,
-	                                              int wall_type = int(WipeTowerWallType::wtwRectangle), double rib_width = 0., double extra_rib_length = 0.);
+	                                              int wall_type = 0 /* WipeTowerWallType::wtwRectangle; the enum lives in PrintConfig.hpp, which this header does not pull in */,
+	                                              double rib_width = 0., double extra_rib_length = 0.);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
 
     

@@ -99,9 +99,16 @@ static EMoveType buffer_type(unsigned char id) {
 // contexts keep the legacy CPU-generated vertex buffers.
 static bool gpu_path_pipeline_enabled()
 {
-    // evaluated once per process; first call happens during preview load,
-    // well after the GL context has been initialized
-    static const bool enabled = GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1);
+    // Enabled on GL 3.1+ provided the gpu_path program actually loaded (a
+    // compile failure at startup silently falls back to the legacy buffers
+    // instead of rendering nothing for the whole session). The shader lookup
+    // comes first and short-circuits the version query, so an early call
+    // before GL initialization degrades to the legacy pipeline instead of
+    // latching a poisoned "N/A" version into the process-wide GLInfo cache.
+    // Evaluated once per process; the shader manager is populated during
+    // init_opengl, well before preview load.
+    static const bool enabled = GUI::wxGetApp().get_shader("gpu_path") != nullptr
+        && GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1);
     return enabled;
 }
 
@@ -1920,6 +1927,8 @@ void GCodeViewer::update_sequential_view_current(unsigned int first, unsigned in
                 last = (direction > 0) ? last + 1 : last - 1;
         }
 
+        // legacy keeps current.first at 0 (top_layer_only is always true in
+        // its refresh_render_paths); the gcode-window start line reads it
         m_sequential_view.current.first = 0;
         m_sequential_view.current.last = last;
         m_sequential_view.last_current = m_sequential_view.current;
@@ -3455,13 +3464,35 @@ void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, b
     const auto window = _pathStack->LayerWindow();
     // the bottom slider is a playback of the CURRENT layer: its range spans
     // only the top layer of the visible window (not the whole window), so
-    // the whole slider travel maps onto the layer's print sequence
-    const PathLayerData& topLayer = _pathStack->Layer(window.second);
-    SequentialView& sequentialView = const_cast<SequentialView&>(m_sequential_view);
-    sequentialView.endpoints = { topLayer.FirstSid(), topLayer.LastSid() };
+    // the whole slider travel maps onto the layer's print sequence. Like
+    // the legacy pipeline (which derives the endpoints from the visible
+    // paths only), the range covers the layer's VISIBLE moves: hidden
+    // trailing travels must not extend the right-hand slider value
+    // the bottom slider is a playback of the CURRENT layer: its endpoints
+    // are computed by the stack from the legacy path records (built with
+    // load_toolpaths' grouping, selected with the legacy first-pass rules),
+    // so the slider numbers match the legacy pipeline by construction
+    uint32_t firstSid = 0;
+    uint32_t lastSid = 0;
+    {
+        _pathStack->SetViewType(static_cast<unsigned int>(m_view_type));
+        const std::pair<uint32_t, uint32_t> endpoints = _pathStack->ComputeSliderEndpoints(window.second);
+        if (endpoints.second >= endpoints.first) {
+            firstSid = endpoints.first;
+            lastSid = endpoints.second;
+        }
+        else {
+            const PathLayerData& topLayer = _pathStack->Layer(window.second);
+            firstSid = topLayer.FirstSid();
+            lastSid = topLayer.LastSid();
+        }
+    }
 
-    // legacy semantics: the playback window starts at 0 and only its end is
-    // kept when requested (see refresh_render_paths())
+    SequentialView& sequentialView = const_cast<SequentialView&>(m_sequential_view);
+    sequentialView.endpoints = { firstSid, lastSid };
+
+    // legacy semantics: with top_layer_only (always true there) the playback
+    // window start stays at 0 and only its end is kept when requested
     sequentialView.current.first = 0;
     if (!keep_sequential_current_last)
         sequentialView.current.last = sequentialView.endpoints.last;

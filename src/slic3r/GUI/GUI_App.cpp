@@ -5464,12 +5464,23 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
     // token, no "Bearer " prefix — same convention as the SM login requests. The gateway
     // resolves the gray-rule variable userId from it; anonymous requests stay valid
     // (update check must work without login) and rules evaluate with userId = nil.
+    // The account token must never travel over plaintext http — the orca_config_api_url
+    // override can point at any URL. Internal testing builds are the only exception,
+    // because the dev gateway has no TLS.
+    bool allow_http_auth = false;
+#if BBL_INTERNAL_TESTING
+    allow_http_auth = true;
+#endif
     bool with_auth = false;
     if (sm_get_userinfo()->is_user_login()) {
         std::string auth_token = sm_get_userinfo()->get_user_token();
         if (!auth_token.empty()) {
-            http.header("Authorization", auth_token);
-            with_auth = true;
+            if (url.rfind("https://", 0) == 0 || allow_http_auth) {
+                http.header("Authorization", auth_token);
+                with_auth = true;
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << "config/get: refusing to send Authorization over non-https URL";
+            }
         }
     }
     // Warning level on purpose: release builds log at warning and above, and this marker
@@ -5477,6 +5488,9 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
     BOOST_LOG_TRIVIAL(warning) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
     http.set_post_body(req_body)
         .timeout_connect(TIMEOUT_CONNECT)
+        // Total timeout: a stalled transfer after a successful connect must still
+        // trigger the static fallback (CURLOPT_TIMEOUT defaults to unlimited).
+        .timeout_max(30)
         .on_error([this, show_tips, by_user](std::string body, std::string error, unsigned http_status) {
             (void)body;
             BOOST_LOG_TRIVIAL(warning) << format("Error posting: `%1%`: HTTP %2%, %3%, fallback to static version.json", "config/get", http_status, error);
@@ -5509,20 +5523,39 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
                 return;
             }
 
-            // The payload mirrors the data object of the static version.json
+            // The payload mirrors the data object of the static version.json.
+            // A malformed payload (missing/invalid required fields) must degrade to the
+            // static channel instead of silently suppressing the update check: a
+            // misconfigured gray release may never be worse than static-only behavior.
+            auto reject_payload = [this, show_tips, by_user](const char* reason) {
+                BOOST_LOG_TRIVIAL(warning) << format("config/get payload rejected: %1%, fallback to static version.json", reason);
+                check_new_version_sf(show_tips, by_user);
+            };
+
             const json dataObj = jsonObj["data"];
+
+            std::string releaseType = str_field(dataObj, "release_type");
+            if (releaseType.empty())
+                return reject_payload("release_type missing");
 
             bool isForceUpgrade         = flag_field(dataObj, "is_force_upgrade");
             version_info.force_upgrade  = isForceUpgrade;
             version_info.version_str    = str_field(dataObj, "version");
 
-            std::string releaseType = str_field(dataObj, "release_type");
+            // An explicitly non-stable release is a server-side decision, not a malformed
+            // payload: ignore it exactly like the static check ignores non-stable channels.
             if (releaseType != RELEASE_TYPE_STABLE)
             {
                 if (by_user)
                     this->no_new_version();
                 return;
             }
+
+            std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+            Semver     current_version = get_version(Snapmaker_VERSION, matcher);
+            Semver     server_version  = get_version(version_info.version_str, matcher);
+            if (!server_version.valid())
+                return reject_payload("version missing or unparsable");
 
             std::string platformType = str_field(dataObj, "platform_type");
 
@@ -5561,23 +5594,14 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
             }
             else
             {
-                BOOST_LOG_TRIVIAL(warning) << "don't support linux upgrade";
-                return;
+                return reject_payload("unsupported platform_type");
             }
 
             // A payload without file_url must not open the update dialog:
             // clicking download would launch the browser with an empty address.
             if (version_info.url.empty()) {
-                BOOST_LOG_TRIVIAL(error) << format("upgrade payload missing file_url (platform %1%, version %2%)", platformType, version_info.version_str);
-                if (by_user)
-                    this->no_new_version();
-                return;
+                return reject_payload("file_url missing");
             }
-
-            std::regex matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
-            Semver     current_version = get_version(Snapmaker_VERSION, matcher);
-
-            Semver server_version = get_version(version_info.version_str, matcher);
 
             if (current_version >= server_version) {
                 if(by_user)

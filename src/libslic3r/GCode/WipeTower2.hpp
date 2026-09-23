@@ -24,10 +24,11 @@ class WipeTower2
 public:
     static const std::string never_skip_tag() { return "_GCODE_WIPE_TOWER_NEVER_SKIP_TAG"; }
 	static std::pair<double, double> get_wipe_tower_cone_base(double width, double height, double depth, double angle_deg);
-	// First-layer outline of the tower relative to its origin, brim and stabilization cone
-	// included: the bounding box of what Print::first_layer_wipe_tower_corners() extrudes.
-	// Lets the GUI place the tower, and keep objects clear of it, before it is sliced.
-	static BoundingBoxf get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width);
+	// First-layer outline of the tower relative to its origin: brim, stabilization cone and
+	// rib wall included. Lets the GUI place the tower, and keep objects clear of it, before
+	// it is sliced, when only the estimated width and depth are known.
+	static BoundingBoxf get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width,
+	                                              int wall_type = int(WipeTowerWallType::wtwRectangle), double rib_width = 0., double extra_rib_length = 0.);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
 
     

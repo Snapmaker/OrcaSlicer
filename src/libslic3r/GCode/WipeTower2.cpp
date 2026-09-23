@@ -2397,9 +2397,30 @@ std::pair<double, double> WipeTower2::get_wipe_tower_cone_base(double width, dou
     return std::make_pair(R, support_scale);
 }
 
-BoundingBoxf WipeTower2::get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width)
+BoundingBoxf WipeTower2::get_first_layer_footprint(double width, double depth, double height, double cone_angle_deg, double brim_width,
+                                                   int wall_type, double rib_width, double extra_rib_length)
 {
-    BoundingBoxf footprint(Vec2d(-brim_width, -brim_width), Vec2d(width + brim_width, depth + brim_width));
+    // A rib wall squares the tower off (see the wtwRib branch of generate_wipe_tower()) and
+    // lays two bars along the diagonals of that square, each half a rib wide and reaching
+    // extra_rib_length past the corners - all of it outside the width x depth rectangle.
+    double ribs = 0.;
+    if (wall_type == int(WipeTowerWallType::wtwRib)) {
+        // + 1 mm because the slicer aligns the square up to a whole perimeter width, and
+        // re-derives the depth from it, so the real body ends up a little larger than sqrt()
+        const double side = std::sqrt(std::abs(width * depth)) + 1.;
+        // plan_tower() re-derives the depth from the squared width, so both end up near side
+        width = depth = side;
+        // the bars run at 45 degrees on a square, so both of their reaches project the same
+        ribs = (std::min(rib_width, side / 2.) + extra_rib_length) / 2. * std::sqrt(2.) / 2.;
+    }
+
+    BoundingBoxf footprint(Vec2d(-ribs - brim_width, -ribs - brim_width),
+                           Vec2d(width + ribs + brim_width, depth + ribs + brim_width));
+
+    // The cone is the rib wall's alternative, not an addition to it: generate_wipe_tower()
+    // lays one or the other down, picked by the wall type.
+    if (wall_type != int(WipeTowerWallType::wtwCone))
+        return footprint;
 
     // The cone's radius grows with the tower's height, so on a tall print it reaches well past
     // the rectangle. Same circle as Print::first_layer_wipe_tower_corners(): centred on the

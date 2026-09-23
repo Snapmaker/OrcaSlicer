@@ -103,6 +103,25 @@ void GLCanvas3D::load_render_colors()
 // Number of floats
 static constexpr const size_t MAX_VERTEX_BUFFER_SIZE     = 131072 * 6; // 3.15MB
 
+namespace {
+// The prime tower's wall type and rib sizes, in the form WipeTower2::get_first_layer_footprint()
+// wants them. A BBL printer slices with WipeTower, which has neither a cone nor ribs.
+int wipe_tower_wall_type(const Slic3r::DynamicPrintConfig *config, bool bbl_printer)
+{
+    using namespace Slic3r;
+    if (bbl_printer || config == nullptr || !config->has("wipe_tower_wall_type"))
+        return int(WipeTowerWallType::wtwRectangle);
+
+    return int(config->opt_enum<WipeTowerWallType>("wipe_tower_wall_type"));
+}
+
+double opt_or_zero(const Slic3r::DynamicPrintConfig *config, const char *key)
+{
+    const auto *opt = config == nullptr ? nullptr : config->option<Slic3r::ConfigOptionFloat>(key);
+    return opt == nullptr ? 0. : opt->value;
+}
+} // namespace
+
 namespace Slic3r {
 namespace GUI {
 
@@ -3885,10 +3904,13 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 // with WipeTower2, whose stabilization cone widens with the tower's height; checking
                 // only the rectangle let a tall tower spill over the plate edge once it was sliced.
                 // With no cone this is exactly the old rectangle-plus-brim bound.
+                const bool bbl_tower = wxGetApp().preset_bundle->is_bbl_vendor();
                 const ConfigOptionFloat* cone_angle_opt = m_config->option<ConfigOptionFloat>("wipe_tower_cone_angle");
-                const double cone_angle = (wxGetApp().preset_bundle->is_bbl_vendor() || cone_angle_opt == nullptr) ? 0. : cone_angle_opt->value;
+                const double cone_angle = (bbl_tower || cone_angle_opt == nullptr) ? 0. : cone_angle_opt->value;
                 const BoundingBoxf footprint = WipeTower2::get_first_layer_footprint(wipe_tower_size(0), wipe_tower_size(1), wipe_tower_size(2),
-                                                                                     cone_angle, tower_brim_width);
+                                                                                     cone_angle, tower_brim_width, wipe_tower_wall_type(m_config, bbl_tower),
+                                                                                     opt_or_zero(m_config, "wipe_tower_rib_width"),
+                                                                                     opt_or_zero(m_config, "wipe_tower_extra_rib_length"));
                 BoundingBoxf3 plate_bbox = wxGetApp().plater()->get_partplate_list().get_plate(plate_id)->get_bounding_box();
                 coordf_t plate_bbox_x_max_local_coord = plate_bbox.max(0) - plate_origin(0);
                 coordf_t plate_bbox_y_max_local_coord = plate_bbox.max(1) - plate_origin(1);
@@ -6311,13 +6333,14 @@ GLCanvas3D::WipeTowerInfo GLCanvas3D::get_wipe_tower_info(int plate_idx) const
             wti.m_bb.offset((brim_width));
 
             // Arrange and fill bed keep objects clear of this box, so on non-BBL printers it has
-            // to cover WipeTower2's stabilization cone as well, not just the preview rectangle.
-            if (!wxGetApp().preset_bundle->is_bbl_vendor()) {
-                const ConfigOptionFloat* cone_angle_opt = preset.config.option<ConfigOptionFloat>("wipe_tower_cone_angle");
-                if (cone_angle_opt != nullptr)
-                    wti.m_bb.merge(WipeTower2::get_first_layer_footprint(bb.size().x(), bb.size().y(), bb.size().z(),
-                                                                         cone_angle_opt->value, brim_width));
-            }
+            // to cover whatever WipeTower2 lays around the tower - a stabilization cone or a rib
+            // wall, depending on the wall type - and not just the preview rectangle.
+            if (!wxGetApp().preset_bundle->is_bbl_vendor())
+                wti.m_bb.merge(WipeTower2::get_first_layer_footprint(bb.size().x(), bb.size().y(), bb.size().z(),
+                                                                     opt_or_zero(&preset.config, "wipe_tower_cone_angle"), brim_width,
+                                                                     wipe_tower_wall_type(&preset.config, false),
+                                                                     opt_or_zero(&preset.config, "wipe_tower_rib_width"),
+                                                                     opt_or_zero(&preset.config, "wipe_tower_extra_rib_length")));
 
             // BBS: the wipe tower pos might be outside bed
             // m_bb is relative to m_pos and reaches below it (brim, cone), so bound m_pos by the

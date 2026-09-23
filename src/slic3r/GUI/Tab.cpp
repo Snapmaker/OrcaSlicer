@@ -1898,38 +1898,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         }
     }
 
-    // BBS: Add warning notification for Snapmaker U1 + Print by Object
-    if (opt_key == "print_sequence") {
-        PrintSequence print_seq = m_config->opt_enum<PrintSequence>("print_sequence");
-
-        if (print_seq == PrintSequence::ByObject) {
-            // Get current printer model
-            auto printer_model_opt = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionString>("printer_model");
-
-            if (printer_model_opt && !printer_model_opt->value.empty()) {
-                std::string printer_model = printer_model_opt->value;
-
-                // Check if this is Snapmaker U1 printer
-                bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") &&
-                                       boost::icontains(printer_model, "U1");
-
-                if (is_snapmaker_u1) {
-                    // Show red warning notification
-                    if (wxGetApp().plater() && wxGetApp().plater()->get_notification_manager()) {
-                        wxString warning_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-                        wxGetApp().plater()->get_notification_manager()->push_plater_error_notification(warning_text.ToStdString());
-                    }
-                }
-            }
-        } else {
-            // Clear warning when switching away from ByObject
-            if (wxGetApp().plater() && wxGetApp().plater()->get_notification_manager()) {
-                wxString warning_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-                wxGetApp().plater()->get_notification_manager()->close_plater_error_notification(warning_text.ToStdString());
-            }
-        }
-    }
-
     // BBS set support style to default when support type changes
     // Orca: do this only in simple mode
     if (opt_key == "support_type" && m_mode == comSimple) {

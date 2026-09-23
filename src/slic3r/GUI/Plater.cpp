@@ -154,6 +154,7 @@
 #include "InstanceCheck.hpp"
 #include "NotificationManager.hpp"
 #include "PresetComboBoxes.hpp"
+#include "PlaterFilamentComboBox.hpp"
 #include "MsgDialog.hpp"
 #include "ProjectDirtyStateManager.hpp"
 #include "Gizmos/GLGizmoSimplify.hpp" // create suggestion notification
@@ -3089,7 +3090,7 @@ Sidebar::Sidebar(Plater *parent)
     /* first filament item */
     // init_filament_combo(&p->combos_filament[0], 0);
 
-    p->combos_filament[0] = new PlaterPresetComboBox(p->m_panel_scrolled_filament_content, Preset::TYPE_FILAMENT);
+    p->combos_filament[0] = new PlaterFilamentComboBox(p->m_panel_scrolled_filament_content, Preset::TYPE_FILAMENT);
     auto combo_and_btn_sizer = new wxBoxSizer(wxHORIZONTAL);
     // BBS:  filament double columns
     combo_and_btn_sizer->AddSpacer(FromDIP(SidebarProps::ContentMargin()));
@@ -3493,7 +3494,7 @@ void Sidebar::create_printer_preset()
 
 void Sidebar::init_filament_combo(PlaterPresetComboBox **combo, const int filament_idx)
 {
-    *combo = new PlaterPresetComboBox(p->m_panel_scrolled_filament_content, Slic3r::Preset::TYPE_FILAMENT);
+    *combo = new PlaterFilamentComboBox(p->m_panel_scrolled_filament_content, Slic3r::Preset::TYPE_FILAMENT);
     (*combo)->set_filament_idx(filament_idx);
 
     auto combo_and_btn_sizer = new wxBoxSizer(wxHORIZONTAL);

@@ -301,8 +301,11 @@ void fill_config(PConf& pcfg, const ArrangeParams &params) {
 
 
     // Try 4 angles (45 degree step) and find the one with min cost
-    if (params.allow_rotations)
+    if (params.allow_rotations) {
         pcfg.rotations = {0., PI / 4., PI/2, 3. * PI / 4. };
+        if (params.allow_half_turns)
+            pcfg.rotations.insert(pcfg.rotations.end(), {PI, 5. * PI / 4., 3. * PI / 2., 7. * PI / 4.});
+    }
     else
         pcfg.rotations = {0.};
 

@@ -52,11 +52,15 @@ class FillBedOptionsJob : public Job
     // Past this many copies per plate the packer crawls; such a plate is named "N+".
     static constexpr int MAX_COPIES_PER_OPTION = 100;
 
+    // The closest two copies are ever packed, when support room is given up for count.
+    static constexpr double TIGHT_GAP_MM = 2.;
+
     struct Variant
     {
         std::string     label;          // translated, starts the plate name
-        bool            rotations;      // let the packer turn the copies
-        double          gap_mm;         // extra room around each copy, on top of brim / support
+        bool            rotations;      // let the packer turn the copies, half turns included
+        bool            support_room;   // keep the arranger's brim / support ring around each copy
+        double          gap_mm;         // extra room around each copy, on top of the above
         double          edge_mm;        // extra room along the plate edge
         ArrangePolygons placed = {};    // copies that fit, in first-plate coordinates
         bool            capped = false; // hit MAX_COPIES_PER_OPTION

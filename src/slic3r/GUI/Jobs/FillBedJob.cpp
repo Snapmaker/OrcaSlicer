@@ -393,12 +393,13 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
 
 FillBedOptionsJob::FillBedOptionsJob() : m_plater{wxGetApp().plater()}
 {
-    // Support room is never traded away: every gap below sits on top of the brim / support
-    // aware inflation the arranger gives each copy anyway.
+    // A packs for count: half turns allowed and only TIGHT_GAP_MM between copies, so their
+    // brims may touch and a support that spreads wide can reach a neighbour. B and C keep
+    // the arranger's brim / support ring, which on a tree support is a 12 mm radius.
     m_variants = {
-        {_u8L("A Max"),      true,  0., 0.},
-        {_u8L("B Balanced"), false, 3., 2.},
-        {_u8L("C Safe"),     false, 8., 5.},
+        {_u8L("A Max"),      true,  false, 0., 0.},
+        {_u8L("B Balanced"), false, true,  3., 2.},
+        {_u8L("C Safe"),     false, true,  8., 5.},
     };
 }
 
@@ -453,6 +454,7 @@ void FillBedOptionsJob::process(Ctl &ctl)
 
         arrangement::ArrangeParams params = m_params;
         params.allow_rotations  = variant.rotations;
+        params.allow_half_turns = variant.rotations;
         params.min_obj_distance = 0; // brim / support aware spacing; the variant's gap goes on top
         params.do_final_align   = false;
 
@@ -463,7 +465,8 @@ void FillBedOptionsJob::process(Ctl &ctl)
         const Points bedpts = get_shrink_bedpts(print_cfg, params);
 
         update_selected_items_inflation(probe, print_cfg, params);
-        const coord_t inflation = probe.front().inflation + scaled(variant.gap_mm / 2.);
+        const coord_t inflation = (variant.support_room ? probe.front().inflation : scaled(TIGHT_GAP_MM / 2.))
+                                  + scaled(variant.gap_mm / 2.);
 
         // An upper bound on the copies that fit; the packer stops as soon as the plate is full.
         const ExPolygons grown     = offset_ex(m_template.poly, float(inflation));

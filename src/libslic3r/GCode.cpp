@@ -8106,7 +8106,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
     bool                        variable_speed = false;
     std::vector<ProcessedPoint> new_points{};
 
-    if (this->process_flow_value(m_config.enable_overhang_speed) && !this->on_first_layer() && (is_bridge(path.role()) || is_perimeter(path.role()))) {
+    if (this->process_flow_value(m_config.enable_overhang_speed) && !this->on_first_layer() && is_perimeter(path.role())) {
         bool   is_external = is_external_perimeter(path.role());
         double ref_speed   = is_external ? this->process_flow_value(m_config.outer_wall_speed) : this->process_flow_value(m_config.inner_wall_speed);
         if (ref_speed == 0)
@@ -8131,9 +8131,6 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         double oh4_abs = oh4_fop.percent ? (oh4_fop.value * 0.01 * ref_speed) : oh4_fop.value;
         double ohT_abs = ohT_fop.percent ? (ohT_fop.value * 0.01 * ref_speed) : ohT_fop.value;
 
-        // Snapmaker: align overhang bands with bbs. bbs non_uniform_degree_map = {0,10,25,50,75,100}
-        // (overhang %), equivalent to overlap % = {100,90,75,50,25,0}. The 0% (fully floating) band maps
-        // to overhang_totally_speed; bridge paths stay capped at bridge_speed via the original_speed clamp.
         ConfigOptionPercents overhang_overlap_levels({100, 90, 75, 50, 25, 0});
         ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
             {FloatOrPercent{100, true},

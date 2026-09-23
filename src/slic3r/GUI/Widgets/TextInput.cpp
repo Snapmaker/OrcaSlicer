@@ -170,7 +170,11 @@ void TextInput::DoSetSize(int x, int y, int width, int height, int sizeFlags)
         textPos.x += labelSize.x;
     if (text_ctrl) {
         wxSize textSize = text_ctrl->GetSize();
-        textSize.x = size.x - textPos.x - labelSize.x - 10;
+        // Clamp to 0: when the control has not been laid out yet (outer width ~0) or
+        // the label is wider than the control, the subtraction underflows and the
+        // negative width is rejected by GTK (gtk_widget_set_size_request assertion),
+        // leaving the embedded GtkEntry with a stale size.
+        textSize.x = wxMax(size.x - textPos.x - labelSize.x - 10, 0);
         text_ctrl->SetSize(textSize);
         text_ctrl->SetPosition({textPos.x, (size.y - textSize.y) / 2});
     }

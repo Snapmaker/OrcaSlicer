@@ -8606,9 +8606,9 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         BOOST_LOG_TRIVIAL(info) << "Built custom remap for physical to mixed merge (accounts for virtual ID changes)";
 
         // Preserve the custom merge target for config-level object/volume extruder
-        // assignments. on_filaments_delete() consumes the remap for painted facets;
-        // passing the target also lets ObjectList remap "extruder" configs so newly
-        // reloaded GLVolumes receive the post-deletion mixed filament ID.
+        // assignments. The count update below replaces PresetBundle's transient
+        // remap with its generic deletion remap, so restore this merge-specific
+        // table before Plater::on_filaments_delete() consumes it.
         const std::vector<unsigned int> physical_to_mixed_remap = pb.last_filament_id_remap();
         const int merged_target_id =
             physical_to_mixed_remap.size() > filament_id + 1 &&
@@ -8616,28 +8616,30 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
                 ? int(physical_to_mixed_remap[filament_id + 1] - 1)
                 : -1;
 
+        // Update PresetBundle before refreshing the sidebar. Sidebar::on_filaments_delete()
+        // first reduces the UI physical count and then reloads custom mixed definitions.
+        // If it runs while the bundle still contains old physical IDs, a row such as
+        // old (3, 5) is temporarily invalid against four UI slots and is discarded.
+        // Updating first renumbers that row to (3, 4) and keeps the merge target alive.
+        pb.update_num_filaments(filament_id);
+        (void)pb.consume_last_filament_id_remap();
+        pb.set_filament_id_remap(physical_to_mixed_remap);
+
+        const size_t total_after_delete =
+            pb.mixed_filaments.total_filaments(pb.filament_presets.size());
+        wxGetApp().plater()->get_partplate_list().on_filament_deleted(
+            total_after_delete, filament_id);
+
         // Pass the post-deletion mixed target so painted states and config-level
         // object/volume extruder assignments follow the same remap.
         wxGetApp().plater()->on_filaments_delete(
-            old_total_filaments, filament_id, merged_target_id, is_mixed_snapshot);
+            total_after_delete, filament_id, merged_target_id, is_mixed_snapshot);
 
-        // Delete the physical filament.
-        pb.update_num_filaments(filament_id);
-        pb.consume_last_filament_id_remap(); // discard the remap built by update_num_filaments
-        wxGetApp().plater()->get_partplate_list().on_filament_deleted(
-            pb.filament_presets.size(), filament_id);
-
-        // The early on_filaments_delete() call synchronized Plater config before the
-        // physical filament was removed. Resynchronize filament_colour from the
-        // post-deletion project config; GLCanvas3D reads this config when updating
-        // GLVolume colors.
+        // Resynchronize filament_colour from the post-deletion project config;
+        // GLCanvas3D reads this config when updating GLVolume colors.
         wxGetApp().plater()->update_filament_colors_in_full_config();
 
-
-        // on_filaments_delete() above refreshed the sidebar before this physical
-        // filament was removed from PresetBundle, so those controls read the old
-        // preset list. Refresh them from the post-deletion bundle state before
-        // leaving this early-return merge path.
+        // Refresh controls that may still hold the pre-deletion filament list.
         for (size_t idx = filament_id; idx < p->combos_filament.size(); ++idx) {
             if (p->combos_filament[idx])
                 p->combos_filament[idx]->update();

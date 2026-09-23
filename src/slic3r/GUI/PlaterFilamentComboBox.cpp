@@ -7,31 +7,28 @@
 #include "nlohmann/json.hpp"
 
 #include <wx/tokenzr.h>
+#include <wx/scrolwin.h>
 #include <wx/weakref.h>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <string>
+#include <system_error>
 #include <utility>
 
-#include <boost/locale.hpp>
 #include <boost/log/trivial.hpp>
 
-namespace Slic3r {
-namespace GUI {
+namespace Slic3r
+{
+namespace GUI
+{
 
-wxBEGIN_EVENT_TABLE(PlaterFilamentComboBox, PlaterPresetComboBox)
-    EVT_LEFT_DOWN(PlaterFilamentComboBox::on_mouse_down)
-    EVT_LEFT_DCLICK(PlaterFilamentComboBox::on_mouse_down)
-    EVT_KEY_DOWN(PlaterFilamentComboBox::on_key_down)
-wxEND_EVENT_TABLE()
-
-namespace {
+namespace
+{
 
 wxWeakRef<FilamentDropDown> s_active_popup;
 wxWeakRef<PlaterFilamentComboBox> s_active_owner;
@@ -40,12 +37,28 @@ constexpr const char *g_topn_file_name      = "filament_topn.json";
 constexpr const char *g_snapmaker_vendor    = "Snapmaker";
 constexpr int         g_topn_schema_version = 1;
 
+wxWindow *scroll_parent(wxWindow *window)
+{
+    wxWindow *current = window;
+    while (current != nullptr && current->GetParent() != nullptr) {
+        wxWindow *parent = current->GetParent();
+        if (dynamic_cast<wxScrollHelper *>(parent) != nullptr)
+            return current;
+        current = parent;
+    }
+    return nullptr;
+}
+
 std::filesystem::path filament_topn_path()
 {
     std::filesystem::path system_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                        g_snapmaker_vendor / "filament" / g_topn_file_name;
-    if (std::filesystem::exists(system_path))
+                                         g_snapmaker_vendor / "filament" / g_topn_file_name;
+    std::error_code filesystem_error;
+    if (std::filesystem::exists(system_path, filesystem_error))
         return system_path;
+    if (filesystem_error)
+        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder could not inspect " << system_path.u8string() << ": "
+                                   << filesystem_error.message();
 
     return std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" / g_snapmaker_vendor / "filament" /
            g_topn_file_name;
@@ -95,8 +108,8 @@ private:
 
         const auto schema_version = root.find("schema_version");
         const auto order_node     = root.find("order");
-        if (schema_version == root.end() || !schema_version->is_number_integer() || *schema_version != g_topn_schema_version ||
-            order_node == root.end() || !order_node->is_object()) {
+        if (schema_version == root.end() || !schema_version->is_number_integer() ||
+            *schema_version != g_topn_schema_version || order_node == root.end() || !order_node->is_object()) {
             BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has invalid schema: " << path.u8string();
             return;
         }
@@ -111,7 +124,8 @@ private:
             Order values;
             for (const auto &value : vendor_order.value()) {
                 if (!value.is_string() || value.get_ref<const std::string &>().empty()) {
-                    BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has an invalid filament product: " << path.u8string();
+                    BOOST_LOG_TRIVIAL(warning)
+                        << "FilamentTopNOrder has an invalid filament product: " << path.u8string();
                     return;
                 }
                 values.emplace_back(value.get_ref<const std::string &>());
@@ -157,14 +171,6 @@ std::string vendor_from_display_name(const wxString &display_name)
     return words.HasMoreTokens() ? into_u8(words.GetNextToken()) : std::string();
 }
 
-size_t rank_of(const std::string &value, const std::array<const char *, 4> &order)
-{
-    for (size_t i = 0; i < order.size(); ++i)
-        if (value == order[i])
-            return i;
-    return order.size();
-}
-
 bool is_snapmaker_vendor(const std::string &vendor)
 {
     return from_u8(vendor).CmpNoCase(wxString::FromUTF8("Snapmaker")) == 0;
@@ -195,79 +201,12 @@ std::string canonical_vendor(const std::string &vendor)
     return vendor;
 }
 
-constexpr int g_name_class_digit = 0;
-constexpr int g_name_class_upper = 1;
-constexpr int g_name_class_lower = 2;
-constexpr int g_name_class_cjk   = 3;
-constexpr int g_name_class_other = 4;
-
-int name_class(const wxString &name)
-{
-    if (name.IsEmpty())
-        return g_name_class_other;
-
-    const wxUint32 cp = name[0].GetValue();
-    if (cp >= '0' && cp <= '9')
-        return g_name_class_digit;
-    if (cp >= 'A' && cp <= 'Z')
-        return g_name_class_upper;
-    if (cp >= 'a' && cp <= 'z')
-        return g_name_class_lower;
-    if ((cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF))
-        return g_name_class_cjk;
-
-    return g_name_class_other;
-}
-
-const boost::locale::collator<char> *pinyin_collator()
-{
-    static const boost::locale::collator<char> *collator = []() -> const boost::locale::collator<char> * {
-        try {
-            static std::locale chinese(boost::locale::generator().generate("zh_CN.UTF-8"));
-            return &std::use_facet<boost::locale::collator<char>>(chinese);
-        } catch (...) {
-            return nullptr;
-        }
-    }();
-    return collator;
-}
-
-int compare_cjk_pinyin(const wxString &left, const wxString &right)
-{
-    const boost::locale::collator<char> *collator = pinyin_collator();
-    if (collator == nullptr)
-        return 0;
-
-    try {
-        return collator->compare(boost::locale::collate_level::primary, into_u8(left), into_u8(right));
-    } catch (...) {
-        return 0;
-    }
-}
-
 bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
 {
     const int name_compare = left.display_name.CmpNoCase(right.display_name);
     if (name_compare != 0)
         return name_compare < 0;
     return left.original_index < right.original_index;
-}
-
-bool classed_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
-{
-    const int left_class  = name_class(left.display_name);
-    const int right_class = name_class(right.display_name);
-    if (left_class != right_class)
-        return left_class < right_class;
-
-    if (left_class == g_name_class_cjk) {
-        const int pinyin_compare = compare_cjk_pinyin(left.display_name, right.display_name);
-        if (pinyin_compare != 0)
-            return pinyin_compare < 0;
-        return left.original_index < right.original_index;
-    }
-
-    return default_name_less(left, right);
 }
 
 } // namespace
@@ -280,16 +219,6 @@ bool FilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &
 bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
 {
     return default_name_less(left, right);
-}
-
-bool ClassedNameFilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
-{
-    return classed_name_less(left, right);
-}
-
-bool SystemClassedNameFilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
-{
-    return classed_name_less(left, right);
 }
 
 bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
@@ -316,33 +245,39 @@ bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSort
             return left_rank < right_rank;
     }
 
-    static const std::array<const char *, 4> first_types = {"PLA", "PETG", "ABS", "TPU"};
-    const size_t left_type  = rank_of(left.filament_type, first_types);
-    const size_t right_type = rank_of(right.filament_type, first_types);
-    if (left_type != right_type)
-        return left_type < right_type;
     return less_by_name(left, right);
 }
 
 PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type preset_type)
     : PlaterPresetComboBox(parent, preset_type)
 {
+    Bind(wxEVT_LEFT_DOWN, &PlaterFilamentComboBox::on_mouse_down, this);
+    Bind(wxEVT_LEFT_DCLICK, &PlaterFilamentComboBox::on_mouse_down, this);
+    Bind(wxEVT_KEY_DOWN, &PlaterFilamentComboBox::on_key_down, this);
+
     if (preset_type != Preset::TYPE_FILAMENT)
         return;
 
     // Preload the TopN order once; popup refreshes never perform file I/O.
     FilamentTopNOrder::instance();
     m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
-    m_system_filament_sorter = std::make_unique<SystemClassedNameFilamentSorter>();
-    m_project_sorter         = std::make_unique<ClassedNameFilamentSorter>();
-    m_user_sorter            = std::make_unique<ClassedNameFilamentSorter>();
+    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>();
+    m_project_sorter         = std::make_unique<FilamentSorter>();
+    m_user_sorter            = std::make_unique<FilamentSorter>();
 
-    m_popup = new FilamentDropDown(this, m_popup_items);
+    std::unique_ptr<FilamentDropDown> popup = std::make_unique<FilamentDropDown>(m_popup_items);
+    if (!popup->Create(this))
+    {
+        BOOST_LOG_TRIVIAL(warning)
+            << "Could not create the grouped filament popup; falling back to the standard dropdown.";
+        return;
+    }
+    m_popup = popup.release();
     m_popup->SetUseContentWidth(true, true);
     m_popup->Bind(wxEVT_COMBOBOX, &PlaterFilamentComboBox::on_popup_selection, this);
     m_popup->Bind(EVT_DISMISS, &PlaterFilamentComboBox::on_popup_dismiss, this);
 
-    // Text-ctrl key events don't reach this window's static table; bind them separately.
+    // Text-control key events do not reach this window's handlers; bind them separately.
     if (GetTextCtrl() != nullptr)
         GetTextCtrl()->Bind(wxEVT_KEY_DOWN, &PlaterFilamentComboBox::on_key_down, this);
 
@@ -351,6 +286,10 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
         m_top_level->Bind(wxEVT_MOVE, &PlaterFilamentComboBox::on_top_level_move, this);
         m_top_level->Bind(wxEVT_SIZE, &PlaterFilamentComboBox::on_top_level_size, this);
     }
+
+    m_scroll_parent = scroll_parent(this);
+    if (m_scroll_parent != nullptr && m_scroll_parent != m_top_level)
+        m_scroll_parent->Bind(wxEVT_MOVE, &PlaterFilamentComboBox::on_scroll_parent_move, this);
 }
 
 void PlaterFilamentComboBox::set_project_sorter(std::unique_ptr<FilamentSorter> sorter)
@@ -376,19 +315,28 @@ void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVe
 void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
 {
     if (sorter == nullptr)
-        sorter = std::make_unique<SystemClassedNameFilamentSorter>();
+        sorter = std::make_unique<SystemFilamentSorter>();
     m_system_filament_sorter = std::move(sorter);
     rebuild_popup_rows();
 }
 
 PlaterFilamentComboBox::~PlaterFilamentComboBox()
 {
+    if (m_popup != nullptr)
+    {
+        m_popup->Unbind(wxEVT_COMBOBOX, &PlaterFilamentComboBox::on_popup_selection, this);
+        m_popup->Unbind(EVT_DISMISS, &PlaterFilamentComboBox::on_popup_dismiss, this);
+    }
+
     close_popup(false);
 
     if (m_top_level != nullptr) {
         m_top_level->Unbind(wxEVT_MOVE, &PlaterFilamentComboBox::on_top_level_move, this);
         m_top_level->Unbind(wxEVT_SIZE, &PlaterFilamentComboBox::on_top_level_size, this);
     }
+
+    if (m_scroll_parent != nullptr && m_scroll_parent != m_top_level)
+        m_scroll_parent->Unbind(wxEVT_MOVE, &PlaterFilamentComboBox::on_scroll_parent_move, this);
 
     if (GetTextCtrl() != nullptr)
         GetTextCtrl()->Unbind(wxEVT_KEY_DOWN, &PlaterFilamentComboBox::on_key_down, this);
@@ -448,11 +396,6 @@ std::string PlaterFilamentComboBox::preset_vendor(const Preset *preset) const
     return vendor;
 }
 
-std::string PlaterFilamentComboBox::preset_filament_type(const Preset *preset) const
-{
-    return config_string(preset, "filament_type");
-}
-
 std::string PlaterFilamentComboBox::preset_filament_product(const Preset *preset) const
 {
     if (preset == nullptr)
@@ -509,6 +452,8 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
 
     Section current_section = Section::Other;
     for (unsigned int combo_index = 0; combo_index < GetCount(); ++combo_index) {
+        if (combo_index > static_cast<unsigned int>(std::numeric_limits<int>::max()))
+            break;
         const wxString text = GetString(combo_index);
         const Marker marker = reinterpret_cast<Marker>(GetClientData(combo_index));
 
@@ -554,7 +499,6 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
                     row.section = Section::User;
 
                 row.sort_item.vendor           = preset_vendor(preset);
-                row.sort_item.filament_type    = preset_filament_type(preset);
                 row.sort_item.filament_product = preset_filament_product(preset);
                 row.item.tip                    = get_tooltip(*preset);
             }
@@ -612,11 +556,14 @@ void PlaterFilamentComboBox::rebuild_popup_rows()
     m_popup->SetItems(m_popup_items);
     int popup_selection = -1;
     const int combo_selection = GetSelection();
-    for (size_t i = 0; i < m_popup_to_combo.size(); ++i)
+    for (size_t i = 0; i < m_popup_to_combo.size(); ++i) {
+        if (i > static_cast<size_t>(std::numeric_limits<int>::max()))
+            break;
         if (m_popup_to_combo[i] == combo_selection) {
             popup_selection = static_cast<int>(i);
             break;
         }
+    }
     m_popup->SetSelection(popup_selection);
 }
 
@@ -722,11 +669,11 @@ void PlaterFilamentComboBox::close_popup(bool notify)
 void PlaterFilamentComboBox::on_popup_selection(wxCommandEvent &event)
 {
     const int popup_index = event.GetInt();
-    if (popup_index < 0 || popup_index >= static_cast<int>(m_popup_to_combo.size()))
+    if (popup_index < 0 || static_cast<size_t>(popup_index) >= m_popup_to_combo.size())
         return;
 
     const int combo_index = m_popup_to_combo[popup_index];
-    if (combo_index < 0 || combo_index >= static_cast<int>(GetCount()))
+    if (combo_index < 0 || static_cast<unsigned int>(combo_index) >= GetCount())
         return;
 
     close_popup(true);
@@ -754,6 +701,12 @@ void PlaterFilamentComboBox::on_popup_dismiss(wxCommandEvent &event)
 
 void PlaterFilamentComboBox::on_mouse_down(wxMouseEvent &event)
 {
+    if (m_popup == nullptr) {
+        // Let ComboBox's static event table open its existing flat popup.
+        event.Skip();
+        return;
+    }
+
     SetFocus();
     show_popup();
 
@@ -774,6 +727,11 @@ void PlaterFilamentComboBox::on_key_down(wxKeyEvent &event)
     case WXK_RETURN:
     case WXK_SPACE:
     case WXK_DOWN:
+        if (m_popup == nullptr) {
+            // Preserve the base ComboBox keyboard behaviour after popup creation fails.
+            event.Skip();
+            return;
+        }
         show_popup();
         event.Skip(false);
         event.StopPropagation();
@@ -789,6 +747,12 @@ void PlaterFilamentComboBox::on_key_down(wxKeyEvent &event)
     default:
         break;
     }
+    event.Skip();
+}
+
+void PlaterFilamentComboBox::on_scroll_parent_move(wxMoveEvent &event)
+{
+    close_popup(true);
     event.Skip();
 }
 

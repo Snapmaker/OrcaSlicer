@@ -15678,6 +15678,11 @@ msgstr "启用擦拭塔接触层功能"
 
 msgid "Enable optimized prime tower interface behavior when different materials meet."
 msgstr "启用优化后的擦拭塔接触层行为，用于不同耗材丝相遇时。"
+
+msgid ""
+"Switch to rectilinear pattern?\n"
+"Yes - switch to rectilinear pattern automatically\n"
+"No  - reset density to default non 100% value automatically"
 msgstr ""
 "切换到直线图案？\n"
 "是 - 自动切换到直线图案\n"

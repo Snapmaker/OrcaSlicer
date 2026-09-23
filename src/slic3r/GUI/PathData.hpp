@@ -65,6 +65,33 @@ struct PathStep
     uint16_t extruderId{ 0 };
 };
 
+// Mirror of the legacy GCodeViewer::Path, built once at load with exactly
+// load_toolpaths' grouping rules (runs break on any raw type change or
+// Path::matches() failure; start is recorded as first move sid - 1, end as
+// the last move sid). The sequential slider endpoints are selected from
+// these records with the legacy first-pass rules, so the slider numbers
+// match the legacy pipeline by construction.
+struct LegacyPathRecord
+{
+    uint32_t firstSid{ 0 };
+    uint32_t lastSid{ 0 };
+    EMoveType type{ EMoveType::Noop };
+    ExtrusionRole role{ erNone };
+    uint8_t extruderId{ 0 };
+    uint8_t cpColorId{ 0 };
+    // grouping attributes (Path::matches comparisons against the run start)
+    float feedrate{ 0.0f };
+    float fanSpeed{ 0.0f };
+    float heightBin{ 0.0f };
+    float widthBin{ 0.0f };
+    float volumetricRate{ 0.0f };
+    float layerTime{ 0.0f };
+    float zRef{ 0.0f }; // z of the move before the run start
+    // chain connectivity (is_travel_in_layers_range compares these)
+    Vec3f startPosition{ Vec3f::Zero() };
+    Vec3f endPosition{ Vec3f::Zero() };
+};
+
 // Data tables of one printable layer: the raw path data (nodes, per-move
 // groups, steps), the visibility-filtered GPU step records, and the buffer
 // textures they get uploaded into. No geometry is ever generated here; the
@@ -75,6 +102,11 @@ public:
     float Z() const { return _z; }
     uint32_t FirstSid() const { return _firstSid; }
     uint32_t LastSid() const { return _lastSid; }
+    // Layer end under the legacy extension rule: this fork's
+    // extract_layer_metadata extends on EVERY travel (gap > 0), which is
+    // exactly what _lastSid does — the sequential-slider endpoints use the
+    // same range as the rendering tables
+    uint32_t LegacyLastSid() const { return _lastSid; }
 
     const std::vector<PathNode>& Nodes() const { return _nodes; }
     const std::vector<MoveNodeGroup>& Groups() const { return _groups; }
@@ -218,9 +250,21 @@ public:
         return (sid < _sidToMoveIndex.size()) ? _sidToMoveIndex[sid] : 0;
     }
 
+    // seam instances: (sid of the following move, raw move index), sorted by
+    // sid; used for the sequential-slider endpoints
+    const std::vector<std::pair<uint32_t, uint32_t>>& SeamMoves() const { return _seamMovesBySid; }
+
+    // Sequential-slider endpoints of the given layer, replicating the legacy
+    // first-pass selection over the legacy path records: visible paths
+    // (travel chains by position connectivity, extrude/wipe with both sids
+    // inside the legacy layer range) plus option/seam instances. Returns
+    // {0, 0} when nothing applies.
+    std::pair<uint32_t, uint32_t> ComputeSliderEndpoints(uint32_t layerIndex) const;
+
 private:
     void BuildLayers(const GCodeProcessorResult& result);
     void AssembleSteps(const GCodeProcessorResult& result);
+    void BuildLegacyPaths(const GCodeProcessorResult& result);
 
     std::vector<std::unique_ptr<PathLayerData>> _layers;
     std::pair<uint32_t, uint32_t> _layerWindow{ 0, 0 };
@@ -241,6 +285,12 @@ private:
     // sid -> move index, and the seam moves sorted by their sid
     std::vector<uint32_t> _sidToMoveIndex;
     std::vector<std::pair<uint32_t, uint32_t>> _seamMovesBySid;
+    // legacy render-path records (for the sequential-slider endpoints) and
+    // the indices of the travel records within them (for chain walks)
+    std::vector<LegacyPathRecord> _legacyPaths;
+    std::vector<uint32_t> _travelPathIndices;
+    // raw move lookup for the endpoint instance scan (not owned)
+    const GCodeProcessorResult* _result{ nullptr };
 };
 
 } // namespace GUI

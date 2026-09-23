@@ -15,6 +15,43 @@ constexpr float LAYER_Z_EPSILON = 1e-4f;
 // generated prism stays visible
 constexpr float TRAVEL_SIZE = 0.1f;
 
+// exact copy of GCodeViewer's round_to_bin (the legacy path grouping bins
+// heights/widths before comparing them)
+float RoundToBin(const float value)
+{
+    constexpr float const scale    [5] = { 100.f,  1000.f,  10000.f,  100000.f,  1000000.f };
+    constexpr float const invscale [5] = { 0.01f,  0.001f,  0.0001f,  0.00001f,  0.000001f };
+    constexpr float const threshold[5] = { 0.095f, 0.0095f, 0.00095f, 0.000095f, 0.0000095f };
+    int i = 0;
+    for (; value < threshold[i] && i < 4; ++i);
+    return std::round(value * scale[i]) * invscale[i];
+}
+
+// Path::matches() against a record's stored (run-start) attributes
+bool LegacyPathMatches(const LegacyPathRecord& path, const GCodeProcessorResult::MoveVertex& move)
+{
+    switch (move.type)
+    {
+    case EMoveType::Travel:
+        return path.feedrate == move.feedrate
+            && path.extruderId == move.extruder_id
+            && path.cpColorId == move.cp_color_id;
+    case EMoveType::Extrude:
+        return path.extruderId == move.extruder_id
+            && path.cpColorId == move.cp_color_id
+            && path.role == move.extrusion_role
+            && move.position.z() <= path.zRef
+            && path.feedrate == move.feedrate
+            && path.fanSpeed == move.fan_speed
+            && path.heightBin == RoundToBin(move.height)
+            && path.widthBin == RoundToBin(move.width)
+            && std::abs(move.volumetric_rate() - path.volumetricRate) / path.volumetricRate <= 0.05f
+            && path.layerTime == move.layer_duration;
+    default:
+        return false;
+    }
+}
+
 // moves rendered as diamond markers (options), everything else as prisms
 bool IsOptionMove(EMoveType type)
 {
@@ -298,15 +335,17 @@ void PathLayerData::Reset()
 void PathLayerStack::BuildFromResult(const GCodeProcessorResult& result)
 {
     Reset();
+    _result = &result;
     BuildLayers(result);
     if (_layers.empty())
         return;
 
     AssembleSteps(result);
 
-    // free the transient seam lookup; the sid -> move index map is kept for
-    // sequential-view queries (marker position, current move)
-    _seamMovesBySid = std::vector<std::pair<uint32_t, uint32_t>>();
+    // the sid -> move index map, the seam list and the legacy path records
+    // are kept for sequential-view queries (marker position, current move,
+    // slider endpoints)
+    BuildLegacyPaths(result);
 
     _layerWindow = { 0, static_cast<uint32_t>(_layers.size() - 1) };
     _moveWindow = { 0, static_cast<uint32_t>(_sidCount - 1) };
@@ -359,9 +398,11 @@ void PathLayerStack::BuildLayers(const GCodeProcessorResult& result)
             }
         }
         else if (move.type == EMoveType::Travel) {
-            // trailing travels after the last extrude of a layer still
-            // belong to that layer
-            if (sid - lastTravelSid > 1 && !_layers.empty())
+            // every travel extends the layer (the fork's
+            // extract_layer_metadata uses gap > 0): trailing travel chains
+            // (e.g. z-hop: lift, xy move, lower) belong to the layer and the
+            // slider endpoints use the same range
+            if (!_layers.empty())
                 _layers.back()->_lastSid = sid;
             lastTravelSid = sid;
         }
@@ -466,6 +507,9 @@ void PathLayerStack::Reset()
     _dirtyMask = 0xff;
     _sidToMoveIndex.clear();
     _seamMovesBySid.clear();
+    _legacyPaths.clear();
+    _travelPathIndices.clear();
+    _result = nullptr;
 }
 
 void PathLayerStack::SetLayerWindow(uint32_t first, uint32_t last)
@@ -537,6 +581,171 @@ void PathLayerStack::SetViewType(unsigned int viewType)
         _viewType = viewType;
         MarkDirty(EDirtyFlag::ViewType);
     }
+}
+
+// Builds the legacy render-path records with exactly load_toolpaths'
+// grouping: a run opens when (no open run) || (previous RAW move type
+// differs, so seams and option moves break runs) || (!Path::matches), and
+// records start = (first move sid - 1), end = (last move sid). Option moves
+// form no paths (legacy renders them as instances only).
+void PathLayerStack::BuildLegacyPaths(const GCodeProcessorResult& result)
+{
+    _legacyPaths.clear();
+    _travelPathIndices.clear();
+    const auto& moves = result.moves;
+    if (moves.size() < 2)
+        return;
+
+    uint32_t seamsCount = 0;
+    // legacy counts the seam of the very first move too (its seam counting
+    // runs before the i == 0 skip); missing it shifts every record sid by 1
+    if (moves[0].type == EMoveType::Seam)
+        ++seamsCount;
+    for (size_t i = 1; i < moves.size(); ++i) { // legacy skips the first move
+        const GCodeProcessorResult::MoveVertex& move = moves[i];
+        if (move.type == EMoveType::Seam) {
+            ++seamsCount;
+            continue;
+        }
+        const uint32_t sid = static_cast<uint32_t>(i - seamsCount);
+        const GCodeProcessorResult::MoveVertex& prev = moves[i - 1];
+
+        const bool opensNewRun = _legacyPaths.empty()
+            || prev.type != move.type
+            || !LegacyPathMatches(_legacyPaths.back(), move);
+
+        if (opensNewRun) {
+            if (IsOptionMove(move.type) || move.type == EMoveType::Noop)
+                continue; // option/noop moves form no legacy paths
+
+            LegacyPathRecord record;
+            record.firstSid = (sid > 0) ? sid - 1 : 0;
+            record.lastSid = sid;
+            record.type = move.type;
+            record.role = move.extrusion_role;
+            record.extruderId = move.extruder_id;
+            record.cpColorId = move.cp_color_id;
+            record.feedrate = move.feedrate;
+            record.fanSpeed = move.fan_speed;
+            record.heightBin = RoundToBin(move.height);
+            record.widthBin = RoundToBin(move.width);
+            record.volumetricRate = move.volumetric_rate();
+            record.layerTime = move.layer_duration;
+            record.zRef = prev.position.z();
+            record.startPosition = prev.position;
+            record.endPosition = move.position;
+            if (move.type == EMoveType::Travel)
+                _travelPathIndices.push_back(static_cast<uint32_t>(_legacyPaths.size()));
+            _legacyPaths.push_back(record);
+        }
+        else {
+            LegacyPathRecord& open = _legacyPaths.back();
+            open.lastSid = sid;
+            open.endPosition = move.position;
+        }
+    }
+}
+
+// Sequential-slider endpoints of a layer, replicating the legacy first-pass
+// selection: min/max over the layer's visible legacy paths (travels gated
+// by the position-connected chain overlap, everything else by both sids
+// inside the legacy layer range) plus visible option/seam instances.
+std::pair<uint32_t, uint32_t> PathLayerStack::ComputeSliderEndpoints(uint32_t layerIndex) const
+{
+    if (layerIndex >= _layers.size())
+        return { 0, 0 };
+
+    const uint32_t layerFirst = _layers[layerIndex]->FirstSid();
+    const uint32_t layerLast = _layers[layerIndex]->LegacyLastSid();
+
+    const bool filterFilament = (_viewType == PathViewType::COLOR_PRINT) && !_filamentVisible.empty();
+    uint32_t bestFirst = INVALID_INDEX;
+    uint32_t bestLast = 0;
+
+    for (size_t i = 0; i < _legacyPaths.size(); ++i) {
+        const LegacyPathRecord& path = _legacyPaths[i];
+        if (!IsMoveTypeVisible(path.type))
+            continue;
+        if (path.type == EMoveType::Extrude && !IsRoleVisible(path.role))
+            continue;
+        if (filterFilament && path.extruderId < _filamentVisible.size()
+            && !_filamentVisible[path.extruderId])
+            continue;
+
+        bool inRange;
+        if (path.type == EMoveType::Travel) {
+            // position-connected chain, ported from is_travel_in_layers_range
+            // (chains run through the travel paths only, comparing shared
+            // end positions)
+            size_t chainIdx = i;
+            while (chainIdx > 0) {
+                // the previous travel record in move order
+                size_t prev = chainIdx - 1;
+                while (prev != 0 && _legacyPaths[prev].type != EMoveType::Travel)
+                    --prev;
+                if (_legacyPaths[prev].type != EMoveType::Travel)
+                    break;
+                if (!_legacyPaths[chainIdx].startPosition.isApprox(_legacyPaths[prev].endPosition))
+                    break;
+                chainIdx = prev;
+            }
+            size_t chainEnd = i;
+            while (chainEnd + 1 < _legacyPaths.size()) {
+                size_t next = chainEnd + 1;
+                while (next + 1 < _legacyPaths.size() && _legacyPaths[next].type != EMoveType::Travel)
+                    ++next;
+                if (_legacyPaths[next].type != EMoveType::Travel)
+                    break;
+                if (!_legacyPaths[chainEnd].endPosition.isApprox(_legacyPaths[next].startPosition))
+                    break;
+                chainEnd = next;
+            }
+            const uint32_t chainFirstSid = _legacyPaths[chainIdx].firstSid;
+            const uint32_t chainLastSid = _legacyPaths[chainEnd].lastSid;
+            // legacy uses AND: BOTH chain endpoints must lie inside the
+            // layer range (this fork changed upstream's OR check)
+            inRange = (layerFirst <= chainFirstSid && chainFirstSid <= layerLast)
+                && (layerFirst <= chainLastSid && chainLastSid <= layerLast);
+        }
+        else {
+            // is_in_layers_range: both recorded sids inside the layer range
+            inRange = layerFirst <= path.firstSid && path.lastSid <= layerLast;
+        }
+
+        if (!inRange)
+            continue;
+        if (path.firstSid < bestFirst) bestFirst = path.firstSid;
+        if (path.lastSid > bestLast) bestLast = path.lastSid;
+    }
+
+    // visible option-marker instances (their own sids; a seam carries the
+    // sid of the move that follows it)
+    if (_result != nullptr) {
+        for (uint32_t sid = layerFirst; sid <= layerLast && sid < _sidToMoveIndex.size(); ++sid) {
+            const uint32_t moveIndex = _sidToMoveIndex[sid];
+            if (moveIndex >= _result->moves.size())
+                break;
+            const GCodeProcessorResult::MoveVertex& move = _result->moves[moveIndex];
+            if (move.type != EMoveType::Seam && IsOptionMove(move.type) && IsMoveTypeVisible(move.type)) {
+                if (sid < bestFirst) bestFirst = sid;
+                if (sid > bestLast) bestLast = sid;
+            }
+        }
+        if (IsMoveTypeVisible(EMoveType::Seam)) {
+            for (const auto& seam : _seamMovesBySid) {
+                if (seam.first < layerFirst)
+                    continue;
+                if (seam.first > layerLast)
+                    break; // sorted by sid
+                if (seam.first < bestFirst) bestFirst = seam.first;
+                if (seam.first > bestLast) bestLast = seam.first;
+            }
+        }
+    }
+
+    if (bestFirst == INVALID_INDEX)
+        return { 0, 0 };
+    return { bestFirst, bestLast };
 }
 
 void PathLayerStack::RefreshVisibleSteps()

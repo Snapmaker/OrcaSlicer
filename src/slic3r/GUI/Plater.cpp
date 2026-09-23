@@ -14507,7 +14507,12 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
                    this->m_slice_all = false;
-                    slice_cancelled = !(this->q->reslice());
+                    // Page-switch auto-slice must run the same pre-slice guard as
+                    // the slice button, or the by-object red error never shows.
+                    if (this->q->guard_before_slice_plate())
+                        slice_cancelled = !(this->q->reslice());
+                    else
+                        slice_cancelled = true;
                }
                 else {
                     //reset current plate to the slicing plate

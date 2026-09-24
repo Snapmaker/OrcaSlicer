@@ -2,6 +2,8 @@
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
+#include "libslic3r/Geometry/ConvexHull.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
@@ -391,15 +393,157 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
     }
 }
 
+namespace {
+
+// The object's outline on the plate, concavities and all. The arranger itself only ever sees a
+// convex hull, which cannot tell that two hearts turned towards each other interlock. Taken from
+// a handful of horizontal sections rather than by projecting every facet: a section is cheap, and
+// their union is the silhouette to within the sampling.
+ExPolygons object_outline(const ModelObject &mo, const Transform3d &trafo)
+{
+    static const int SECTIONS = 12;
+
+    BoundingBoxf3 bb;
+    for (const ModelVolume *v : mo.volumes)
+        if (v->is_model_part())
+            bb.merge(v->mesh().transformed_bounding_box(trafo * v->get_matrix()));
+    if (!bb.defined || bb.max.z() - bb.min.z() <= 0.)
+        return {};
+
+    std::vector<float> zs;
+    zs.reserve(SECTIONS);
+    for (int i = 0; i < SECTIONS; ++i)
+        zs.emplace_back(float(bb.min.z() + (bb.max.z() - bb.min.z()) * (double(i) + 0.5) / double(SECTIONS)));
+
+    Polygons all;
+    for (const ModelVolume *v : mo.volumes)
+        if (v->is_model_part()) {
+            MeshSlicingParams params;
+            params.mode  = MeshSlicingParams::SlicingMode::Positive; // holes closed: nothing fits in them
+            params.trafo = trafo * v->get_matrix();
+            for (const Polygons &section : slice_mesh(v->mesh().its, zs, params))
+                append(all, section);
+        }
+
+    // A section of a detailed mesh carries thousands of points, and every one of them would be
+    // walked again for each overlap test the nesting below runs.
+    return expolygons_simplify(union_ex(all), scaled<double>(0.2));
+}
+
+ExPolygons turned(const ExPolygons &outline, double angle, coord_t inflation)
+{
+    ExPolygons out = outline;
+    for (ExPolygon &ex : out)
+        ex.rotate(angle);
+
+    return inflation > 0 ? offset_ex(out, float(inflation)) : out;
+}
+
+// Copy i of a rosette sits at angle 2*pi*i/n from the group's origin, turned by that same angle.
+Vec2crd rosette_offset(double radius, size_t i, size_t n)
+{
+    const double a = 2. * PI * double(i) / double(n);
+    return Vec2crd(coord_t(radius * std::cos(a)), coord_t(radius * std::sin(a)));
+}
+
+// Close the rosette up until its copies almost touch. Returns the radius they settle at, or
+// reach when they never come apart.
+double nest_radius(const std::vector<ExPolygons> &shapes, double reach)
+{
+    const size_t n        = shapes.size();
+    auto         overlaps = [&shapes, n](double radius) {
+        std::vector<ExPolygons> at(n);
+        for (size_t i = 0; i < n; ++i) {
+            const Vec2crd off = rosette_offset(radius, i, n);
+            at[i]             = shapes[i];
+            for (ExPolygon &ex : at[i])
+                ex.translate(off.x(), off.y());
+        }
+        for (size_t i = 0; i < n; ++i)
+            for (size_t j = i + 1; j < n; ++j)
+                if (!intersection_ex(at[i], at[j]).empty())
+                    return true;
+        return false;
+    };
+
+    if (overlaps(reach))
+        return reach;
+
+    double lo = 0., hi = reach; // lo overlaps, hi does not
+    for (int i = 0; i < 12; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        (overlaps(mid) ? lo : hi) = mid;
+    }
+    return hi;
+}
+
+Polygon cluster_hull(const ExPolygons &outline, const std::vector<FillBedCluster> &members)
+{
+    Points pts;
+    for (const FillBedCluster &member : members)
+        for (const ExPolygon &ex : turned(outline, member.rotation, 0)) {
+            Polygon contour = ex.contour;
+            contour.translate(member.offset);
+            append(pts, contour.points);
+        }
+
+    return Geometry::convex_hull(std::move(pts));
+}
+
+// Look for a group of copies that takes less room per copy than a copy on its own: two turned
+// half around, or four turned quarter by quarter, pushed together until they nearly touch. This
+// is what packs hearts or wedges into each other's hollows. Falls back to a single copy.
+std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, coord_t inflation)
+{
+    const std::vector<FillBedCluster> single{{Vec2crd(0, 0), 0.}};
+
+    const BoundingBox bb = get_extents(outline);
+    if (bb.size().x() <= 0 || bb.size().y() <= 0)
+        return single;
+
+    const double                reach  = 2. * bb.size().cast<double>().norm();
+    double                      best   = double(bb.size().x()) * double(bb.size().y());
+    std::vector<FillBedCluster> winner = single;
+
+    for (const size_t n : {size_t(2), size_t(4)}) {
+        std::vector<ExPolygons> shapes;
+        shapes.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            shapes.emplace_back(turned(outline, 2. * PI * double(i) / double(n), inflation));
+
+        const double radius = nest_radius(shapes, reach);
+        if (radius >= reach)
+            continue;
+
+        std::vector<FillBedCluster> members;
+        members.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            members.push_back({rosette_offset(radius, i, n), 2. * PI * double(i) / double(n)});
+
+        const BoundingBox group = get_extents(cluster_hull(outline, members));
+        const double      area  = double(group.size().x()) * double(group.size().y()) / double(n);
+        if (area < 0.98 * best) { // has to be a real gain, not rounding
+            best   = area;
+            winner = members;
+        }
+    }
+
+    return winner;
+}
+
+} // namespace
+
 FillBedOptionsJob::FillBedOptionsJob() : m_plater{wxGetApp().plater()}
 {
-    // A packs for count: half turns allowed and only TIGHT_GAP_MM between copies, so their
-    // brims may touch and a support that spreads wide can reach a neighbour. B and C keep
-    // the arranger's brim / support ring, which on a tree support is a 12 mm radius.
+    // A packs for count: copies nested into each other, half turns allowed, and only
+    // TIGHT_GAP_MM between them, so their brims may touch and a support that spreads wide can
+    // reach a neighbour. B keeps the arranger's brim / support ring - a 12 mm radius on a tree
+    // support - and still lets the packer turn the copies. C lays them out all facing the same
+    // way, which is the plate to pick when the copies have to come off the bed alike.
     m_variants = {
-        {_u8L("A Max"),      true,  false, 0., 0.},
-        {_u8L("B Balanced"), false, true,  3., 2.},
-        {_u8L("C Safe"),     false, true,  8., 5.},
+        {_u8L("A Max"),      true,  false, true,  0., 0.},
+        {_u8L("B Balanced"), true,  true,  false, 3., 2.},
+        {_u8L("C Grid"),     false, true,  false, 8., 5.},
     };
 }
 
@@ -420,9 +564,19 @@ void FillBedOptionsJob::prepare()
     m_params = init_arrange_params(m_plater);
 
     const Slic3r::DynamicPrintConfig &global_config = wxGetApp().preset_bundle->full_config();
-    m_template          = get_instance_arrange_poly(mo->instances[m_instance_idx], global_config);
+    ModelInstance                    *mi            = mo->instances[m_instance_idx];
+    m_template          = get_instance_arrange_poly(mi, global_config);
     m_template.setter   = nullptr; // copies are made in finalize(); the source stays put
     m_template.priority = 0;
+
+    // In the same frame as m_template.poly: the Z turn and the position on the plate are the
+    // arranger's to choose, everything else is baked in.
+    Vec3d rotation = mi->get_rotation();
+    rotation.z()   = 0.;
+    Geometry::Transformation trafo(mi->get_transformation());
+    trafo.set_offset(mi->get_offset().z() * Vec3d::UnitZ());
+    trafo.set_rotation(rotation);
+    m_outline = object_outline(*mo, trafo.get_matrix());
 
     // The new plates start out empty but for their excluded regions and, on a multi-material
     // print, the prime tower - pushed into a corner, as fill bed does.
@@ -468,13 +622,26 @@ void FillBedOptionsJob::process(Ctl &ctl)
         const coord_t inflation = (variant.support_room ? probe.front().inflation : scaled(TIGHT_GAP_MM / 2.))
                                   + scaled(variant.gap_mm / 2.);
 
-        // An upper bound on the copies that fit; the packer stops as soon as the plate is full.
-        const ExPolygons grown     = offset_ex(m_template.poly, float(inflation));
-        const double     item_area = grown.empty() ? m_template.poly.area() : grown.front().area();
-        const double     bed_area  = std::abs(Polygon{bedpts}.area());
-        const int        count     = std::clamp(int(bed_area / std::max(item_area, 1.)) + 1, 1, MAX_COPIES_PER_OPTION);
+        // Copies turned into one another can take less room per copy than a copy on its own, and
+        // the packer only ever sees convex hulls, so the interlocking is worked out here and
+        // handed to it as a single item.
+        ArrangePolygon templ = m_template;
+        variant.cluster.assign(1, FillBedCluster{Vec2crd(0, 0), 0.});
+        if (variant.nest && !m_outline.empty()) {
+            variant.cluster = build_cluster(m_outline, inflation);
+            if (variant.cluster.size() > 1)
+                templ.poly = ExPolygon(cluster_hull(m_outline, variant.cluster));
+        }
+        const int per_group = int(variant.cluster.size());
 
-        ArrangePolygons items(count, m_template);
+        // An upper bound on the groups that fit; the packer stops as soon as the plate is full.
+        const ExPolygons grown     = offset_ex(templ.poly, float(inflation));
+        const double     item_area = grown.empty() ? templ.poly.area() : grown.front().area();
+        const double     bed_area  = std::abs(Polygon{bedpts}.area());
+        const int        count     = std::clamp(int(bed_area / std::max(item_area, 1.)) + 1, 1,
+                                                std::max(1, MAX_COPIES_PER_OPTION / per_group));
+
+        ArrangePolygons items(count, templ);
         for (int i = 0; i < count; ++i) {
             items[i].itemid    = i;
             items[i].bed_idx   = PartPlateList::MAX_PLATES_COUNT;
@@ -493,7 +660,7 @@ void FillBedOptionsJob::process(Ctl &ctl)
         for (const ArrangePolygon &ap : items)
             if (ap.bed_idx == 0)
                 variant.placed.emplace_back(ap);
-        variant.capped = int(variant.placed.size()) == MAX_COPIES_PER_OPTION;
+        variant.capped = int(variant.placed.size()) * per_group >= MAX_COPIES_PER_OPTION;
     }
 
     ctl.update_status(100, ctl.was_canceled() ? _u8L("Bed filling canceled.") : _u8L("Bed filling done."));
@@ -541,18 +708,26 @@ void FillBedOptionsJob::finalize(bool canceled, std::exception_ptr &eptr)
         const Vec3d    origin  = plate->get_origin();
         const Vec2d    shift(scale_(origin.x()), scale_(origin.y()));
         for (const ArrangePolygon &ap : variant.placed) {
-            // add_object() can reallocate model.objects, so the source is looked up each time.
-            ModelObject *src = model.objects[m_object_idx];
-            ModelObject *obj = model.add_object(*src);
-            obj->clear_instances();
-            ModelInstance *inst = obj->add_instance(*src->instances[m_instance_idx]);
-            inst->apply_arrange_result(ap.translation.cast<double>() + shift, ap.rotation);
-            // Register the copy with the plate it now stands on. add_to_plate() would move it to
-            // the plate centre first, stacking every copy on one spot.
-            plate_list.notify_instance_update(int(model.objects.size()) - 1, 0, true);
+            // The group was packed as one item, so its copies turn and travel with it.
+            const double c = std::cos(ap.rotation), s = std::sin(ap.rotation);
+            for (const FillBedCluster &member : variant.cluster) {
+                // add_object() can reallocate model.objects, so the source is looked up each time.
+                ModelObject *src = model.objects[m_object_idx];
+                ModelObject *obj = model.add_object(*src);
+                obj->clear_instances();
+                ModelInstance *inst = obj->add_instance(*src->instances[m_instance_idx]);
+                const Vec2d in_group(c * member.offset.x() - s * member.offset.y(),
+                                     s * member.offset.x() + c * member.offset.y());
+                inst->apply_arrange_result(ap.translation.cast<double>() + in_group + shift,
+                                           ap.rotation + member.rotation);
+                // Register the copy with the plate it now stands on. add_to_plate() would move it
+                // to the plate centre first, stacking every copy on one spot.
+                plate_list.notify_instance_update(int(model.objects.size()) - 1, 0, true);
+            }
         }
 
-        const std::string count = std::to_string(variant.placed.size()) + (variant.capped ? "+" : "");
+        const std::string count = std::to_string(variant.placed.size() * variant.cluster.size())
+                                  + (variant.capped ? "+" : "");
         plate->set_plate_name((boost::format(_u8L("%1% - %2% copies")) % variant.label % count).str());
 
         if (m_tower_pos) {

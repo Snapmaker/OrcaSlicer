@@ -7,6 +7,13 @@ namespace Slic3r { namespace GUI {
 
 class Plater;
 
+// One copy inside a nested group, relative to the group's own origin.
+struct FillBedCluster
+{
+    Vec2crd offset;
+    double  rotation;
+};
+
 class FillBedJob : public Job
 {
     int     m_object_idx = -1;
@@ -60,9 +67,11 @@ class FillBedOptionsJob : public Job
         std::string     label;          // translated, starts the plate name
         bool            rotations;      // let the packer turn the copies, half turns included
         bool            support_room;   // keep the arranger's brim / support ring around each copy
+        bool            nest;           // interlock turned copies into a group before packing
         double          gap_mm;         // extra room around each copy, on top of the above
         double          edge_mm;        // extra room along the plate edge
-        ArrangePolygons placed = {};    // copies that fit, in first-plate coordinates
+        ArrangePolygons placed = {};    // groups that fit, in first-plate coordinates
+        std::vector<FillBedCluster> cluster = {}; // the copies inside one group
         bool            capped = false; // hit MAX_COPIES_PER_OPTION
     };
 
@@ -70,6 +79,7 @@ class FillBedOptionsJob : public Job
     int                        m_object_idx   = -1;
     int                        m_instance_idx = 0;
     ArrangePolygon             m_template;
+    ExPolygons                 m_outline;   // the object's real outline, concavities and all
     ArrangePolygons            m_fixed;     // excluded regions and the prime tower
     arrangement::ArrangeParams m_params;
     std::optional<Vec2d>       m_tower_pos; // plate-local, reused on every new plate

@@ -21123,8 +21123,8 @@ msgstr "A Maks"
 msgid "B Balanced"
 msgstr "B Dengeli"
 
-msgid "C Safe"
-msgstr "C Güvenli"
+msgid "C Grid"
+msgstr "C Izgara"
 
 msgid "%1% - %2% copies"
 msgstr "%1% - %2% adet"

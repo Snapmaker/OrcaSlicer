@@ -344,8 +344,26 @@ int wmain(int argc, wchar_t** argv)
                        "_bambustu_main@8"
 #endif
         );
-    if (Snapmaker_Orca_main == nullptr) {
-        printf("could not locate the function Snapmaker_Orca_main in Snapmaker_Orca.dll\n");
+    // Resolve the state bridge dynamically to keep the main DLL (and its
+    // OpenGL imports) out of the launcher's static dependency graph.
+    using SetSentryInitializedFunc  = void(__stdcall*)(int);
+    using GetPrivacyPolicyFunc      = int(__stdcall*)();
+    auto set_app_sentry_initialized = reinterpret_cast<SetSentryInitializedFunc>(GetProcAddress(hInstance_Slic3r,
+#ifdef _WIN64
+                                                                                                "Snapmaker_Orca_set_sentry_initialized"
+#else
+                                                                                                "_Snapmaker_Orca_set_sentry_initialized@4"
+#endif
+                                                                                                ));
+    auto get_app_privacy_policy = reinterpret_cast<GetPrivacyPolicyFunc>(GetProcAddress(hInstance_Slic3r,
+#ifdef _WIN64
+                                                                                        "Snapmaker_Orca_get_privacy_policy"
+#else
+                                                                                        "_Snapmaker_Orca_get_privacy_policy@0"
+#endif
+                                                                                        ));
+    if (Snapmaker_Orca_main == nullptr || set_app_sentry_initialized == nullptr || get_app_privacy_policy == nullptr) {
+        printf("could not locate the application entry points in Snapmaker_Orca.dll\n");
         auto        soft_end_time = get_time_timestamp();
         std::string softEndTime   = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);
         sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);
@@ -353,8 +371,13 @@ int wmain(int argc, wchar_t** argv)
         return -1;
     }
 
+    // Share the actual initialization result; do not initialize the SDK twice.
+    set_app_sentry_initialized(get_sentry_flags() ? 1 : 0);
     // argc minus the trailing nullptr of the argv
     auto res = Snapmaker_Orca_main((int) argv_extended.size() - 1, argv_extended.data());
+    // The GUI updates the DLL's consent flag. Honor it for the launcher log too.
+    set_privacy_policy(get_app_privacy_policy() != 0);
+    set_app_sentry_initialized(0);
     auto        soft_end_time = get_time_timestamp();
     std::string softEndTime   = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);
     sentryReportLog(SENTRY_LOG_TRACE, softEndTime, BP_START_SOFT);

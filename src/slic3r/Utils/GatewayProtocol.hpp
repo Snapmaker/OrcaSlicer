@@ -85,6 +85,8 @@ nlohmann::json                      build_jsonrpc_request(std::int64_t id, std::
 GatewayError                        parse_health(const std::string& body, HealthInfo& health);
 std::string                         parse_device_sn(const nlohmann::json& params);
 std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params);
+std::optional<nlohmann::json>       parse_device_object_query_result(const nlohmann::json& result);
+void                                merge_device_object_changes(nlohmann::json& objects, const nlohmann::json& changes);
 std::optional<nlohmann::json> build_machine_snapshot_from_device_objects(const nlohmann::json& params, const std::string& serial_number);
 RpcFrame                      classify_jsonrpc_message(const nlohmann::json& message);
 std::optional<nlohmann::json> parse_json_object(const std::string& body);

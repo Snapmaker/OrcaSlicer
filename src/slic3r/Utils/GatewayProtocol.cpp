@@ -227,6 +227,34 @@ std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& pa
     return active_device;
 }
 
+std::optional<nlohmann::json> parse_device_object_query_result(const nlohmann::json& result)
+{
+    if (!result.is_object())
+        return std::nullopt;
+
+    if (const auto objects = result.find("objects"); objects != result.end() && objects->is_object())
+        return *objects;
+
+    // Older gateway builds returned the object map directly instead of wrapping it in "objects".
+    if (result.contains("print_task_config"))
+        return result;
+    return std::nullopt;
+}
+
+void merge_device_object_changes(nlohmann::json& objects, const nlohmann::json& changes)
+{
+    if (!objects.is_object() || !changes.is_object())
+        return;
+
+    for (auto change = changes.begin(); change != changes.end(); ++change) {
+        auto object = objects.find(change.key());
+        if (change->is_object() && object != objects.end() && object->is_object())
+            merge_device_object_changes(*object, *change);
+        else
+            objects[change.key()] = *change;
+    }
+}
+
 std::optional<nlohmann::json> build_machine_snapshot_from_device_objects(const nlohmann::json& params, const std::string& serial_number)
 {
     if (!params.is_object())

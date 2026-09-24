@@ -6660,14 +6660,6 @@ msgstr "Yazıcı hazır mı? Baskı plakası takılı, boş ve temiz mi?"
 msgid "Upload and Print"
 msgstr "Yükle ve Yazdır"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Nesneye Göre Yazdır:\n"
-"Yazdırma sırasında çarpışmaları önlemek için otomatik düzenlemeyi "
-"kullanmanızı önerin."
-
 msgid "Send G-code"
 msgstr "G-kodu gönder"
 

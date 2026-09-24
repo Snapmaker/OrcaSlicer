@@ -1126,7 +1126,7 @@ private:
     bool                                    m_support_used {false};
 
     //BBS: plate's origin
-    Vec3d   m_origin;
+    Vec3d   m_origin {Vec3d::Zero()};
     //BBS: modified_count
     int     m_modified_count {0};
     //BBS

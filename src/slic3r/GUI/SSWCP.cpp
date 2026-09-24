@@ -2783,7 +2783,7 @@ void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regrou
             wxGetApp().mainframe->start_slice();
     });
 }
-nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename)
+nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, const std::string& display_name)
 {
     json response = json::object();
     try {
@@ -2967,8 +2967,8 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename)
             }
         }
         response["thumbnails"] = thumbnails;
-        response["filename"] = SSWCP::get_display_filename();
-        response["filepath"] = SSWCP::get_active_filename();
+        response["filename"] = display_name;
+        response["filepath"] = filename;
     } catch (...) {
         return json::object();
     }

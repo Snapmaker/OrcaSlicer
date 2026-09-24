@@ -517,16 +517,26 @@ void GLVolume::set_bounding_boxes_as_dirty()
     m_transformed_non_sinking_bounding_box.reset();
 }
 
-void GLVolume::promote_ready_lod_models()
+bool GLVolume::promote_ready_lod_models()
 {
     // The LOD models stay render-disabled while their background thread may
     // still be writing them. Once the worker signals completion (release
     // store in SimplifyMesh), the acquire load below makes its writes
     // visible, and enable_render() hands the model over to the main thread.
-    if (m_modelMiddle && m_lodMiddleReady && m_modelMiddle->is_render_disabled() && m_lodMiddleReady->load(std::memory_order_acquire))
+    bool activeModelChanged = false;
+    if (m_modelMiddle && m_lodMiddleReady && m_modelMiddle->is_render_disabled() &&
+        m_lodMiddleReady->load(std::memory_order_acquire))
+    {
         m_modelMiddle->enable_render();
-    if (m_modelSmall && m_lodSmallReady && m_modelSmall->is_render_disabled() && m_lodSmallReady->load(std::memory_order_acquire))
+        activeModelChanged = m_curLodLevel == LODLevel::Middle;
+    }
+    if (m_modelSmall && m_lodSmallReady && m_modelSmall->is_render_disabled() &&
+        m_lodSmallReady->load(std::memory_order_acquire))
+    {
         m_modelSmall->enable_render();
+        activeModelChanged |= m_curLodLevel == LODLevel::Small;
+    }
+    return activeModelChanged;
 }
 
 Transform3d GLVolume::world_matrix() const
@@ -685,7 +695,7 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         }
     } while (0);
 
-    // LOD evaluation is now done once per frame in GLVolumeCollection::render().
+    // LOD evaluation is handled by GLVolumeCollection::render().
     // m_curLodLevel is already set before simple_render is called.
 
     if (color_volume && !picking) {
@@ -741,21 +751,27 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         // Select LOD model based on current LOD level
         static int lodRenderLogCounter = 0;
         lodRenderLogCounter++;
-        if (!picking) {
+        {
             // DEBUG: color-code LOD levels for visual verification
             // GREEN = HIGH (original), BLUE = MIDDLE, RED = SMALL
             if (m_curLodLevel == LODLevel::Small && m_modelSmall && !m_modelSmall->is_render_disabled() && m_modelSmall->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(debug) << "LOD: SMALL '" << name << "'";
-                m_modelSmall->set_color(render_color);
+                const ColorRGBA previousColor = m_modelSmall->get_color();
+                m_modelSmall->set_color(picking ? model.get_color() : render_color);
                 //m_modelSmall->set_color(ColorRGBA::GREEN());
                 m_modelSmall->render();
+                if (picking)
+                    m_modelSmall->set_color(previousColor);
             } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
                 if (lodRenderLogCounter % 180 == 0)
                     BOOST_LOG_TRIVIAL(debug) << "LOD: MID '" << name << "'";
-                m_modelMiddle->set_color(render_color);
+                const ColorRGBA previousColor = m_modelMiddle->get_color();
+                m_modelMiddle->set_color(picking ? model.get_color() : render_color);
                 //m_modelMiddle->set_color(ColorRGBA::BLUE());
                 m_modelMiddle->render();
+                if (picking)
+                    m_modelMiddle->set_color(previousColor);
             } else {
                 if (lodRenderLogCounter % 180 == 0) {
                     BOOST_LOG_TRIVIAL(debug) << "LOD: HIGH fallback '" << name
@@ -770,12 +786,6 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 else
                     model.render(this->tverts_range);
             }
-        } else {
-            // Picking: always use full-resolution model
-            if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-                model.render();
-            else
-                model.render(this->tverts_range);
         }
     }
     if (this->is_left_handed())
@@ -1124,7 +1134,7 @@ int GLVolumeCollection::get_selection_support_threshold_angle(bool& enable_suppo
     return support_threshold_angle;
 }
 
-void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
+bool GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                                 bool                                 disable_cullface,
                                 const GUI::Camera&                   camera,
                                 std::function<bool(const GLVolume&)> filter_func,
@@ -1134,11 +1144,11 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     const Transform3d& projection_matrix = camera.get_projection_matrix();
     GLVolumeWithIdAndZList to_render = volumes_to_render(volumes, type, view_matrix, filter_func);
     if (to_render.empty())
-        return;
+        return false;
 
     GLShaderProgram* shader = GUI::wxGetApp().get_current_shader();
     if (shader == nullptr)
-        return;
+        return false;
 
     GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
     const bool canRenderSinkingContours = m_show_sinking_contours && sink_shader != nullptr;
@@ -1151,26 +1161,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     glsafe(::glCullFace(GL_BACK));
     if (disable_cullface)
         glsafe(::glDisable(GL_CULL_FACE));
+    else
+        glsafe(::glEnable(GL_CULL_FACE));
 
     // Set static camera state for LOD evaluation in GLVolume rendering
     GLVolume::s_curZoom = camera.get_zoom();
     GLVolume::s_curViewProjMatrix = (projection_matrix.matrix() * view_matrix.matrix()).eval();
     GLVolume::s_curViewport = camera.get_viewport();
 
-    // Evaluate LOD level for each volume once per frame
+    // Evaluate the LOD level for each volume in this render pass.
     float curZoom = GLVolume::s_curZoom;
     bool  shouldEvaluate = (std::abs(curZoom - GLVolume::s_lastCameraZoomValue) > ZOOM_THRESHOLD);
     if (shouldEvaluate) 
     {
         GLVolume::s_lastCameraZoomValue = curZoom;
     }
+    bool lodStateChanged = false;
     for (GLVolumeWithIdAndZ& volume : to_render)
     {
         GLVolume* v = volume.first;
         // Hand over LOD models whose background initialization finished.
         // Must run every frame, on the main thread only.
-        v->promote_ready_lod_models();
-        if (!v->picking && (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY))
+        lodStateChanged |= v->promote_ready_lod_models();
+        if (shouldEvaluate || ++v->m_lodUpdateIndex >= LOD_UPDATE_FREQUENCY)
         {
             v->m_lodUpdateIndex = 0;
             LODLevel prevLod = v->m_curLodLevel;
@@ -1178,6 +1191,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
                 v->transformed_bounding_box(), GLVolume::s_curViewProjMatrix,
                 GLVolume::s_curViewport[2], GLVolume::s_curViewport[3]);
             if (prevLod != v->m_curLodLevel) {
+                lodStateChanged = true;
                 BOOST_LOG_TRIVIAL(debug) << "LOD level changed: " << static_cast<int>(prevLod)
                                            << " -> " << static_cast<int>(v->m_curLodLevel)
                                            << " (zoom=" << curZoom << ", name=" << v->name << ")";
@@ -1310,6 +1324,8 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
 
     if (type == ERenderType::Transparent)
         glsafe(::glDisable(GL_BLEND));
+
+    return lodStateChanged;
 }
 
 bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state) const

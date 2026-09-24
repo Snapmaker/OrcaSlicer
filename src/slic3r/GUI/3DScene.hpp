@@ -363,9 +363,9 @@ public:
     // LOD mesh simplification (async, uses quadric edge collapse)
     bool SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const;
     bool SimplifyMesh(const indexed_triangle_set& its, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const;
-    // Main-thread handoff: enable rendering of LOD models whose background
-    // initialization has completed (see SimplifyMesh). Call once per frame.
-    void promote_ready_lod_models();
+    // Main-thread handoff: enable LOD models whose background initialization has completed.
+    // Returns true when the model used by the current LOD level changes.
+    bool promote_ready_lod_models();
 
     void                set_bounding_boxes_as_dirty();
 
@@ -502,13 +502,13 @@ public:
     GLVolume* new_nontoolpath_volume(const ColorRGBA& rgba);
 
     int get_selection_support_threshold_angle(bool&) const;
-    // Render the volumes by OpenGL.
-    void render(ERenderType                           type,
-                 bool                                  disable_cullface,
-                 const GUI::Camera&                    camera,
-                 std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
-                 bool                                  partly_inside_enable =true
-           ) const;
+    // Render the volumes by OpenGL. Returns true when the active LOD state changes.
+    bool render(ERenderType                           type,
+                bool                                  disable_cullface,
+                const GUI::Camera&                    camera,
+                std::function<bool(const GLVolume &)> filter_func   = std::function<bool(const GLVolume &)>(),
+                bool                                  partly_inside_enable =true
+          ) const;
 
     // Clear the geometry. Volumes are unregistered from the LOD sharing map
     // (release_volume) before being deleted.
@@ -544,6 +544,8 @@ public:
     void set_slope_normal_z(float normal_z) { m_slope.normal_z = normal_z; }
     void set_default_slope_normal_z() { m_slope.normal_z = -::cos(Geometry::deg2rad(90.0f - 45.0f)); }
     void set_show_sinking_contours(bool show) { m_show_sinking_contours = show; }
+    /** @brief Returns whether sinking-contour rendering is enabled for this collection. */
+    bool IsShowingSinkingContours() const { return m_show_sinking_contours; }
 
     // returns true if all the volumes are completely contained in the print volume
     // returns the containment state in the given out_state, if non-null

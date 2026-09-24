@@ -17,6 +17,8 @@
 #include "3DScene.hpp"
 #include "BackgroundSlicingProcess.hpp"
 #include "GLShader.hpp"
+#include "GLSubTextureBindRenderer.hpp"
+#include "GLToolbarBackgroundTextureCache.hpp"
 #include "GUI.hpp"
 #include "Tab.hpp"
 #include "GUI_Preview.hpp"
@@ -72,6 +74,8 @@
 #include <float.h>
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <cstring>
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -102,11 +106,16 @@ void GLCanvas3D::load_render_colors()
 // Number of floats
 static constexpr const size_t MAX_VERTEX_BUFFER_SIZE     = 131072 * 6; // 3.15MB
 
+#ifndef ENABLE_GPU_VOLUME_PICKING
+#define ENABLE_GPU_VOLUME_PICKING 1
+#endif
+
 namespace Slic3r {
 namespace GUI {
 
 namespace {
 
+constexpr int VOLUME_PICKING_TOLERANCE_RADIUS_PX = 3;
 constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
@@ -114,6 +123,7 @@ constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
 constexpr int GAUSSIAN_LOGICAL_TAP_COUNT = 4;
 constexpr float GAUSSIAN_MAX_RADIUS = 4.0f; // Larger radii use the original nine-fetch kernel.
 constexpr float GAUSSIAN_EPSILON = 1.0e-6f;
+constexpr uint64_t SCENE_CACHE_MEMORY_BUDGET = 128ull * 1024ull * 1024ull;
 // Normalized weights for offset_i = radius * i / 4 and sigma = radius * 0.5.
 constexpr std::array<float, GAUSSIAN_LOGICAL_TAP_COUNT + 1> GAUSSIAN_LOGICAL_WEIGHTS{
     0.20416369f,
@@ -125,6 +135,51 @@ constexpr std::array<float, GAUSSIAN_LOGICAL_TAP_COUNT + 1> GAUSSIAN_LOGICAL_WEI
 constexpr double STENCIL_OUTLINE_SCALE = 1.02;
 const ColorRGB SELECTION_OUTLINE_COLOR = ColorRGB::WHITE();
 const ColorRGB ASSEMBLE_VIEW_SELECTION_OUTLINE_COLOR{ 0.76f, 0.76f, 0.16f };
+
+bool LogOpenGlErrors(const char* operation)
+{
+    bool hasError = false;
+    GLenum error = GL_NO_ERROR;
+    while ((error = ::glGetError()) != GL_NO_ERROR) {
+        hasError = true;
+        BOOST_LOG_TRIVIAL(error) << operation << " produced OpenGL error " << error;
+    }
+    return hasError;
+}
+
+void LogPreExistingOpenGlErrors(const char* operation)
+{
+    GLenum error = GL_NO_ERROR;
+    while ((error = ::glGetError()) != GL_NO_ERROR)
+        BOOST_LOG_TRIVIAL(error) << "Pre-existing OpenGL error before " << operation << ": " << error;
+}
+
+bool HoverAffectsSinkingContour(const GLVolumeCollection& volumes, const GLVolume& volume)
+{
+    return volumes.IsShowingSinkingContours() && volume.is_sinking() && !volume.is_below_printbed() &&
+           !volume.force_sinking_contours;
+}
+
+int PlateHoverAction(int hoverId)
+{
+    return hoverId < 0 ? -1 : hoverId % PartPlate::GRABBER_COUNT;
+}
+
+bool PlateHoverChangeAffectsScene(int oldHoverId, int newHoverId)
+{
+    if (oldHoverId == newHoverId)
+        return false;
+
+    return PlateHoverAction(oldHoverId) >= 1 || PlateHoverAction(newHoverId) >= 1;
+}
+
+struct PickingPixelCandidate
+{
+    uint32_t volumeId{0};
+    int x{0};
+    int y{0};
+    int distanceSquared{0};
+};
 
 /** @brief Persistent OpenGL states changed by the selection Mask Pass. */
 struct MaskRenderState
@@ -142,6 +197,14 @@ struct MaskRenderState
     GLint drawFramebuffer{ 0 };
     std::array<GLint, 4> viewport{ 0, 0, 0, 0 };
 };
+
+void RestoreCapability(GLenum capability, GLboolean enabled)
+{
+    if (enabled)
+        glsafe(::glEnable(capability));
+    else
+        glsafe(::glDisable(capability));
+}
 
 /**
  * @brief Captures the persistent OpenGL states changed by the selection Mask Pass.
@@ -1077,6 +1140,8 @@ GLCanvas3D::Mouse::Mouse()
     : dragging(false)
     , position(DBL_MAX, DBL_MAX)
     , scene_position(DBL_MAX, DBL_MAX, DBL_MAX)
+    , volumeHitPosition(Drag::Invalid_3D_Point)
+    , volumeHitIndex(-1)
     , ignore_left_up(false)
     , ignore_right_up(false)
 {
@@ -1329,6 +1394,17 @@ void GLCanvas3D::SequentialPrintClearance::set_polygons(const Polygons& polygons
 
 void GLCanvas3D::SequentialPrintClearance::render()
 {
+    if (!m_visible)
+    {
+        return;
+    }
+
+    const bool hasRenderableData = m_perimeter.is_initialized() || m_fill.is_initialized() || m_height_limit.is_initialized();
+    if (!hasRenderableData)
+    {
+        return;
+    }
+
     const ColorRGBA FILL_COLOR = { 0.7f, 0.7f, 1.0f, 0.5f };
     const ColorRGBA NO_FILL_COLOR = { 0.75f, 0.75f, 0.75f, 0.75f };
 
@@ -1522,6 +1598,7 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
     , m_initialized(false)
     , m_apply_zoom_to_volumes_filter(false)
     , m_picking_enabled(false)
+    , m_pickingBufferDirty(true)
     , m_moving_enabled(false)
     , m_dynamic_background_enabled(false)
     , m_multisample_allowed(false)
@@ -1558,6 +1635,15 @@ GLCanvas3D::GLCanvas3D(wxGLCanvas* canvas, Bed3D &bed)
 
 GLCanvas3D::~GLCanvas3D()
 {
+    const bool contextCurrent = _set_current();
+    if (contextCurrent)
+        m_pickingBuffer.Reset();
+    else
+        assert(!m_pickingBuffer.IsReady());
+
+    if (contextCurrent && m_sceneCacheResources.framebuffer != 0)
+        ReleaseSceneCacheResources();
+
     const bool hasSelectionHighlightResources =
         m_selectionHighlightResources.fullResolutionMaskFramebuffer != 0 ||
         m_selectionHighlightResources.fullResolutionMaskTexture != 0 ||
@@ -1571,7 +1657,7 @@ GLCanvas3D::~GLCanvas3D()
         m_selectionHighlightResources.glowBlurPingPongTexture != 0 ||
         m_selectionHighlightResources.glowFramebuffer != 0 ||
         m_selectionHighlightResources.glowTexture != 0;
-    if (hasSelectionHighlightResources && m_canvas != nullptr && _set_current())
+    if (hasSelectionHighlightResources && m_canvas != nullptr && contextCurrent)
         ReleaseSelectionHighlightResources();
 
     reset_volumes(ResetVolumesMode::CanvasDestruction);
@@ -1672,10 +1758,8 @@ GLCanvas3D::ESelectionHighlightMode GLCanvas3D::ResolveSelectionHighlightMode()
     GLShaderProgram* const downsampleShader = wxGetApp().get_shader("selection_area_downsample");
     GLShaderProgram* const gaussianShader = wxGetApp().get_shader("selection_gaussian");
     if (m_selectionFramebufferAvailable && maskShader != nullptr && compositeShader != nullptr && edgeShader != nullptr &&
-        downsampleShader != nullptr && gaussianShader != nullptr && RenderSelectionHighlightMask())
-    {
+        downsampleShader != nullptr && gaussianShader != nullptr)
         return ESelectionHighlightMode::UnifiedFramebuffer;
-    }
 
     if (maskShader != nullptr && m_stencilFallbackAvailable)
         return ESelectionHighlightMode::StencilFallback;
@@ -1693,6 +1777,8 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
 
     const unsigned int canvasWidth = static_cast<unsigned int>(canvasSize.get_width());
     const unsigned int canvasHeight = static_cast<unsigned int>(canvasSize.get_height());
+    if (m_selectionHighlightFailedWidth == canvasWidth && m_selectionHighlightFailedHeight == canvasHeight)
+        return false;
     const unsigned int width = std::max(1U, static_cast<unsigned int>(std::ceil(canvasWidth * SELECTION_MASK_SCALE)));
     const unsigned int height = std::max(1U, static_cast<unsigned int>(std::ceil(canvasHeight * SELECTION_MASK_SCALE)));
     const unsigned int glowWidth = std::max(1U, static_cast<unsigned int>(std::ceil(width * SELECTION_GLOW_SCALE)));
@@ -1762,7 +1848,8 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
     if (!framebufferComplete)
     {
         ReleaseSelectionHighlightResources();
-        m_selectionFramebufferAvailable = false;
+        m_selectionHighlightFailedWidth = canvasWidth;
+        m_selectionHighlightFailedHeight = canvasHeight;
         BOOST_LOG_TRIVIAL(warning) << "Unable to create complete selection highlight framebuffers";
         return false;
     }
@@ -1771,6 +1858,8 @@ bool GLCanvas3D::EnsureSelectionHighlightResources(const Size& canvasSize)
     m_selectionHighlightResources.fullResolutionHeight = canvasHeight;
     m_selectionHighlightResources.width = width;
     m_selectionHighlightResources.height = height;
+    m_selectionHighlightFailedWidth = 0;
+    m_selectionHighlightFailedHeight = 0;
     return true;
 }
 
@@ -2100,11 +2189,16 @@ bool GLCanvas3D::RenderSelectionOutlineTextures()
                                        glowVerticalStepUv, verticalGlowKernel);
 }
 
-void GLCanvas3D::CompositeSelectionHighlight()
+bool GLCanvas3D::UpdateSelectionHighlightCache()
+{
+    return RenderSelectionHighlightMask() && RenderSelectionOutlineTextures();
+}
+
+bool GLCanvas3D::CompositeSelectionHighlight()
 {
     const Size canvasSize = get_canvas_size();
     if (canvasSize.get_width() <= 0 || canvasSize.get_height() <= 0)
-        return;
+        return false;
 
     const unsigned int canvasWidth = static_cast<unsigned int>(canvasSize.get_width());
     const unsigned int canvasHeight = static_cast<unsigned int>(canvasSize.get_height());
@@ -2116,21 +2210,18 @@ void GLCanvas3D::CompositeSelectionHighlight()
         m_selectionHighlightResources.width != maskWidth ||
         m_selectionHighlightResources.height != maskHeight || !m_background.is_initialized())
     {
-        return;
+        return false;
     }
 
     GLShaderProgram* const shader = wxGetApp().get_shader("selection_composite");
     if (shader == nullptr)
-        return;
+        return false;
 
     const CompositeRenderState previousState = SaveCompositeRenderState();
     ScopeGuard stateGuard([&previousState]()
     {
         RestoreCompositeRenderState(previousState);
     });
-
-    if (!RenderSelectionOutlineTextures())
-        return;
 
     glsafe(::glDisable(GL_DEPTH_TEST));
     glsafe(::glEnable(GL_BLEND));
@@ -2154,6 +2245,7 @@ void GLCanvas3D::CompositeSelectionHighlight()
 
     m_background.render();
     shader->stop_using();
+    return true;
 }
 
 void GLCanvas3D::RenderSelectionStencilFallback()
@@ -2280,6 +2372,7 @@ void GLCanvas3D::ReleaseSelectionHighlightResources()
         glsafe(::glDeleteTextures(1, &m_selectionHighlightResources.glowTexture));
 
     m_selectionHighlightResources = SelectionHighlightResources{};
+    m_selectionHighlightValid = false;
 }
 
 void GLCanvas3D::on_change_color_mode(bool is_dark, bool reinit) {
@@ -2328,6 +2421,8 @@ void GLCanvas3D::on_change_color_mode(bool is_dark, bool reinit) {
             m_gizmos.set_icon_dirty();
         }
     }
+    InvalidateSceneCache();
+    set_as_dirty();
 }
 
 void GLCanvas3D::set_as_dirty()
@@ -2363,6 +2458,7 @@ void GLCanvas3D::reset_volumes(ResetVolumesMode mode)
         m_selection.clear();
     m_volumes.clear();
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 
     if (mode == ResetVolumesMode::CanvasDestruction)
         return;
@@ -2418,6 +2514,8 @@ ModelInstanceEPrintVolumeState GLCanvas3D::check_volumes_outside_state() const
 
 void GLCanvas3D::toggle_selected_volume_visibility(bool selected_visible)
 {
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
     m_render_sla_auxiliaries = !selected_visible;
     if (selected_visible) {
         const Selection::IndicesList &idxs = m_selection.get_volume_idxs();
@@ -2451,6 +2549,8 @@ void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObje
         return;
 
     m_render_sla_auxiliaries = visible;
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
 
     std::vector<std::shared_ptr<SceneRaycasterItem>>* raycasters = get_raycasters_for_picking(SceneRaycaster::EType::Volume);
 
@@ -2471,6 +2571,8 @@ void GLCanvas3D::toggle_sla_auxiliaries_visibility(bool visible, const ModelObje
 
 void GLCanvas3D::toggle_model_objects_visibility(bool visible, const ModelObject* mo, int instance_idx, const ModelVolume* mv)
 {
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
     std::vector<std::shared_ptr<SceneRaycasterItem>>* raycasters = get_raycasters_for_picking(SceneRaycaster::EType::Volume);
     for (GLVolume* vol : m_volumes.volumes) {
         // BBS: add partplate logic
@@ -2572,12 +2674,14 @@ void GLCanvas3D::bed_shape_changed()
 {
     refresh_camera_scene_box();
     wxGetApp().plater()->get_camera().requires_zoom_to_bed = true;
+    InvalidateSceneCache();
     m_dirty = true;
 }
 
 void GLCanvas3D::plates_count_changed()
 {
     refresh_camera_scene_box();
+    InvalidateSceneCache();
     m_dirty = true;
 }
 
@@ -2589,11 +2693,14 @@ Camera& GLCanvas3D::get_camera()
 void GLCanvas3D::set_color_by(const std::string& value)
 {
     m_color_by = value;
+    InvalidateSceneCache();
+    set_as_dirty();
 }
 
 void GLCanvas3D::refresh_camera_scene_box()
 {
     wxGetApp().plater()->get_camera().set_scene_box(scene_bounding_box());
+    InvalidateSceneAndPickingCaches();
 }
 
 BoundingBoxf3 GLCanvas3D::volumes_bounding_box(bool current_plate_only) const
@@ -2707,12 +2814,21 @@ void GLCanvas3D::enable_legend_texture(bool enable)
 
 void GLCanvas3D::enable_picking(bool enable)
 {
+    const bool changed = m_picking_enabled != enable;
+    if (changed)
+        InvalidatePickingBuffer();
     m_picking_enabled = enable;
 
     // Orca: invalidate hover state when dragging is toggled, otherwise if we turned off dragging
     // while hovering above a volume, the hovering state won't update even if mouse has moved away.
     // Fixes https://github.com/SoftFever/OrcaSlicer/pull/9979#issuecomment-3065575889
     m_hover_volume_idxs.clear();
+    if (_update_volumes_hover_state()) {
+        InvalidateSceneCache();
+        m_dirty = true;
+    } else if (changed) {
+        SetOverlayAsDirty();
+    }
 }
 
 void GLCanvas3D::enable_moving(bool enable)
@@ -2732,7 +2848,11 @@ void GLCanvas3D::enable_selection(bool enable)
 
 void GLCanvas3D::enable_main_toolbar(bool enable)
 {
+    if (m_main_toolbar.is_enabled() == enable)
+        return;
+
     m_main_toolbar.set_enabled(enable);
+    m_dirty = true;
 }
 
 void GLCanvas3D::reset_select_plate_toolbar_selection() {
@@ -2765,11 +2885,15 @@ void GLCanvas3D::enable_separator_toolbar(bool enable)
 void GLCanvas3D::enable_dynamic_background(bool enable)
 {
     m_dynamic_background_enabled = enable;
+    InvalidateSceneCache();
+    set_as_dirty();
 }
 
 void GLCanvas3D::allow_multisample(bool allow)
 {
     m_multisample_allowed = allow;
+    InvalidateSceneCache();
+    set_as_dirty();
 }
 
 void GLCanvas3D::zoom_to_bed()
@@ -2843,6 +2967,7 @@ void GLCanvas3D::ZoomToFit()
 void GLCanvas3D::select_view(const std::string& direction)
 {
     wxGetApp().plater()->get_camera().select_view(direction);
+    InvalidateSceneAndPickingCaches();
     if (m_canvas != nullptr)
         m_canvas->Refresh();
 }
@@ -2886,7 +3011,7 @@ bool GLCanvas3D::make_current_for_postinit() {
     return _set_current();
 }
 
-void GLCanvas3D::render(bool only_init)
+void GLCanvas3D::render(bool only_init, bool overlayOnly)
 {
     if (m_in_render) {
         // if called recursively, return
@@ -2926,6 +3051,11 @@ void GLCanvas3D::render(bool only_init)
     if (only_init)
         return;
 
+    bool fullSceneRefresh = !overlayOnly || m_dirty;
+    GLint targetDrawFramebuffer = 0;
+    if (OpenGLManager::get_framebuffers_type() == OpenGLManager::EFramebufferType::Arb)
+        glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &targetDrawFramebuffer));
+
 #if ENABLE_ENVIRONMENT_MAP
     if (wxGetApp().is_editor())
         wxGetApp().plater()->init_environment_texture();
@@ -2960,17 +3090,46 @@ void GLCanvas3D::render(bool only_init)
 
     camera.apply_projection(_max_bounding_box(true, true, true));
     camera.UpdateFrustum();
+    if (UpdateVolumeClippingState())
+        fullSceneRefresh = true;
+    for (GLVolume* volume : m_volumes.volumes)
+    {
+        if (volume != nullptr && volume->promote_ready_lod_models()) {
+            InvalidatePickingBuffer();
+            fullSceneRefresh = true;
+        }
+    }
+
+    const bool isRectanglePicking = m_rectangle_selection.is_dragging();
+    const bool isRegularPicking = !m_mouse.dragging && m_mouse.position != Vec2d(DBL_MAX, DBL_MAX) && !m_gizmos.is_dragging();
+    const bool isGpuPointPicking = ENABLE_GPU_VOLUME_PICKING != 0 && isRegularPicking;
+    const bool shouldRenderPickingBuffer = m_picking_enabled && (isRectanglePicking || isGpuPointPicking);
+    const bool pickingBufferSizeChanged = !m_pickingBuffer.IsReady() || m_pickingBuffer.GetWidth() != camera.get_viewport()[2] ||
+                                          m_pickingBuffer.GetHeight() != camera.get_viewport()[3];
+    const bool shouldUpdatePickingBuffer = shouldRenderPickingBuffer && (m_pickingBufferDirty || pickingBufferSizeChanged);
+
+    if (shouldUpdatePickingBuffer)
+    {
+        const bool rendered = RenderPickingBuffer(camera);
+        if (!rendered && m_pickingBuffer.IsReady())
+            m_pickingBuffer.Reset();
+        m_pickingBufferDirty = !rendered;
+    }
+
     wxGetApp().imgui()->new_frame();
 
+    const int oldPlateHoverId = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
+    bool sinkingContourSceneChanged = false;
+    std::optional<PickingPassResult> currentMousePick;
     if (m_picking_enabled) {
-        if (m_rectangle_selection.is_dragging())
+        if (isRectanglePicking)
             // picking pass using rectangle selection
-            _rectangular_selection_picking_pass();
+            sinkingContourSceneChanged = _rectangular_selection_picking_pass();
         //BBS: enable picking when no volumes for partplate logic
         //else if (!m_volumes.empty())
         else {
             // regular picking pass
-            _picking_pass();
+            currentMousePick = _picking_pass(sinkingContourSceneChanged);
 
 #if ENABLE_RAYCAST_PICKING_DEBUG
             ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -2981,11 +3140,9 @@ void GLCanvas3D::render(bool only_init)
         }
     }
 
-    const ESelectionHighlightMode highlightMode = ResolveSelectionHighlightMode();
-
-    // draw scene
-    glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
-    _render_background();
+    const int newPlateHoverId = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
+    if (sinkingContourSceneChanged || PlateHoverChangeAffectsScene(oldPlateHoverId, newPlateHoverId))
+        fullSceneRefresh = true;
 
     //BBS add partplater rendering logic
     bool only_current = false, only_body = false, show_axes = true, no_partplate = false;
@@ -3000,21 +3157,53 @@ void GLCanvas3D::render(bool only_init)
     else if (gizmo_type == GLGizmosManager::BrimEars && !camera.is_looking_downward())
         show_grid = false;
 
+    const int hover_id = m_hover_plate_idxs.empty() ? -1 : m_hover_plate_idxs.front();
+    MainSceneRenderParams sceneParams;
+    sceneParams.onlyCurrent = only_current;
+    sceneParams.onlyBody = only_body;
+    sceneParams.showAxes = show_axes;
+    sceneParams.noPartplate = no_partplate;
+    sceneParams.showGrid = show_grid;
+    sceneParams.hoverPlateId = hover_id;
+
+    const std::array<int, 4>& viewport = camera.get_viewport();
+    const Size sceneCacheSize(viewport[2], viewport[3]);
+    int sceneCacheSamples = 0;
+    const bool sceneCacheEligible = CanUseSceneCache(sceneCacheSize, targetDrawFramebuffer, sceneCacheSamples);
+    if (m_canvas_type == ECanvasType::CanvasView3D && !fullSceneRefresh && (!sceneCacheEligible || !m_sceneCacheValid))
+        fullSceneRefresh = true;
+
     /* view3D render*/
-    int hover_id = (m_hover_plate_idxs.size() > 0)?m_hover_plate_idxs.front():-1;
     if (m_canvas_type == ECanvasType::CanvasView3D) {
-        //BBS: add outline logic
-        _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
-        _render_sla_slices();
-        _render_selection();
-        if (!no_partplate)
-            _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), show_axes);
-        if (!no_partplate) //BBS: add outline logic
-            _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), only_current, only_body, hover_id, true, show_grid);
+        bool sceneReady = false;
+        if (!fullSceneRefresh) {
+            sceneReady = PresentSceneCache();
+            if (!sceneReady) {
+                InvalidateSceneCache();
+                fullSceneRefresh = true;
+            }
+        }
+
+        if (!sceneReady) {
+            m_selectionHighlightValid = false;
+            RenderMainSceneContent(camera, sceneParams);
+            InvalidateSceneCache();
+            const bool sceneIsActivelyChanging = m_mouse.dragging || m_gizmos.is_dragging() || m_sceneCacheCaptureDeferred;
+            m_sceneCacheCaptureDeferred = false;
+            if (!sceneIsActivelyChanging && sceneCacheEligible && EnsureSceneCacheResources(sceneCacheSize, sceneCacheSamples) &&
+                CaptureSceneCache()) {
+                m_sceneCacheValid = true;
+            }
+        }
+
+        RenderSelectionBoxWithExplicitState();
         _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
     }
     /* preview render */
     else if (m_canvas_type == ECanvasType::CanvasPreview && m_render_preview) {
+        m_selectionHighlightValid = false;
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        _render_background();
         _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
         _render_sla_slices();
         _render_selection();
@@ -3025,6 +3214,9 @@ void GLCanvas3D::render(bool only_init)
     }
     /* assemble render*/
     else if (m_canvas_type == ECanvasType::CanvasAssembleView) {
+        m_selectionHighlightValid = false;
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        _render_background();
         //BBS: add outline logic
         if (m_show_world_axes) {
             m_axes.render();
@@ -3039,12 +3231,20 @@ void GLCanvas3D::render(bool only_init)
         _render_objects(GLVolumeCollection::ERenderType::Transparent, !m_gizmos.is_running());
     }
 
-    if (highlightMode == ESelectionHighlightMode::UnifiedFramebuffer)
-    {
-        CompositeSelectionHighlight();
-    }
-    else if (highlightMode == ESelectionHighlightMode::StencilFallback)
-    {
+    if (m_selectionHighlightValid && m_selectionHighlightVolumeIndices != m_selection.get_volume_idxs())
+        m_selectionHighlightValid = false;
+
+    const ESelectionHighlightMode highlightMode = ResolveSelectionHighlightMode();
+    if (highlightMode == ESelectionHighlightMode::UnifiedFramebuffer) {
+        if (!m_selectionHighlightValid && UpdateSelectionHighlightCache()) {
+            m_selectionHighlightVolumeIndices = m_selection.get_volume_idxs();
+            m_selectionHighlightValid = true;
+        }
+
+        const bool highlightRendered = m_selectionHighlightValid && CompositeSelectionHighlight();
+        if (!highlightRendered && m_stencilFallbackAvailable)
+            RenderSelectionStencilFallback();
+    } else if (highlightMode == ESelectionHighlightMode::StencilFallback) {
         RenderSelectionStencilFallback();
     }
 
@@ -3056,8 +3256,25 @@ void GLCanvas3D::render(bool only_init)
     // we need to set the mouse's scene position here because the depth buffer
     // could be invalidated by the following gizmo render methods
     // this position is used later into on_mouse() to drag the objects
-    if (m_picking_enabled)
-        m_mouse.scene_position = _mouse_to_3d(m_mouse.position.cast<coord_t>());
+    if (m_picking_enabled) {
+        if (currentMousePick.has_value()) {
+            m_mouse.scene_position = currentMousePick->interactionPosition;
+            if (currentMousePick->hit.is_valid() && currentMousePick->hit.type == SceneRaycaster::EType::Volume) {
+                m_mouse.volumeHitPosition = currentMousePick->hit.position.cast<double>();
+                m_mouse.volumeHitIndex = currentMousePick->hit.raycaster_id;
+            } else {
+                m_mouse.volumeHitPosition = Mouse::Drag::Invalid_3D_Point;
+                m_mouse.volumeHitIndex = -1;
+            }
+        } else {
+            m_mouse.scene_position = _mouse_to_3d(m_mouse.position.cast<coord_t>());
+            m_mouse.volumeHitPosition = Mouse::Drag::Invalid_3D_Point;
+            m_mouse.volumeHitIndex = -1;
+        }
+    } else {
+        m_mouse.volumeHitPosition = Mouse::Drag::Invalid_3D_Point;
+        m_mouse.volumeHitIndex = -1;
+    }
 
     // sidebar hints need to be rendered before the gizmos because the depth buffer
     // could be invalidated by the following gizmo render methods
@@ -3167,6 +3384,7 @@ void GLCanvas3D::render(bool only_init)
 
     m_canvas->SwapBuffers();
     m_render_stats.increment_fps_counter();
+    m_overlayDirty = false;
 }
 
 void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
@@ -3275,19 +3493,19 @@ void GLCanvas3D::render_calibration_thumbnail(ThumbnailData& thumbnail_data, uns
 void GLCanvas3D::select_curr_plate_all()
 {
     m_selection.add_curr_plate();
-    m_dirty = true;
+    SetSelectionAsDirty();
 }
 
 void GLCanvas3D::select_object_from_idx(std::vector<int>& object_idxs) {
     m_selection.add_object_from_idx(object_idxs);
-    m_dirty = true;
+    SetSelectionAsDirty();
 }
 
 //BBS
 void GLCanvas3D::remove_curr_plate_all()
 {
     m_selection.remove_curr_plate();
-    m_dirty = true;
+    SetSelectionAsDirty();
 }
 
 void GLCanvas3D::update_plate_thumbnails()
@@ -3301,7 +3519,7 @@ void GLCanvas3D::select_all()
         return;
     }
     m_selection.add_all();
-    m_dirty = true;
+    SetSelectionAsDirty();
 }
 
 void GLCanvas3D::deselect_all()
@@ -3312,6 +3530,7 @@ void GLCanvas3D::deselect_all()
     m_gizmos.reset_all_states();
     m_gizmos.update_data();
     post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
+    SetSelectionAsDirty();
 }
 
 void GLCanvas3D::exit_gizmo() {
@@ -3368,6 +3587,10 @@ void GLCanvas3D::ensure_on_bed(unsigned int object_idx, bool allow_negative_z)
         if (it != instances_min_z.end())
             volume->set_instance_offset(Z, volume->get_instance_offset(Z) - it->second);
     }
+    if (!instances_min_z.empty()) {
+        InvalidateSceneAndPickingCaches();
+        set_as_dirty();
+    }
 }
 
 
@@ -3389,6 +3612,8 @@ void GLCanvas3D::set_gcode_options_visibility_from_flags(unsigned int flags)
 void GLCanvas3D::set_volumes_z_range(const std::array<double, 2>& range)
 {
     m_volumes.set_range(range[0] - 1e-6, range[1] + 1e-6);
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
 }
 
 std::vector<int> GLCanvas3D::load_object(const ModelObject& model_object, int obj_idx, std::vector<int> instance_idxs, bool lodEnabled)
@@ -3398,7 +3623,13 @@ std::vector<int> GLCanvas3D::load_object(const ModelObject& model_object, int ob
             instance_idxs.emplace_back(i);
         }
     }
-    return m_volumes.load_object(&model_object, obj_idx, instance_idxs, m_color_by, m_initialized, true, lodEnabled);
+    const std::vector<int> loadedVolumeIndices =
+        m_volumes.load_object(&model_object, obj_idx, instance_idxs, m_color_by, m_initialized, true, lodEnabled);
+    if (!loadedVolumeIndices.empty()) {
+        InvalidateSceneAndPickingCaches();
+        set_as_dirty();
+    }
+    return loadedVolumeIndices;
 }
 
 std::vector<int> GLCanvas3D::load_object(const Model& model, int obj_idx, bool lodEnabled)
@@ -3438,6 +3669,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
     if (!m_initialized)
         return;
 
+    InvalidateSceneAndPickingCaches();
     _set_current();
 
     m_hover_volume_idxs.clear();
@@ -4181,6 +4413,8 @@ void GLCanvas3D::unbind_event_handlers()
 void GLCanvas3D::on_size(wxSizeEvent& evt)
 {
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
+    m_selectionHighlightValid = false;
 }
 
 void GLCanvas3D::on_idle(wxIdleEvent& evt)
@@ -4188,25 +4422,31 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
     if (!m_initialized)
         return;
 
-    m_dirty |= m_main_toolbar.update_items_state();
+    m_overlayDirty |= m_main_toolbar.update_items_state();
     //BBS: GUI refactor: GLToolbar
-    m_dirty |= m_assemble_view_toolbar.update_items_state();
+    m_overlayDirty |= m_assemble_view_toolbar.update_items_state();
     // BBS
     //m_dirty |= wxGetApp().plater()->get_view_toolbar().update_items_state();
-    m_dirty |= wxGetApp().plater()->get_collapse_toolbar().update_items_state();
+    m_overlayDirty |= wxGetApp().plater()->get_collapse_toolbar().update_items_state();
     _update_imgui_select_plate_toolbar();
     bool mouse3d_controller_applied = wxGetApp().plater()->get_mouse3d_controller().apply(wxGetApp().plater()->get_camera());
+    if (mouse3d_controller_applied)
+    {
+        m_sceneCacheCaptureDeferred = true;
+        InvalidateSceneAndPickingCaches();
+    }
     m_dirty |= mouse3d_controller_applied;
-    m_dirty |= wxGetApp().plater()->get_notification_manager()->update_notifications(*this);
+    m_overlayDirty |= wxGetApp().plater()->get_notification_manager()->update_notifications(*this);
     auto gizmo = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager().get_current();
-    if (gizmo != nullptr) m_dirty |= gizmo->update_items_state();
+    if (gizmo != nullptr)
+        m_overlayDirty |= gizmo->update_items_state();
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
     // ImGuiWrapper::m_requires_extra_frame may have been set by a render made outside of the OnIdle mechanism
     bool imgui_requires_extra_frame = wxGetApp().imgui()->requires_extra_frame();
-    m_dirty |= imgui_requires_extra_frame;
+    m_overlayDirty |= imgui_requires_extra_frame;
 #endif // ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
 
-    if (!m_dirty)
+    if (!m_dirty && !m_overlayDirty)
         return;
 
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
@@ -4215,7 +4455,7 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
     wxGetApp().imgui()->reset_requires_extra_frame();
 #endif // ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
 
-    _refresh_if_shown_on_screen();
+    _refresh_if_shown_on_screen(!m_dirty);
 
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
     if (m_extra_frame_requested || mouse3d_controller_applied || imgui_requires_extra_frame || wxGetApp().imgui()->requires_extra_frame()) {
@@ -4226,8 +4466,10 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
         m_extra_frame_requested = false;
         evt.RequestMore();
     }
-    else
+    else {
         m_dirty = false;
+        m_overlayDirty = false;
+    }
 }
 
 void GLCanvas3D::on_char(wxKeyEvent& evt)
@@ -4655,6 +4897,7 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
             trafo_type.set_relative();
             m_selection.translate(displacement, trafo_type);
             m_dirty = true;
+            InvalidateSceneAndPickingCaches();
         }
     );}
 
@@ -4671,7 +4914,7 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                 if (evt.ShiftDown() && evt.ControlDown() && keyCode == WXK_SPACE) {
 #if !BBL_RELEASE_TO_PUBLIC
                     wxGetApp().plater()->toggle_render_statistic_dialog();
-                    m_dirty = true;
+                    SetOverlayAsDirty();
 #endif
                 } else if ((evt.ShiftDown() && evt.ControlDown() && keyCode == WXK_RETURN) ||
                     (evt.ShiftDown() && evt.AltDown() && keyCode == WXK_RETURN)) {
@@ -4800,6 +5043,7 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                         m_selection.setup_cache();
                         m_selection.rotate(Vec3d(0.0, 0.0, angle_z_rad), TransformationType(TransformationType::World_Relative_Joint));
                         m_dirty = true;
+                        InvalidateSceneAndPickingCaches();
 //                        wxGetApp().obj_manipul()->set_dirty();
                     };
 
@@ -4949,11 +5193,13 @@ void GLCanvas3D::on_mouse_wheel(wxMouseEvent& evt)
                     volume->set_bounding_boxes_as_dirty();
                 }
                 GLVolume::explosion_ratio = m_explosion_ratio;
+                InvalidateSceneAndPickingCaches();
             }
         }
         return;
     }
     // Calculate the zoom delta and apply it to the current zoom factor
+    m_sceneCacheCaptureDeferred = true;
     double direction_factor = wxGetApp().app_config->get_bool("reverse_mouse_wheel_zoom") ? -1.0 : 1.0;
     auto delta = direction_factor * (double)evt.GetWheelRotation() / (double)evt.GetWheelDelta();
     bool zoom_to_mouse = wxGetApp().app_config->get("zoom_to_mouse") == "true";
@@ -5010,7 +5256,7 @@ void GLCanvas3D::schedule_extra_frame(int miliseconds)
         if (m_in_render)
             miliseconds = 33;
         else {
-            m_dirty = true;
+            SetOverlayAsDirty();
             wxWakeUpIdle();
             return;
         }
@@ -5114,7 +5360,9 @@ void GLCanvas3D::on_gesture(wxGestureEvent &evt)
             camera.rotate_on_sphere(-rotate, 0, rotate_limit);
         camera.auto_type(Camera::EType::Perspective);
     }
+    m_sceneCacheCaptureDeferred = true;
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::on_mouse(wxMouseEvent& evt)
@@ -5143,11 +5391,15 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
             m_canvas->SetFocus();
         m_mouse.position = evt.Leaving() ? Vec2d(-1.0, -1.0) : pos.cast<double>();
         m_tooltip.set_in_imgui(true);
-        render();
+        const bool overlayOnly = evt.Moving();
+        render(false, overlayOnly);
 #ifdef SLIC3R_DEBUG_MOUSE_EVENTS
         printf((format_mouse_event_debug_message(evt) + " - Consumed by ImGUI\n").c_str());
 #endif /* SLIC3R_DEBUG_MOUSE_EVENTS */
-        m_dirty = true;
+        if (overlayOnly)
+            SetOverlayAsDirty();
+        else
+            m_dirty = true;
         // do not return if dragging or tooltip not empty to allow for tooltip update
         // also, do not return if the mouse is moving and also is inside MM gizmo to allow update seed fill selection
         if (!m_mouse.dragging && m_tooltip.is_empty() && (m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation || !evt.Moving()))
@@ -5307,7 +5559,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
     else if (evt.Leaving()) {
         // to remove hover on objects when the mouse goes out of this canvas
         m_mouse.position = Vec2d(-1.0, -1.0);
-        m_dirty = true;
+        SetOverlayAsDirty();
     }
     else if (evt.LeftDClick()) {
         // switch to object panel if double click on object, otherwise switch to global panel if double click on background
@@ -5343,7 +5595,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                     && m_gizmos.get_current_type() != GLGizmosManager::MmSegmentation
                     && m_gizmos.get_current_type() != GLGizmosManager::FuzzySkin) {
                     m_rectangle_selection.start_dragging(m_mouse.position, evt.ShiftDown() ? GLSelectionRectangle::Select : GLSelectionRectangle::Deselect);
-                    m_dirty = true;
+                    SetOverlayAsDirty();
                 }
             }
             else {
@@ -5390,7 +5642,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 
                             m_gizmos.update_data();
                             post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
-                            m_dirty = true;
+                            SetSelectionAsDirty();
+                            render(false, true);
                         }
                     }
                 }
@@ -5402,7 +5655,9 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                         BoundingBoxf3 volume_bbox = m_volumes.volumes[volume_idx]->transformed_bounding_box();
                         volume_bbox.offset(1.0);
                         const bool is_cut_connector_selected = m_selection.is_any_connector();
-                        if ((!any_gizmo_active || !evt.CmdDown()) && volume_bbox.contains(m_mouse.scene_position) && !is_cut_connector_selected) {
+                        const bool hasMatchingVolumeHit = m_mouse.volumeHitIndex == volume_idx;
+                        if ((!any_gizmo_active || !evt.CmdDown()) && hasMatchingVolumeHit &&
+                            volume_bbox.contains(m_mouse.volumeHitPosition) && !is_cut_connector_selected) {
                             m_volumes.volumes[volume_idx]->hover = GLVolume::HS_None;
                             // The dragging operation is initiated.
                             m_mouse.drag.move_volume_idx = volume_idx;
@@ -5458,6 +5713,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                 TransformationType trafo_type;
                 trafo_type.set_relative();
                 m_selection.translate(cur_pos - m_mouse.drag.start_position_3D, trafo_type);
+                InvalidateSceneAndPickingCaches();
                 if (current_printer_technology() == ptFFF && (fff_print()->config().print_sequence == PrintSequence::ByObject))
                     update_sequential_clearance();
                 // BBS
@@ -5470,7 +5726,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
         //BBS not in assemble view
         if (m_canvas_type != ECanvasType::CanvasAssembleView) {
             m_rectangle_selection.dragging(pos.cast<double>());
-            m_dirty = true;
+            SetOverlayAsDirty();
         }
     }
     else if (evt.Dragging() || is_camera_rotate(evt, swap_mouse_buttons) || is_camera_pan(evt, swap_mouse_buttons)) {
@@ -5553,6 +5809,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 
                 camera.auto_type(Camera::EType::Perspective);
                 m_dirty = true;
+                InvalidateSceneAndPickingCaches();
                 m_mouse.ignore_right_up = true;  // will be reset on button up event even if not right button is pressed
             }
 
@@ -5578,6 +5835,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 
                 camera.set_target(camera.get_target() + orig - cur_pos);
                 m_dirty = true;
+                InvalidateSceneAndPickingCaches();
                 m_mouse.ignore_right_up = true;  // will be reset on button up event even if not right button is pressed
             }
 
@@ -5613,11 +5871,14 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                 _update_selection_from_hover();
 
             m_rectangle_selection.stop_dragging();
+            SetOverlayAsDirty();
         }
         else if (evt.LeftUp() && !m_mouse.ignore_left_up && !m_mouse.dragging && m_hover_volume_idxs.empty() && m_hover_plate_idxs.empty() && !is_layers_editing_enabled()) {
             // deselect and propagate event through callback
-            if (!evt.ShiftDown() && (!any_gizmo_active || !evt.CmdDown()) && m_picking_enabled)
+            if (!evt.ShiftDown() && (!any_gizmo_active || !evt.CmdDown()) && m_picking_enabled) {
                 deselect_all();
+                render(false, true);
+            }
         }
         //BBS Select plate in this 3D canvas.
         else if (evt.LeftUp() && !m_mouse.dragging && m_picking_enabled && !m_hover_plate_idxs.empty() && (m_canvas_type == CanvasView3D) && !is_layers_editing_enabled())
@@ -5700,7 +5961,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
         if (m_selection.is_empty())
             m_gizmos.reset_all_states();
 
-        m_dirty = true;
+        SetOverlayAsDirty();
     }
     else
         evt.Skip();
@@ -5739,7 +6000,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
         }
     }
 
-    if (m_moving)
+    if (m_moving && m_mouse.dragging)
         show_sinking_contours();
 
 #ifdef __WXMSW__
@@ -5769,7 +6030,7 @@ void GLCanvas3D::on_set_focus(wxFocusEvent& evt)
         wxGetApp().plater()->update_all_plate_thumbnails();
         _update_imgui_select_plate_toolbar();
     }
-    _refresh_if_shown_on_screen();
+    _refresh_if_shown_on_screen(true);
     m_tooltip_enabled = true;
     m_is_touchpad_navigation = wxGetApp().app_config->get_bool("camera_navigation_style");
 }
@@ -5939,6 +6200,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
     wxGetApp().plater()->notify_filament_usage_changed();
 
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::do_rotate(const std::string& snapshot_type)
@@ -6033,6 +6295,7 @@ void GLCanvas3D::do_rotate(const std::string& snapshot_type)
         post_event(SimpleEvent(EVT_GLCANVAS_INSTANCE_ROTATED));
 
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::do_scale(const std::string& snapshot_type)
@@ -6118,6 +6381,7 @@ void GLCanvas3D::do_scale(const std::string& snapshot_type)
         post_event(SimpleEvent(EVT_GLCANVAS_INSTANCE_SCALED));
 
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::do_center()
@@ -6126,6 +6390,8 @@ void GLCanvas3D::do_center()
         return;
 
     m_selection.center();
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
 }
 
 void GLCanvas3D::do_drop()
@@ -6134,6 +6400,8 @@ void GLCanvas3D::do_drop()
         return;
 
     m_selection.drop();
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
 }
 
 void GLCanvas3D::do_center_plate(const int plate_idx) {
@@ -6141,6 +6409,8 @@ void GLCanvas3D::do_center_plate(const int plate_idx) {
         return;
 
     m_selection.center_plate(plate_idx);
+    InvalidateSceneAndPickingCaches();
+    set_as_dirty();
 }
 
 void GLCanvas3D::do_mirror(const std::string& snapshot_type)
@@ -6225,6 +6495,7 @@ void GLCanvas3D::do_mirror(const std::string& snapshot_type)
     post_event(SimpleEvent(EVT_GLCANVAS_SCHEDULE_BACKGROUND_PROCESS));
 
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::update_gizmos_on_off_state()
@@ -6234,15 +6505,26 @@ void GLCanvas3D::update_gizmos_on_off_state()
     m_gizmos.refresh_on_off_state();
 }
 
+void GLCanvas3D::UpdateGizmosForSelectionChange()
+{
+    m_gizmos.update_data();
+    m_gizmos.refresh_on_off_state();
+    SetSelectionAsDirty();
+}
+
 void GLCanvas3D::handle_sidebar_focus_event(const std::string& opt_key, bool focus_on)
 {
-    m_sidebar_field = focus_on ? opt_key : "";
+    const std::string sidebarField = focus_on ? opt_key : "";
+    if (m_sidebar_field == sidebarField)
+        return;
+
+    m_sidebar_field = sidebarField;
 
     //BBS: this event was sent from gizmo now, no need to clear gizmo
     //if (!m_sidebar_field.empty())
     //    m_gizmos.reset_all_states();
 
-    m_dirty = true;
+    SetOverlayAsDirty();
 }
 
 void GLCanvas3D::handle_layers_data_focus_event(const t_layer_height_range range, const EditorType type)
@@ -6423,6 +6705,7 @@ void GLCanvas3D::export_toolpaths_to_obj(const char* filename) const
 
 void GLCanvas3D::mouse_up_cleanup()
 {
+    const bool sceneChanged = m_mouse.dragging || m_camera_movement;
     m_moving = false;
     m_camera_movement = false;
     m_mouse.drag.move_volume_idx = -1;
@@ -6431,7 +6714,10 @@ void GLCanvas3D::mouse_up_cleanup()
     m_mouse.dragging = false;
     m_mouse.ignore_left_up = false;
     m_mouse.ignore_right_up = false;
-    m_dirty = true;
+    if (sceneChanged)
+        m_dirty = true;
+    else
+        SetOverlayAsDirty();
 
     if (m_canvas->HasCapture())
         m_canvas->ReleaseMouse();
@@ -7008,6 +7294,7 @@ void GLCanvas3D::_render_3d_navigator()
             }
         }
 
+        InvalidateSceneAndPickingCaches();
         request_extra_frame();
     }
 
@@ -7579,6 +7866,29 @@ void GLCanvas3D::render_thumbnail_legacy(ThumbnailData& thumbnail_data, unsigned
 
 //BBS: GUI refractor
 
+const GLTexture* GLCanvas3D::_get_shared_toolbar_background_texture()
+{
+    if (m_canvas_type != ECanvasType::CanvasView3D)
+        return nullptr;
+
+    if (m_toolbarBackgroundTextureCache == nullptr)
+        m_toolbarBackgroundTextureCache.reset(new GLToolbarBackgroundTextureCache());
+
+    if (!m_toolbarBackgroundTextureCache->load(m_is_dark))
+        return nullptr;
+
+    return m_toolbarBackgroundTextureCache->get_texture();
+}
+
+bool GLCanvas3D::_init_toolbar_background(GLToolbar& toolbar, const BackgroundTexture::Metadata& background_data)
+{
+    const GLTexture* shared_texture = _get_shared_toolbar_background_texture();
+    if (shared_texture != nullptr && toolbar.init_shared_background(background_data, shared_texture))
+        return true;
+
+    return toolbar.init(background_data);
+}
+
 void GLCanvas3D::_switch_toolbars_icon_filename()
 {
     BackgroundTexture::Metadata background_data;
@@ -7587,10 +7897,16 @@ void GLCanvas3D::_switch_toolbars_icon_filename()
     background_data.top = 16;
     background_data.right = 16;
     background_data.bottom = 16;
-    m_main_toolbar.init(background_data);
-    m_assemble_view_toolbar.init(background_data);
-    m_separator_toolbar.init(background_data);
-    wxGetApp().plater()->get_collapse_toolbar().init(background_data);
+    _init_toolbar_background(m_main_toolbar, background_data);
+    _init_toolbar_background(m_assemble_view_toolbar, background_data);
+    _init_toolbar_background(wxGetApp().plater()->get_collapse_toolbar(), background_data);
+
+    BackgroundTexture::Metadata separator_background_data = background_data;
+    separator_background_data.left = 0;
+    separator_background_data.top = 0;
+    separator_background_data.right = 0;
+    separator_background_data.bottom = 0;
+    _init_toolbar_background(m_separator_toolbar, separator_background_data);
 
     // main toolbar
     {
@@ -7669,7 +7985,7 @@ bool GLCanvas3D::_init_main_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!m_main_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_main_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_main_toolbar.set_enabled(false);
@@ -7871,7 +8187,7 @@ bool GLCanvas3D::_init_assemble_view_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!m_assemble_view_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_assemble_view_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_assemble_view_toolbar.set_enabled(false);
@@ -7928,7 +8244,7 @@ bool GLCanvas3D::_init_separator_toolbar()
     background_data.right = 0;
     background_data.bottom = 0;
 
-    if (!m_separator_toolbar.init(background_data))
+    if (!_init_toolbar_background(m_separator_toolbar, background_data))
     {
         // unable to init the toolbar texture, disable it
         m_separator_toolbar.set_enabled(false);
@@ -7967,7 +8283,7 @@ bool GLCanvas3D::_init_view_toolbar()
 
 bool GLCanvas3D::_init_collapse_toolbar()
 {
-    return wxGetApp().plater()->init_collapse_toolbar();
+    return wxGetApp().plater()->init_collapse_toolbar(_get_shared_toolbar_background_texture());
 }
 
 bool GLCanvas3D::_set_current()
@@ -8060,15 +8376,17 @@ void GLCanvas3D::_zoom_to_box(const BoundingBoxf3& box, double margin_factor)
 {
     wxGetApp().plater()->get_camera().zoom_to_box(box, margin_factor);
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
 void GLCanvas3D::_update_camera_zoom(double zoom)
 {
     wxGetApp().plater()->get_camera().update_zoom(zoom);
     m_dirty = true;
+    InvalidateSceneAndPickingCaches();
 }
 
-void GLCanvas3D::_refresh_if_shown_on_screen()
+void GLCanvas3D::_refresh_if_shown_on_screen(bool overlayOnly)
 {
     if (_is_shown_on_screen()) {
         const Size& cnv_size = get_canvas_size();
@@ -8076,12 +8394,732 @@ void GLCanvas3D::_refresh_if_shown_on_screen()
 
         // Because of performance problems on macOS, where PaintEvents are not delivered
         // frequently enough, we call render() here directly when we can.
-        render();
+        render(false, overlayOnly);
     }
 }
 
-void GLCanvas3D::_picking_pass()
+void GLCanvas3D::InvalidatePickingBuffer()
 {
+    m_pickingBufferDirty = true;
+}
+
+void GLCanvas3D::InvalidateSceneCache()
+{
+    m_sceneCacheValid = false;
+}
+
+void GLCanvas3D::InvalidateSceneAndPickingCaches()
+{
+    InvalidateSceneCache();
+    InvalidatePickingBuffer();
+}
+
+void GLCanvas3D::SetOverlayAsDirty()
+{
+    if (!m_dirty)
+        m_overlayDirty = true;
+}
+
+void GLCanvas3D::SetSelectionAsDirty()
+{
+    m_selectionHighlightValid = false;
+    SetOverlayAsDirty();
+}
+
+bool GLCanvas3D::CanUseSceneCache(const Size& canvasSize, int targetDrawFramebuffer, int& samples) const
+{
+    samples = 0;
+    if (m_canvas_type != ECanvasType::CanvasView3D || targetDrawFramebuffer != 0 ||
+        OpenGLManager::get_framebuffers_type() != OpenGLManager::EFramebufferType::Arb || canvasSize.get_width() <= 0 ||
+        canvasSize.get_height() <= 0)
+        return false;
+
+    GLint redBits = 0;
+    GLint greenBits = 0;
+    GLint blueBits = 0;
+    GLint alphaBits = 0;
+    GLint depthBits = 0;
+    GLint stencilBits = 0;
+    GLint actualSamples = 0;
+    glsafe(::glGetIntegerv(GL_RED_BITS, &redBits));
+    glsafe(::glGetIntegerv(GL_GREEN_BITS, &greenBits));
+    glsafe(::glGetIntegerv(GL_BLUE_BITS, &blueBits));
+    glsafe(::glGetIntegerv(GL_ALPHA_BITS, &alphaBits));
+    glsafe(::glGetIntegerv(GL_DEPTH_BITS, &depthBits));
+    glsafe(::glGetIntegerv(GL_STENCIL_BITS, &stencilBits));
+    glsafe(::glGetIntegerv(GL_SAMPLES, &actualSamples));
+    if (redBits != 8 || greenBits != 8 || blueBits != 8 || alphaBits != 8 || depthBits != 24 || stencilBits != 8 ||
+        actualSamples < 0)
+        return false;
+
+    const uint64_t width = static_cast<uint64_t>(canvasSize.get_width());
+    const uint64_t height = static_cast<uint64_t>(canvasSize.get_height());
+    const uint64_t sampleCount = static_cast<uint64_t>(std::max(actualSamples, 1));
+    if (width * height * sampleCount * 8ull > SCENE_CACHE_MEMORY_BUDGET)
+        return false;
+
+    samples = actualSamples;
+    return m_sceneCacheFailedWidth != static_cast<unsigned int>(canvasSize.get_width()) ||
+           m_sceneCacheFailedHeight != static_cast<unsigned int>(canvasSize.get_height()) || m_sceneCacheFailedSamples != samples;
+}
+
+bool GLCanvas3D::EnsureSceneCacheResources(const Size& canvasSize, int samples)
+{
+    const unsigned int width = static_cast<unsigned int>(canvasSize.get_width());
+    const unsigned int height = static_cast<unsigned int>(canvasSize.get_height());
+    if (m_sceneCacheResources.framebuffer != 0 && m_sceneCacheResources.width == width &&
+        m_sceneCacheResources.height == height && m_sceneCacheResources.samples == samples)
+        return true;
+
+    ReleaseSceneCacheResources();
+    LogPreExistingOpenGlErrors("Scene Cache creation");
+
+    GLint previousDrawFramebuffer = 0;
+    GLint previousReadFramebuffer = 0;
+    GLint previousRenderbuffer = 0;
+    glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer));
+    glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer));
+    glsafe(::glGetIntegerv(GL_RENDERBUFFER_BINDING, &previousRenderbuffer));
+
+    GLuint framebuffer = 0;
+    GLuint colorRenderbuffer = 0;
+    GLuint depthStencilRenderbuffer = 0;
+    ::glGenFramebuffers(1, &framebuffer);
+    ::glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    ::glGenRenderbuffers(1, &colorRenderbuffer);
+    ::glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+    if (samples == 0)
+        ::glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+    else
+        ::glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, static_cast<GLsizei>(width),
+                                           static_cast<GLsizei>(height));
+    ::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRenderbuffer);
+
+    ::glGenRenderbuffers(1, &depthStencilRenderbuffer);
+    ::glBindRenderbuffer(GL_RENDERBUFFER, depthStencilRenderbuffer);
+    if (samples == 0)
+        ::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+    else
+        ::glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH24_STENCIL8, static_cast<GLsizei>(width),
+                                           static_cast<GLsizei>(height));
+    ::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthStencilRenderbuffer);
+
+    const GLenum framebufferStatus = ::glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const bool failed = LogOpenGlErrors("Scene Cache creation") || framebufferStatus != GL_FRAMEBUFFER_COMPLETE;
+    ::glBindRenderbuffer(GL_RENDERBUFFER, static_cast<GLuint>(previousRenderbuffer));
+    ::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
+    ::glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+
+    if (failed) {
+        if (depthStencilRenderbuffer != 0)
+            glsafe(::glDeleteRenderbuffers(1, &depthStencilRenderbuffer));
+        if (colorRenderbuffer != 0)
+            glsafe(::glDeleteRenderbuffers(1, &colorRenderbuffer));
+        if (framebuffer != 0)
+            glsafe(::glDeleteFramebuffers(1, &framebuffer));
+        m_sceneCacheFailedWidth = width;
+        m_sceneCacheFailedHeight = height;
+        m_sceneCacheFailedSamples = samples;
+        BOOST_LOG_TRIVIAL(warning) << "Unable to create Scene Cache framebuffer " << width << 'x' << height
+                                   << " samples=" << samples;
+        return false;
+    }
+
+    m_sceneCacheResources.framebuffer = framebuffer;
+    m_sceneCacheResources.colorRenderbuffer = colorRenderbuffer;
+    m_sceneCacheResources.depthStencilRenderbuffer = depthStencilRenderbuffer;
+    m_sceneCacheResources.width = width;
+    m_sceneCacheResources.height = height;
+    m_sceneCacheResources.samples = samples;
+    m_sceneCacheCaptureValidated = false;
+    m_sceneCachePresentValidated = false;
+    m_sceneCacheFailedWidth = 0;
+    m_sceneCacheFailedHeight = 0;
+    m_sceneCacheFailedSamples = -1;
+    return true;
+}
+
+void GLCanvas3D::ReleaseSceneCacheResources()
+{
+    if (m_sceneCacheResources.depthStencilRenderbuffer != 0)
+        glsafe(::glDeleteRenderbuffers(1, &m_sceneCacheResources.depthStencilRenderbuffer));
+    if (m_sceneCacheResources.colorRenderbuffer != 0)
+        glsafe(::glDeleteRenderbuffers(1, &m_sceneCacheResources.colorRenderbuffer));
+    if (m_sceneCacheResources.framebuffer != 0)
+        glsafe(::glDeleteFramebuffers(1, &m_sceneCacheResources.framebuffer));
+    m_sceneCacheResources = SceneCacheResources{};
+    m_sceneCacheValid = false;
+    m_sceneCacheCaptureValidated = false;
+    m_sceneCachePresentValidated = false;
+}
+
+void GLCanvas3D::RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params)
+{
+    glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+    _render_background();
+    _render_objects(GLVolumeCollection::ERenderType::Opaque, !m_gizmos.is_running());
+    _render_sla_slices();
+    if (!params.noPartplate)
+        _render_bed(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(), params.showAxes);
+    if (!params.noPartplate) {
+        _render_platelist(camera.get_view_matrix(), camera.get_projection_matrix(), !camera.is_looking_downward(),
+                          params.onlyCurrent, params.onlyBody, params.hoverPlateId, true, params.showGrid);
+    }
+}
+
+bool GLCanvas3D::CaptureSceneCache()
+{
+    if (m_sceneCacheResources.framebuffer == 0)
+        return false;
+
+    GLint previousDrawFramebuffer = 0;
+    GLint previousReadFramebuffer = 0;
+    glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer));
+    glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer));
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, 0));
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_sceneCacheResources.framebuffer));
+
+    bool success = true;
+    if (!m_sceneCacheCaptureValidated) {
+        LogPreExistingOpenGlErrors("Scene Cache first capture");
+        ::glBlitFramebuffer(0, 0, static_cast<GLint>(m_sceneCacheResources.width),
+                            static_cast<GLint>(m_sceneCacheResources.height), 0, 0,
+                            static_cast<GLint>(m_sceneCacheResources.width),
+                            static_cast<GLint>(m_sceneCacheResources.height), GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT,
+                            GL_NEAREST);
+        success = !LogOpenGlErrors("Scene Cache first capture");
+        m_sceneCacheCaptureValidated = success;
+    } else {
+        glsafe(::glBlitFramebuffer(0, 0, static_cast<GLint>(m_sceneCacheResources.width),
+                                   static_cast<GLint>(m_sceneCacheResources.height), 0, 0,
+                                   static_cast<GLint>(m_sceneCacheResources.width),
+                                   static_cast<GLint>(m_sceneCacheResources.height), GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT,
+                                   GL_NEAREST));
+    }
+
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer)));
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer)));
+    if (!success) {
+        m_sceneCacheFailedWidth = m_sceneCacheResources.width;
+        m_sceneCacheFailedHeight = m_sceneCacheResources.height;
+        m_sceneCacheFailedSamples = m_sceneCacheResources.samples;
+    }
+    return success;
+}
+
+bool GLCanvas3D::PresentSceneCache()
+{
+    if (m_sceneCacheResources.framebuffer == 0)
+        return false;
+
+    GLint previousDrawFramebuffer = 0;
+    GLint previousReadFramebuffer = 0;
+    glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer));
+    glsafe(::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer));
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneCacheResources.framebuffer));
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
+
+    bool success = true;
+    if (!m_sceneCachePresentValidated) {
+        LogPreExistingOpenGlErrors("Scene Cache first present");
+        ::glBlitFramebuffer(0, 0, static_cast<GLint>(m_sceneCacheResources.width),
+                            static_cast<GLint>(m_sceneCacheResources.height), 0, 0,
+                            static_cast<GLint>(m_sceneCacheResources.width),
+                            static_cast<GLint>(m_sceneCacheResources.height), GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT,
+                            GL_NEAREST);
+        success = !LogOpenGlErrors("Scene Cache first present");
+        m_sceneCachePresentValidated = success;
+    } else {
+        glsafe(::glBlitFramebuffer(0, 0, static_cast<GLint>(m_sceneCacheResources.width),
+                                   static_cast<GLint>(m_sceneCacheResources.height), 0, 0,
+                                   static_cast<GLint>(m_sceneCacheResources.width),
+                                   static_cast<GLint>(m_sceneCacheResources.height), GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT,
+                                   GL_NEAREST));
+    }
+
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer)));
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer)));
+    if (!success) {
+        m_sceneCacheFailedWidth = m_sceneCacheResources.width;
+        m_sceneCacheFailedHeight = m_sceneCacheResources.height;
+        m_sceneCacheFailedSamples = m_sceneCacheResources.samples;
+    }
+    return success;
+}
+
+void GLCanvas3D::RenderSelectionBoxWithExplicitState()
+{
+    const GLboolean depthTestEnabled = ::glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean blendEnabled = ::glIsEnabled(GL_BLEND);
+    GLboolean depthWriteEnabled = GL_TRUE;
+    GLint depthFunction = GL_LESS;
+    glsafe(::glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWriteEnabled));
+    glsafe(::glGetIntegerv(GL_DEPTH_FUNC, &depthFunction));
+
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glDepthFunc(GL_LESS));
+    glsafe(::glDepthMask(GL_TRUE));
+    glsafe(::glDisable(GL_BLEND));
+    _render_selection();
+
+    glsafe(::glDepthMask(depthWriteEnabled));
+    glsafe(::glDepthFunc(static_cast<GLenum>(depthFunction)));
+    RestoreCapability(GL_DEPTH_TEST, depthTestEnabled);
+    RestoreCapability(GL_BLEND, blendEnabled);
+}
+
+bool GLCanvas3D::UpdateVolumeClippingState()
+{
+    const std::array<float, 2> previousZRange = m_volumes.get_z_range();
+    const std::array<double, 4> previousClippingPlane = m_volumes.get_clipping_plane();
+    m_camera_clipping_plane = m_gizmos.get_clipping_plane();
+
+    if (m_use_clipping_planes) {
+        m_volumes.set_z_range(-m_clipping_planes[0].get_data()[3], m_clipping_planes[1].get_data()[3]);
+    } else {
+        m_volumes.set_z_range(-FLT_MAX, FLT_MAX);
+    }
+
+    GLGizmoBase* currentGizmo = m_gizmos.get_current();
+    if (m_canvas_type == CanvasAssembleView) {
+        m_volumes.set_clipping_plane(m_gizmos.get_assemble_view_clipping_plane().get_data());
+    } else if (currentGizmo != nullptr && !currentGizmo->apply_clipping_plane()) {
+        m_volumes.set_clipping_plane(ClippingPlane::ClipsNothing().get_data());
+    } else {
+        m_volumes.set_clipping_plane(m_camera_clipping_plane.get_data());
+    }
+
+    const bool changed = previousZRange != m_volumes.get_z_range() || previousClippingPlane != m_volumes.get_clipping_plane();
+    if (changed)
+        InvalidatePickingBuffer();
+    return changed;
+}
+
+bool GLCanvas3D::RenderPickingBuffer(const Camera& camera)
+{
+    if (!OpenGLManager::are_framebuffers_supported() || m_volumes.volumes.size() > 0x1000000u) {
+        return false;
+    }
+
+    const std::array<int, 4>& viewport = camera.get_viewport();
+    if (viewport[2] <= 0 || viewport[3] <= 0 || !m_pickingBuffer.EnsureSize(viewport[2], viewport[3]) ||
+        !m_pickingBuffer.BeginRender()) {
+        return false;
+    }
+
+    GLint previousViewport[4];
+    GLfloat previousClearColor[4];
+    GLint previousDepthFunction = GL_LESS;
+    GLint previousCullFaceMode = GL_BACK;
+    GLint previousFrontFace = GL_CCW;
+    GLboolean previousDepthMask = GL_TRUE;
+    GLboolean previousColorMask[4];
+
+    const GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    const GLboolean multisampleEnabled = glIsEnabled(GL_MULTISAMPLE);
+    const GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+    const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+    const GLboolean scissorEnabled = glIsEnabled(GL_SCISSOR_TEST);
+    const GLboolean ditherEnabled = glIsEnabled(GL_DITHER);
+
+    glsafe(::glGetIntegerv(GL_VIEWPORT, previousViewport));
+    glsafe(::glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor));
+    glsafe(::glGetIntegerv(GL_DEPTH_FUNC, &previousDepthFunction));
+    glsafe(::glGetIntegerv(GL_CULL_FACE_MODE, &previousCullFaceMode));
+    glsafe(::glGetIntegerv(GL_FRONT_FACE, &previousFrontFace));
+    glsafe(::glGetBooleanv(GL_DEPTH_WRITEMASK, &previousDepthMask));
+    glsafe(::glGetBooleanv(GL_COLOR_WRITEMASK, previousColorMask));
+
+    Slic3r::ScopeGuard restoreState([this, previousViewport, previousClearColor, previousDepthFunction,
+                                     previousCullFaceMode, previousFrontFace, previousDepthMask, previousColorMask,
+                                     blendEnabled, multisampleEnabled, depthTestEnabled, cullFaceEnabled,
+                                     scissorEnabled, ditherEnabled]() {
+        RestoreCapability(GL_BLEND, blendEnabled);
+        RestoreCapability(GL_MULTISAMPLE, multisampleEnabled);
+        RestoreCapability(GL_DEPTH_TEST, depthTestEnabled);
+        RestoreCapability(GL_CULL_FACE, cullFaceEnabled);
+        RestoreCapability(GL_SCISSOR_TEST, scissorEnabled);
+        RestoreCapability(GL_DITHER, ditherEnabled);
+
+        glsafe(::glDepthMask(previousDepthMask));
+        glsafe(::glDepthFunc(previousDepthFunction));
+        glsafe(::glCullFace(previousCullFaceMode));
+        glsafe(::glFrontFace(previousFrontFace));
+        glsafe(::glColorMask(previousColorMask[0], previousColorMask[1], previousColorMask[2], previousColorMask[3]));
+        glsafe(::glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]));
+        glsafe(::glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]));
+        m_pickingBuffer.EndRender();
+    });
+
+    glsafe(::glViewport(0, 0, viewport[2], viewport[3]));
+    glsafe(::glDisable(GL_BLEND));
+    glsafe(::glDisable(GL_MULTISAMPLE));
+    glsafe(::glDisable(GL_SCISSOR_TEST));
+    glsafe(::glDisable(GL_DITHER));
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glDepthMask(GL_TRUE));
+    glsafe(::glDepthFunc(GL_LESS));
+    glsafe(::glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE));
+    glsafe(::glClearColor(0.0f, 0.0f, 0.0f, 0.0f));
+    glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+
+    if (!_render_volumes_for_picking(camera))
+        return false;
+
+    return true;
+}
+
+GLCanvas3D::VolumePickResult GLCanvas3D::QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera,
+                                                                      int toleranceRadiusPx)
+{
+    VolumePickResult result;
+
+#if !ENABLE_GPU_VOLUME_PICKING
+    (void)screenPosition;
+    (void)camera;
+    (void)toleranceRadiusPx;
+    return result;
+#else
+    const std::array<int, 4>& viewport = camera.get_viewport();
+    if (!std::isfinite(screenPosition.x()) || !std::isfinite(screenPosition.y())) {
+        result.status = EPickingQueryStatus::NoHit;
+        return result;
+    }
+
+    const int pixelX = static_cast<int>(std::floor(screenPosition.x()));
+    const int pixelYFromTop = static_cast<int>(std::floor(screenPosition.y()));
+    if (pixelX < 0 || pixelYFromTop < 0 || pixelX >= viewport[2] || pixelYFromTop >= viewport[3]) {
+        result.status = EPickingQueryStatus::NoHit;
+        return result;
+    }
+
+    if (!m_pickingBuffer.IsReady() || m_pickingBuffer.GetWidth() != viewport[2] || m_pickingBuffer.GetHeight() != viewport[3])
+        return result;
+
+    const int readY = m_pickingBuffer.GetHeight() - 1 - pixelYFromTop;
+    const int radius = std::max(0, toleranceRadiusPx);
+    const int left = std::max(0, pixelX - radius);
+    const int right = std::min(m_pickingBuffer.GetWidth() - 1, pixelX + radius);
+    const int bottom = std::max(0, readY - radius);
+    const int top = std::min(m_pickingBuffer.GetHeight() - 1, readY + radius);
+    const int width = right - left + 1;
+    const int height = top - bottom + 1;
+
+    std::vector<GLPickingBuffer::ColorPixel> pixels;
+    if (!m_pickingBuffer.ReadColorRect(left, bottom, width, height, pixels))
+        return result;
+
+    const int centerLocalX = pixelX - left;
+    const int centerLocalY = readY - bottom;
+    const size_t centerIndex = static_cast<size_t>(centerLocalY) * static_cast<size_t>(width) + static_cast<size_t>(centerLocalX);
+    const GLPickingBuffer::ColorPixel& centerPixel = pixels[centerIndex];
+    std::optional<PickingPixelCandidate> candidate;
+    int nearestInvalidDistanceSquared = std::numeric_limits<int>::max();
+
+    if (!centerPixel.IsBackground()) {
+        if (!centerPixel.IsValid())
+            return result;
+
+        candidate = PickingPixelCandidate{centerPixel.DecodeId(), pixelX, readY, 0};
+    } else {
+        int preferredVolumeIndex = -1;
+        if (m_selection.is_single_volume() || m_selection.is_single_modifier()) {
+            const Selection::IndicesList& selectedIndices = m_selection.get_volume_idxs();
+            if (!selectedIndices.empty())
+                preferredVolumeIndex = static_cast<int>(*selectedIndices.begin());
+        }
+
+        const int radiusSquared = radius * radius;
+        for (int localY = 0; localY < height; ++localY) {
+            for (int localX = 0; localX < width; ++localX) {
+                const int candidateX = left + localX;
+                const int candidateY = bottom + localY;
+                const int dx = candidateX - pixelX;
+                const int dy = candidateY - readY;
+                const int distanceSquared = dx * dx + dy * dy;
+                if (distanceSquared == 0 || distanceSquared > radiusSquared)
+                    continue;
+
+                const size_t pixelIndex = static_cast<size_t>(localY) * static_cast<size_t>(width) + static_cast<size_t>(localX);
+                const GLPickingBuffer::ColorPixel& pixel = pixels[pixelIndex];
+                if (pixel.IsBackground())
+                    continue;
+
+                if (!pixel.IsValid()) {
+                    nearestInvalidDistanceSquared = std::min(nearestInvalidDistanceSquared, distanceSquared);
+                    continue;
+                }
+
+                const uint32_t volumeId = pixel.DecodeId();
+                if (volumeId >= m_volumes.volumes.size() || m_volumes.volumes[volumeId] == nullptr ||
+                    !ShouldRenderVolumeForPicking(*m_volumes.volumes[volumeId])) {
+                    nearestInvalidDistanceSquared = std::min(nearestInvalidDistanceSquared, distanceSquared);
+                    continue;
+                }
+
+                const bool isCloser = !candidate.has_value() || distanceSquared < candidate->distanceSquared;
+                const bool isPreferredTie = candidate.has_value() && distanceSquared == candidate->distanceSquared &&
+                                            static_cast<int>(volumeId) == preferredVolumeIndex &&
+                                            static_cast<int>(candidate->volumeId) != preferredVolumeIndex;
+                if (isCloser || isPreferredTie)
+                    candidate = PickingPixelCandidate{volumeId, candidateX, candidateY, distanceSquared};
+            }
+        }
+    }
+
+    if (!candidate.has_value()) {
+        if (nearestInvalidDistanceSquared == std::numeric_limits<int>::max())
+            result.status = EPickingQueryStatus::NoHit;
+        return result;
+    }
+
+    if (nearestInvalidDistanceSquared <= candidate->distanceSquared)
+        return result;
+
+    if (candidate->volumeId >= m_volumes.volumes.size())
+        return result;
+
+    GLVolume* volume = m_volumes.volumes[candidate->volumeId];
+    if (volume == nullptr || !ShouldRenderVolumeForPicking(*volume))
+        return result;
+
+    GLfloat depth = 1.0f;
+    if (!m_pickingBuffer.ReadDepthPoint(candidate->x, candidate->y, depth) || !std::isfinite(depth))
+        return result;
+
+    const Vec4i32 viewportData(camera.get_viewport().data());
+    Vec3d worldPosition;
+    igl::unproject(Vec3d(static_cast<double>(candidate->x) + 0.5, static_cast<double>(candidate->y) + 0.5,
+                         static_cast<double>(depth)),
+                   camera.get_view_matrix().matrix(), camera.get_projection_matrix().matrix(), viewportData, worldPosition);
+    if (!worldPosition.allFinite())
+        return result;
+
+    result.status = EPickingQueryStatus::Hit;
+    result.depth = depth;
+    result.samplePosition = Vec2d(static_cast<double>(candidate->x) + 0.5,
+                                  static_cast<double>(m_pickingBuffer.GetHeight() - 1 - candidate->y) + 0.5);
+    result.screenDistanceSquared = candidate->distanceSquared;
+    result.hit.type = SceneRaycaster::EType::Volume;
+    result.hit.raycaster_id = static_cast<int>(candidate->volumeId);
+    result.hit.position = worldPosition.cast<float>();
+    result.hit.normal = Vec3f::Zero();
+    return result;
+#endif
+}
+
+GLCanvas3D::PickingPassResult GLCanvas3D::QueryHybridPickingHit(const Vec2d& screenPosition, const Camera& camera,
+                                                                const ClippingPlane& clippingPlane,
+                                                                int volumeToleranceRadiusPx)
+{
+    if (!std::isfinite(screenPosition.x()) || !std::isfinite(screenPosition.y())) {
+        return {};
+    }
+
+    const Vec2d samplePosition(std::floor(screenPosition.x()) + 0.5, std::floor(screenPosition.y()) + 0.5);
+    const auto buildCenterResult = [this, &samplePosition](const SceneRaycaster::HitResult& hit) {
+        PickingPassResult result;
+        result.hit = hit;
+        result.interactionPosition = hit.is_valid() ? hit.position.cast<double>()
+                                                   : _mouse_to_bed_3d(samplePosition.cast<coord_t>());
+        return result;
+    };
+
+    const VolumePickResult volumeResult = QueryVolumeFromPickingBuffer(samplePosition, camera, volumeToleranceRadiusPx);
+    if (volumeResult.status == EPickingQueryStatus::Unavailable) {
+        return buildCenterResult(m_scene_raycaster.hit(samplePosition, camera, &clippingPlane, SceneRaycaster::EHitMask::All));
+    }
+
+    const SceneRaycaster::HitResult nonVolumeHit =
+        m_scene_raycaster.hit(samplePosition, camera, nullptr, SceneRaycaster::EHitMask::NonVolume);
+    if (volumeResult.status == EPickingQueryStatus::NoHit)
+        return buildCenterResult(nonVolumeHit);
+
+    SceneRaycaster::HitResult volumeHit = volumeResult.hit;
+    if (volumeResult.screenDistanceSquared > 0) {
+        const SceneRaycaster::HitResult candidateBedHit =
+            m_scene_raycaster.hit(volumeResult.samplePosition, camera, nullptr, SceneRaycaster::EHitMask::Bed);
+        const SceneRaycaster::HitResult visibleCandidate =
+            m_scene_raycaster.ResolveHitCandidates(candidateBedHit, volumeHit, camera);
+        if (visibleCandidate.type == SceneRaycaster::EType::Bed)
+            return buildCenterResult(nonVolumeHit);
+    }
+
+    ResolveSelectedVolumeOverlap(volumeResult.samplePosition, camera, clippingPlane, volumeHit);
+    if (volumeResult.screenDistanceSquared == 0)
+        return buildCenterResult(m_scene_raycaster.ResolveHitCandidates(nonVolumeHit, volumeHit, camera));
+
+    const bool exactGizmoHit =
+        nonVolumeHit.type == SceneRaycaster::EType::Gizmo || nonVolumeHit.type == SceneRaycaster::EType::FallbackGizmo;
+    if (exactGizmoHit)
+        return buildCenterResult(nonVolumeHit);
+
+    const bool exactBedIconHit = nonVolumeHit.type == SceneRaycaster::EType::Bed && nonVolumeHit.raycaster_id >= 0 &&
+                                 nonVolumeHit.raycaster_id % PartPlate::GRABBER_COUNT != 0;
+    if (exactBedIconHit)
+        return buildCenterResult(nonVolumeHit);
+
+    PickingPassResult result;
+    result.hit = volumeHit;
+    result.interactionPosition = ComputeVolumeDragAnchor(samplePosition, volumeHit.position.cast<double>(), camera);
+    return result;
+}
+
+Vec3d GLCanvas3D::ComputeVolumeDragAnchor(const Vec2d& screenPosition, const Vec3d& surfacePosition, const Camera& camera)
+{
+    const Linef3 ray = mouse_ray(screenPosition.cast<coord_t>());
+    Vec3d interactionPosition;
+    if (std::abs(camera.get_dir_forward().z()) < EPSILON) {
+        const Vec3d direction = ray.unit_vector();
+        const double directionSquaredNorm = direction.squaredNorm();
+        if (directionSquaredNorm <= 0.0)
+            return surfacePosition;
+
+        interactionPosition = ray.a + (surfacePosition - ray.a).dot(direction) / directionSquaredNorm * direction;
+    } else {
+        interactionPosition = ray.intersect_plane(surfacePosition.z());
+    }
+
+    return interactionPosition.allFinite() ? interactionPosition : surfacePosition;
+}
+
+bool GLCanvas3D::RaycastVolume(int volumeIndex, const Vec2d& screenPosition, const Camera& camera,
+                               const ClippingPlane* clippingPlane, SceneRaycaster::HitResult& hit) const
+{
+    hit = {};
+    if (volumeIndex < 0 || volumeIndex >= static_cast<int>(m_volumes.volumes.size())) {
+        return false;
+    }
+
+    const GLVolume* volume = m_volumes.volumes[volumeIndex];
+    if (volume == nullptr || !volume->is_active || volume->disabled || volume->mesh_raycaster == nullptr) {
+        return false;
+    }
+
+    Vec3f localPosition = Vec3f::Zero();
+    Vec3f localNormal = Vec3f::Zero();
+    const Transform3d worldMatrix = volume->world_matrix();
+    if (!volume->mesh_raycaster->closest_hit(screenPosition, worldMatrix, camera, localPosition, localNormal, clippingPlane)) {
+        return false;
+    }
+
+    const Vec3d transformedNormal = worldMatrix.matrix().block(0, 0, 3, 3).inverse().transpose() * localNormal.cast<double>();
+    if (transformedNormal.squaredNorm() == 0.0)
+        return false;
+
+    const Vec3f worldNormal = transformedNormal.normalized().cast<float>();
+    if (worldNormal.dot(camera.get_dir_forward().cast<float>()) >= 0.0f)
+        return false;
+
+    hit.type = SceneRaycaster::EType::Volume;
+    hit.raycaster_id = volumeIndex;
+    hit.position = (worldMatrix * localPosition.cast<double>()).cast<float>();
+    hit.normal = worldNormal;
+    return true;
+}
+
+void GLCanvas3D::ResolveSelectedVolumeOverlap(const Vec2d& screenPosition, const Camera& camera,
+                                              const ClippingPlane& clippingPlane, SceneRaycaster::HitResult& volumeHit) const
+{
+    if (!volumeHit.is_valid() || volumeHit.type != SceneRaycaster::EType::Volume || m_use_clipping_planes ||
+        (!m_selection.is_single_volume() && !m_selection.is_single_modifier())) {
+        return;
+    }
+
+    const GLVolume* selectedVolume = m_selection.get_first_volume();
+    const Selection::IndicesList& selectedIndices = m_selection.get_volume_idxs();
+    if (selectedVolume == nullptr || selectedIndices.empty() || selectedVolume->is_wipe_tower || selectedVolume->is_sla_pad() ||
+        selectedVolume->is_sla_support()) {
+        return;
+    }
+
+    const int selectedIndex = static_cast<int>(*selectedIndices.begin());
+    if (selectedIndex == volumeHit.raycaster_id)
+        return;
+
+    SceneRaycaster::HitResult selectedHit;
+    SceneRaycaster::HitResult gpuPickedCpuHit;
+    if (!RaycastVolume(selectedIndex, screenPosition, camera, &clippingPlane, selectedHit) ||
+        !RaycastVolume(volumeHit.raycaster_id, screenPosition, camera, &clippingPlane, gpuPickedCpuHit)) {
+        return;
+    }
+
+    if (selectedHit.position.isApprox(gpuPickedCpuHit.position))
+        volumeHit = selectedHit;
+}
+
+bool GLCanvas3D::ShouldRenderVolumeForPicking(const GLVolume& volume) const
+{
+    if (!volume.is_active || volume.disabled)
+        return false;
+
+    if (m_canvas_type == CanvasAssembleView)
+        return !volume.is_modifier && !volume.is_wipe_tower;
+
+    return m_render_sla_auxiliaries || volume.composite_id.volume_id >= 0;
+}
+
+void GLCanvas3D::ApplyPickingHit(const SceneRaycaster::HitResult& hit)
+{
+    if (!hit.is_valid()) {
+        wxGetApp().plater()->get_partplate_list().reset_hover_id();
+        m_gizmos.set_hover_id(-1);
+        return;
+    }
+
+    switch (hit.type)
+    {
+    case SceneRaycaster::EType::Volume:
+    {
+        if (hit.raycaster_id < 0 || hit.raycaster_id >= static_cast<int>(m_volumes.volumes.size())) {
+            assert(false);
+            break;
+        }
+
+        const GLVolume* volume = m_volumes.volumes[hit.raycaster_id];
+        if (volume != nullptr && ShouldRenderVolumeForPicking(*volume)) {
+            const bool allowVolumeHover = m_gizmos.get_current_type() == GLGizmosManager::EType::Undefined || !wxGetKeyState(WXK_CONTROL);
+            if (allowVolumeHover)
+                m_hover_volume_idxs.emplace_back(hit.raycaster_id);
+
+            m_gizmos.set_hover_id(-1);
+        }
+        break;
+    }
+
+    case SceneRaycaster::EType::Gizmo:
+    case SceneRaycaster::EType::FallbackGizmo:
+    {
+        const Size& canvasSize = get_canvas_size();
+        const bool inside = m_mouse.position.x() >= 0.0 && m_mouse.position.y() >= 0.0 &&
+                            m_mouse.position.x() < canvasSize.get_width() && m_mouse.position.y() < canvasSize.get_height();
+        m_gizmos.set_hover_id(inside ? hit.raycaster_id : -1);
+        break;
+    }
+
+    case SceneRaycaster::EType::Bed:
+    {
+        const int plateHoverId = hit.raycaster_id;
+        const int maxPlateHoverId = PartPlateList::MAX_PLATES_COUNT * PartPlate::GRABBER_COUNT;
+        if (plateHoverId >= 0 && plateHoverId < maxPlateHoverId) {
+            wxGetApp().plater()->get_partplate_list().set_hover_id(plateHoverId);
+            m_hover_plate_idxs.emplace_back(plateHoverId);
+        } else {
+            wxGetApp().plater()->get_partplate_list().reset_hover_id();
+        }
+        m_gizmos.set_hover_id(-1);
+        break;
+    }
+
+    default:
+        assert(false);
+        break;
+    }
+}
+
+std::optional<GLCanvas3D::PickingPassResult> GLCanvas3D::_picking_pass(bool& sinkingContourSceneChanged)
+{
+    sinkingContourSceneChanged = false;
     if (!m_picking_enabled || m_mouse.dragging || m_mouse.position == Vec2d(DBL_MAX, DBL_MAX) || m_gizmos.is_dragging()) {
 #if ENABLE_RAYCAST_PICKING_DEBUG
         ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -8089,7 +9127,7 @@ void GLCanvas3D::_picking_pass()
         imgui.text("Picking disabled");
         imgui.end();
 #endif // ENABLE_RAYCAST_PICKING_DEBUG
-        return;
+        return std::nullopt;
     }
 
     m_hover_volume_idxs.clear();
@@ -8100,59 +9138,12 @@ void GLCanvas3D::_picking_pass()
     const ClippingPlane clipping_plane = ((!current_gizmo || current_gizmo->apply_clipping_plane()) ? m_gizmos.get_clipping_plane() :
                                                                                                       ClippingPlane::ClipsNothing())
                                              .inverted_normal();
-    const SceneRaycaster::HitResult hit = m_scene_raycaster.hit(m_mouse.position, wxGetApp().plater()->get_camera(), &clipping_plane);
-    if (hit.is_valid()) {
-        switch (hit.type)
-        {
-        case SceneRaycaster::EType::Volume:
-        {
-            if (0 <= hit.raycaster_id && hit.raycaster_id < (int)m_volumes.volumes.size()) {
-                const GLVolume* volume = m_volumes.volumes[hit.raycaster_id];
-                if (volume->is_active && !volume->disabled && (volume->composite_id.volume_id >= 0 || m_render_sla_auxiliaries)) {
-                    // do not add the volume id if any gizmo is active and CTRL is pressed
-                    if (m_gizmos.get_current_type() == GLGizmosManager::EType::Undefined || !wxGetKeyState(WXK_CONTROL))
-                        m_hover_volume_idxs.emplace_back(hit.raycaster_id);
-                    m_gizmos.set_hover_id(-1);
-                }
-            }
-            else
-                assert(false);
+    const PickingPassResult result = QueryHybridPickingHit(m_mouse.position, wxGetApp().plater()->get_camera(), clipping_plane,
+                                                            VOLUME_PICKING_TOLERANCE_RADIUS_PX);
+    const SceneRaycaster::HitResult& hit = result.hit;
+    ApplyPickingHit(hit);
 
-            break;
-        }
-        case SceneRaycaster::EType::Gizmo:
-        case SceneRaycaster::EType::FallbackGizmo:
-        {
-            const Size& cnv_size = get_canvas_size();
-            const bool inside = 0 <= m_mouse.position.x() && m_mouse.position.x() < cnv_size.get_width() &&
-                0 <= m_mouse.position.y() && m_mouse.position.y() < cnv_size.get_height();
-            m_gizmos.set_hover_id(inside ? hit.raycaster_id : -1);
-            break;
-        }
-        case SceneRaycaster::EType::Bed:
-        {
-            // BBS: add plate picking logic
-            int plate_hover_id = hit.raycaster_id;
-            if (plate_hover_id >= 0 && plate_hover_id < PartPlateList::MAX_PLATES_COUNT * PartPlate::GRABBER_COUNT) {
-                wxGetApp().plater()->get_partplate_list().set_hover_id(plate_hover_id);
-                m_hover_plate_idxs.emplace_back(plate_hover_id);
-            } else {
-                wxGetApp().plater()->get_partplate_list().reset_hover_id();
-            }
-            m_gizmos.set_hover_id(-1);
-            break;
-        }
-        default:
-        {
-            assert(false);
-            break;
-        }
-        }
-    }
-    else
-        m_gizmos.set_hover_id(-1);
-
-    _update_volumes_hover_state();
+    sinkingContourSceneChanged = _update_volumes_hover_state();
 
 #if ENABLE_RAYCAST_PICKING_DEBUG
     ImGuiWrapper& imgui = *wxGetApp().imgui();
@@ -8252,13 +9243,62 @@ void GLCanvas3D::_picking_pass()
 
     imgui.end();
 #endif // ENABLE_RAYCAST_PICKING_DEBUG
+
+    return result;
 }
 
-void GLCanvas3D::_rectangular_selection_picking_pass()
+bool GLCanvas3D::_rectangular_selection_picking_pass()
 {
     m_gizmos.set_hover_id(-1);
 
     std::set<int> idxs;
+
+    if (m_picking_enabled) {
+        const Camera& camera = wxGetApp().plater()->get_camera();
+        const std::array<int, 4>& viewport = camera.get_viewport();
+        if (m_pickingBuffer.IsReady() && m_pickingBuffer.GetWidth() == viewport[2] &&
+            m_pickingBuffer.GetHeight() == viewport[3]) {
+            const int bufferWidth = m_pickingBuffer.GetWidth();
+            const int bufferHeight = m_pickingBuffer.GetHeight();
+            const int left = std::max(0, static_cast<int>(std::floor(m_rectangle_selection.get_left())));
+            const int right = std::min(bufferWidth, static_cast<int>(std::ceil(m_rectangle_selection.get_right())));
+            const int bottom = std::max(0, bufferHeight - static_cast<int>(std::ceil(m_rectangle_selection.get_top())));
+            const int top = std::min(bufferHeight, bufferHeight - static_cast<int>(std::floor(m_rectangle_selection.get_bottom())));
+            const int width = right - left;
+            const int height = top - bottom;
+
+            if (width <= 0 || height <= 0) {
+                m_hover_volume_idxs.clear();
+                return _update_volumes_hover_state();
+            }
+
+            std::vector<GLPickingBuffer::ColorPixel> pixels;
+            if (m_pickingBuffer.ReadColorRect(left, bottom, width, height, pixels)) {
+                tbb::spin_mutex mutex;
+                tbb::parallel_for(tbb::blocked_range<size_t>(0, pixels.size(), static_cast<size_t>(width)),
+                                  [this, &pixels, &idxs, &mutex](const tbb::blocked_range<size_t>& range) {
+                    std::set<int> localIds;
+                    for (size_t index = range.begin(); index < range.end(); ++index) {
+                        const GLPickingBuffer::ColorPixel& pixel = pixels[index];
+                        if (!pixel.IsValid())
+                            continue;
+
+                        const uint32_t id = pixel.DecodeId();
+                        if (id < m_volumes.volumes.size())
+                            localIds.insert(static_cast<int>(id));
+                    }
+
+                    if (!localIds.empty()) {
+                        tbb::spin_mutex::scoped_lock lock(mutex);
+                        idxs.insert(localIds.begin(), localIds.end());
+                    }
+                });
+
+                m_hover_volume_idxs.assign(idxs.begin(), idxs.end());
+                return _update_volumes_hover_state();
+            }
+        }
+    }
 
     if (m_picking_enabled) {
         const size_t width  = std::max<size_t>(m_rectangle_selection.get_width(), 1);
@@ -8428,7 +9468,7 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
     }
 
     m_hover_volume_idxs.assign(idxs.begin(), idxs.end());
-    _update_volumes_hover_state();
+    return _update_volumes_hover_state();
 }
 
 void GLCanvas3D::_render_background()
@@ -8488,7 +9528,6 @@ void GLCanvas3D::_render_background()
         shader->set_uniform("top_color", bottom_color);
         shader->set_uniform("bottom_color", bottom_color);
         m_background.render();
-        shader->stop_using();
     }
 
     glsafe(::glEnable(GL_DEPTH_TEST));
@@ -8534,7 +9573,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
 
     glsafe(::glEnable(GL_DEPTH_TEST));
 
-    m_camera_clipping_plane = m_gizmos.get_clipping_plane();
+    UpdateVolumeClippingState();
 
     if (m_picking_enabled)
         // Update the layer editing selection to the first object selected, update the current object maximum Z.
@@ -8570,22 +9609,6 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
         }
     }
 
-    if (m_use_clipping_planes)
-        m_volumes.set_z_range(-m_clipping_planes[0].get_data()[3], m_clipping_planes[1].get_data()[3]);
-    else
-        m_volumes.set_z_range(-FLT_MAX, FLT_MAX);
-
-    GLGizmosManager& gm = get_gizmos_manager();
-    GLGizmoBase* current_gizmo = gm.get_current();
-    if (m_canvas_type == CanvasAssembleView) {
-        m_volumes.set_clipping_plane(m_gizmos.get_assemble_view_clipping_plane().get_data());
-    }
-    else if (current_gizmo && !current_gizmo->apply_clipping_plane()) {
-        m_volumes.set_clipping_plane(ClippingPlane::ClipsNothing().get_data());
-    }
-    else {
-        m_volumes.set_clipping_plane(m_camera_clipping_plane.get_data());
-    }
     if (m_canvas_type == CanvasAssembleView)
         m_volumes.set_show_sinking_contours(false);
     else
@@ -8608,10 +9631,12 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 if (m_picking_enabled && m_layers_editing.is_enabled() && (m_layers_editing.last_object_id != -1) && (m_layers_editing.object_max_z() > 0.0f)) {
                     int object_id = m_layers_editing.last_object_id;
                 const Camera& camera = wxGetApp().plater()->get_camera();
-                m_volumes.render(type, false, camera, [object_id](const GLVolume& volume) {
+                const bool lodStateChanged = m_volumes.render(type, false, camera, [object_id](const GLVolume& volume) {
                     // Which volume to paint without the layer height profile shader?
                     return volume.is_active && (volume.is_modifier || volume.composite_id.object_id != object_id);
                     });
+                    if (lodStateChanged)
+                        InvalidatePickingBuffer();
                     m_layers_editing.render_volumes(*this, m_volumes);
                 }
                 else {
@@ -8622,9 +9647,10 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                             shader->set_uniform("show_wireframe", false);
                     }*/
                     //BBS:add assemble view related logic
-                    // do not cull backfaces to show broken geometry, if any
+                    // Cull back faces while rendering Volumes to reduce fragment processing.
                 const Camera& camera = wxGetApp().plater()->get_camera();
-                    m_volumes.render(type, m_picking_enabled, camera, [this, canvas_type](const GLVolume& volume) {
+                    const bool lodStateChanged = m_volumes.render(type, false, camera,
+                        [this, canvas_type](const GLVolume& volume) {
                         if (canvas_type == ECanvasType::CanvasAssembleView) {
                             return !volume.is_modifier && !volume.is_wipe_tower;
                         }
@@ -8633,6 +9659,8 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                         }
                         },
                         partly_inside_enable);
+                    if (lodStateChanged)
+                        InvalidatePickingBuffer();
                 }
             }
             else {
@@ -8659,7 +9687,7 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
             }*/
             const Camera& camera = wxGetApp().plater()->get_camera();
             //BBS:add assemble view related logic
-            m_volumes.render(type, false, camera, [canvas_type](const GLVolume& volume) {
+            const bool lodStateChanged = m_volumes.render(type, false, camera, [canvas_type](const GLVolume& volume) {
                 if (canvas_type == ECanvasType::CanvasAssembleView) {
                     return !volume.is_modifier;
                 }
@@ -8668,6 +9696,8 @@ void GLCanvas3D::_render_objects(GLVolumeCollection::ERenderType type, bool with
                 }
                 },
                 partly_inside_enable);
+            if (lodStateChanged)
+                InvalidatePickingBuffer();
             if (m_canvas_type == CanvasAssembleView && m_gizmos.m_assemble_view_data->model_objects_clipper()->get_position() > 0) {
                 const GLGizmosManager& gm = get_gizmos_manager();
                 shader->stop_using();
@@ -8841,11 +9871,7 @@ void GLCanvas3D::_render_overlays()
     _render_assemble_control();
     _render_assemble_info();
 
-    _render_separator_toolbar_right();
-    _render_separator_toolbar_left();
-    _render_main_toolbar();
-    _render_collapse_toolbar();
-    _render_assemble_view_toolbar();
+    _render_prepare_top_toolbars();
     //BBS: GUI refactor: GLToolbar
     _render_imgui_select_plate_toolbar();
     _render_return_toolbar();
@@ -8978,41 +10004,65 @@ void GLCanvas3D::_render_style_editor()
     ImGui::End();
 }
 
-void GLCanvas3D::_render_volumes_for_picking(const Camera& camera) const
+bool GLCanvas3D::_render_volumes_for_picking(const Camera& camera) const
 {
     GLShaderProgram* shader = wxGetApp().get_shader("flat_clip");
     if (shader == nullptr)
-        return;
+        return false;
 
-    // do not cull backfaces to show broken geometry, if any
-    glsafe(::glDisable(GL_CULL_FACE));
+    // Cull back faces to reduce the Picking FBO geometry workload.
+    const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+    Slic3r::ScopeGuard restoreCullFace([cullFaceEnabled]()
+    {
+        RestoreCapability(GL_CULL_FACE, cullFaceEnabled);
+    });
+    glsafe(::glEnable(GL_CULL_FACE));
 
     const Transform3d& view_matrix = camera.get_view_matrix();
-    for (size_t type = 0; type < 2; ++ type) {
-        GLVolumeWithIdAndZList to_render = volumes_to_render(m_volumes.volumes, (type == 0) ? GLVolumeCollection::ERenderType::Opaque : GLVolumeCollection::ERenderType::Transparent, view_matrix);
-        for (const GLVolumeWithIdAndZ& volume : to_render)
-	        if (!volume.first->disabled && (volume.first->composite_id.volume_id >= 0 || m_render_sla_auxiliaries)) {
-		        // Object picking mode. Render the object with a color encoding the object index.
-                // we reserve color = (0,0,0) for occluders (as the printbed)
-                // so we shift volumes' id by 1 to get the proper color
-                //BBS: remove the bed picking logic
-                const unsigned int id = volume.second.first;
-                //const unsigned int id = 1 + volume.second.first;
-                volume.first->model.set_color(picking_decode(id));
-                shader->start_using();
-                shader->set_uniform("view_model_matrix", view_matrix * volume.first->world_matrix());
-                shader->set_uniform("projection_matrix", camera.get_projection_matrix());
-                shader->set_uniform("volume_world_matrix", volume.first->world_matrix());
-                shader->set_uniform("z_range", m_volumes.get_z_range());
-                shader->set_uniform("clipping_plane", m_volumes.get_clipping_plane());
-                volume.first->picking = true;
-                volume.first->render();
-                volume.first->picking = false;
-                shader->stop_using();
-	        }
-	}
+    shader->start_using();
+    Slic3r::ScopeGuard stopShader([shader]() { shader->stop_using(); });
+    shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+    shader->set_uniform("z_range", m_volumes.get_z_range());
+    shader->set_uniform("clipping_plane", m_volumes.get_clipping_plane());
 
-    glsafe(::glEnable(GL_CULL_FACE));
+    // Keep equal-depth picking deterministic and independent of the current selection.
+    for (size_t volumeIndex = 0; volumeIndex < m_volumes.volumes.size(); ++volumeIndex)
+    {
+        GLVolume* volume = m_volumes.volumes[volumeIndex];
+        if (volume == nullptr || !ShouldRenderVolumeForPicking(*volume))
+            continue;
+
+        const ColorRGBA previousColor = volume->model.get_color();
+        const bool previousPicking = volume->picking;
+        GLWipeTowerVolume* wipeTower = dynamic_cast<GLWipeTowerVolume*>(volume);
+        std::vector<ColorRGBA> previousWipeTowerColors;
+        if (wipeTower != nullptr)
+        {
+            previousWipeTowerColors.reserve(wipeTower->model_per_colors.size());
+            for (const GLModel& model : wipeTower->model_per_colors)
+                previousWipeTowerColors.emplace_back(model.get_color());
+        }
+
+        Slic3r::ScopeGuard restoreVolumeState([volume, previousColor, previousPicking, wipeTower, previousWipeTowerColors]()
+        {
+            volume->model.set_color(previousColor);
+            volume->picking = previousPicking;
+            if (wipeTower != nullptr)
+            {
+                for (size_t index = 0; index < wipeTower->model_per_colors.size() && index < previousWipeTowerColors.size(); ++index)
+                    wipeTower->model_per_colors[index].set_color(previousWipeTowerColors[index]);
+            }
+        });
+
+        const unsigned int id = static_cast<unsigned int>(volumeIndex);
+        volume->model.set_color(picking_decode(id));
+        shader->set_uniform("view_model_matrix", view_matrix * volume->world_matrix());
+        shader->set_uniform("volume_world_matrix", volume->world_matrix());
+        volume->picking = true;
+        volume->render();
+    }
+
+    return true;
 }
 
 void GLCanvas3D::_render_current_gizmo() const
@@ -9036,7 +10086,10 @@ void GLCanvas3D::_render_gizmos_overlay()
     const float size = int(GLGizmosManager::Default_Icons_Size * wxGetApp().toolbar_icon_scale());
     m_gizmos.set_overlay_icon_size(size); //! #ys_FIXME_experiment
 #endif */ /* __WXMSW__ */
-    m_gizmos.render_overlay();
+    if (m_subTextureBindRenderer == nullptr)
+        m_subTextureBindRenderer.reset(new GLSubTextureBindRenderer());
+
+    m_gizmos.render_overlay(m_subTextureBindRenderer.get());
 
     if (m_gizmo_highlighter.m_render_arrow)
     {
@@ -9059,6 +10112,91 @@ int GLCanvas3D::get_main_toolbar_offset() const
         const float offset = (cnv_width - toolbar_total_width) / 2;
         return is_collapse_toolbar_on_left() ? offset + collapse_toolbar_width : offset;
     }
+}
+
+void GLCanvas3D::_render_prepare_top_toolbars()
+{
+    struct ToolbarRenderEntry
+    {
+        GLToolbar* toolbar;
+        GLToolbarRenderLayout renderLayout;
+    };
+
+    std::vector<ToolbarRenderEntry> renderEntries;
+    const Size cnv_size = get_canvas_size();
+    const float canvas_width = static_cast<float>(cnv_size.get_width());
+    const float canvas_height = static_cast<float>(cnv_size.get_height());
+    const float top = 0.5f * canvas_height;
+    const float main_toolbar_left = -0.5f * canvas_width + get_main_toolbar_offset();
+
+    auto appendToolbar = [this, &renderEntries](GLToolbar& toolbar, GLToolbarItem::EType itemType) {
+        GLToolbarRenderLayout renderLayout;
+        if (toolbar.prepare_render_layout(*this, itemType, renderLayout))
+            renderEntries.push_back({ &toolbar, renderLayout });
+    };
+
+    if (m_separator_toolbar.is_enabled()) {
+        const float gizmo_width = m_gizmos.get_scaled_total_width();
+        const float separator_width = m_separator_toolbar.get_width();
+        const float left = main_toolbar_left + m_main_toolbar.get_width() + gizmo_width + 0.5f * separator_width;
+        m_separator_toolbar.set_position(top, left);
+        appendToolbar(m_separator_toolbar, GLToolbarItem::SeparatorLine);
+    }
+
+    if (m_separator_toolbar.is_enabled()) {
+        const float left = main_toolbar_left + m_main_toolbar.get_width();
+        m_separator_toolbar.set_position(top, left);
+        appendToolbar(m_separator_toolbar, GLToolbarItem::SeparatorLine);
+    }
+
+    if (m_main_toolbar.is_enabled()) {
+        m_main_toolbar.set_position(top, main_toolbar_left);
+        appendToolbar(m_main_toolbar, GLToolbarItem::Action);
+    }
+
+    auto& plater = *wxGetApp().plater();
+    const auto sidebar_docking_dir = plater.get_sidebar_docking_state();
+    if (sidebar_docking_dir != Sidebar::None) {
+        GLToolbar& collapse_toolbar = plater.get_collapse_toolbar();
+        const float left = sidebar_docking_dir == Sidebar::Right ?
+            0.5f * canvas_width - static_cast<float>(collapse_toolbar.get_width()) : -0.5f * canvas_width;
+        collapse_toolbar.set_position(top, left);
+        appendToolbar(collapse_toolbar, GLToolbarItem::Action);
+    }
+
+    if (m_assemble_view_toolbar.is_enabled()) {
+        const float gizmo_width = m_gizmos.get_scaled_total_width();
+        const float separator_width = m_separator_toolbar.get_width();
+        const float left = main_toolbar_left + m_main_toolbar.get_width() + gizmo_width + separator_width;
+        m_assemble_view_toolbar.set_position(top, left);
+        appendToolbar(m_assemble_view_toolbar, GLToolbarItem::Action);
+    }
+
+    if (renderEntries.empty())
+        return;
+
+    if (m_subTextureBindRenderer == nullptr)
+        m_subTextureBindRenderer.reset(new GLSubTextureBindRenderer());
+
+    if (!GLTexture::BeginSubTextureBind(m_subTextureBindRenderer.get())) {
+        _render_separator_toolbar_right();
+        _render_separator_toolbar_left();
+        _render_main_toolbar();
+        _render_collapse_toolbar();
+        _render_assemble_view_toolbar();
+        return;
+    }
+
+    for (const ToolbarRenderEntry& entry : renderEntries)
+        entry.toolbar->render_prepared_background(entry.renderLayout);
+
+    for (const ToolbarRenderEntry& entry : renderEntries)
+        entry.toolbar->render_prepared_icons(*this, entry.renderLayout);
+
+    GLTexture::EndSubTextureBind();
+
+    if (m_toolbar_highlighter.m_render_arrow)
+        m_main_toolbar.render_arrow(*this, m_toolbar_highlighter.m_toolbar_item);
 }
 
 //BBS: GUI refactor: GLToolbar adjust
@@ -9918,6 +11056,7 @@ void GLCanvas3D::_render_assemble_control()
             volume->set_bounding_boxes_as_dirty();
         }
         GLVolume::explosion_ratio = m_explosion_ratio;
+        InvalidateSceneAndPickingCaches();
     }
 }
 void GLCanvas3D::_render_assemble_info() const
@@ -10155,14 +11294,41 @@ void GLCanvas3D::_render_selection_sidebar_hints()
     m_selection.render_sidebar_hints(m_sidebar_field, m_gizmos.get_uniform_scaling());
 }
 
-void GLCanvas3D::_update_volumes_hover_state()
+bool GLCanvas3D::_update_volumes_hover_state()
 {
-    for (GLVolume* v : m_volumes.volumes) {
-        v->hover = GLVolume::HS_None;
+    std::vector<int> oldSensitiveHover;
+    std::vector<int> newSensitiveHover;
+    oldSensitiveHover.reserve(4);
+    newSensitiveHover.reserve(4);
+
+    for (size_t index = 0; index < m_volumes.volumes.size(); ++index) {
+        GLVolume* volume = m_volumes.volumes[index];
+        if (volume == nullptr)
+            continue;
+        if (volume->hover != GLVolume::HS_None && HoverAffectsSinkingContour(m_volumes, *volume))
+            oldSensitiveHover.push_back(static_cast<int>(index));
+        volume->hover = GLVolume::HS_None;
     }
 
+    const auto finalize = [&oldSensitiveHover, &newSensitiveHover]() {
+        std::sort(newSensitiveHover.begin(), newSensitiveHover.end());
+        newSensitiveHover.erase(std::unique(newSensitiveHover.begin(), newSensitiveHover.end()), newSensitiveHover.end());
+        return oldSensitiveHover != newSensitiveHover;
+    };
+
+    const auto setHover = [this, &newSensitiveHover](int index, GLVolume::EHoverState state) {
+        if (index < 0 || index >= static_cast<int>(m_volumes.volumes.size()))
+            return;
+        GLVolume* volume = m_volumes.volumes[static_cast<size_t>(index)];
+        if (volume == nullptr)
+            return;
+        volume->hover = state;
+        if (state != GLVolume::HS_None && HoverAffectsSinkingContour(m_volumes, *volume))
+            newSensitiveHover.push_back(index);
+    };
+
     if (m_hover_volume_idxs.empty())
-        return;
+        return finalize();
 
     bool ctrl_pressed = wxGetKeyState(WXK_CONTROL); // additive select/deselect
     bool shift_pressed = wxGetKeyState(WXK_SHIFT);  // select by rectangle
@@ -10171,7 +11337,7 @@ void GLCanvas3D::_update_volumes_hover_state()
     if (alt_pressed && (shift_pressed || ctrl_pressed)) {
         // illegal combinations of keys
         m_hover_volume_idxs.clear();
-        return;
+        return finalize();
     }
 
     bool selection_modifiers_only = m_selection.is_empty() || m_selection.is_any_modifier();
@@ -10195,7 +11361,7 @@ void GLCanvas3D::_update_volumes_hover_state()
     if (hover_modifiers_only && !hover_from_single_instance) {
         // do not allow to select volumes from different instances
         m_hover_volume_idxs.clear();
-        return;
+        return finalize();
     }
 
     for (int i : m_hover_volume_idxs) {
@@ -10216,20 +11382,24 @@ void GLCanvas3D::_update_volumes_hover_state()
                 );
 
             if (as_volume)
-                volume.hover = deselect ? GLVolume::HS_Deselect : GLVolume::HS_Select;
+                setHover(i, deselect ? GLVolume::HS_Deselect : GLVolume::HS_Select);
             else {
                 int object_idx = volume.object_idx();
                 int instance_idx = volume.instance_idx();
 
-                for (GLVolume* v : m_volumes.volumes) {
-                    if (v->object_idx() == object_idx && v->instance_idx() == instance_idx)
-                        v->hover = deselect ? GLVolume::HS_Deselect : GLVolume::HS_Select;
+                for (size_t index = 0; index < m_volumes.volumes.size(); ++index) {
+                    GLVolume* sameInstanceVolume = m_volumes.volumes[index];
+                    if (sameInstanceVolume != nullptr && sameInstanceVolume->object_idx() == object_idx &&
+                        sameInstanceVolume->instance_idx() == instance_idx) {
+                        setHover(static_cast<int>(index), deselect ? GLVolume::HS_Deselect : GLVolume::HS_Select);
+                    }
                 }
             }
         }
         else if (volume.selected)
-            volume.hover = GLVolume::HS_Hover;
+            setHover(i, GLVolume::HS_Hover);
     }
+    return finalize();
 }
 
 void GLCanvas3D::_perform_layer_editing_action(wxMouseEvent* evt)
@@ -10260,17 +11430,37 @@ Vec3d GLCanvas3D::_mouse_to_3d(const Point& mouse_pos, float* z)
     if (m_canvas == nullptr)
         return Vec3d(DBL_MAX, DBL_MAX, DBL_MAX);
 
-    if (z == nullptr) {
-        const SceneRaycaster::HitResult hit = m_scene_raycaster.hit(mouse_pos.cast<double>(), wxGetApp().plater()->get_camera(), nullptr);
-        return hit.is_valid() ? hit.position.cast<double>() : _mouse_to_bed_3d(mouse_pos);
-    }
-    else {
+    if (z != nullptr) {
         const Camera& camera = wxGetApp().plater()->get_camera();
         const Vec4i32 viewport(camera.get_viewport().data());
         Vec3d out;
         igl::unproject(Vec3d(mouse_pos.x(), viewport[3] - mouse_pos.y(), *z), camera.get_view_matrix().matrix(), camera.get_projection_matrix().matrix(), viewport, out);
         return out;
     }
+
+    const Camera& camera = wxGetApp().plater()->get_camera();
+    const int draggedVolumeIndex = m_mouse.drag.move_volume_idx;
+    if (m_mouse.dragging && draggedVolumeIndex != -1) {
+        SceneRaycaster::HitResult draggedVolumeHit;
+        if (RaycastVolume(draggedVolumeIndex, mouse_pos.cast<double>(), camera, nullptr, draggedVolumeHit)) {
+            return draggedVolumeHit.position.cast<double>();
+        }
+
+        return _mouse_to_bed_3d(mouse_pos);
+    }
+
+    if (m_gizmos.is_dragging() || m_mouse.dragging) {
+        const SceneRaycaster::HitResult dragHit =
+            m_scene_raycaster.hit(mouse_pos.cast<double>(), camera, nullptr, SceneRaycaster::EHitMask::All);
+        return dragHit.is_valid() ? dragHit.position.cast<double>() : _mouse_to_bed_3d(mouse_pos);
+    }
+
+    GLGizmoBase* currentGizmo = m_gizmos.get_current();
+    const bool applyClippingPlane = currentGizmo == nullptr || currentGizmo->apply_clipping_plane();
+    const ClippingPlane clippingPlane =
+        (applyClippingPlane ? m_gizmos.get_clipping_plane() : ClippingPlane::ClipsNothing()).inverted_normal();
+    const PickingPassResult result = QueryHybridPickingHit(mouse_pos.cast<double>(), camera, clippingPlane, 0);
+    return result.hit.is_valid() ? result.hit.position.cast<double>() : _mouse_to_bed_3d(mouse_pos);
 }
 
 Vec3d GLCanvas3D::_mouse_to_bed_3d(const Point& mouse_pos)
@@ -11046,8 +12236,10 @@ void GLCanvas3D::_update_selection_from_hover()
     bool ctrl_pressed = wxGetKeyState(WXK_CONTROL);
 
     if (m_hover_volume_idxs.empty()) {
-        if (!ctrl_pressed && (m_rectangle_selection.get_state() == GLSelectionRectangle::Select))
+        if (!ctrl_pressed && m_rectangle_selection.get_state() == GLSelectionRectangle::Select && !m_selection.is_empty()) {
             m_selection.remove_all();
+            SetSelectionAsDirty();
+        }
 
         return;
     }
@@ -11122,7 +12314,7 @@ void GLCanvas3D::_update_selection_from_hover()
 
     m_gizmos.update_data();
     post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
-    m_dirty = true;
+    SetSelectionAsDirty();
 }
 
 bool GLCanvas3D::_deactivate_arrange_menu()

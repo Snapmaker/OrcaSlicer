@@ -193,6 +193,8 @@ set(SLIC3R_GUI_SOURCES
     #GUI/Gizmos/GLGizmoText.hpp
     GUI/GLCanvas3D.cpp
     GUI/GLCanvas3D.hpp
+    GUI/GLPickingBuffer.cpp
+    GUI/GLPickingBuffer.hpp
     GUI/GLModel.cpp
     GUI/GLModel.hpp
     GUI/GLSelectionRectangle.cpp
@@ -201,8 +203,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
     GUI/GLShadersManager.hpp
+    GUI/GLSubTextureBindRenderer.cpp
+    GUI/GLSubTextureBindRenderer.hpp
     GUI/GLTexture.cpp
     GUI/GLTexture.hpp
+    GUI/GLToolbarBackgroundTextureCache.cpp
+    GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
     GUI/GUI_App.cpp

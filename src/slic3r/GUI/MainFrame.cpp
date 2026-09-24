@@ -1773,9 +1773,8 @@ wxBoxSizer* MainFrame::create_side_tools()
     m_slice_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
             if (GUI::FlowType::any_nozzle_high_flow()) {
-                if (GUI::FlowType::distinct_nozzle_flow_type_count() < 2)
-                    GUI::FlowType::sync_filament_volume_types_for_slice();
-                GUI::FilamentGroupDialog dlg(this);
+                bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+                GUI::FilamentGroupDialog dlg(this, all_high_flow);
                 if (dlg.ShowModal() != wxID_OK)
                     return;
             } else {

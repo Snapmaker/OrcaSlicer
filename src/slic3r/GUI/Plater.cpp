@@ -14534,9 +14534,8 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     this->m_slice_all = false;
                     bool grouping_confirmed = true;
                     if (GUI::FlowType::any_nozzle_high_flow()) {
-                        if (GUI::FlowType::distinct_nozzle_flow_type_count() < 2)
-                            GUI::FlowType::sync_filament_volume_types_for_slice();
-                        GUI::FilamentGroupDialog dlg(q);
+                        bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+                        GUI::FilamentGroupDialog dlg(q, all_high_flow);
                         grouping_confirmed = dlg.ShowModal() == wxID_OK;
                     } else {
                         GUI::FlowType::sync_filament_volume_types_for_slice();
@@ -19136,17 +19135,22 @@ wxString Plater::get_project_name()
 
 void Plater::update_all_plate_thumbnails(bool force_update)
 {
+    get_view3D_canvas3D()->make_current_for_postinit();
+    bool rendered = false;
     for (int i = 0; i < get_partplate_list().get_plate_count(); i++) {
         PartPlate* plate = get_partplate_list().get_plate(i);
         ThumbnailsParams thumbnail_params = { {}, false, true, true, true, i};
         if (force_update || !plate->thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params, Camera::EType::Ortho);
+            rendered = true;
         }
         if (force_update || !plate->no_light_thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->no_light_thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params,
                                                     Camera::EType::Ortho,false,false,true);
         }
     }
+    if (rendered)
+        get_preview_canvas3D()->invalidate_select_plate_toolbar();
 }
 
 //invalid all plate's thumbnails

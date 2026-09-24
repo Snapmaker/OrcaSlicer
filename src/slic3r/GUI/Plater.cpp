@@ -109,6 +109,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FilamentGroupDialog.hpp"
 #include "FlowTypeHelper.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Utils.hpp"
@@ -14513,14 +14514,26 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                   this->m_slice_all = false;
+                    this->m_slice_all = false;
                     // Page-switch auto-slice runs the same pre-slice guard as the
                     // slice button so blocking errors (filament temp mixing, cold
                     // plate) surface here too.
-                    if (this->q->guard_before_slice_plate())
+                    bool guard_passed = this->q->guard_before_slice_plate();
+                    bool grouping_confirmed = true;
+                    if (guard_passed && GUI::FlowType::any_nozzle_high_flow()) {
+                        bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+                        GUI::FilamentGroupDialog dlg(q, all_high_flow);
+                        grouping_confirmed = dlg.ShowModal() == wxID_OK;
+                    } else if (guard_passed) {
+                        GUI::FlowType::sync_filament_volume_types_for_slice();
+                    }
+                    if (guard_passed && grouping_confirmed)
                         slice_cancelled = !(this->q->reslice());
-                    else
+                    else {
                         slice_cancelled = true;
+                        if (wxGetApp().mainframe != nullptr)
+                            wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
+                    }
                }
                 else {
                     //reset current plate to the slicing plate
@@ -19112,17 +19125,22 @@ wxString Plater::get_project_name()
 
 void Plater::update_all_plate_thumbnails(bool force_update)
 {
+    get_view3D_canvas3D()->make_current_for_postinit();
+    bool rendered = false;
     for (int i = 0; i < get_partplate_list().get_plate_count(); i++) {
         PartPlate* plate = get_partplate_list().get_plate(i);
         ThumbnailsParams thumbnail_params = { {}, false, true, true, true, i};
         if (force_update || !plate->thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params, Camera::EType::Ortho);
+            rendered = true;
         }
         if (force_update || !plate->no_light_thumbnail_data.is_valid()) {
             get_view3D_canvas3D()->render_thumbnail(plate->no_light_thumbnail_data, plate->plate_thumbnail_width, plate->plate_thumbnail_height, thumbnail_params,
                                                     Camera::EType::Ortho,false,false,true);
         }
     }
+    if (rendered)
+        get_preview_canvas3D()->invalidate_select_plate_toolbar();
 }
 
 //invalid all plate's thumbnails

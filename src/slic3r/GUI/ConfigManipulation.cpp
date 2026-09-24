@@ -213,6 +213,8 @@ void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* c
         wxString::Format(_L("Bottom paint penetration layers cannot exceed bottom shell layers.\n"
                            "Bottom paint penetration layers will be reset to %d."), cur_shell);
     MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
+    // Centre on the screen, not on the (left-anchored) parent panel, so the dialog never covers the edited fields.
+    dialog.CentreOnScreen();
     DynamicPrintConfig new_conf = *config;
     is_msg_dlg_already_exist = true;
     dialog.ShowModal();

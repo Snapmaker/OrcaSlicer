@@ -493,8 +493,19 @@ Polygon cluster_hull(const ExPolygons &outline, const std::vector<FillBedCluster
 // Look for a group of copies that takes less room per copy than a copy on its own: two turned
 // half around, or four turned quarter by quarter, pushed together until they nearly touch. This
 // is what packs hearts or wedges into each other's hollows. Falls back to a single copy.
+//
+// Which way each copy faces is searched too. Turning a copy by its own place in the rosette
+// leaves it side-on to the middle; the layout people lay out by hand - four hearts meeting at
+// their points - needs a turn on top of that, and which one depends on how the shape sits in
+// its own frame.
+//
+// The score is the area of the group's convex hull per copy, against that of one copy's hull:
+// the hull is what the packer works with, so the hollows a neighbour fills are exactly the
+// room that stops being wasted.
 std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, coord_t inflation)
 {
+    static const int PHASES = 8;
+
     const std::vector<FillBedCluster> single{{Vec2crd(0, 0), 0.}};
 
     const BoundingBox bb = get_extents(outline);
@@ -502,32 +513,42 @@ std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, coord_t inf
         return single;
 
     const double                reach  = 2. * bb.size().cast<double>().norm();
-    double                      best   = double(bb.size().x()) * double(bb.size().y());
+    double                      best   = cluster_hull(outline, single).area();
     std::vector<FillBedCluster> winner = single;
+    if (best <= 0.)
+        return single;
 
-    for (const size_t n : {size_t(2), size_t(4)}) {
-        std::vector<ExPolygons> shapes;
-        shapes.reserve(n);
-        for (size_t i = 0; i < n; ++i)
-            shapes.emplace_back(turned(outline, 2. * PI * double(i) / double(n), inflation));
+    for (const size_t n : {size_t(2), size_t(4)})
+        for (int p = 0; p < PHASES; ++p) {
+            const double phase = 2. * PI * double(p) / double(PHASES);
 
-        const double radius = nest_radius(shapes, reach);
-        if (radius >= reach)
-            continue;
+            std::vector<ExPolygons> shapes;
+            std::vector<double>     turns;
+            shapes.reserve(n);
+            turns.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                turns.emplace_back(2. * PI * double(i) / double(n) + phase);
+                shapes.emplace_back(turned(outline, turns.back(), inflation));
+            }
 
-        std::vector<FillBedCluster> members;
-        members.reserve(n);
-        for (size_t i = 0; i < n; ++i)
-            members.push_back({rosette_offset(radius, i, n), 2. * PI * double(i) / double(n)});
+            const double radius = nest_radius(shapes, reach);
+            if (radius >= reach)
+                continue;
 
-        const BoundingBox group = get_extents(cluster_hull(outline, members));
-        const double      area  = double(group.size().x()) * double(group.size().y()) / double(n);
-        if (area < 0.98 * best) { // has to be a real gain, not rounding
-            best   = area;
-            winner = members;
+            std::vector<FillBedCluster> members;
+            members.reserve(n);
+            for (size_t i = 0; i < n; ++i)
+                members.push_back({rosette_offset(radius, i, n), turns[i]});
+
+            const double area = cluster_hull(outline, members).area() / double(n);
+            if (area < 0.98 * best) { // has to be a real gain, not rounding
+                best   = area;
+                winner = members;
+            }
         }
-    }
 
+    BOOST_LOG_TRIVIAL(info) << "fill bed: nested " << winner.size() << " copies per group, "
+                            << "hull area per copy " << best;
     return winner;
 }
 

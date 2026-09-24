@@ -263,6 +263,7 @@ private:
     void messureSize();
     void autoPosition();
     void ensure_row_visible(int row);
+    void ensure_selection_at_top();
     void setGroup(const wxString &value);
     void show_submenu();
     void on_submenu_motion_timer(wxTimerEvent &event);

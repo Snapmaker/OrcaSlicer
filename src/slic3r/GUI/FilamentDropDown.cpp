@@ -341,6 +341,36 @@ void FilamentDropDown::ensure_row_visible(int row)
         offset.y = 0;
 }
 
+void FilamentDropDown::ensure_selection_at_top()
+{
+    const int selected_row = selectedItem();
+    if (selected_row < 0 || rowSize.y <= 0)
+        return;
+
+    const size_t max_rows      = max_visible_row_count(max_visible_rows);
+    size_t       visible_count = std::min(max_rows, std::max(count, size_t{1}));
+    const int     client_height = GetClientSize().y;
+    if (client_height > 0)
+    {
+        const size_t client_rows = static_cast<size_t>(client_height / rowSize.y);
+        if (client_rows > 0)
+            visible_count = std::min(visible_count, client_rows);
+    }
+    if (count <= visible_count)
+    {
+        offset.y = 0;
+        return;
+    }
+
+    const int viewport_height = multiply_to_int(rowSize.y, visible_count);
+    const int content_height  = multiply_to_int(rowSize.y, count);
+    const int selected_top    = multiply_to_int(rowSize.y, static_cast<size_t>(selected_row));
+    const int minimum_offset  = viewport_height - content_height;
+    offset.y                  = std::max(minimum_offset, -selected_top);
+    if (offset.y > 0)
+        offset.y = 0;
+}
+
 void FilamentDropDown::show_submenu()
 {
     if (subDropDown == nullptr)
@@ -400,7 +430,9 @@ bool FilamentDropDown::openSelectionGroup()
         drop.setGroup(target);
         drop.messureSize();
     }
+    drop.SetSelection(selection);
     drop.autoPosition();
+    drop.ensure_selection_at_top();
     drop.paintNow();
     show_submenu();
     return true;

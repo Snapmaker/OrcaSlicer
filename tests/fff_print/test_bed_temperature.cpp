@@ -52,9 +52,11 @@ TEST_CASE("Mixed print uses the highest bed temperature", "[BedTemperature]")
 {
     DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
     config.set_num_extruders(2);
-    config.set_num_filaments(2);
+    // Filament count is data-driven like a loaded preset (Preset.cpp derives it from
+    // filament_diameter); DynamicPrintConfig::set_num_filaments does not resize these vectors.
     config.set_deserialize_strict({
         { "curr_bed_type", "High Temp Plate" },
+        { "filament_diameter", "1.75,1.75" }, // two filaments, preset-style
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
         // Wall printed by extruder 1 (0-based 0, low bed temp 35C), infill by extruder 2 (0-based 1, 65C).
@@ -73,9 +75,11 @@ TEST_CASE("Brim-introduced extruder is covered when wall_loops is zero", "[BedTe
 {
     DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
     config.set_num_extruders(2);
-    config.set_num_filaments(2);
+    // Filament count is data-driven like a loaded preset (Preset.cpp derives it from
+    // filament_diameter); DynamicPrintConfig::set_num_filaments does not resize these vectors.
     config.set_deserialize_strict({
         { "curr_bed_type", "High Temp Plate" },
+        { "filament_diameter", "1.75,1.75" }, // two filaments, preset-style
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
         // No walls. Infill uses extruder 1 (0-based 0, 35C); the brim follows wall_filament
@@ -98,9 +102,11 @@ TEST_CASE("bed_temperature_initial_layer_single expands to the max", "[BedTemper
 {
     DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
     config.set_num_extruders(2);
-    config.set_num_filaments(2);
+    // Filament count is data-driven like a loaded preset (Preset.cpp derives it from
+    // filament_diameter); DynamicPrintConfig::set_num_filaments does not resize these vectors.
     config.set_deserialize_strict({
         { "curr_bed_type", "High Temp Plate" },
+        { "filament_diameter", "1.75,1.75" }, // two filaments, preset-style
         { "hot_plate_temp", "30,60" },
         { "hot_plate_temp_initial_layer", "35,65" },
         { "wall_filament", 1 },

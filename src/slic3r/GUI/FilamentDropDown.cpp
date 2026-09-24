@@ -1099,16 +1099,25 @@ bool FilamentDropDown::ProcessLeftDown(wxMouseEvent &event)
 
 bool FilamentDropDown::is_pointer_over_popup_tree() const
 {
-    const FilamentDropDown *root = mainDropDown != nullptr ? mainDropDown : this;
-    const wxPoint            mouse_pos = wxGetMousePosition();
-    if (root->GetScreenRect().Contains(mouse_pos))
-        return true;
+    const wxPoint mouse_pos = wxGetMousePosition();
 
-    if (root->subDropDown != nullptr && root->subDropDown->IsShown() &&
-        root->subDropDown->GetScreenRect().Contains(mouse_pos))
-        return true;
+    // A submenu is a sibling of the root popup, not a child of it: only its own window and the
+    // shared anchor belong to its tree. Counting the root popup here kept the submenu open when
+    // the pointer moved onto the root, leaving a stale list behind and blocking root-item clicks.
+    if (mainDropDown != nullptr)
+    {
+        if (GetScreenRect().Contains(mouse_pos))
+            return true;
+        const wxWindow *anchor = GetParent();
+        return anchor != nullptr && anchor->GetScreenRect().Contains(mouse_pos);
+    }
 
-    const wxWindow *anchor = root->GetParent();
+    // Root popup: its tree is the root window, the visible submenu, and the shared anchor.
+    if (GetScreenRect().Contains(mouse_pos))
+        return true;
+    if (subDropDown != nullptr && subDropDown->IsShown() && subDropDown->GetScreenRect().Contains(mouse_pos))
+        return true;
+    const wxWindow *anchor = GetParent();
     return anchor != nullptr && anchor->GetScreenRect().Contains(mouse_pos);
 }
 

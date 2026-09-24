@@ -6565,14 +6565,6 @@ msgstr ""
 msgid "Upload and Print"
 msgstr "Upload en print"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Afdrukken per object:\n"
-"Het wordt geadviseerd om automatisch rangschikken te gebruiken om botsingen "
-"tijdens het afdrukken te voorkomen."
-
 msgid "Send G-code"
 msgstr "Verstuur G-code"
 

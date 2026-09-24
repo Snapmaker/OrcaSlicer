@@ -36,11 +36,15 @@
 #include "Camera.hpp"
 #include "GUI_Colors.hpp"
 #include "GUI_ObjectList.hpp"
+#include "OpenGLManager.hpp"
 #include "Tab.hpp"
 #include "format.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include <imgui/imgui_internal.h>
 #include <wx/dcgraph.h>
+
+#include "nanosvg/nanosvg.h"
+#include "nanosvg/nanosvgrast.h"
 using boost::optional;
 namespace fs = boost::filesystem;
 
@@ -84,7 +88,338 @@ int resolve_sparse_infill_filament(const ConfigLike &config, int inherited_spars
     return sparse_opt != nullptr && sparse_opt->getInt() > 0 ? sparse_opt->getInt() : inherited_sparse_infill_filament;
 }
 
+struct RasterizedTile
+{
+    std::vector<unsigned char> rgba;
+    int width{ 0 };
+    int height{ 0 };
+};
+
+bool IsRasterizedTileValid(const RasterizedTile& tile)
+{
+    if (tile.width <= 0 || tile.height <= 0)
+        return false;
+
+    const size_t expectedSize = static_cast<size_t>(tile.width) * static_cast<size_t>(tile.height) * 4;
+    return tile.rgba.size() == expectedSize;
+}
+
+bool RasterizeAtlasSvgSource(const std::string& filename, int rasterSize, RasterizedTile& tile)
+{
+    tile = RasterizedTile();
+    if (rasterSize <= 0 || !boost::filesystem::exists(filename) || !boost::algorithm::iends_with(filename, ".svg"))
+        return false;
+
+    NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    if (image == nullptr)
+        return false;
+
+    NSVGrasterizer* rasterizer = nsvgCreateRasterizer();
+    if (rasterizer == nullptr)
+    {
+        nsvgDelete(image);
+        return false;
+    }
+
+    tile.width = rasterSize;
+    tile.height = rasterSize;
+    tile.rgba.assign(static_cast<size_t>(tile.width) * static_cast<size_t>(tile.height) * 4, 0);
+
+    const float scale = static_cast<float>(rasterSize) / std::max(image->width, image->height);
+    const float offsetX = (static_cast<float>(rasterSize) - image->width * scale) * 0.5f;
+    const float offsetY = (static_cast<float>(rasterSize) - image->height * scale) * 0.5f;
+    nsvgRasterize(rasterizer, image, offsetX, offsetY, scale,
+                  tile.rgba.data(), tile.width, tile.height, tile.width * 4);
+
+    nsvgDeleteRasterizer(rasterizer);
+    nsvgDelete(image);
+    return IsRasterizedTileValid(tile);
+}
+
+bool CopyAtlasTile(const RasterizedTile& tile, std::vector<unsigned char>& atlasData, int atlasWidth, int atlasHeight,
+                   int destX, int destY, int padding)
+{
+    if (!IsRasterizedTileValid(tile) || atlasWidth <= 0 || atlasHeight <= 0 || padding < 0)
+        return false;
+
+    if (destX - padding < 0 || destY - padding < 0 ||
+        destX + tile.width + padding > atlasWidth || destY + tile.height + padding > atlasHeight)
+        return false;
+
+    for (int row = -padding; row < tile.height + padding; ++row)
+    {
+        const int sourceY = std::min(std::max(row, 0), tile.height - 1);
+        const int targetY = destY + row;
+        for (int col = -padding; col < tile.width + padding; ++col)
+        {
+            const int sourceX = std::min(std::max(col, 0), tile.width - 1);
+            const int targetX = destX + col;
+            const size_t sourceOffset = (static_cast<size_t>(sourceY) * static_cast<size_t>(tile.width) +
+                                         static_cast<size_t>(sourceX)) * 4;
+            const size_t targetOffset = (static_cast<size_t>(targetY) * static_cast<size_t>(atlasWidth) +
+                                         static_cast<size_t>(targetX)) * 4;
+            std::copy(tile.rgba.data() + sourceOffset, tile.rgba.data() + sourceOffset + 4,
+                      atlasData.data() + targetOffset);
+        }
+    }
+
+    return true;
+}
+
+bool CalcAtlasUvTransform(const GLModel& model, const PartPlateIconAtlas::Region& region,
+                          std::array<float, 4>& uvTransform)
+{
+    Vec2f minCoord;
+    Vec2f maxCoord;
+    if (!model.GetTexCoordBounds(minCoord, maxCoord))
+        return false;
+
+    const float sourceWidth = maxCoord.x() - minCoord.x();
+    const float sourceHeight = maxCoord.y() - minCoord.y();
+    const float minSourceSize = 0.000001f;
+    if ((sourceWidth > -minSourceSize && sourceWidth < minSourceSize) ||
+        (sourceHeight > -minSourceSize && sourceHeight < minSourceSize))
+        return false;
+
+    const float scaleU = (region.u1 - region.u0) / sourceWidth;
+    const float scaleV = (region.v1 - region.v0) / sourceHeight;
+    uvTransform = { region.u0 - minCoord.x() * scaleU, region.v0 - minCoord.y() * scaleV, scaleU, scaleV };
+    return true;
+}
+
+PartPlateIconAtlas::IconType GetCloseIconType(int hoverId)
+{
+    return hoverId == 1 ? PartPlateIconAtlas::IconType::CloseHovered : PartPlateIconAtlas::IconType::Close;
+}
+
+PartPlateIconAtlas::IconType GetOrientIconType(int hoverId)
+{
+    return hoverId == 2 ? PartPlateIconAtlas::IconType::OrientHovered : PartPlateIconAtlas::IconType::Orient;
+}
+
+PartPlateIconAtlas::IconType GetArrangeIconType(int hoverId)
+{
+    return hoverId == 3 ? PartPlateIconAtlas::IconType::ArrangeHovered : PartPlateIconAtlas::IconType::Arrange;
+}
+
+PartPlateIconAtlas::IconType GetLockIconType(int hoverId, bool locked)
+{
+    if (locked)
+        return hoverId == 4 ? PartPlateIconAtlas::IconType::LockedHovered : PartPlateIconAtlas::IconType::Locked;
+
+    return hoverId == 4 ? PartPlateIconAtlas::IconType::UnlockedHovered : PartPlateIconAtlas::IconType::Unlocked;
+}
+
+PartPlateIconAtlas::IconType GetPlateNameEditIconType(int hoverId)
+{
+    return hoverId == 6 ? PartPlateIconAtlas::IconType::PlateNameEditHovered :
+                          PartPlateIconAtlas::IconType::PlateNameEdit;
+}
+
+PartPlateIconAtlas::IconType GetMoveFrontIconType(int hoverId)
+{
+    return hoverId == 7 ? PartPlateIconAtlas::IconType::MoveFrontHovered : PartPlateIconAtlas::IconType::MoveFront;
+}
+
+PartPlateIconAtlas::IconType GetPlateSettingsIconType(int hoverId, bool hasPlateSettings)
+{
+    if (hasPlateSettings)
+        return hoverId == 5 ? PartPlateIconAtlas::IconType::PlateSettingsChangedHovered :
+                              PartPlateIconAtlas::IconType::PlateSettingsChanged;
+
+    return hoverId == 5 ? PartPlateIconAtlas::IconType::PlateSettingsHovered :
+                          PartPlateIconAtlas::IconType::PlateSettings;
+}
+
 } // namespace
+
+bool PartPlateIconAtlas::Init(bool darkMode, int iconSize)
+{
+    Reset();
+
+    std::vector<Source> sources;
+    if (!BuildSources(darkMode, sources))
+        return false;
+
+    return BuildTexture(sources, iconSize);
+}
+
+void PartPlateIconAtlas::Reset()
+{
+    _texture.reset();
+    _regions.clear();
+    ++_version;
+}
+
+bool PartPlateIconAtlas::IsValid() const
+{
+    return _texture.get_id() != 0 && !_regions.empty();
+}
+
+unsigned int PartPlateIconAtlas::GetTextureId() const
+{
+    return _texture.get_id();
+}
+
+unsigned int PartPlateIconAtlas::GetVersion() const
+{
+    return _version;
+}
+
+bool PartPlateIconAtlas::GetRegion(IconType type, Region& region) const
+{
+    const std::map<IconType, Region>::const_iterator it = _regions.find(type);
+    if (it == _regions.end())
+        return false;
+
+    region = it->second;
+    return true;
+}
+
+bool PartPlateIconAtlas::BuildSources(bool darkMode, std::vector<Source>& sources) const
+{
+    sources.clear();
+    const std::string path = resources_dir() + "/images/";
+
+    const auto addSvgSource = [&sources, &path](IconType type, const std::string& filename)
+    {
+        Source source;
+        source.type = type;
+        source.filename = path + filename;
+        sources.emplace_back(source);
+    };
+
+    addSvgSource(IconType::Close, darkMode ? "plate_close_dark.svg" : "plate_close.svg");
+    addSvgSource(IconType::CloseHovered, darkMode ? "plate_close_hover_dark.svg" : "plate_close_hover.svg");
+    addSvgSource(IconType::MoveFront, darkMode ? "plate_move_front_dark.svg" : "plate_move_front.svg");
+    addSvgSource(IconType::MoveFrontHovered,
+                 darkMode ? "plate_move_front_hover_dark.svg" : "plate_move_front_hover.svg");
+    addSvgSource(IconType::Arrange, darkMode ? "plate_arrange_dark.svg" : "plate_arrange.svg");
+    addSvgSource(IconType::ArrangeHovered, darkMode ? "plate_arrange_hover_dark.svg" : "plate_arrange_hover.svg");
+    addSvgSource(IconType::Orient, darkMode ? "plate_orient_dark.svg" : "plate_orient.svg");
+    addSvgSource(IconType::OrientHovered, darkMode ? "plate_orient_hover_dark.svg" : "plate_orient_hover.svg");
+    addSvgSource(IconType::Locked, darkMode ? "plate_locked_dark.svg" : "plate_locked.svg");
+    addSvgSource(IconType::LockedHovered, darkMode ? "plate_locked_hover_dark.svg" : "plate_locked_hover.svg");
+    addSvgSource(IconType::Unlocked, darkMode ? "plate_unlocked_dark.svg" : "plate_unlocked.svg");
+    addSvgSource(IconType::UnlockedHovered, darkMode ? "plate_unlocked_hover_dark.svg" : "plate_unlocked_hover.svg");
+    addSvgSource(IconType::PlateSettings, darkMode ? "plate_settings_dark.svg" : "plate_settings.svg");
+    addSvgSource(IconType::PlateSettingsChanged,
+                 darkMode ? "plate_settings_changed_dark.svg" : "plate_settings_changed.svg");
+    addSvgSource(IconType::PlateSettingsHovered,
+                 darkMode ? "plate_settings_hover_dark.svg" : "plate_settings_hover.svg");
+    addSvgSource(IconType::PlateSettingsChangedHovered,
+                 darkMode ? "plate_settings_changed_hover_dark.svg" : "plate_settings_changed_hover.svg");
+    addSvgSource(IconType::PlateNameEdit, darkMode ? "plate_name_edit_dark.svg" : "plate_name_edit.svg");
+    addSvgSource(IconType::PlateNameEditHovered,
+                 darkMode ? "plate_name_edit_hover_dark.svg" : "plate_name_edit_hover.svg");
+
+    return !sources.empty();
+}
+
+bool PartPlateIconAtlas::BuildTexture(const std::vector<Source>& sources, int iconSize)
+{
+    if (sources.empty() || iconSize <= 0)
+        return false;
+
+    const int padding = 4;
+    const int maxTextureSize = OpenGLManager::get_gl_info().get_max_tex_size();
+    if (maxTextureSize <= 0)
+        return false;
+
+    int rasterSize = std::min(iconSize, 256);
+    int cellWidth = 0;
+    int cellHeight = 0;
+    int columnCount = 0;
+    int rowCount = 0;
+    bool atlasFits = false;
+
+    struct RasterizedSource
+    {
+        Source source;
+        RasterizedTile tile;
+    };
+
+    std::vector<RasterizedSource> rasterizedSources;
+    while (rasterSize > 0)
+    {
+        rasterizedSources.clear();
+
+        int maxTileWidth = 0;
+        int maxTileHeight = 0;
+        for (size_t sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex)
+        {
+            const Source& source = sources[sourceIndex];
+            RasterizedTile tile;
+            const bool loaded = RasterizeAtlasSvgSource(source.filename, rasterSize, tile);
+            if (!loaded)
+            {
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(":load atlas source %1% failed") % source.filename;
+                return false;
+            }
+
+            maxTileWidth = std::max(maxTileWidth, tile.width);
+            maxTileHeight = std::max(maxTileHeight, tile.height);
+
+            RasterizedSource rasterizedSource;
+            rasterizedSource.source = source;
+            rasterizedSource.tile = std::move(tile);
+            rasterizedSources.push_back(std::move(rasterizedSource));
+        }
+
+        cellWidth = maxTileWidth + padding * 2;
+        cellHeight = maxTileHeight + padding * 2;
+        if (cellWidth <= 0 || cellHeight <= 0)
+            return false;
+
+        const int sourceCount = static_cast<int>(rasterizedSources.size());
+        columnCount = std::min(sourceCount, std::max(1, maxTextureSize / cellWidth));
+        rowCount = static_cast<int>((rasterizedSources.size() + static_cast<size_t>(columnCount) - 1) /
+                                    static_cast<size_t>(columnCount));
+        if (cellWidth <= maxTextureSize && columnCount > 0 && rowCount * cellHeight <= maxTextureSize)
+        {
+            atlasFits = true;
+            break;
+        }
+
+        --rasterSize;
+    }
+
+    if (!atlasFits || rasterSize <= 0 || columnCount <= 0 || rowCount <= 0)
+        return false;
+
+    const int atlasWidth = columnCount * cellWidth;
+    const int atlasHeight = rowCount * cellHeight;
+    std::vector<unsigned char> atlasData(static_cast<size_t>(atlasWidth) * static_cast<size_t>(atlasHeight) * 4, 0);
+    std::map<IconType, Region> regions;
+
+    for (size_t sourceIndex = 0; sourceIndex < rasterizedSources.size(); ++sourceIndex)
+    {
+        const RasterizedSource& rasterizedSource = rasterizedSources[sourceIndex];
+        const int column = static_cast<int>(sourceIndex % static_cast<size_t>(columnCount));
+        const int row = static_cast<int>(sourceIndex / static_cast<size_t>(columnCount));
+        const int contentX = column * cellWidth + padding;
+        const int contentY = row * cellHeight + padding;
+        if (!CopyAtlasTile(rasterizedSource.tile, atlasData, atlasWidth, atlasHeight, contentX, contentY, padding))
+        {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":copy atlas tile failed";
+            return false;
+        }
+
+        Region region;
+        region.u0 = static_cast<float>(contentX) / static_cast<float>(atlasWidth);
+        region.u1 = static_cast<float>(contentX + rasterizedSource.tile.width) / static_cast<float>(atlasWidth);
+        region.v0 = static_cast<float>(contentY) / static_cast<float>(atlasHeight);
+        region.v1 = static_cast<float>(contentY + rasterizedSource.tile.height) / static_cast<float>(atlasHeight);
+        regions[rasterizedSource.source.type] = region;
+    }
+
+    if (!_texture.load_from_raw_data(std::move(atlasData), static_cast<unsigned int>(atlasWidth),
+                                     static_cast<unsigned int>(atlasHeight), false, true))
+        return false;
+
+    _regions.swap(regions);
+    return true;
+}
 
 ColorRGBA PartPlate::SELECT_COLOR		= { 0.2666f, 0.2784f, 0.2784f, 1.0f }; //{ 0.4196f, 0.4235f, 0.4235f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_COLOR		= { 0.82f, 0.82f, 0.82f, 1.0f };
@@ -695,10 +1030,6 @@ void PartPlate::render_logo_texture(GLTexture &logo_texture, GLModel& logo_buffe
 	if (logo_buffer.is_initialized()) {
 		GLShaderProgram* shader = wxGetApp().get_shader("printbed");
 		if (shader != nullptr) {
-			shader->start_using();
-            const Camera &camera = wxGetApp().plater()->get_camera();
-            shader->set_uniform("view_model_matrix", camera.get_view_matrix());
-            shader->set_uniform("projection_matrix", camera.get_projection_matrix());
 			shader->set_uniform("transparent_background", 0);
 			shader->set_uniform("svg_source", 0);
 
@@ -712,11 +1043,10 @@ void PartPlate::render_logo_texture(GLTexture &logo_texture, GLModel& logo_buffe
 				glsafe(::glFrontFace(GL_CW));
 
 			// show the temporary texture while no compressed data is available
-			GLuint tex_id = (GLuint)logo_texture.get_id();
+			GLuint tex_id = static_cast<GLuint>(logo_texture.get_id());
 
 			glsafe(::glBindTexture(GL_TEXTURE_2D, tex_id));
             logo_buffer.render();
-			glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
 
 			if (bottom)
 				glsafe(::glFrontFace(GL_CCW));
@@ -724,8 +1054,6 @@ void PartPlate::render_logo_texture(GLTexture &logo_texture, GLModel& logo_buffe
             glsafe(::glDisable(GL_BLEND));
 
 			glsafe(::glDepthMask(GL_TRUE));
-
-			shader->stop_using();
 		}
 	}
 }
@@ -931,10 +1259,165 @@ void PartPlate::render_height_limit(PartPlate::HeightLimitMode mode)
 
 void PartPlate::render_icon_texture(GLModel &buffer, GLTexture &texture)
 {
-	GLuint tex_id = (GLuint)texture.get_id();
+	GLuint tex_id = static_cast<GLuint>(texture.get_id());
 	glsafe(::glBindTexture(GL_TEXTURE_2D, tex_id));
     buffer.render();
-	glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
+}
+
+void PartPlate::InvalidateRightIconBatch()
+{
+    _rightIconBatchModel.reset();
+    _rightIconBatchKeyValid = false;
+}
+
+PartPlate::RightIconBatchKey PartPlate::BuildRightIconBatchKey(int hoverId, bool hasPlateSettings) const
+{
+    RightIconBatchKey key;
+    key.hoverId = hoverId;
+    key.locked = is_locked();
+    key.hasPlateSettings = hasPlateSettings;
+    key.renderPlateSettings = m_partplate_list != nullptr && m_partplate_list->render_plate_settings;
+    key.atlasVersion = m_partplate_list != nullptr ? m_partplate_list->m_iconAtlas.GetVersion() : 0;
+    return key;
+}
+
+bool PartPlate::IsSameRightIconBatchKey(const RightIconBatchKey& key) const
+{
+    return _rightIconBatchKeyValid &&
+        _rightIconBatchKey.hoverId == key.hoverId &&
+        _rightIconBatchKey.locked == key.locked &&
+        _rightIconBatchKey.hasPlateSettings == key.hasPlateSettings &&
+        _rightIconBatchKey.renderPlateSettings == key.renderPlateSettings &&
+        _rightIconBatchKey.atlasVersion == key.atlasVersion;
+}
+
+bool PartPlate::AppendRightIconBatchModel(GLModel::Geometry& geometry, const GLModel& model,
+                                          const PartPlateIconAtlas::Region& region) const
+{
+    const GLModel::Geometry& sourceGeometry = model.get_geometry();
+    if (sourceGeometry.is_empty())
+        return false;
+
+    if (!GLModel::Geometry::has_position(sourceGeometry.format) ||
+        !GLModel::Geometry::has_tex_coord(sourceGeometry.format) ||
+        GLModel::Geometry::position_stride_floats(sourceGeometry.format) != 3)
+        return false;
+
+    std::array<float, 4> uvTransform;
+    if (!CalcAtlasUvTransform(model, region, uvTransform))
+        return false;
+
+    const unsigned int vertexOffset = static_cast<unsigned int>(geometry.vertices_count());
+    const size_t vertexCount = sourceGeometry.vertices_count();
+    for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+    {
+        const Vec3f position = sourceGeometry.extract_position_3(vertexIndex);
+        const Vec2f sourceUv = sourceGeometry.extract_tex_coord_2(vertexIndex);
+        const Vec2f targetUv(sourceUv.x() * uvTransform[2] + uvTransform[0],
+                             sourceUv.y() * uvTransform[3] + uvTransform[1]);
+        geometry.add_vertex(position, targetUv);
+    }
+
+    const size_t indexCount = sourceGeometry.indices_count();
+    for (size_t index = 0; index < indexCount; ++index)
+        geometry.add_index(vertexOffset + sourceGeometry.extract_index(index));
+
+    return true;
+}
+
+bool PartPlate::AppendRightIconBatchIcon(GLModel::Geometry& geometry, const GLModel& model,
+                                         PartPlateIconAtlas::IconType iconType) const
+{
+    if (m_partplate_list == nullptr || !m_partplate_list->m_iconAtlas.IsValid())
+        return false;
+
+    PartPlateIconAtlas::Region region;
+    if (!m_partplate_list->m_iconAtlas.GetRegion(iconType, region))
+        return false;
+
+    return AppendRightIconBatchModel(geometry, model, region);
+}
+
+bool PartPlate::RebuildRightIconBatchModel(const RightIconBatchKey& key)
+{
+    _rightIconBatchModel.reset();
+
+    GLModel::Geometry geometry;
+    geometry.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3T2 };
+
+    if (!AppendRightIconBatchIcon(geometry, m_del_icon.model, GetCloseIconType(key.hoverId)) ||
+        !AppendRightIconBatchIcon(geometry, m_orient_icon.model, GetOrientIconType(key.hoverId)) ||
+        !AppendRightIconBatchIcon(geometry, m_arrange_icon.model, GetArrangeIconType(key.hoverId)) ||
+        !AppendRightIconBatchIcon(geometry, m_lock_icon.model, GetLockIconType(key.hoverId, key.locked)) ||
+        !AppendRightIconBatchIcon(geometry, m_plate_name_edit_icon.model, GetPlateNameEditIconType(key.hoverId)) ||
+        !AppendRightIconBatchIcon(geometry, m_move_front_icon.model, GetMoveFrontIconType(key.hoverId)))
+        return false;
+
+    if (key.renderPlateSettings && !AppendRightIconBatchIcon(geometry, m_plate_settings_icon.model,
+									GetPlateSettingsIconType(key.hoverId, key.hasPlateSettings)))
+        return false;
+
+    if (geometry.is_empty())
+        return false;
+
+    _rightIconBatchModel.init_from(std::move(geometry));
+    return _rightIconBatchModel.is_initialized();
+}
+
+bool PartPlate::RenderRightIconBatch(const RightIconBatchKey& key)
+{
+    if (m_partplate_list == nullptr || !m_partplate_list->m_iconAtlas.IsValid())
+        return false;
+
+    if (!IsSameRightIconBatchKey(key))
+    {
+        if (!RebuildRightIconBatchModel(key))
+        {
+            InvalidateRightIconBatch();
+            return false;
+        }
+
+        _rightIconBatchKey = key;
+        _rightIconBatchKeyValid = true;
+    }
+
+    if (!_rightIconBatchModel.is_initialized())
+        return false;
+
+    const GLuint atlasTexId = static_cast<GLuint>(m_partplate_list->m_iconAtlas.GetTextureId());
+    glsafe(::glBindTexture(GL_TEXTURE_2D, atlasTexId));
+    _rightIconBatchModel.render();
+    return true;
+}
+
+void PartPlate::ShowRightIconTooltip(int hoverId)
+{
+    switch (hoverId)
+    {
+    case 1:
+        show_tooltip(_u8L("Remove current plate (if not last one)"));
+        break;
+    case 2:
+        show_tooltip(_u8L("Auto orient objects on current plate"));
+        break;
+    case 3:
+        show_tooltip(_u8L("Arrange objects on current plate"));
+        break;
+    case 4:
+        show_tooltip(is_locked() ? _u8L("Unlock current plate") : _u8L("Lock current plate"));
+        break;
+    case 5:
+        show_tooltip(_u8L("Customize current plate"));
+        break;
+    case 6:
+        show_tooltip(_u8L("Edit current plate name"));
+        break;
+    case 7:
+        show_tooltip(_u8L("Move plate to the front"));
+        break;
+    default:
+        break;
+    }
 }
 
 void PartPlate::render_plate_name_texture()
@@ -942,10 +1425,9 @@ void PartPlate::render_plate_name_texture()
 	if (m_name_texture.get_id() == 0)
 		generate_plate_name_texture();
 
-	GLuint tex_id = (GLuint)m_name_texture.get_id();
+	GLuint tex_id = static_cast<GLuint>(m_name_texture.get_id());
 	glsafe(::glBindTexture(GL_TEXTURE_2D, tex_id));
     m_plate_name_icon.render();
-	glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
 }
 
 void PartPlate::show_tooltip(const std::string tooltip)
@@ -967,10 +1449,6 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
 {
 	GLShaderProgram* shader = wxGetApp().get_shader("printbed");
 	if (shader != nullptr) {
-		shader->start_using();
-        const Camera &camera = wxGetApp().plater()->get_camera();
-        shader->set_uniform("view_model_matrix", camera.get_view_matrix());
-        shader->set_uniform("projection_matrix", camera.get_projection_matrix());
 		shader->set_uniform("transparent_background", bottom);
 		//shader->set_uniform("svg_source", boost::algorithm::iends_with(m_partplate_list->m_del_texture.get_source(), ".svg"));
 		shader->set_uniform("svg_source", 0);
@@ -982,80 +1460,97 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
         glsafe(::glEnable(GL_BLEND));
         glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
 
+        const bool useIconAtlas = m_partplate_list != nullptr && m_partplate_list->m_iconAtlas.IsValid();
+        const bool hasPlateSettings = get_bed_type() != BedType::btDefault ||
+            get_print_seq() != PrintSequence::ByDefault ||
+            !get_first_layer_print_sequence().empty() ||
+            !get_other_layers_print_sequence().empty() ||
+            has_spiral_mode_config();
         if (!only_name) {
-            if (hover_id == 1) {
-                render_icon_texture(m_del_icon.model, m_partplate_list->m_del_hovered_texture);
-                show_tooltip(_u8L("Remove current plate (if not last one)"));
-            }
-            else
-                render_icon_texture(m_del_icon.model, m_partplate_list->m_del_texture);
-
-            if (hover_id == 2) {
-                render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_hovered_texture);
-                show_tooltip(_u8L("Auto orient objects on current plate"));
-            }
-            else
-                render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_texture);
-
-            if (hover_id == 3) {
-                render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_hovered_texture);
-                show_tooltip(_u8L("Arrange objects on current plate"));
-            }
-            else
-                render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_texture);
-
-            if (hover_id == 4) {
-                if (this->is_locked()) {
-                    render_icon_texture(m_lock_icon.model,
-                                        m_partplate_list->m_locked_hovered_texture);
-                    show_tooltip(_u8L("Unlock current plate"));
+            bool rightIconsRendered = false;
+            if (useIconAtlas) {
+                const RightIconBatchKey key = BuildRightIconBatchKey(hover_id, hasPlateSettings);
+                rightIconsRendered = RenderRightIconBatch(key);
+                if (rightIconsRendered) {
+                    ShowRightIconTooltip(hover_id);
                 }
-                else {
-                    render_icon_texture(m_lock_icon.model,
-                                        m_partplate_list->m_lockopen_hovered_texture);
-                    show_tooltip(_u8L("Lock current plate"));
+            }
+
+            if (!rightIconsRendered) {
+                if (hover_id == 1) {
+                    render_icon_texture(m_del_icon.model, m_partplate_list->m_del_hovered_texture);
+                    show_tooltip(_u8L("Remove current plate (if not last one)"));
                 }
-            } else {
-                if (this->is_locked())
-                    render_icon_texture(m_lock_icon.model, m_partplate_list->m_locked_texture);
                 else
-                    render_icon_texture(m_lock_icon.model, m_partplate_list->m_lockopen_texture);
-            }
+                    render_icon_texture(m_del_icon.model, m_partplate_list->m_del_texture);
 
-			if (hover_id == 6) {
-                render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_hovered_texture);
-                show_tooltip(_u8L("Edit current plate name"));
-			}
-			else
-                render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_texture);
+                if (hover_id == 2) {
+                    render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_hovered_texture);
+                    show_tooltip(_u8L("Auto orient objects on current plate"));
+                }
+                else
+                    render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_texture);
 
-			if (hover_id == 7) {
-                render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_hovered_texture);
-                show_tooltip(_u8L("Move plate to the front"));
-            } else
-                render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
+                if (hover_id == 3) {
+                    render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_hovered_texture);
+                    show_tooltip(_u8L("Arrange objects on current plate"));
+                }
+                else
+                    render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_texture);
 
-
-			if (m_partplate_list->render_plate_settings) {
-				bool has_plate_settings = get_bed_type() != BedType::btDefault || get_print_seq() != PrintSequence::ByDefault || !get_first_layer_print_sequence().empty() || !get_other_layers_print_sequence().empty() || has_spiral_mode_config();
-                if (hover_id == 5) {
-                    if (!has_plate_settings)
-                        render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_hovered_texture);
-                    else
-                        render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_changed_hovered_texture);
-
-                    show_tooltip(_u8L("Customize current plate"));
+                if (hover_id == 4) {
+                    if (this->is_locked()) {
+                        render_icon_texture(m_lock_icon.model, m_partplate_list->m_locked_hovered_texture);
+                        show_tooltip(_u8L("Unlock current plate"));
+                    }
+                    else {
+                        render_icon_texture(m_lock_icon.model, m_partplate_list->m_lockopen_hovered_texture);
+                        show_tooltip(_u8L("Lock current plate"));
+                    }
                 } else {
-                    if (!has_plate_settings)
-                        render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_texture);
+                    if (this->is_locked())
+                        render_icon_texture(m_lock_icon.model, m_partplate_list->m_locked_texture);
                     else
-                        render_icon_texture(m_plate_settings_icon.model, m_partplate_list->m_plate_settings_changed_texture);
+                        render_icon_texture(m_lock_icon.model, m_partplate_list->m_lockopen_texture);
+                }
+
+                if (hover_id == 6) {
+                    render_icon_texture(m_plate_name_edit_icon.model,
+                                        m_partplate_list->m_plate_name_edit_hovered_texture);
+                    show_tooltip(_u8L("Edit current plate name"));
+                }
+                else
+                    render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_texture);
+
+                if (hover_id == 7) {
+                    render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_hovered_texture);
+                    show_tooltip(_u8L("Move plate to the front"));
+                } else
+                    render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
+
+                if (m_partplate_list->render_plate_settings) {
+                    if (hover_id == 5) {
+                        if (!hasPlateSettings)
+                            render_icon_texture(m_plate_settings_icon.model,
+                                                m_partplate_list->m_plate_settings_hovered_texture);
+                        else
+                            render_icon_texture(m_plate_settings_icon.model,
+                                                m_partplate_list->m_plate_settings_changed_hovered_texture);
+
+                        show_tooltip(_u8L("Customize current plate"));
+                    } else {
+                        if (!hasPlateSettings)
+                            render_icon_texture(m_plate_settings_icon.model,
+                                                m_partplate_list->m_plate_settings_texture);
+                        else
+                            render_icon_texture(m_plate_settings_icon.model,
+                                                m_partplate_list->m_plate_settings_changed_texture);
+                    }
                 }
             }
 
-            if (m_plate_index >= 0 && m_plate_index < MAX_PLATE_COUNT) {
+            if (m_plate_index >= 0 && m_plate_index < MAX_PLATE_COUNT)
                 render_icon_texture(m_plate_idx_icon, m_partplate_list->m_idx_textures[m_plate_index]);
-            }
         }
 		render_plate_name_texture();
 
@@ -1065,7 +1560,6 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
         //    glsafe(::glFrontFace(GL_CCW));
 
         glsafe(::glDepthMask(GL_TRUE));
-        shader->stop_using();
     }
 }
 
@@ -1073,10 +1567,6 @@ void PartPlate::render_only_numbers(bool bottom)
 {
 	GLShaderProgram* shader = wxGetApp().get_shader("printbed");
 	if (shader != nullptr) {
-		shader->start_using();
-        const Camera &camera = wxGetApp().plater()->get_camera();
-        shader->set_uniform("view_model_matrix", camera.get_view_matrix());
-        shader->set_uniform("projection_matrix", camera.get_projection_matrix());
 		shader->set_uniform("transparent_background", bottom);
 		//shader->set_uniform("svg_source", boost::algorithm::iends_with(m_partplate_list->m_del_texture.get_source(), ".svg"));
 		shader->set_uniform("svg_source", 0);
@@ -1088,9 +1578,8 @@ void PartPlate::render_only_numbers(bool bottom)
         glsafe(::glEnable(GL_BLEND));
         glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
 
-        if (m_plate_index >=0 && m_plate_index < MAX_PLATE_COUNT) {
+        if (m_partplate_list != nullptr && m_plate_index >= 0 && m_plate_index < MAX_PLATE_COUNT)
             render_icon_texture(m_plate_idx_icon, m_partplate_list->m_idx_textures[m_plate_index]);
-        }
 
         glsafe(::glDisable(GL_BLEND));
 
@@ -1098,7 +1587,6 @@ void PartPlate::render_only_numbers(bool bottom)
         //    glsafe(::glFrontFace(GL_CCW));
 
         glsafe(::glDepthMask(GL_TRUE));
-        shader->stop_using();
     }
 }
 
@@ -1954,6 +2442,7 @@ void PartPlate::generate_plate_name_texture()
     canvas->remove_raycasters_for_picking(SceneRaycaster::EType::Bed, picking_id_component(6));
     calc_vertex_for_plate_name_edit_icon(&m_name_texture, 0, m_plate_name_edit_icon);
     register_model_for_picking(*canvas, m_plate_name_edit_icon, picking_id_component(6));
+    InvalidateRightIconBatch();
 }
 void PartPlate::set_plate_name(const std::string& name) 
 { 
@@ -2729,6 +3218,7 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, Ve
 			// calc vertex for plate name
 			generate_plate_name_texture();
 		}
+        InvalidateRightIconBatch();
 	}
 
 	calc_height_limit();
@@ -2781,6 +3271,7 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
 {
     glsafe(::glEnable(GL_DEPTH_TEST));
 
+    GLShaderProgram* printbedShader = wxGetApp().get_shader("printbed");
     GLShaderProgram *shader = wxGetApp().get_shader("flat");
     if (shader != nullptr) {
         shader->start_using();
@@ -2808,19 +3299,30 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
         //	render_label(canvas);
         // }
 
-        shader->stop_using();
+        if (printbedShader == nullptr)
+            shader->stop_using();
     }
 
-    if (!bottom && m_selected && !force_background_color) {
-        if (m_partplate_list)
-            render_logo(bottom, m_partplate_list->render_cali_logo && render_cali);
-        else
-            render_logo(bottom);
-    }
+    if (printbedShader != nullptr) {
+        printbedShader->start_using();
+        printbedShader->set_uniform("view_model_matrix", view_matrix);
+        printbedShader->set_uniform("projection_matrix", projection_matrix);
+        printbedShader->set_uniform("svg_source", 0);
 
-    render_icons(bottom, only_body, hover_id);
-    if (!force_background_color) {
-        render_only_numbers(bottom);
+        if (!bottom && m_selected && !force_background_color) {
+            if (m_partplate_list)
+                render_logo(bottom, m_partplate_list->render_cali_logo && render_cali);
+            else
+                render_logo(bottom);
+        }
+
+        render_icons(bottom, only_body, hover_id);
+        if (!force_background_color && only_body) {
+            render_only_numbers(bottom);
+        }
+
+        glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
+        printbedShader->stop_using();
     }
 
     glsafe(::glDisable(GL_DEPTH_TEST));
@@ -3522,6 +4024,10 @@ void PartPlateList::generate_icon_textures()
 			}
 		}
 	}
+
+    if (!m_iconAtlas.Init(m_is_dark, icon_size)) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":load part plate icon atlas failed";
+    }
 }
 
 void PartPlateList::release_icon_textures()
@@ -3548,6 +4054,7 @@ void PartPlateList::release_icon_textures()
 	for (int i = 0;i < MAX_PLATE_COUNT; i++) {
 		m_idx_textures[i].reset();
 	}
+    m_iconAtlas.Reset();
 	//reset
 	PartPlateList::is_load_bedtype_textures = false;
 	PartPlateList::is_load_cali_texture = false;

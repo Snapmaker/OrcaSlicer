@@ -201,8 +201,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
     GUI/GLShadersManager.hpp
+    GUI/GLSubTextureBindRenderer.cpp
+    GUI/GLSubTextureBindRenderer.hpp
     GUI/GLTexture.cpp
     GUI/GLTexture.hpp
+    GUI/GLToolbarBackgroundTextureCache.cpp
+    GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
     GUI/GUI_App.cpp

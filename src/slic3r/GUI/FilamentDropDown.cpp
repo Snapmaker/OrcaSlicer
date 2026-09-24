@@ -1071,8 +1071,9 @@ void FilamentDropDown::sendDropDownEvent()
 bool FilamentDropDown::ProcessLeftDown(wxMouseEvent &event)
 {
 #ifdef __WXOSX__
+    const wxWindow *anchor = mainDropDown != nullptr ? mainDropDown->GetParent() : GetParent();
     if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE &&
-        point_in_anchor_gap(GetParent(), this, ClientToScreen(event.GetPosition())))
+        point_in_anchor_gap(anchor, this, ClientToScreen(event.GetPosition())))
     {
         DismissAndNotify();
 
@@ -1085,9 +1086,24 @@ bool FilamentDropDown::ProcessLeftDown(wxMouseEvent &event)
     return PopupWindow::ProcessLeftDown(event);
 }
 
+bool FilamentDropDown::is_pointer_over_popup_tree() const
+{
+    const FilamentDropDown *root = mainDropDown != nullptr ? mainDropDown : this;
+    const wxPoint            mouse_pos = wxGetMousePosition();
+    if (root->GetScreenRect().Contains(mouse_pos))
+        return true;
+
+    if (root->subDropDown != nullptr && root->subDropDown->IsShown() &&
+        root->subDropDown->GetScreenRect().Contains(mouse_pos))
+        return true;
+
+    const wxWindow *anchor = root->GetParent();
+    return anchor != nullptr && anchor->GetScreenRect().Contains(mouse_pos);
+}
+
 void FilamentDropDown::Dismiss()
 {
-    if (subDropDown && subDropDown->IsShown())
+    if (is_pointer_over_popup_tree())
         return;
     PopupWindow::Dismiss();
 }
@@ -1111,7 +1127,7 @@ void FilamentDropDown::OnDismiss()
 #endif
         return;
     }
-    if (subDropDown && subDropDown->IsShown())
+    if (is_pointer_over_popup_tree())
         return;
     dismissTime = boost::posix_time::microsec_clock::universal_time();
     wxCommandEvent e(EVT_DISMISS);

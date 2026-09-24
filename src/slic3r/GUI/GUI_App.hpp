@@ -371,6 +371,7 @@ private:
     std::mutex                 m_host_cfg_mtx;
 
     std::unique_ptr<GatewayMachineSnapshot> m_gateway_machine_snapshot;
+    nlohmann::json                          m_gateway_device_objects;
     struct GatewayActiveDeviceState
     {
         bool                     valid{false};

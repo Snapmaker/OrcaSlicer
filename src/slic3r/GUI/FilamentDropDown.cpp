@@ -264,8 +264,10 @@ void FilamentDropDown::apply_flat_fallback()
 
 void FilamentDropDown::DismissAll()
 {
+    dismiss_outside = false;
     if (subDropDown != nullptr)
     {
+        subDropDown->dismiss_outside = false;
         subDropDown->submenu_motion_timer.Stop();
         // The child override intentionally keeps the root open while the
         // pointer is over it. An owner-driven close must close both windows.
@@ -1071,15 +1073,24 @@ void FilamentDropDown::sendDropDownEvent()
 bool FilamentDropDown::ProcessLeftDown(wxMouseEvent &event)
 {
 #ifdef __WXOSX__
-    const wxWindow *anchor = mainDropDown != nullptr ? mainDropDown->GetParent() : GetParent();
-    if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE &&
-        point_in_anchor_gap(anchor, this, ClientToScreen(event.GetPosition())))
+    if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE)
     {
-        DismissAndNotify();
+        const wxPoint screen_point = ClientToScreen(event.GetPosition());
+        if (point_in_anchor_gap(GetParent(), this, screen_point))
+        {
+            DismissAndNotify();
 
-        // wxOSX reposts an outside click to the control below the popup. The anchor/popup gap is not
-        // an activation target, so consume it after dismissing.
-        return true;
+            // wxOSX reposts an outside click to the control below the popup. The anchor/popup gap is not
+            // an activation target, so consume it after dismissing.
+            return true;
+        }
+
+        // The popup handler will call DismissAndNotify() next. Force that path to release
+        // native mouse capture even when the submenu is still visible.
+        if (!is_pointer_over_popup_tree())
+        {
+            dismiss_outside = true;
+        }
     }
 #endif
 
@@ -1103,13 +1114,25 @@ bool FilamentDropDown::is_pointer_over_popup_tree() const
 
 void FilamentDropDown::Dismiss()
 {
-    if (is_pointer_over_popup_tree())
+    if (!dismiss_outside && is_pointer_over_popup_tree())
+    {
         return;
+    }
+    if (dismiss_outside && subDropDown != nullptr && subDropDown->IsShown())
+    {
+        // The root popup is dismissed by wx's handler on an outside click. Close the
+        // sibling submenu explicitly as it has its own popup handler and capture.
+        subDropDown->dismiss_outside = false;
+        subDropDown->PopupWindow::Dismiss();
+        subDropDown->Hide();
+    }
     PopupWindow::Dismiss();
 }
 
 void FilamentDropDown::OnDismiss()
 {
+    const bool was_dismissed_outside = dismiss_outside;
+    dismiss_outside = false;
     submenu_motion_timer.Stop();
     hover_item = -1;
     SetToolTip(wxString());
@@ -1127,8 +1150,10 @@ void FilamentDropDown::OnDismiss()
 #endif
         return;
     }
-    if (is_pointer_over_popup_tree())
+    if (!was_dismissed_outside && is_pointer_over_popup_tree())
+    {
         return;
+    }
     dismissTime = boost::posix_time::microsec_clock::universal_time();
     wxCommandEvent e(EVT_DISMISS);
     GetEventHandler()->ProcessEvent(e);

@@ -168,6 +168,9 @@ private:
     bool   align_icon              = false;
     bool   text_off                = false;
     bool   use_flat_fallback       = false;
+    // macOS may invoke DismissAndNotify() after ProcessLeftDown(); this flag forces the
+    // outside-click path through the base implementation so mouse capture is released.
+    bool   dismiss_outside         = false;
     int    max_visible_rows        = 15;
 
     wxSize textSize;

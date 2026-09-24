@@ -564,7 +564,7 @@ public:
 
     static nlohmann::json build_active_file_metadata();
     static nlohmann::json build_active_file_json(const std::string& file_path, const std::string& file_name, bool is_zip = false);
-    static nlohmann::json build_filament_mapping_json(const std::string& filename);
+    static nlohmann::json build_filament_mapping_json(const std::string& filename, const std::string& display_name);
 
     static std::mutex m_file_size_mutex;
     static long long m_active_file_size;

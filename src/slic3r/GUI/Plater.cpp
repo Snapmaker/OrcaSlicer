@@ -21657,13 +21657,12 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
 
         const std::string source_path = upload_job.upload_data.source_path.string();
         const std::string display_name = upload_job.upload_data.upload_path.string();
-        const std::string active_filename = SSWCP::get_active_filename();
 
         nlohmann::json payload;
         payload["file_path"] = source_path;
         payload["file_name"] = display_name;
         payload["active_file"] = SSWCP::build_active_file_json(source_path, display_name, false);
-        payload["filament_mapping"] = SSWCP::build_filament_mapping_json(active_filename);
+        payload["filament_mapping"] = SSWCP::build_filament_mapping_json(source_path, display_name);
 
         std::string store_id = boost::uuids::to_string(boost::uuids::random_generator()());
         const auto store_result = wxGetApp().gateway_store_preprint_context(store_id, payload);

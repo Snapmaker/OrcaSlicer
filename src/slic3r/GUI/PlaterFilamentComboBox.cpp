@@ -115,11 +115,11 @@ public:
 private:
     struct ClickRecord
     {
-        bool                                      valid{false};
-        long                                      timestamp{0};
-        wxPoint                                   screen_position;
-        const wxEvent                            *event{nullptr};
-        std::chrono::steady_clock::time_point    observed_at{};
+        bool                                   valid;
+        long                                   timestamp;
+        wxPoint                                screen_position;
+        const wxEvent                         *event;
+        std::chrono::steady_clock::time_point observed_at;
     };
 
     static constexpr size_t k_history = 16;

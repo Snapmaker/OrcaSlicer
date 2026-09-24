@@ -434,7 +434,9 @@ std::string GatewayService::web_url(const std::string& page_key) const
     HealthInfo copied_health;
     {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (state_ != ConnectionState::Connected)
+        // Health already validates the web server and carries the page URLs. The UI can
+        // therefore show gateway pages while the websocket control channel is still connecting.
+        if (stop_requested_ || state_ == ConnectionState::Disconnected)
             return {};
         copied_health = health_;
     }

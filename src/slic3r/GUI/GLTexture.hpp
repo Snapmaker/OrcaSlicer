@@ -15,6 +15,7 @@ namespace Slic3r {
 namespace GUI {
 
 class GLModel;
+class GLSubTextureBindRenderer;
 
     class GLTexture
     {
@@ -97,7 +98,8 @@ class GLModel;
         bool load_from_file(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy);
         bool load_from_svg_file(const std::string& filename, bool use_mipmaps, bool compress, bool apply_anisotropy, unsigned int max_size_px);
         //BBS load GLTexture from raw pixel data
-        bool load_from_raw_data(std::vector<unsigned char> data, unsigned int w, unsigned int h, bool apply_anisotropy = false);
+        bool load_from_raw_data(std::vector<unsigned char> data, unsigned int w, unsigned int h,
+                                bool apply_anisotropy = false, bool use_mipmaps = true);
         // meanings of states: (std::pair<int, bool>)
         // first field (int):
         // 0 -> no changes
@@ -129,6 +131,8 @@ class GLModel;
 
         static void render_texture(unsigned int tex_id, float left, float right, float bottom, float top);
         static void render_sub_texture(unsigned int tex_id, float left, float right, float bottom, float top, const Quad_UVs& uvs);
+        static bool BeginSubTextureBind(GLSubTextureBindRenderer* renderer);
+        static void EndSubTextureBind();
 
     private:
         bool load_from_png(const std::string& filename, bool use_mipmaps, ECompressionType compression_type, bool apply_anisotropy);

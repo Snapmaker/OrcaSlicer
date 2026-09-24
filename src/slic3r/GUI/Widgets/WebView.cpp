@@ -24,6 +24,7 @@
 #endif
 
 #ifdef __WIN32__
+#include <objbase.h>
 #include <WebView2.h>
 #include <Shellapi.h>
 #include <slic3r/Utils/Http.hpp>
@@ -105,6 +106,17 @@ DWORD DownloadAndInstallWV2RT() {
   return returnCode;
 }
 
+static wxString PreserveWebViewEngineUserAgent(const wxString &requestedUserAgent, const wxString &currentUserAgent)
+{
+  const int requestedMarker = requestedUserAgent.Find(" Mozilla/5.0");
+  if (!requestedUserAgent.StartsWith("SM-Slicer/") || requestedMarker == wxNOT_FOUND)
+    return requestedUserAgent;
+
+  const int        currentMarker    = currentUserAgent.Find(" Mozilla/5.0");
+  const wxString   engineUserAgent  = currentMarker == wxNOT_FOUND ? currentUserAgent : currentUserAgent.Mid(currentMarker + 1);
+  return requestedUserAgent.Left(requestedMarker) + " " + engineUserAgent;
+}
+
 class WebViewEdge : public wxWebViewEdge
 {
 public:
@@ -121,10 +133,17 @@ public:
                 ICoreWebView2Settings2 *settings2;
                 hr = settings->QueryInterface(&settings2);
                 if (hr == S_OK) {
-                    settings2->put_UserAgent(userAgent.wc_str());
+                    wchar_t *currentUserAgent = nullptr;
+                    wxString userAgentToSet   = userAgent;
+                    if (settings2->get_UserAgent(&currentUserAgent) == S_OK && currentUserAgent) {
+                        userAgentToSet = PreserveWebViewEngineUserAgent(userAgent, currentUserAgent);
+                        CoTaskMemFree(currentUserAgent);
+                    }
+                    hr = settings2->put_UserAgent(userAgentToSet.wc_str());
                     settings2->Release();
-                    return true;
                 }
+                settings->Release();
+                return hr == S_OK;
             }
             settings->Release();
             return false;

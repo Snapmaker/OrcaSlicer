@@ -32,6 +32,7 @@
 #define WEBKIT_API
 struct WebKitWebView;
 struct WebKitJavascriptResult;
+struct WebKitUserContentManager;
 extern "C" {
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
@@ -45,6 +46,11 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 						      GError                    **error);
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
+WEBKIT_API WebKitUserContentManager *
+webkit_web_view_get_user_content_manager    (WebKitWebView             *web_view);
+WEBKIT_API void
+webkit_user_content_manager_unregister_script_message_handler(WebKitUserContentManager *manager,
+                                                              const gchar              *name);
 }
 #endif
 
@@ -353,6 +359,33 @@ public:
     wxWebView *m_webView;
 };
 
+#if defined(__linux__)
+// wx connects "script-message-received" on the view's WebKitUserContentManager with the
+// wxWebViewWebKit as user data, but ~wxWebViewWebKit only disconnects handlers from the
+// WebKitWebView. A message the page still has in flight during teardown (e.g. a language
+// switch, where AddScriptMessageHandler() on a new view spins a nested main loop) then reaches
+// a freed object. Unregister the handler and drop wx's connections before the view goes away.
+// The native view is captured here: on the plain delete path wxEVT_DESTROY is only sent from
+// ~wxWindow, when calling back into the wxWebView is no longer safe, while the GTK widget itself
+// is disposed only after that event.
+static void disconnect_script_messages_on_destroy(wxWebView *webView)
+{
+    WebKitWebView *view = static_cast<WebKitWebView *>(webView->GetNativeBackend());
+    if (view == nullptr)
+        return;
+    webView->Bind(wxEVT_DESTROY, [webView, view](wxWindowDestroyEvent &evt) {
+        evt.Skip();
+        if (evt.GetEventObject() != webView)
+            return; // destroy events of child windows propagate up to us
+        WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager(view);
+        if (ucm == nullptr)
+            return;
+        webkit_user_content_manager_unregister_script_message_handler(ucm, "wx");
+        g_signal_handlers_disconnect_by_data(ucm, webView);
+    });
+}
+#endif
+
 wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 {
 #if wxUSE_WEBVIEW_EDGE
@@ -411,6 +444,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
 #else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#endif
+#if defined(__linux__)
+        disconnect_script_messages_on_destroy(webView);
 #endif
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));

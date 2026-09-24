@@ -97,6 +97,32 @@ struct FakeWebSocket final : public WebSocketTransport
     { listener.message(nlohmann::json{{"jsonrpc", "2.0"}, {"method", method}, {"params", params}}.dump()); }
 };
 
+struct BlockingFirstWebSocket final : public WebSocketTransport
+{
+    Listener           listener;
+    std::promise<void> release_first;
+    std::atomic<int>   connections{0};
+
+    void set_listener(Listener value) override { listener = std::move(value); }
+
+    void connect(std::uint16_t port, const std::string& path) override
+    {
+        REQUIRE(port == 8888);
+        REQUIRE(path == "/ws");
+        if (connections.fetch_add(1) == 0)
+            release_first.get_future().wait();
+        listener.opened();
+    }
+
+    bool send(const std::string&) override { return true; }
+
+    void close() override
+    {
+        if (listener.closed)
+            listener.closed("closed");
+    }
+};
+
 bool wait_for_state(const GatewayService& service, ConnectionState expected)
 {
     std::mutex                   mutex;
@@ -235,6 +261,44 @@ TEST_CASE("GatewayService reconnects after the first websocket failure", "[gatew
     REQUIRE(wait_for_state(service, ConnectionState::Connected));
     REQUIRE(service.wait_for_connected(std::chrono::milliseconds{100}));
     REQUIRE(websocket->connections.load() >= 2);
+    service.stop();
+}
+
+TEST_CASE("GatewayService exposes health page URLs before the websocket connects", "[gateway][service]")
+{
+    auto manager = std::make_shared<ConnectionProcessManager>(ConnectionProcessManager::Config{boost::filesystem::path{
+                                                                  "snapmaker_connection.exe"}},
+                                                              [](const std::vector<std::string>&) {
+                                                                ConnectionProcessManager::ProcessRunResult result;
+                                                                result.stdout_data = "PORT:8888\r\n\r\n";
+                                                                return result;
+                                                              });
+    auto http      = std::make_shared<FakeHttp>();
+    auto websocket = std::make_shared<BlockingFirstWebSocket>();
+
+    GatewayService::Config config;
+    config.health_timeout = std::chrono::seconds{10};
+    GatewayService::Dependencies dependencies;
+    dependencies.process_manager = manager;
+    dependencies.http            = http;
+    dependencies.websocket       = websocket;
+    GatewayService service(config, std::move(dependencies));
+
+    REQUIRE(service.start("zh-CN"));
+    bool health_ready = false;
+    for (int i = 0; i < 10000; ++i) {
+        if (service.port() == 8888 && !service.health().cli_version.empty()) {
+            health_ready = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    REQUIRE(health_ready);
+    REQUIRE(service.state() == ConnectionState::Connecting);
+    REQUIRE(service.web_url("home_page") == "http://127.0.0.1:8080/index");
+
+    websocket->release_first.set_value();
+    REQUIRE(wait_for_state(service, ConnectionState::Connected));
     service.stop();
 }
 

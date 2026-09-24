@@ -5519,18 +5519,39 @@ void GUI_App::register_gateway_notifications()
             refresh_gateway_account();
     });
 
+    const auto apply_device_objects = [this](const std::string& serial_number, const nlohmann::json& objects, bool replace_objects) {
+        if (serial_number.empty() || !m_gateway_active_device.valid || m_gateway_active_device.serial_number != serial_number ||
+            m_gateway_machine_snapshot == nullptr)
+            return;
+
+        if (!objects.is_object()) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][machine-snapshot] ignored invalid device objects for " << serial_number;
+            return;
+        }
+
+        if (replace_objects)
+            m_gateway_device_objects = objects;
+        else {
+            if (!m_gateway_device_objects.is_object())
+                m_gateway_device_objects = nlohmann::json::object();
+            Gateway::merge_device_object_changes(m_gateway_device_objects, objects);
+        }
+
+        const auto snapshot = Gateway::build_machine_snapshot_from_device_objects(m_gateway_device_objects, serial_number);
+        if (!snapshot.has_value()) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][machine-snapshot] device objects cannot build a snapshot yet";
+            return;
+        }
+        m_gateway_machine_snapshot->apply(*snapshot);
+    };
+
     m_gateway_service->set_notification_handler("machine.snapshot_changed", [this](const nlohmann::json& snapshot) {
         if (m_gateway_machine_snapshot != nullptr)
             m_gateway_machine_snapshot->apply(snapshot);
     });
 
-    m_gateway_service->set_notification_handler("notify.device.object.changed", [this](const nlohmann::json& params) {
-        if (!m_gateway_active_device.valid || m_gateway_machine_snapshot == nullptr)
-            return;
-
-        const auto snapshot = Gateway::build_machine_snapshot_from_device_objects(params, m_gateway_active_device.serial_number);
-        if (snapshot.has_value())
-            m_gateway_machine_snapshot->apply(*snapshot);
+    m_gateway_service->set_notification_handler("notify.device.object.changed", [this, apply_device_objects](const nlohmann::json& params) {
+        apply_device_objects(m_gateway_active_device.serial_number, params, false);
     });
 
     const auto make_active_device_state = [](const Gateway::ActiveDeviceSnapshot& snapshot) {
@@ -5545,17 +5566,25 @@ void GUI_App::register_gateway_notifications()
         return active_device;
     };
 
-    const auto query_device_objects = [this]() {
+    const auto query_device_objects = [this, apply_device_objects](const std::string& serial_number) {
         if (!m_gateway_service)
             return;
 
         m_gateway_service->request(
             "query.device.objects", nlohmann::json::object(),
-            [](Gateway::GatewayError query_error, const nlohmann::json&) {
-                if (query_error)
+            [serial_number, apply_device_objects](Gateway::GatewayError query_error, const nlohmann::json& result) {
+                if (query_error) {
                     BOOST_LOG_TRIVIAL(warning) << "failed to query gateway device objects: " << query_error.message;
-                else
-                    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] device objects queried";
+                    return;
+                }
+
+                const auto objects = Gateway::parse_device_object_query_result(result);
+                if (!objects.has_value()) {
+                    BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] gateway device objects response is invalid";
+                    return;
+                }
+                apply_device_objects(serial_number, *objects, true);
+                BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] device objects queried for " << serial_number;
             });
     };
 
@@ -5581,17 +5610,19 @@ void GUI_App::register_gateway_notifications()
 
             const bool active_device_changed = !m_gateway_active_device.valid ||
                                                m_gateway_active_device.serial_number != active_device.serial_number;
-            const bool should_query_objects  = active_device.connected &&
-                                               (active_device_changed || !m_gateway_active_device.connected);
+            const bool device_was_disconnected = !m_gateway_active_device.valid || !m_gateway_active_device.connected;
+            const bool should_query_objects = active_device.connected && (active_device_changed || device_was_disconnected);
             BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] applying active device, sn=" << active_device.serial_number
                                     << ", connected=" << active_device.connected << ", device_changed=" << active_device_changed;
             m_gateway_active_device          = active_device;
+            if (!active_device.connected || active_device_changed || device_was_disconnected)
+                m_gateway_device_objects = nlohmann::json::object();
             if (m_gateway_machine_snapshot != nullptr)
                 m_gateway_machine_snapshot->set_active_device(active_device.serial_number, active_device.connected);
             if (mainframe != nullptr && mainframe->plater() != nullptr)
                 mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
             if (should_query_objects)
-                query_device_objects();
+                query_device_objects(active_device.serial_number);
             if (should_query_objects)
                 watch_active_device(active_device.serial_number);
         };
@@ -5662,6 +5693,7 @@ void GUI_App::register_gateway_notifications()
                 BOOST_LOG_TRIVIAL(warning) << "connection gateway disconnected: " << error.message;
                 m_gateway_active_device       = GatewayActiveDeviceState{};
                 m_gateway_loaded_base_url.clear();
+                m_gateway_device_objects      = nlohmann::json::object();
                 if (m_gateway_machine_snapshot != nullptr)
                     m_gateway_machine_snapshot->clear();
                 if (mainframe != nullptr && mainframe->plater() != nullptr)

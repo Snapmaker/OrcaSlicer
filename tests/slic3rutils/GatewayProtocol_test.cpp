@@ -165,6 +165,40 @@ TEST_CASE("device object notifications build machine snapshots", "[gateway][prot
     REQUIRE_FALSE(build_machine_snapshot_from_device_objects(params, "").has_value());
 }
 
+TEST_CASE("device object deltas merge into the last complete objects", "[gateway][protocol]")
+{
+    nlohmann::json objects{{"extruder", {{"nozzle_diameter", 0.4}, {"temperature", 25.0}}},
+                           {"extruder1", {{"nozzle_diameter", "0.6"}, {"temperature", 26.0}}},
+                           {"print_task_config",
+                            {{"filament_vendor", json::array({"Snapmaker", "Polymaker"})},
+                             {"filament_type", json::array({"PLA", "PETG"})}}}};
+
+    const nlohmann::json delta{{"extruder1", nlohmann::json{{"nozzle_diameter", 0.2}}}};
+    merge_device_object_changes(objects, delta);
+
+    REQUIRE(objects["extruder"]["nozzle_diameter"] == 0.4);
+    REQUIRE(objects["extruder"]["temperature"] == 25.0);
+    REQUIRE(objects["extruder1"]["nozzle_diameter"] == 0.2);
+    REQUIRE(objects["extruder1"]["temperature"] == 26.0);
+    REQUIRE(objects["print_task_config"]["filament_vendor"] == json::array({"Snapmaker", "Polymaker"}));
+
+    const auto snapshot = build_machine_snapshot_from_device_objects(objects, "U1-001");
+    REQUIRE(snapshot.has_value());
+    REQUIRE((*snapshot)["nozzle_diameters"] == json::array({"0.4", "0.2"}));
+}
+
+TEST_CASE("device object query results expose the complete object map", "[gateway][protocol]")
+{
+    const nlohmann::json objects{{"extruder", json{{"nozzle_diameter", 0.4}}},
+                                 {"print_task_config",
+                                  json{{"filament_vendor", json::array({"Snapmaker"})}, {"filament_type", json::array({"PLA"})}}}};
+
+    REQUIRE(parse_device_object_query_result(json{{"objects", objects}}) == objects);
+    REQUIRE(parse_device_object_query_result(objects) == objects);
+    REQUIRE_FALSE(parse_device_object_query_result(json{{"objects", json::array()}}).has_value());
+    REQUIRE_FALSE(parse_device_object_query_result(json::object()).has_value());
+}
+
 TEST_CASE("JSON-RPC frames are classified and requests are built", "[gateway][protocol]")
 {
     const nlohmann::json request = build_jsonrpc_request(7, "action.device.watch", {{"sn", "A1"}});

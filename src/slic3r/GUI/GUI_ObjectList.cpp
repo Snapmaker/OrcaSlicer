@@ -407,9 +407,11 @@ void ObjectList::update_min_height()
 // Orca-deps-wxWidgets (connect the wx key handlers to the tree view as well).
 static gboolean objlist_treeview_key_press(GtkWidget* /*widget*/, GdkEventKey* event, ObjectList* /*self*/)
 {
-    // MOD2/MOD3 (Num-/ScrollLock) are harmless to include; MOD5 is AltGr on many
-    // layouts — wxGTK maps it to Ctrl+Alt elsewhere, so it must not pass as "plain".
-    static const guint modifier_mask = GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD2_MASK | GDK_MOD3_MASK | GDK_MOD5_MASK | GDK_META_MASK | GDK_SUPER_MASK;
+    // Lock modifiers (MOD2 = NumLock, MOD3 = ScrollLock on X11) must stay OUT of
+    // the mask: they must not suppress the shortcut, matching wx's own
+    // HasAnyModifiers(), which ignores them. MOD5 is AltGr on many layouts —
+    // wxGTK maps it to Ctrl+Alt elsewhere, so it must not pass as "plain".
+    static const guint modifier_mask = GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD5_MASK | GDK_META_MASK | GDK_SUPER_MASK;
     if (event->type == GDK_KEY_PRESS &&
         (event->keyval == GDK_KEY_z || event->keyval == GDK_KEY_Z) &&
         (event->state & modifier_mask) == 0 &&

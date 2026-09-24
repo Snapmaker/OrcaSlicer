@@ -3,6 +3,7 @@
 #include "slic3r/Utils/MacDarkMode.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <boost/log/trivial.hpp>
 
 #include <wx/webviewarchivehandler.h>
@@ -32,6 +33,7 @@
 #define WEBKIT_API
 struct WebKitWebView;
 struct WebKitJavascriptResult;
+struct WebKitWebContext;
 extern "C" {
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
@@ -45,6 +47,11 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 						      GError                    **error);
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
+WEBKIT_API WebKitWebContext *
+webkit_web_context_get_default              (void);
+WEBKIT_API void
+webkit_web_context_set_preferred_languages  (WebKitWebContext          *context,
+                                             const gchar * const       *languages);
 }
 #endif
 
@@ -353,6 +360,38 @@ public:
     wxWebView *m_webView;
 };
 
+#if defined(__linux__)
+// The flatpak launcher exports LC_ALL=C.UTF-8 (BambuStudio #3440). WebKitGTK derives
+// navigator.languages from LC_CTYPE and maps only a bare "C" to en-US, so "C.UTF-8" becomes
+// the tag "C". Intl.Locale rejects that, the Flutter web engine shipped since v2.4.0 fails to
+// start, and every web view stays blank. Hand WebKit the UI language as a valid BCP 47 tag.
+static std::string to_bcp47_language_tag(std::string name)
+{
+    name = name.substr(0, name.find_first_of(".@")); // drop codeset / modifier: "ja_JP.UTF-8" -> "ja_JP"
+    std::replace(name.begin(), name.end(), '_', '-');
+    const size_t primary = std::min(name.find('-'), name.size());
+    const bool valid = (primary == 2 || primary == 3) &&
+        std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-'; });
+    return valid ? name : "en-US"; // "C", "POSIX", "" or anything odd would reintroduce the bug
+}
+
+static void apply_webkit_preferred_language()
+{
+    const wxLocale *locale = wxGetLocale();
+    const std::string tag = to_bcp47_language_tag(locale ? locale->GetCanonicalName().ToStdString() : std::string());
+    static std::string s_applied; // re-applied only when the UI language changes
+    if (tag == s_applied)
+        return;
+    WebKitWebContext *ctx = webkit_web_context_get_default();
+    if (ctx == nullptr)
+        return;
+    const gchar *const languages[] = {tag.c_str(), nullptr};
+    webkit_web_context_set_preferred_languages(ctx, languages);
+    s_applied = tag;
+    BOOST_LOG_TRIVIAL(info) << "WebKit preferred language: " << tag;
+}
+#endif
+
 wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 {
 #if wxUSE_WEBVIEW_EDGE
@@ -378,6 +417,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #elif defined(__WXOSX__)
     wxWebView *webView = new WebViewWebKit(url2);
 #else
+#if defined(__linux__)
+    apply_webkit_preferred_language();
+#endif
     auto webView = wxWebView::New();
 #endif
     if (webView) {

@@ -954,6 +954,7 @@ public:
         }
 
         UpdateLayout();
+        InvalidateBestSize();
         Refresh();
     }
 
@@ -967,6 +968,7 @@ public:
         m_tabs.clear();
         m_selectedIndex = -1;
         UpdateLayout();
+        InvalidateBestSize();
         Refresh();
     }
 
@@ -1181,6 +1183,24 @@ private:
             m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
             m_tabs[m_selectedIndex].page->Layout();
         }
+    }
+
+    // Include page content so the parent sizer reserves the notebook height instead
+    // of allowing following sidebar panels to overlap it.
+    wxSize DoGetBestSize() const override
+    {
+        int best_width  = m_tabWidth;
+        int best_height = m_tabHeight;
+        for (const auto &tab : m_tabs)
+        {
+            if (tab.page == nullptr)
+                continue;
+
+            const wxSize page_size = tab.page->GetBestSize();
+            best_width             = std::max(best_width, page_size.x);
+            best_height            = std::max(best_height, m_tabHeight + page_size.y + 4);
+        }
+        return wxSize(best_width, best_height);
     }
 
 private:
@@ -2331,11 +2351,11 @@ Sidebar::Sidebar(Plater *parent)
 
         // add printer title
         scrolled_sizer->Add(p->m_panel_printer_title, 0, wxEXPAND | wxALL, 0);
-        p->m_panel_printer_title->Bind(wxEVT_LEFT_UP, [this] (auto & e) {
-            if (p->m_panel_printer_content->GetMaxHeight() == 0)
-                p->m_panel_printer_content->SetMaxSize({-1, -1});
-            else
-                p->m_panel_printer_content->SetMaxSize({-1, 0});
+        p->m_panel_printer_title->Bind(wxEVT_LEFT_UP, [this] (auto & e)
+        {
+            const bool expanded = p->m_panel_printer_content->IsShown();
+            p->m_panel_printer_content->Show(!expanded);
+            p->m_panel_printer_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
             m_scrolled_sizer->Layout();
         });
 
@@ -2529,14 +2549,14 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_filament_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
     p->m_panel_filament_title->SetBackgroundColor(title_bg);
     p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
-    p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
+    p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e)
+    {
         if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown()
                 ? p->m_flushing_volume_btn->GetPosition().x : (p->m_bpButton_ams_filament->GetPosition().x - FromDIP(30))))
             return;
-        if (p->m_panel_filament_content->GetMaxHeight() == 0)
-            p->m_panel_filament_content->SetMaxSize({-1, -1});
-        else
-            p->m_panel_filament_content->SetMaxSize({-1, 0});
+        const bool expanded = p->m_panel_filament_content->IsShown();
+        p->m_panel_filament_content->Show(!expanded);
+        p->m_panel_filament_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
         m_scrolled_sizer->Layout();
     });
 
@@ -3354,7 +3374,8 @@ Sidebar::Sidebar(Plater *parent)
     scrolled_sizer->Add(p->m_panel_mixed_filaments_content, 0, wxEXPAND, 0);
 
     // Bind collapse/expand event to title bar
-    p->m_panel_mixed_filaments_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
+    p->m_panel_mixed_filaments_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e)
+    {
         // Exclude button areas from collapse/expand
         int button_left = p->m_panel_mixed_filaments_title->GetClientSize().x;
         auto consider_button = [&button_left](wxWindow *button) {
@@ -3367,10 +3388,9 @@ Sidebar::Sidebar(Plater *parent)
         if (e.GetPosition().x > button_left - FromDIP(12))
             return;
         
-        if (p->m_panel_mixed_filaments_content->GetMaxHeight() == 0)
-            p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});
-        else
-            p->m_panel_mixed_filaments_content->SetMaxSize({-1, 0});
+        const bool expanded = p->m_panel_mixed_filaments_content->IsShown();
+        p->m_panel_mixed_filaments_content->Show(!expanded);
+        p->m_panel_mixed_filaments_content->SetMaxSize(expanded ? wxSize(-1, 0) : wxSize(-1, -1));
         m_scrolled_sizer->Layout();
     });
 
@@ -9222,6 +9242,7 @@ void Sidebar::sync_ams_list()
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     update_dynamic_filament_list();
     // Expand filament list
+    p->m_panel_filament_content->Show();
     p->m_panel_filament_content->SetMaxSize({-1, -1});
     // BBS:Synchronized consumables information
     // auto calculation of flushing volumes
@@ -9667,6 +9688,15 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
     p->m_nozzle_notebook->Layout();
     p->m_nozzle_notebook->Thaw();
+    p->m_nozzle_notebook->InvalidateBestSize();
+    if (p->m_nozzle_notebook->GetParent() != nullptr)
+    {
+        p->m_nozzle_notebook->GetParent()->InvalidateBestSize();
+    }
+    p->m_panel_printer_content->InvalidateBestSize();
+    p->scrolled->InvalidateBestSize();
+    p->m_panel_printer_content->Layout();
+    m_scrolled_sizer->Layout();
 
     if (switch_machine) {
         p->combo_printer->SetFocus();

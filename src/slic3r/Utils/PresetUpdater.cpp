@@ -1590,6 +1590,18 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
                     updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
                 }
             }
+            {
+                // filament_topn.json is a vendor-shipped GUI ordering policy. The copy under
+                // the user data directory is update-managed and may replace manual edits when
+                // the vendor profile resources are installed or updated. The running GUI keeps
+                // its process-lifetime cache; the new order takes effect after restart.
+                fs::path rules_src = rsrc_path / bundle / "filament" / "filament_topn.json";
+                fs::path rules_dst = vendor_path / bundle / "filament" / "filament_topn.json";
+                if (fs::exists(rules_src)) {
+                    fs::create_directories(rules_dst.parent_path());
+                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+                }
+            }
         }
 	}
 
@@ -1839,6 +1851,19 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                             {
                                 fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_allow_list.json";
                                 fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_allow_list.json";
+                                if (fs::exists(rules_src)) {
+                                    fs::create_directories(rules_dst.parent_path());
+                                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
+                                                                 force_update, false, legal);
+                                }
+                            }
+                            {
+                                // This file is deployment data rather than a user-owned setting;
+                                // vendor profile updates are allowed to replace the deployed copy.
+                                // The running GUI does not reload its one-time TopN cache here;
+                                // restart is required before the replacement order is used.
+                                fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_topn.json";
+                                fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_topn.json";
                                 if (fs::exists(rules_src)) {
                                     fs::create_directories(rules_dst.parent_path());
                                     updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",

@@ -1,11 +1,10 @@
 #pragma once
 
 #include "FilamentDropDown.hpp"
+#include "FilamentSort.hpp"
 #include "PresetComboBoxes.hpp"
 
-#include <cstddef>
 #include <memory>
-#include <string>
 #include <vector>
 
 namespace Slic3r
@@ -13,66 +12,7 @@ namespace Slic3r
 namespace GUI
 {
 
-/** @brief Holds the immutable values used to order a filament popup row. */
-struct FilamentSortItem {
-    wxString    display_name;
-    std::string vendor;
-    std::string filament_product;
-    size_t      original_index{0};
-};
-
-/** @brief Defines an overridable ordering for filament rows. */
-class FilamentSorter
-{
-public:
-    FilamentSorter() = default;
-    virtual ~FilamentSorter() = default;
-
-    FilamentSorter(const FilamentSorter &)            = delete;
-    FilamentSorter &operator=(const FilamentSorter &) = delete;
-    FilamentSorter(FilamentSorter &&)                 = delete;
-    FilamentSorter &operator=(FilamentSorter &&)      = delete;
-
-    // Implementations must provide a strict weak ordering.
-    /** @brief Returns whether @p left precedes @p right. */
-    virtual bool less(const FilamentSortItem &left, const FilamentSortItem &right) const;
-
-protected:
-    /** @brief Applies the default display-name ordering. */
-    bool less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const;
-};
-
 /** @brief Defines an overridable ordering for system filament vendors. */
-class FilamentVendorSorter
-{
-public:
-    FilamentVendorSorter() = default;
-    virtual ~FilamentVendorSorter() = default;
-
-    FilamentVendorSorter(const FilamentVendorSorter &)            = delete;
-    FilamentVendorSorter &operator=(const FilamentVendorSorter &) = delete;
-    FilamentVendorSorter(FilamentVendorSorter &&)                 = delete;
-    FilamentVendorSorter &operator=(FilamentVendorSorter &&)      = delete;
-
-    // Implementations must provide a strict weak ordering.
-    /** @brief Returns whether vendor @p left precedes vendor @p right. */
-    virtual bool less(const std::string &left, const std::string &right) const;
-};
-
-/** @brief Prioritizes Snapmaker and Generic vendors before lexical vendor order. */
-class SystemFilamentVendorSorter final : public FilamentVendorSorter
-{
-public:
-    bool less(const std::string &left, const std::string &right) const override;
-};
-
-/** @brief Applies Snapmaker TopN ordering before the default name ordering. */
-class SystemFilamentSorter final : public FilamentSorter
-{
-public:
-    bool less(const FilamentSortItem &left, const FilamentSortItem &right) const override;
-};
-
 /** @brief Provides the filament-specific grouped presentation over the preset combo pipeline. */
 class PlaterFilamentComboBox : public PlaterPresetComboBox
 {

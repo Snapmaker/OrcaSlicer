@@ -380,6 +380,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PresetComboBoxes.hpp
     GUI/FilamentDropDown.cpp
     GUI/FilamentDropDown.hpp
+    GUI/FilamentSort.cpp
+    GUI/FilamentSort.hpp
     GUI/PlaterFilamentComboBox.cpp
     GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp

@@ -1591,6 +1591,10 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
                 }
             }
             {
+                // filament_topn.json is a vendor-shipped GUI ordering policy. The copy under
+                // the user data directory is update-managed and may replace manual edits when
+                // the vendor profile resources are installed or updated. The running GUI keeps
+                // its process-lifetime cache; the new order takes effect after restart.
                 fs::path rules_src = rsrc_path / bundle / "filament" / "filament_topn.json";
                 fs::path rules_dst = vendor_path / bundle / "filament" / "filament_topn.json";
                 if (fs::exists(rules_src)) {
@@ -1854,6 +1858,10 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                                 }
                             }
                             {
+                                // This file is deployment data rather than a user-owned setting;
+                                // vendor profile updates are allowed to replace the deployed copy.
+                                // The running GUI does not reload its one-time TopN cache here;
+                                // restart is required before the replacement order is used.
                                 fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_topn.json";
                                 fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_topn.json";
                                 if (fs::exists(rules_src)) {

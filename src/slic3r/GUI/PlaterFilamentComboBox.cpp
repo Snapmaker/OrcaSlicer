@@ -4,8 +4,6 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Utils.hpp"
 
-#include "nlohmann/json.hpp"
-
 #include <wx/tokenzr.h>
 #include <wx/scrolwin.h>
 #include <wx/weakref.h>
@@ -35,7 +33,8 @@ wxWeakRef<PlaterFilamentComboBox> s_active_owner;
 
 constexpr const char *g_topn_file_name      = "filament_topn.json";
 constexpr const char *g_snapmaker_vendor    = "Snapmaker";
-constexpr int         g_topn_schema_version = 1;
+constexpr const char *g_bambu_vendor        = "Bambu";
+constexpr const char *g_bambu_lab_vendor    = "Bambu Lab";
 
 wxWindow *scroll_parent(wxWindow *window)
 {
@@ -64,86 +63,38 @@ std::filesystem::path filament_topn_path()
            g_topn_file_name;
 }
 
-class FilamentTopNOrder
+/** @brief Loads the TopN configuration once from the user or resource path. */
+FilamentTopNOrder load_filament_topn_order()
 {
-public:
-    static const FilamentTopNOrder &instance()
+    const std::filesystem::path path = filament_topn_path();
+    std::ifstream               stream(path);
+    if (!stream)
     {
-        static const FilamentTopNOrder order;
-        return order;
+        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder failed to open " << path.u8string();
+        return FilamentTopNOrder{};
     }
 
-    size_t rank(const std::string &vendor, const std::string &filament_product) const
-    {
-        for (const auto &vendor_order : m_orders) {
-            if (from_u8(vendor_order.first).CmpNoCase(from_u8(vendor)) != 0)
-                continue;
-
-            for (size_t i = 0; i < vendor_order.second.size(); ++i)
-                if (vendor_order.second[i] == filament_product)
-                    return i;
-            break;
-        }
-        return std::numeric_limits<size_t>::max();
-    }
-
-private:
-    using Order  = std::vector<std::string>;
-    using Orders = std::vector<std::pair<std::string, Order>>;
-
-    FilamentTopNOrder()
-    {
-        const std::filesystem::path path = filament_topn_path();
-        std::ifstream               stream(path);
-        if (!stream) {
-            BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder failed to open " << path.u8string();
-            return;
-        }
-
-        nlohmann::json root = nlohmann::json::parse(stream, nullptr, false);
-        if (root.is_discarded() || !root.is_object()) {
-            BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder failed to parse " << path.u8string();
-            return;
-        }
-
-        const auto schema_version = root.find("schema_version");
-        const auto order_node     = root.find("order");
-        if (schema_version == root.end() || !schema_version->is_number_integer() ||
-            *schema_version != g_topn_schema_version || order_node == root.end() || !order_node->is_object()) {
-            BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has invalid schema: " << path.u8string();
-            return;
-        }
-
-        Orders orders;
-        for (const auto &vendor_order : order_node->items()) {
-            if (vendor_order.key().empty() || !vendor_order.value().is_array() || vendor_order.value().empty()) {
-                BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has an invalid vendor order: " << path.u8string();
-                return;
-            }
-
-            Order values;
-            for (const auto &value : vendor_order.value()) {
-                if (!value.is_string() || value.get_ref<const std::string &>().empty()) {
-                    BOOST_LOG_TRIVIAL(warning)
-                        << "FilamentTopNOrder has an invalid filament product: " << path.u8string();
-                    return;
-                }
-                values.emplace_back(value.get_ref<const std::string &>());
-            }
-            orders.emplace_back(vendor_order.key(), std::move(values));
-        }
-
-        if (orders.empty()) {
-            BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has no configured vendor order: " << path.u8string();
-            return;
-        }
-
-        m_orders = std::move(orders);
+    FilamentTopNOrder order = FilamentTopNOrder::from_stream(stream);
+    if (order.empty())
+        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has invalid or empty configuration: " << path.u8string();
+    else
         BOOST_LOG_TRIVIAL(info) << "FilamentTopNOrder loaded: " << path.u8string();
-    }
+    return order;
+}
 
-    Orders m_orders;
-};
+/**
+ * @brief Returns the process-wide immutable TopN configuration.
+ *
+ * The one-time load is intentional: popup refreshes and preset updates in the
+ * running process must not perform file I/O or change the active ordering. If
+ * PresetUpdater replaces the deployed file, the new order takes effect after
+ * the next application restart.
+ */
+const FilamentTopNOrder &filament_topn_order()
+{
+    static const FilamentTopNOrder order = load_filament_topn_order();
+    return order;
+}
 
 std::string config_string(const Preset *preset, const char *key)
 {
@@ -171,82 +122,7 @@ std::string vendor_from_display_name(const wxString &display_name)
     return words.HasMoreTokens() ? into_u8(words.GetNextToken()) : std::string();
 }
 
-bool is_snapmaker_vendor(const std::string &vendor)
-{
-    return from_u8(vendor).CmpNoCase(wxString::FromUTF8("Snapmaker")) == 0;
-}
-
-wxString system_vendor_label(const std::string &vendor)
-{
-    return vendor.empty() ? _L("System") : from_u8(vendor);
-}
-
-int system_vendor_rank(const std::string &vendor)
-{
-    const wxString label = system_vendor_label(vendor);
-    if (label.CmpNoCase(wxString::FromUTF8("Snapmaker")) == 0)
-        return 0;
-    if (label.CmpNoCase(wxString::FromUTF8("Generic")) == 0)
-        return 1;
-    return 2;
-}
-
-std::string canonical_vendor(const std::string &vendor)
-{
-    const wxString label = from_u8(vendor);
-    if (label.CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
-        return g_snapmaker_vendor;
-    if (label.CmpNoCase(wxString::FromUTF8("Generic")) == 0)
-        return "Generic";
-    return vendor;
-}
-
-bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
-{
-    const int name_compare = left.display_name.CmpNoCase(right.display_name);
-    if (name_compare != 0)
-        return name_compare < 0;
-    return left.original_index < right.original_index;
-}
-
 } // namespace
-
-bool FilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
-{
-    return less_by_name(left, right);
-}
-
-bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSortItem &right) const
-{
-    return default_name_less(left, right);
-}
-
-bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
-{
-    return system_vendor_label(left).CmpNoCase(system_vendor_label(right)) < 0;
-}
-
-bool SystemFilamentVendorSorter::less(const std::string &left, const std::string &right) const
-{
-    const int left_rank  = system_vendor_rank(left);
-    const int right_rank = system_vendor_rank(right);
-    if (left_rank != right_rank)
-        return left_rank < right_rank;
-    return FilamentVendorSorter::less(left, right);
-}
-
-bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
-{
-    if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor)) {
-        const auto  &topn_order = FilamentTopNOrder::instance();
-        const size_t left_rank  = topn_order.rank(left.vendor, left.filament_product);
-        const size_t right_rank = topn_order.rank(right.vendor, right.filament_product);
-        if (left_rank != right_rank)
-            return left_rank < right_rank;
-    }
-
-    return less_by_name(left, right);
-}
 
 PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type preset_type)
     : PlaterPresetComboBox(parent, preset_type)
@@ -258,10 +134,9 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     if (preset_type != Preset::TYPE_FILAMENT)
         return;
 
-    // Preload the TopN order once; popup refreshes never perform file I/O.
-    FilamentTopNOrder::instance();
+    // Load the TopN order once; popup refreshes never perform file I/O.
     m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
-    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>();
+    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>(filament_topn_order());
     m_project_sorter         = std::make_unique<FilamentSorter>();
     m_user_sorter            = std::make_unique<FilamentSorter>();
 
@@ -287,6 +162,9 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
         m_top_level->Bind(wxEVT_SIZE, &PlaterFilamentComboBox::on_top_level_size, this);
     }
 
+    // WHY: the scrolled content panel, not the top-level frame, moves when the sidebar scrolls.
+    // The top-level MOVE handler cannot observe that child movement, so both bindings are needed
+    // to dismiss a popup that would otherwise remain detached from its combo box.
     m_scroll_parent = scroll_parent(this);
     if (m_scroll_parent != nullptr && m_scroll_parent != m_top_level)
         m_scroll_parent->Bind(wxEVT_MOVE, &PlaterFilamentComboBox::on_scroll_parent_move, this);
@@ -315,13 +193,16 @@ void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVe
 void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
 {
     if (sorter == nullptr)
-        sorter = std::make_unique<SystemFilamentSorter>();
+        sorter = std::make_unique<SystemFilamentSorter>(filament_topn_order());
     m_system_filament_sorter = std::move(sorter);
     rebuild_popup_rows();
 }
 
 PlaterFilamentComboBox::~PlaterFilamentComboBox()
 {
+    // Unbind the popup's handlers before closing it: close_popup() dismisses the popup, whose
+    // OnDismiss() posts EVT_DISMISS back to this window; that must not reach a partially
+    // destroyed object. Keep this order.
     if (m_popup != nullptr)
     {
         m_popup->Unbind(wxEVT_COMBOBOX, &PlaterFilamentComboBox::on_popup_selection, this);
@@ -344,6 +225,9 @@ PlaterFilamentComboBox::~PlaterFilamentComboBox()
 
 void PlaterFilamentComboBox::update()
 {
+    // WHY: the base update() below can emit a selection change that reaches
+    // Plater::priv::on_select_preset(), which calls combo->update() again (Plater.cpp:14993).
+    // The nested call must not dismiss the popup or rebuild the rows a second time.
     if (m_rebuilding)
         return;
 
@@ -391,8 +275,9 @@ PlaterFilamentComboBox::PopupRow PlaterFilamentComboBox::make_header(const wxStr
 std::string PlaterFilamentComboBox::preset_vendor(const Preset *preset) const
 {
     std::string vendor = config_string(preset, "filament_vendor");
-    if (vendor == "Bambu Lab")
-        vendor = "Bambu";
+    // Historical spelling: normalise it in a case-insensitive way, like every other vendor comparison here.
+    if (from_u8(vendor).CmpNoCase(wxString::FromUTF8(g_bambu_lab_vendor)) == 0)
+        vendor = g_bambu_vendor;
     return vendor;
 }
 
@@ -623,10 +508,16 @@ void PlaterFilamentComboBox::show_popup()
     if (GetDropDown().IsShown())
         GetDropDown().Dismiss();
 
-    if (m_popup_visible) {
+    if (m_popup_visible)
+    {
         close_popup(true);
         return;
     }
+
+    // wxOSX and wxGTK may repost the click that dismissed the transient popup to this control.
+    // Keep the base ComboBox debounce so that dismissing never immediately reopens the popup.
+    if (!m_popup->HasDismissLongTime())
+        return;
 
     if (s_active_owner && s_active_owner.get() != this)
         s_active_owner->close_popup(true);
@@ -639,6 +530,9 @@ void PlaterFilamentComboBox::show_popup()
 
     s_active_popup = m_popup;
     s_active_owner = this;
+    // WHY: update() above rebuilds m_popup_items and may synchronously notify selection listeners.
+    // Set the visible flag only after that work succeeds, so callbacks cannot observe a half-open
+    // popup and close/reopen it before PopupForParent() owns the window.
     m_popup_visible = true;
     wxCommandEvent open_event(wxEVT_COMBOBOX_DROPDOWN, GetId());
     open_event.SetEventObject(this);

@@ -4,9 +4,12 @@
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <wx/stattext.h>
+#include <wx/timer.h>
+#include <wx/weakref.h>
 
 #include <cstddef>
 #include <limits>
+#include <set>
 #include <vector>
 
 #include "wxExtensions.hpp"
@@ -27,11 +30,124 @@ public:
     {
         wxString text;
         wxBitmap icon;
-        void *   data{nullptr};
         wxString group{};
         wxString tip{};
         int      style{0};
     };
+
+    /** @brief Describes one row visible after grouping and filtering. */
+    struct VisibleRow
+    {
+        size_t item_index{0};
+        bool   group_header{false};
+    };
+
+    /** @brief Builds the visible-row mapping without creating a wx window. */
+    static std::vector<VisibleRow> build_visible_rows(const std::vector<Item> &items, const wxString &group)
+    {
+        std::vector<VisibleRow> rows;
+        std::set<wxString> groups;
+        rows.reserve(items.size());
+
+        for (size_t index = 0; index < items.size(); ++index)
+        {
+            const Item &item = items[index];
+            if (!group.IsEmpty() && item.group != group)
+                continue;
+
+            const bool is_group_header = group.IsEmpty() && !item.group.IsEmpty();
+            if (is_group_header && !groups.insert(item.group).second)
+                continue;
+
+            rows.push_back({index, is_group_header});
+        }
+
+        return rows;
+    }
+
+    /** @brief Converts a visible row into an item index or a group-header sentinel. */
+    static int item_index_for_visible_row(const std::vector<VisibleRow> &rows, int visible_row)
+    {
+        if (visible_row < 0 || static_cast<size_t>(visible_row) >= rows.size())
+            return -1;
+
+        const VisibleRow &row     = rows[static_cast<size_t>(visible_row)];
+        const size_t      max_int = static_cast<size_t>(std::numeric_limits<int>::max());
+        if (row.item_index > max_int || (row.group_header && row.item_index > max_int - 2))
+            return -1;
+
+        if (row.group_header)
+            return -static_cast<int>(row.item_index) - 2;
+        return static_cast<int>(row.item_index);
+    }
+
+    /** @brief Finds the visible row containing an item, or -1 when it is hidden. */
+    static int visible_row_for_item(const std::vector<VisibleRow> &rows, int item_index)
+    {
+        if (item_index < 0)
+            return -1;
+
+        const size_t item_index_value = static_cast<size_t>(item_index);
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index)
+        {
+            if (rows[row_index].item_index != item_index_value)
+                continue;
+            if (row_index > static_cast<size_t>(std::numeric_limits<int>::max()))
+                return -1;
+            return static_cast<int>(row_index);
+        }
+        return -1;
+    }
+
+    /** @brief Maps a selected item to its visible row, including a folded group header. */
+    static int selected_row_for_item(const std::vector<Item> &items, const wxString &group, int item_index)
+    {
+        if (item_index < 0 || static_cast<size_t>(item_index) >= items.size())
+            return -1;
+
+        const Item &item = items[static_cast<size_t>(item_index)];
+        if (!group.IsEmpty() && item.group != group)
+            return -1;
+
+        const std::vector<VisibleRow> rows = build_visible_rows(items, group);
+        const int visible_row = visible_row_for_item(rows, item_index);
+        if (visible_row >= 0)
+            return visible_row;
+        if (!group.IsEmpty() || item.group.IsEmpty())
+            return -1;
+
+        for (size_t row_index = 0; row_index < rows.size(); ++row_index)
+        {
+            const VisibleRow &row = rows[row_index];
+            if (!row.group_header || items[row.item_index].group != item.group)
+                continue;
+            if (row_index > static_cast<size_t>(std::numeric_limits<int>::max()))
+                return -1;
+            return static_cast<int>(row_index);
+        }
+        return -1;
+    }
+
+    /** @brief Removes a redundant vendor/group prefix, matching only at a word boundary. */
+    static wxString strip_group_prefix(const wxString &text, const wxString &group)
+    {
+        // Project/User pseudo-groups carry a trailing space and keep their text unchanged.
+        if (group.EndsWith(' '))
+            return text;
+
+        const wxString candidates[2] = {group, group.BeforeFirst(' ')};
+        for (const wxString &prefix : candidates)
+        {
+            if (prefix.IsEmpty() || !text.StartsWith(prefix))
+                continue;
+            // A genuine prefix ends the text or is followed by a space; otherwise it matched inside a word
+            // (e.g. group "Prusa Polymers" against the text "Prusament PVB @CORE One").
+            if (text.length() > prefix.length() && text[prefix.length()] != ' ')
+                continue;
+            return text.substr(prefix.size()).Trim(false);
+        }
+        return text;
+    }
 
 private:
     std::vector<Item> items;
@@ -43,6 +159,8 @@ private:
 
     FilamentDropDown * subDropDown{nullptr};
     FilamentDropDown * mainDropDown{nullptr};
+    wxWeakRef<FilamentDropDown> mainDropDownWeak;
+    wxTimer                    submenu_motion_timer;
 
     double radius                  = 0;
     bool   use_content_width       = false;
@@ -73,6 +191,8 @@ public:
     /** @brief Creates an unparented popup that will be initialized by Create(). */
     FilamentDropDown(std::vector<Item> &items);
 
+    ~FilamentDropDown() override;
+
     /** @brief Initializes the wx popup and returns false when the parent cannot create it. */
     bool Create(wxWindow *parent, long style = 0);
 
@@ -87,27 +207,6 @@ public:
 
     /** @brief Selects a valid row index or clears the selection for an invalid index. */
     void SetSelection(int n);
-
-    /** @brief Returns the selected row text or an empty string. */
-    wxString GetValue() const;
-    /** @brief Selects the row whose text equals @p value. */
-    void     SetValue(const wxString &value);
-
-public:
-    /** @brief Updates the popup background corner radius. */
-    void SetCornerRadius(double radius);
-
-    /** @brief Updates the popup border colors. */
-    void SetBorderColor(StateColor const &color);
-
-    /** @brief Updates the selected-row border colors. */
-    void SetSelectorBorderColor(StateColor const &color);
-
-    /** @brief Updates the row text colors. */
-    void SetTextColor(StateColor const &color);
-
-    /** @brief Updates the selected-row background colors. */
-    void SetSelectorBackgroundColor(StateColor const &color);
 
     /** @brief Chooses whether the popup follows parent width or its row content width. */
     void SetUseContentWidth(bool use, bool limit_max_content_width = false);
@@ -131,15 +230,8 @@ public:
     /** @brief Opens the group that contains the current selection. */
     bool openSelectionGroup();
 
-    int GetVisibleCount() const
-    {
-        return count > static_cast<size_t>(std::numeric_limits<int>::max()) ? std::numeric_limits<int>::max()
-                                                                              : static_cast<int>(count);
-    }
-
-    const std::vector<Item> &GetItems() const { return items; }
-
 protected:
+    bool ProcessLeftDown(wxMouseEvent &event) override;
     void Dismiss() override;
 
     void OnDismiss() override;
@@ -170,7 +262,11 @@ private:
 
     void messureSize();
     void autoPosition();
+    void ensure_row_visible(int row);
     void setGroup(const wxString &value);
+    void show_submenu();
+    void on_submenu_motion_timer(wxTimerEvent &event);
+    std::vector<VisibleRow> visible_rows() const;
     /** @brief Creates the submenu before showing the root popup when grouped rows are present. */
     void prepare_submenu();
     /** @brief Permanently switches this popup instance to its selectable flat-list fallback. */

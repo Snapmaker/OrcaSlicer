@@ -1,15 +1,15 @@
 {
     "schema_version": 1,
-    "order":{
-		"SnapMaker":[
-			"PLA SnapSpeed",
-			"PLA Matte",
-			"PETG HF",
-			"PLA Full Spectrum",
-			"TPU 95A HF",
-			"PEBA 90A",
-			"ABS",
-			"ASA"
-		]
-	}
+    "order": {
+        "Snapmaker": [
+            "PLA SnapSpeed",
+            "PLA Matte",
+            "PETG HF",
+            "PLA Full Spectrum",
+            "TPU 95A HF",
+            "PEBA 90A",
+            "ABS",
+            "ASA"
+        ]
+    }
 }

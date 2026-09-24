@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
-#include <set>
 
 #include <boost/log/trivial.hpp>
 
@@ -50,6 +49,35 @@ int add_to_int(int left, int right)
     return left + right;
 }
 
+bool point_in_anchor_gap(const wxWindow *anchor, const wxWindow *popup, const wxPoint &screen_point)
+{
+    if (anchor == nullptr || popup == nullptr)
+        return false;
+
+    const wxRect anchor_rect = anchor->GetScreenRect();
+    const wxRect popup_rect  = popup->GetScreenRect();
+    const int    left        = std::max(anchor_rect.GetLeft(), popup_rect.GetLeft());
+    const int    right       = std::min(anchor_rect.GetRight(), popup_rect.GetRight());
+    if (right < left)
+        return false;
+
+    // Screen y grows downward. Boundary pixels belong to the anchor or popup, so the clickable gap is
+    // strictly between the two rectangles.
+    if (popup_rect.GetTop() > anchor_rect.GetBottom())
+    {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > anchor_rect.GetBottom() &&
+               screen_point.y < popup_rect.GetTop();
+    }
+
+    if (popup_rect.GetBottom() < anchor_rect.GetTop())
+    {
+        return screen_point.x >= left && screen_point.x <= right && screen_point.y > popup_rect.GetBottom() &&
+               screen_point.y < anchor_rect.GetTop();
+    }
+
+    return false;
+}
+
 } // namespace
 
 FilamentDropDown::FilamentDropDown(std::vector<Item> &items)
@@ -64,6 +92,11 @@ FilamentDropDown::FilamentDropDown(std::vector<Item> &items)
 {
 }
 
+FilamentDropDown::~FilamentDropDown()
+{
+    submenu_motion_timer.Stop();
+}
+
 bool FilamentDropDown::Create(wxWindow *parent, long style)
 {
     if (parent == nullptr || !PopupWindow::Create(parent, wxPU_CONTAINS_CONTROLS))
@@ -75,6 +108,10 @@ bool FilamentDropDown::Create(wxWindow *parent, long style)
     Bind(wxEVT_MOTION, &FilamentDropDown::mouseMove, this);
     Bind(wxEVT_MOUSEWHEEL, &FilamentDropDown::mouseWheelMoved, this);
     Bind(wxEVT_PAINT, &FilamentDropDown::paintEvent, this);
+#ifdef __WXGTK__
+    submenu_motion_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, &FilamentDropDown::on_submenu_motion_timer, this, submenu_motion_timer.GetId());
+#endif
 
     SetBackgroundStyle(wxBG_STYLE_PAINT);
     SetBackgroundColour(*wxWHITE);
@@ -137,66 +174,6 @@ void FilamentDropDown::SetSelection(int n)
     paintNow();
 }
 
-wxString FilamentDropDown::GetValue() const
-{
-    return selection >= 0 && static_cast<size_t>(selection) < items.size() ? items[selection].text : wxString();
-}
-
-void FilamentDropDown::SetValue(const wxString &value)
-{
-    auto i = std::find_if(items.begin(), items.end(), [&value](const Item &item)
-                          {
-                              return item.text == value;
-                          });
-    if (i == items.end())
-    {
-        SetSelection(-1);
-        return;
-    }
-
-    const std::ptrdiff_t distance = std::distance(items.begin(), i);
-    if (distance < 0 || static_cast<size_t>(distance) > static_cast<size_t>(std::numeric_limits<int>::max()))
-    {
-        SetSelection(-1);
-        return;
-    }
-    SetSelection(static_cast<int>(distance));
-}
-
-void FilamentDropDown::SetCornerRadius(double radius)
-{
-    this->radius = radius;
-    paintNow();
-}
-
-void FilamentDropDown::SetBorderColor(StateColor const &color)
-{
-    border_color = color;
-    state_handler.update_binds();
-    paintNow();
-}
-
-void FilamentDropDown::SetSelectorBorderColor(StateColor const &color)
-{
-    selector_border_color = color;
-    state_handler.update_binds();
-    paintNow();
-}
-
-void FilamentDropDown::SetTextColor(StateColor const &color)
-{
-    text_color = color;
-    state_handler.update_binds();
-    paintNow();
-}
-
-void FilamentDropDown::SetSelectorBackgroundColor(StateColor const &color)
-{
-    selector_background_color = color;
-    state_handler.update_binds();
-    paintNow();
-}
-
 void FilamentDropDown::SetUseContentWidth(bool use, bool limit_max_content_width)
 {
     if (use_content_width == use)
@@ -246,6 +223,7 @@ void FilamentDropDown::prepare_submenu()
 
     std::unique_ptr<FilamentDropDown> new_sub_drop_down = std::make_unique<FilamentDropDown>(items);
     new_sub_drop_down->mainDropDown            = this;
+    new_sub_drop_down->mainDropDownWeak        = this;
     new_sub_drop_down->check_bitmap            = check_bitmap;
     new_sub_drop_down->text_off                = text_off;
     new_sub_drop_down->use_content_width       = true;
@@ -270,25 +248,6 @@ void FilamentDropDown::prepare_submenu()
                           e.SetId(root->GetId());
                           root->GetEventHandler()->ProcessEvent(e);
                       });
-#ifdef __WXGTK__
-    subDropDown->Bind(wxEVT_IDLE, [weak_root](wxIdleEvent &evt)
-                      {
-                          FilamentDropDown *root = weak_root.get();
-                          if (root == nullptr || root->subDropDown == nullptr || !root->subDropDown->IsShown())
-                              return;
-                          wxPoint mouse_pos = wxGetMousePosition();
-                          wxRect  sub_rect  = root->subDropDown->GetScreenRect();
-                          if (!sub_rect.Contains(mouse_pos))
-                          {
-                              wxPoint      local_pt = root->ScreenToClient(mouse_pos);
-                              wxMouseEvent mouse_evt(wxEVT_MOTION);
-                              mouse_evt.SetX(local_pt.x);
-                              mouse_evt.SetY(local_pt.y);
-                              wxPostEvent(root, mouse_evt);
-                              evt.RequestMore();
-                          }
-                      });
-#endif
 }
 
 void FilamentDropDown::apply_flat_fallback()
@@ -307,11 +266,13 @@ void FilamentDropDown::DismissAll()
 {
     if (subDropDown != nullptr)
     {
+        subDropDown->submenu_motion_timer.Stop();
         // The child override intentionally keeps the root open while the
         // pointer is over it. An owner-driven close must close both windows.
         subDropDown->PopupWindow::Dismiss();
         subDropDown->Hide();
     }
+    submenu_motion_timer.Stop();
     PopupWindow::Dismiss();
     Hide();
 }
@@ -321,17 +282,102 @@ int FilamentDropDown::group_row_of(const wxString &target) const
     if (target.IsEmpty())
         return -1;
 
-    std::set<wxString> seen;
-    int                row = 0;
-    for (const Item &item : items)
+    const std::vector<VisibleRow> rows = visible_rows();
+    for (size_t row = 0; row < rows.size(); ++row)
     {
-        if (!item.group.IsEmpty() && !seen.insert(item.group).second)
+        const VisibleRow &visible_row = rows[row];
+        if (!visible_row.group_header || items[visible_row.item_index].group != target)
             continue;
-        if (item.group == target)
-            return row;
-        ++row;
+        if (row > static_cast<size_t>(std::numeric_limits<int>::max()))
+            return -1;
+        return static_cast<int>(row);
     }
     return -1;
+}
+
+std::vector<FilamentDropDown::VisibleRow> FilamentDropDown::visible_rows() const
+{
+    return build_visible_rows(items, group);
+}
+
+void FilamentDropDown::ensure_row_visible(int row)
+{
+    if (row < 0 || rowSize.y <= 0)
+        return;
+
+    const size_t max_rows      = max_visible_row_count(max_visible_rows);
+    size_t       visible_count = std::min(max_rows, std::max(count, size_t{1}));
+    const int     client_height = GetClientSize().y;
+    if (client_height > 0)
+    {
+        const size_t client_rows = static_cast<size_t>(client_height / rowSize.y);
+        if (client_rows > 0)
+            visible_count = std::min(visible_count, client_rows);
+    }
+    if (count <= visible_count)
+    {
+        offset.y = 0;
+        return;
+    }
+
+    const size_t row_index = static_cast<size_t>(row);
+    if (row_index >= count)
+        return;
+
+    const int viewport_height = multiply_to_int(rowSize.y, visible_count);
+    const int content_height  = multiply_to_int(rowSize.y, count);
+    const int row_top         = multiply_to_int(rowSize.y, row_index);
+    const int row_bottom      = multiply_to_int(rowSize.y, row_index + 1);
+
+    if (add_to_int(offset.y, row_top) < 0)
+        offset.y = -row_top;
+    else if (add_to_int(offset.y, row_bottom) > viewport_height)
+        offset.y = viewport_height - row_bottom;
+
+    const int minimum_offset = viewport_height - content_height;
+    if (offset.y < minimum_offset)
+        offset.y = minimum_offset;
+    if (offset.y > 0)
+        offset.y = 0;
+}
+
+void FilamentDropDown::show_submenu()
+{
+    if (subDropDown == nullptr)
+        return;
+
+    if (!subDropDown->IsShown())
+        subDropDown->Popup(subDropDown);
+
+#ifdef __WXGTK__
+    if (subDropDown->IsShown() && !subDropDown->submenu_motion_timer.IsRunning())
+        subDropDown->submenu_motion_timer.Start(30, wxTIMER_CONTINUOUS);
+#endif
+}
+
+void FilamentDropDown::on_submenu_motion_timer(wxTimerEvent &event)
+{
+#ifdef __WXGTK__
+    static_cast<void>(event);
+    FilamentDropDown *root = mainDropDownWeak.get();
+    if (root == nullptr || !IsShown())
+    {
+        submenu_motion_timer.Stop();
+        return;
+    }
+
+    const wxPoint mouse_pos = wxGetMousePosition();
+    if (GetScreenRect().Contains(mouse_pos))
+        return;
+
+    const wxPoint      local_pt = root->ScreenToClient(mouse_pos);
+    wxMouseEvent       mouse_evt(wxEVT_MOTION);
+    mouse_evt.SetX(local_pt.x);
+    mouse_evt.SetY(local_pt.y);
+    wxPostEvent(root, mouse_evt);
+#else
+    event.Skip();
+#endif
 }
 
 bool FilamentDropDown::openSelectionGroup()
@@ -345,6 +391,8 @@ bool FilamentDropDown::openSelectionGroup()
         return false;
 
     hover_item = row;
+    ensure_row_visible(row);
+    paintNow();
 
     auto &drop = *subDropDown;
     if (drop.group != target)
@@ -354,8 +402,7 @@ bool FilamentDropDown::openSelectionGroup()
     }
     drop.autoPosition();
     drop.paintNow();
-    if (!drop.IsShown())
-        drop.Popup(&drop);
+    show_submenu();
     return true;
 }
 
@@ -382,65 +429,66 @@ static wxSize GetBmpSize(const wxBitmap &bmp)
 #endif
 }
 
-static wxString strip_group_prefix(const wxString &text, const wxString &group)
+/** @brief Carries the state needed to draw a split row. */
+struct SplitItemRenderContext
 {
-    if (group.EndsWith(' ')) return text;
-    wxString prefix = group.BeforeFirst(' ');
-    if (prefix.IsEmpty()) prefix = group;
-    if (text.StartsWith(prefix))
-        return text.substr(prefix.size()).Trim(false);
-    return text;
-}
+    const wxWindow *window;
+    wxDC &          dc;
+    wxString        text;
+    wxPoint         start;
+    int             width;
+    int             height;
+};
 
-static void _DrawSplitItem(const wxWindow *w,
-                           wxDC &dc,
-                           wxString split_text,
-                           wxPoint start_pt,
-                           int item_width,
-                           int item_height)
+/** @brief Draws a split row separator and optional label. */
+static void draw_split_item(const SplitItemRenderContext &context)
 {
+    wxDC &dc = context.dc;
+    wxString split_text = context.text;
+
     // save dc
     auto pre_clr = dc.GetTextForeground();
     auto pre_pen = dc.GetPen();
     dc.SetTextForeground(StateColor::darkModeColorFor(wxColour(172, 172, 172)));
     dc.SetPen(StateColor::darkModeColorFor(wxColour(166, 169, 170)));
     // miner font
-    auto font = w->GetFont();
+    auto font = context.window->GetFont();
     font.SetPointSize(font.GetPointSize() - 3);
     dc.SetFont(font);
 
-    int spacing = w->FromDIP(8);
+    int spacing = context.window->FromDIP(8);
 
     if (!split_text.empty()) // Paiting: text + spacing + line + spacing
     {
-        int    max_content_width = item_width - start_pt.x - 2 * spacing;
+        int    max_content_width = context.width - context.start.x - 2 * spacing;
         wxSize tSize             = dc.GetMultiLineTextExtent(split_text);
-    if (tSize.x > max_content_width)
-    {
+        if (tSize.x > max_content_width)
+        {
             split_text = wxControl::Ellipsize(split_text, dc, wxELLIPSIZE_END, max_content_width);
             tSize      = dc.GetMultiLineTextExtent(split_text);
         }
 
         dc.SetFont(font);
-        dc.DrawText(split_text, start_pt);
+        dc.DrawText(split_text, context.start);
 
-        int line_width = item_width - start_pt.x - tSize.x - 2 * spacing;
-        int line_y     = start_pt.y + (tSize.GetHeight() / 2);
-        dc.DrawLine(start_pt.x + tSize.x + spacing,
+        int line_width = context.width - context.start.x - tSize.x - 2 * spacing;
+        int line_y     = context.start.y + (tSize.GetHeight() / 2);
+        dc.DrawLine(context.start.x + tSize.x + spacing,
                     line_y,
-                    start_pt.x + tSize.x + line_width + spacing,
+                    context.start.x + tSize.x + line_width + spacing,
                     line_y); // draw right line
-    } else // Paiting: line + spacing
+    }
+    else // Paiting: line + spacing
     {
-        int line_y     = start_pt.y + (item_height / 2);
-        int line_width = item_width - start_pt.x - spacing;
-        dc.DrawLine(start_pt.x, line_y, start_pt.x + line_width, line_y); // draw line
+        int line_y     = context.start.y + (context.height / 2);
+        int line_width = context.width - context.start.x - spacing;
+        dc.DrawLine(context.start.x, line_y, context.start.x + line_width, line_y); // draw line
     }
 
     // restore dc
     dc.SetTextForeground(pre_clr);
     dc.SetPen(pre_pen);
-    dc.SetFont(w->GetFont());
+    dc.SetFont(context.window->GetFont());
 }
 
 void FilamentDropDown::render(wxDC &dc)
@@ -548,34 +596,18 @@ void FilamentDropDown::render_scroll_bar(wxDC &dc, const wxSize &size, wxRect &c
 
 void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wxRect &rcContent)
 {
-    std::set<wxString> groups;
-    // draw texts & icons
-    size_t index = 0;
-    for (size_t i = 0; i < items.size(); ++i)
+    const std::vector<VisibleRow> rows = visible_rows();
+    for (size_t index = 0; index < rows.size(); ++index)
     {
-        auto &item    = items[i];
-        int   states2 = states;
+        const VisibleRow &visible_row = rows[index];
+        const Item       &item        = items[visible_row.item_index];
+        int               states2     = states;
         const bool is_dimmed = (item.style & DD_ITEM_STYLE_DIMMED) != 0;
         if ((item.style & DD_ITEM_STYLE_DISABLED) != 0)
             states2 &= ~StateColor::Enabled;
-        // Skip by group
-        if (group.IsEmpty())
-        {
-            if (!item.group.IsEmpty())
-            {
-                if (groups.find(item.group) != groups.end())
-                    continue;
-                groups.insert(item.group);
-                states2 |= StateColor::Enabled;
-            }
-        }
-        else
-        {
-            if (item.group != group)
-                continue;
-        }
+        if (visible_row.group_header)
+            states2 |= StateColor::Enabled;
         const bool is_hover = hover_item >= 0 && index == static_cast<size_t>(hover_item);
-        ++index;
         if (rcContent.GetBottom() < 0)
         {
             rcContent.y += rowSize.y;
@@ -586,12 +618,13 @@ void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wx
 
         if (item.style & DD_ITEM_STYLE_SPLIT_ITEM)
         {
-            _DrawSplitItem(this, dc, item.text, pt, rowSize.GetWidth(), rowSize.GetHeight());
+            const SplitItemRenderContext context{this, dc, item.text, pt, rowSize.GetWidth(), rowSize.GetHeight()};
+            draw_split_item(context);
             rcContent.y += rowSize.GetHeight();
             continue;
         }
 
-        const bool is_top_level_group = group.IsEmpty() && !item.group.IsEmpty();
+        const bool is_top_level_group = visible_row.group_header;
         auto &     icon               = item.icon;
         auto       size2              = GetBmpSize(icon);
         if (iconSize.x > 0)
@@ -642,95 +675,12 @@ void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wx
 
 int FilamentDropDown::hoverIndex()
 {
-    if (hover_item < 0)
-        return -1;
-    if (count == items.size())
-    {
-        // "count == items.size()" implies no group folded a row, except when a group has
-        // exactly one member; only then keep the shortcut, else the header row would be
-        // reported as a positive index instead of -i-2.
-        bool any_grouped_at_top_level = false;
-        if (group.IsEmpty())
-        {
-            for (const auto &item : items)
-                if (!item.group.IsEmpty())
-                {
-                    any_grouped_at_top_level = true;
-                    break;
-                }
-        }
-        if (!any_grouped_at_top_level)
-            return hover_item;
-    }
-    size_t             index = 0;
-    std::set<wxString> groups;
-    for (size_t i = 0; i < items.size(); ++i)
-    {
-        auto &item = items[i];
-        // Skip by group
-        if (group.IsEmpty())
-        {
-            if (!item.group.IsEmpty())
-            {
-                if (groups.find(item.group) == groups.end())
-                    groups.insert(item.group);
-                else
-                    continue;
-            }
-        }
-        else
-        {
-            if (item.group != group)
-                continue;
-        }
-        if (index == static_cast<size_t>(hover_item))
-        {
-            const size_t max_int = static_cast<size_t>(std::numeric_limits<int>::max());
-            if (i > max_int || (!item.group.IsEmpty() && group.IsEmpty() && i > max_int - 2))
-                return -1;
-            return (item.group.IsEmpty() || !group.IsEmpty()) ? static_cast<int>(i) : -static_cast<int>(i) - 2;
-        }
-        ++index;
-    }
-    return -1;
+    return item_index_for_visible_row(visible_rows(), hover_item);
 }
 
 int FilamentDropDown::selectedItem()
 {
-    if (selection < 0 || static_cast<size_t>(selection) >= items.size())
-        return -1;
-    if (count == items.size())
-        return selection;
-    auto &sel = items[selection];
-    if (group.IsEmpty() ? !sel.group.IsEmpty() : sel.group != group)
-        return -1;
-    if (selection == 0)
-        return 0;
-    size_t             index = 0;
-    std::set<wxString> groups;
-    for (size_t i = 0; i < static_cast<size_t>(selection); ++i)
-    {
-        auto &item = items[i];
-        // Skip by group
-        if (group.IsEmpty())
-        {
-            if (!item.group.IsEmpty())
-            {
-                if (groups.find(item.group) == groups.end())
-                    groups.insert(item.group);
-                else
-                    continue;
-            }
-        }
-        else
-        {
-            if (item.group != group)
-                continue;
-        }
-        ++index;
-    }
-    return index > static_cast<size_t>(std::numeric_limits<int>::max()) ? std::numeric_limits<int>::max()
-                                                                         : static_cast<int>(index);
+    return selected_row_for_item(items, group, selection);
 }
 
 void FilamentDropDown::messureSize()
@@ -741,26 +691,10 @@ void FilamentDropDown::messureSize()
     count    = 0;
     wxClientDC dc(GetParent() ? GetParent() : this);
     dc.SetFont(GetFont());
-    std::set<wxString> groups;
-    for (size_t i = 0; i < items.size(); ++i)
+    const std::vector<VisibleRow> rows = visible_rows();
+    for (const VisibleRow &visible_row : rows)
     {
-        auto &item = items[i];
-        // Skip by group
-        if (group.IsEmpty())
-        {
-            if (!item.group.IsEmpty())
-            {
-                if (groups.find(item.group) == groups.end())
-                    groups.insert(item.group);
-                else
-                    continue;
-            }
-        }
-        else
-        {
-            if (item.group != group)
-                continue;
-        }
+        const Item &item = items[visible_row.item_index];
         ++count;
         wxSize size1;
         if (!text_off)
@@ -771,7 +705,7 @@ void FilamentDropDown::messureSize()
             if (group.IsEmpty() && !item.group.IsEmpty())
                 size1.x += 5 + arrow_bitmap.GetBmpWidth();
         }
-        const bool is_top_level_group = group.IsEmpty() && !item.group.IsEmpty();
+        const bool is_top_level_group = visible_row.group_header;
         if (!is_top_level_group && item.icon.IsOk())
         {
             wxSize size2 = GetBmpSize(item.icon);
@@ -958,7 +892,7 @@ void FilamentDropDown::mouseReleased(wxMouseEvent &event)
                 drop.paintNow();
             }
             if (!drop.IsShown())
-                drop.Popup(&drop);
+                show_submenu();
             return;
         }
 
@@ -968,8 +902,9 @@ void FilamentDropDown::mouseReleased(wxMouseEvent &event)
             if (mainDropDown)
                 mainDropDown->hover_item = -1; // To Dismiss mainDropDown
             DismissAndNotify();
-        } else if (subDropDown)
-            subDropDown->Popup(subDropDown);
+        }
+        else if (subDropDown)
+            show_submenu();
     }
 }
 
@@ -1035,8 +970,7 @@ void FilamentDropDown::mouseMove(wxMouseEvent &event)
             drop.messureSize();
             drop.autoPosition();
             drop.paintNow();
-            if (!drop.IsShown())
-                drop.Popup(&drop);
+            show_submenu();
         }
         else if (index >= 0)
         {
@@ -1102,6 +1036,23 @@ void FilamentDropDown::sendDropDownEvent()
     GetEventHandler()->ProcessEvent(event);
 }
 
+bool FilamentDropDown::ProcessLeftDown(wxMouseEvent &event)
+{
+#ifdef __WXOSX__
+    if (IsShown() && HitTest(event.GetPosition()) == wxHT_WINDOW_OUTSIDE &&
+        point_in_anchor_gap(GetParent(), this, ClientToScreen(event.GetPosition())))
+    {
+        DismissAndNotify();
+
+        // wxOSX reposts an outside click to the control below the popup. The anchor/popup gap is not
+        // an activation target, so consume it after dismissing.
+        return true;
+    }
+#endif
+
+    return PopupWindow::ProcessLeftDown(event);
+}
+
 void FilamentDropDown::Dismiss()
 {
     if (subDropDown && subDropDown->IsShown())
@@ -1111,6 +1062,7 @@ void FilamentDropDown::Dismiss()
 
 void FilamentDropDown::OnDismiss()
 {
+    submenu_motion_timer.Stop();
     hover_item = -1;
     SetToolTip(wxString());
 

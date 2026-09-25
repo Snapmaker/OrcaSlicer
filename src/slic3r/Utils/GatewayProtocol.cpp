@@ -233,11 +233,11 @@ std::optional<nlohmann::json> parse_device_object_query_result(const nlohmann::j
         return std::nullopt;
 
     if (const auto objects = result.find("objects"); objects != result.end() && objects->is_object())
-        return *objects;
+        return std::optional<nlohmann::json>{std::in_place, *objects};
 
     // Older gateway builds returned the object map directly instead of wrapping it in "objects".
     if (result.contains("print_task_config"))
-        return result;
+        return std::optional<nlohmann::json>{std::in_place, result};
     return std::nullopt;
 }
 

@@ -25,11 +25,12 @@ SCENARIO("Origin manipulation", "[GCode]") {
 }
 
 // Orca #15755 (selective): U1 end-G-code metadata from Edge per-extruder flow variants.
-static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vts)
+static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vts, unsigned filaments = 0)
 {
-    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
-    const unsigned     n      = 2;
-    config.set_num_extruders(n);
+    DynamicPrintConfig config    = DynamicPrintConfig::full_print_config();
+    const unsigned     extruders = unsigned(std::max<size_t>(nozzle_vts.size(), 2));
+    const unsigned     n         = filaments ? filaments : extruders;
+    config.set_num_extruders(extruders);
     config.set_num_filaments(n);
     config.set_deserialize_strict({
         { "machine_end_gcode",              "; TEST_FVT = {filament_volume_type_list}" },
@@ -42,8 +43,8 @@ static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vt
     REQUIRE(nvt != nullptr);
     if (!nozzle_vts.empty())
         nvt->values = nozzle_vts;
-    if (nvt->values.size() < n)
-        nvt->values.resize(n, int(nvtStandard));
+    if (nvt->values.size() < extruders)
+        nvt->values.resize(extruders, int(nvtStandard));
 
     TriangleMesh a = mesh(TestMesh::cube_20x20x20);
     TriangleMesh b = mesh(TestMesh::cube_20x20x20);
@@ -60,5 +61,9 @@ TEST_CASE("filament_volume_type_list is emitted in end G-code from nozzle volume
     SECTION("defaults are standard,standard") {
         const std::string gcode = slice_volume_type_end_gcode({});
         REQUIRE(gcode.find("; TEST_FVT = standard,standard\n") != std::string::npos);
+    }
+    SECTION("identity map wraps extra filaments onto toolheads") {
+        const std::string gcode = slice_volume_type_end_gcode({ int(nvtStandard), int(nvtHighFlow) }, 3);
+        REQUIRE(gcode.find("; TEST_FVT = standard,high_flow,standard\n") != std::string::npos);
     }
 }

@@ -338,6 +338,15 @@ enum ZHopType {
     zhtCount
 };
 
+// Snapmaker: a spiral lift sweeps outside the object footprint, so a model sitting
+// closer than this to the bed edge risks colliding with it. Shared by the plater
+// warning and by the bed shrink the arranger applies, so the two cannot drift apart.
+inline constexpr double SPIRAL_LIFT_SAFETY_MARGIN = 3.5; // mm
+
+// Snapmaker: whether any filament's Z hop performs a spiral lift. "Auto Lift" is
+// turned into a spiral lift when the G-code is written, so it counts as one here.
+bool any_filament_uses_spiral_lift(const ConfigBase &config);
+
 enum FilamentMapMode {
     fmmAutoForFlush,
     fmmAutoForMatch,

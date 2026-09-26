@@ -842,6 +842,14 @@ void MenuFactory::append_menu_item_fill_bed(wxMenu *menu)
         [](wxCommandEvent &) { plater()->fill_bed_with_instances(); }, "", nullptr, []() { return plater()->can_increase_instances(); }, m_parent);
 }
 
+void MenuFactory::append_menu_item_fill_bed_options(wxMenu *menu)
+{
+    append_menu_item(
+        menu, wxID_ANY, _L("Fill bed: 3 options"),
+        _L("Fill three new plates with copies of the selected object, each packed differently, so you can print the one you prefer"),
+        [](wxCommandEvent &) { plater()->fill_bed_with_options(); }, "", nullptr, []() { return plater()->can_increase_instances(); }, m_parent);
+}
+
 wxMenuItem* MenuFactory::append_menu_item_printable(wxMenu* menu)
 {
     // BBS: to be checked
@@ -1356,6 +1364,7 @@ void MenuFactory::create_extra_object_menu()
     //append_menu_item_fill_bed(&m_object_menu);
     // Object Clone
     append_menu_item_clone(&m_object_menu);
+    append_menu_item_fill_bed_options(&m_object_menu);
     // Object Repair
     append_menu_item_fix_through_netfabb(&m_object_menu);
     // Object Simplify

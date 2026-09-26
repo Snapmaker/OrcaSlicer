@@ -38,6 +38,33 @@ public:
         apply_wipe_tower();
     }
 
+    // Push the tower into the plate corner nearest to it, keeping its whole first-layer
+    // footprint (m_bb, relative to m_pos: brim and cone included) WIPE_TOWER_MARGIN inside
+    // the plate. Leaves m_pos alone if the footprint does not fit the plate either way.
+    void snap_to_nearest_corner(const Vec2d &plate_size)
+    {
+        const double x_lo = WIPE_TOWER_MARGIN - m_bb.min.x();
+        const double x_hi = plate_size.x() - WIPE_TOWER_MARGIN - m_bb.max.x();
+        const double y_lo = WIPE_TOWER_MARGIN - m_bb.min.y();
+        const double y_hi = plate_size.y() - WIPE_TOWER_MARGIN - m_bb.max.y();
+        if (x_lo > x_hi || y_lo > y_hi)
+            return; // it does not fit either way; leave it to the plate clamp
+
+        m_pos.x() = m_pos.x() - x_lo <= x_hi - m_pos.x() ? x_lo : x_hi;
+        m_pos.y() = m_pos.y() - y_lo <= y_hi - m_pos.y() ? y_lo : y_hi;
+    }
+
+    // Store m_pos in the project config. m_pos is plate-local here, like the config value,
+    // so apply_wipe_tower() - which subtracts the plate origin - is not used.
+    void store_position() const
+    {
+        DynamicConfig &proj_cfg = wxGetApp().preset_bundle->project_config;
+        ConfigOptionFloat wipe_tower_x(m_pos.x());
+        ConfigOptionFloat wipe_tower_y(m_pos.y());
+        proj_cfg.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&wipe_tower_x, m_plate_idx, 0);
+        proj_cfg.option<ConfigOptionFloats>("wipe_tower_y", true)->set_at(&wipe_tower_y, m_plate_idx, 0);
+    }
+
     ArrangePolygon get_arrange_polygon() const
     {
         Polygon ap({
@@ -745,6 +772,31 @@ get_wipe_tower_arrangepoly(const Plater &plater)
         return get_wipetower_arrange_poly(&wti);
 
     return {};
+}
+
+std::optional<arrangement::ArrangePolygon>
+move_wipe_tower_to_nearest_corner(Plater &plater)
+{
+    int id = plater.canvas3D()->fff_print()->get_plate_index();
+    WipeTower wti = get_wipe_tower(plater, id);
+    if (!wti)
+        return {};
+
+    wti.snap_to_nearest_corner(plater.get_partplate_list().get_plate(id)->get_size());
+    wti.store_position();
+    return get_wipetower_arrange_poly(&wti);
+}
+
+std::optional<arrangement::ArrangePolygon>
+get_wipe_tower_corner_arrangepoly(Plater &plater)
+{
+    int id = plater.canvas3D()->fff_print()->get_plate_index();
+    WipeTower wti = get_wipe_tower(plater, id);
+    if (!wti)
+        return {};
+
+    wti.snap_to_nearest_corner(plater.get_partplate_list().get_plate(id)->get_size());
+    return get_wipetower_arrange_poly(&wti);
 }
 
 //BBS: add sudoku-style stride

@@ -20201,6 +20201,15 @@ void Plater::fill_bed_with_instances()
     }
 }
 
+void Plater::fill_bed_with_options()
+{
+    auto &w = get_ui_job_worker();
+    if (w.is_idle()) {
+        p->take_snapshot(_u8L("Fill bed: 3 options"));
+        replace_job(w, std::make_unique<FillBedOptionsJob>());
+    }
+}
+
 bool Plater::is_selection_empty() const
 {
     return p->get_selection().is_empty() || p->get_selection().is_wipe_tower();

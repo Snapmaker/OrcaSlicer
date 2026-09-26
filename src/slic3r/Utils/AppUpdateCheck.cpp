@@ -13,10 +13,12 @@ namespace Slic3r {
 namespace AppUpdate {
 
 const char* const GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/aceRage/EdgeSlicer/releases/latest";
+const char* const GITHUB_NIGHTLY_RELEASE_API = "https://api.github.com/repos/aceRage/EdgeSlicer/releases/tags/nightly";
 const char* const GITHUB_TRUSTED_URL_PREFIX = "https://github.com/aceRage/EdgeSlicer/";
 const char* const GITHUB_RELEASES_PAGE      = "https://github.com/aceRage/EdgeSlicer/releases/latest";
 const char* const NOTICE_BEGIN_MARKER       = "<!-- update-notice -->";
 const char* const NOTICE_END_MARKER         = "<!-- /update-notice -->";
+const char* const NIGHTLY_VERSION_MARKER    = "nightly-version";
 
 namespace {
 
@@ -293,9 +295,77 @@ int compare_versions(const Version& a, const Version& b)
     return a.prerelease < b.prerelease ? -1 : 1;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Nightly versions
+
+std::string NightlyVersion::to_string() const
+{
+    std::string s = base.to_string() + "-nightly." + date;
+    if (!commit.empty()) s += "+" + commit;
+    return s;
+}
+
+std::string NightlyVersion::date_display() const
+{
+    return date.size() == 8 ? date.substr(0, 4) + "-" + date.substr(4, 2) + "-" + date.substr(6, 2) : date;
+}
+
+NightlyVersion parse_nightly(const std::string& text)
+{
+    // <number>-nightly.<8 digits>, then optionally [+-]<hex commit>, then nothing.
+    static const std::regex re(R"(^[vV]?([0-9]+(?:\.[0-9]+){1,3})-nightly\.([0-9]{8})(?:[+-]([0-9A-Fa-f]{4,40}))?$)");
+    NightlyVersion n;
+    std::smatch    m;
+    const std::string t = trim(text);
+    if (!std::regex_match(t, m, re)) return n;
+    n.base = parse_version(m[1].str());
+    if (!n.base.valid) return n;
+    n.date   = m[2].str();
+    n.commit = to_lower(m[3].str());
+    const int month = std::atoi(n.date.substr(4, 2).c_str());
+    const int day   = std::atoi(n.date.substr(6, 2).c_str());
+    n.valid = month >= 1 && month <= 12 && day >= 1 && day <= 31;
+    return n;
+}
+
+bool is_nightly_version(const std::string& text) { return parse_nightly(text).valid; }
+
+int compare_nightly(const NightlyVersion& a, const NightlyVersion& b)
+{
+    if (a.valid != b.valid) return a.valid ? 1 : -1;
+    if (!a.valid) return 0;
+    if (const int c = compare_versions(a.base, b.base); c != 0) return c;
+    if (a.date != b.date) return a.date < b.date ? -1 : 1; // YYYYMMDD orders as text
+    return 0;
+}
+
+bool nightly_is_newer(const NightlyVersion& remote, const NightlyVersion& local)
+{
+    if (!remote.valid) return false;
+    if (!local.valid) return true;
+    const int c = compare_nightly(remote, local);
+    if (c != 0) return c > 0;
+    // Same release number and day: commits cannot be ordered by their hashes, but the nightly
+    // release only ever holds the latest build, so a different commit is the newer one.
+    // Hashes of different lengths name the same commit when one starts with the other.
+    if (remote.commit.empty() || local.commit.empty()) return false;
+    return !starts_with(remote.commit, local.commit) && !starts_with(local.commit, remote.commit);
+}
+
+Channel channel_from_config(const std::string& value) { return to_lower(trim(value)) == "nightly" ? Channel::Nightly : Channel::Stable; }
+
+const char* channel_config_value(Channel channel) { return channel == Channel::Nightly ? "nightly" : "stable"; }
+
 bool is_skipped(const std::string& candidate, const std::string& skip_version)
 {
     if (trim(skip_version).empty()) return false;
+    const NightlyVersion cn = parse_nightly(candidate);
+    const NightlyVersion sn = parse_nightly(skip_version);
+    if (cn.valid || sn.valid) {
+        // A skipped nightly hides that build and older ones; it says nothing about releases.
+        if (cn.valid && sn.valid) return !nightly_is_newer(cn, sn);
+        return false;
+    }
     const Version c = parse_version(candidate);
     const Version s = parse_version(skip_version);
     if (c.valid && s.valid) return compare_versions(c, s) <= 0;
@@ -513,39 +583,43 @@ std::string pick_asset(const nlohmann::json& release, Platform platform)
     return url;
 }
 
-} // namespace
-
-ReleaseInfo parse_github_release(const std::string& json_body, Platform platform)
+// "2026-09-26T13:22:38Z" -> "20260926"; anything else -> "".
+std::string date_of(const std::string& iso)
 {
-    ReleaseInfo info;
-    nlohmann::json j;
+    static const std::regex re(R"(^([0-9]{4})-([0-9]{2})-([0-9]{2})T)");
+    std::smatch m;
+    if (!std::regex_search(iso, m, re)) return {};
+    return m[1].str() + m[2].str() + m[3].str();
+}
+
+// Parses the JSON object and the tag; false (with info.error set) when it is not a release.
+bool parse_release_object(const std::string& json_body, nlohmann::json& j, ReleaseInfo& info)
+{
     try {
         j = nlohmann::json::parse(json_body);
     } catch (const std::exception& e) {
         info.error = std::string("invalid JSON: ") + e.what();
-        return info;
+        return false;
     }
     if (!j.is_object()) {
         info.error = "unexpected answer (not a JSON object)";
-        return info;
+        return false;
     }
-
     info.tag = json_string(j, "tag_name");
     if (info.tag.empty()) {
         // GitHub reports rate limits and missing releases as {"message": "..."}.
         const std::string message = json_string(j, "message");
         info.error                = message.empty() ? "no tag_name in the answer" : "GitHub: " + message;
-        return info;
+        return false;
     }
+    return true;
+}
 
-    info.version = parse_version(info.tag);
-    if (!info.version.valid) {
-        info.error = "unrecognised release tag '" + info.tag + "'";
-        return info;
-    }
-    info.version_str = info.version.to_string();
-    info.draft       = json_bool(j, "draft");
-    info.prerelease  = json_bool(j, "prerelease") || !info.version.prerelease.empty();
+// Links, flags, date and notes: everything but the version.
+void fill_release_details(const nlohmann::json& j, Platform platform, ReleaseInfo& info)
+{
+    info.draft          = json_bool(j, "draft");
+    info.published_date = date_of(json_string(j, "published_at"));
 
     info.html_url = json_string(j, "html_url");
     if (!trusted(info.html_url)) info.html_url = GITHUB_RELEASES_PAGE;
@@ -554,7 +628,73 @@ ReleaseInfo parse_github_release(const std::string& json_body, Platform platform
     if (info.download_url.empty()) info.download_url = info.html_url;
 
     info.notes = compact_release_notes(json_string(j, "body"));
-    info.ok    = true;
+}
+
+// The nightly's version from the body marker, else from the first asset name that carries one.
+NightlyVersion nightly_version_of(const nlohmann::json& j)
+{
+    static const std::regex marker(R"(<!--\s*nightly-version\s*:\s*([^\s>]+)\s*-->)", std::regex::icase);
+    static const std::regex in_name(R"([vV]?[0-9]+(?:\.[0-9]+){1,3}-nightly\.[0-9]{8}(?:[+-][0-9A-Fa-f]{4,40})?)");
+    const std::string body = json_string(j, "body");
+    std::smatch       m;
+    if (std::regex_search(body, m, marker)) {
+        const NightlyVersion n = parse_nightly(m[1].str());
+        if (n.valid) return n;
+    }
+    if (auto it = j.find("assets"); it != j.end() && it->is_array()) {
+        for (const auto& a : *it) {
+            if (!a.is_object()) continue;
+            const std::string name = json_string(a, "name");
+            if (std::regex_search(name, m, in_name)) {
+                const NightlyVersion n = parse_nightly(m[0].str());
+                if (n.valid) return n;
+            }
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+ReleaseInfo parse_github_release(const std::string& json_body, Platform platform)
+{
+    ReleaseInfo    info;
+    nlohmann::json j;
+    if (!parse_release_object(json_body, j, info)) return info;
+
+    info.version = parse_version(info.tag);
+    if (!info.version.valid) {
+        info.error = "unrecognised release tag '" + info.tag + "'";
+        return info;
+    }
+    info.version_str = info.version.to_string();
+    info.prerelease  = json_bool(j, "prerelease") || !info.version.prerelease.empty();
+    fill_release_details(j, platform, info);
+    info.ok = true;
+    return info;
+}
+
+ReleaseInfo parse_github_nightly(const std::string& json_body, Platform platform)
+{
+    ReleaseInfo    info;
+    nlohmann::json j;
+    if (!parse_release_object(json_body, j, info)) return info;
+
+    info.nightly = nightly_version_of(j);
+    if (!info.nightly.valid) {
+        info.error = "the nightly release names no nightly version";
+        return info;
+    }
+    info.version     = info.nightly.base;
+    info.version_str = info.nightly.to_string();
+    info.prerelease  = true;
+    fill_release_details(j, platform, info);
+    if (!info.notes.from_markers) {
+        info.notes      = CompactNotes();
+        info.notes.text = "New nightly build (" + info.nightly.date_display() +
+                               (info.nightly.commit.empty() ? std::string() : ", " + info.nightly.commit) + ").";
+    }
+    info.ok = true;
     return info;
 }
 
@@ -562,9 +702,31 @@ Verdict evaluate(const ReleaseInfo& release, const std::string& local_version)
 {
     if (!release.ok || !release.version.valid) return Verdict::Invalid;
     if (release.draft || release.prerelease) return Verdict::Ignored;
+    if (const NightlyVersion nightly = parse_nightly(local_version); nightly.valid) {
+        const int c = compare_versions(release.version, nightly.base);
+        if (c != 0) return c > 0 ? Verdict::UpdateAvailable : Verdict::UpToDate;
+        // Same release number: the nightly may predate the release (main is bumped to the next
+        // version ahead of the release) or follow it (not bumped yet). The dates tell which.
+        if (release.published_date.empty()) return Verdict::UpdateAvailable;
+        return release.published_date > nightly.date ? Verdict::UpdateAvailable : Verdict::UpToDate;
+    }
     const Version local = parse_version(local_version);
     if (!local.valid) return Verdict::Invalid;
     return compare_versions(release.version, local) > 0 ? Verdict::UpdateAvailable : Verdict::UpToDate;
+}
+
+Verdict evaluate_nightly(const ReleaseInfo& nightly_release, const std::string& local_version)
+{
+    if (!nightly_release.ok || !nightly_release.nightly.valid) return Verdict::Invalid;
+    if (nightly_release.draft) return Verdict::Ignored;
+    if (const NightlyVersion local = parse_nightly(local_version); local.valid)
+        return nightly_is_newer(nightly_release.nightly, local) ? Verdict::UpdateAvailable : Verdict::UpToDate;
+    const Version local = parse_version(local_version);
+    if (!local.valid) return Verdict::Invalid;
+    // Compare release numbers only: 2.4.1.0-nightly.X is a build of the 2.4.1.0 line.
+    Version local_base    = local;
+    local_base.prerelease = std::string();
+    return compare_versions(nightly_release.nightly.base, local_base) >= 0 ? Verdict::UpdateAvailable : Verdict::UpToDate;
 }
 
 } // namespace AppUpdate

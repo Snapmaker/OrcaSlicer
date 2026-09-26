@@ -1,0 +1,229 @@
+# Nightly builds (docs/nightly.md).
+#
+# Once a day, if main has moved since the last nightly, build every package with build_all.yml
+# (Windows, macOS, Linux AppImage, Flatpak) versioned "<Snapmaker_VERSION>-nightly.<YYYYMMDD>+<sha>"
+# and publish them to ONE pre-release, tag `nightly`, replacing its previous files. The release is
+# a pre-release and never "Latest", so /releases/latest - which the app's stable update channel
+# reads - never sees it. No other release or tag is ever touched.
+#
+# Publishing happens only for the scheduled run on main, or a manual run of main with "publish"
+# ticked. Any other run (a branch, or main without "publish") builds the same packages and uploads
+# them, with the release body it would have written, as the "nightly-preview" artifact instead.
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to the nightly pre-release (honoured on main only)'
+        type: boolean
+        default: false
+      force:
+        description: 'Build even if main has not changed since the last nightly'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One nightly at a time per ref; a second one waits rather than cancelling a publish half way.
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      publish: ${{ steps.plan.outputs.publish }}
+      suffix: ${{ steps.plan.outputs.suffix }}
+      full_version: ${{ steps.plan.outputs.full_version }}
+      file_version: ${{ steps.plan.outputs.file_version }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Decide
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish || false }}
+          INPUT_FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          short=$(git rev-parse --short=7 HEAD)
+          date=$(date -u +%Y%m%d)
+          base=$(grep -E '^#define[[:space:]]+Snapmaker_VERSION[[:space:]]+"' src/common_func/common_func.hpp | cut -d '"' -f2)
+          [ -n "$base" ] || { echo "::error::could not read Snapmaker_VERSION"; exit 1; }
+          suffix="-nightly.${date}+${short}"
+          full="${base}${suffix}"
+          file="V${base}${suffix//+/-}"
+
+          publish=false
+          if [ "$GITHUB_REPOSITORY" = "aceRage/EdgeSlicer" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            if [ "$EVENT" = schedule ] || [ "$INPUT_PUBLISH" = true ]; then publish=true; fi
+          fi
+
+          build=true
+          if [ "$EVENT" = schedule ] && [ "$GITHUB_REPOSITORY" != "aceRage/EdgeSlicer" ]; then
+            build=false
+            echo "::notice::scheduled nightlies run in aceRage/EdgeSlicer only"
+          fi
+          # The commit of the current nightly, from its body (scripts/release/nightly_body.sh).
+          last=$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json body --jq .body 2>/dev/null \
+                   | sed -n 's/.*<!-- nightly-commit: \([0-9a-f]\{40\}\) -->.*/\1/p' | head -1 || true)
+          echo "HEAD $sha; current nightly: ${last:-<none>}"
+          if [ "$build" = true ] && [ "$last" = "$sha" ] && [ "$INPUT_FORCE" != true ]; then
+            build=false
+            echo "::notice::main has not changed since the last nightly ($short) - nothing to build"
+          fi
+
+          echo "version $full, files $file, build=$build, publish=$publish"
+          {
+            echo "build=$build"
+            echo "publish=$publish"
+            echo "suffix=$suffix"
+            echo "full_version=$full"
+            echo "file_version=$file"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    uses: ./.github/workflows/build_all.yml
+    with:
+      version-suffix: ${{ needs.plan.outputs.suffix }}
+      sentry-environment: nightly
+    secrets: inherit
+
+  publish:
+    name: ${{ needs.plan.outputs.publish == 'true' && 'Publish the nightly release' || 'Assemble the nightly (preview only)' }}
+    needs: [plan, build]
+    # Every package but the Flatpak is required (build_all's Flatpak job may fail on its own).
+    if: ${{ !cancelled() && needs.plan.outputs.build == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FULL_VERSION: ${{ needs.plan.outputs.full_version }}
+      FILE_VERSION: ${{ needs.plan.outputs.file_version }}
+      NIGHTLY_SHA: ${{ needs.plan.outputs.sha }}
+      PUBLISH: ${{ needs.plan.outputs.publish }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The merge commits since the last stable tag, for the body's change list.
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
+
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: EdgeSlicer_*
+          path: artifacts
+
+      - name: Assemble the release files
+        shell: bash
+        env:
+          HAS_ULTRANET: ${{ secrets.ULTRANET_DEPLOY_KEY != '' }}
+          HAS_MAC_SIGNING: ${{ secrets.BUILD_CERTIFICATE_BASE64 != '' && secrets.P12_PASSWORD != '' && secrets.MACOS_CERTIFICATE_ID != '' }}
+          HAS_MAC_NOTARY: ${{ (secrets.APP_STORE_CONNECT_KEY_P8 != '' && secrets.APP_STORE_CONNECT_KEY_ID != '' && secrets.APP_STORE_CONNECT_ISSUER_ID != '') || (secrets.APPLE_DEV_ACCOUNT != '' && secrets.TEAM_ID != '' && secrets.APP_PWD != '') }}
+        run: |
+          set -euo pipefail
+          rm -rf dist && mkdir dist
+          v="$FILE_VERSION"
+          pick() { # <required: yes/no> <file name> : copy the one artifact file of that name into dist/
+            local f
+            f=$(find artifacts -type f -name "$2" | head -1)
+            if [ -z "$f" ]; then
+              if [ "$1" = yes ]; then echo "::error::missing $2"; exit 1; fi
+              echo "::warning::no $2 in this build"; return 0
+            fi
+            cp "$f" dist/
+          }
+          pick yes "EdgeSlicer_Windows_Installer_${v}.exe"
+          pick yes "EdgeSlicer_Mac_universal_${v}.dmg"
+          pick yes "EdgeSlicer_Linux_AppImage_Ubuntu2404_${v}.AppImage"
+          pick no  "EdgeSlicer_Linux_flatpak_${v}_x86_64.flatpak"
+          pick no  "EdgeSlicer_Linux_flatpak_${v}_aarch64.flatpak"
+
+          # The portable build is uploaded as its install tree; zip it with an EdgeSlicer/ root, as
+          # the release packages have it.
+          portable="artifacts/EdgeSlicer_Windows_${v}_portable"
+          [ -f "$portable/EdgeSlicer.exe" ] || { echo "::error::no Windows portable tree at $portable"; exit 1; }
+          stage=$(mktemp -d)
+          cp -r "$portable" "$stage/EdgeSlicer"
+          (cd "$stage" && zip -qr -9 "$GITHUB_WORKSPACE/dist/EdgeSlicer_Windows_${v}_portable.zip" EdgeSlicer)
+          if [ -f "$stage/EdgeSlicer/ultranet/bambu_networking.dll" ]; then ultranet_windows=yes; else ultranet_windows=no; fi
+          rm -rf "$stage"
+
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          echo "--- release files"; ls -l dist; echo "--- SHA256SUMS"; cat dist/SHA256SUMS
+
+          # The macOS and Linux jobs fail when a plug-in they built is missing from the package, so
+          # the secret being set means both carry it.
+          ultranet_posix=no; [ "$HAS_ULTRANET" = true ] && ultranet_posix=yes
+          mac=none
+          if [ "$HAS_MAC_SIGNING" = true ]; then mac=signed; [ "$HAS_MAC_NOTARY" = true ] && mac=notarized; fi
+          stable=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          echo "latest stable: ${stable:-<none>}; ultranet windows=$ultranet_windows posix=$ultranet_posix; mac=$mac"
+          STABLE_TAG="$stable" ULTRANET_WINDOWS="$ultranet_windows" ULTRANET_POSIX="$ultranet_posix" MAC_SIGNING="$mac" \
+            bash scripts/release/nightly_body.sh dist > nightly_body.md
+          echo "--- body"; cat nightly_body.md
+
+      - name: Keep the preview
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-preview
+          path: |
+            dist/SHA256SUMS
+            nightly_body.md
+          retention-days: 7
+
+      - name: Publish to the nightly pre-release
+        if: needs.plan.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="EdgeSlicer nightly $FULL_VERSION"
+          if ! gh release view nightly --repo "$REPO" >/dev/null 2>&1; then
+            # First run: create the release (and its tag, at this commit).
+            gh release create nightly --repo "$REPO" --target "$NIGHTLY_SHA" --prerelease --latest=false \
+              --title "$title" --notes-file nightly_body.md
+          else
+            # Move the tag to this commit so the release's source links match its files.
+            gh api -X PATCH "repos/$REPO/git/refs/tags/nightly" -f sha="$NIGHTLY_SHA" -F force=true >/dev/null
+          fi
+
+          # New files first, then drop whatever the previous nightly left that this one did not
+          # replace, so the release always holds exactly one set.
+          gh release upload nightly --repo "$REPO" --clobber dist/*
+          keep=$(cd dist && ls -1)
+          gh release view nightly --repo "$REPO" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+            if ! grep -qxF -- "$name" <<< "$keep"; then
+              echo "removing the previous nightly's $name"
+              gh release delete-asset nightly "$name" --repo "$REPO" --yes
+            fi
+          done
+
+          # The body last: it names the version the app compares against, so it only changes once
+          # the files it points at are in place.
+          gh release edit nightly --repo "$REPO" --prerelease --latest=false --title "$title" --notes-file nightly_body.md
+
+          latest=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [ "$latest" = nightly ]; then
+            echo "::error::the nightly pre-release is marked Latest - it must never be"; exit 1
+          fi
+          echo "published $FULL_VERSION ($(gh release view nightly --repo "$REPO" --json assets --jq '.assets | length') files); latest stable is still ${latest:-<none>}"

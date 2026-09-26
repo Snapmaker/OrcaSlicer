@@ -24,6 +24,9 @@ on:
 
   workflow_call:
     inputs:
+      build-deps-only:
+        type: boolean
+        default: false
       version-suffix:
         description: 'Nightly version suffix, "-nightly.<YYYYMMDD>+<shortsha>"'
         type: string

@@ -7,6 +7,7 @@
 #include "STEP.hpp"
 
 #include "libslic3r/AABBMesh.hpp"
+#include "libslic3r/Exception.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
@@ -356,7 +357,13 @@ bool store_step(const std::string &path, const std::vector<StepExportItem> &item
                         if (mesh.empty())
                             continue;
                         BRep::MeshToBRepStats stats;
-                        part.shape = BRep::mesh_to_brep(mesh.its, params.mesh, stats);
+                        try {
+                            part.shape = BRep::mesh_to_brep(mesh.its, params.mesh, stats);
+                        } catch (const Slic3r::RuntimeError &e) {
+                            // Only degenerate triangles: leave this part out, not the whole export.
+                            report.warnings.emplace_back(part.name + ": not exported (" + e.what() + ")");
+                            continue;
+                        }
                         ++report.mesh_parts;
                         if (!stats.is_solid)
                             ++report.open_parts;

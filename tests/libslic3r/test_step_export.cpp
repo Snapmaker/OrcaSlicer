@@ -463,6 +463,27 @@ TEST_CASE("STEP export of an open mesh writes a surface and warns", "[StepExport
     CHECK(info.faces == 5);
 }
 
+TEST_CASE("STEP export leaves out a degenerate part but exports the rest", "[StepExport]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->name        = "mixed";
+    object->add_volume(make_cube(10., 10., 10.), ModelVolumeType::MODEL_PART, false)->name = "good";
+    indexed_triangle_set flat;
+    flat.vertices = {Vec3f(0.f, 0.f, 0.f), Vec3f(0.f, 0.f, 0.f), Vec3f(0.f, 0.f, 0.f)};
+    flat.indices  = {Vec3i32(0, 1, 2)};
+    object->add_volume(TriangleMesh(flat), ModelVolumeType::MODEL_PART, false)->name = "dust";
+    object->add_instance();
+
+    TempFile         step(".step");
+    StepExportReport report;
+    REQUIRE(store_step(step.str(), model, {}, report));
+    CHECK(report.parts == 1);
+    REQUIRE_FALSE(report.warnings.empty());
+    CHECK(report.warnings.front().find("dust") != std::string::npos);
+    CHECK(info_of_all(reread(step.str())).solids == 1);
+}
+
 TEST_CASE("STEP export of a part imported from STEP writes the exact B-rep", "[StepExport]")
 {
     // An exact cylinder with a box-shaped notch: 3 cylinder faces + the notch's faces.

@@ -4701,6 +4701,36 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
                             << " remap=" << summarize_uint_vector(m_last_filament_id_remap);
 }
 
+// Keys that describe preset identity/compatibility rather than slicing behavior; never carried
+// onto the auto-matched profile when a printer switch forces a different process preset.
+static bool print_transfer_skip_key(const std::string &key)
+{
+    return key == "inherits" ||
+           key == "compatible_printers"          || key == "compatible_printers_condition" ||
+           key == "compatible_prints"            || key == "compatible_prints_condition";
+}
+
+// Apply the process settings captured before a printer switch onto the newly auto-matched
+// print preset, so they survive the switch and show up as revertable modifications.
+static void transfer_print_config_on_printer_switch(PresetCollection &prints, const DynamicPrintConfig &prev_config)
+{
+    DynamicPrintConfig &dst = prints.get_edited_preset().config;
+    for (const std::string &key : prev_config.keys()) {
+        if (print_transfer_skip_key(key))
+            continue;
+        const ConfigOption *old_opt = prev_config.option(key);
+        ConfigOption       *cur_opt = dst.option(key);
+        if (old_opt == nullptr || cur_opt == nullptr || old_opt->type() != cur_opt->type())
+            continue;
+        const auto *old_vec = dynamic_cast<const ConfigOptionVectorBase *>(old_opt);
+        const auto *cur_vec = dynamic_cast<const ConfigOptionVectorBase *>(cur_opt);
+        if (old_vec != nullptr && cur_vec != nullptr && old_vec->size() != cur_vec->size())
+            // Extruder-count-dependent value from a different machine: keep the matched profile's.
+            continue;
+        cur_opt->set(old_opt);
+    }
+}
+
 void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_print_if_incompatible, PresetSelectCompatibleType select_other_filament_if_incompatible)
 {
     const Preset					&printer_preset					    = this->printers.get_edited_preset();
@@ -4832,9 +4862,19 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 		assert(printer_preset.config.has("default_print_profile"));
 		assert(printer_preset.config.has("default_filament_profile"));
         const std::vector<std::string> &prefered_filament_profiles = printer_preset.config.option<ConfigOptionStrings>("default_filament_profile")->values;
+        // Carry the current process settings onto the auto-matched profile when a printer switch
+        // forces a different print preset: capture the edited config before reselection (which
+        // would discard it) and re-apply it after. The carried values then diff against the
+        // selected preset, so the UI shows them as revertable modifications (orange arrows)
+        // instead of silently losing them.
+        const bool          had_print_selection = this->prints.get_selected_idx() != size_t(-1);
+        const std::string   prev_print_name     = had_print_selection ? this->prints.get_edited_preset().name : std::string();
+        const DynamicPrintConfig prev_print_config = this->prints.get_edited_preset().config;
         this->prints.update_compatible(printer_preset_with_vendor_profile, nullptr, select_other_print_if_incompatible,
-            PreferedPrintProfileMatch(this->prints.get_selected_idx() == size_t(-1) ? nullptr : &this->prints.get_edited_preset(), printer_preset.config.opt_string("default_print_profile"),
+            PreferedPrintProfileMatch(had_print_selection ? &this->prints.get_edited_preset() : nullptr, printer_preset.config.opt_string("default_print_profile"),
                                       this->preferred_print_profiles_by_height));
+        if (had_print_selection && this->prints.get_edited_preset().name != prev_print_name)
+            transfer_print_config_on_printer_switch(this->prints, prev_print_config);
         const PresetWithVendorProfile   print_preset_with_vendor_profile = this->prints.get_edited_preset_with_vendor_profile();
         // Remember whether the filament profiles were compatible before updating the filament compatibility.
         std::vector<char> 				filament_preset_was_compatible(this->filament_presets.size(), false);

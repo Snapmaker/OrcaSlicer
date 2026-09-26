@@ -1780,6 +1780,13 @@ wxWindow* PreferencesDialog::create_general_page()
         _L("If enabled, EdgeSlicer asks GitHub once per start whether a newer release has been published and offers it. "
            "Help > Check for Update works either way."),
         50, "check_for_updates_on_startup");
+    std::vector<wxString>    UpdateChannels      = { _L("Stable"), _L("Nightly") };
+    std::vector<std::string> UpdateChannelValues = { "stable", "nightly" };
+    auto item_update_channel = create_item_combobox(_L("Update channel"), page,
+        _L("Stable: offer new EdgeSlicer releases.\n"
+           "Nightly: offer the nightly build, made automatically from the latest source whenever it changed. "
+           "Nightly builds are untested and may be broken; switch back to Stable and install the latest release to return."),
+        "update_channel", UpdateChannels, UpdateChannelValues);
     auto item_sm_auto_login = create_item_checkbox(_L("Sign in to my Snapmaker account automatically at startup"), page,
         _L("If enabled, EdgeSlicer quietly reuses the Snapmaker account session saved from your last sign-in when it starts, "
            "so you do not have to sign in again. Nothing is shown; if there is no saved session you simply stay signed out."),
@@ -1914,6 +1921,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_show_splash_screen, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_hints, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_check_updates, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_update_channel, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_sm_auto_login, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_multi_machine, 0, wxTOP, FromDIP(3));

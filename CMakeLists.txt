@@ -183,6 +183,38 @@ set(EDGESLICER_SENTRY_DSN_VALUE "${_edge_sentry_dsn}")
 set(EDGESLICER_SENTRY_ENVIRONMENT_VALUE "${_edge_sentry_env}")
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/sentry_wrapper/edgeslicer_sentry_config.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/edgeslicer_sentry_config.h @ONLY)
+
+# Build flavour suffix: empty for releases and local builds, "-nightly.<YYYYMMDD>+<shortsha>" for
+# the nightly builds (.github/workflows/nightly.yml, docs/nightly.md). It is appended to
+# Snapmaker_VERSION wherever the build names itself to a person or a service - About, the splash
+# screen, the crash reporter's release, the update check and the installer's file name - and
+# nowhere else: project files, presets and printer protocols keep the plain release number.
+# Taken from -DEDGESLICER_VERSION_SUFFIX, else the environment variable of that name, else a
+# one-line version_suffix.txt at the top of the source tree (CI writes it; the Flatpak build copies
+# the tree and sees no environment). It goes into a generated header, not onto compiler command
+# lines, so a new suffix recompiles only the few files that show the version.
+set(EDGESLICER_VERSION_SUFFIX "" CACHE STRING "Version suffix of a nightly build, e.g. -nightly.20260926+abc1234 (empty = release)")
+set(_edge_version_suffix "${EDGESLICER_VERSION_SUFFIX}")
+if (_edge_version_suffix STREQUAL "" AND DEFINED ENV{EDGESLICER_VERSION_SUFFIX})
+    set(_edge_version_suffix "$ENV{EDGESLICER_VERSION_SUFFIX}")
+endif ()
+if (_edge_version_suffix STREQUAL "" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/version_suffix.txt")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/version_suffix.txt")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version_suffix.txt" _edge_version_suffix LIMIT_COUNT 1)
+endif ()
+string(STRIP "${_edge_version_suffix}" _edge_version_suffix)
+if (NOT _edge_version_suffix STREQUAL "" AND NOT _edge_version_suffix MATCHES "^[-+][A-Za-z0-9][A-Za-z0-9.+-]*$")
+    message(FATAL_ERROR "EDGESLICER_VERSION_SUFFIX '${_edge_version_suffix}' must start with '-' or '+' and hold only letters, digits, '.', '-' and '+'")
+endif ()
+set(EDGESLICER_VERSION_SUFFIX_VALUE "${_edge_version_suffix}")
+set(EDGESLICER_FULL_VERSION "${Snapmaker_VERSION}${_edge_version_suffix}")
+# File names avoid '+': GitHub renames release assets whose names carry special characters.
+string(REPLACE "+" "-" EDGESLICER_FILE_VERSION "${EDGESLICER_FULL_VERSION}")
+if (NOT _edge_version_suffix STREQUAL "")
+    message(STATUS "EdgeSlicer version: ${EDGESLICER_FULL_VERSION}")
+endif ()
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/common_func/edgeslicer_version.h.in
+               ${CMAKE_CURRENT_BINARY_DIR}/generated/edgeslicer_version.h @ONLY)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/generated)
 # If SLIC3R_FHS is 1 -> SLIC3R_DESKTOP_INTEGRATION is always 0, othrewise variable.
 CMAKE_DEPENDENT_OPTION(SLIC3R_DESKTOP_INTEGRATION "Allow perfoming desktop integration during runtime" 1 "NOT SLIC3R_FHS" 0)
@@ -1142,7 +1174,8 @@ set (CPACK_PACKAGE_VERSION_PATCH "${ORCA_VERSION_PATCH}")
 # Ultra: keep the 4th version component (2.3.6.x) in Add/Remove Programs; the MAJOR/MINOR/PATCH
 # triple above drops it, which made consecutive patch releases indistinguishable there.
 set (CPACK_PACKAGE_VERSION "${Snapmaker_VERSION}")
-set (CPACK_PACKAGE_FILE_NAME "EdgeSlicer_Windows_Installer_V${Snapmaker_VERSION}")
+# A nightly carries its suffix in the file name only; Add/Remove Programs keeps the release number.
+set (CPACK_PACKAGE_FILE_NAME "EdgeSlicer_Windows_Installer_V${EDGESLICER_FILE_VERSION}")
 set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "EdgeSlicer is an open source slicer for FDM printers, for Snapmaker and Bambu Lab machines")
 set (CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/aceRage/EdgeSlicer")
 set (CPACK_PACKAGE_INSTALL_DIRECTORY ${CPACK_PACKAGE_NAME})

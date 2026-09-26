@@ -5474,6 +5474,7 @@ TEST_CASE("Dual-color primary drops invalid tokens and falls back on empty", "[M
 TEST_CASE("Mixed slot identity comes from MixedFilamentManager, not filament_is_mixed",
           "[MixedFilament][IncompleteMetadata]")
 {
+    MixedAutoGenerateGuard guard(true);
     const FullPrintConfig &defaults = FullPrintConfig::defaults();
     CHECK(defaults.option("filament_is_mixed") == nullptr);
     REQUIRE(defaults.option("mixed_filament_definitions") != nullptr);

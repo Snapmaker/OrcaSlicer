@@ -3510,6 +3510,30 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         }
     }
 
+    // Orca #15755 (selective): U1 firmware reads `; filament_volume_type = standard,high_flow,...`
+    // from machine_end_gcode. Upstream's static regex template is wrong here because Edge models
+    // High Flow as a per-extruder runtime variant (nozzle_volume_type), not a separate preset.
+    // Named filament_volume_type_list so the existing ConfigOptionEnumsGeneric filament_volume_type
+    // is not shadowed. Sized by physical filament_type (not MixedFilamentManager virtual IDs).
+    {
+        const size_t           n        = m_config.filament_type.size();
+        const std::vector<int> identity = identity_filament_map(print.full_print_config(), n);
+        const auto &           nvt      = m_config.nozzle_volume_type;
+        std::string            joined;
+        joined.reserve(n * 12);
+        for (size_t i = 0; i < n; ++i) {
+            int e = int(i);
+            if (i < identity.size())
+                e = std::max(0, identity[i] - 1);
+            const int  volume   = nvt.values.empty() ? int(nvtStandard) : nvt.get_at(size_t(e));
+            const bool high_flow = volume == int(nvtHighFlow) || volume == int(nvtTPUHighFlow) || volume == int(nvtE3DHighFlow);
+            if (i)
+                joined += ',';
+            joined += high_flow ? FLOW_MODE_HIGH_FLOW : FLOW_MODE_STANDARD;
+        }
+        this->placeholder_parser().set("filament_volume_type_list", new ConfigOptionString(std::move(joined)));
+    }
+
     std::string machine_start_gcode = this->placeholder_parser_process("machine_start_gcode", print.config().machine_start_gcode.value,
                                                                        initial_extruder_id);
     if (print.config().gcode_flavor != gcfKlipper) {

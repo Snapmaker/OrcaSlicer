@@ -3,8 +3,11 @@
 #include <memory>
 
 #include "libslic3r/GCode.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "test_data.hpp"
 
 using namespace Slic3r;
+using namespace Slic3r::Test;
 
 SCENARIO("Origin manipulation", "[GCode]") {
 	Slic3r::GCode gcodegen;
@@ -18,5 +21,44 @@ SCENARIO("Origin manipulation", "[GCode]") {
 		THEN("origin returns reference to point") {
     		REQUIRE(gcodegen.origin() == Vec2d(15,5));
     	}
+    }
+}
+
+// Orca #15755 (selective): U1 end-G-code metadata from Edge per-extruder flow variants.
+static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vts)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    const unsigned     n      = 2;
+    config.set_num_extruders(n);
+    config.set_num_filaments(n);
+    config.set_deserialize_strict({
+        { "machine_end_gcode",              "; TEST_FVT = {filament_volume_type_list}" },
+        { "machine_start_gcode",            "" },
+        { "single_extruder_multi_material", "0" },
+        { "layer_height",                   "0.2" },
+        { "initial_layer_print_height",     "0.2" },
+    });
+    auto *nvt = config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+    REQUIRE(nvt != nullptr);
+    if (!nozzle_vts.empty())
+        nvt->values = nozzle_vts;
+    if (nvt->values.size() < n)
+        nvt->values.resize(n, int(nvtStandard));
+
+    TriangleMesh a = mesh(TestMesh::cube_20x20x20);
+    TriangleMesh b = mesh(TestMesh::cube_20x20x20);
+    b.translate(30.f, 0.f, 0.f);
+    return slice({ a, b }, config);
+}
+
+TEST_CASE("filament_volume_type_list is emitted in end G-code from nozzle volume types", "[GCode][U1]")
+{
+    SECTION("mixed Standard / High Flow") {
+        const std::string gcode = slice_volume_type_end_gcode({ int(nvtStandard), int(nvtHighFlow) });
+        REQUIRE(gcode.find("; TEST_FVT = standard,high_flow") != std::string::npos);
+    }
+    SECTION("defaults are standard,standard") {
+        const std::string gcode = slice_volume_type_end_gcode({});
+        REQUIRE(gcode.find("; TEST_FVT = standard,standard") != std::string::npos);
     }
 }

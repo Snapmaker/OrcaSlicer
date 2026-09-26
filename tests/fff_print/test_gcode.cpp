@@ -24,12 +24,13 @@ SCENARIO("Origin manipulation", "[GCode]") {
     }
 }
 
-// Orca #15755 (selective): U1 end-G-code metadata from Edge per-extruder flow variants.
-static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vts, unsigned filaments = 0)
+// Orca #15755 (selective): U1 end-G-code metadata from the sliced per-filament flow type.
+static std::string slice_volume_type_end_gcode(const std::vector<int> &filament_vts,
+                                               const std::vector<int> &nozzle_vts = {})
 {
     DynamicPrintConfig config    = DynamicPrintConfig::full_print_config();
+    const unsigned     n         = unsigned(std::max<size_t>(filament_vts.size(), 2));
     const unsigned     extruders = unsigned(std::max<size_t>(nozzle_vts.size(), 2));
-    const unsigned     n         = filaments ? filaments : extruders;
     config.set_num_extruders(extruders);
     config.set_num_filaments(n);
     config.set_deserialize_strict({
@@ -39,12 +40,16 @@ static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vt
         { "layer_height",                   "0.2" },
         { "initial_layer_print_height",     "0.2" },
     });
-    auto *nvt = config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
-    REQUIRE(nvt != nullptr);
-    if (!nozzle_vts.empty())
+    if (!filament_vts.empty()) {
+        auto *fvt = config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+        REQUIRE(fvt != nullptr);
+        fvt->values = filament_vts;
+    }
+    if (!nozzle_vts.empty()) {
+        auto *nvt = config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
+        REQUIRE(nvt != nullptr);
         nvt->values = nozzle_vts;
-    if (nvt->values.size() < extruders)
-        nvt->values.resize(extruders, int(nvtStandard));
+    }
 
     TriangleMesh a = mesh(TestMesh::cube_20x20x20);
     TriangleMesh b = mesh(TestMesh::cube_20x20x20);
@@ -52,18 +57,23 @@ static std::string slice_volume_type_end_gcode(const std::vector<int> &nozzle_vt
     return slice({ a, b }, config);
 }
 
-TEST_CASE("filament_volume_type_list is emitted in end G-code from nozzle volume types", "[GCode][U1]")
+TEST_CASE("filament_volume_type_list is emitted in end G-code from filament_volume_type", "[GCode][U1]")
 {
     SECTION("mixed Standard / High Flow") {
-        const std::string gcode = slice_volume_type_end_gcode({ int(nvtStandard), int(nvtHighFlow) });
+        const std::string gcode = slice_volume_type_end_gcode({ int(fvtStandard), int(fvtHighFlow) });
         REQUIRE(gcode.find("; TEST_FVT = standard,high_flow\n") != std::string::npos);
     }
     SECTION("defaults are standard,standard") {
         const std::string gcode = slice_volume_type_end_gcode({});
         REQUIRE(gcode.find("; TEST_FVT = standard,standard\n") != std::string::npos);
     }
-    SECTION("identity map wraps extra filaments onto toolheads") {
-        const std::string gcode = slice_volume_type_end_gcode({ int(nvtStandard), int(nvtHighFlow) }, 3);
+    SECTION("nozzle high_flow does not override filament standard") {
+        const std::string gcode = slice_volume_type_end_gcode({ int(fvtStandard), int(fvtStandard) },
+                                                             { int(nvtStandard), int(nvtHighFlow) });
+        REQUIRE(gcode.find("; TEST_FVT = standard,standard\n") != std::string::npos);
+    }
+    SECTION("extra filaments follow filament_volume_type") {
+        const std::string gcode = slice_volume_type_end_gcode({ int(fvtStandard), int(fvtHighFlow), int(fvtStandard) });
         REQUIRE(gcode.find("; TEST_FVT = standard,high_flow,standard\n") != std::string::npos);
     }
 }

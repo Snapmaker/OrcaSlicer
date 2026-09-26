@@ -55,10 +55,10 @@ TEST_CASE("filament_volume_type_list is emitted in end G-code from nozzle volume
 {
     SECTION("mixed Standard / High Flow") {
         const std::string gcode = slice_volume_type_end_gcode({ int(nvtStandard), int(nvtHighFlow) });
-        REQUIRE(gcode.find("; TEST_FVT = standard,high_flow") != std::string::npos);
+        REQUIRE(gcode.find("; TEST_FVT = standard,high_flow\n") != std::string::npos);
     }
     SECTION("defaults are standard,standard") {
         const std::string gcode = slice_volume_type_end_gcode({});
-        REQUIRE(gcode.find("; TEST_FVT = standard,standard") != std::string::npos);
+        REQUIRE(gcode.find("; TEST_FVT = standard,standard\n") != std::string::npos);
     }
 }

@@ -10748,7 +10748,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
         toolchange_gcode_parsed = placeholder_parser_process("change_filament_gcode", change_filament_gcode, extruder_id, &dyn_config);
         check_add_eol(toolchange_gcode_parsed);
-        // FanMover skips spans bracketed by "; custom gcode" … "; custom gcode end" (prefix match,
+        // FanMover skips spans bracketed by "; custom gcode" ... "; custom gcode end" (prefix match,
         // and it ignores comments shorter than 17 chars). "; custom gcode start" satisfies both.
         // Without these markers a fan-speedup/kickstart pass can split a G1 inside the user's
         // change_filament_gcode and splice a phantom waypoint into a hand-routed toolchange.

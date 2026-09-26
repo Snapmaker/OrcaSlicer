@@ -477,15 +477,21 @@ double nest_radius(const std::vector<ExPolygons> &shapes, double reach)
     return hi;
 }
 
-Polygon cluster_hull(const ExPolygons &outline, const std::vector<FillBedCluster> &members)
+// The polygon the packer is handed for a whole group. It is built from the object's own convex
+// hull, not from the sampled outline: object_outline() takes a dozen sections and simplifies
+// them, so it sits slightly inside the real footprint - near enough to decide how the copies
+// interlock, but not something to keep the rest of the plate clear of. Feeding the packer a
+// group smaller than the copies it stands for is how they end up overlapping a neighbour, or
+// the prime tower's reserved corner.
+Polygon cluster_hull(const Polygon &hull, const std::vector<FillBedCluster> &members)
 {
     Points pts;
-    for (const FillBedCluster &member : members)
-        for (const ExPolygon &ex : turned(outline, member.rotation, 0)) {
-            Polygon contour = ex.contour;
-            contour.translate(member.offset);
-            append(pts, contour.points);
-        }
+    for (const FillBedCluster &member : members) {
+        Polygon turned_hull = hull;
+        turned_hull.rotate(member.rotation);
+        turned_hull.translate(member.offset);
+        append(pts, turned_hull.points);
+    }
 
     return Geometry::convex_hull(std::move(pts));
 }
@@ -502,18 +508,18 @@ Polygon cluster_hull(const ExPolygons &outline, const std::vector<FillBedCluster
 // The score is the area of the group's convex hull per copy, against that of one copy's hull:
 // the hull is what the packer works with, so the hollows a neighbour fills are exactly the
 // room that stops being wasted.
-std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, coord_t inflation)
+std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, const Polygon &hull, coord_t inflation)
 {
     static const int PHASES = 8;
 
     const std::vector<FillBedCluster> single{{Vec2crd(0, 0), 0.}};
 
     const BoundingBox bb = get_extents(outline);
-    if (bb.size().x() <= 0 || bb.size().y() <= 0)
+    if (bb.size().x() <= 0 || bb.size().y() <= 0 || hull.points.size() < 3)
         return single;
 
     const double                reach  = 2. * bb.size().cast<double>().norm();
-    double                      best   = cluster_hull(outline, single).area();
+    double                      best   = cluster_hull(hull, single).area();
     std::vector<FillBedCluster> winner = single;
     if (best <= 0.)
         return single;
@@ -540,7 +546,10 @@ std::vector<FillBedCluster> build_cluster(const ExPolygons &outline, coord_t inf
             for (size_t i = 0; i < n; ++i)
                 members.push_back({rosette_offset(radius, i, n), turns[i]});
 
-            const double area = cluster_hull(outline, members).area() / double(n);
+            // Scored on the convex hull too, for the same reason: the hull is what the packer
+            // works with, so the hollow a neighbour fills is exactly the room that stops being
+            // wasted.
+            const double area = cluster_hull(hull, members).area() / double(n);
             if (area < 0.98 * best) { // has to be a real gain, not rounding
                 best   = area;
                 winner = members;
@@ -649,9 +658,9 @@ void FillBedOptionsJob::process(Ctl &ctl)
         ArrangePolygon templ = m_template;
         variant.cluster.assign(1, FillBedCluster{Vec2crd(0, 0), 0.});
         if (variant.nest && !m_outline.empty()) {
-            variant.cluster = build_cluster(m_outline, inflation);
+            variant.cluster = build_cluster(m_outline, m_template.poly.contour, inflation);
             if (variant.cluster.size() > 1)
-                templ.poly = ExPolygon(cluster_hull(m_outline, variant.cluster));
+                templ.poly = ExPolygon(cluster_hull(m_template.poly.contour, variant.cluster));
         }
         const int per_group = int(variant.cluster.size());
 

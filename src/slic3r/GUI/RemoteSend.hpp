@@ -44,6 +44,13 @@ struct Request
     // Stage 2 (a reprint): the G-code archive record whose bytes are the payload. Set by
     // /api/archive/{id}/send only; a plate send leaves it empty.
     std::string record;
+    // A Bambu reprint: which AMS slot feeds each of the job's filaments,
+    // "<filament>:<ams_id>-<slot_id>,..." (0-based filament). Empty = the send dialog's automatic
+    // mapping (BambuSendMapping); the preview (/api/archive/{id}/preview) hands out that mapping in
+    // this form, and the phone sends it back, edited or not.
+    std::string ams_mapping;
+    // Bambu two-nozzle printers: nozzle offset calibration (-1 = the desktop's remembered choice).
+    int         nozzle_offset_cali { -1 };
 };
 
 // Everything prepare() worked out on the GUI thread; run() only performs the transfer.
@@ -121,6 +128,15 @@ std::pair<int, std::string> prepare(const Request& req, std::shared_ptr<Prepared
 // it talks to the printer, and only steps onto the GUI thread for the printer preset. Errors as
 // prepare(), plus 409 when the record's file is gone or the target printer is of another kind.
 std::pair<int, std::string> prepare_from_record(const Request& req, std::shared_ptr<Prepared>& out);
+
+// A Bambu reprint's mapping sheet, before anything is sent: the record's job read back from its
+// .gcode.3mf, the target printer selected (and so connected, as picking it in the send dialog
+// does) and matched the way prepare_from_record() would send it - the proposed AMS slot per
+// filament, the printer's slots, the print options with their defaults, and what stands in the way.
+// `out` is that JSON. Any thread but the GUI one. Errors as prepare_from_record(): a printer that
+// cannot take the job at all (offline, busy, another model or nozzle, no storage) is a 409 with
+// the reason; mapping problems are not errors - they are in the preview, with can_send false.
+std::pair<int, std::string> preview_record(const Request& req, nlohmann::json& out);
 
 // Which send path a printer id names, without asking anything: "sm:<id>" snapmaker, "host" and
 // "ph:<device>" printhost, "connect" connect, anything else a Bambu serial.

@@ -471,6 +471,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteEvents.hpp
     GUI/RemoteSend.cpp
     GUI/RemoteSend.hpp
+    GUI/BambuSendMapping.cpp
+    GUI/BambuSendMapping.hpp
+    GUI/BambuReprint.cpp
+    GUI/BambuReprint.hpp
     GUI/GcodeArchive.cpp
     GUI/GcodeArchive.hpp
     GUI/RemoteSnapmaker.cpp

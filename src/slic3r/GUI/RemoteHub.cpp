@@ -4300,8 +4300,9 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
         return id.find("%2f") == std::string::npos && id.find("%2F") == std::string::npos;
     }
 
-    // /api/archive/<id> (GET the record, DELETE it), /api/archive/<id>/thumbnail.png, and the
-    // stage 2 pair /api/archive/<id>/send and /api/archive/<id>/delete. The id is a name the
+    // /api/archive/<id> (GET the record, DELETE it), /api/archive/<id>/thumbnail.png, the stage 2
+    // pair /api/archive/<id>/send and /api/archive/<id>/delete, and a Bambu reprint's mapping
+    // sheet /api/archive/<id>/preview. The id is a name the
     // archive itself made: letters, digits, dot, dash and underscore, one segment, nothing to
     // decode - checked here before it reaches a file system, and again by GcodeArchive::find.
     if (sub.compare(0, 13, "/api/archive/") == 0) {
@@ -4314,7 +4315,7 @@ static bool instance_api_allowed(const std::string& method, const std::string& s
         if (slash == std::string::npos) return get || del;
         const std::string what = rest.substr(slash);
         if (what == "/thumbnail.png") return get;
-        if (what == "/send" || what == "/delete") return post;
+        if (what == "/send" || what == "/delete" || what == "/preview") return post;
         return false;
     }
 
@@ -4515,7 +4516,7 @@ void HubServer::handle_phone(tcp::socket& client, Request& r, const std::string&
         j["version"] = 2;
         j["routes"]  = json::array({
             { {"method", "GET"},  {"path", "/api/instances"},       {"description", "running slicer instances: id (pid), index, title, project path, slicing"} },
-            { {"method", "GET"},  {"path", "/api/archive[?offset=&limit=&printer={id}&model={key}]"}, {"description", "the G-code archive, read by the hub (no slicer window needed): {enabled?, max?, total, offset, limit, next_offset, printers [{id, name, kind}], models [{key, name, count, printers [{id, name, kind, online}]}], records}, newest first; records are the same rows /i/{id}/api/archive lists plus model_key / model_name (the model the file was sliced for; \"other\" when unknown), and a printer is never named by an address. models[].printers are where a record of that model may be reprinted (send with printer={id}). Sending or deleting one still goes through a slicer window (/i/{id}/api/archive/{id}/send)"} },
+            { {"method", "GET"},  {"path", "/api/archive[?offset=&limit=&printer={id}&model={key}]"}, {"description", "the G-code archive, read by the hub (no slicer window needed): {enabled?, max?, total, offset, limit, next_offset, printers [{id, name, kind}], models [{key, name, count, printers [{id, name, kind, online}]}], records}, newest first; records are the same rows /i/{id}/api/archive lists plus model_key / model_name (the model the file was sliced for; \"other\" when unknown), and a printer is never named by an address. models[].printers are where a record of that model may be reprinted (send with printer={id}). Sending or deleting one still goes through a slicer window (/i/{id}/api/archive/{id}/send; a Bambu one takes /i/{id}/api/archive/{id}/preview first for its AMS mapping)"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}/thumbnail.png"}, {"description", "one record's preview; cacheable, since a record's preview never changes"} },
             { {"method", "POST"}, {"path", "/api/instances/open"},  {"description", "body = a .3mf/.stl/.obj/.step/.glb file, header X-File-Name = its name; starts a new (hidden) slicer instance with it; ?visible=1 opens a window"} },
             { {"method", "POST"}, {"path", "/i/{id}/open?mode=load|import"}, {"description", "same upload, opened in instance {id}: load = save the current project, then open this project (default for .3mf); import = add the model to the current plate (default otherwise)"} },

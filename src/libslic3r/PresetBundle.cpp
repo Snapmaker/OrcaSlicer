@@ -252,8 +252,12 @@ static std::vector<std::string> s_project_options {
     // saved project round-trips the assignment alongside filament_map/filament_volume_map.
     "filament_nozzle_map",
     // Snapmaker Orca: the process preset each tool head printed with (PerHeadProcess), a record
-    // the load compares and reports; preset data like filament_map, not published.
+    // the load compares and reports, the preset chosen for each tool head on the Speed page and
+    // the speeds flow type chosen for a High Flow tool head there; preset data like filament_map,
+    // not published.
     "extruder_process_preset",
+    "extruder_process_choice",
+    "extruder_process_flow",
     // Filament Track Switch device state: whether the switch is installed and ready, and
     // whether dynamic per-nozzle filament mapping is active. Persisted with the project and
     // restored from a saved 3mf; reset to false on load and set true only by live device sync.
@@ -5199,18 +5203,20 @@ DynamicPrintConfig PresetBundle::full_config_for_print(bool apply_extruder, std:
 {
     if (sources != nullptr)
         sources->clear();
-    if (!this->process_follows_nozzle || this->printers.get_edited_preset().printer_technology() != ptFFF)
+    // The preference off and no head with a chosen preset: the plain config (PerHeadProcess::active).
+    if (!PerHeadProcess::active(*this) || this->printers.get_edited_preset().printer_technology() != ptFFF)
         return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
     std::vector<PerHeadProcess::Source> heads = PerHeadProcess::head_sources(*this);
     if (sources != nullptr)
         *sources = heads;
-    const bool any_derived = std::any_of(heads.begin(), heads.end(), [](const PerHeadProcess::Source &source) { return source.derived; });
+    // A head with a chosen flow (a High Flow nozzle printing the Standard speeds) composes too.
+    const bool any_derived = std::any_of(heads.begin(), heads.end(), [](const PerHeadProcess::Source &source) { return source.derived || source.flow_chosen; });
     if (!any_derived)
         return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
     // Composed on the unexpanded config: Print::apply narrows the composed per-head layout the
     // same way the expansion of full_fff_config(true) would.
     DynamicPrintConfig out = this->full_fff_config(false, filament_maps, filament_volume_maps);
-    if (!PerHeadProcess::compose(out, PerHeadProcess::edited_keys(*this), heads))
+    if (!PerHeadProcess::compose(out, PerHeadProcess::all_edited_keys(*this), heads))
         return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
     if (sources != nullptr)
         *sources = heads;
@@ -6155,7 +6161,11 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 
         // Load the project config values. In published mode only the plate/bed geometry keys
         // cross over (the receiver must not inherit the author's filament/purge data).
+        // Snapmaker Orca: the per-head process record, choices and chosen flows are the file's or empty, never the
+        // previous project's; choices naming renamed vendor presets are rewritten before the dirty state's first copy.
+        this->project_config.apply_only(FullPrintConfig::defaults(), {PerHeadProcess::record_key, PerHeadProcess::choice_key, PerHeadProcess::flow_key});
         this->project_config.apply_only(config, is_published ? s_project_options_published : s_project_options);
+        PerHeadProcess::resolve_renamed_choices(*this);
         EnsureFilamentColorFieldsAligned(this->project_config);
 
         break;

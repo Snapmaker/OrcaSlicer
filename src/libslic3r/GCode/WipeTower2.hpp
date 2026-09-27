@@ -94,6 +94,10 @@ public:
 
 	// Set the extruder properties.
     void set_extruder(size_t idx, const PrintConfig& config);
+    // Snapmaker Orca: per filament, the slot of the process table its travel, first layer, infill
+    // and perimeter speeds are read at (Print::process_slot_of_filament); set before set_extruder().
+    // Without it set_extruder() reads the filament's tool head.
+    void set_filament_slots(const std::vector<size_t> &slots) { m_filament_slot = slots; }
 
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
@@ -299,6 +303,7 @@ private:
     // read through the accessors below for the tool the tower prints with at that point.
     std::vector<double> m_head_infill_speed;
     std::vector<double> m_head_perimeter_speed;
+    std::vector<size_t> m_filament_slot;
     float  m_wipe_tower_max_purge_speed   = 90.f;
     float  travel_speed() const      { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].travel_speed : 0.f; }
     float  infill_speed() const      { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].infill_speed : 80.f; }

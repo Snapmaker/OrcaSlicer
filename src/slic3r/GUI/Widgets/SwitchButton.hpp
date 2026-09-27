@@ -147,7 +147,18 @@ public:
     }
 
     wxString GetOptionText(unsigned int index) const;
+    // The button takes the width of the new text.
     void     SetOptionText(unsigned int index, const wxString &text);
+
+    // Snapmaker Orca: the entries continue on further rows when one row of them would be wider
+    // than `width` (0: one row, whatever its width); kept over later SetOptions. The speed
+    // selector of the Process tab uses it in a narrow sidebar.
+    void SetMaxRowWidth(int width);
+    int  GetMaxRowWidth() const { return m_max_row_width; }
+    // The width the button of entry `index` would take with `option` as its text (text, padding,
+    // the indicator dot when the entry shows one), as AppendOption sizes it. Measured without
+    // changing the entry; an index beyond the entries counts as without a dot.
+    int  MeasureOption(unsigned int index, const wxString &option) const;
 
     void *GetOptionData(unsigned int index) const;
     void  SetOptionData(unsigned int index, void *clientData);
@@ -163,6 +174,12 @@ public:
     }
     void SetButtonCornerRadius(double radius);
     void SetButtonPadding(const wxSize &padding);
+    // Snapmaker Orca: the dot of an entry (Button::SetIndicator), shown on the selected entry too.
+    void SetOptionIndicator(unsigned int index, bool on)
+    {
+        if (index < btns.size())
+            btns[index]->SetIndicator(on);
+    }
 
     void Rescale();
 
@@ -173,9 +190,17 @@ protected:
     bool send_selection_event();
 
 private:
+    Button *make_button(const wxString &option, void *clientData);
+    // Lays the buttons out in rows of at most m_max_row_width (one row when 0).
+    void    rebuild_rows();
+
     std::vector<Button *> btns;
-    wxBoxSizer           *sizer = nullptr;
+    wxBoxSizer           *sizer = nullptr;   // vertical: one horizontal row sizer per row
     int                   sel   = -1;
+    int                   m_max_row_width = 0;
+    // The height of one row of entries: the minimum height of the control (20 px, as before the
+    // rows), multiplied by the rows in rebuild_rows.
+    int                   m_row_height    = 20;
 
     StateColor m_bg_color;
     StateColor m_text_color;

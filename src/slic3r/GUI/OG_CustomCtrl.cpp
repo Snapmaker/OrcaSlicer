@@ -364,6 +364,15 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             if (!suppress_hyperlinks && !line.og_line.label_path.empty())
                 tooltip = OptionsGroup::get_url(line.og_line.label_path) + "\n\n";
             tooltip += line.og_line.label_tooltip;
+            // Snapmaker Orca: the values set for tool heads on this line (the speed selector).
+            if (opt_group->head_values_tooltip)
+                for (const Option& opt : line.og_line.get_options()) {
+                    const wxString heads = opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#')));
+                    if (!heads.IsEmpty()) {
+                        tooltip += (tooltip.IsEmpty() ? "" : "\n\n") + heads;
+                        break;
+                    }
+                }
             // BBS: markdown tip
             focusedLine = &line;
             markdowntip = line.og_line.label.empty()
@@ -808,7 +817,18 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord h_pos, wxCoord v_pos)
         wxCoord icon_pos = h_pos;
         if (is_multi_extruder) {
             static ScalableBitmap multi_extruder(ctrl, "multi_extruder");
-            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), multi_extruder.bmp(), multi_extruder.bmp(), false, 0, true).x;
+            // Snapmaker Orca: a line whose key has a value set for some tool head (the speed
+            // selector of the Process tab) draws the head icon with a dot in the same slot.
+            static ScalableBitmap head_override(ctrl, "head_override");
+            bool set_per_head = false;
+            if (ctrl->opt_group->head_values_tooltip)
+                for (const Option& opt : option_set)
+                    if (!ctrl->opt_group->head_values_tooltip(opt.opt_id.substr(0, opt.opt_id.find('#'))).IsEmpty()) {
+                        set_per_head = true;
+                        break;
+                    }
+            const ScalableBitmap &icon = set_per_head ? head_override : multi_extruder;
+            h_pos = draw_act_bmps(dc, wxPoint(h_pos, v_pos), icon.bmp(), icon.bmp(), false, 0, true).x;
         }
         is_url_string = !suppress_hyperlinks && !og_line.label_path.empty();
         // BBS

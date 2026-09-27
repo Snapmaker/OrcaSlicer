@@ -660,7 +660,9 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
     // set volumetric speed of outer wall ,ignore per obejct & region ,just use default setting
     // filament_variant_idx selects the per-variant column of filament_max_volumetric_speed
     // (equals filament_id unless a per-layer nozzle grouping expanded the filament arrays).
-    static float get_outer_wall_volumetric_speed(const FullPrintConfig& config, const Print& print, int filament_id, int filament_variant_idx, int extruder_id) {
+    // process_slot selects the column of outer_wall_speed (the tool head, or its (tool head x volume
+    // type) slot on a printer that declares several types per head); extruder_id the nozzle.
+    static float get_outer_wall_volumetric_speed(const FullPrintConfig& config, const Print& print, int filament_id, int filament_variant_idx, int extruder_id, int process_slot) {
         float outer_wall_volumetric_speed = 0;
         float filament_max_volumetric_speed = config.filament_max_volumetric_speed.get_at(filament_variant_idx);
         const double filament_diameter = config.filament_diameter.get_at(filament_id);
@@ -670,7 +672,7 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             outer_wall_line_width = default_line_width == 0.0 ? filament_diameter : default_line_width;
         }
         Flow outer_wall_flow = Flow(outer_wall_line_width, config.layer_height, config.nozzle_diameter.get_at(extruder_id));
-        float outer_wall_speed = print.default_region_config().outer_wall_speed.get_at(extruder_id);
+        float outer_wall_speed = print.default_region_config().outer_wall_speed.get_at(process_slot);
         outer_wall_volumetric_speed = outer_wall_speed * outer_wall_flow.mm3_per_mm();
         if (outer_wall_volumetric_speed > filament_max_volumetric_speed)
             outer_wall_volumetric_speed = filament_max_volumetric_speed;
@@ -1179,7 +1181,8 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
                 size_t new_fi = gcodegen.get_filament_config_index(new_filament_id);
 
                 // set volumetric speed of outer wall ,ignore per obejct,just use default setting
-                float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(full_config, *gcodegen.m_print, new_filament_id, (int)new_fi, gcodegen.get_extruder_id(new_filament_id));
+                float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(full_config, *gcodegen.m_print, new_filament_id, (int)new_fi, gcodegen.get_extruder_id(new_filament_id),
+                                                                                    (int)gcodegen.process_slot_of(new_filament_id));
                 config.set_key_value("outer_wall_volumetric_speed", new ConfigOptionFloat(outer_wall_volumetric_speed));
 
                 float old_retract_length = (old_filament_id != -1) ? full_config.retraction_length.get_at(old_fi) : 0;
@@ -1350,6 +1353,8 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
             // non-multi-nozzle paths (the helper falls back to the extruder id).
             toolchange_command = gcodegen.writer().toolchange(new_filament_id,
                 nozzle_id_for_gcode_placeholder(group_result, new_filament_id, new_extruder_id, gcodegen.m_layer_index));
+        if (new_filament_id >= 0 && !gcodegen.writer().need_toolchange(new_filament_id))
+            gcodegen.writer().set_process_slot(gcodegen.process_slot_of(new_filament_id));
         if (!custom_gcode_changes_tool(toolchange_gcode_str, gcodegen.writer().toolchange_prefix(), new_filament_id))
             toolchange_gcode_str += toolchange_command;
         else {
@@ -4035,7 +4040,8 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         //BBS: calculate the volumetric speed of outer wall. Ignore pre-object setting and multi-filament, and just use the default setting
         float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(m_config, print, initial_non_support_extruder_id,
                                                                             (int) get_filament_config_index((int) initial_non_support_extruder_id),
-                                                                            get_extruder_id(initial_non_support_extruder_id));
+                                                                            get_extruder_id(initial_non_support_extruder_id),
+                                                                            (int) process_slot_of((int) initial_non_support_extruder_id));
         this->placeholder_parser().set("outer_wall_volumetric_speed", new ConfigOptionFloat(outer_wall_volumetric_speed));
 
         auto first_layer_filaments = print.get_slice_used_filaments(true);
@@ -4153,6 +4159,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
     if (is_bbl_printers) {
         m_writer.init_extruder(initial_non_support_extruder_id);
+        m_writer.set_process_slot(process_slot_of((int)initial_non_support_extruder_id));
         // add the missing filament start gcode in machine start gcode
         {
             DynamicConfig config;
@@ -4749,6 +4756,13 @@ size_t GCode::get_nozzle_config_index(int filament_id) const
         return m_print->get_nozzle_config_index(filament_id, m_cur_layer_idx);
     }
     // Orca: same reasoning; degenerate to the filament's extruder column.
+    return get_extruder_id(filament_id);
+}
+
+size_t GCode::process_slot_of(int filament_id) const
+{
+    if (m_print)
+        return m_print->process_slot_of_filament((unsigned int)filament_id, m_cur_layer_idx);
     return get_extruder_id(filament_id);
 }
 
@@ -6682,8 +6696,10 @@ LayerResult GCode::process_layer(
     m_cur_layer_idx = layer.id();
     // A per-layer nozzle grouping can move the active filament to another variant column on a
     // layer boundary without a toolchange, so re-resolve the writer's config column here.
-    if (Extruder *cur_filament = m_writer.filament())
+    if (Extruder *cur_filament = m_writer.filament()) {
         cur_filament->set_config_index((int)get_filament_config_index((int)cur_filament->id()));
+        m_writer.set_process_slot(process_slot_of((int)cur_filament->id()));
+    }
     LayerResult   result { {}, layer.id(), false, last_layer };
     if (layer_tools.extruders.empty())
         // Nothing to extrude.
@@ -7011,8 +7027,13 @@ LayerResult GCode::process_layer(
             const bool has_extrusions = std::any_of(regions.begin(), regions.end(), [](const LayerRegion* r) {
                 return r->has_extrusions();
             });
-            const bool enable_overhang_speed = std::any_of(regions.begin(), regions.end(), [this](const LayerRegion* r) {
-                return r->has_extrusions() && r->region().config().enable_overhang_speed.get_at(get_nozzle_config_index(m_writer.filament()->id()));
+            // Snapmaker Orca: any slot of a region with extrusions, not only the layer-start filament's, since
+            // tool heads may differ here (as in PrintObject::estimate_curled_extrusions). Preparing changes no value.
+            const bool enable_overhang_speed = std::any_of(regions.begin(), regions.end(), [](const LayerRegion* r) {
+                if (!r->has_extrusions())
+                    return false;
+                const auto &slots = r->region().config().enable_overhang_speed.values;
+                return std::any_of(slots.begin(), slots.end(), [](unsigned char on) { return on != 0; });
             });
             const bool enable_overhang_fan = m_enable_cooling_markers && has_extrusions &&
                 std::any_of(m_config.enable_overhang_bridge_fan.values.begin(),
@@ -9324,6 +9345,8 @@ void GCode::append_full_config(const Print& print, std::string& str)
     // Snapmaker Orca: the transient record of a process table composed per tool head
     // (PerHeadProcess) stays out of the header, so neither the G-code nor "Import Configs" sees it.
     cfg.erase("print_extruder_source_column");
+    cfg.erase("print_extruder_source_flow");
+    cfg.erase("print_extruder_flow_count");
     { // correct the flush_volumes_matrix with flush_multiplier values
         // Fast purge mode uses flush_multiplier_fast; Default is inert.
         std::vector<double> temp_cfg_flush_multiplier = (print.config().prime_volume_mode == PrimeVolumeMode::pvmFast)
@@ -11719,6 +11742,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
         }
 
         gcode += m_writer.toolchange(new_filament_id, new_extruder_id);
+        m_writer.set_process_slot(process_slot_of((int)new_filament_id));
         if (Extruder *fil = m_writer.filament())
             fil->set_config_index((int)get_filament_config_index((int)fil->id()));
         return gcode;
@@ -11857,7 +11881,8 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     new_filament_e_feedrate = new_filament_e_feedrate == 0 ? 100 : new_filament_e_feedrate;
 
     // set volumetric speed of outer wall ,ignore per obejct,just use default setting
-    float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(m_config, *m_print, new_filament_id, (int)new_fi, get_extruder_id(new_filament_id));
+    float outer_wall_volumetric_speed = get_outer_wall_volumetric_speed(m_config, *m_print, new_filament_id, (int)new_fi, get_extruder_id(new_filament_id),
+                                                                        (int)process_slot_of((int)new_filament_id));
     float         wipe_avoid_pos_x            = 110.f;
     // Logical nozzle grouping (null on paths that don't populate it) + null-safe nozzle ids.
     auto group_result   = m_print->get_layered_nozzle_group_result();
@@ -12035,6 +12060,7 @@ std::string GCode::set_extruder(unsigned int new_filament_id, double print_z, bo
     //BBS: don't add T[next extruder] if there is no T cmd on filament change
      //We inform the writer about what is happening, but we may not use the resulting gcode.
     std::string toolchange_command = m_writer.toolchange(new_filament_id, next_nozzle_id);
+    m_writer.set_process_slot(process_slot_of((int)new_filament_id));
     if (Extruder *fil = m_writer.filament())
         fil->set_config_index((int)get_filament_config_index((int)fil->id()));
     if (!custom_gcode_changes_tool(toolchange_gcode_parsed, m_writer.toolchange_prefix(), new_filament_id))

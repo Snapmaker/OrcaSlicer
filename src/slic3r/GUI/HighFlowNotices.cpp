@@ -150,6 +150,12 @@ std::vector<std::vector<HeadFilament>> group_by_head(const std::vector<HeadFilam
 Report evaluate(const std::vector<int> &nozzle_volume_types, const std::vector<std::vector<HeadFilament>> &filaments, bool process_has_high_flow_column,
                 bool process_standard_only)
 {
+    return evaluate(nozzle_volume_types, filaments, std::vector<bool>(nozzle_volume_types.size(), process_has_high_flow_column), process_standard_only);
+}
+
+Report evaluate(const std::vector<int> &nozzle_volume_types, const std::vector<std::vector<HeadFilament>> &filaments,
+                const std::vector<bool> &process_has_high_flow_column, bool process_standard_only)
+{
     auto add_once = [](std::vector<Report::Entry> &entries, size_t head, const std::string &material, const std::string &parent = {}) {
         for (const Report::Entry &entry : entries)
             if (entry.head == head && entry.material == material)
@@ -161,7 +167,7 @@ Report evaluate(const std::vector<int> &nozzle_volume_types, const std::vector<s
     for (size_t head = 0; head < nozzle_volume_types.size(); ++head) {
         if (nozzle_volume_types[head] != int(nvtHighFlow))
             continue;
-        if (!process_has_high_flow_column)
+        if (head >= process_has_high_flow_column.size() || !process_has_high_flow_column[head])
             report.standard_speeds_used.push_back(head);
         else if (process_standard_only)
             report.process_standard_only.push_back(head);
@@ -386,6 +392,21 @@ std::string head_nozzle_size_label(const DynamicPrintConfig &printer_config, siz
     return label;
 }
 
+SelectorFit head_selector_fit(const std::vector<int> &long_widths, const std::vector<int> &short_widths, int available)
+{
+    auto total = [](const std::vector<int> &widths) {
+        int sum = 0;
+        for (int width : widths)
+            sum += width;
+        return sum;
+    };
+    if (available <= 0 || total(long_widths) <= available)
+        return SelectorFit::Long;
+    if (total(short_widths) <= available)
+        return SelectorFit::Short;
+    return SelectorFit::ShortRows;
+}
+
 void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config, size_t head, int current_type, const SizeOffersHighFlow &size_offers)
 {
     if (combo == nullptr)
@@ -426,6 +447,91 @@ wxString flow_tooltip(FlowRowState state, const std::string &head_size)
         // TRN Tooltip of a disabled Flow row. %1% is the nozzle size of this tool head, e.g. 0.2
         return format_wxstr(_L("Flow type of this nozzle. Snapmaker Orca has no High Flow values for %1% mm nozzles, so this nozzle prints with the Standard values."), head_size);
     return _L("Flow type of this nozzle. A High Flow nozzle prints with the High Flow values of the filament and process presets.");
+}
+
+wxString automatic_reason(PerHeadProcess::Step step, const std::string &plate_class, const std::string &class_used, const std::string &head_size,
+                          double height, bool preferred)
+{
+    const wxString height_text = from_u8(float_to_string_decimal_point(height, 2));
+    switch (step) {
+    case PerHeadProcess::Step::SameQuality:
+        if (plate_class.empty())
+            return preferred ?
+                // TRN Why a tool head prints with a process preset. %1% is a layer height in mm
+                format_wxstr(_L("Automatic: the nearest layer height to the preferred %1% mm."), height_text) :
+                // TRN Why a tool head prints with a process preset. %1% is a layer height in mm
+                format_wxstr(_L("Automatic: the nearest layer height to the plate's %1% mm."), height_text);
+        return preferred ?
+            // TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+            format_wxstr(_L("Automatic: the plate's quality (%1%), nearest to the preferred layer height %2% mm."), from_u8(plate_class), height_text) :
+            // TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+            format_wxstr(_L("Automatic: the plate's quality (%1%), nearest to the plate's layer height %2% mm."), from_u8(plate_class), height_text);
+    case PerHeadProcess::Step::ClassLadder:
+        if (plate_class.empty())
+            return preferred ?
+                // TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+                format_wxstr(_L("Automatic: %1%, nearest to the preferred layer height %2% mm."), from_u8(class_used), height_text) :
+                // TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+                format_wxstr(_L("Automatic: %1%, nearest to the plate's layer height %2% mm."), from_u8(class_used), height_text);
+        return preferred ?
+            // TRN Why a tool head prints with a process preset. %1% is the plate's quality class ("High Quality"), %2% a nozzle size, %3% the class used instead ("Standard"), %4% a layer height in mm
+            format_wxstr(_L("Automatic: no %1% preset exists for a %2% mm nozzle, so %3%, nearest to the preferred layer height %4% mm."),
+                         from_u8(plate_class), from_u8(head_size), from_u8(class_used), height_text) :
+            // TRN Why a tool head prints with a process preset. %1% is the plate's quality class ("High Quality"), %2% a nozzle size, %3% the class used instead ("Standard"), %4% a layer height in mm
+            format_wxstr(_L("Automatic: no %1% preset exists for a %2% mm nozzle, so %3%, nearest to the plate's layer height %4% mm."),
+                         from_u8(plate_class), from_u8(head_size), from_u8(class_used), height_text);
+    case PerHeadProcess::Step::SizeDefault:
+        // TRN Why a tool head prints with a process preset. %1% is a nozzle size
+        return format_wxstr(_L("Automatic: the default preset of a %1% mm nozzle."), from_u8(head_size));
+    case PerHeadProcess::Step::FirstByName:
+        // TRN Why a tool head prints with a process preset. %1% is a nozzle size
+        return format_wxstr(_L("Automatic: the first preset installed for a %1% mm nozzle."), from_u8(head_size));
+    case PerHeadProcess::Step::SelectedPreset:
+    case PerHeadProcess::Step::Chosen:
+        break;
+    }
+    return wxEmptyString;
+}
+
+wxString head_flow_description(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen)
+{
+    if (standard_chosen)
+        // TRN Line on the Speed page under a selected High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+        return format_wxstr(_L("Extruder %1%, %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."), head + 1, from_u8(head_size));
+    // TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+    return format_wxstr(_L("Extruder %1%, %2% mm nozzle, %3%."), head + 1, from_u8(head_size), _L(get_nozzle_volume_type_string(nozzle)));
+}
+
+wxString head_entry_tooltip(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen)
+{
+    if (standard_chosen)
+        // TRN Tooltip of an entry of the speed selector: a High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+        return format_wxstr(_L("Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."), head + 1, from_u8(head_size));
+    // TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+    return format_wxstr(_L("Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."), head + 1, from_u8(head_size), _L(get_nozzle_volume_type_string(nozzle)));
+}
+
+wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note, const std::string &outer_wall, const std::string &sparse,
+                           const std::string &accel)
+{
+    switch (note) {
+    case SpeedsNote::HighFlow:
+        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.20mm Standard") whose High Flow column the tool head prints with, %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration
+        return format_wxstr(_L("Speeds: %1%, High Flow %2% · outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+    case SpeedsNote::StandardChosen:
+        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset with its state ("0.20mm High Quality", "0.18mm Standard (automatic)") whose Standard speeds the High Flow tool head prints by choice, %2%..%4% the outer wall speed, sparse infill speed and acceleration
+        return format_wxstr(_L("Speeds: %1%, Standard (chosen for this High Flow nozzle) · outer wall %2%, sparse %3%, accel %4%"),
+                            state.IsEmpty() ? preset : preset + " " + state, outer_wall, sparse, accel);
+    default:
+        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration the tool head prints with
+        return format_wxstr(_L("Speeds: %1% %2% · outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+    }
+}
+
+wxString standard_chosen_tooltip()
+{
+    return _L("This extruder carries a High Flow nozzle and prints the Standard speeds, accelerations and jerk, chosen with the toggle of the "
+              "Speed page; its filament settings stay those of a High Flow nozzle.");
 }
 
 }}} // namespace Slic3r::GUI::HighFlowNotices

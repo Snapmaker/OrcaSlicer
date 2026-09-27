@@ -9,6 +9,7 @@
 #include <wx/tokenzr.h>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Color.hpp"
 #include "format.hpp"
@@ -1547,10 +1548,14 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
     // Display a dialog showing the dirty options in a human readable form.
     for (PresetCollection* presets : presets_list)
     {
-        const DynamicPrintConfig& old_config = presets->get_selected_preset().config;
+        const DynamicPrintConfig& saved_config = presets->get_selected_preset().config;
         const PrinterTechnology&  old_pt     = presets->get_selected_preset().printer_technology();
         const DynamicPrintConfig& new_config = presets->get_edited_preset().config;
         type = presets->type();
+        // Snapmaker Orca: old values come from the saved preset laid out like the edited one
+        // (PerHeadProcess::reference_in_layout_of), so a per-head column shows its value, not "Undefined".
+        DynamicPrintConfig        old_storage;
+        const DynamicPrintConfig& old_config = type == Preset::TYPE_PRINT ? PerHeadProcess::reference_in_layout_of(new_config, saved_config, old_storage) : saved_config;
 
         const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
 
@@ -2135,9 +2140,18 @@ void DiffPresetDialog::update_tree()
             continue;
         }
 
-        const DynamicPrintConfig& left_config   = left_preset->config;
+        // Snapmaker Orca: when one process preset holds values per tool head, the narrower one is laid out like it
+        // (PerHeadProcess::reference_in_layout_of), so columns compare by (id, variant) instead of showing "Undefined".
+        Preset left_in_layout  = *left_preset;
+        Preset right_in_layout = *right_preset;
+        if (type == Preset::TYPE_PRINT) {
+            DynamicPrintConfig storage;
+            left_in_layout.config  = PerHeadProcess::reference_in_layout_of(right_preset->config, left_preset->config, storage);
+            right_in_layout.config = PerHeadProcess::reference_in_layout_of(left_preset->config, right_preset->config, storage);
+        }
+        const DynamicPrintConfig& left_config   = left_in_layout.config;
         const PrinterTechnology&  left_pt       = left_preset->printer_technology();
-        const DynamicPrintConfig& right_congig  = right_preset->config;
+        const DynamicPrintConfig& right_congig  = right_in_layout.config;
 
         if (left_pt != right_preset->printer_technology()) {
             bottom_info = _L("Compared presets has different printer technology");
@@ -2151,8 +2165,8 @@ void DiffPresetDialog::update_tree()
                                    type == Preset::TYPE_FILAMENT || type == Preset::TYPE_SLA_MATERIAL);
         auto dirty_options = type == Preset::TYPE_PRINTER && left_pt == ptFFF &&
                              left_config.opt<ConfigOptionStrings>("extruder_colour")->values.size() < right_congig.opt<ConfigOptionStrings>("extruder_colour")->values.size() ?
-                             presets->dirty_options(right_preset, left_preset, deep_compare) :
-                             presets->dirty_options(left_preset, right_preset, deep_compare);
+                             presets->dirty_options(&right_in_layout, &left_in_layout, deep_compare) :
+                             presets->dirty_options(&left_in_layout, &right_in_layout, deep_compare);
 
         if (dirty_options.empty()) {
             //bottom_info = _L("Presets are the same");

@@ -68,6 +68,9 @@ public:
     bool        need_toolchange(unsigned int filament_id) const;
     std::string set_extruder(unsigned int filament_id);
     void init_extruder(unsigned int filament_id);
+    // Snapmaker Orca: process-table slot for travel and first-layer speeds (tool head, or head x volume type).
+    // toolchange()/init_extruder() seed it with the head; GCode then sets Print::process_slot_of_filament.
+    void set_process_slot(size_t slot) { m_cached_extruder_idx = slot; }
     // Current parked-retract length of a filament's extruder (share-aware). Used for the
     // new_extruder_retracted_length change-filament placeholder. Returns 0 if the filament is unknown.
     double get_extruder_retracted_length(const int filament_id);

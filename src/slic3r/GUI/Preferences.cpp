@@ -1795,10 +1795,11 @@ void PreferencesDialog::create_items()
 
     // Snapmaker Orca: libslic3r/PerHeadProcess.hpp. The handler of the checkbox hands the new value to the preset bundle.
     auto item_process_follows_nozzle = create_item_checkbox(_L("Process speeds follow the nozzle size"),
-        _L("If enabled, an extruder whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a "
-           "process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, "
-           "walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every "
-           "extruder."),
+        _L("If enabled, an extruder whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of the "
+           "process preset of the same quality as the selected preset made for its size, at the nearest layer height. Line widths, walls, "
+           "infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every "
+           "extruder. Values set for one extruder on the Speed page, and a process preset chosen for an extruder there, apply to that extruder "
+           "whether this is on or off."),
         "process_follows_nozzle");
     g_sizer->Add(item_process_follows_nozzle);
 

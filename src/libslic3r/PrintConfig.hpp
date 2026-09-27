@@ -920,13 +920,21 @@ extern std::set<std::string> printer_options_with_variant_1;
 extern std::set<std::string> printer_options_with_variant_2;
 extern std::set<std::string> empty_options;
 
-// `composed`: the variant table was composed per tool head (PerHeadProcess), see the definition.
+// Snapmaker Orca: how set_variant_override reads an object, part or layer-range override per slot.
+// `composed`: table composed per tool head, variant_index holds the preset's column per slot.
+// `flow_index`: per slot, its flow among the preset's shared columns (-1: none); `flow_count`: their number.
+struct VariantOverrideRule
+{
+    bool             composed { false };
+    std::vector<int> flow_index;
+    int              flow_count { 0 };
+};
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
-                          const std::vector<int> &variant_index, int stride = 1, bool composed = false);
+                          const std::vector<int> &variant_index, int stride = 1, const VariantOverrideRule &rule = VariantOverrideRule());
 
 extern std::set<std::string> filament_dev_options;
 
-extern void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride = 1, bool composed = false);
+extern void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride = 1, const VariantOverrideRule &rule = VariantOverrideRule());
 extern void compute_filament_override_value(const std::string& opt_key, const ConfigOption *opt_old_machine, const ConfigOption *opt_new_machine, const ConfigOption *opt_new_filament, const DynamicPrintConfig& new_full_config,
     t_config_option_keys& diff_keys, DynamicPrintConfig& filament_overrides, std::vector<int>& f_map_indices);
 
@@ -1331,6 +1339,9 @@ PRINT_CONFIG_CLASS_DEFINE(
 
     ((ConfigOptionInts,  print_extruder_id))
     ((ConfigOptionStrings,  print_extruder_variant))
+    // Snapmaker Orca: per column of the process layout, the keys set for the column's tool head
+    // on the Speed page (libslic3r/PerHeadProcess.hpp, override_key); empty on a shared column.
+    ((ConfigOptionStrings,  print_extruder_override))
     ((ConfigOptionInt,                  bottom_shell_layers))
     ((ConfigOptionFloat,                bottom_shell_thickness))
     ((ConfigOptionFloat,                bridge_angle))
@@ -1634,6 +1645,12 @@ PRINT_CONFIG_CLASS_DEFINE(
     // applied, empty for a head that prints with the selected preset (libslic3r/PerHeadProcess.hpp).
     // A project option like filament_map.
     ((ConfigOptionStrings,             extruder_process_preset))
+    // Snapmaker Orca: the process preset chosen for each tool head in the project, empty for a head
+    // that follows the rule (libslic3r/PerHeadProcess.hpp, choice_key). A project option like the record.
+    ((ConfigOptionStrings,             extruder_process_choice))
+    // Snapmaker Orca: the flow type whose speeds column each tool head prints when that is not its
+    // nozzle's own ("Standard" on a High Flow nozzle), empty otherwise (PerHeadProcess::flow_key).
+    ((ConfigOptionStrings,             extruder_process_flow))
     ((ConfigOptionInts,                filament_volume_map))
     ((ConfigOptionInts,                filament_nozzle_map))
     ((ConfigOptionInts,                filament_map_2)) //used for multi nozzle, map filament to the index identified by extruder+nozzle_volume_type

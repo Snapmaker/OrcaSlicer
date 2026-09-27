@@ -4,8 +4,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -18,11 +21,14 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
 #include "test_helpers.hpp"
+
+#include <boost/filesystem.hpp>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -152,10 +158,18 @@ void with_prime_tower(DynamicPrintConfig &config)
     config.set_key_value("layer_change_gcode", new ConfigOptionString("G92 E0"));
 }
 
+// A slice of two_head_slice with the Print behind it, kept for the message of a failed check.
+struct TwoHeadSlice
+{
+    Print       print;
+    Model       model;
+    std::string gcode;
+};
+
 // Two 20 mm cubes next to each other, 2 mm tall (10 layers of 0.2 mm), with the given per-object
 // overrides; by default the first on tool head 1, the second on tool head 2.
-std::string two_head_gcode(const DynamicPrintConfig &config,
-                           const std::vector<std::vector<ConfigBase::SetDeserializeItem>> &overrides = {{{"extruder", "1"}}, {{"extruder", "2"}}})
+std::unique_ptr<TwoHeadSlice> two_head_slice(const DynamicPrintConfig &config,
+                                             const std::vector<std::vector<ConfigBase::SetDeserializeItem>> &overrides = {{{"extruder", "1"}}, {{"extruder", "2"}}})
 {
     TriangleMesh first = mesh(TestMesh::cube_20x20x20);
     first.scale(Vec3f(1.f, 1.f, 0.1f));
@@ -166,15 +180,93 @@ std::string two_head_gcode(const DynamicPrintConfig &config,
     std::vector<TriangleMesh> meshes;
     meshes.emplace_back(std::move(first));
     meshes.emplace_back(std::move(second));
-    Print print;
-    Model model;
-    init_print(std::move(meshes), print, model, config, &overrides, /*arrange=*/false);
+    auto slice = std::make_unique<TwoHeadSlice>();
+    init_print(std::move(meshes), slice->print, slice->model, config, &overrides, /*arrange=*/false);
     {
-        const StringObjectException err = print.validate();
+        const StringObjectException err = slice->print.validate();
         INFO(err.string);
         REQUIRE(err.string.empty());
     }
-    return Slic3r::Test::gcode(print);
+    slice->gcode = Slic3r::Test::gcode(slice->print);
+    return slice;
+}
+
+std::string two_head_gcode(const DynamicPrintConfig &config,
+                           const std::vector<std::vector<ConfigBase::SetDeserializeItem>> &overrides = {{{"extruder", "1"}}, {{"extruder", "2"}}})
+{
+    return two_head_slice(config, overrides)->gcode;
+}
+
+// The Print state behind a slice, for a failure message: per-object layer and extrusion counts,
+// the tool ordering's layers, and the counts of a rebuilt ordering. Tells whether the slice or the
+// tool ordering lost the layers.
+std::string print_digest(const Print &print)
+{
+    std::string out;
+    for (const PrintObject *object : print.objects()) {
+        size_t with_slices = 0, with_extrusions = 0;
+        const Layer *first_empty = nullptr;
+        for (const Layer *layer : object->layers()) {
+            if (!layer->lslices.empty())
+                ++with_slices;
+            if (layer->has_extrusions())
+                ++with_extrusions;
+            else if (first_empty == nullptr && layer->id() > 0)
+                first_empty = layer;
+        }
+        out += (out.empty() ? "object " : "; object ") + object->model_object()->name + ": layers " + std::to_string(object->layers().size()) +
+               ", with slices " + std::to_string(with_slices) + ", with extrusions " + std::to_string(with_extrusions);
+        if (first_empty != nullptr) {
+            out += ", first without an extrusion above the first: layer " + std::to_string(first_empty->id() + 1) + " (z " +
+                   float_to_string_decimal_point(first_empty->print_z) + ") lslices " + std::to_string(first_empty->lslices.size()) + ", regions";
+            for (const LayerRegion *layerm : first_empty->regions())
+                out += " slices=" + std::to_string(layerm->slices.surfaces.size()) + " perimeters=" + std::to_string(layerm->perimeters.entities.size()) +
+                       " fills=" + std::to_string(layerm->fills.entities.size());
+        }
+    }
+    const std::vector<LayerTools> &layer_tools = print.tool_ordering().layer_tools();
+    size_t      with_extruders = 0, with_object = 0, with_tower = 0;
+    std::string layers;
+    for (const LayerTools &lt : layer_tools) {
+        // has_object is set where the extruders are collected, for a region with perimeters or
+        // fills, and nothing later clears it: a layer with an object and no extruder lost them
+        // after the collection; a layer without one had nothing to collect from.
+        if (lt.has_object)
+            ++with_object;
+        if (lt.has_wipe_tower)
+            ++with_tower;
+        if (lt.extruders.empty())
+            continue;
+        ++with_extruders;
+        if (with_extruders > 4)
+            continue;
+        layers += " " + float_to_string_decimal_point(lt.print_z) + ":";
+        for (size_t i = 0; i < lt.extruders.size(); ++i)
+            layers += (i == 0 ? "T" : ",T") + std::to_string(lt.extruders[i]);
+    }
+    out += "; tool ordering: layers " + std::to_string(layer_tools.size()) + ", with extruders " + std::to_string(with_extruders) +
+           ", with an object " + std::to_string(with_object) + ", with a tower slab " + std::to_string(with_tower);
+    if (!layers.empty())
+        out += " (the first:" + layers + ")";
+    // An ordering rebuilt from the finished Print as Print::_make_wipe_tower does, counted after
+    // the constructor and after sort_and_build_data. A full rebuild next to a short print ordering
+    // means the layers were read before they held their extrusions.
+    {
+        auto layers_with_extruders = [](const std::vector<LayerTools> &tools) {
+            return std::count_if(tools.begin(), tools.end(), [](const LayerTools &lt) { return !lt.extruders.empty(); });
+        };
+        try {
+            const bool   priming = print.wipe_tower_type() == WipeTowerType::Type2;
+            ToolOrdering rebuilt(print, (unsigned int) -1, priming);
+            const auto   collected = layers_with_extruders(rebuilt.layer_tools());
+            rebuilt.sort_and_build_data(print, (unsigned int) -1, priming);
+            out += "; rebuilt from the finished Print: layers with extruders " + std::to_string(collected) + " collected, " +
+                   std::to_string(layers_with_extruders(rebuilt.layer_tools())) + " sorted";
+        } catch (const std::exception &ex) {
+            out += std::string("; rebuilt from the finished Print: threw ") + ex.what();
+        }
+    }
+    return out;
 }
 
 // The part of the G-code a printer executes: header, thumbnails and the config block left out.
@@ -276,6 +368,47 @@ std::map<int, std::map<std::string, std::set<int>>> feature_feedrates(const std:
     return out;
 }
 
+// What feature_feedrates saw, for the message of a failed check: the layers counted, every tool
+// change with the layer it was read on, and per tool the extruding moves above the first layer,
+// split into those under a feature label and those before any label.
+std::string gcode_digest(const std::string &gcode)
+{
+    std::istringstream in(executable_block(gcode));
+    std::string        line, feature, changes;
+    std::map<int, int> labelled, unlabelled;
+    int                tool  = 0;
+    int                layer = 0;
+    while (std::getline(in, line)) {
+        if (line.rfind(";LAYER_CHANGE", 0) == 0 || line.rfind("; CHANGE_LAYER", 0) == 0) { ++layer; continue; }
+        if (line.rfind(";TYPE:", 0) == 0) { feature = line.substr(6); continue; }
+        if (line.rfind("; FEATURE:", 0) == 0) { feature = line.substr(10); continue; }
+        if (const int changed_to = tool_change(line); changed_to >= 0) {
+            tool = changed_to;
+            changes += (changes.empty() ? "" : " ") + std::to_string(layer) + ":T" + std::to_string(tool);
+            continue;
+        }
+        if (line.rfind("G1 ", 0) == 0 && layer > 1 && word_value(line, 'E') > 0. && (word_value(line, 'X') >= 0. || word_value(line, 'Y') >= 0.))
+            ++(feature.empty() ? unlabelled : labelled)[tool];
+    }
+    std::string out = "layers " + std::to_string(layer) + "; tool changes (layer:tool) " + changes + "; extruding moves above layer 1 under a feature label:";
+    for (const auto &[t, n] : labelled)
+        out += " T" + std::to_string(t) + "=" + std::to_string(n);
+    out += "; before any label:";
+    for (const auto &[t, n] : unlabelled)
+        out += " T" + std::to_string(t) + "=" + std::to_string(n);
+    return out;
+}
+
+// Keeps the G-code of a failed slice check in the system temp directory for inspection and
+// answers its path (for the failure message). Nothing removes the file.
+std::string keep_gcode(const std::string &name, const std::string &gcode)
+{
+    const boost::filesystem::path path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path(name + "-%%%%%%%%.gcode");
+    std::ofstream out(path.string(), std::ios::binary);
+    out << gcode;
+    return path.string();
+}
+
 std::string joined(const std::set<int> &values)
 {
     std::string out;
@@ -316,6 +449,41 @@ void init_cube_with_modifier(Print &print, Model &model, const DynamicPrintConfi
 }
 
 } // namespace
+
+// An unindexed vector variable in custom G-code (travel_speed in the U1's change_filament_gcode)
+// reads the slot of the current filament's tool head; filament_map is 1-based.
+TEST_CASE("A custom G-code's unindexed vector variable reads the tool head of the current filament", "[PerHeadProcess][PerHeadOverride][pho_placeholder_head]")
+{
+    DynamicPrintConfig config = four_head_config();
+    const std::vector<double> travel_speed = {500., 400., 300., 200.};
+    set_head_values(config, "travel_speed", travel_speed);
+    // The block is evaluated for the filament changed in; the writer's T command follows it.
+    config.set_key_value("change_filament_gcode", new ConfigOptionString("; TOOLCHANGE_TRAVEL {travel_speed}\n"));
+
+    std::istringstream in(executable_block(two_head_gcode(config)));
+    std::string        line;
+    double             pending = -1.;
+    size_t             blocks  = 0;
+    std::set<int>      tools;
+    while (std::getline(in, line)) {
+        if (line.rfind("; TOOLCHANGE_TRAVEL ", 0) == 0) {
+            pending = std::atof(line.c_str() + 20);
+            continue;
+        }
+        if (const int changed_to = tool_change(line); changed_to >= 0 && pending >= 0.) {
+            REQUIRE(changed_to >= 0);
+            REQUIRE(changed_to < int(HEADS));
+            INFO("tool " << changed_to << " changed in with travel speed " << pending);
+            CHECK_THAT(pending, Catch::Matchers::WithinAbs(travel_speed[size_t(changed_to)], 1e-6));
+            tools.insert(changed_to);
+            ++blocks;
+            pending = -1.;
+        }
+    }
+    // Both tool heads of the plate are changed in at least once.
+    CHECK(blocks >= 2);
+    CHECK(tools == std::set<int>{0, 1});
+}
 
 // Layer::is_perimeter_compatible and the infill role speed read the slot of the tool head that
 // prints the filament, not the slot of the next filament.
@@ -570,6 +738,150 @@ TEST_CASE("An override on a part is read by its width on a table composed per to
 
 namespace {
 
+// The per-type layout of flow_columns_config(): one column per (tool head x flow type), ids
+// 1,1,2,2,3,3,4,4, Standard then High Flow per head, so that every one of the 8 slots of the
+// narrowing is an exact match and a value can be given to one slot alone.
+void per_type_process(DynamicPrintConfig &config)
+{
+    std::vector<int>         ids;
+    std::vector<std::string> variants;
+    for (size_t head = 0; head < HEADS; ++head)
+        for (const char *variant : {STANDARD, HIGH_FLOW}) {
+            ids.emplace_back(int(head) + 1);
+            variants.emplace_back(variant);
+        }
+    config.set_key_value("print_extruder_id",      new ConfigOptionInts(ids));
+    config.set_key_value("print_extruder_variant", new ConfigOptionStrings(variants));
+    for (const std::string &key : print_options_with_variant) {
+        if (key == "print_extruder_id" || key == "print_extruder_variant")
+            continue;
+        auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+        REQUIRE(option != nullptr);
+        option->resize(HEADS * 2);
+    }
+}
+
+// One value per slot (8) for a process key.
+void set_slot_values(DynamicPrintConfig &config, const std::string &key, const std::vector<double> &values)
+{
+    REQUIRE(values.size() == HEADS * 2);
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::unique_ptr<ConfigOption> parsed(option->clone());
+    for (size_t slot = 0; slot < values.size(); ++slot) {
+        REQUIRE(parsed->deserialize(float_to_string_decimal_point(values[slot])));
+        option->set_at(parsed.get(), slot, 0);
+    }
+}
+
+// The feed rates (mm/min) of the non-extruding XY moves per tool: above the first layer outside
+// the prime tower blocks (the writer's travels), and the maximum inside the tower blocks (the
+// tower's travels; the tool changes inside a block, a move belongs to the tool active at it).
+struct TravelFacts
+{
+    std::map<int, std::set<int>> writer_travels;
+    std::map<int, int>           tower_max_travel;
+};
+TravelFacts travel_facts(const std::string &gcode)
+{
+    TravelFacts        out;
+    std::istringstream in(executable_block(gcode));
+    std::string        line;
+    int                tool     = 0;
+    int                layer    = 0;
+    double             feedrate = 0.;
+    bool               in_tower = false;
+    while (std::getline(in, line)) {
+        if (line.rfind(";LAYER_CHANGE", 0) == 0 || line.rfind("; CHANGE_LAYER", 0) == 0) { ++layer; continue; }
+        if (line.rfind("; CP TOOLCHANGE START", 0) == 0) { in_tower = true; continue; }
+        if (line.rfind("; CP TOOLCHANGE END", 0) == 0) { in_tower = false; continue; }
+        if (const int changed_to = tool_change(line); changed_to >= 0) {
+            tool = changed_to;
+            continue;
+        }
+        if (line.rfind("G1 ", 0) != 0)
+            continue;
+        const double f = word_value(line, 'F');
+        if (f > 0.)
+            feedrate = f;
+        const bool moves    = word_value(line, 'X') >= 0. || word_value(line, 'Y') >= 0.;
+        const bool extrudes = word_value(line, 'E') >= 0.;
+        if (!moves || extrudes || f <= 0.)
+            continue;
+        if (in_tower)
+            out.tower_max_travel[tool] = std::max(out.tower_max_travel[tool], int(std::lround(feedrate)));
+        else if (layer > 1)
+            out.writer_travels[tool].insert(int(std::lround(feedrate)));
+    }
+    return out;
+}
+
+} // namespace
+
+// On a table with one slot per (tool head x flow type), travel and first-layer speeds are read
+// from the tool head's slot, not at the tool head's index (another slot there).
+TEST_CASE("The writer and the prime tower read the travel and first-layer speeds in the slot of the tool head", "[PerHeadProcess][PerHeadOverride][pho_slot_travel]")
+{
+    DynamicPrintConfig config = flow_columns_config();
+    per_type_process(config);
+    with_prime_tower(config);
+    // Slots: (1,S) (1,HF) (2,S) (2,HF) (3,S) (3,HF) (4,S) (4,HF); tool head 3 is on High Flow.
+    const std::vector<double> travel_speed        = {500., 510., 400., 410., 300., 310., 200., 210.};
+    const std::vector<double> initial_layer_speed = {50., 51., 40., 41., 30., 31., 20., 21.};
+    set_slot_values(config, "travel_speed", travel_speed);
+    set_slot_values(config, "initial_layer_speed", initial_layer_speed);
+    // No first-layer travel factor and no z travel speed of their own: every travel reads travel_speed.
+    for (const char *key : {"initial_layer_travel_speed"}) {
+        auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+        const std::unique_ptr<ConfigOption> parsed(option->clone());
+        REQUIRE(parsed->deserialize("100%"));
+        for (size_t slot = 0; slot < HEADS * 2; ++slot)
+            option->set_at(parsed.get(), slot, 0);
+    }
+    set_slot_values(config, "travel_speed_z", std::vector<double>(HEADS * 2, 0.));
+    const double max_purge_speed = config.opt_float("wipe_tower_max_purge_speed");
+
+    // The first cube on tool head 2 (Standard, slot 2), the second on tool head 3 (High Flow, slot 5).
+    const std::string gcode = two_head_gcode(config, {{{"extruder", "2"}}, {{"extruder", "3"}}});
+    const std::map<int, size_t> slot_of_tool = {{1, 2}, {2, 5}};
+    const TravelFacts facts = travel_facts(gcode);
+
+    SECTION("the writer's travels of each tool run at the travel speed of its slot and at no other slot's") {
+        for (const auto &[tool, slot] : slot_of_tool) {
+            REQUIRE(facts.writer_travels.count(tool) == 1);
+            const std::set<int> &rates = facts.writer_travels.at(tool);
+            INFO("tool " << tool << " travel feed rates: " << joined(rates));
+            CHECK(rates.count(int(std::lround(travel_speed[slot] * 60.))) == 1);
+            for (size_t other = 0; other < travel_speed.size(); ++other)
+                if (other != slot)
+                    CHECK(rates.count(int(std::lround(travel_speed[other] * 60.))) == 0);
+        }
+    }
+
+    SECTION("the prime tower travels at the travel speed of the slot of the tool it runs") {
+        for (const auto &[tool, slot] : slot_of_tool) {
+            REQUIRE(facts.tower_max_travel.count(tool) == 1);
+            INFO("tool " << tool << " fastest travel on the tower: " << facts.tower_max_travel.at(tool));
+            CHECK(facts.tower_max_travel.at(tool) == int(std::lround(travel_speed[slot] * 60.)));
+        }
+    }
+
+    SECTION("the prime tower purges a tool on the first layer at the first layer speed of its slot") {
+        const std::vector<WipeBlock> blocks = wipe_blocks(gcode);
+        bool first_layer_seen = false;
+        for (const WipeBlock &block : blocks) {
+            if (block.layer > 1 || slot_of_tool.count(block.tool) == 0)
+                continue;
+            first_layer_seen = true;
+            INFO("tool " << block.tool << " on layer " << block.layer);
+            CHECK(block.first_feedrate == first_wipe_feedrate(initial_layer_speed[slot_of_tool.at(block.tool)], true, max_purge_speed));
+        }
+        CHECK(first_layer_seen);
+    }
+}
+
+namespace {
+
 // The acceleration (SET_VELOCITY_LIMIT ACCEL=, Klipper) in force at the extruding moves of the
 // outer walls above the first layer (which runs at initial_layer_acceleration), per tool.
 std::map<int, std::set<int>> outer_wall_accelerations(const std::string &gcode)
@@ -651,8 +963,14 @@ TEST_CASE("A tool head of another nozzle size prints with the speeds and acceler
     REQUIRE(PerHeadProcess::compose(config, {}, sources));
     REQUIRE(config.option<ConfigOptionInts>("print_extruder_id")->values == std::vector<int>{1, 2, 3, 4});
 
-    const std::string gcode = two_head_gcode(config);
-    const auto        rates = feature_feedrates(gcode);
+    const std::unique_ptr<TwoHeadSlice> slice = two_head_slice(config);
+    const std::string                  &gcode = slice->gcode;
+    const auto                          rates = feature_feedrates(gcode);
+    // Under CPU load the G-code can hold the first layer alone. The details go in the FAIL message:
+    // Catch2 3 can drop earlier INFO scopes before the failure reports.
+    if (rates.count(0) != 1 || rates.count(1) != 1)
+        FAIL("no extrusion above the first layer for tool " << (rates.count(0) != 1 ? 0 : 1) << ": " << gcode_digest(gcode) << "; "
+             << print_digest(slice->print) << "; G-code kept at " << keep_gcode("phs_gcode_head2", gcode));
     REQUIRE(rates.count(0) == 1);
     REQUIRE(rates.count(1) == 1);
 
@@ -696,4 +1014,466 @@ TEST_CASE("A tool head of another nozzle size prints with the speeds and acceler
         CHECK(gcode.find("print_extruder_source_column") == std::string::npos);
         CHECK(gcode.find("; extruder_process_preset") != std::string::npos);
     }
+}
+
+namespace {
+
+// The wide layout of a single Standard column on the four-head printer: a shared column with id 0
+// and one column per tool head (ids 0,1,2,3,4), every key five wide with the shared value.
+void wide_single_flow(DynamicPrintConfig &config)
+{
+    config.set_key_value("print_extruder_id",      new ConfigOptionInts({0, 1, 2, 3, 4}));
+    config.set_key_value("print_extruder_variant", new ConfigOptionStrings(std::vector<std::string>(HEADS + 1, STANDARD)));
+    for (const std::string &key : print_options_with_variant) {
+        if (key == "print_extruder_id" || key == "print_extruder_variant")
+            continue;
+        auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+        REQUIRE(option != nullptr);
+        option->resize(1);
+        option->resize(HEADS + 1);
+    }
+    config.set_key_value(PerHeadProcess::override_key, new ConfigOptionStrings(std::vector<std::string>(HEADS + 1, std::string())));
+}
+
+void set_wide_column(DynamicPrintConfig &config, const std::string &key, size_t column, double value)
+{
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::unique_ptr<ConfigOption> parsed(option->clone());
+    REQUIRE(parsed->deserialize(float_to_string_decimal_point(value)));
+    option->set_at(parsed.get(), column, 0);
+}
+
+} // namespace
+
+// A value set for one tool head reaches that head's G-code and no other head's.
+TEST_CASE("A value set for one tool head reaches its G-code alone, under the identity map and under a manual map", "[PerHeadProcess][PerHeadOverride][pho_gcode_head_value]")
+{
+    DynamicPrintConfig config = four_head_config();
+    for (const char *key : {"machine_max_acceleration_extruding", "machine_max_acceleration_x", "machine_max_acceleration_y"})
+        config.set_key_value(key, new ConfigOptionFloats(std::vector<double>(HEADS * 2, 20000.)));
+    wide_single_flow(config);
+    for (size_t column = 0; column <= HEADS; ++column) {
+        set_wide_column(config, "outer_wall_speed", column, 200.);
+        set_wide_column(config, "outer_wall_acceleration", column, 5000.);
+        set_wide_column(config, "inner_wall_speed", column, 200.);
+        set_wide_column(config, "default_acceleration", column, 10000.);
+    }
+    DynamicPrintConfig without = config;
+    // Tool head 2 (column 2): outer wall 30 mm/s at 1000 mm/s2, set on the Speed page.
+    set_wide_column(config, "outer_wall_speed", 2, 30.);
+    set_wide_column(config, "outer_wall_acceleration", 2, 1000.);
+    PerHeadProcess::set_head_value(config, 1, "outer_wall_speed", 2);
+    PerHeadProcess::set_head_value(config, 1, "outer_wall_acceleration", 2);
+    REQUIRE(PerHeadProcess::head_override_keys(config, 1) == std::vector<std::string>{"outer_wall_acceleration", "outer_wall_speed"});
+
+    SECTION("identity map: tool head 2 prints its own outer wall, tool head 1 the shared one, byte for byte the run without the value") {
+        const std::string gcode         = two_head_gcode(config);
+        const auto        rates         = feature_feedrates(gcode);
+        const auto        accelerations = outer_wall_accelerations(gcode);
+        REQUIRE(rates.count(0) == 1);
+        REQUIRE(rates.count(1) == 1);
+        CHECK(rates.at(0).at("Outer wall") == std::set<int>{200 * 60});
+        CHECK(rates.at(1).at("Outer wall") == std::set<int>{30 * 60});
+        CHECK(accelerations.at(0) == std::set<int>{5000});
+        CHECK(accelerations.at(1) == std::set<int>{1000});
+        // The head without a value prints exactly as without the value; the head with it differs.
+        const auto reference = feature_feedrates(two_head_gcode(without));
+        CHECK(rates.at(0) == reference.at(0));
+        CHECK(rates.at(1) != reference.at(1));
+        CHECK(reference.at(1).at("Outer wall") == std::set<int>{200 * 60});
+        // The marker reaches the header and the transient keys do not.
+        CHECK(gcode.find("; print_extruder_override") != std::string::npos);
+        CHECK(gcode.find("print_extruder_source_flow") == std::string::npos);
+        CHECK(gcode.find("print_extruder_flow_count") == std::string::npos);
+    }
+
+    SECTION("a manual map with filament 1 on tool head 2: the value follows the tool head, not the filament") {
+        config.set_key_value("filament_map_mode", new ConfigOptionEnum<FilamentMapMode>(fmmManual));
+        config.set_key_value("filament_map", new ConfigOptionInts({2, 1, 3, 4}));
+        const std::string gcode = two_head_gcode(config);
+        const auto        rates = feature_feedrates(gcode);
+        REQUIRE(rates.count(0) == 1);
+        REQUIRE(rates.count(1) == 1);
+        // T0 is filament 1, printed by tool head 2: the head's value; T1 (filament 2) on tool head 1: the shared value.
+        CHECK(rates.at(0).at("Outer wall") == std::set<int>{30 * 60});
+        CHECK(rates.at(1).at("Outer wall") == std::set<int>{200 * 60});
+        const auto accelerations = outer_wall_accelerations(gcode);
+        CHECK(accelerations.at(0) == std::set<int>{1000});
+        CHECK(accelerations.at(1) == std::set<int>{5000});
+    }
+}
+
+// An override of a part on a wide preset is read by its width.
+TEST_CASE("An override of a part on a preset with values per tool head is read once, by flow or slot by slot", "[PerHeadProcess][PerHeadOverride][pho_override_flow_space]")
+{
+    // The per-type printer (8 slots, tool head 3 on High Flow) with the flow-only child widened and
+    // tool head 2 set to 60 mm/s walls.
+    DynamicPrintConfig config = flow_columns_config();
+    PerHeadProcess::widen(config, config);
+    REQUIRE(config.option<ConfigOptionInts>("print_extruder_id")->values == std::vector<int>{0, 0, 1, 1, 2, 2, 3, 3, 4, 4});
+    for (const char *key : {"outer_wall_speed", "inner_wall_speed"}) {
+        set_wide_column(config, key, 4, 60.);
+        PerHeadProcess::set_head_value(config, 1, key, 4);
+    }
+
+    SECTION("plain table: the head value, a one-value override, and a flow-only override by the flow of each head") {
+        {
+            const auto [head_2, head_3] = wall_feedrates_with_override(config, "");
+            CHECK(head_2 == std::set<int>{60 * 60});
+            CHECK(head_3 == std::set<int>{500 * 60});
+        }
+        {
+            const auto [head_2, head_3] = wall_feedrates_with_override(config, "90");
+            CHECK(head_2 == std::set<int>{90 * 60});
+            CHECK(head_3 == std::set<int>{90 * 60});
+        }
+        {
+            const auto [head_2, head_3] = wall_feedrates_with_override(config, "90,400");
+            CHECK(head_2 == std::set<int>{90 * 60});
+            CHECK(head_3 == std::set<int>{400 * 60});
+        }
+    }
+
+    SECTION("composed table: the head value beats the source of its size and the flow-only override is read by flow") {
+        auto source = std::make_unique<Preset>(Preset::TYPE_PRINT, "0.12mm Standard @Test (0.2 nozzle)");
+        source->config.option<ConfigOptionInts>("print_extruder_id", true)->values         = {1};
+        source->config.option<ConfigOptionStrings>("print_extruder_variant", true)->values = {STANDARD};
+        source->config.option<ConfigOptionFloatsNullable>("outer_wall_speed", true)->values = {70.};
+        source->config.option<ConfigOptionFloatsNullable>("inner_wall_speed", true)->values = {70.};
+        std::vector<PerHeadProcess::Source> sources(HEADS);
+        for (size_t head = 0; head < HEADS; ++head)
+            sources[head].head = head;
+        sources[1].preset  = source.get();
+        sources[1].derived = true;
+        sources[1].composed_keys.assign(PerHeadProcess::composed_keys().begin(), PerHeadProcess::composed_keys().end());
+        REQUIRE(PerHeadProcess::compose(config, {}, sources));
+        REQUIRE(config.option<ConfigOptionInts>("print_extruder_id")->values == std::vector<int>{1, 1, 2, 2, 3, 3, 4, 4});
+        // The source columns are the head columns of the wide layout; their flow positions Standard / High Flow.
+        CHECK(config.option<ConfigOptionInts>(PerHeadProcess::source_column_key)->values == std::vector<int>{2, 3, 4, 5, 6, 7, 8, 9});
+        CHECK(config.option<ConfigOptionInts>(PerHeadProcess::source_flow_key)->values == std::vector<int>{0, 1, 0, 1, 0, 1, 0, 1});
+        CHECK(config.opt_int(PerHeadProcess::flow_count_key) == 2);
+        {
+            const auto [head_2, head_3] = wall_feedrates_with_override(config, "");
+            CHECK(head_2 == std::set<int>{60 * 60});
+            CHECK(head_3 == std::set<int>{500 * 60});
+        }
+        {
+            const auto [head_2, head_3] = wall_feedrates_with_override(config, "90,400");
+            CHECK(head_2 == std::set<int>{90 * 60});
+            CHECK(head_3 == std::set<int>{400 * 60});
+        }
+    }
+}
+
+// ---- A plate of four nozzle sizes, sliced -------------------------------------------------------
+// Tool heads of 0.2, 0.4 (High Flow), 0.6 and 0.8 mm on the U1 presets under 0.20mm High Quality,
+// composed by full_config_for_print; cube i on tool head i. No cooling slowdown or volumetric cap.
+
+namespace {
+
+const char *const OWNER_MACHINE  = "Snapmaker U1 (0.4 nozzle)";
+const char *const OWNER_PROCESS  = "0.20mm High Quality @Snapmaker U1 (0.4 nozzle)";
+const char *const OWNER_FILAMENT = "Snapmaker PLA Matte @U1";
+
+struct OwnerPlateSlice
+{
+    PresetBundle                        bundle;
+    std::vector<PerHeadProcess::Source> sources;
+    DynamicPrintConfig                  config;
+    Print                               print;
+    Model                               model;
+    std::string                         gcode;
+};
+
+// `before_compose` edits the bundle once the presets are selected, before the table is composed
+// (a value set for a tool head on the Speed page lives in the edited process preset).
+std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(PresetBundle &)> &before_compose = {})
+{
+    auto slice = std::make_unique<OwnerPlateSlice>();
+    PresetBundle &bundle = slice->bundle;
+    bundle.load_vendor_configs_from_json(PROFILES_DIR, "Snapmaker", PresetBundle::LoadSystem,
+                                         ForwardCompatibilitySubstitutionRule::EnableSilent, nullptr, /*allow_cache=*/false);
+    REQUIRE(bundle.printers.select_preset_by_name(OWNER_MACHINE, true));
+    // As the sidebar sets the sizes: on the edited printer preset; no preferred layer heights.
+    bundle.printers.get_edited_preset().config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.2, 0.4, 0.6, 0.8}));
+    bundle.printers.get_edited_preset().config.set_key_value("extruder_layer_height", new ConfigOptionFloats(std::vector<double>(HEADS, 0.)));
+    REQUIRE(bundle.prints.select_preset_by_name(OWNER_PROCESS, true));
+    // The 0.25 mm first layer exceeds the 0.2 mm nozzle, which Print::validate refuses; lowered to
+    // the layer height.
+    bundle.prints.get_edited_preset().config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+    // A 100 % bridge width at the 0.2 mm head equals the layer height, which Print::validate
+    // refuses ("Line width too small"); 0 uses the internal solid infill width. No cube bridges.
+    bundle.prints.get_edited_preset().config.set_key_value("bridge_line_width", new ConfigOptionFloatOrPercent(0., false));
+    // Locked Zag skin / skeleton widths also default to 100 % and are validated for every pattern,
+    // refusing the 0.2 mm head; 0 (auto) passes and only Locked Zag uses them.
+    bundle.prints.get_edited_preset().config.set_key_value("skin_infill_line_width",     new ConfigOptionFloatOrPercent(0., false));
+    bundle.prints.get_edited_preset().config.set_key_value("skeleton_infill_line_width", new ConfigOptionFloatOrPercent(0., false));
+    bundle.filament_presets = std::vector<std::string>(HEADS, OWNER_FILAMENT);
+    REQUIRE(bundle.filaments.select_preset_by_name(OWNER_FILAMENT, true));
+    bundle.project_config.option<ConfigOptionInts>("filament_map", true)->values = {1, 2, 3, 4};
+    bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard),
+                                                                                                  int(nvtStandard)};
+    bundle.process_follows_nozzle = true;
+    if (before_compose)
+        before_compose(bundle);
+
+    DynamicPrintConfig &config = slice->config;
+    config = bundle.full_config_for_print(false, std::nullopt, std::nullopt, &slice->sources);
+    // The application sizes the colours and the flush volumes with the filament list; nothing is
+    // flushed here.
+    config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("enable_support",       new ConfigOptionBool(false));
+    config.set_key_value("enable_prime_tower",   new ConfigOptionBool(false));
+    config.set_key_value("skirt_loops",          new ConfigOptionInt(0));
+    // The cooling slowdown and the volumetric ceiling of the filament would rewrite the feed rates
+    // under test; every column of both is replaced, the width kept.
+    {
+        auto *slowdown = config.option<ConfigOptionBools>("slow_down_for_layer_cooling");
+        REQUIRE(slowdown != nullptr);
+        slowdown->values.assign(slowdown->values.size(), 0);
+        auto *ceiling = dynamic_cast<ConfigOptionVectorBase *>(config.option("filament_max_volumetric_speed"));
+        REQUIRE(ceiling != nullptr);
+        std::string values;
+        for (size_t column = 0; column < ceiling->size(); ++column)
+            values += (values.empty() ? "" : ",") + std::string("200");
+        REQUIRE(ceiling->deserialize(values));
+    }
+
+    std::vector<TriangleMesh> meshes;
+    for (size_t head = 0; head < HEADS; ++head) {
+        TriangleMesh cube = mesh(TestMesh::cube_20x20x20);
+        cube.scale(Vec3f(1.f, 1.f, 0.25f)); // 5 mm, 25 layers of 0.2 mm
+        cube.translate(40.f + 40.f * float(head), 100.f, 0.f);
+        meshes.emplace_back(std::move(cube));
+    }
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides = {
+        {{"extruder", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}}, {{"extruder", "4"}}};
+    init_print(std::move(meshes), slice->print, slice->model, config, &overrides, /*arrange=*/false);
+    {
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ")");
+        REQUIRE(err.string.empty());
+    }
+    slice->gcode = Slic3r::Test::gcode(slice->print);
+    return slice;
+}
+
+// The speed of a process key in the column of `preset` that serves `flow` (the column whose
+// variant names the flow; the single column of a one-column preset), as a feed rate in mm/min.
+int preset_feedrate(const Preset &preset, const std::string &key, NozzleVolumeType flow)
+{
+    const auto *variants = preset.config.option<ConfigOptionStrings>("print_extruder_variant");
+    const auto *option   = dynamic_cast<const ConfigOptionVectorBase *>(preset.config.option(key));
+    REQUIRE(variants != nullptr);
+    REQUIRE(option != nullptr);
+    size_t column = 0;
+    for (size_t i = 0; i < variants->values.size(); ++i)
+        if (variants->values[i] == (flow == nvtHighFlow ? "Direct Drive High Flow" : STANDARD))
+            column = i;
+    const std::vector<std::string> values = option->vserialize();
+    REQUIRE_FALSE(values.empty());
+    return int(std::lround(std::atof(values[column < values.size() ? column : 0].c_str()) * 60.));
+}
+
+} // namespace
+
+TEST_CASE("On a plate of four nozzle sizes the 0.6 and 0.8 mm tool heads print their outer walls at the speed of the process preset of their size", "[PerHeadProcess][Profiles][hs_mixed_plate_gcode]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice();
+    REQUIRE(slice->sources.size() == HEADS);
+    for (size_t head : {size_t(2), size_t(3)}) {
+        REQUIRE(slice->sources[head].derived);
+        REQUIRE(slice->sources[head].preset != nullptr);
+    }
+    // The plate is High Quality, which neither size has: the Standard presets nearest to its 0.20 mm.
+    CHECK(slice->sources[2].preset->name == "0.18mm Standard @Snapmaker U1 (0.6 nozzle)");
+    CHECK(slice->sources[3].preset->name == "0.24mm Standard @Snapmaker U1 (0.8 nozzle)");
+
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.count(2) != 1 || rates.count(3) != 1)
+        FAIL("no extrusion above the first layer for tool " << (rates.count(2) != 1 ? 2 : 3) << ": " << gcode_digest(slice->gcode) << "; "
+             << print_digest(slice->print) << "; G-code kept at " << keep_gcode("hs_mixed_plate_gcode", slice->gcode));
+    for (size_t head : {size_t(2), size_t(3)}) {
+        const Preset &source = *slice->sources[head].preset;
+        INFO("tool " << head << " (" << source.name << ")");
+        REQUIRE(rates.at(int(head)).count("Outer wall") == 1);
+        INFO("outer wall: " << joined(rates.at(int(head)).at("Outer wall")));
+        CHECK(rates.at(int(head)).at("Outer wall") == std::set<int>{preset_feedrate(source, "outer_wall_speed", nvtStandard)});
+    }
+    // The 0.8 mm head does not print the selected preset's outer wall speed.
+    const Preset &selected = slice->bundle.prints.get_selected_preset();
+    CHECK(rates.at(3).at("Outer wall") != std::set<int>{preset_feedrate(selected, "outer_wall_speed", nvtStandard)});
+}
+
+// High Flow rule of PerHeadProcess::head_sources: 0.20mm High Quality has no High Flow column, so
+// the High Flow head prints the High Flow column of 0.20mm Standard.
+TEST_CASE("On a plate of four nozzle sizes the High Flow tool head prints at the High Flow speeds of the preset of its size that has them", "[PerHeadProcess][Profiles][hs_high_flow_gcode]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice();
+    const Preset *standard_020 = slice->bundle.prints.find_preset("0.20mm Standard @Snapmaker U1 (0.4 nozzle)", false);
+    REQUIRE(standard_020 != nullptr);
+    REQUIRE(slice->sources.size() == HEADS);
+    CHECK(slice->sources[1].derived);
+
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << rates.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("hs_high_flow_gcode", slice->gcode));
+    // The feed rates of every tool, for the record: outer wall and sparse infill.
+    for (const auto &[tool, features] : rates) {
+        const auto outer  = features.find("Outer wall");
+        const auto sparse = features.find("Sparse infill");
+        UNSCOPED_INFO("tool " << tool << ": outer wall " << (outer == features.end() ? std::string("-") : joined(outer->second)) << ", sparse infill "
+                              << (sparse == features.end() ? std::string("-") : joined(sparse->second)));
+    }
+    REQUIRE(rates.at(1).count("Outer wall") == 1);
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(*standard_020, "outer_wall_speed", nvtHighFlow)});
+    REQUIRE(rates.at(1).count("Sparse infill") == 1);
+    CHECK(rates.at(1).at("Sparse infill") == std::set<int>{preset_feedrate(*standard_020, "sparse_infill_speed", nvtHighFlow)});
+}
+
+// A value set for one tool head on the Speed page beats the preset of its size on that head alone.
+TEST_CASE("On a plate of four nozzle sizes an outer wall speed set for the 0.8 mm tool head reaches its G-code alone", "[PerHeadProcess][Profiles][hs_mixed_plate_override]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice([](PresetBundle &bundle) {
+        // Tool head 4: outer wall 40 mm/s, as the Speed page writes it (widen, the value in the
+        // head's columns, the marker).
+        DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+        PerHeadProcess::widen(process, bundle.printers.get_edited_preset().config);
+        const std::vector<int> columns = PerHeadProcess::head_columns(process, 3);
+        REQUIRE_FALSE(columns.empty());
+        set_wide_column(process, "outer_wall_speed", size_t(columns.front()), 40.);
+        PerHeadProcess::set_head_value(process, 3, "outer_wall_speed", columns.front());
+        REQUIRE(PerHeadProcess::head_override_keys(process, 3) == std::vector<std::string>{"outer_wall_speed"});
+    });
+    REQUIRE(slice->sources.size() == HEADS);
+    REQUIRE(slice->sources[3].derived);
+    CHECK(slice->sources[3].overridden_keys == std::vector<std::string>{"outer_wall_speed"});
+    CHECK(slice->sources[2].overridden_keys.empty());
+    // The widened preset's High Flow column for tool head 2 copies Standard and holds no High Flow
+    // values (PerHeadProcess::has_high_flow_values): the head keeps 0.20mm Standard's High Flow column.
+    const Preset *standard_020 = slice->bundle.prints.find_preset("0.20mm Standard @Snapmaker U1 (0.4 nozzle)", false);
+    REQUIRE(standard_020 != nullptr);
+    CHECK(slice->sources[1].reason == PerHeadProcess::Reason::HighFlow);
+    REQUIRE(slice->sources[1].preset != nullptr);
+    CHECK(slice->sources[1].preset->name == standard_020->name);
+
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.count(2) != 1 || rates.count(3) != 1)
+        FAIL("no extrusion above the first layer for tool " << (rates.count(2) != 1 ? 2 : 3) << ": " << gcode_digest(slice->gcode) << "; "
+             << print_digest(slice->print) << "; G-code kept at " << keep_gcode("hs_mixed_plate_override", slice->gcode));
+    REQUIRE(rates.at(3).count("Outer wall") == 1);
+    CHECK(rates.at(3).at("Outer wall") == std::set<int>{40 * 60});
+    // Tool head 2 prints 0.20mm Standard's High Flow outer wall (500 mm/s), not the copied Standard speed.
+    REQUIRE(rates.count(1) == 1);
+    REQUIRE(rates.at(1).count("Outer wall") == 1);
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(*standard_020, "outer_wall_speed", nvtHighFlow)});
+    // The 0.6 mm head keeps the outer wall of the preset of its size, the sparse infill of the 0.8 mm head its preset's too.
+    REQUIRE(rates.at(2).count("Outer wall") == 1);
+    CHECK(rates.at(2).at("Outer wall") == std::set<int>{preset_feedrate(*slice->sources[2].preset, "outer_wall_speed", nvtStandard)});
+    REQUIRE(rates.at(3).count("Sparse infill") == 1);
+    CHECK(rates.at(3).at("Sparse infill") == std::set<int>{preset_feedrate(*slice->sources[3].preset, "sparse_infill_speed", nvtStandard)});
+}
+
+// A preset chosen for the 0.6 mm head applies to that head only. Its sparse infill (150 mm/s)
+// tells it apart from the automatic 0.18mm Standard (100 mm/s).
+TEST_CASE("On a plate of four nozzle sizes a process preset chosen for the 0.6 mm tool head prints on that tool head alone", "[PerHeadProcess][Profiles][hs_chosen_plate_gcode]")
+{
+    const char *const chosen_name = "0.24mm Standard @Snapmaker U1 (0.6 nozzle)";
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice([chosen_name](PresetBundle &bundle) {
+        PerHeadProcess::set_chosen(bundle, 2, chosen_name);
+    });
+    REQUIRE(slice->sources.size() == HEADS);
+    REQUIRE(slice->sources[2].derived);
+    REQUIRE(slice->sources[2].preset != nullptr);
+    CHECK(slice->sources[2].chosen_state == PerHeadProcess::ChosenState::Applied);
+    CHECK(slice->sources[2].step == PerHeadProcess::Step::Chosen);
+    CHECK(slice->sources[2].preset->name == chosen_name);
+    REQUIRE(slice->sources[2].automatic != nullptr);
+    CHECK(slice->sources[2].automatic->name == "0.18mm Standard @Snapmaker U1 (0.6 nozzle)");
+    // The other tool heads follow the rule as without the choice.
+    CHECK(slice->sources[3].chosen_state == PerHeadProcess::ChosenState::None);
+    CHECK(slice->sources[3].preset->name == "0.24mm Standard @Snapmaker U1 (0.8 nozzle)");
+    CHECK(slice->sources[1].reason == PerHeadProcess::Reason::HighFlow);
+
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.count(2) != 1 || rates.count(3) != 1)
+        FAIL("no extrusion above the first layer for tool " << (rates.count(2) != 1 ? 2 : 3) << ": " << gcode_digest(slice->gcode) << "; "
+             << print_digest(slice->print) << "; G-code kept at " << keep_gcode("hs_chosen_plate_gcode", slice->gcode));
+    const Preset &chosen = *slice->sources[2].preset;
+    REQUIRE(rates.at(2).count("Sparse infill") == 1);
+    INFO("T2 sparse infill: " << joined(rates.at(2).at("Sparse infill")));
+    CHECK(rates.at(2).at("Sparse infill") == std::set<int>{preset_feedrate(chosen, "sparse_infill_speed", nvtStandard)});
+    CHECK(rates.at(2).at("Sparse infill") == std::set<int>{150 * 60});
+    REQUIRE(rates.at(2).count("Outer wall") == 1);
+    CHECK(rates.at(2).at("Outer wall") == std::set<int>{preset_feedrate(chosen, "outer_wall_speed", nvtStandard)});
+    // T3 keeps the sparse infill of its automatic preset (100 mm/s), T1 the High Flow outer wall of 0.20mm Standard.
+    REQUIRE(rates.at(3).count("Sparse infill") == 1);
+    CHECK(rates.at(3).at("Sparse infill") == std::set<int>{preset_feedrate(*slice->sources[3].preset, "sparse_infill_speed", nvtStandard)});
+    CHECK(rates.at(3).at("Sparse infill") == std::set<int>{100 * 60});
+    REQUIRE(rates.count(1) == 1);
+    REQUIRE(rates.at(1).count("Outer wall") == 1);
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(*slice->sources[1].preset, "outer_wall_speed", nvtHighFlow)});
+    // The record of the plate names the chosen preset for tool head 3.
+    PerHeadProcess::record_sources(slice->bundle);
+    const auto *record = slice->bundle.project_config.option<ConfigOptionStrings>(PerHeadProcess::record_key);
+    REQUIRE(record != nullptr);
+    REQUIRE(record->values.size() == HEADS);
+    CHECK(record->values[2] == chosen_name);
+    CHECK(slice->bundle.project_config.option<ConfigOptionStrings>(PerHeadProcess::choice_key)->values == std::vector<std::string>{"", "", chosen_name});
+}
+
+// Flow toggle (PerHeadProcess::flow_key): the High Flow head set to Standard prints the selected
+// preset's Standard column (60 mm/s), not 0.20mm Standard's High Flow column (500 mm/s).
+TEST_CASE("On a plate of four nozzle sizes the High Flow tool head set to the Standard speeds prints the selected preset's Standard column", "[PerHeadProcess][Profiles][hs_flow_choice_gcode]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice([](PresetBundle &bundle) { PerHeadProcess::set_chosen_flow(bundle, 1, nvtStandard); });
+    REQUIRE(slice->sources.size() == HEADS);
+    CHECK(slice->sources[1].flow_chosen);
+    CHECK(slice->sources[1].flow == nvtStandard);
+    CHECK_FALSE(slice->sources[1].derived);
+    CHECK(slice->sources[1].reason == PerHeadProcess::Reason::HomeSize);
+    for (size_t head : {size_t(0), size_t(2), size_t(3)}) {
+        REQUIRE(slice->sources[head].derived);
+        REQUIRE(slice->sources[head].preset != nullptr);
+        CHECK_FALSE(slice->sources[head].flow_chosen);
+    }
+    CHECK(slice->sources[2].preset->name == "0.18mm Standard @Snapmaker U1 (0.6 nozzle)");
+    CHECK(slice->sources[3].preset->name == "0.24mm Standard @Snapmaker U1 (0.8 nozzle)");
+
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << rates.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("hs_flow_choice_gcode", slice->gcode));
+    // The feed rates of every tool, for the record: outer wall and sparse infill.
+    for (const auto &[tool, features] : rates) {
+        const auto outer  = features.find("Outer wall");
+        const auto sparse = features.find("Sparse infill");
+        UNSCOPED_INFO("tool " << tool << ": outer wall " << (outer == features.end() ? std::string("-") : joined(outer->second)) << ", sparse infill "
+                              << (sparse == features.end() ? std::string("-") : joined(sparse->second)));
+    }
+    const Preset &selected = slice->bundle.prints.get_selected_preset();
+    REQUIRE(rates.at(1).count("Outer wall") == 1);
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(selected, "outer_wall_speed", nvtStandard)});
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{60 * 60});
+    REQUIRE(rates.at(1).count("Sparse infill") == 1);
+    CHECK(rates.at(1).at("Sparse infill") == std::set<int>{preset_feedrate(selected, "sparse_infill_speed", nvtStandard)});
+    // T0, T2 and T3 print the Standard column of the preset of their size, as without the entry.
+    for (size_t head : {size_t(0), size_t(2), size_t(3)}) {
+        const Preset &source = *slice->sources[head].preset;
+        INFO("tool " << head << " (" << source.name << ")");
+        REQUIRE(rates.at(int(head)).count("Outer wall") == 1);
+        CHECK(rates.at(int(head)).at("Outer wall") == std::set<int>{preset_feedrate(source, "outer_wall_speed", nvtStandard)});
+    }
+    // The record names the derived heads; a chosen flow is no preset and stays in its own key.
+    PerHeadProcess::record_sources(slice->bundle);
+    const auto *record = slice->bundle.project_config.option<ConfigOptionStrings>(PerHeadProcess::record_key);
+    REQUIRE(record != nullptr);
+    REQUIRE(record->values.size() == HEADS);
+    CHECK(record->values[1].empty());
+    CHECK(record->values[2] == "0.18mm Standard @Snapmaker U1 (0.6 nozzle)");
+    CHECK(slice->bundle.project_config.option<ConfigOptionStrings>(PerHeadProcess::flow_key)->values == std::vector<std::string>{"", "Standard"});
 }

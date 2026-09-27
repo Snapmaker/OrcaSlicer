@@ -1,4 +1,5 @@
 #include "PrintConfig.hpp"
+#include "PerHeadProcess.hpp"
 #include "ProjectSchemaVersion.hpp"
 #include "PrintConfigConstants.hpp"
 #include "ClipperUtils.hpp"
@@ -3022,6 +3023,28 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Process preset per extruder");
     def->tooltip = L("The process preset each extruder printed with when this project was last sliced. An extruder whose nozzle size "
                      "differs from the printer preset prints with the speeds of a process preset made for its size.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per tool head, the process preset chosen on the Speed page
+    // (PerHeadProcess::choice_key); empty for a head that follows the rule, [] when none has a
+    // choice. Project-level; vendor caches (.opc) lacking the key are parsed from JSON once.
+    def = this->add("extruder_process_choice", coStrings);
+    def->label = L("Process preset chosen per extruder");
+    def->tooltip = L("The process preset an extruder takes its speeds, accelerations and jerk from, chosen in this project. Empty: the "
+                     "preset of the selected process preset's quality made for the extruder's nozzle size.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per tool head, the flow type whose speeds column it prints when not its nozzle's
+    // own ("Standard" on a High Flow nozzle, PerHeadProcess::flow_key); empty otherwise, [] when no
+    // head has one. Project-level and cached like extruder_process_choice.
+    def = this->add("extruder_process_flow", coStrings);
+    def->label = L("Speeds flow type chosen per extruder");
+    def->tooltip = L("The flow type whose speeds, accelerations and jerk an extruder prints with, chosen in this project when it is not the "
+                     "flow type of its nozzle: a High Flow nozzle set to the Standard speeds. Empty: the nozzle's own flow type.");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionStrings());
     def->cli = ConfigOptionDef::nocli;
@@ -6493,6 +6516,15 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionStrings { "Direct Drive Standard" });
     def->cli = ConfigOptionDef::nocli;
 
+    // Snapmaker Orca: per process layout column, a comma list of the keys set for its tool head on
+    // the Speed page (PerHeadProcess); empty on a shared column (print_extruder_id 0). Preset and
+    // project key, never composed, not read by G-code writers. Internal use only, no translation.
+    def = this->add("print_extruder_override", coStrings);
+    def->label = "Process values set per extruder";
+    def->tooltip = "Process values set per extruder.";
+    def->set_default_value(new ConfigOptionStrings { "" });
+    def->cli = ConfigOptionDef::nocli;
+
     /*def = this->add("filament_extruder_id", coInts);
     def->label = "Filament extruder id";
     def->tooltip = "Filament extruder id.";
@@ -6520,6 +6552,21 @@ void PrintConfigDef::init_fff_params()
     def->label = "Process source column per extruder";
     def->tooltip = "Process source column per extruder.";
     def->set_default_value(new ConfigOptionInts());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: transient like the key above: per composed column, the position of the
+    // preset's column among its shared columns (-1: none), and the number of shared columns.
+    // Internal use only, no translation.
+    def = this->add("print_extruder_source_flow", coInts);
+    def->label = "Process source flow per extruder";
+    def->tooltip = "Process source flow per extruder.";
+    def->set_default_value(new ConfigOptionInts());
+    def->cli = ConfigOptionDef::nocli;
+
+    def = this->add("print_extruder_flow_count", coInt);
+    def->label = "Process shared column count";
+    def->tooltip = "Process shared column count.";
+    def->set_default_value(new ConfigOptionInt(0));
     def->cli = ConfigOptionDef::nocli;
 
     def = this->add("retract_restart_extra", coFloats);
@@ -10015,7 +10062,8 @@ std::set<std::string> print_options_with_variant = {
     "initial_layer_travel_jerk",
     "default_junction_deviation",
     "print_extruder_id", //coInts
-    "print_extruder_variant" //coStrings
+    "print_extruder_variant", //coStrings
+    "print_extruder_override" //coStrings, Snapmaker Orca: the marker of the values set per tool head
 };
 
 std::set<std::string> filament_options_with_variant = {
@@ -11391,13 +11439,20 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
 }
 
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
-                          const std::vector<int> &variant_index, int stride, bool composed)
+                          const std::vector<int> &variant_index, int stride, const VariantOverrideRule &rule)
 {
     // A single-value object or region override applies to every nozzle variant.
     std::vector<int> indices = variant_index;
     if (source.size() == 1 && !source.is_nil(0))
         std::fill(indices.begin(), indices.end(), 0);
-    else if (composed && variant_index.size() > 1 && source.size() == variant_index.size())
+    else if (rule.flow_count > 0 && rule.flow_index.size() == variant_index.size() && source.size() == size_t(rule.flow_count) &&
+             size_t(rule.flow_count) != variant_index.size())
+        // Snapmaker Orca: an override as wide as the preset's shared columns (the flow-only space the
+        // settings tabs write in, PerHeadProcess) is read per slot by the slot's flow type; a slot
+        // whose flow has no column keeps its value.
+        for (size_t slot = 0; slot < indices.size(); ++slot)
+            indices[slot] = rule.flow_index[slot];
+    else if (rule.composed && variant_index.size() > 1 && source.size() == variant_index.size())
         // Snapmaker Orca: on a composed per-extruder table (PerHeadProcess) an override as wide as the
         // slot table is already in the printer's column space (update_values_from_multi_to_multi_2),
         // so it is read slot by slot instead of through the selected preset's columns.
@@ -11672,9 +11727,16 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                         composed != nullptr && !composed->values.empty() && id_name == "print_extruder_id")
                         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the composed process table has no column for extruder %2%, extruder_type %3%, nozzle_volume_type %4%; its first column is used")
                             % __LINE__ % (e_index + 1) % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
-                    // Orca: This is expected during transient UI states (e.g. popup windows),
-                    // fall back to 0 silently.
-                    slot_index = 0;
+                    // Snapmaker Orca: a tool head a per-head layout (PerHeadProcess) has no column for
+                    // takes the shared column of its flow ("All extruders"), not head 1's value.
+                    if (id_name == "print_extruder_id" && PerHeadProcess::is_wide(*this)) {
+                        slot_index = PerHeadProcess::shared_column(*this, nozzle_volume_type);
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the process layout has no column for extruder %2%, nozzle_volume_type %3%; its shared column %4% is used")
+                            % __LINE__ % (e_index + 1) % s_keys_names_NozzleVolumeType[nozzle_volume_type] % slot_index;
+                    } else
+                        // Orca: This is expected during transient UI states (e.g. popup windows),
+                        // fall back to 0 silently.
+                        slot_index = 0;
                 }
                 variant_index.push_back(slot_index);
             }
@@ -12297,6 +12359,18 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
     int cur_variant_count = cur_extruder_variants.size();
     int target_variant_count = target_extruder_variants.size();
 
+    // Snapmaker Orca: a user process preset with per-head values is wider than its parent and has
+    // shared columns (id 0, PerHeadProcess). The parent is relaid out like the child first, so the
+    // (variant, id) match below is exact per column; an unknown variant takes its flow's shared column.
+    if (extruder_id_name == "print_extruder_id" && target_variant_count > cur_variant_count && PerHeadProcess::is_wide(new_config)) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": a process preset with %1% columns and values set per extruder inherits a parent of %2%; the parent is laid out like the child")
+            % target_variant_count % cur_variant_count;
+        PerHeadProcess::relayout(*this, PerHeadProcess::layout_of(new_config));
+        cur_extruder_ids      = this->option<ConfigOptionInts>(extruder_id_name)->values;
+        cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
+        cur_variant_count     = cur_extruder_variants.size();
+    }
+
     if (cur_variant_count > 0)
         variant_index.resize(cur_variant_count, -1);
     else
@@ -12432,7 +12506,7 @@ void compute_filament_override_value(const std::string& opt_key, const ConfigOpt
 }
 
 
-void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride, bool composed)
+void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride, const VariantOverrideRule &rule)
 {
     if (variant_index.size() > 0) {
         const t_config_option_keys &keys = dest_config.keys();
@@ -12445,7 +12519,7 @@ void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPr
                 else {
                     ConfigOptionVectorBase* opt_vec_src = static_cast<ConfigOptionVectorBase*>(opt_src);
                     const ConfigOptionVectorBase* opt_vec_dest = static_cast<const ConfigOptionVectorBase*>(opt_dest);
-                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride, composed);
+                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride, rule);
                 }
             }
         }

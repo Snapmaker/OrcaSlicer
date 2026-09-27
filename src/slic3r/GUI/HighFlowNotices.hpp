@@ -11,6 +11,8 @@
 
 #include <wx/string.h>
 
+#include "libslic3r/PerHeadProcess.hpp"
+
 class ComboBox;
 
 namespace Slic3r {
@@ -101,6 +103,10 @@ struct Report
 // `process_standard_only`: see Report::process_standard_only (N7).
 Report evaluate(const std::vector<int> &nozzle_volume_types, const std::vector<std::vector<HeadFilament>> &filaments, bool process_has_high_flow_column,
                 bool process_standard_only = false);
+// Per-head variant: `process_has_high_flow_column[i]` = head i prints High Flow speeds (PerHeadProcess::head_sources);
+// heads beyond the vector count as without. N4 names the heads without.
+Report evaluate(const std::vector<int> &nozzle_volume_types, const std::vector<std::vector<HeadFilament>> &filaments,
+                const std::vector<bool> &process_has_high_flow_column, bool process_standard_only = false);
 
 // N7: keys of `variant_keys` whose Standard column `preset` changes against `parent` while its High Flow
 // column keeps the parent's value; columns are named by `variant_key`. Empty for a single-column preset
@@ -166,6 +172,15 @@ int shown_volume_type(const DynamicPrintConfig &printer_config, size_t head, int
 // no diameter for it. A ruled out row names the head's own size.
 std::string head_nozzle_size_label(const DynamicPrintConfig &printer_config, size_t head);
 
+// Label set for the Process-tab speed selector (Tab::fit_head_selector): long labels on one row, else short
+// on one row, else short on several rows. Widths include padding; `available` <= 0 keeps the long labels.
+enum class SelectorFit {
+    Long,       // the long labels on one row
+    Short,      // the short labels on one row
+    ShortRows   // the short labels on several rows
+};
+SelectorFit head_selector_fit(const std::vector<int> &long_widths, const std::vector<int> &short_widths, int available);
+
 // Fills a read-only Flow combo with the declared types of `head` (type as client data), shown_volume_type()
 // selected; disabled with the reason as tooltip when High Flow is ruled out. Items are rebuilt only
 // when they differ, so the combo may be refreshed from its own selection event.
@@ -174,5 +189,24 @@ void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config
 // The tooltip of a Flow row and of its label: what the row is, then what follows for this nozzle.
 // `head_size`: head_nozzle_size_label(). A ruled out row without a size reads like a choice.
 wxString flow_tooltip(FlowRowState state, const std::string &head_size);
+
+// Why the quality rule gave a tool head its preset (PerHeadProcess::source_for_head), from the matched
+// `height` and whether it is the head's preferred one. Empty for SelectedPreset and Chosen sources.
+wxString automatic_reason(PerHeadProcess::Step step, const std::string &plate_class, const std::string &class_used, const std::string &head_size,
+                          double height, bool preferred);
+
+// Speed-page intro and speed-selector tooltip for a tool head: head, nozzle size and flow type;
+// `standard_chosen`: a High Flow nozzle set to print the Standard speeds (PerHeadProcess::flow_key).
+wxString head_flow_description(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen);
+wxString head_entry_tooltip(size_t head, const std::string &head_size, NozzleVolumeType nozzle, bool standard_chosen);
+
+// The "Preset:" line under a nozzle tab's rows in the sidebar: `preset` the alias of the process preset the
+// head prints with, `state` "(automatic)" / "(chosen)" or empty, `note` its column (Plain: the nozzle's flow,
+// HighFlow, StandardChosen: Standard on a High Flow nozzle); the three values as the hint shows them.
+enum class SpeedsNote { Plain, HighFlow, StandardChosen };
+wxString speeds_hint_label(const wxString &preset, const wxString &state, SpeedsNote note, const std::string &outer_wall, const std::string &sparse,
+                           const std::string &accel);
+// The sentence the hint's tooltip adds for a head that prints the Standard speeds by choice.
+wxString standard_chosen_tooltip();
 
 }}} // namespace Slic3r::GUI::HighFlowNotices

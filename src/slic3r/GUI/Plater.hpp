@@ -266,6 +266,10 @@ public:
     void update_nozzle_process_hints();
     // Shows the nozzle tab of tool head `head` (0-based) with the printer section unfolded.
     void select_nozzle_tab(size_t head);
+    // Snapmaker Orca: the page of tool head `head` alone, for the speed selector of the Process
+    // tab that follows a click on a tool head: no unfolding of a folded printer section, no focus,
+    // no scroll; nothing when the tab is shown already.
+    void show_nozzle_tab(size_t head);
     // The tool head (0-based) whose nozzle tab is shown; 0 without the tabs. The flow selector
     // of the Process tab opens on the flow type of this tool head.
     size_t selected_nozzle_tab() const;

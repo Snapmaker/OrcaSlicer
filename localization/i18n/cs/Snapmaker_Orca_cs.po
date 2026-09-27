@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-25 00:30+0200\n"
+"POT-Creation-Date: 2026-09-26 14:08+0200\n"
 "PO-Revision-Date: 2024-11-03 20:59+0100\n"
 "Last-Translator: René Mošner <Renemosner@seznam.cz>\n"
 "Language-Team: \n"
@@ -8775,6 +8775,11 @@ msgstr "Preferovaná výška vrstvy trysky %1% jí už neprojde a byla obnovena 
 msgid "Filament %1% of nozzle %2% has no value of its own for some of these settings and prints with the printer's."
 msgstr ""
 
+#. TRN %1% the tool head, %2% the number of values set for it on the Speed page of the process settings
+#, boost-format
+msgid "Tool head %1% keeps %2% values set for it on the Speed page."
+msgstr ""
+
 msgid "Diameter of this nozzle. This printer has presets for one nozzle diameter only."
 msgstr ""
 
@@ -8795,7 +8800,7 @@ msgstr ""
 msgid "The layer height of extruder %1% cannot exceed its nozzle diameter (%2% mm)."
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2%..%4% its outer wall speed, sparse infill speed and acceleration
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2%..%4% the outer wall speed, sparse infill speed and acceleration the tool head prints with
 #, boost-format
 msgid "Speeds: %1% (outer wall %2%, sparse %3%, accel %4%)"
 msgstr ""
@@ -8809,6 +8814,16 @@ msgstr ""
 
 #, boost-format
 msgid "Its High Flow speeds are those of the selected process preset, as %1% has no High Flow values."
+msgstr ""
+
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% the number of values set for the tool head on the Speed page, %2%..%4% the outer wall speed, sparse infill speed and acceleration it prints with
+#, boost-format
+msgid "Speeds: %1% values set for this tool head (outer wall %2%, sparse %3%, accel %4%)"
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% lists the settings set for the tool head on the Speed page of the process settings
+#, boost-format
+msgid "Values set for this tool head on the Speed page: %1%."
 msgstr ""
 
 #. TRN Line under the disabled Flow row of a nozzle tab in the sidebar. %1% is the nozzle size of this tool head, e.g. 0.2
@@ -10087,7 +10102,7 @@ msgstr ""
 msgid "Process speeds follow the nozzle size"
 msgstr ""
 
-msgid "If enabled, a tool head whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every tool head."
+msgid "If enabled, a tool head whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every tool head. Values set for one tool head on the Speed page apply to that tool head whether this is on or off."
 msgstr ""
 
 msgid "Group user filament presets"
@@ -10728,6 +10743,7 @@ msgstr "DEBUG nastavení byla úspěšně uložena!"
 msgid "Cloud environment switched; please login again!"
 msgstr "Prostředí cloudu bylo změněno, přihlaste se prosím znovu!"
 
+#. TRN: the nozzle size a filament preset is made for, in front of its name in the filament list. %1% is a number like 0.2.
 #, boost-format
 msgid "%1% mm"
 msgstr ""
@@ -10771,6 +10787,11 @@ msgstr "Upravit přednastavení"
 # AI Translated
 msgid "Change extruder color"
 msgstr "Změnit barvu extruderu"
+
+#. TRN: separator in the filament list of a tool head, above the materials that have no preset for its nozzle size. %1% is a number like 0.6.
+#, boost-format
+msgid "No %1% mm version:"
+msgstr ""
 
 msgid "Machine Filament"
 msgstr ""
@@ -12068,6 +12089,21 @@ msgstr "Konfigurace pluginu"
 msgid "Notes"
 msgstr "Poznámky"
 
+#, boost-format
+msgid "Head %1% (%2%)"
+msgstr ""
+
+#. TRN Line on the Speed page. %1% lists tool heads with the number of values set for each ("Head 2 (3), Head 4 (2)")
+#, boost-format
+msgid "Values set per tool head: %1%."
+msgstr ""
+
+msgid "Clear the values set for this tool head"
+msgstr ""
+
+msgid "Clear the values set per tool head..."
+msgstr ""
+
 #. TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
 #, boost-format
 msgid "Tool head %1% prints with the speeds of %2%. The values below apply to tool heads %3%, and to every tool head for the settings you changed."
@@ -12079,6 +12115,40 @@ msgid "Tool heads %1% print with the speeds of %2%. The values below apply to to
 msgstr ""
 
 msgid "An override on a part applies on every tool head that prints it."
+msgstr ""
+
+msgid "Set per tool head:"
+msgstr ""
+
+#. TRN %1% a tool head, %2% the value set for it
+#, boost-format
+msgid "Head %1%: %2%"
+msgstr ""
+
+#. TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#, boost-format
+msgid "Tool head %1%, %2% mm nozzle, %3%."
+msgstr ""
+
+#. TRN %1% is a process preset
+#, boost-format
+msgid "Speeds from %1%."
+msgstr ""
+
+#. TRN %1% the number of values set for the selected tool head
+#, boost-format
+msgid "%1% values set for this tool head."
+msgstr ""
+
+msgid "Greyed settings apply to every tool head."
+msgstr ""
+
+#. TRN Confirmation before every value set per tool head is cleared. %1% the number of values, %2% the tool heads ("2, 4")
+#, boost-format
+msgid "This clears %1% values set for tool heads %2%. They will follow All tool heads again."
+msgstr ""
+
+msgid "Clear the values set per tool head"
 msgstr ""
 
 msgid "Frequent"
@@ -12502,10 +12572,36 @@ msgstr "Pokračovat"
 msgid "Don't warn again for this preset"
 msgstr "Pro tuto předvolbu již nezobrazovat upozornění"
 
+msgid "The values below apply to every tool head that has no value of its own for them."
+msgstr ""
+
+#. TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#, boost-format
+msgid "Tool head %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."
+msgstr ""
+
+#. TRN %1% the number of values set for the tool head, %2% their names
+#, boost-format
+msgid "%1% values set for this tool head: %2%."
+msgstr ""
+
 # AI Translated
 #, c-format, boost-format
 msgid "%s: %s"
 msgstr "%s: %s"
+
+msgid "All tool heads"
+msgstr ""
+
+#. TRN An entry of the speed selector on the Process tab: the tool head and its nozzle size ("Head 2 · 0.2")
+#, boost-format
+msgid "Head %1% · %2%"
+msgstr ""
+
+#. TRN An entry of the speed selector on the Process tab
+#, boost-format
+msgid "Head %1%"
+msgstr ""
 
 # AI Translated
 msgid "No modifications need to be copied."

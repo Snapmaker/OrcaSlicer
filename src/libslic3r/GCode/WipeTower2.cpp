@@ -1167,9 +1167,11 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     const size_t variant_column = first_filament_variant_column(config.filament_self_index.values, idx);
     m_filpar[idx].material = config.filament_type.get_at(idx);
     {
-        // Snapmaker Orca: use the speeds of the tool head holding this filament, not the initial tool's.
-        // 0 (autospeed) falls back to the tower defaults: 30 mm/s first layer, 80 mm/s above.
-        const size_t head     = get_extruder_index(config, (unsigned int)idx);
+        // Snapmaker Orca: the tower prints this filament's lines with the speeds of the tool head
+        // that holds it, not with the initial tool's. travel_speed and initial_layer_speed are
+        // per slot (tool head, or tool head x volume type), as are infill and inner wall speeds.
+        // Slot from set_filament_slots, else the tool head; 0 (autospeed): 30 mm/s first layer, 80 above.
+        const size_t head     = idx < m_filament_slot.size() ? m_filament_slot[idx] : get_extruder_index(config, (unsigned int)idx);
         auto         value_at = [](const std::vector<double> &values, size_t i) {
             return values.empty() ? 0.f : float(values[i < values.size() ? i : 0]);
         };
@@ -1900,6 +1902,11 @@ void WipeTower2::toolchange_Change(
     // writer.append("[end_filament_gcode]\n");
     writer.append("[change_filament_gcode]\n");
 
+    // Snapmaker Orca: the Tn is issued above, so the park move and the repositioning travel below
+    // move the new tool and run at the travel speed of its slot; m_current_tool names the tool
+    // rammed out until the end of this function (travel_speed() reads it).
+    const float new_tool_travel_speed = new_tool < m_filpar.size() ? m_filpar[new_tool].travel_speed : travel_speed();
+
     if (m_is_mk4mmu3)
         writer.switch_filament_monitoring(true);
 
@@ -1979,7 +1986,7 @@ void WipeTower2::toolchange_Change(
         }
         if (have_park) {
             const Vec2f stop = writer.rotated(Vec2f(park_x, writer.y()));
-            writer.feedrate(travel_speed() * 60.f)
+            writer.feedrate(new_tool_travel_speed * 60.f)
                   .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(stop.x())
                                      +  " Y"  + Slic3r::float_to_string_decimal_point(stop.y())
                                      + never_skip_tag() + "\n");
@@ -1992,7 +1999,7 @@ void WipeTower2::toolchange_Change(
     // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
     Vec2f current_pos = writer.pos_rotated();
     writer
-        .feedrate(travel_speed() * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+        .feedrate(new_tool_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
         .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
             Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 

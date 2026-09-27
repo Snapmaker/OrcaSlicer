@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include <fstream>
+#include <sstream>
 #include <regex>
 #include <string>
 #include <vector>
@@ -77,4 +78,60 @@ TEST_CASE("Every Print::apply of the GUI is fed by full_config_for_print", "[Per
     }
     CHECK(plater >= 6);
     CHECK(part_plate >= 2);
+}
+
+namespace {
+
+// The text of a GUI source file.
+std::string gui_source(const std::string &name)
+{
+    const fs::path path = fs::path(SLIC3R_SOURCE_DIR) / "slic3r" / "GUI" / name;
+    REQUIRE(fs::is_regular_file(path));
+    std::ifstream      in(path.string());
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+// The body of the first function definition whose line contains `signature` and does not end in
+// a semicolon (a declaration or a call): from that line to the first closing brace in column 0.
+// Empty when there is none.
+std::string function_body(const std::string &source, const std::string &signature)
+{
+    for (size_t at = source.find(signature); at != std::string::npos; at = source.find(signature, at + 1)) {
+        const size_t line_begin = source.rfind('\n', at) == std::string::npos ? 0 : source.rfind('\n', at) + 1;
+        const size_t line_end   = source.find('\n', at);
+        const std::string line  = source.substr(line_begin, line_end == std::string::npos ? std::string::npos : line_end - line_begin);
+        if (line.find(';') != std::string::npos || line.empty() || line.front() == ' ' || line.front() == '\t')
+            continue;
+        const size_t end = source.find("\n}\n", line_begin);
+        return source.substr(line_begin, end == std::string::npos ? std::string::npos : end - line_begin);
+    }
+    return std::string();
+}
+
+} // namespace
+
+// Plater::on_config_change refreshes the Process tab's speed selector on a nozzle size or preferred
+// layer height change, so its labels and the selected head's source preset match the new sizes. The
+// refresh is Tab::update_extruder_variants, called directly or via refresh_process_head_selector.
+TEST_CASE("A nozzle size or preferred layer height change refreshes the speed selector of the Process tab", "[PerHeadProcess][hs_selector_refresh]")
+{
+    const std::string plater = gui_source("Plater.cpp");
+    const std::string body   = function_body(plater, "void Plater::on_config_change(");
+    REQUIRE_FALSE(body.empty());
+    // The branch of the nozzle keys is where the refresh belongs.
+    REQUIRE(body.find("\"nozzle_diameter\"") != std::string::npos);
+    REQUIRE(body.find("\"extruder_layer_height\"") != std::string::npos);
+
+    bool refreshes = body.find("update_extruder_variants(") != std::string::npos;
+    if (!refreshes && body.find("refresh_process_head_selector(") != std::string::npos) {
+        // The helper: its definition, in any GUI source, calls the refresh.
+        for (const char *file : {"Plater.cpp", "Tab.cpp", "GUI_App.cpp"}) {
+            const std::string helper = function_body(gui_source(file), "::refresh_process_head_selector(");
+            if (helper.find("update_extruder_variants(") != std::string::npos)
+                refreshes = true;
+        }
+    }
+    CHECK(refreshes);
 }

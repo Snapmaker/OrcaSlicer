@@ -187,6 +187,15 @@ TEST_CASE("Notices name the High Flow tool heads only", "[HighFlow][Notices]")
     SECTION("Hybrid and TPU High Flow heads are none of this check's business") {
         CHECK(HighFlowNotices::evaluate({ int(nvtHybrid), int(nvtTPUHighFlow) }, filaments, false).empty());
     }
+    SECTION("the High Flow speeds known per tool head: N4 names the heads without, a head beyond the vector among them") {
+        auto report = HighFlowNotices::evaluate({ 1, 1, 0, 1 }, filaments, std::vector<bool>{ false, true, false });
+        CHECK(report.standard_speeds_used == std::vector<size_t>{ 0, 3 });
+        report = HighFlowNotices::evaluate({ 1, 1, 0, 1 }, filaments, std::vector<bool>{ true, true, true, true });
+        CHECK(report.standard_speeds_used.empty());
+        // The one-value form is the same for every head.
+        report = HighFlowNotices::evaluate({ 1, 1, 0, 1 }, filaments, false);
+        CHECK(report.standard_speeds_used == std::vector<size_t>{ 0, 1, 3 });
+    }
 }
 
 TEST_CASE("A filament is rated for the tool head that prints it", "[HighFlow][Notices]")
@@ -729,6 +738,23 @@ TEST_CASE("A user preset that lowers a Standard value keeps the High Flow value 
 
 // A U1 tool head whose preset declares Standard only (0.2 / 0.6 / 0.8 mm) still shows its Flow row,
 // disabled at "Standard" with the reason line of its size, as the model offers High Flow on 0.4 mm.
+TEST_CASE("The speed selector shortens its labels before it breaks the row", "[HighFlow][SpeedSelector][hs_selector_fit]")
+{
+    // "All extruders", four "Extruder k · s" entries; the short set "All", "Ek · s".
+    const std::vector<int> long_widths{ 120, 90, 90, 90, 90 };
+    const std::vector<int> short_widths{ 44, 62, 62, 62, 62 };
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 480) == HighFlowNotices::SelectorFit::Long);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 900) == HighFlowNotices::SelectorFit::Long);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 479) == HighFlowNotices::SelectorFit::Short);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 292) == HighFlowNotices::SelectorFit::Short);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 291) == HighFlowNotices::SelectorFit::ShortRows);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 100) == HighFlowNotices::SelectorFit::ShortRows);
+    // An unknown width changes nothing; a row without entries fits anywhere.
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, 0) == HighFlowNotices::SelectorFit::Long);
+    CHECK(HighFlowNotices::head_selector_fit(long_widths, short_widths, -5) == HighFlowNotices::SelectorFit::Long);
+    CHECK(HighFlowNotices::head_selector_fit({}, {}, 1) == HighFlowNotices::SelectorFit::Long);
+}
+
 TEST_CASE("Every tool head of a U1 shows its Flow row", "[FirstRun][HighFlow][FlowRow][fr1_flow_row]")
 {
     const auto loaded = load_snapmaker_bundle();
@@ -752,4 +778,76 @@ TEST_CASE("Every tool head of a U1 shows its Flow row", "[FirstRun][HighFlow][Fl
         INFO("Snapmaker U1 (0.4 nozzle), tool head " << head + 1);
         CHECK(HighFlowNotices::flow_row_state(printer, head, shipped) == HighFlowNotices::FlowRowState::Choice);
     }
+}
+
+// The speed picker: the sentence that says why the quality rule gave a tool head its preset, per
+// step of PerHeadProcess::source_for_head.
+TEST_CASE("The automatic reason names the step of the quality rule and the layer height it matched", "[HighFlow][SpeedPicker][phs_picker]")
+{
+    using PerHeadProcess::Step;
+    const wxString same = HighFlowNotices::automatic_reason(Step::SameQuality, "Standard", "Standard", "0.6", 0.2, false);
+    CHECK(same.Contains("Standard"));
+    CHECK(same.Contains("0.20"));
+    CHECK(same.Contains("plate"));
+    CHECK_FALSE(same.Contains("preferred"));
+    const wxString preferred = HighFlowNotices::automatic_reason(Step::SameQuality, "Standard", "Standard", "0.6", 0.3, true);
+    CHECK(preferred.Contains("preferred"));
+    CHECK(preferred.Contains("0.30"));
+    const wxString ladder = HighFlowNotices::automatic_reason(Step::ClassLadder, "High Quality", "Standard", "0.8", 0.2, false);
+    CHECK(ladder.Contains("High Quality"));
+    CHECK(ladder.Contains("0.8"));
+    CHECK(ladder.Contains("Standard"));
+    // A classless plate names the class the ladder landed on and no missing class.
+    const wxString classless = HighFlowNotices::automatic_reason(Step::ClassLadder, "", "Standard", "0.8", 0.2, false);
+    CHECK(classless.Contains("Standard"));
+    CHECK_FALSE(classless.Contains("no "));
+    CHECK(HighFlowNotices::automatic_reason(Step::SameQuality, "", "", "0.8", 0.2, false).Contains("nearest layer height"));
+    CHECK(HighFlowNotices::automatic_reason(Step::SizeDefault, "Standard", "", "0.5", 0.2, false).Contains("default"));
+    CHECK(HighFlowNotices::automatic_reason(Step::FirstByName, "Standard", "", "0.5", 0.2, false).Contains("first"));
+    // Not derived by the rule: nothing to say.
+    CHECK(HighFlowNotices::automatic_reason(Step::SelectedPreset, "Standard", "", "0.4", 0.2, false).IsEmpty());
+    CHECK(HighFlowNotices::automatic_reason(Step::Chosen, "Standard", "", "0.4", 0.2, false).IsEmpty());
+}
+
+// The flow toggle of the Speed page (PerHeadProcess::flow_key): the texts of a High Flow tool head
+// that prints the Standard speeds by choice, on the page, in the entry's tooltip and in the hint.
+TEST_CASE("The texts of a High Flow tool head printing the Standard speeds name the choice", "[HighFlow][SpeedSelector][hs_flow_choice_text]")
+{
+    using HighFlowNotices::SpeedsNote;
+    const wxString description = HighFlowNotices::head_flow_description(2, "0.4", nvtHighFlow, true);
+    CHECK(description.Contains("Extruder 3"));
+    CHECK(description.Contains("0.4 mm"));
+    CHECK(description.Contains("High Flow"));
+    CHECK(description.Contains("Standard speeds (chosen)"));
+    const wxString plain = HighFlowNotices::head_flow_description(2, "0.4", nvtHighFlow, false);
+    CHECK(plain.Contains("High Flow"));
+    CHECK_FALSE(plain.Contains("chosen"));
+    CHECK(HighFlowNotices::head_flow_description(0, "0.2", nvtStandard, false).Contains("Standard."));
+
+    const wxString tooltip = HighFlowNotices::head_entry_tooltip(0, "0.4", nvtHighFlow, true);
+    CHECK(tooltip.Contains("Extruder 1 (sidebar: Nozzle 1)"));
+    CHECK(tooltip.Contains("High Flow"));
+    CHECK(tooltip.Contains("Standard speeds (chosen)"));
+    const wxString plain_tooltip = HighFlowNotices::head_entry_tooltip(0, "0.4", nvtStandard, false);
+    CHECK(plain_tooltip.Contains("sidebar: Nozzle 1"));
+    CHECK(plain_tooltip.Contains("Standard."));
+    CHECK_FALSE(plain_tooltip.Contains("chosen"));
+
+    // The hint: the selected preset without a state, an automatic source, the High Flow column, a chosen preset.
+    const wxString hint = HighFlowNotices::speeds_hint_label("0.20mm High Quality", wxString(), SpeedsNote::StandardChosen, "60", "100", "4000");
+    CHECK(hint.Contains("Speeds: 0.20mm High Quality, Standard (chosen for this High Flow nozzle)"));
+    CHECK(hint.Contains("outer wall 60"));
+    CHECK(hint.Contains("sparse 100"));
+    CHECK(hint.Contains("accel 4000"));
+    const wxString automatic = HighFlowNotices::speeds_hint_label("0.18mm Standard", "(automatic)", SpeedsNote::StandardChosen, "120", "100", "10000");
+    CHECK(automatic.Contains("0.18mm Standard (automatic), Standard (chosen for this High Flow nozzle)"));
+    const wxString high_flow = HighFlowNotices::speeds_hint_label("0.20mm Standard", "(automatic)", SpeedsNote::HighFlow, "500", "600", "10000");
+    CHECK(high_flow.Contains("0.20mm Standard, High Flow (automatic)"));
+    CHECK_FALSE(high_flow.Contains("chosen"));
+    const wxString chosen = HighFlowNotices::speeds_hint_label("0.12mm Standard", "(chosen)", SpeedsNote::Plain, "120", "150", "10000");
+    CHECK(chosen.Contains("0.12mm Standard (chosen)"));
+    CHECK(chosen.Contains("accel 10000"));
+
+    CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("High Flow nozzle"));
+    CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("Standard speeds"));
 }

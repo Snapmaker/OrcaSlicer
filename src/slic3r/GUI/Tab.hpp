@@ -26,6 +26,7 @@
 #include <wx/imaglist.h>
 
 #include <map>
+#include <set>
 #include <vector>
 #include <memory>
 
@@ -34,6 +35,7 @@
 #include "ConfigManipulation.hpp"
 #include "OptionsGroup.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 //BBS: GUI refactor
 #include "Notebook.hpp"
 #include "ParamsPanel.hpp"
@@ -45,6 +47,8 @@ class ModeSwitchButton;
 class SwitchButton;
 class MultiSwitchButton;
 
+class ComboBox;
+
 namespace Slic3r {
 
 class ModelConfig;
@@ -54,6 +58,7 @@ namespace GUI {
 
 class TabPresetComboBox;
 class OG_CustomCtrl;
+class HyperLink;
 
 std::vector<InputShaperType> input_shaper_types_for_flavor(GCodeFlavor flavor);
 
@@ -285,6 +290,10 @@ protected:
 
 	DynamicPrintConfig 	m_cache_config;
     std::vector<std::string> m_cache_options;
+    // Snapmaker Orca: the process layout the cached rows were taken from (its ids, variants,
+    // marker and variant keys), so that rows of a preset with values per tool head are transferred
+    // by (id, variant) and not by index (PerHeadProcess::transfer_columns).
+    DynamicPrintConfig  m_cache_process_source;
 
 
 	bool				m_page_switch_running = false;
@@ -322,6 +331,31 @@ public:
     // per flow type (HighFlowNotices::flow_selector_types) and the switch offers these types
     // instead of extruders; empty in every other case.
     std::vector<NozzleVolumeType> m_flow_selector_types;
+    // Snapmaker Orca: Process-tab speed selector (PerHeadProcess.hpp), "All extruders" plus one entry per tool head
+    // (not on Bambu two-head printers). All edits the shared columns of m_all_flow (set by m_flow_toggle);
+    // a head edits its own columns, created on first edit.
+    bool                          m_head_selector { false };
+    std::vector<NozzleVolumeType> m_head_flow_types;
+    NozzleVolumeType              m_all_flow { NozzleVolumeType::nvtStandard };
+    MultiSwitchButton            *m_flow_toggle { nullptr };
+    // -1: the toggle picks the shared column under All (m_all_flow); else the High Flow head whose printed column
+    // it picks (PerHeadProcess::flow_key). m_flow_toggle_updating mutes the handler during show_flow_toggle.
+    int                           m_flow_toggle_head { -1 };
+    bool                          m_flow_toggle_updating { false };
+    // Set while the code selects an entry of m_extruder_switch (a rebuild of the row, the
+    // sidebar's page change through select_tool_head): the selection handler then shows no nozzle
+    // tab in the sidebar; a click on a tool head does (Sidebar::show_nozzle_tab).
+    bool                          m_head_selection_by_program { false };
+    // Long ("Extruder 2 · 0.6") and short ("E2 · 0.6") selector labels from generate_extruder_options;
+    // fit_head_selector picks the set that fits (HighFlowNotices::head_selector_fit) on resize and rebuild.
+    std::vector<wxString>         m_head_labels_long;
+    std::vector<wxString>         m_head_labels_short;
+    bool                          m_head_labels_short_shown { false };
+    bool                          m_head_fit_pending { false };
+    void                          fit_head_selector();
+    // Applies the rule of the flow toggle's visibility (see the definition); called after every
+    // show of the row, which wxSizer::ShowItems shows the toggle with.
+    void                          show_flow_toggle();
 
 public:
 	// BBS
@@ -477,6 +511,25 @@ public:
     // variant list (HighFlowNotices::variant_column_for_type) or the process tab's flow selector.
     // No-op when the preset has no such column or the tab has no such control.
     void                   select_flow_column(NozzleVolumeType type);
+    // Snapmaker Orca: the sidebar's nozzle tab of `head` was clicked: the speed selector selects
+    // that head, the flow selector the column of `type`.
+    void                   select_tool_head(size_t head, NozzleVolumeType type);
+    // Activates the page of category `category` ("Speed") without focusing or highlighting a field.
+    void                   select_page_by_category(const wxString &category);
+    // Snapmaker Orca, speed selector: selected entry (0 = All, k = tool head k-1) and its head (-1 for All),
+    // a head's flow (project_config), the preset column a selection edits, and the entries' labels and tooltips.
+    int                    head_selection() const;
+    int                    selected_head() const { return head_selection() - 1; }
+    NozzleVolumeType       head_flow(size_t head) const;
+    // The flow whose speeds column the tool head prints (PerHeadProcess::effective_flow): the
+    // nozzle's, or the Standard column chosen for a High Flow nozzle with the flow toggle. Every
+    // reader of a head's speeds on this tab asks this one; head_flow names the nozzle.
+    NozzleVolumeType       head_speed_flow(size_t head) const;
+    // The flow toggle under a selected High Flow tool head: writes the head's entry (the nozzle's
+    // own flow clears it) and refreshes the page, the entries, the sidebar hint and the plate.
+    void                   choose_head_flow(size_t head, NozzleVolumeType flow);
+    int                    head_selection_column(int selection) const;
+    void                   update_head_entries();
     NozzleVolumeType       get_actual_nozzle_volume_type(int extruder_id);
 
 protected:
@@ -517,7 +570,34 @@ public:
 	void		toggle_options() override;
 	void		update() override;
 	void		clear_pages() override;
+	void		msw_rescale() override;
+	void		sys_color_changed() override;
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
+	// Snapmaker Orca, the speed picker: shows the Speed page with tool head `head` selected and the
+	// focus on the picker (the nozzle tab hint and the notices lead here).
+	void		focus_speed_source_picker(size_t head);
+
+protected:
+	// Snapmaker Orca, the speed selector (libslic3r/PerHeadProcess.hpp): the hooks of the option
+	// groups of the Speed page, installed by build() for the process tab alone.
+	void		install_head_hooks();
+	bool		before_head_change(const std::string &opt_key, int &opt_index);
+	void		after_head_change(const std::string &opt_key, int opt_index);
+	bool		before_head_revert(const std::string &opt_key, bool to_sys);
+	bool		head_display_source(const std::string &opt_key, int opt_index, const DynamicPrintConfig *&config, int &index);
+	wxString	head_values_tooltip(const std::string &opt_key) const;
+	// The line and the link under the selector: what the selection means, and the clear of the
+	// values set for the selected tool head (no confirmation) or for every head (confirmed).
+	wxSizer*	per_head_line_widget(wxWindow *parent);
+	wxString	head_selection_description() const;
+	void		clear_head_values();
+	void		refresh_after_head_change(bool relayout_columns);
+	// The "Speeds from" picker of the Speed page for the selected tool head. A pick calls PerHeadProcess::set_chosen
+	// ("" = automatic) and refreshes page, entries, sidebar hint and plate. Keys: arrows move the highlight only,
+	// Enter commits, Escape cancels.
+	void		update_speed_source_picker();
+	void		choose_speed_source(const std::string &name);
+	void		on_speed_source_key(wxKeyEvent &event);
 
 private:
 	wxString	per_head_process_description() const;
@@ -526,6 +606,17 @@ private:
 	// Snapmaker Orca: the line on the Speed page that names the process presets the tool heads of
 	// another nozzle size print with (libslic3r/PerHeadProcess.hpp).
 	ogStaticText*	m_per_head_process_line = nullptr;
+	HyperLink*		m_per_head_clear_link = nullptr;
+	// The speed picker row: label, combo and the reset to the automatic preset; the preset name
+	// behind every item ("" for the automatic item and the headers). Cleared with the page.
+	wxStaticText*	m_speed_source_label = nullptr;
+	::ComboBox*		m_speed_source_combo = nullptr;
+	ScalableButton*	m_speed_source_reset = nullptr;
+	std::vector<std::string> m_speed_source_items;
+	// The sources of the tool heads (PerHeadProcess::head_sources) and the composed keys edited under
+	// All, refreshed with the entries; read by the display of a tool head's fields.
+	std::vector<PerHeadProcess::Source> m_head_sources;
+	std::set<std::string>               m_all_edited_keys;
 	::CheckBox*		m_legacy_support_check = nullptr;
 };
 

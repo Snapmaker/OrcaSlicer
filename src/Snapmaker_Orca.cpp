@@ -60,6 +60,7 @@ using namespace nlohmann;
 #include "libslic3r/Config.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/SnapmakerFlowCompat.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/GCode.hpp"
@@ -3355,6 +3356,13 @@ int CLI::run(int argc, char **argv)
         load_default_gcodes_to_config(load_process_config, Preset::TYPE_PRINT);
         if (new_process_name.empty()) {
             int diff_keys_size = different_keys_set.size();
+            // Snapmaker Orca: a project whose process preset holds values per tool head is wider
+            // than the system preset (libslic3r/PerHeadProcess.hpp); the system preset is laid out
+            // like the project first, so that every column is restored onto its own.
+            if (PerHeadProcess::is_wide(m_print_config)) {
+                BOOST_LOG_TRIVIAL(info) << boost::format("%1%, the process preset carries values per extruder: the system preset takes its layout") % __LINE__;
+                PerHeadProcess::relayout(load_process_config, PerHeadProcess::layout_of(m_print_config));
+            }
             compute_variant_index(m_print_config, load_process_config, "print_extruder_id", "print_extruder_variant", new_variant_index, variant_count_changed);
             ret = update_full_config(m_print_config, load_process_config, different_keys_set, variant_count_changed, print_options_with_variant, empty_options, new_variant_index, false, skip_modified_gcodes);
             if (diff_keys_size != different_keys_set.size()) {
@@ -3381,13 +3389,11 @@ int CLI::run(int argc, char **argv)
     }
 
     // Snapmaker Orca: the project records the process preset each tool head printed with in the
-    // application (PerHeadProcess, "extruder_process_preset"). The command line composes no
-    // per-head process table yet: every tool head slices with the loaded process preset.
-    if (const auto *recorded = m_print_config.option<ConfigOptionStrings>("extruder_process_preset"); recorded != nullptr)
-        for (size_t head = 0; head < recorded->values.size(); ++head)
-            if (!recorded->values[head].empty())
-                BOOST_LOG_TRIVIAL(warning) << boost::format("extruder %1% printed with %2% in the application; the command line slices every extruder with the loaded process preset")
-                    % (head + 1) % recorded->values[head];
+    // application and the preset chosen for a head there (PerHeadProcess). The command line
+    // composes no per-head process table yet: every tool head slices with the loaded process
+    // preset, the outputs' record says so (emptied) and the choice is kept.
+    for (const std::string &line : PerHeadProcess::command_line_record(m_print_config))
+        BOOST_LOG_TRIVIAL(warning) << line;
 
     //get nozzle_volume_type
     if(m_extra_config.has("nozzle_volume_type")) {
@@ -3466,6 +3472,13 @@ int CLI::run(int argc, char **argv)
                 if (!current_is_multi_extruder && new_is_multi_extruder && (current_print_variant_count == 1)) {
                     //single -> multiple
                     ret = m_print_config.update_values_from_single_to_multi(config, print_options_with_variant, "print_extruder_id", "print_extruder_variant");
+                }
+                else if (PerHeadProcess::is_wide(m_print_config)) {
+                    // Snapmaker Orca: values set per tool head (PerHeadProcess.hpp). The shared columns stay;
+                    // each head of the new printer takes its own column or the shared one of its flow, with its marker.
+                    BOOST_LOG_TRIVIAL(info) << boost::format("%1%, machine_switch: the process preset carries values per extruder, laid out for the new printer") % __LINE__;
+                    PerHeadProcess::relayout(m_print_config, PerHeadProcess::wide_layout(m_print_config, m_print_config));
+                    ret = 0;
                 }
                 else {
                     //multiple -> single

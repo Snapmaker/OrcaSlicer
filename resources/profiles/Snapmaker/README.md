@@ -78,3 +78,40 @@ Preferences > Preset ("Process speeds follow the nozzle size"), on by default.
 Pre-existing and unchanged: `PerimeterGenerator.cpp` resolves the wall / infill overlap spacing
 against the outer-wall filament's nozzle, so a region whose walls and infill print on heads of
 different sizes uses the wall head's spacing.
+
+## Speeds per tool head
+
+The Speed page of the Process tab carries a selector `All tool heads | Head 1 | ... | Head N` on
+every printer with more than one extruder, except a Bambu two-head printer, whose process presets
+name their tool heads in `print_extruder_id` and keep mainline's row. Under All the fields edit the
+shared columns of the preset (the Standard / High Flow toggle picks the column when the preset has
+two); under a tool head they show the value that head prints with (its own, else the composed
+source's, else the shared value) and an edit sets the value for that head alone. 38 of the 42
+variant keys can be set per tool head (the 39 value keys other than `enable_overhang_speed`,
+`slowdown_for_curled_perimeters` and `small_perimeter_threshold`, which stay uniform; `travel_speed_z`
+has no field). An edit under All skips a tool head that has a value of its own for the key; the line
+under the selector says so and offers the clear of the values set.
+
+Storage (`src/libslic3r/PerHeadProcess.hpp`): while at least one value is set per tool head the
+preset is laid out as the parent's flow columns with id 0 (the shared columns) followed by the
+printer's columns: the U1 child `0.20mm Standard` becomes `print_extruder_id` 0,0,1,1,2,2,3,3,4,4
+with Standard / High Flow per head, a one-column preset 0,1,1,2,2,3,3,4,4. The key
+`print_extruder_override` names, per column, the keys set for the column's tool head; it is empty on
+a shared column. Without a value set the preset keeps its vendor layout byte for byte. A value set
+for a tool head lives in both of its flow columns, so a flow change never strands it, and stays with
+the head when its nozzle size changes (the size notice says so). Precedence at slice time: an
+override of an object, part or layer range (as wide as the shared columns, read by the flow of each
+head) > the value set for the tool head > a value changed under All > the composed source of an
+off-size head > the vendor column. The preference "Process speeds follow the nozzle size" gates the
+composition only: values set per tool head apply with it off as well.
+
+Compatibility: no head lookup matches id 0, so `Print::apply`, the composer and mainline OrcaSlicer
+read the head columns exactly and drop the shared ones; Snapmaker Orca 2.4 reads column 0, the
+shared Standard column, so every head prints the shared values after its schema notice (the same
+as a project of the two-column preset today). A user preset saves its columns and marker as diffs
+against the parent laid out like the preset and reloads with every column; a project lists every
+widened key in `different_settings_to_system` so that a load keeps them; the command line honours the
+stored columns and lays the newest system preset out like the project before restoring the kept
+keys. The `.opc` preset cache refuses a cache written without `print_extruder_override`. The Type 1
+prime tower (Bambu printers) reads the travel and first-layer speeds of the initial tool for every
+head, as in mainline; the Type 2 tower and the G-code writer read them in the slot of the tool head.

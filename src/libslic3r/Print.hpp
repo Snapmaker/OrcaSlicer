@@ -621,7 +621,7 @@ public:
 
     // `variant_index_composed`: the process table was composed per tool head (PerHeadProcess) and
     // variant_index holds the selected preset's column per slot; see set_variant_override.
-    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index, bool variant_index_composed = false);
+    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index, const VariantOverrideRule &variant_rule = VariantOverrideRule());
 
 private:
     void make_perimeters();
@@ -1357,6 +1357,9 @@ public:
     // per-(extruder x volume type) column in the expanded variant arrays, cached by grouping context.
     int get_filament_config_indx(int filament_id, int layer_id);
     int get_nozzle_config_index(int filament_id, int layer_id);
+    // Snapmaker Orca: the process table slot a filament's travel and first-layer speeds are read at:
+    // get_nozzle_config_index at `layer_id` when a nozzle grouping exists, else the filament's tool head.
+    size_t process_slot_of_filament(unsigned int filament_id, int layer_id);
 
     // Orca: Implement prusa's filament shrink compensation approach
     // Returns if all used filaments have same shrinkage compensations.

@@ -84,6 +84,7 @@ public:
     // Show a small coloured dot to the right of the label (used by TabCtrl tabs to flag that
     // the tab's category has a selected/toggled setting).
     void SetIndicator(bool on);
+    bool HasIndicator() const { return m_show_indicator; }
 
     // Only meant to be used by inspector, not public API
     ButtonStyle GetStyle() const { return m_style; }

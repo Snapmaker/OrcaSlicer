@@ -432,6 +432,106 @@ TEST_CASE("The prime tower purges a filament by the column of the tool head that
     CHECK(selected_standard_column_read);
 }
 
+namespace {
+
+// One pressure advance command of the executable block: the tool active when it was written,
+// its value, and whether a "; Ramming end" line came between the previous command of the same
+// tool and this one (the restore the ramming override is followed by).
+struct PressureAdvanceCommand
+{
+    int    tool;
+    double value;
+    bool   after_ramming_end;
+};
+
+std::vector<PressureAdvanceCommand> pressure_advance_commands(const std::string &gcode)
+{
+    std::vector<PressureAdvanceCommand> out;
+    std::istringstream                  in(executable_block(gcode));
+    std::string                         line;
+    int                                 tool             = 0;
+    bool                                ramming_ended    = false;
+    while (std::getline(in, line)) {
+        if (line.size() >= 2 && line[0] == 'T' && std::isdigit(static_cast<unsigned char>(line[1]))) {
+            tool          = std::atoi(line.c_str() + 1);
+            ramming_ended = false;
+            continue;
+        }
+        if (line.rfind("; Ramming end", 0) == 0) {
+            ramming_ended = true;
+            continue;
+        }
+        if (line.rfind("M900 K", 0) == 0) {
+            out.push_back({tool, std::atof(line.c_str() + 6), ramming_ended});
+            ramming_ended = false;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// The prime tower's ramming pressure advance (enable_change_pressure_when_wiping) is set on the
+// rammed-out tool and the filament's value restored after "; Ramming end"; a firmware-managed
+// filament (enable_pressure_advance off) gets no pressure advance command at all (upstream #714).
+TEST_CASE("The prime tower restores the pressure advance of a filament after ramming it and leaves a firmware-managed one alone", "[HighFlow][PressureAdvance]")
+{
+    constexpr double RAMMING_PRESSURE_ADVANCE = 0.05;
+    const std::vector<NozzleVolumeType> head_flow_types(HEADS, nvtStandard);
+
+    DynamicPrintConfig config = u1_shaped_config(ColumnLayout::SingleColumn, head_flow_types);
+    with_prime_tower(config);
+    // Ramming on a multi-tool printer: the tower rams the old tool out before every change.
+    config.set_key_value("filament_multitool_ramming",        new ConfigOptionBools(std::vector<unsigned char>(HEADS, 1)));
+    config.set_key_value("filament_multitool_ramming_volume", new ConfigOptionFloats(std::vector<double>(HEADS, 10.)));
+    config.set_key_value("filament_multitool_ramming_flow",   new ConfigOptionFloats(std::vector<double>(HEADS, 10.)));
+    config.set_key_value("enable_change_pressure_when_wiping", new ConfigOptionBool(true));
+    config.set_key_value("ramming_pressure_advance_value",     new ConfigOptionFloat(RAMMING_PRESSURE_ADVANCE));
+    // The filament of tool head 2 is managed by the firmware; tool head 1 keeps its slicer value.
+    config.set_key_value("enable_pressure_advance", new ConfigOptionBools(std::vector<unsigned char>{1, 0, 1, 1}));
+
+    const std::string                          gcode    = two_head_gcode(config);
+    const std::vector<PressureAdvanceCommand>  commands = pressure_advance_commands(gcode);
+    REQUIRE(executable_block(gcode).find("; Ramming end") != std::string::npos);
+
+    SECTION("the slicer-managed filament is rammed with the override and gets its own value back after the ram") {
+        const double own = pressure_advance_of(0, nvtStandard);
+        size_t overrides = 0, restores = 0;
+        bool   last_was_override = false;
+        for (const PressureAdvanceCommand &command : commands) {
+            if (command.tool != 0)
+                continue;
+            INFO("tool 0 pressure advance " << command.value << (command.after_ramming_end ? " after a ramming end" : ""));
+            if (std::abs(command.value - RAMMING_PRESSURE_ADVANCE) < 1e-6) {
+                ++overrides;
+                last_was_override = true;
+                continue;
+            }
+            CHECK_THAT(command.value, Catch::Matchers::WithinAbs(own, 1e-6));
+            if (last_was_override) {
+                // The restore follows the ram and precedes the next tool change.
+                CHECK(command.after_ramming_end);
+                ++restores;
+            }
+            last_was_override = false;
+        }
+        CHECK(overrides >= 1);
+        CHECK(restores == overrides);
+        // Never left on the override when the tool is changed out.
+        CHECK_FALSE(last_was_override);
+    }
+
+    SECTION("the firmware-managed filament gets no pressure advance command, neither the override nor a restore") {
+        size_t tool_1_commands = 0;
+        for (const PressureAdvanceCommand &command : commands)
+            if (command.tool == 1) {
+                INFO("tool 1 pressure advance " << command.value);
+                ++tool_1_commands;
+            }
+        CHECK(tool_1_commands == 0);
+    }
+}
+
 TEST_CASE("Switching a tool head to High Flow leaves the per-extruder layer plan alone", "[HighFlow][MultiNozzleLayerHeight]")
 {
     // Object layers of 0.12 mm; tool head 2 prefers 0.24 mm, i.e. runs of two object layers.

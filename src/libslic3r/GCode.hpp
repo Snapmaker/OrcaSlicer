@@ -313,6 +313,10 @@ public:
     // slot arrays. Both degenerate to filament_id / extruder index on single-volume printers.
     size_t get_filament_config_index(int filament_id) const;
     size_t get_nozzle_config_index(int filament_id) const;
+    // Snapmaker Orca: the slot of the process table the writer reads the travel and first-layer
+    // speeds of a filament at (Print::process_slot_of_filament at the current layer; the tool
+    // head of the filament without a Print).
+    size_t process_slot_of(int filament_id) const;
 
     // Object and support extrusions of the same PrintObject at the same print_z.
     // public, so that it could be accessed by free helper functions from GCode.cpp

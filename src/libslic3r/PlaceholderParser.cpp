@@ -855,11 +855,14 @@ namespace client
         // Table to translate symbol tag to a human readable error message.
         static std::map<std::string, std::string> tag_to_error_message;
 
+        // Snapmaker Orca: slot of an unindexed vector variable = 0-based tool head of the current filament
+        // (filament_map is 1-based, as in get_extruder_index). No map entry or a value below 1 reads slot 0.
         size_t get_extruder_id() const {
             if (external_config != nullptr) {
                 const ConfigOptionInts * filament_map_opt = external_config->option<ConfigOptionInts>("filament_map");
                 if (filament_map_opt && current_extruder_id < filament_map_opt->values.size()) {
-                    return filament_map_opt->values[current_extruder_id];
+                    const int head = filament_map_opt->values[current_extruder_id];
+                    return head >= 1 ? size_t(head - 1) : 0;
                 }
             }
             return 0;

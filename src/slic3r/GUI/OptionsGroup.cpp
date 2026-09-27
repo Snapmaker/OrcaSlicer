@@ -722,7 +722,17 @@ void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const b
         auto itOption              = it->second;
         const std::string& opt_key = itOption.first;
         int opt_index              = itOption.second;
-        this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
+        int write_index            = opt_index == -1 ? 0 : opt_index;
+        if (m_before_change && !m_before_change(opt_key, write_index)) {
+            // Refused: the field shows the stored value again.
+            const auto option = m_options.find(opt_id);
+            if (option != m_options.end())
+                this->set_value(opt_id, config_value(opt_key, opt_index, option->second.opt.gui_flags == "serialized"));
+            return;
+        }
+        this->change_opt_value(opt_key, value, write_index);
+        if (m_after_change)
+            m_after_change(opt_key, write_index);
     }
 
     OptionsGroup::on_change_OG(opt_id, value);
@@ -796,6 +806,8 @@ void ConfigOptionsGroup::back_to_initial_value(const std::string& opt_key)
 {
     if (m_get_initial_config == nullptr)
         return;
+    if (m_before_revert && m_before_revert(opt_key, false))
+        return;
     back_to_config_value(m_get_initial_config(), opt_key);
 }
 
@@ -804,6 +816,8 @@ void ConfigOptionsGroup::back_to_sys_value(const std::string& opt_key)
     if (m_get_sys_config == nullptr)
         return;
     if (!have_sys_config())
+        return;
+    if (m_before_revert && m_before_revert(opt_key, true))
         return;
     back_to_config_value(m_get_sys_config(), opt_key);
 }
@@ -887,7 +901,16 @@ void ConfigOptionsGroup::reload_config()
         // index in the vector option, zero for scalars
         int opt_index                 = kvp.second.second;
         const ConfigOptionDef& option = m_options.at(opt_id).opt;
-        this->set_value(opt_id, config_value(opt_key, opt_index, option.gui_flags == "serialized"));
+        boost::any value = config_value(opt_key, opt_index, option.gui_flags == "serialized");
+        // Snapmaker Orca: a field may show the value the selected tool head prints with when its
+        // preset stores none of its own (the speed selector of the Process tab).
+        if (m_display_source) {
+            const DynamicPrintConfig *source = nullptr;
+            int                       index  = 0;
+            if (m_display_source(opt_key, opt_index, source, index) && source != nullptr)
+                value = get_config_value(*source, opt_key, index);
+        }
+        this->set_value(opt_id, value);
     }
 }
 
@@ -1771,8 +1794,9 @@ bool OptionsGroup::launch_browser(const std::string& path_end) { return wxLaunch
 // ogStaticText
 //-------------------------------------------------------------------------------------------
 
-ogStaticText::ogStaticText(wxWindow* parent, const wxString& text) : wxStaticText(parent, wxID_ANY, text, wxDefaultPosition, wxDefaultSize)
+ogStaticText::ogStaticText(wxWindow* parent, const wxString& text, long style) : wxStaticText(parent, wxID_ANY, text, wxDefaultPosition, wxDefaultSize, style)
 {
+    m_full_text = text;
     if (!text.IsEmpty()) {
         Wrap(60 * wxGetApp().em_unit());
         GetParent()->Layout();
@@ -1781,10 +1805,53 @@ ogStaticText::ogStaticText(wxWindow* parent, const wxString& text) : wxStaticTex
 
 void ogStaticText::SetText(const wxString& value, bool wrap /* = true*/)
 {
+    m_full_text = value;
     SetLabel(value);
-    if (wrap)
+    if (m_wrap_to_width) {
+        m_wrapped_width = -1;
+        wrap_to_current_width();
+    } else if (wrap)
         Wrap(60 * wxGetApp().em_unit());
     GetParent()->Layout();
+}
+
+void ogStaticText::WrapToWidth(std::function<void()> after_wrap)
+{
+    m_after_wrap = std::move(after_wrap);
+    if (m_wrap_to_width)
+        return;
+    m_wrap_to_width = true;
+    // The sizer reads the minimum size where one is set: the width may shrink below the longest
+    // line, the height follows the wrapped lines (the best size).
+    SetMinSize({FromDIP(40), -1});
+    Bind(wxEVT_SIZE, [this](wxSizeEvent &evt) {
+        evt.Skip();
+        const int width = evt.GetSize().x;
+        if (width <= 0 || width == m_wrapped_width)
+            return;
+        // Deferred: the layout that set this size is still running.
+        CallAfter([this]() {
+            if (!wrap_to_current_width())
+                return;
+            if (m_after_wrap)
+                m_after_wrap();
+            else if (GetParent() != nullptr)
+                GetParent()->Layout();
+        });
+    });
+    wrap_to_current_width();
+}
+
+bool ogStaticText::wrap_to_current_width()
+{
+    const int width = GetClientSize().x;
+    if (width <= 0 || width == m_wrapped_width)
+        return false;
+    m_wrapped_width = width;
+    SetLabel(m_full_text);
+    Wrap(width);
+    InvalidateBestSize();
+    return true;
 }
 
 void ogStaticText::SetPathEnd(const std::string& link)

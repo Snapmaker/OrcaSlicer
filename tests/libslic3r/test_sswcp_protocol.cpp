@@ -492,3 +492,21 @@ TEST_CASE("The event of sw_FinishFilamentMapping never fails the request", "[SSW
                                                json("99999999999999999999")})
         CHECK(SSWCPProtocol::parse_finish_filament_mapping_event({{"event", event}}) == FinishFilamentMappingEvent::None);
 }
+
+TEST_CASE("the pin code answer is read without an exception path", "[SSWCPProtocol]")
+{
+    json result;
+    CHECK(SSWCPProtocol::parse_pin_code_response(R"({"jsonrpc":"2.0","result":{"pin_code":"123456"},"id":7})", result));
+    CHECK(result == json{{"pin_code", "123456"}});
+
+    // A scalar result is handed over as it is.
+    CHECK(SSWCPProtocol::parse_pin_code_response(R"({"result":"654321"})", result));
+    CHECK(result == json("654321"));
+
+    // Not JSON, not an object, no result: false, and the previous result is left alone.
+    result = json("kept");
+    for (const char *message : {"", "not json", "{\"result\":", "[1,2,3]", "42", R"({"error":"timeout"})"}) {
+        CHECK_FALSE(SSWCPProtocol::parse_pin_code_response(message, result));
+        CHECK(result == json("kept"));
+    }
+}

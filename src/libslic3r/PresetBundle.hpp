@@ -473,6 +473,9 @@ public:
     // The per slot form of the loop that ends update_selections() and load_selections(); false when
     // tool heads of different nozzle sizes are not in use and mainline's loop has to run.
     bool                        repair_filament_slots_per_head();
+    // The preset a broken filament slot takes when all extruders share one nozzle size: the edited
+    // filament (update_compatible()'s pick) if installed and compatible, else the first compatible one.
+    std::string                 filament_slot_fallback_name() const;
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
@@ -779,6 +782,12 @@ public:
     static const char *ORCA_FILAMENT_LIBRARY;
     static const char *ORCA_DEFAULT_BUNDLE;
     static const char *ORCA_DEFAULT_FILAMENT_PLACEHOLDER;
+
+    // Snapmaker Orca: the variant the setup wizard activates among the ticked nozzle sizes. SM_BUNDLE:
+    // SM_DEFAULT_PRINTER_VARIANT if ticked; else the first ticked variant in model order (null `model`:
+    // the default size if ticked, else the first ticked name). Empty when nothing is ticked.
+    static std::string wizard_printer_variant(const std::string &bundle_name, const VendorProfile::PrinterModel *model,
+                                              const std::set<std::string> &ticked);
 
 
     static std::array<Preset::Type, 3>  types_list(PrinterTechnology pt) {

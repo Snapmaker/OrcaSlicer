@@ -1992,11 +1992,22 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 			Semver cache_ver;
 			std::string description;
 			bool force_update = false;
+			// Snapmaker Orca: a whole cache whose writer lacked options of this build.
+			bool opc_lacks_options = false;
 			if (is_opc_file) {
 				cache_ver = VendorCacheFile::usable_version(file_path, vendor_name);
 				if (!cache_ver.valid()) {
-					BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:ignoring unreadable vendor cache " << file_path;
-					continue;
+					// Such a cache is offered with its reason and cannot be installed, the
+					// counterpart of the minimum application version gate of a JSON package
+					// below; anything else that does not answer is unreadable and skipped.
+					const auto stamped = Semver::parse(VendorCacheFile::peek_version(file_path, vendor_name));
+					if (stamped && VendorCacheFile::lacks_options_of_this_build(file_path, vendor_name)) {
+						cache_ver         = *stamped;
+						opc_lacks_options = true;
+					} else {
+						BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]:ignoring unreadable vendor cache " << file_path;
+						continue;
+					}
 				}
 			}
 			else {
@@ -2037,10 +2048,15 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
 			}
 
 			if (vendor_ver < cache_ver) {
-				// Minimum application version gate. A preset cache (.opc) is binary and
-				// carries no such key, so it is always installable.
+				// Minimum application version gate. A preset cache (.opc) carries no such
+				// key; its counterpart is the option schema of the build that wrote it
+				// (VendorCacheFile::usable_version), judged above.
 				bool legal = true;
-				if (!is_opc_file) {
+				if (is_opc_file) {
+					legal = !opc_lacks_options;
+					if (!legal)
+						changelog += (wxString("\n") + _L("This profile package was built by an earlier Snapmaker Orca and does not carry every setting of this version; a package built for this version is needed.") + "\n").ToStdString();
+				} else {
 					Semver min_ver  = get_min_version_from_json(file_path);
 					// Snapmaker Orca: parsed, not constructed - an unparseable build label means no gate, not a throw.
 					const boost::optional<Semver> soft_ver = OtaUpdateRules::application_version(Snapmaker_VERSION);

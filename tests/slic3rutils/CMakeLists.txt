@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
     test_ota_update_rules.cpp # Snapmaker Orca: GUI-free decisions of the OTA install path
     test_http_status.cpp # Snapmaker Orca: every final status outside 200-299 reaches on_error
     test_snaplog_wiring.cpp # Snapmaker Orca: transport guard, consent rule and text scrubbing around the SnapLog client
+    test_timeout_map.cpp # Snapmaker Orca: expiry, pause and snapshot rules of the TimeoutMap behind the SSWCP instance list
     test_plugin_host_api.cpp
     test_plugin_capability_config.cpp
     test_plugin_config.cpp

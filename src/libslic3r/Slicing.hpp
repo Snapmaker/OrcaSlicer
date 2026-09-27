@@ -230,14 +230,16 @@ double conforming_object_layer_height(const std::vector<double> &heights, double
 // it. `exact` (experimental): the grid is the coarsest height every preferred height is a whole
 // multiple of, so every entered value prints exactly - possibly a very fine grid, which the
 // Default extruders, supports and the prime tower's fallback slabs print at. Otherwise the grid
-// is the coarsest height, from the finest preferred height down to a quarter of it (never below
-// 0.02 mm), on which every preferred height lands within `tolerance` of a whole multiple; when
-// none does, the finest preferred height. Either way the grid must fit through the smallest
+// is the coarsest height, down to the floor `min_grid` (clamped to 0.02 mm..finest preferred
+// height), on which every preferred height lands within `tolerance` of a whole multiple; the
+// tolerance grows in steps of itself until one does. With a Default (0) extruder, grids `base`
+// lands on within max(base/10, tolerance) are preferred, so one entered value does not move
+// the others. In both modes the grid must fit through the smallest
 // nozzle (`min_nozzle`, 0 = unconstrained), preferred heights are snapped to whole multiples
-// within their nozzle bore, and Default extruders keep their current height (`base`, rounded to
-// the grid) when the grid gets finer than it.
+// within their nozzle bore, and Default extruders are pinned to their current height (`base`,
+// rounded to the grid) when the grid gets finer than it.
 ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
-                                                    double min_nozzle, bool exact, double tolerance = 0.01);
+                                                    double min_nozzle, bool exact, double min_grid = 0., double tolerance = 0.01);
 
 namespace Slicing {
 	// Minimum layer height for the variable layer height algorithm. Nozzle index is 1 based.

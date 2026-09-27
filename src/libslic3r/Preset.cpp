@@ -3866,6 +3866,12 @@ static bool has_missing_nondefault_option(const ConfigBase &edited, const Config
     return !missing.empty();
 }
 
+//BBS: skip these keys for dirty check
+// Snapmaker Orca: extruder_nozzle_stats is session-only (seeded by the sidebar nozzle badges on
+// every preset load); without the skip every system printer preset would show "(modified)".
+static std::set<std::string> skipped_in_dirty = {"printer_settings_id", "print_settings_id", "filament_settings_id", "mixed_filament_definitions",
+                                                 "extruder_nozzle_stats"};
+
 // Use deep_diff to correct return of changed options, considering individual options for each extruder.
 inline t_config_option_keys deep_diff(const ConfigBase &config_this, const ConfigBase &config_other, bool strict = true)
 {
@@ -3938,15 +3944,13 @@ inline t_config_option_keys deep_diff(const ConfigBase &config_this, const Confi
             }
         }
     }
-    append_missing_nondefault_options(config_this, config_other, diff);
+    append_missing_nondefault_options(config_this, config_other, diff, &skipped_in_dirty);
     std::sort(diff.begin(), diff.end());
     diff.erase(std::unique(diff.begin(), diff.end()), diff.end());
     return diff;
 }
 
 static constexpr const std::initializer_list<const char*> optional_keys { "compatible_prints", "compatible_printers" };
-//BBS: skip these keys for dirty check
-static std::set<std::string> skipped_in_dirty = {"printer_settings_id", "print_settings_id", "filament_settings_id", "mixed_filament_definitions"};
 
 bool PresetCollection::is_dirty(const Preset *edited, const Preset *reference)
 {
@@ -3974,7 +3978,7 @@ std::vector<std::string> PresetCollection::dirty_options(const Preset *edited, c
         changed = deep_compare ?
                 deep_diff(edited->config, reference->config) :
                 reference->config.diff(edited->config);
-        append_missing_nondefault_options(edited->config, reference->config, changed);
+        append_missing_nondefault_options(edited->config, reference->config, changed, &skipped_in_dirty);
         // The "compatible_printers" option key is handled differently from the others:
         // It is not mandatory. If the key is missing, it means it is compatible with any printer.
         // If the key exists and it is empty, it means it is compatible with no printer.
@@ -3996,7 +4000,7 @@ std::vector<std::string> PresetCollection::dirty_options_without_option_list(con
         changed = deep_compare ?
                 deep_diff(edited->config, reference->config) :
                 reference->config.diff(edited->config);
-        append_missing_nondefault_options(edited->config, reference->config, changed);
+        append_missing_nondefault_options(edited->config, reference->config, changed, &skipped_in_dirty);
         // The "compatible_printers" option key is handled differently from the others:
         // It is not mandatory. If the key is missing, it means it is compatible with any printer.
         // If the key exists and it is empty, it means it is compatible with no printer.

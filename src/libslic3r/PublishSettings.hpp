@@ -28,9 +28,13 @@ struct PublishablePrinterOption {
 // The printer tab's "Retraction" / "Z-Hop" optgroup options, in tab order.
 const std::vector<PublishablePrinterOption>& publishable_printer_retraction_options();
 const std::vector<PublishablePrinterOption>& publishable_printer_z_hop_options();
+// Snapmaker Orca: the preferred layer heights of the "Layer height limits" optgroup (the limits
+// are the device's); the process layer_height is derived from them, so they travel with it.
+const std::vector<PublishablePrinterOption>& publishable_printer_layer_height_options();
 
-// Union of the two optgroup option lists; printer keys apply on import only if their base
-// key is in this allowlist.
+// Union of the optgroup option lists plus extruder_layer_height_exact, the scalar mode the
+// preferred layer heights are read with (published with them, see the Publish dialog); printer
+// keys apply on import only if their base key is in this allowlist.
 const std::set<std::string>& publishable_printer_keys();
 
 // Union of setting keys differing from the base/system preset across the current print,

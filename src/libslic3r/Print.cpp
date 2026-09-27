@@ -2430,14 +2430,23 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
         }
 
         // Make sure all extruders use same diameter filament and have the same nozzle diameter
-        // EPSILON comparison is used for nozzles and 10 % tolerance is used for filaments
+        // EPSILON comparison is used for nozzles and 10 % tolerance is used for filaments.
+        // Snapmaker Orca: the Type2 tower gives each tool its own line width and row pitch, so mixed
+        // nozzles are fine there (thin slabs are reported by _make_wipe_tower). Mixed filament
+        // diameters still warn (one filament area); the Type1 tower keeps the mainline warning.
+        const bool tower_handles_mixed_nozzles = this->wipe_tower_type() == WipeTowerType::Type2;
         double first_nozzle_diam = m_config.nozzle_diameter.get_at(extruders.front());
         double first_filament_diam = m_config.filament_diameter.get_at(extruders.front());
         for (const auto& extruder_idx : extruders) {
             double nozzle_diam = m_config.nozzle_diameter.get_at(extruder_idx);
             double filament_diam = m_config.filament_diameter.get_at(extruder_idx);
-            if (nozzle_diam - EPSILON > first_nozzle_diam || nozzle_diam + EPSILON < first_nozzle_diam
-                || std::abs((filament_diam - first_filament_diam) / first_filament_diam) > 0.1) {
+            const bool mixed_nozzles   = nozzle_diam - EPSILON > first_nozzle_diam || nozzle_diam + EPSILON < first_nozzle_diam;
+            const bool mixed_filaments = std::abs((filament_diam - first_filament_diam) / first_filament_diam) > 0.1;
+            if (mixed_filaments && tower_handles_mixed_nozzles) {
+                warn(L("Different filament diameters may not work well when the prime tower is enabled: the tower purges every filament with one filament area."), "filament_diameter");
+                break;
+            }
+            if ((mixed_nozzles && ! tower_handles_mixed_nozzles) || mixed_filaments) {
                 // return { L("Different nozzle diameters and different filament diameters may not work well when prime tower is enabled. It's very experimental, please proceed with caucious.") };
                     warn(L("Different nozzle diameters and different filament diameters may not work well when the prime tower is enabled. It's very experimental, so please proceed with caution."), "nozzle_diameter");
                     break;
@@ -2817,22 +2826,27 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                             // The GUI keeps the global configuration conforming; a per-object layer
                             // height override is the usual way here, so name the value that conforms.
                             if (extruder_height < layer_height - EPSILON || std::abs(extruder_height - std::lround(extruder_height / layer_height) * layer_height) > EPSILON) {
-                                // The coarsest object layer height (1 um quanta) every preferred height is a whole
-                                // multiple of that still fits through the smallest nozzle.
-                                long common = 0;
-                                for (double h : m_config.extruder_layer_height.values)
-                                    if (h > EPSILON)
-                                        common = std::gcd(common, std::lround(h / 0.001));
-                                double conforming = 0.;
-                                for (long k = 1; common > 0 && k <= common; ++ k)
-                                    if (common % k == 0 && (common / k) * 0.001 <= min_nozzle_diameter + EPSILON) {
-                                        conforming = std::round((common / k) * 0.001 * 1e6) / 1e6;
-                                        break;
-                                    }
+                                // Object layer height as the sidebar derives it (plan_extruder_layer_heights),
+                                // one entry per used head only: a 0 means Default and pulls the object layer
+                                // height into the scan, so unused heads are left out.
+                                std::vector<double> used_heights, used_nozzles;
+                                double              min_used_height = 0.;   // the floor: half the smallest minimum layer height in use
+                                for (unsigned int used_filament : extruders) {
+                                    const size_t head = this->extruder_index_of(used_filament);
+                                    used_heights.push_back(m_config.extruder_layer_height.get_at(head));
+                                    used_nozzles.push_back(m_config.nozzle_diameter.get_at(head));
+                                    const double min_height = m_config.min_layer_height.get_at(head);
+                                    if (min_height > EPSILON && (min_used_height <= 0. || min_height < min_used_height))
+                                        min_used_height = min_height;
+                                }
+                                const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights(used_heights, layer_height, used_nozzles,
+                                                                                                min_nozzle_diameter, m_config.extruder_layer_height_exact.value,
+                                                                                                min_used_height / 2.);
+                                const double conforming = plan.grid > EPSILON ? plan.grid : layer_height;
                                 return { Slic3r::format(_u8L("The preferred layer height of extruder %1% (%2% mm) is not a whole multiple of the object layer "
                                                              "height (%3% mm). Set the object layer height (for this object: its own layer height in the object "
-                                                             "settings) to %4% mm, the coarsest value every preferred layer height is a whole multiple of, or "
-                                                             "change the preferred layer heights."),
+                                                             "settings) to %4% mm, the object layer height derived from the preferred layer heights of the "
+                                                             "extruders in use, or change the preferred layer heights."),
                                                         extruder_idx + 1, extruder_height, layer_height, conforming), object, "extruder_layer_height" };
                             }
                             return { Slic3r::format(_u8L("The layer height of extruder %1% (%2% mm) cannot exceed its nozzle diameter."),
@@ -3250,6 +3264,13 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                         return { _u8L("Per-extruder layer heights are not supported in spiral vase mode."), object, "extruder_layer_height" };
                     if (object->config().interface_shells)
                         return { _u8L("Per-extruder layer heights are not supported together with interface shells."), object, "extruder_layer_height" };
+                    // The beams are carved per object layer before the runs combine; a run keeps
+                    // only the shape common to its layers, so a combined region's beam cells vanish
+                    // while the holes for them stay in the other region.
+                    if (object->config().interlocking_beam && object->all_regions().size() > 1)
+                        return { _u8L("Per-extruder layer heights are not supported together with interlocking beams. "
+                                      "Disable the interlocking beams or set the extruders' preferred layer heights to Default."),
+                                 object, "interlocking_beam" };
                     if (object->model_object()->has_custom_layering()) {
                         std::vector<coordf_t> profile;
                         PrintObject::update_layer_height_profile(*object->model_object(), object->slicing_parameters(), profile, object);
@@ -5992,6 +6013,43 @@ void Print::_make_wipe_tower()
         BOOST_LOG_TRIVIAL(debug) << "Wipe tower generation completed"
                                  << " nominal_layers=" << m_wipe_tower_data.tool_changes.size()
                                  << " local_z_layers=" << m_wipe_tower_data.local_z_tool_changes.size();
+
+        // Snapmaker Orca: warns per head about tower slabs below its minimum layer height. Slabs follow
+        // the object layer grid (step = finest head's height), so a coarse head ramming, purging or
+        // finishing on one extrudes too thin. Heads on a slab: its layer's extruders, mixed slots resolved.
+        {
+            const size_t             heads = m_config.nozzle_diameter.values.size();
+            std::vector<size_t>      thin_slabs(heads, 0);
+            std::vector<double>      thinnest(heads, std::numeric_limits<double>::max());
+            size_t                   slabs = 0;
+            for (const LayerTools &lt : m_wipe_tower_data.tool_ordering.layer_tools()) {
+                if (! lt.has_wipe_tower)
+                    continue;
+                ++ slabs;
+                for (unsigned int filament : lt.extruders) {
+                    const unsigned int head = lt.resolve_mixed(filament);
+                    if (head >= heads)
+                        continue;
+                    const double min_lh = m_config.min_layer_height.get_at(head);
+                    if (min_lh > EPSILON && lt.wipe_tower_layer_height < min_lh - EPSILON) {
+                        ++ thin_slabs[head];
+                        thinnest[head] = std::min(thinnest[head], lt.wipe_tower_layer_height);
+                    }
+                }
+            }
+            std::string per_head;
+            for (size_t head = 0; head < heads; ++ head)
+                if (thin_slabs[head] > 0)
+                    per_head += (per_head.empty() ? "" : "; ") +
+                                Slic3r::format(_u8L("extruder %1%: %2% slabs down to %3% mm, minimum layer height %4% mm"),
+                                               head + 1, thin_slabs[head], thinnest[head], m_config.min_layer_height.get_at(head));
+            if (! per_head.empty())
+                this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                    Slic3r::format(_u8L("The prime tower prints %1% slabs on the object layer grid, some thinner than the minimum "
+                                        "layer height of an extruder that purges on them (%2%). Preferred layer heights that share "
+                                        "a coarser grid, or fewer tool changes per layer, reduce them."),
+                                   slabs, per_head));
+        }
         m_wipe_tower_data.depth             = wipe_tower.get_depth();
         m_wipe_tower_data.width             = wipe_tower.width();
         m_wipe_tower_data.z_and_depth_pairs = wipe_tower.get_z_and_depth_pairs();

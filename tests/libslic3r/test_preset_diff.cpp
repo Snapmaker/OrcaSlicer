@@ -50,3 +50,28 @@ TEST_CASE("deep_diff distinguishes absolute and percentage speeds for each varia
     transferred.apply_only(edited.config, diff);
     REQUIRE(*transferred.option("small_perimeter_speed") == *edited.config.option("small_perimeter_speed"));
 }
+
+// Snapmaker Orca: extruder_nozzle_stats is a session-only key. The nozzle count badges of the
+// sidebar seed it into the edited printer preset on every preset load and saved presets never
+// carry it, so a system preset with the seed must read clean; a key the user set still counts.
+TEST_CASE("A session-only extruder_nozzle_stats entry does not make a preset dirty", "[PresetDiff][Config]")
+{
+    Preset reference(Preset::TYPE_PRINTER, "ref");
+    reference.config.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4, 0.4, 0.4, 0.4});
+
+    Preset edited(Preset::TYPE_PRINTER, "edited");
+    edited.config = reference.config;
+    edited.config.set_key_value("extruder_nozzle_stats", new ConfigOptionStrings{"Standard#1", "Standard#1", "Standard#1", "Standard#1"});
+
+    CHECK_FALSE(PresetCollection::is_dirty(&edited, &reference));
+    const std::vector<std::string> deep = PresetCollection::dirty_options(&edited, &reference, /*deep_compare=*/true);
+    CHECK(std::find(deep.begin(), deep.end(), "extruder_nozzle_stats") == deep.end());
+    const std::vector<std::string> flat = PresetCollection::dirty_options(&edited, &reference, /*deep_compare=*/false);
+    CHECK(std::find(flat.begin(), flat.end(), "extruder_nozzle_stats") == flat.end());
+
+    // A key the reference lacks and the user set away from its default is still a change.
+    edited.config.set_key_value("printer_notes", new ConfigOptionString("tuned"));
+    CHECK(PresetCollection::is_dirty(&edited, &reference));
+    const std::vector<std::string> with_notes = PresetCollection::dirty_options(&edited, &reference, /*deep_compare=*/true);
+    CHECK(std::find(with_notes.begin(), with_notes.end(), "printer_notes") != with_notes.end());
+}

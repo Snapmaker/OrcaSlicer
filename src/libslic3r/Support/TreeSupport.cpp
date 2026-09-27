@@ -815,11 +815,10 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             }
         });
 
-    typedef std::chrono::high_resolution_clock clock_;
-    typedef std::chrono::duration<double, std::ratio<1> > second_;
-    std::chrono::time_point<clock_> t0{ clock_::now() };
     // main part of overhang detection can be parallel
     tbb::concurrent_vector<ExPolygons> overhangs_all_layers(m_object->layer_count());
+    // ORCA: the lower layer offset by the overhang threshold, kept for the second pass below.
+    std::vector<ExPolygons> lower_layers_offseted(m_object->layer_count());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
         [&](const tbb::blocked_range<size_t>& range) {
             for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
@@ -853,14 +852,50 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 // normal overhang
                 ExPolygons lower_layer_offseted = offset_ex(lower_polys, support_offset_scaled, SUPPORT_SURFACES_OFFSET_PARAMETERS);
                 overhangs_all_layers[layer_nr] = diff_ex(curr_polys, lower_layer_offseted);
+                lower_layers_offseted[layer_nr] = std::move(lower_layer_offseted);
+            }
+        }
+    ); // end tbb::parallel_for
 
-                double duration{ std::chrono::duration_cast<second_>(clock_::now() - t0).count() };
-                if (duration > 30 || overhangs_all_layers[layer_nr].size() > 100) {
-                    BOOST_LOG_TRIVIAL(info) << "detect_overhangs takes more than 30 secs, skip cantilever and sharp tails detection: layer_nr=" << layer_nr << " duration=" << duration;
-                    config_detect_sharp_tails = false;
-                    config_remove_small_overhangs = false;
+    // ORCA: the too-many-overhangs fallback is decided once, before sharp tail detection, so the
+    // result does not depend on the thread schedule or machine load. The layer with the many
+    // overhangs still skips its own sharp tail and cantilever checks.
+    {
+        bool too_many_overhangs = false;
+        for (size_t layer_nr = 0; layer_nr < m_object->layer_count() && ! too_many_overhangs; layer_nr++)
+            if (overhangs_all_layers[layer_nr].size() > 100) {
+                BOOST_LOG_TRIVIAL(info) << "detect_overhangs: more than 100 overhangs on a layer, skip cantilever and sharp tails detection: layer_nr=" << layer_nr;
+                too_many_overhangs = true;
+            }
+        if (too_many_overhangs) {
+            config_detect_sharp_tails = false;
+            config_remove_small_overhangs = false;
+        }
+    }
+
+    // ORCA: per layer, reduced in layer order after the loop, so worker threads share no state.
+    std::vector<double> cantilever_dist_by_layer(m_object->layer_count(), 0.);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
+        [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
+                if (m_object->print()->canceled())
+                    break;
+
+                if (!is_auto(stype) && layer_nr > enforce_support_layers)
                     continue;
-                }
+
+                Layer* layer = m_object->get_layer(layer_nr);
+                if (layer->lower_layer == nullptr)
+                    continue;
+                if (overhangs_all_layers[layer_nr].size() > 100)
+                    continue;
+
+                Layer* lower_layer = layer->lower_layer;
+                coordf_t lower_layer_offset = layer_nr < enforce_support_layers ? -0.15 * extrusion_width : (float)lower_layer->height / tan(threshold_rad);
+                ExPolygons& curr_polys = layer->lslices_extrudable;
+                ExPolygons& lower_polys = lower_layer->lslices_extrudable;
+                ExPolygons lower_layer_offseted = std::move(lower_layers_offseted[layer_nr]);
+
                 if (is_auto(stype) && config_detect_sharp_tails)
                 {
                     // BBS detect sharp tail
@@ -902,16 +937,20 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                         dist_max = std::max(dist_max, dist_pt);
                     }
                     if (dist_max > scale_(3)) {  // is cantilever if the farmost point is larger than 3mm away from base
-                        max_cantilever_dist = std::max(max_cantilever_dist, dist_max);
+                        cantilever_dist_by_layer[layer_nr] = std::max(cantilever_dist_by_layer[layer_nr], dist_max);
                         layer->cantilevers.emplace_back(poly);
                         BOOST_LOG_TRIVIAL(debug) << "found a cantilever cluster. layer_nr=" << layer_nr << dist_max;
-                        has_cantilever = true;
                     }
                 }
             }
         }
     ); // end tbb::parallel_for
 
+    for (size_t layer_nr = 0; layer_nr < m_object->layer_count(); layer_nr++) {
+        max_cantilever_dist = std::max(max_cantilever_dist, cantilever_dist_by_layer[layer_nr]);
+        if (! m_object->get_layer(layer_nr)->cantilevers.empty())
+            has_cantilever = true;
+    }
     BOOST_LOG_TRIVIAL(info) << "max_cantilever_dist=" << max_cantilever_dist;
     if (check_support_necessity)
         return;
@@ -3676,8 +3715,6 @@ void TreeSupport::generate_contact_points()
         }
     }
 
-    int      nonempty_layers = 0;
-    tbb::concurrent_vector<Slic3r::Vec3f> all_nodes;
     tbb::parallel_for(tbb::blocked_range<size_t>(1, m_object->layers().size()), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
             if (m_object->print()->canceled())
@@ -3803,8 +3840,6 @@ void TreeSupport::generate_contact_points()
                 if (node)
                     node->skin_direction = pt_and_normal.second;
             }
-            if (!curr_nodes.empty()) nonempty_layers++;
-            for (auto node : curr_nodes) { all_nodes.emplace_back(node->position(0), node->position(1), scale_(node->print_z)); }
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
             if (!curr_nodes.empty())
             draw_contours_and_nodes_to_svg(debug_out_path("init_contact_points_%.2f.svg", bottom_z), layer->loverhangs,layer->lslices_extrudable, m_ts_data->m_layer_outlines_below[layer_nr],
@@ -3815,23 +3850,32 @@ void TreeSupport::generate_contact_points()
 
 
 
-    int nNodes = all_nodes.size();
-    avg_node_per_layer = nodes_angle = 0;
-    if (nNodes > 0) {
-        avg_node_per_layer = nNodes / nonempty_layers;
-        // get orientation of nodes by line fitting
-        // line: y=kx+b, where
-        //       k=tan(nodes_angle)=(n\sum{xy}-\sum{x}\sum{y})/(n\sum{x^2}-\sum{x}^2)
-        float mx = 0, my = 0, mxy = 0, mx2 = 0;
-        for (auto &pt : all_nodes) {
-            float x = unscale_(pt(0));
-            float y = unscale_(pt(1));
+    // ORCA: node statistics are gathered after the loop, in layer order and in double, so the
+    // fitted angle (it rotates every branch polygon of square support) is deterministic.
+    int    nonempty_layers = 0;
+    size_t nNodes          = 0;
+    double mx = 0., my = 0., mxy = 0., mx2 = 0.;
+    for (size_t layer_nr = 1; layer_nr < m_object->layers().size(); layer_nr++) {
+        const auto& curr_nodes = contact_nodes[layer_nr - 1];
+        if (!curr_nodes.empty()) nonempty_layers++;
+        for (const SupportNode* node : curr_nodes) {
+            // get orientation of nodes by line fitting
+            // line: y=kx+b, where
+            //       k=tan(nodes_angle)=(n\sum{xy}-\sum{x}\sum{y})/(n\sum{x^2}-\sum{x}^2)
+            const double x = unscale<double>(node->position.x());
+            const double y = unscale<double>(node->position.y());
             mx += x;
             my += y;
             mxy += x * y;
             mx2 += x * x;
+            ++nNodes;
         }
-        nodes_angle = atan2(nNodes * mxy - mx * my, nNodes * mx2 - SQ(mx));
+    }
+    avg_node_per_layer = nodes_angle = 0;
+    if (nNodes > 0) {
+        avg_node_per_layer = int(nNodes / size_t(nonempty_layers));
+        const double n = double(nNodes);
+        nodes_angle = float(atan2(n * mxy - mx * my, n * mx2 - mx * mx));
 
         BOOST_LOG_TRIVIAL(info) << "avg_node_per_layer=" << avg_node_per_layer << ", nodes_angle=" << nodes_angle;
     }

@@ -3147,6 +3147,9 @@ int GUI_App::OnExit()
         m_flutter_wcp_timeout_timer->Stop();
         m_flutter_wcp_timeout_timer.reset();
     }
+    // Snapmaker Orca: SSWCP instances and the web views' MQTT engines go first, while SnapLog and
+    // the app can still take their callbacks, not left to static destruction.
+    SSWCP::shutdown();
     // Snapmaker Orca: SnapLog goes down after the local server (its stop must not wait behind the
     // bounded join of the upload workers, up to 5 s with a hanging network) and before the device
     // manager and the network agent die, because MQTT callbacks log from foreign threads.
@@ -9700,6 +9703,12 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
                 preset_bundle->set_num_filaments(target);
         }
     }
+    // Snapmaker Orca: one filament combo per slot before the tabs load their presets, as the
+    // Printer tab's printer switch does; otherwise the sidebar shows a single slot until the next
+    // extruder count change.
+    if (printer_technology == ptFFF && plater_ != nullptr &&
+        sidebar().combos_filament().size() != preset_bundle->filament_presets.size())
+        sidebar().on_filament_count_change(preset_bundle->filament_presets.size());
 	this->plater()->set_printer_technology(printer_technology);
     for (Tab *tab : tabs_list)
 		if (tab->supports_printer_technology(printer_technology)) {

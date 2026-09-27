@@ -157,9 +157,19 @@ const std::vector<PublishablePrinterOption>& publishable_printer_z_hop_options()
     return options;
 }
 
+// Snapmaker Orca: the preferred layer height of the "Layer height limits" optgroup of the
+// printer tab (TabPrinter::build_extruder_pages). min / max_layer_height stay out.
+const std::vector<PublishablePrinterOption>& publishable_printer_layer_height_options()
+{
+    static const std::vector<PublishablePrinterOption> options = {
+        { "extruder_layer_height", "printer_extruder_basic_information#extruder-layer-height-limits" },
+    };
+    return options;
+}
+
 const std::set<std::string>& publishable_printer_keys()
 {
-    // Union of the two optgroups; "Retraction when switching material" keys are excluded
+    // Union of the optgroups; "Retraction when switching material" keys are excluded
     // (toolchange retraction is device/profile territory, not a publishable behavior tweak).
     static const std::set<std::string> printer_keys = [] {
         std::set<std::string> keys;
@@ -167,6 +177,10 @@ const std::set<std::string>& publishable_printer_keys()
             keys.insert(opt.key);
         for (const PublishablePrinterOption &opt : publishable_printer_z_hop_options())
             keys.insert(opt.key);
+        for (const PublishablePrinterOption &opt : publishable_printer_layer_height_options())
+            keys.insert(opt.key);
+        // The mode the preferred layer heights are read with.
+        keys.insert("extruder_layer_height_exact");
         return keys;
     }();
     return printer_keys;

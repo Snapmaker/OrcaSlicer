@@ -1618,3 +1618,74 @@ TEST_CASE("a stamp string with an absurd length is rejected, not allocated", "[V
     CHECK(VendorCacheFile::peek_version(cache, "Evil").empty());
 }
 
+// The option schema another build would record: every option of this build except `dropped`,
+// with `retyped` (when set) carried under another type, plus `extra` (when set) as an option
+// this build does not have. CacheDictionary::covers looks at keys and types only.
+static ConfigDef schema_of_another_build(const std::string& dropped, const std::string& retyped = "",
+                                         const std::string& extra = "")
+{
+    ConfigDef schema;
+    for (const auto& kvp : print_config_def.options) {
+        if (kvp.first == dropped)
+            continue;
+        ConfigOptionDef& def = schema.options[kvp.first];
+        def.opt_key = kvp.first;
+        def.type    = kvp.first == retyped ? (kvp.second.type == coInt ? coFloat : coInt) : kvp.second.type;
+    }
+    if (! extra.empty()) {
+        ConfigOptionDef& def = schema.options[extra];
+        def.opt_key = extra;
+        def.type    = coFloat;
+    }
+    return schema;
+}
+
+TEST_CASE("a cache written by a build without an option of this one is not served", "[VendorCache]")
+{
+    TempDir           tmp;
+    const std::string vid   = "Acme";
+    const fs::path     cache = tmp.path / (vid + ".opc");
+    VendorCacheData   data;
+    data.vendors          = one_vendor(vid);
+    data.filament_entries = {filament_entry(vid + " PLA")};
+
+    const ConfigDef older = schema_of_another_build("layer_height");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &older));
+
+    // The stamps are still readable: the file is a cache of this vendor, just not one to serve.
+    CHECK(VendorCacheFile::peek_version(cache.string(), vid) == "1.0.0");
+    CHECK(! VendorCacheFile::usable_version(cache.string(), vid).valid());
+    CHECK(VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+    CHECK(! VendorCacheFile::carries_preset(cache.string(), vid, Preset::TYPE_FILAMENT, vid + " PLA"));
+    PresetBundle out;
+    CHECK(! out.load_vendor_cache(cache.string(), vid, Semver("1.0.0")));
+
+    // The same option under another type counts as missing too.
+    const ConfigDef retyped = schema_of_another_build("", "layer_height");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &retyped));
+    CHECK(! VendorCacheFile::usable_version(cache.string(), vid).valid());
+    CHECK(VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+}
+
+TEST_CASE("a cache written by a build with more options than this one is served", "[VendorCache]")
+{
+    TempDir           tmp;
+    const std::string vid   = "Acme";
+    const fs::path     cache = tmp.path / (vid + ".opc");
+    VendorCacheData   data;
+    data.vendors          = one_vendor(vid);
+    data.filament_entries = {filament_entry(vid + " PLA")};
+
+    const ConfigDef newer = schema_of_another_build("", "", "a_setting_of_a_later_build");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &newer));
+
+    CHECK(VendorCacheFile::usable_version(cache.string(), vid) == Semver("1.0.0"));
+    CHECK(! VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+    CHECK(VendorCacheFile::carries_preset(cache.string(), vid, Preset::TYPE_FILAMENT, vid + " PLA"));
+    PresetBundle out;
+    REQUIRE(out.load_vendor_cache(cache.string(), vid, Semver("1.0.0")));
+    CHECK(presets_for(out.filaments, vid).size() == 1);
+
+    // A file that is no cache at all lacks nothing: the answer is about a readable cache only.
+    CHECK(! VendorCacheFile::lacks_options_of_this_build((tmp.path / "missing.opc").string(), vid));
+}

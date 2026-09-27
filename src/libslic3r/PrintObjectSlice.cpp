@@ -956,7 +956,7 @@ void PrintObject::apply_extruder_layer_heights()
     // Never combine the first printed layer: it keeps its own height for bed adhesion (mirrors the
     // id() == 0 exclusion in PrintObject::combine_infill()), and with a raft detect_surfaces_type()
     // needs its slices to seed the object's bottom surfaces.
-    const size_t first_idx = 1;
+    const size_t first_idx = first_combined_layer_idx;
     if (m_layers.size() <= first_idx + 1)
         return;
 
@@ -5346,12 +5346,12 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     if (clamp_parent_to_geometry)
                         clamped_parent_expolygons = intersection_ex(parent_layer_region.slices.surfaces, layer_geometry_mask);
 
-                    int               self_extruder_id         = -1; // 1-based extruder ID
+                    // 1-based extruder ID whose painted target region IS the parent region; set only by
+                    // the alias branch below. Not the outer-wall filament: with an outer-wall override
+                    // its painted region differs from the parent and takes the area, so both would print it.
+                    int               self_extruder_id         = -1;
                     ExPolygons        explicit_self_expolygons;
                     ExPolygons        default_self_expolygons;
-                    if (const int cfg_wall = parent_print_region.config().outer_wall_filament_id.value;
-                        cfg_wall >= 1 && cfg_wall <= int(by_extruder.size()))
-                        self_extruder_id = cfg_wall;
                     if (clamp_parent_to_geometry && default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
                         default_self_expolygons = intersection_ex(parent_layer_region.slices.surfaces, default_segmentation);
                     std::vector<bool> assigned_extruder(by_extruder.size(), false);

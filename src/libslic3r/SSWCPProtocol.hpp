@@ -153,6 +153,11 @@ enum class FinishFilamentMappingEvent {
 /// and malformed values are None, so that the webview always closes without an error.
 FinishFilamentMappingEvent parse_finish_filament_mapping_event(const nlohmann::json &params);
 
+/// The "result" member of the printer's cloud/config/response to server.client_manager.request_pin_code
+/// (sw_get_pin_code). False, *result* untouched, unless it is a JSON object with "result". Never throws:
+/// it runs on the MQTT client's thread, where an exception has no handler.
+bool parse_pin_code_response(const std::string &message, nlohmann::json &result);
+
 } // namespace SSWCPProtocol
 } // namespace Slic3r
 

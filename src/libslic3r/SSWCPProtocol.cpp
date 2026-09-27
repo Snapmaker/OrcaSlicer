@@ -388,4 +388,16 @@ FinishFilamentMappingEvent parse_finish_filament_mapping_event(const nlohmann::j
                                                                                            FinishFilamentMappingEvent::None;
 }
 
+bool parse_pin_code_response(const std::string &message, nlohmann::json &result)
+{
+    const nlohmann::json response = nlohmann::json::parse(message, nullptr, /*allow_exceptions=*/false);
+    if (!response.is_object())
+        return false;   // a parse error is the discarded value, not an object
+    const auto it = response.find("result");
+    if (it == response.end())
+        return false;
+    result = *it;
+    return true;
+}
+
 }} // namespace Slic3r::SSWCPProtocol

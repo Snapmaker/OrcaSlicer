@@ -291,6 +291,26 @@ const char *PresetBundle::ORCA_FILAMENT_LIBRARY = "OrcaFilamentLibrary";
 const char *PresetBundle::ORCA_DEFAULT_BUNDLE  = "Custom";
 const char *PresetBundle::ORCA_DEFAULT_FILAMENT_PLACEHOLDER = "Default Filament";
 
+std::string PresetBundle::wizard_printer_variant(const std::string &bundle_name, const VendorProfile::PrinterModel *model,
+                                                 const std::set<std::string> &ticked)
+{
+    if (ticked.empty())
+        return {};
+    // The Snapmaker bundle alone prefers the default size: other vendors' model entries may list
+    // another size first on purpose (a 0.8 mm K1 SE), and there the first ticked variant in model
+    // order is what mainline activates.
+    if (bundle_name == SM_BUNDLE && ticked.count(SM_DEFAULT_PRINTER_VARIANT) != 0)
+        return SM_DEFAULT_PRINTER_VARIANT;
+    if (model != nullptr)
+        for (const VendorProfile::PrinterVariant &variant : model->variants)
+            if (ticked.count(variant.name) != 0)
+                return variant.name;
+    // No model entry (mainline's fallback): the default size when it is ticked, else the first name.
+    if (ticked.count(SM_DEFAULT_PRINTER_VARIANT) != 0)
+        return SM_DEFAULT_PRINTER_VARIANT;
+    return *ticked.begin();
+}
+
 DynamicPrintConfig PresetBundle::construct_full_config(
     Preset& in_printer_preset,
     Preset& in_print_preset,
@@ -3361,7 +3381,8 @@ void PresetBundle::update_selections(AppConfig &config)
     this->update_multi_material_filament_presets();
 
     // Snapmaker Orca: with tool heads of different nozzle sizes a broken slot gets a preset for the
-    // size of its own tool head (repair_filament_slots_per_head); otherwise mainline's loop, untouched.
+    // size of its own tool head (repair_filament_slots_per_head); otherwise mainline's loop, with
+    // the editor's filament as the replacement (filament_slot_fallback_name).
     if (! this->repair_filament_slots_per_head()) {
         std::string first_visible_filament_name;
         for (auto & fp : filament_presets) {
@@ -3370,7 +3391,7 @@ void PresetBundle::update_selections(AppConfig &config)
             // stays true and the not-found/visible/compatible predicate alone would miss it.
             if (auto it = filaments.find_preset_internal(fp); fp == ORCA_DEFAULT_FILAMENT_PLACEHOLDER || it == filaments.end() || !it->is_visible || !it->is_compatible) {
                 if (first_visible_filament_name.empty())
-                    first_visible_filament_name = filaments.first_compatible().name;
+                    first_visible_filament_name = this->filament_slot_fallback_name();
                 fp = first_visible_filament_name;
             }
         }
@@ -3587,14 +3608,15 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
     }
 
     // Snapmaker Orca: with tool heads of different nozzle sizes a broken slot gets a preset for the
-    // size of its own tool head (see update_selections); otherwise mainline's loop, untouched.
+    // size of its own tool head (see update_selections); otherwise mainline's loop, with the
+    // editor's filament as the replacement (filament_slot_fallback_name).
     if (! this->repair_filament_slots_per_head()) {
         std::string first_visible_filament_name;
         for (auto & fp : filament_presets) {
             // Orca: also match the ORCA_DEFAULT_FILAMENT_PLACEHOLDER placeholder — see update_selections.
             if (auto it = filaments.find_preset_internal(fp); fp == ORCA_DEFAULT_FILAMENT_PLACEHOLDER || it == filaments.end() || !it->is_visible || !it->is_compatible) {
                 if (first_visible_filament_name.empty())
-                    first_visible_filament_name = filaments.first_compatible().name;
+                    first_visible_filament_name = this->filament_slot_fallback_name();
                 fp = first_visible_filament_name;
             }
         }
@@ -4097,6 +4119,16 @@ static std::string usable_nozzle_filament_target(const PresetBundle &bundle, con
 // Snapmaker Orca: per slot form of the repair loop of update_selections() / load_selections(); false
 // unless nozzle sizes are mixed. A slot with a missing or unselectable preset gets the rule's target,
 // else the first preset that fits its tool head.
+std::string PresetBundle::filament_slot_fallback_name() const
+{
+    if (this->filaments.get_selected_idx() != size_t(-1)) {
+        const Preset &selected = this->filaments.get_selected_preset();
+        if (! selected.is_default && selected.is_visible && selected.is_compatible)
+            return selected.name;
+    }
+    return this->filaments.first_compatible().name;
+}
+
 bool PresetBundle::repair_filament_slots_per_head()
 {
     const NozzleFilament::State state = NozzleFilament::state(*this);
@@ -8623,11 +8655,18 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                 for (size_t idx = 0; idx < this->filament_presets.size(); ++ idx) {
                     std::string &filament_name = this->filament_presets[idx];
                     Preset      *preset = this->filaments.find_preset(filament_name, false);
-                    if (preset == nullptr || (! preset->is_compatible && (select_other_filament_if_incompatible == PresetSelectCompatibleType::Always || filament_preset_was_compatible[idx])))
+                    if (preset == nullptr || (! preset->is_compatible && (select_other_filament_if_incompatible == PresetSelectCompatibleType::Always || filament_preset_was_compatible[idx]))) {
                         // Pick a compatible profile. If there are prefered_filament_profiles, use them.
+                        // Snapmaker Orca: a slot without a material of its own (none, or the
+                        // default one) is matched like the editor's filament, which the block above
+                        // chose for the printer, so every slot starts with the same material.
+                        const Preset *like = preset;
+                        if ((like == nullptr || like->is_default) && this->filaments.get_selected_idx() != size_t(-1))
+                            like = &this->filaments.get_selected_preset();
                         filament_name = this->filaments.first_compatible(
-                            PreferedFilamentProfileMatch(preset,
+                            PreferedFilamentProfileMatch(like,
                                 (idx < prefered_filament_profiles.size()) ? prefered_filament_profiles[idx] : prefered_filament_profile)).name;
+                    }
                 }
             }
         }

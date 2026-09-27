@@ -28,6 +28,21 @@ TriangleMesh two_tier_mesh()
     return mesh;
 }
 
+// A plate carrying an 11 x 11 grid of small blocks that float 4 mm above it: 121 separate
+// overhangs on one layer, more than the hundred at which detect_overhangs() drops the sharp tail
+// and small overhang handling.
+TriangleMesh many_overhangs_mesh()
+{
+    TriangleMesh mesh = make_cube(46, 46, 2);
+    for (int i = 0; i < 11; ++i)
+        for (int j = 0; j < 11; ++j) {
+            TriangleMesh block = make_cube(2, 2, 2);
+            block.translate(2.f + 4.f * float(i), 2.f + 4.f * float(j), 6.f);
+            mesh.merge(block);
+        }
+    return mesh;
+}
+
 TriangleMesh scaled(TestMesh id, float scale)
 {
     TriangleMesh mesh = Slic3r::Test::mesh(id);
@@ -174,6 +189,9 @@ TEST_CASE("Tree support toolpaths do not depend on thread scheduling", "[TreeSup
     // nodes, so it is the only style that exercises the overhang merge.
     SECTION("resting on the model") { sliced_twice_matches(two_tier_mesh(), 0); }
     SECTION("hybrid on the model")  { sliced_twice_matches(two_tier_mesh(), 0, "tree_hybrid"); }
+    // More than a hundred overhangs on one layer switch the sharp tail and small overhang handling
+    // off; that decision must not depend on which worker thread reaches the layer.
+    SECTION("a layer with more than a hundred overhangs") { sliced_twice_matches(many_overhangs_mesh(), 0); }
 }
 
 // Prim breaks equal-distance ties by heap address. A 1 mm branch diameter puts neighbours close

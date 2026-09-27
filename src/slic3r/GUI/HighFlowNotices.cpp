@@ -76,7 +76,16 @@ SizeOffersHighFlow size_offers_high_flow(const PresetBundle &bundle)
     const PresetBundle *presets = &bundle;
     return [presets](double nozzle_size, size_t head) {
         const std::string model = presets->printers.get_edited_preset().config.opt_string("printer_model");
-        const Preset     *machine = NozzleFilament::head_machine_preset(presets->printers, model, nozzle_size);
+        if (nozzle_size <= 0.) {
+            // Any size of the model: the Flow row of a Standard-only preset.
+            if (model.empty())
+                return false;
+            for (const Preset &preset : presets->printers)
+                if (preset.config.opt_string("printer_model") == model && head_declares_high_flow(preset.config, head))
+                    return true;
+            return false;
+        }
+        const Preset *machine = NozzleFilament::head_machine_preset(presets->printers, model, nozzle_size);
         return machine != nullptr && head_declares_high_flow(machine->config, head);
     };
 }
@@ -330,8 +339,13 @@ bool flow_choice_usable(const DynamicPrintConfig &printer_config, size_t head, c
 
 FlowRowState flow_row_state(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
 {
-    if (declared_volume_types(printer_config, head).size() <= 1)
-        return FlowRowState::Hidden;
+    if (declared_volume_types(printer_config, head).size() <= 1) {
+        // A head beyond the preset's diameters has no row; a Standard-only head of a model that
+        // offers High Flow at another size shows the row, ruled out.
+        const auto *diameters = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
+        const bool  has_head  = diameters != nullptr && head < diameters->values.size();
+        return has_head && size_offers && size_offers(0., head) ? FlowRowState::RuledOut : FlowRowState::Hidden;
+    }
     return flow_choice_usable(printer_config, head, size_offers) ? FlowRowState::Choice : FlowRowState::RuledOut;
 }
 
@@ -362,7 +376,9 @@ void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config
     if (combo == nullptr)
         return;
     const std::vector<int> declared = declared_volume_types(printer_config, head);
-    const bool             usable   = flow_choice_usable(printer_config, head, size_offers);
+    // A single declared type leaves nothing to choose (a Standard-only preset shown for a model
+    // that offers High Flow at another size): the combo is disabled with the reason of the size.
+    const bool             usable   = declared.size() > 1 && flow_choice_usable(printer_config, head, size_offers);
 
     bool same_items = combo->GetCount() == declared.size();
     for (size_t item = 0; same_items && item < declared.size(); ++item)

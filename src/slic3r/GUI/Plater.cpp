@@ -114,6 +114,7 @@
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/ProjectSchemaVersion.hpp"
 #include "libslic3r/PublishSettings.hpp"
 #include "slic3r/Utils/CrealityPrint.hpp"
@@ -11207,6 +11208,18 @@ static double smallest_nozzle_diameter()
     return min_bore;
 }
 
+// ORCA multi-nozzle-size: the floor of the planned object layer height, half the smallest
+// minimum layer height of the edited printer's heads (0 when unknown: the planner's 0.02 mm).
+static double object_layer_height_floor()
+{
+    double min_height = 0.;
+    if (const auto *mlh = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("min_layer_height"))
+        for (double h : mlh->values)
+            if (h > EPSILON && (min_height <= 0. || h < min_height))
+                min_height = h;
+    return min_height / 2.;
+}
+
 // ORCA multi-nozzle-size: whether the experimental exact preferred layer heights are on.
 static bool exact_extruder_heights()
 {
@@ -11216,11 +11229,13 @@ static bool exact_extruder_heights()
 
 // ORCA multi-nozzle-size: the object layer height for a set of preferred layer heights, and the
 // heights made whole multiples of it (plan_extruder_layer_heights() in libslic3r: the coarsest
-// grid every preferred height lands on within 0.01 mm, or every value exactly with the
-// experimental option; Default extruders keep their current height when the grid gets finer).
+// grid every preferred height, and the current object layer height while an extruder is at
+// Default, lands on within the tolerance, floored at half the smallest minimum layer height;
+// exact with the experimental option; Default extruders stay pinned when the grid gets finer).
 static ExtruderLayerHeightPlan plan_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles)
 {
-    return plan_extruder_layer_heights(std::move(heights), base, nozzles, smallest_nozzle_diameter(), exact_extruder_heights());
+    return plan_extruder_layer_heights(std::move(heights), base, nozzles, smallest_nozzle_diameter(), exact_extruder_heights(),
+                                       object_layer_height_floor());
 }
 
 // ORCA multi-nozzle-size: whether an explicit extruder layer height is a whole multiple of the
@@ -11305,10 +11320,17 @@ static bool derive_object_layer_height_from_extruder_heights(std::vector<double>
                 notice += (notice.empty() ? "" : " ") + GUI::format(_u8L("Preferred layer heights rounded to whole multiples of it: %1%."), list);
             }
             if (!plan.pinned.empty()) {
-                std::string list;
-                for (size_t j : plan.pinned)
+                // A pinned extruder printed the object layer height so far; it is "kept" only
+                // when the pinned value is that height, else the value moved.
+                std::string kept, moved;
+                for (size_t j : plan.pinned) {
+                    std::string &list = std::abs(plan.heights[j] - base_height) <= 1e-6 ? kept : moved;
                     list += (list.empty() ? "" : ", ") + GUI::format(_u8L("extruder %1%: %2% mm"), j + 1, plan.heights[j]);
-                notice += (notice.empty() ? "" : " ") + GUI::format(_u8L("Extruders without a preference keep their height: %1%."), list);
+                }
+                if (!kept.empty())
+                    notice += (notice.empty() ? "" : " ") + GUI::format(_u8L("Extruders without a preference keep their height: %1%."), kept);
+                if (!moved.empty())
+                    notice += (notice.empty() ? "" : " ") + GUI::format(_u8L("Extruders without a preference are set to the whole multiple of it nearest their height: %1%."), moved);
             }
             heights = plan.heights;
             if (!notice.empty() && notifications != nullptr)
@@ -11425,15 +11447,23 @@ bool Sidebar::confirm_object_layer_height_edit()
             --m;
         snapped[j] = m * base > nd->values[j] + EPSILON ? 0. : std::round(m * base * 1e6) / 1e6;
     }
-    const double derived = plan_layer_heights(current, base, nd->values).grid;
+    // The alternative is the planner's grid, as in the notice of
+    // derive_object_layer_height_from_extruder_heights: not the finest preferred height
+    // (0.12 / 0.2 / 0.3 / 0.4 mm plan a 0.1 mm grid); the preferred heights are rounded to it.
+    const ExtruderLayerHeightPlan plan    = plan_layer_heights(current, base, nd->values);
+    const double                  derived = plan.grid;
     if (derived <= EPSILON)
         return false;
 
     const std::string body = GUI::format(_u8L("An object layer height of %1% mm is not a divisor of the extruders' preferred layer heights (%2%); "
                                               "object parts printed by those extruders need whole multiples of it."), base, extruder_heights_list(current))
-        + "\n\n" + GUI::format(_u8L("Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the finest "
-                                    "preferred layer height, as the object layer height (rounding the others to its whole multiples)?"),
-                                extruder_heights_list(snapped), derived);
+        + "\n\n" + (exact_extruder_heights() ?
+                     GUI::format(_u8L("Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest "
+                                      "height every preferred layer height is a whole multiple of, as the object layer height?"),
+                                 extruder_heights_list(snapped), derived) :
+                     GUI::format(_u8L("Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest "
+                                      "height the preferred layer heights land on, as the object layer height (they are then rounded to %3%)?"),
+                                 extruder_heights_list(snapped), derived, extruder_heights_list(plan.heights)));
     // This question settles the configuration: a reconcile scheduled by the edit must not run
     // underneath it (the dialog's nested event loop would deliver it).
     p->layer_height_reconcile_pending = false;
@@ -11499,6 +11529,7 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
         plater->show_nozzle_follow_notice(plater->follow_nozzle_sizes({i}, Plater::FollowReason::SidebarNozzle));
         return;
     }
+    const double old_nd = nozzle_diameters[i];
     nozzle_diameters[i] = new_nd;
     new_conf.set_key_value("nozzle_diameter", new ConfigOptionFloats(nozzle_diameters));
 
@@ -11507,6 +11538,8 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
     // one exists, otherwise ask the user to review the limits manually.
     std::string notice;
     bool        variant_found = false;
+    // Snapmaker Orca: the per-extruder machine keys of the tool head that followed the size preset.
+    std::vector<std::string> adopted;
     {
         const PrinterPresetCollection &printers = wxGetApp().preset_bundle->printers;
         const std::string model   = new_conf.opt_string("printer_model");
@@ -11530,6 +11563,43 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
             new_conf.set_key_value("max_layer_height", new ConfigOptionFloats(maxs));
             notice = GUI::format(_u8L("Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."),
                                  i + 1, mins[i], maxs[i], variant_preset->name);
+            // Snapmaker Orca: the head's other per-extruder machine values (U1: retraction length,
+            // minimum travel, wipe distance, nozzle type) follow the size preset where it differs from
+            // the previous size's preset; without that preset, every value the size preset differs in.
+            const Preset *previous_preset = nullptr;
+            for (const Preset &preset : printers)
+                if (preset.is_system && preset.config.opt_string("printer_model") == model)
+                    if (const auto *sizes = preset.config.option<ConfigOptionFloats>("nozzle_diameter");
+                        sizes != nullptr && !sizes->values.empty() && std::abs(sizes->values.front() - old_nd) < EPSILON) {
+                        previous_preset = &preset;
+                        break;
+                    }
+            adopted = adopt_extruder_values_from_size_preset(new_conf, variant_preset->config,
+                                                             previous_preset == nullptr ? nullptr : &previous_preset->config, i,
+                                                             nozzle_size_extruder_options());
+            if (!adopted.empty()) {
+                // "Retraction length 0.4 mm, Nozzle type Stainless steel": the label of the key and
+                // the value of the head's first column, an enum by its label.
+                std::string values;
+                for (const std::string &key : adopted) {
+                    const ConfigOptionDef *def     = new_conf.def()->get(key);
+                    const std::vector<size_t> cols = extruder_option_columns(new_conf, key, i);
+                    if (def == nullptr || cols.empty())
+                        continue;
+                    std::string value = static_cast<const ConfigOptionVectorBase*>(new_conf.option(key))->vserialize()[cols.front()];
+                    if (!def->enum_values.empty() && def->enum_labels.size() == def->enum_values.size())
+                        for (size_t e = 0; e < def->enum_values.size(); ++e)
+                            if (def->enum_values[e] == value) {
+                                value = into_u8(_(def->enum_labels[e]));
+                                break;
+                            }
+                    if (!def->sidetext.empty())
+                        value += " " + into_u8(_(def->sidetext));
+                    values += (values.empty() ? "" : ", ") + into_u8(_(def->label)) + " " + value;
+                }
+                notice += "\n";
+                notice += GUI::format(_u8L("Nozzle %1%: %2%, from \"%3%\"."), i + 1, values, variant_preset->name);
+            }
         } else {
             notice = GUI::format(_u8L("This printer has no profile for a %1% mm nozzle. Please review the "
                                       "layer height limits of nozzle %2% in the printer settings."),
@@ -11567,6 +11637,37 @@ void Sidebar::apply_nozzle_diameter(size_t i, const wxString &diameter_label)
     if (!follow.lines.empty()) {
         notice += "\n";
         notice += follow.text();
+    }
+    if (!adopted.empty()) {
+        // The filaments of this tool head whose preset for the new size leaves one of the adopted
+        // values to the printer (a nil vendor value) print with the values above. The targets are
+        // read after the size is in the printer preset, so they are the presets of the new size.
+        const PresetBundle          &bundle = *wxGetApp().preset_bundle;
+        const NozzleFilament::State  state  = NozzleFilament::state(bundle);
+        std::string                  slots;
+        for (size_t slot = 0; slot < state.slot_head.size(); ++slot) {
+            if (state.slot_head[slot] != i)
+                continue;
+            const NozzleFilament::SlotTarget target   = NozzleFilament::target_for_slot(bundle, state, slot, {i});
+            const Preset                    *filament = bundle.filaments.find_preset(target.to, false);
+            if (filament == nullptr)
+                continue;
+            bool leaves_to_printer = false;
+            for (const std::string &key : adopted)
+                if (const ConfigOption *opt = filament->config.option("filament_" + key);
+                    opt != nullptr && opt->is_vector() && static_cast<const ConfigOptionVectorBase*>(opt)->size() > 0 &&
+                    static_cast<const ConfigOptionVectorBase*>(opt)->is_nil(0)) {
+                    leaves_to_printer = true;
+                    break;
+                }
+            if (leaves_to_printer)
+                slots += (slots.empty() ? "" : ", ") + std::to_string(slot + 1);
+        }
+        if (!slots.empty()) {
+            notice += "\n";
+            notice += GUI::format(_u8L("Filament %1% of nozzle %2% has no value of its own for some of these settings and prints with the printer's."),
+                                  slots, i + 1);
+        }
     }
 
     wxGetApp().plater()->get_notification_manager()->push_notification(
@@ -18085,19 +18186,24 @@ void Plater::priv::notify_filament_compatibility_after_apply()
     if (isPeiBedMatchTpu && isPeiBedMatchNotPla)
         isPeiBedMatchNotPla = false;
 
+    // Snapmaker Orca: the advice has its own notification type, so closing it leaves the other
+    // CustomNotification notices (layer height, flow type, nozzle follow) open.
     if (isGraphicMatch || isPeiBedMatchNotPla)
     {
-        notification_manager->close_notification_of_type(NotificationType::CustomNotification);
+        notification_manager->close_notification_of_type(NotificationType::SMPlateFilamentAdvice);
 
         if (isGraphicMatch)
-            notification_manager->push_notification(into_u8(filamentMismatchGraphicBedMsg), 0);
+            notification_manager->push_notification(NotificationType::SMPlateFilamentAdvice, NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                    into_u8(filamentMismatchGraphicBedMsg));
         if (isPeiBedMatchNotPla)
-            notification_manager->push_notification(into_u8(filamentMismatchPeiBedMsgNotPla), 0);
+            notification_manager->push_notification(NotificationType::SMPlateFilamentAdvice, NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                    into_u8(filamentMismatchPeiBedMsgNotPla));
         notification_manager->set_slicing_progress_hidden();
     }
 
     if (nozzle_mismatch.has_mismatch)
-        notification_manager->push_notification(into_u8(filamentMismatchNozzleWarning), 0);
+        notification_manager->push_notification(NotificationType::SMPlateFilamentAdvice, NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                into_u8(filamentMismatchNozzleWarning));
 
     if (isPeiBedMatchTpu)
     {

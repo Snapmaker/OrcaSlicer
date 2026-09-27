@@ -15,7 +15,9 @@ using namespace Slic3r;
 using Catch::Matchers::WithinAbs;
 
 // Rectangle wall, one nozzle, 100 mm3 prime volume on a 50 mm wide tower at 0.2 mm layers: one
-// purge is 10 mm of depth. The flush matrix is off here; the shipped-default case covers it.
+// purge is 1094 mm of 0.5 mm line on 47.5 mm rows (the box less the wall and two ramming lines),
+// 24 whole rows of 0.5 mm = 12 mm of depth, as WipeTower2::set_toolchange() reserves it. The
+// flush matrix is off here; the shipped-default case covers it.
 // Built as PresetBundle::full_config builds the GUI's: apply() creates each enum as a
 // ConfigOptionEnumGeneric, where full_print_config() would clone the static defaults'
 // ConfigOptionEnum<T>. The estimate has to read either.
@@ -70,27 +72,69 @@ static double printed_brim(double configured, WipeTowerType type)
 
 TEST_CASE("A rectangle wall tower is sized by the purge volume", "[WipeTowerEstimate]") {
     const DynamicPrintConfig config = make_config();
-    // Three filaments purge twice per layer; a 5 mm object keeps the stability floor at 5 mm.
+    // Three filaments purge twice per layer: 2 x 24 rows of 0.5 mm plus the 0.5 mm wall; a 5 mm
+    // object keeps the stability floor at 5 mm.
     const WipeTowerFootprint fp = estimate(config, 3, 0.2, 5.);
     CHECK_THAT(fp.width, WithinAbs(50., 1e-9));
-    CHECK_THAT(fp.depth, WithinAbs(20., 1e-9));
+    CHECK_THAT(fp.depth, WithinAbs(24.5, 1e-4));
     CHECK_THAT(fp.height, WithinAbs(5., 1e-9));
     CHECK_THAT(fp.brim_width, WithinAbs(printed_brim(3., WipeTowerType::Type2), 1e-6));
-    // Thinner layers need more depth for the same volume.
-    CHECK_THAT(estimate(config, 3, 0.1, 5.).depth, WithinAbs(40., 1e-9));
+    // Thinner layers need more depth for the same volume: 2 x 44 rows at 0.1 mm.
+    CHECK_THAT(estimate(config, 3, 0.1, 5.).depth, WithinAbs(44.5, 1e-4));
+}
+
+// The estimate reserves exactly what WipeTower2::set_toolchange() plans for the same geometry:
+// each tool's own line width and row pitch, the old tool's ram band, whole rows.
+TEST_CASE("A Type2 tower reserves the planned depth of every tool change", "[WipeTowerEstimate]") {
+    DynamicPrintConfig config = make_config();
+    config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.2, 0.8}));
+    config.set_key_value("filament_map", new ConfigOptionInts({1, 2}));
+    config.set_key_value("filament_diameter", new ConfigOptionFloats({1.75, 1.75}));
+    config.set_key_value("filament_multitool_ramming", new ConfigOptionBools({false, false}));
+    config.set_key_value("filament_multitool_ramming_volume", new ConfigOptionFloats({10., 10.}));
+    config.set_key_value("filament_multitool_ramming_flow", new ConfigOptionFloats({10., 10.}));
+    // 0.2 -> 0.8: the 1.0 mm lines of the new tool on 48.5 mm rows (50 - the 1.0 mm wall - two
+    // 0.5 mm ramming lines of the old tool), 522 mm of line = 11 whole rows of 1.0 mm, plus the wall.
+    WipeTower2::ToolChangeGeometry g;
+    g.tower_width                      = 50.f;
+    g.widest_line_width                = 1.f;
+    g.layer_height                     = 0.2f;
+    g.old_line_width                   = 0.25f;
+    g.ramming_line_width_multiplicator = 2.f;
+    g.new_line_width                   = 1.f;
+    g.wipe_volume                      = 100.f;
+    const WipeTower2::ToolChangeDepth planned = WipeTower2::toolchange_depth(g);
+    CHECK_THAT(planned.wiping_depth, WithinAbs(11., 1e-4));
+    CHECK_THAT(planned.ramming_depth, WithinAbs(0., 1e-9));
+    const double without_ramming = estimate(config, 2, 0.2, 5.).depth;
+    CHECK_THAT(without_ramming, WithinAbs(planned.total() + 1., 1e-4));
+
+    // The old tool rams 10 mm3 as three 0.5 mm lines (109 mm of line on 48.5 mm rows): with the gap
+    // wall the purge restarts below the band, so the band adds its whole depth.
+    config.set_key_value("filament_multitool_ramming", new ConfigOptionBools({true, true}));
+    g.ramming             = true;
+    g.ramming_volume      = 10.f;
+    g.boundary_wipe_start = true;
+    const WipeTower2::ToolChangeDepth rammed = WipeTower2::toolchange_depth(g);
+    CHECK_THAT(rammed.ramming_depth, WithinAbs(1.5, 1e-4));
+    CHECK_THAT(rammed.wiping_depth, WithinAbs(11., 1e-4));
+    CHECK_THAT(estimate(config, 2, 0.2, 5.).depth - without_ramming, WithinAbs(1.5, 1e-4));
 }
 
 TEST_CASE("Each planner spaces its purge lines by its own option", "[WipeTowerEstimate]") {
     // Type2 reads wipe_tower_extra_spacing and Type1 prime_tower_infill_gap; neither sees the
     // other's key. Type2's extra flow cancels out of its depth.
     DynamicPrintConfig config = make_config();
+    // The extra flow only changes the row rounding: 10 rows of 1.25 mm (25.5) instead of 24 of 0.5 mm.
     config.set_key_value("wipe_tower_extra_flow", new ConfigOptionPercent(250.));
-    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(20., 1e-9));
+    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(25.5, 1e-4));
+    config.set_key_value("wipe_tower_extra_flow", new ConfigOptionPercent(100.));
+    // 150 % spacing: the same 24 rows per change, 0.75 mm apart.
     config.set_key_value("wipe_tower_extra_spacing", new ConfigOptionPercent(150.));
-    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(30., 1e-9));
+    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(36.5, 1e-4));
     const double type1_spaced = estimate(config, 3, 0.2, 5., WipeTowerType::Type1).depth;
     config.set_key_value("prime_tower_infill_gap", new ConfigOptionPercent(150.));
-    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(30., 1e-9));
+    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs(36.5, 1e-4));
     // Type1 stacks whole lines behind one 0.5 mm perimeter width, so only the stack scales.
     CHECK_THAT(estimate(config, 3, 0.2, 5., WipeTowerType::Type1).depth - 0.5, WithinAbs(1.5 * (type1_spaced - 0.5), 1e-6));
 }
@@ -221,18 +265,21 @@ TEST_CASE("Both wall types agree on whether there is a tower at all", "[WipeTowe
 
 TEST_CASE("A rib wall squares the tower and caps the rib width", "[WipeTowerEstimate]") {
     DynamicPrintConfig config = make_config("rib");
-    // sqrt(200 / 0.2) = 31.62 mm square, plus the 8 mm rib bulge along the diagonal.
-    const double body = std::sqrt(1000.);
+    // The 24.5 mm of planned depth on the 50 mm width square to sqrt(24.5 x 50) = 35 mm (whole 0.5
+    // mm lines, as WipeTower2::generate() rounds); replanned for 35 mm the two changes need 2 x 34
+    // rows plus the wall = 34.5 mm. The 8 mm rib bulges along the diagonal beyond the 35 mm side.
+    const double body = 35.;
     WipeTowerFootprint fp = estimate(config, 3, 0.2, 5.);
-    CHECK_THAT(fp.depth, WithinAbs(8. / std::sqrt(2.) + body, 1e-5));
+    CHECK_THAT(fp.depth, WithinAbs(8. / std::sqrt(2.) + body, 1e-4));
     CHECK_THAT(fp.width, WithinAbs(fp.depth, 1e-9));
     // The extra rib length runs along the diagonal and grows the footprint by its projection.
     config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(4.));
-    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs((8. + 4.) / std::sqrt(2.) + body, 1e-5));
-    // A tiny tower caps the rib width at half its depth: 5 mm body, 2.5 mm rib.
+    CHECK_THAT(estimate(config, 3, 0.2, 5.).depth, WithinAbs((8. + 4.) / std::sqrt(2.) + body, 1e-4));
+    // A tiny tower caps the rib width at half its depth: 5 mm3 on two filaments plans 1.5 mm, squared
+    // to 9 mm, replanned 9 rows of 0.5 mm plus the wall = 5 mm deep, 2.5 mm rib.
     config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(0.));
     config.set_key_value("prime_volume", new ConfigOptionFloat(5.));
-    CHECK_THAT(estimate(config, 2, 0.2, 5.).depth, WithinAbs(2.5 / std::sqrt(2.) + 5., 1e-5));
+    CHECK_THAT(estimate(config, 2, 0.2, 5.).depth, WithinAbs(2.5 / std::sqrt(2.) + 9., 1e-4));
 }
 
 TEST_CASE("Every wall and tower type is read the same from a preset and a static config", "[WipeTowerEstimate]") {
@@ -312,14 +359,18 @@ TEST_CASE("A Bambu Lab printer always gets the Type1 planner", "[WipeTowerEstima
     CHECK(resolve_wipe_tower_type(config) == WipeTowerType::Type2);
 }
 
-TEST_CASE("A dual nozzle purges every filament plus the filament change", "[WipeTowerEstimate]") {
+TEST_CASE("A second nozzle adds no Type2 purge: the layer's one change is planned as on one nozzle", "[WipeTowerEstimate]") {
+    // Two filaments follow each other once per layer whatever heads they are on, and WipeTower2
+    // purges the volume of that change alone: 24 rows of 0.5 mm plus the wall. The filament change
+    // length of a nozzle change is the Type1 planner's ramming (see the case above).
     DynamicPrintConfig config = make_config();
+    const double one_nozzle = estimate(config, 2, 0.2, 5.).depth;
+    CHECK_THAT(one_nozzle, WithinAbs(12.5, 1e-4));
     config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.4}));
+    config.set_key_value("filament_map", new ConfigOptionInts({1, 2}));
     config.set_key_value("filament_change_length", new ConfigOptionFloats({10., 10.}));
     config.set_key_value("filament_diameter", new ConfigOptionFloats({1.75, 1.75}));
-    // Two purges of 100 mm3 plus one 10 mm filament change: (200 + 10 * pi * 1.75^2 / 4) / (0.2 * 50).
-    const double change_volume = 10. * PI * 1.75 * 1.75 / 4.;
-    CHECK_THAT(estimate(config, 2, 0.2, 5.).depth, WithinAbs((200. + change_volume) / 10., 1e-9));
+    CHECK_THAT(estimate(config, 2, 0.2, 5.).depth, WithinAbs(one_nozzle, 1e-9));
 }
 
 TEST_CASE("The shipped defaults size the tower from the flush matrix", "[WipeTowerEstimate]") {

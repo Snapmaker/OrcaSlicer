@@ -54,6 +54,34 @@ public:
     // tower's tagged M109 can never disagree.
     static bool wait_for_temp_enabled(const PrintConfig& config);
 
+    // The depth one tool change reserves on the tower (set_toolchange()), from the geometry alone,
+    // so the pre-slice footprint estimate (WipeTowerEstimate) reserves what the tower will print.
+    struct ToolChangeGeometry
+    {
+        float tower_width                      = 0.f; // the box width
+        float widest_line_width                = 0.f; // the wall line, the widest tool's
+        float layer_height                     = 0.f;
+        float old_line_width                   = 0.f; // the ramming tool's line
+        float ramming_line_width_multiplicator = 1.f;
+        float ramming_step_multiplicator       = 1.f;
+        float ramming_volume                   = 0.f;
+        bool  ramming                          = false; // whether the unload rams at all
+        bool  boundary_wipe_start              = false; // the wipe restarts on a fresh row below the ram band
+        float new_line_width                   = 0.f;  // the purging tool's line and row pitch
+        float wipe_volume                      = 0.f;
+        float extra_flow                       = 1.f;
+        float extra_spacing_wipe               = 1.f; // row pitch factor of the purge (extra_flow on the first layer)
+        float extra_spacing_ramming            = 1.f;
+    };
+    struct ToolChangeDepth
+    {
+        float ramming_depth   = 0.f;
+        float first_wipe_line = 0.f;
+        float wiping_depth    = 0.f; // whole rows of the purging tool
+        float total() const { return ramming_depth + wiping_depth; }
+    };
+    static ToolChangeDepth toolchange_depth(const ToolChangeGeometry &geometry);
+
 	// x			-- x coordinates of wipe tower in mm ( left bottom corner )
 	// y			-- y coordinates of wipe tower in mm ( left bottom corner )
 	// width		-- width of wipe tower in mm ( default 60 mm - leave as it is )
@@ -202,6 +230,9 @@ public:
 		float               multitool_ramming_time = 0.f;
 		float               multitool_ramming_volume = 0.f;
 		float               filament_minimal_purge_on_wipe_tower = 0.f;
+        // Pressure advance the slicer sets for this filament (enable_pressure_advance), restored
+        // after the ramming override; negative when the firmware manages the value.
+        float               pressure_advance = -1.f;
         float               retract_length;
         float               retract_speed;
         float               tower_interface_pre_extrusion_dist = 0.f;
@@ -329,9 +360,10 @@ private:
 
     bool is_first_layer() const { return size_t(m_layer_info - m_plan.begin()) == m_first_layer_idx; }
 
-    // Purge row lattice of toolchange_Wipe(): row pitch and extrusion width.
-    float wipe_row_spacing(bool first_layer) const { return (first_layer ? m_extra_flow : m_extra_spacing_wipe) * m_perimeter_width; }
-    float wipe_line_width() const { return m_perimeter_width * m_extra_flow; }
+    // Purge row lattice of toolchange_Wipe() for the purging tool: row pitch and extrusion width. Both
+    // follow the tool's own line width, so a thin head's purge stays dense and the tower is sized for it.
+    float wipe_row_spacing(size_t tool, bool first_layer) const { return (first_layer ? m_extra_flow : m_extra_spacing_wipe) * tool_perimeter_width(tool); }
+    float wipe_line_width(size_t tool) const { return tool_perimeter_width(tool) * m_extra_flow; }
 
     // Whether toolchange_Unload() rams this (old) tool out.
     bool tool_ramming_enabled(size_t tool) const { return (m_semm && m_enable_filament_ramming) || m_filpar[tool].multitool_ramming; }
@@ -341,10 +373,10 @@ private:
     bool boundary_wipe_start_enabled(size_t tool) const { return tool_ramming_enabled(tool) && !m_semm && m_use_gap_wall; }
 
     // With a boundary wipe start the wipe begins on a fresh row below the quantized ram
-    // band. Y offset from the box start to that first wipe row.
-    float wipe_start_offset_after_ram(float ramming_depth, bool first_layer) const
+    // band. Y offset from the box start to that first wipe row of the new (purging) tool.
+    float wipe_start_offset_after_ram(float ramming_depth, size_t new_tool, bool first_layer) const
     {
-        return ramming_depth + wipe_row_spacing(first_layer) - (m_perimeter_width + wipe_line_width()) / 2.f;
+        return ramming_depth + wipe_row_spacing(new_tool, first_layer) - (m_perimeter_width + wipe_line_width(new_tool)) / 2.f;
     }
 
     // Tower-local entry position of a toolchange whose box starts depth_traversed into
@@ -352,11 +384,11 @@ private:
     // it a boundary wipe start (ramming_depth > 0 iff the unload rams). tool_change()
     // enters here and compute_wall_skip_points() cuts the wall gap here, so the routed
     // entry, the gap and the wipe scrub all share one opening.
-    Vec2f toolchange_entry_pos(float depth_traversed, float ramming_depth, bool first_layer) const
+    Vec2f toolchange_entry_pos(float depth_traversed, float ramming_depth, size_t new_tool, bool first_layer) const
     {
         Vec2f pos(m_perimeter_width / 2.f, m_perimeter_width / 2.f + depth_traversed);
         if (!m_semm && m_use_gap_wall && ramming_depth > 0.f)
-            pos.y() += wipe_start_offset_after_ram(ramming_depth, first_layer);
+            pos.y() += wipe_start_offset_after_ram(ramming_depth, new_tool, first_layer);
         return pos;
     }
 
@@ -432,12 +464,15 @@ private:
     float cumulative_toolchange_depth_before(const WipeTowerInfo::ToolChange *tool_change) const;
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
 
+	// new_tool: the tool that purges after this unload (the current tool for the final purge); its
+	// row lattice decides where the wipe starts below the ram band.
 	void toolchange_Unload(
 		WipeTowerWriter2 &writer,
 		const WipeTower::box_coordinates  &cleaning_box,
 		const std::string&	 	current_material,
 		const int 				old_temperature,
-		const int 				new_temperature);
+		const int 				new_temperature,
+		size_t                  new_tool);
 
 	void toolchange_Change(
 		WipeTowerWriter2 &writer,

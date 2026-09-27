@@ -2720,9 +2720,9 @@ void Tab::apply_config_from_cache()
     }
 
     if (was_applied) {
+        // update_dirty() sets the flag from the diff; the transferred values stay in the edited
+        // preset either way, and a forced is_dirty would show "(modified)" with an empty diff.
         update_dirty();
-        // 标记为 dirty 以保留修改
-        m_presets->get_edited_preset().is_dirty = true;
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<<boost::format(": exit, was_applied=%1%")%was_applied;
 }
@@ -5402,6 +5402,11 @@ void TabFilament::toggle_options()
 
     if (m_active_page->title() == L("Multimaterial")) {
         // Orca: hide specific settings for BBL printers
+        // Snapmaker Orca: only the single extruder multi material path reads the minimal purge; a
+        // toolchanger purges prime_volume per change and carries no colour over, so the line is hidden.
+        const bool toolchanger = !is_BBL_printer && !printer_cfg.opt_bool("single_extruder_multi_material") &&
+                                 printer_cfg.option<ConfigOptionFloats>("nozzle_diameter")->size() > 1;
+        toggle_line("filament_minimal_purge_on_wipe_tower", !is_BBL_printer && !toolchanger, 0);
         toggle_option("filament_minimal_purge_on_wipe_tower", !is_BBL_printer, 0);
         for (auto el : {"filament_loading_speed_start", "filament_loading_speed",
                         "filament_unloading_speed_start", "filament_unloading_speed", "filament_toolchange_delay", "filament_cooling_moves",
@@ -6958,10 +6963,11 @@ static bool confirm_exact_extruder_heights(wxWindow *parent, bool ask_experiment
     }
     if (ask_prime_tower) {
         MessageDialog dlg(parent,
-                          _L("With exact preferred layer heights the prime tower prints one slab per tool change and bridges "
-                             "the layers between them. Where tool changes fall on neighbouring layers of a very fine grid, "
-                             "those slabs can be thinner than the extruders' minimum layer height, outside the printer's "
-                             "limits.\n\nKeep exact preferred layer heights together with the prime tower?"),
+                          _L("The prime tower prints one slab per tool change on the object layer grid and bridges the "
+                             "layers between them, in either mode. A coarse extruder that purges on a slab of a fine grid "
+                             "extrudes below its minimum layer height there; the finer grid of exact preferred layer heights "
+                             "makes this more likely. Slicing reports the affected slabs per extruder.\n\nKeep exact "
+                             "preferred layer heights together with the prime tower?"),
                           _L("Prime tower layer height"), wxICON_WARNING | wxYES | wxNO);
         if (dlg.ShowModal() != wxID_YES)
             return false;
@@ -7763,6 +7769,14 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection *presets /*= nullptr
     if (presets == nullptr) presets = m_presets;
 
     UnsavedChangesDialog dlg(m_type, presets, new_printer_name, no_transfer);
+
+    // Snapmaker Orca: no dialog when it would list nothing (all dirty keys are internal strings).
+    // GUI_App::check_and_keep_current_preset_changes has the same guard.
+    if (dlg.getUpdateItemCount() == 0) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": no listable change in " << presets->get_edited_preset().name
+                                << ", dirty keys: " << boost::algorithm::join(presets->current_dirty_options(true), ", ");
+        return true;
+    }
 
     if (dlg.ShowModal() == wxID_CANCEL)
         return false;
@@ -8695,8 +8709,9 @@ void TabPrinter::update_nozzle_flow_lines(bool refresh_page)
 
     bool visibility_changed = false;
     for (size_t head = 0; head < m_extruders_count; ++head) {
-        const std::vector<int> declared = HighFlowNotices::declared_volume_types(*m_config, head);
-        const bool             visible  = declared.size() > 1;
+        // The same rule as the sidebar's nozzle tabs: shown for a Standard-only head as well when
+        // the printer model offers High Flow at another size (ruled out, disabled with the reason).
+        const bool visible = HighFlowNotices::flow_row_state(*m_config, head, size_offers) != HighFlowNotices::FlowRowState::Hidden;
         for (const PageShp &page : m_pages)
             if (Line *line = page ? page->get_line("nozzle_volume_type", int(head)) : nullptr; line != nullptr && line->toggle_visible != visible) {
                 line->toggle_visible = visible;

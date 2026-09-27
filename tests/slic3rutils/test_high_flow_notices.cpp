@@ -470,6 +470,18 @@ TEST_CASE("A Flow row is hidden, a choice, or ruled out by the nozzle size", "[H
         const DynamicPrintConfig printer = u1_like_printer({ 0.4, 0.4, 0.6, 0.4 });
         CHECK(HighFlowNotices::flow_row_state(printer, 7) == FlowRowState::Hidden);
     }
+    SECTION("a Standard-only head is ruled out when another size of the model offers High Flow") {
+        // The function answers the "any size" question (a size of 0) for tool heads 1 and 2 only.
+        const HighFlowNotices::SizeOffersHighFlow any_size = [](double nozzle_size, size_t head) { return nozzle_size <= 0. && head < 2; };
+        const DynamicPrintConfig standard_only = u1_like_printer({ 0.2, 0.2, 0.2 }, "Direct Drive Standard");
+        CHECK(HighFlowNotices::flow_row_state(standard_only, 0, any_size) == FlowRowState::RuledOut);
+        CHECK(HighFlowNotices::flow_row_state(standard_only, 1, any_size) == FlowRowState::RuledOut);
+        CHECK(HighFlowNotices::flow_row_state(standard_only, 2, any_size) == FlowRowState::Hidden);
+        CHECK(HighFlowNotices::flow_row_state(standard_only, 7, any_size) == FlowRowState::Hidden);
+        // The shown type stays Standard, and a function that knows no size at all hides the row.
+        CHECK(HighFlowNotices::shown_volume_type(standard_only, 0, int(nvtHighFlow), any_size) == int(nvtStandard));
+        CHECK(HighFlowNotices::flow_row_state(standard_only, 0, offers({ 0.4 })) == FlowRowState::Hidden);
+    }
 }
 
 TEST_CASE("A ruled out tool head shows the first declared type", "[HighFlow][FlowRow]")
@@ -687,4 +699,31 @@ TEST_CASE("A user preset that lowers a Standard value keeps the High Flow value 
     report = HighFlowNotices::evaluate({ int(nvtHighFlow) }, {}, false, true);
     CHECK(report.process_standard_only.empty());
     CHECK(report.standard_speeds_used == std::vector<size_t>{ 0 });
+}
+
+// A U1 tool head whose preset declares Standard only (0.2 / 0.6 / 0.8 mm) still shows its Flow row,
+// disabled at "Standard" with the reason line of its size, as the model offers High Flow on 0.4 mm.
+TEST_CASE("Every tool head of a U1 shows its Flow row", "[FirstRun][HighFlow][FlowRow][fr1_flow_row]")
+{
+    const auto loaded = load_snapmaker_bundle();
+    const HighFlowNotices::SizeOffersHighFlow shipped = HighFlowNotices::size_offers_high_flow(*loaded);
+
+    for (const char *name : { "Snapmaker U1 (0.2 nozzle)", "Snapmaker U1 (0.6 nozzle)", "Snapmaker U1 (0.8 nozzle)" }) {
+        REQUIRE(loaded->printers.select_preset_by_name(name, true));
+        const DynamicPrintConfig &printer = loaded->printers.get_edited_preset().config;
+        REQUIRE(printer.option<ConfigOptionFloats>("nozzle_diameter")->size() == 4);
+        for (size_t head = 0; head < 4; ++head) {
+            INFO(name << ", tool head " << head + 1);
+            CHECK(HighFlowNotices::flow_row_state(printer, head, shipped) == HighFlowNotices::FlowRowState::RuledOut);
+            CHECK_FALSE(HighFlowNotices::head_nozzle_size_label(printer, head).empty());
+            CHECK(HighFlowNotices::shown_volume_type(printer, head, int(nvtStandard), shipped) == int(nvtStandard));
+        }
+    }
+
+    REQUIRE(loaded->printers.select_preset_by_name("Snapmaker U1 (0.4 nozzle)", true));
+    const DynamicPrintConfig &printer = loaded->printers.get_edited_preset().config;
+    for (size_t head = 0; head < 4; ++head) {
+        INFO("Snapmaker U1 (0.4 nozzle), tool head " << head + 1);
+        CHECK(HighFlowNotices::flow_row_state(printer, head, shipped) == HighFlowNotices::FlowRowState::Choice);
+    }
 }

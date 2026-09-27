@@ -902,6 +902,20 @@ const std::vector<std::string>& promoted_filament_variant_keys();
 // the filament id itself (filament_self_index is 1 based). Reads only its arguments, so the G-code
 // filters beside the generator thread may call it.
 size_t first_filament_variant_column(const std::vector<int>& filament_self_index, size_t filament_id);
+// Snapmaker Orca: per-extruder machine keys adopted from the new size's printer preset when a
+// nozzle size changes (Sidebar::apply_nozzle_diameter): retraction, wipe, z hop, nozzle type and
+// nozzle volume. Machine limits do not depend on the nozzle and are not included.
+const std::vector<std::string>& nozzle_size_extruder_options();
+// The columns of the per-extruder option `key` in `config` that belong to tool head `extruder`
+// (0-based): the columns printer_extruder_id names when the option has one column per variant,
+// else the head's own column. Empty when the option is missing or not a vector.
+std::vector<size_t> extruder_option_columns(const DynamicPrintConfig &config, const std::string &key, size_t extruder);
+// Copies into `config`, for `extruder`, the `keys` on which `size_preset` (new size) and
+// `from_preset` (old size; `config` when nullptr) differ; columns match by printer_extruder_variant,
+// else the extruder's first column. Other keys keep their edits. Returns the changed keys, in order.
+std::vector<std::string> adopt_extruder_values_from_size_preset(DynamicPrintConfig &config, const DynamicPrintConfig &size_preset,
+                                                                const DynamicPrintConfig *from_preset, size_t extruder,
+                                                                const std::vector<std::string> &keys);
 extern std::set<std::string> printer_options_with_variant_1;
 extern std::set<std::string> printer_options_with_variant_2;
 extern std::set<std::string> empty_options;

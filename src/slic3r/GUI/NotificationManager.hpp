@@ -198,6 +198,10 @@ enum class NotificationType
     // Snapmaker Orca: the filament map of the current plate sends a filament to a tool head of
     // another size than the one its preset follows. One notification, persistent.
     SMNozzleFilamentPlateMap,
+    // Snapmaker Orca: plate/nozzle advice of Plater::notify_filament_compatibility_after_apply,
+    // re-issued after every apply. Own type, so closing it leaves other notifications alone;
+    // several texts at once (m_multiple_types).
+    SMPlateFilamentAdvice,
     NotificationTypeCount
 };
 
@@ -1098,7 +1102,8 @@ private:
         NotificationType::ValidateWarning,
         // A published file load can produce several distinct 3MF warnings (invalid values,
         // skipped settings, changed slots); let them stack rather than clobber each other.
-        NotificationType::BBL3MFInfo
+        NotificationType::BBL3MFInfo,
+        NotificationType::SMPlateFilamentAdvice
 	};
 	//prepared (basic) notifications
 	// non-static so its not loaded too early. If static, the translations wont load correctly.

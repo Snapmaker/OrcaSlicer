@@ -1590,17 +1590,25 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
                 // When founded option isn't the correct one.
                 // It can be for dirty_options: "default_print_profile", "printer_model", "printer_settings_id",
                 // because of they don't exist in the index
-                // Snapmaker: such keys of type bool/float/int/enum are still listed, as in the
-                // update_tree(type, config, from, to) overload; internal coString/coStrings keys are skipped.
-                const ConfigOption* o = old_config.option(opt_key);
-                if (!o) o = new_config.option(opt_key);
+                // Snapmaker: such bool/float/int/enum keys are still listed (as in the other update_tree()
+                // overload), coString/coStrings keys are skipped. A per extruder key ("nozzle_diameter#0")
+                // is looked up by its pure key and listed under its extruder's category.
+                const std::string pure_key = get_pure_opt_key(opt_key);
+                const ConfigOption* o = old_config.option(pure_key);
+                if (!o) o = new_config.option(pure_key);
                 if (!o || o->type() == coString || o->type() == coStrings)
                     continue;
-                const ConfigOptionDef* def = print_config_def.get(opt_key);
+                const ConfigOptionDef* def = print_config_def.get(pure_key);
                 const std::string def_label = def ? (def->full_label.empty() ? def->label : def->full_label) : std::string();
-                const wxString other_label = def_label.empty() ? from_u8(opt_key) : _L(def_label);
-                const wxString other_category = (def && !def->category.empty()) ?
+                const wxString other_label = def_label.empty() ? from_u8(pure_key) : _L(def_label);
+                wxString other_category = (def && !def->category.empty()) ?
                     Tab::translate_category(from_u8(def->category), type) : _L("Others");
+                if (pure_key != opt_key && type == Preset::TYPE_PRINTER && multiple_extruders &&
+                    printer_options_with_variant_2.count(pure_key) == 0) {
+                    const int extruder = std::atoi(opt_key.c_str() + pure_key.size() + 1);
+                    other_category = Tab::translate_category(wxString::Format("Extruder %d", extruder + 1), Preset::TYPE_PRINTER) +
+                                     ": " + other_category;
+                }
                 PresetItem pi = {type, opt_key,
                     other_category, wxEmptyString,
                     other_label,

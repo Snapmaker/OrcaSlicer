@@ -159,6 +159,51 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
 
     const double min_depth      = WipeTower::get_limit_depth_by_height(float(max_object_height));
     const float  perimeter_width = float(nozzle_diameter) * 1.25f; // Width_To_Nozzle_Ratio
+
+    // Type2 without the flush matrix: a layer's depth is the sum of what set_toolchange() reserves per
+    // change - the old tool's ram band and the new tool's whole purge rows, each at its own line width -
+    // plus the wall. One change per further filament and layer, in id order; nozzle changes add none.
+    const size_t planned_changes = filaments_cnt > 1 ? filaments_cnt - 1 : 0;
+    const bool   type2_planned   = !type1 && !semm_flush && planned_changes > 0;
+    const float widest_line   = float((nozzle_opt != nullptr && !nozzle_opt->values.empty()
+                                       ? *std::max_element(nozzle_opt->values.begin(), nozzle_opt->values.end()) : nozzle_diameter) * 1.25);
+    auto type2_depth = [&](double tower_width) {
+        const bool   semm      = opt_bool("single_extruder_multi_material");
+        const bool   gap_wall  = opt_bool("prime_tower_skip_points") && opt_bool("wipe_tower_wall_gap") &&
+                                 opt_enum("wipe_tower_wall_type", int(WipeTowerWallType::wtwRectangle)) != int(WipeTowerWallType::wtwCone);
+        const double extra_flow  = opt_float("wipe_tower_extra_flow") / 100.;
+        const auto  *self_index  = dynamic_cast<const ConfigOptionInts *>(option_of(config, "filament_self_index"));
+        const auto  *ramming_on  = dynamic_cast<const ConfigOptionBools *>(option_of(config, "filament_multitool_ramming"));
+        auto line_width_of = [&](unsigned int id) {
+            const int extruder = int_at("filament_map", id, int(id) + 1) - 1;
+            return float(float_at("nozzle_diameter", unsigned(std::max(extruder, 0)), nozzle_diameter) * 1.25);
+        };
+        double depth = 0.;
+        for (size_t k = 1; k <= planned_changes; ++k) {
+            const unsigned int old_id = filament_ids[k - 1];
+            const unsigned int new_id = filament_ids[k];
+            const size_t       column = self_index != nullptr ? first_filament_variant_column(self_index->values, old_id) : old_id;
+            const double       ramming_volume = float_at("filament_multitool_ramming_volume", unsigned(column), 0.);
+            const double       ramming_flow   = float_at("filament_multitool_ramming_flow", unsigned(column), 0.);
+            WipeTower2::ToolChangeGeometry g;
+            g.tower_width                      = float(tower_width);
+            g.widest_line_width                = widest_line;
+            g.layer_height                     = float(layer_height);
+            g.old_line_width                   = line_width_of(old_id);
+            g.ramming_line_width_multiplicator = float(opt_float("ramming_line_width_ratio"));
+            g.ramming                          = !semm && ramming_on != nullptr && !ramming_on->values.empty() &&
+                                                 ramming_on->get_at(column) && ramming_volume > 0. && ramming_flow > 0.;
+            g.ramming_volume                   = g.ramming ? float(ramming_volume) : 0.f;
+            g.boundary_wipe_start              = g.ramming && gap_wall;
+            g.new_line_width                   = line_width_of(new_id);
+            g.wipe_volume                      = float(prime_volume);
+            g.extra_flow                       = float(extra_flow);
+            g.extra_spacing_wipe               = float(extra_spacing * extra_flow);
+            g.extra_spacing_ramming            = float(extra_spacing);
+            depth += WipeTower2::toolchange_depth(g).total();
+        }
+        return depth + widest_line;
+    };
     // With nothing to purge, plan_tower_new sizes the tower for wrapping detection or the
     // stability minimum; WipeTower2 only knows the latter.
     const double idle_depth = (type1 && wrapping && !smooth_timelapse) ? WipeTower::get_wrapping_detection_depth() : min_depth;
@@ -168,7 +213,13 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
         double side;
         if (!purges.empty())
             side = WipeTower::estimate_rib_tower_bbox_side(purges, float(width), float(layer_height), float(nozzle_diameter), float(extra_spacing), float(rib_width), float(extra_rib_length), float(max_object_height));
-        else {
+        else if (type2_planned) {
+            // WipeTower2::generate() squares the rib tower: the width becomes sqrt(depth x width)
+            // (rounded up to the wall line), every change is planned again for it, and the depth
+            // follows from that plan.
+            const double square = std::ceil(std::sqrt(type2_depth(width) * width) / widest_line) * widest_line;
+            side = WipeTower::rib_footprint_side(float(square), float(type2_depth(square)), float(rib_width), float(extra_rib_length), float(max_object_height));
+        } else {
             // Type2 squares the tower from its purge volume; Type1 with no purge list (a lone
             // filament kept for timelapse or wrapping) sizes for the idle depth.
             const bool   has_purge = !type1 && volume > EPSILON;
@@ -182,6 +233,8 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
             // plan_tower_new stretches a short purge stack to the stability minimum behind its
             // leading perimeter width.
             depth = purges.empty() ? idle_depth : std::max(min_depth + perimeter_width, double(WipeTower::estimate_tower_blocks_depth(purges, float(width), float(layer_height), float(nozzle_diameter), float(extra_spacing))));
+        } else if (type2_planned) {
+            depth = std::max(min_depth, type2_depth(width));
         } else {
             depth = volume / (layer_height * width);
             // The flush volumes already hold the spacing between wipes.

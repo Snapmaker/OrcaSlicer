@@ -1461,3 +1461,70 @@ TEST_CASE("Repro: a printer sync sets sizes and flow types, and every slot takes
     SECTION("the modified system printer preset (\"* Snapmaker U1\")") { printer_sync(false); }
     SECTION("a user printer preset \"Snapmaker U1\" made from it") { printer_sync(true); }
 }
+
+// Snapmaker Orca: adopt_extruder_values_from_size_preset() on a nozzle size change. The U1 sizes
+// differ in retraction length (0.4 / 1.5 / 1.4 / 1.5), minimum travel (1 / 1 / 3 / 1), wipe distance
+// (2 / 2 / 1 / 2) and nozzle type (0.6: stainless steel); the 0.4 preset has two columns per head.
+TEST_CASE("A tool head adopts the per-extruder machine values of its size preset", "[NozzleFilament][SizeChange]")
+{
+    auto          bundle = load_snapmaker_bundle();
+    const Preset *p02    = bundle->printers.find_preset(U1_02, false);
+    const Preset *p04    = bundle->printers.find_preset(U1_04, false);
+    const Preset *p06    = bundle->printers.find_preset(U1_06, false);
+    REQUIRE(p02 != nullptr);
+    REQUIRE(p04 != nullptr);
+    REQUIRE(p06 != nullptr);
+    DynamicPrintConfig config = p04->config;
+    const auto values_of = [&config](const char *key) { return static_cast<const ConfigOptionVectorBase *>(config.option(key))->vserialize(); };
+
+    SECTION("0.4 to 0.2 on head 1: the retraction length of both variant columns of the head")
+    {
+        const std::vector<std::string> changed = adopt_extruder_values_from_size_preset(config, p02->config, &p04->config, 0, nozzle_size_extruder_options());
+        CHECK(changed == std::vector<std::string>{"retraction_length"});
+        CHECK(extruder_option_columns(config, "retraction_length", 0) == std::vector<size_t>{0, 1});
+        const std::vector<std::string> retraction = values_of("retraction_length");
+        REQUIRE(retraction.size() == 8);
+        CHECK(retraction[0] == "0.4");
+        CHECK(retraction[1] == "0.4");
+        for (size_t column = 2; column < 8; ++column)
+            CHECK(retraction[column] == "1.5");
+    }
+    SECTION("0.4 to 0.6 on head 3: retraction length, minimum travel, wipe distance and nozzle type")
+    {
+        const std::vector<std::string> changed = adopt_extruder_values_from_size_preset(config, p06->config, &p04->config, 2, nozzle_size_extruder_options());
+        CHECK(changed == std::vector<std::string>{"nozzle_type", "retraction_length", "retraction_minimum_travel", "wipe_distance"});
+        const std::vector<std::string> type = values_of("nozzle_type");
+        REQUIRE(type.size() == 8);
+        CHECK(type[4] == "stainless_steel");
+        CHECK(type[5] == "stainless_steel");
+        CHECK(type[0] == "hardened_steel");
+        CHECK(type[7] == "hardened_steel");
+        CHECK(values_of("retraction_length")[4] == "1.4");
+        CHECK(values_of("retraction_minimum_travel")[5] == "3");
+        CHECK(values_of("wipe_distance")[4] == "1");
+        CHECK(values_of("wipe_distance")[6] == "2");
+    }
+    SECTION("an edit of a value the two size presets agree on survives the size change")
+    {
+        auto *z_hop = config.option<ConfigOptionFloats>("z_hop");
+        REQUIRE(z_hop != nullptr);
+        z_hop->values[0] = 0.9;
+        const std::vector<std::string> changed = adopt_extruder_values_from_size_preset(config, p02->config, &p04->config, 0, nozzle_size_extruder_options());
+        CHECK(changed == std::vector<std::string>{"retraction_length"});
+        CHECK(values_of("z_hop")[0] == "0.9");
+    }
+    SECTION("without the preset of the previous size every value the size preset differs in is adopted")
+    {
+        auto *z_hop = config.option<ConfigOptionFloats>("z_hop");
+        REQUIRE(z_hop != nullptr);
+        z_hop->values[0] = 0.9;
+        const std::vector<std::string> changed = adopt_extruder_values_from_size_preset(config, p02->config, nullptr, 0, nozzle_size_extruder_options());
+        CHECK(changed == std::vector<std::string>{"retraction_length", "z_hop"});
+        CHECK(values_of("z_hop")[0] == "0.4");
+        CHECK(values_of("z_hop")[1] == "0.4");
+    }
+    SECTION("a tool head beyond the printer's heads adopts nothing")
+    {
+        CHECK(adopt_extruder_values_from_size_preset(config, p02->config, &p04->config, 4, nozzle_size_extruder_options()).empty());
+    }
+}

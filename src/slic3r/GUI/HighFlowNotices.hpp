@@ -139,11 +139,13 @@ bool ids_name_tool_heads(const std::vector<int> &ids);
 // The choice of a tool head can be changed: it declares no High Flow, or it may use it.
 bool flow_choice_usable(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
 
-// What the Flow row of a tool head looks like (sidebar nozzle tabs, "Nozzle flow" line).
+// What the Flow row of a tool head looks like (sidebar nozzle tabs, "Nozzle flow" line). A
+// head with one declared volume type shows it ruled out when another size of the model offers
+// High Flow (U1 0.2 / 0.6 / 0.8 mm: "Standard", disabled); without High Flow at any size, no row.
 enum class FlowRowState {
-    Hidden,     // one declared volume type: nothing to choose
+    Hidden,     // one declared volume type and no size of the model offers High Flow: nothing to choose
     Choice,     // several types, the stored one is shown and can be changed
-    RuledOut    // several types, but there are no High Flow values for the head's nozzle size: the first declared type is shown, disabled
+    RuledOut    // no High Flow values for the head's nozzle size: the first declared type is shown, disabled
 };
 FlowRowState flow_row_state(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
 

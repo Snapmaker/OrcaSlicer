@@ -875,12 +875,16 @@ void PublishSettingsDialog::build_option_model()
                 for (const ConfigOptionsGroupShp& optgroup : page->m_optgroups) {
                     // Allowlist on the untranslated optgroup title; the "Retraction when
                     // switching material" group is intentionally skipped.
-                    if (optgroup->title != "Retraction" && optgroup->title != "Z-Hop")
+                    // Snapmaker Orca: "Layer height limits" joins for its preferred layer height
+                    // (the only key of that group in the allowlist).
+                    if (optgroup->title != "Retraction" && optgroup->title != "Z-Hop" && optgroup->title != "Layer height limits")
                         continue;
                     const wxString subcategory = _(optgroup->title);
                     for (const auto& opt : optgroup->opt_map()) {
                         const std::string& opt_id   = opt.first;
                         const std::string& pure_key = opt.second.first;
+                        if (publishable_printer_keys().count(pure_key) == 0)
+                            continue;
                         // Rows are keyed by the full per-extruder "#N" opt_id so each extruder
                         // tab publishes its own value; GetPublishedKeys() emits the checked rows
                         // as-is.
@@ -2005,6 +2009,10 @@ std::vector<std::string> PublishSettingsDialog::GetPublishedKeys() const
             continue;
         out.push_back(row.key);
     }
+    // Snapmaker Orca: a preferred layer height travels with the mode it is read with (the
+    // experimental exact mode, a printer-wide flag without a row of its own).
+    if (std::any_of(out.begin(), out.end(), [](const std::string& key) { return publish_base_key(key) == "extruder_layer_height"; }))
+        out.push_back("extruder_layer_height_exact");
     return out;
 }
 

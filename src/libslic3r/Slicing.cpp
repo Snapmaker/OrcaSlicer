@@ -1089,18 +1089,29 @@ double conforming_object_layer_height(const std::vector<double> &heights, double
 }
 
 ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights, double base, const std::vector<double> &nozzles,
-                                                    double min_nozzle, bool exact, double tolerance)
+                                                    double min_nozzle, bool exact, double min_grid, double tolerance)
 {
     ExtruderLayerHeightPlan plan;
     auto snap = [](double v) { return std::round(v * 1e6) / 1e6; };
-    double finest = 0.;
-    for (double h : heights)
-        if (h > EPSILON && (finest <= 0. || h < finest))
-            finest = h;
+    double finest      = 0.;
+    bool   has_default = false;
+    for (double h : heights) {
+        if (h > EPSILON) {
+            if (finest <= 0. || h < finest)
+                finest = h;
+        } else
+            has_default = true;
+    }
     if (finest <= 0.) {
         plan.heights = std::move(heights);
         return plan;
     }
+    // Whether `h` lands within `tol` of a whole multiple of the grid `g` that fits the bore.
+    auto lands = [&snap](double h, double g, double bore, double tol) {
+        const long   n       = std::max(1L, std::lround(h / g));
+        const double snapped = snap(n * g);
+        return std::abs(snapped - h) <= tol + EPSILON && snapped <= bore + EPSILON;
+    };
     double grid = 0.;
     if (exact) {
         // Every entered value prints exactly: the grid is what they all are whole multiples of.
@@ -1108,31 +1119,30 @@ ExtruderLayerHeightPlan plan_extruder_layer_heights(std::vector<double> heights,
     } else {
         // The coarsest grid on which every entered value lands within the tolerance of a whole
         // multiple; candidates run from the finest value (or the smallest nozzle, if that is
-        // finer) down to a quarter of the finest value, never below 0.02 mm, in 5 um steps.
-        const double top   = min_nozzle > EPSILON ? std::min(finest, min_nozzle) : finest;
-        const double floor = std::max(0.02, snap(finest / 4.));
-        const long   q_top = std::lround(top / 0.005), q_floor = std::lround(floor / 0.005);
-        for (long q = q_top; q >= q_floor && grid <= 0.; -- q) {
-            const double g  = snap(q * 0.005);
-            bool         ok = true;
-            for (size_t j = 0; j < heights.size() && ok; ++ j) {
-                if (heights[j] <= EPSILON)
-                    continue;
-                const long   n       = std::max(1L, std::lround(heights[j] / g));
-                const double snapped = snap(n * g);
-                const double bore    = j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max();
-                ok = std::abs(snapped - heights[j]) <= tolerance + EPSILON && snapped <= bore + EPSILON;
+        // finer) down to the floor in 5 um steps. With Default extruders, `base` must land too,
+        // within max(tol, 0.1 * base). If nothing fits, the tolerance grows step by step until a
+        // candidate does; the grid never drops below the floor.
+        const double top       = min_nozzle > EPSILON ? std::min(finest, min_nozzle) : finest;
+        const double floor     = std::min(top, std::max(0.02, min_grid));
+        const bool   with_base = has_default && base > EPSILON;
+        const double step      = std::max(tolerance, 0.005);
+        const long   q_top     = std::lround(top / 0.005), q_floor = std::max(1L, std::lround(floor / 0.005));
+        for (double tol = step; grid <= 0. && tol <= top + EPSILON; tol += step) {
+            const double base_tol = std::max(tol, 0.1 * base);
+            for (long q = q_top; q >= q_floor && grid <= 0.; -- q) {
+                const double g  = snap(q * 0.005);
+                bool         ok = ! with_base || lands(base, g, std::numeric_limits<double>::max(), base_tol);
+                for (size_t j = 0; j < heights.size() && ok; ++ j)
+                    if (heights[j] > EPSILON)
+                        ok = lands(heights[j], g, j < nozzles.size() ? nozzles[j] : std::numeric_limits<double>::max(), tol);
+                if (ok)
+                    grid = g;
             }
-            if (ok)
-                grid = g;
         }
-        if (grid <= EPSILON) {
-            // Nothing coarse enough fits within the tolerance: the finest value is the grid (a
-            // grid that fine is what the user asked for), capped to the smallest nozzle.
-            grid = finest;
-            if (min_nozzle > EPSILON && grid > min_nozzle + EPSILON)
-                grid = conforming_object_layer_height(heights, base, false, min_nozzle);
-        }
+        if (grid <= EPSILON)
+            // Only a value above its own nozzle never lands (Print::validate refuses it); the
+            // coarsest candidate, the snapping below caps every value to its bore.
+            grid = top;
     }
     if (grid <= EPSILON) {
         plan.heights = std::move(heights);

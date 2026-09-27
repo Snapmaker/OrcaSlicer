@@ -5531,9 +5531,10 @@ void PrintConfigDef::init_fff_params()
                      "becomes the coarsest height all of them are whole multiples of, which can be very fine "
                      "(0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers "
                      "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
-                     "printing can take much longer; the prime tower prints one slab per tool change instead, but "
-                     "those slabs can fall below the extruders' minimum layer height. Off: the preferred heights "
-                     "are rounded to the coarsest grid on which they land within 0.01 mm.");
+                     "printing can take much longer. The prime tower prints one slab per tool change on that grid in "
+                     "either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum "
+                     "layer height there, which slicing reports. Off: the preferred heights are rounded to the "
+                     "coarsest grid on which they land within 0.01 mm.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -10086,6 +10087,108 @@ size_t first_filament_variant_column(const std::vector<int>& filament_self_index
         if (filament_self_index[column] == int(filament_id) + 1)
             return column;
     return filament_id;
+}
+
+const std::vector<std::string>& nozzle_size_extruder_options()
+{
+    static const std::vector<std::string> keys = {
+        "nozzle_type", "nozzle_volume",
+        "retraction_length", "retract_restart_extra", "retraction_minimum_travel", "retraction_speed", "deretraction_speed",
+        "retract_when_changing_layer", "wipe", "wipe_distance", "retract_before_wipe", "retract_after_wipe",
+        "z_hop", "z_hop_types", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce",
+        "retract_length_toolchange", "retract_restart_extra_toolchange", "long_retractions_when_cut", "retraction_distances_when_cut"
+    };
+    return keys;
+}
+
+// Tool head (0-based) and variant name of column `column` of a per-extruder option with `size` columns.
+static std::pair<size_t, std::string> extruder_column_owner(const DynamicPrintConfig &config, size_t column, size_t size)
+{
+    const auto *ids      = config.option<ConfigOptionInts>("printer_extruder_id");
+    const auto *variants = config.option<ConfigOptionStrings>("printer_extruder_variant");
+    if (ids != nullptr && ids->values.size() == size && column < size && ids->values[column] > 0)
+        return { size_t(ids->values[column] - 1),
+                 variants != nullptr && variants->values.size() == size ? variants->values[column] : std::string() };
+    return { column, std::string() };
+}
+
+std::vector<size_t> extruder_option_columns(const DynamicPrintConfig &config, const std::string &key, size_t extruder)
+{
+    std::vector<size_t> columns;
+    const ConfigOption *opt = config.option(key);
+    if (opt == nullptr || ! opt->is_vector())
+        return columns;
+    const size_t size = static_cast<const ConfigOptionVectorBase*>(opt)->size();
+    for (size_t column = 0; column < size; ++ column)
+        if (extruder_column_owner(config, column, size).first == extruder)
+            columns.push_back(column);
+    return columns;
+}
+
+std::vector<std::string> adopt_extruder_values_from_size_preset(DynamicPrintConfig &config, const DynamicPrintConfig &size_preset,
+                                                                const DynamicPrintConfig *from_preset, size_t extruder,
+                                                                const std::vector<std::string> &keys)
+{
+    std::vector<std::string> changed;
+    const auto  *nozzles = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const size_t heads   = nozzles == nullptr ? 0 : nozzles->values.size();
+    if (extruder >= heads)
+        return changed;
+    // The column of `preset`'s option `opt` that stands for the tool head with variant `variant`.
+    auto source_column = [extruder](const DynamicPrintConfig &preset, const ConfigOptionVectorBase &opt, const std::string &variant) {
+        const size_t size  = opt.size();
+        size_t       first = size_t(-1);
+        for (size_t column = 0; column < size; ++ column) {
+            const std::pair<size_t, std::string> owner = extruder_column_owner(preset, column, size);
+            if (owner.first != extruder)
+                continue;
+            if (owner.second == variant)
+                return column;
+            if (first == size_t(-1))
+                first = column;
+        }
+        return first != size_t(-1) ? first : std::min(extruder, size - 1);
+    };
+    for (const std::string &key : keys) {
+        ConfigOption       *dst_opt  = config.option(key);
+        const ConfigOption *src_opt  = size_preset.option(key);
+        const ConfigOption *from_opt = from_preset == nullptr ? nullptr : from_preset->option(key);
+        if (dst_opt == nullptr || src_opt == nullptr || ! dst_opt->is_vector() || src_opt->type() != dst_opt->type())
+            continue;
+        if (from_opt != nullptr && from_opt->type() != dst_opt->type())
+            from_opt = nullptr;
+        auto       *dst  = static_cast<ConfigOptionVectorBase*>(dst_opt);
+        const auto *src  = static_cast<const ConfigOptionVectorBase*>(src_opt);
+        const auto *from = static_cast<const ConfigOptionVectorBase*>(from_opt);
+        if (dst->size() == 0 || src->size() == 0 || (from != nullptr && from->size() == 0))
+            continue;
+        if (dst->size() < heads) {
+            // Extend with the last value (resize() repeats the first).
+            std::unique_ptr<ConfigOption> last(dst->clone());
+            const size_t                  old_size = dst->size();
+            for (size_t column = old_size; column < heads; ++ column)
+                dst->set_at(last.get(), column, old_size - 1);
+        }
+        const std::vector<std::string> src_values  = src->vserialize();
+        const std::vector<std::string> from_values = from == nullptr ? std::vector<std::string>() : from->vserialize();
+        bool         key_changed = false;
+        const size_t dst_size    = dst->size();
+        for (size_t column = 0; column < dst_size; ++ column) {
+            const std::pair<size_t, std::string> owner = extruder_column_owner(config, column, dst_size);
+            if (owner.first != extruder)
+                continue;
+            const size_t      src_column = source_column(size_preset, *src, owner.second);
+            const std::string current    = dst->vserialize()[column];
+            const std::string before     = from == nullptr ? current : from_values[source_column(*from_preset, *from, owner.second)];
+            if (src_values[src_column] == before || src_values[src_column] == current)
+                continue;
+            dst->set_at(src, column, src_column);
+            key_changed = true;
+        }
+        if (key_changed)
+            changed.push_back(key);
+    }
+    return changed;
 }
 
 // Parameters that are the same as the number of extruders

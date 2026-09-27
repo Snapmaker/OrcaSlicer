@@ -367,10 +367,30 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
     return any_inner && ! any_outer ? inner_wall_extruder_id(region) : wall_extruder_id(region);
 }
 
-static double calc_max_layer_height(const PrintConfig &config, double max_object_layer_height)
+// ORCA: per-extruder layer height. The heads (0-based, one per nozzle_diameter entry) some layer prints
+// with: the layers' filament ids, mixed slots resolved, like the tower maps a tool to its nozzle.
+// Empty before collect_extruders() ran.
+static std::vector<unsigned int> used_heads(const std::vector<LayerTools> &layer_tools, const PrintConfig &config)
+{
+    std::vector<unsigned int> heads;
+    const unsigned int        count = (unsigned int) config.nozzle_diameter.values.size();
+    for (const LayerTools &lt : layer_tools)
+        for (unsigned int filament : lt.extruders) {
+            const unsigned int head = lt.resolve_mixed(filament);
+            if (head < count && std::find(heads.begin(), heads.end(), head) == heads.end())
+                heads.push_back(head);
+        }
+    return heads;
+}
+
+// The height a tower slab may bridge: the smallest max_layer_height of `heads` (all heads when empty),
+// raised to the objects' layer height. ORCA: unused heads are skipped so they cannot cap the slabs.
+static double calc_max_layer_height(const PrintConfig &config, double max_object_layer_height, const std::vector<unsigned int> &heads)
 {
     double max_layer_height = std::numeric_limits<double>::max();
     for (size_t i = 0; i < config.nozzle_diameter.values.size(); ++ i) {
+        if (! heads.empty() && std::find(heads.begin(), heads.end(), (unsigned int) i) == heads.end())
+            continue;
         // max_layer_height may be shorter than the extruder count; get_at() clamps.
         double mlh = config.max_layer_height.get_at(i);
         if (mlh == 0.)
@@ -672,7 +692,7 @@ void ToolOrdering::sort_and_build_data(const Print& print, unsigned int first_ex
         if (object->slicing_parameters().raft_layers() > 0)
             raft_top_z = std::max(raft_top_z, object->slicing_parameters().raft_contact_top_z);
 
-    max_layer_height = calc_max_layer_height(print.config(), max_layer_height);
+    max_layer_height = calc_max_layer_height(print.config(), max_layer_height, used_heads(m_layer_tools, print.config()));
 
     this->fill_wipe_tower_partitions(print.config(), object_bottom_z, raft_top_z, max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
@@ -696,7 +716,7 @@ void ToolOrdering::sort_and_build_data(const PrintObject& object , unsigned int 
     this->enforce_mixed_component_order();
     m_sorted = true;
 
-    double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
+    double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height, used_heads(m_layer_tools, object.print()->config()));
 
     this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, object.slicing_parameters().raft_layers() > 0 ? object.slicing_parameters().raft_contact_top_z : 0., max_layer_height);
     if (this->insert_wipe_tower_extruder()) {
@@ -758,7 +778,7 @@ ToolOrdering::ToolOrdering(const PrintObject &object, unsigned int first_extrude
 
     this->collect_extruder_statistics(prime_multi_material);
 
-    double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
+    double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height, used_heads(m_layer_tools, object.print()->config()));
 
     this->mark_skirt_layers(object.print()->config(), max_layer_height);
 }
@@ -793,7 +813,6 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
             for (auto layer : object->layers())
                 this->tools_for_layer(layer->print_z).on_object_grid = true;
     }
-    max_layer_height = calc_max_layer_height(print.config(), max_layer_height);
 
 	// Use the extruder switches from Model::custom_gcode_per_print_z to override the extruder to print the object.
 	// Do it only if all the objects were configured to be printed with a single extruder.
@@ -827,6 +846,8 @@ ToolOrdering::ToolOrdering(const Print &print, unsigned int first_extruder, bool
 
     this->collect_extruder_statistics(prime_multi_material);
 
+    // The extruders of the layers are known now: the cap follows the heads in use.
+    max_layer_height = calc_max_layer_height(print.config(), max_layer_height, used_heads(m_layer_tools, print.config()));
     this->mark_skirt_layers(print.config(), max_layer_height);
 }
 

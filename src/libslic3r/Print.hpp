@@ -514,6 +514,10 @@ public:
     std::vector<unsigned int>   object_extruders() const;
 
     // ORCA: per-extruder layer height ("extruder_layer_height" printer option).
+    // Object layer index the run ladder of apply_extruder_layer_heights() counts from: the first
+    // printed layer keeps its own height for bed adhesion, runs may start at this one, and every
+    // region's run boundaries lie at multiples of its pitch above it.
+    static constexpr size_t first_combined_layer_idx = 1;
     // Preferred layer height (mm) of the extruder printing the given 1-based filament id; 0 when unset or not reliably resolvable.
     double       extruder_preferred_layer_height(unsigned int filament_id) const;
     // Object layers a region printing with the given 1-based filament id combines into one extrusion where its geometry allows it (1 = no combining).

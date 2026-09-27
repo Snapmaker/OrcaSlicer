@@ -614,6 +614,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "fan_speedup_overhangs",
         "fan_speedup_time",
         "filament_colour",
+        // Snapmaker Orca: the record of the process preset per tool head is written into the
+        // G-code header only; the composed values it stands for are diffed on their own keys.
+        "extruder_process_preset",
         "filament_multi_colors",
         "filament_colour_mode",
         "default_filament_colour",

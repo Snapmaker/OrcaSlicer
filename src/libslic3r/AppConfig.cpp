@@ -547,6 +547,12 @@ void AppConfig::set_defaults()
         set_bool("filament_follows_nozzle", true);
     }
 
+    // Snapmaker Orca: a tool head of another nozzle size prints with the speeds of a process preset
+    // for its size (PerHeadProcess.hpp). GUI_App copies it into PresetBundle::process_follows_nozzle.
+    if (get("process_follows_nozzle").empty()) {
+        set_bool("process_follows_nozzle", true);
+    }
+
     if (get("group_filament_presets").empty()) {
         set("group_filament_presets", "1"); // All "0" / None "1" / By Type "2" / By Vendor "3"
     }

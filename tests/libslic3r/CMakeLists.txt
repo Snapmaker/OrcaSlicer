@@ -38,6 +38,7 @@ add_executable(${_TEST_NAME}_tests
     test_minimum_spanning_tree.cpp
     test_nozzle_volume_type.cpp
     test_nozzle_filament_presets.cpp # Snapmaker Orca: filament presets follow the nozzle size of their tool head
+    test_per_head_process.cpp # Snapmaker Orca: process speeds follow the nozzle size of their tool head
     test_first_run_presets.cpp # Snapmaker Orca: the presets the setup wizard leaves for a Snapmaker U1
     test_snapmaker_flow_compat.cpp # Snapmaker Orca: older project layouts of the per flow type filament keys
     test_sswcp_protocol.cpp # Snapmaker Orca: device protocol conversion (upstream #807)

@@ -3380,6 +3380,15 @@ int CLI::run(int argc, char **argv)
         }
     }
 
+    // Snapmaker Orca: the project records the process preset each tool head printed with in the
+    // application (PerHeadProcess, "extruder_process_preset"). The command line composes no
+    // per-head process table yet: every tool head slices with the loaded process preset.
+    if (const auto *recorded = m_print_config.option<ConfigOptionStrings>("extruder_process_preset"); recorded != nullptr)
+        for (size_t head = 0; head < recorded->values.size(); ++head)
+            if (!recorded->values[head].empty())
+                BOOST_LOG_TRIVIAL(warning) << boost::format("extruder %1% printed with %2% in the application; the command line slices every extruder with the loaded process preset")
+                    % (head + 1) % recorded->values[head];
+
     //get nozzle_volume_type
     if(m_extra_config.has("nozzle_volume_type")) {
         auto opt_nozzle_volume_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(m_extra_config.option("nozzle_volume_type"));

@@ -23,7 +23,10 @@ include(Catch)
 set(CATCH_EXTRA_ARGS "" CACHE STRING "Extra arguments for catch2 test suites.") # Unknown if this still works and/or should be replaced with something else.
 
 add_library(test_common INTERFACE)
-target_compile_definitions(test_common INTERFACE TEST_DATA_DIR=R"\(${TEST_DATA_DIR}\)" PROFILES_DIR=R"\(${PROFILES_DIR}\)" CATCH_CONFIG_FAST_COMPILE)
+# Snapmaker Orca: the sources, for the tests that read them (the apply sites of the GUI).
+set(SLIC3R_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
+file(TO_NATIVE_PATH "${SLIC3R_SOURCE_DIR}" SLIC3R_SOURCE_DIR)
+target_compile_definitions(test_common INTERFACE TEST_DATA_DIR=R"\(${TEST_DATA_DIR}\)" PROFILES_DIR=R"\(${PROFILES_DIR}\)" SLIC3R_SOURCE_DIR=R"\(${SLIC3R_SOURCE_DIR}\)" CATCH_CONFIG_FAST_COMPILE)
 target_include_directories(test_common INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if (APPLE)

@@ -619,7 +619,9 @@ public:
     // If ! m_slicing_params.valid, recalculate.
     void                    update_slicing_parameters();
 
-    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index);
+    // `variant_index_composed`: the process table was composed per tool head (PerHeadProcess) and
+    // variant_index holds the selected preset's column per slot; see set_variant_override.
+    static PrintObjectConfig object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index, bool variant_index_composed = false);
 
 private:
     void make_perimeters();

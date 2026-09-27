@@ -239,6 +239,13 @@ public:
         float               tower_interface_pre_extrusion_length = 0.f;
         float               tower_ironing_area = 4.f;
         float               tower_interface_purge_length = 0.f;
+        // Snapmaker Orca: the speeds the tower prints this filament with, read in the slot of the
+        // tool head that holds it (set_extruder): travel and first layer from the print config,
+        // sparse infill and inner wall from the region config the constructor keeps per head.
+        float               travel_speed = 0.f;
+        float               infill_speed = 0.f;
+        float               perimeter_speed = 0.f;
+        float               first_layer_speed = 0.f;
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
@@ -287,11 +294,16 @@ private:
 	float  m_layer_height 		= 0.f; 	// Current layer height.
 	size_t m_max_color_changes 	= 0; 	// Maximum number of color changes per layer.
     int    m_old_temperature    = -1;   // To keep track of what was the last temp that we set (so we don't issue the command when not neccessary)
-    float  m_travel_speed       = 0.f;
-	float  m_infill_speed       = 0.f;
+    // Snapmaker Orca: the region config's sparse infill and inner wall speeds, one slot per tool
+    // head, read per filament by set_extruder(). The speeds themselves live in m_filpar and are
+    // read through the accessors below for the tool the tower prints with at that point.
+    std::vector<double> m_head_infill_speed;
+    std::vector<double> m_head_perimeter_speed;
     float  m_wipe_tower_max_purge_speed   = 90.f;
-	float  m_perimeter_speed    = 0.f;
-    float  m_first_layer_speed  = 0.f;
+    float  travel_speed() const      { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].travel_speed : 0.f; }
+    float  infill_speed() const      { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].infill_speed : 80.f; }
+    float  perimeter_speed() const   { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].perimeter_speed : 80.f; }
+    float  first_layer_speed() const { return m_current_tool < m_filpar.size() ? m_filpar[m_current_tool].first_layer_speed : 30.f; }
     size_t m_first_layer_idx    = size_t(-1);
     bool   m_enable_tower_interface_features = false;
     bool   m_enable_tower_interface_cooldown_during_tower = false;

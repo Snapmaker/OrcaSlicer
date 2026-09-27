@@ -3015,6 +3015,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{1});
 
+    // Snapmaker Orca: per extruder, the process preset it printed with at the last apply
+    // (PerHeadProcess::record_sources); empty for the selected preset, [] when none is derived.
+    // Project-level like filament_map; a load only compares it, never switches presets.
+    def = this->add("extruder_process_preset", coStrings);
+    def->label = L("Process preset per extruder");
+    def->tooltip = L("The process preset each extruder printed with when this project was last sliced. An extruder whose nozzle size "
+                     "differs from the printer preset prints with the speeds of a process preset made for its size.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");
     def->tooltip = L("Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range.");
@@ -6500,6 +6511,15 @@ void PrintConfigDef::init_fff_params()
     def->label = "Filament self index";
     def->tooltip = "Filament self index.";
     def->set_default_value(new ConfigOptionInts { 1 });
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per composed column (PerHeadProcess::compose), the selected preset's column that
+    // stands in for it; Print::apply maps object/part/layer-range overrides with it. Transient: never
+    // stored in a preset, project, CLI or G-code header. Internal use only, no translation.
+    def = this->add("print_extruder_source_column", coInts);
+    def->label = "Process source column per extruder";
+    def->tooltip = "Process source column per extruder.";
+    def->set_default_value(new ConfigOptionInts());
     def->cli = ConfigOptionDef::nocli;
 
     def = this->add("retract_restart_extra", coFloats);
@@ -11371,12 +11391,18 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
 }
 
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
-                          const std::vector<int> &variant_index, int stride)
+                          const std::vector<int> &variant_index, int stride, bool composed)
 {
     // A single-value object or region override applies to every nozzle variant.
     std::vector<int> indices = variant_index;
     if (source.size() == 1 && !source.is_nil(0))
         std::fill(indices.begin(), indices.end(), 0);
+    else if (composed && variant_index.size() > 1 && source.size() == variant_index.size())
+        // Snapmaker Orca: on a composed per-extruder table (PerHeadProcess) an override as wide as the
+        // slot table is already in the printer's column space (update_values_from_multi_to_multi_2),
+        // so it is read slot by slot instead of through the selected preset's columns.
+        for (size_t slot = 0; slot < indices.size(); ++slot)
+            indices[slot] = int(slot);
     target.set_to_index(&source, indices, stride);
 }
 
@@ -11640,6 +11666,12 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                 int slot_index = get_index_for_extruder(e_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
                 slot_extruders.push_back(slot_index < 0 ? 0 : e_index + 1);
                 if (slot_index < 0) {
+                    // Snapmaker Orca: a process table composed per tool head (PerHeadProcess) holds
+                    // one column per slot; a miss means a head reads another head's values.
+                    if (const auto *composed = this->option<ConfigOptionInts>("print_extruder_source_column");
+                        composed != nullptr && !composed->values.empty() && id_name == "print_extruder_id")
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the composed process table has no column for extruder %2%, extruder_type %3%, nozzle_volume_type %4%; its first column is used")
+                            % __LINE__ % (e_index + 1) % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
                     // Orca: This is expected during transient UI states (e.g. popup windows),
                     // fall back to 0 silently.
                     slot_index = 0;
@@ -12400,7 +12432,7 @@ void compute_filament_override_value(const std::string& opt_key, const ConfigOpt
 }
 
 
-void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride)
+void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride, bool composed)
 {
     if (variant_index.size() > 0) {
         const t_config_option_keys &keys = dest_config.keys();
@@ -12413,7 +12445,7 @@ void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPr
                 else {
                     ConfigOptionVectorBase* opt_vec_src = static_cast<ConfigOptionVectorBase*>(opt_src);
                     const ConfigOptionVectorBase* opt_vec_dest = static_cast<const ConfigOptionVectorBase*>(opt_dest);
-                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride);
+                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride, composed);
                 }
             }
         }

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-23 22:02+0200\n"
+"POT-Creation-Date: 2026-09-25 00:30+0200\n"
 "PO-Revision-Date: 2026-07-20 13:33+0200\n"
 "Last-Translator: Manu Goiogana <mgoiogana@gmail.com>\n"
 "Language-Team: \n"
@@ -8513,6 +8513,10 @@ msgid "Extruders without a preference keep their height: %1%."
 msgstr ""
 
 #, boost-format
+msgid "Extruders without a preference are set to the whole multiple of it nearest their height: %1%."
+msgstr ""
+
+#, boost-format
 msgid "The own layer height of some objects was set so that every extruder's layer height is a whole multiple of it: %1%."
 msgstr ""
 
@@ -8521,7 +8525,11 @@ msgid "An object layer height of %1% mm is not a divisor of the extruders' prefe
 msgstr ""
 
 #, boost-format
-msgid "Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the finest preferred layer height, as the object layer height (rounding the others to its whole multiples)?"
+msgid "Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest height every preferred layer height is a whole multiple of, as the object layer height?"
+msgstr ""
+
+#, boost-format
+msgid "Adjust the preferred layer heights to the nearest whole multiples (%1%), or use %2% mm, the coarsest height the preferred layer heights land on, as the object layer height (they are then rounded to %3%)?"
 msgstr ""
 
 msgid "Adjust extruder heights"
@@ -8540,11 +8548,19 @@ msgid "Nozzle %1%: layer height limits set to %2%-%3% mm, from \"%4%\"."
 msgstr ""
 
 #, boost-format
+msgid "Nozzle %1%: %2%, from \"%3%\"."
+msgstr ""
+
+#, boost-format
 msgid "This printer has no profile for a %1% mm nozzle. Please review the layer height limits of nozzle %2% in the printer settings."
 msgstr ""
 
 #, boost-format
 msgid "The preferred layer height of nozzle %1% no longer fits through it and was reset to Default."
+msgstr ""
+
+#, boost-format
+msgid "Filament %1% of nozzle %2% has no value of its own for some of these settings and prints with the printer's."
 msgstr ""
 
 msgid "Diameter of this nozzle. This printer has presets for one nozzle diameter only."
@@ -8565,6 +8581,22 @@ msgstr ""
 
 #, boost-format
 msgid "The layer height of extruder %1% cannot exceed its nozzle diameter (%2% mm)."
+msgstr ""
+
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2%..%4% its outer wall speed, sparse infill speed and acceleration
+#, boost-format
+msgid "Speeds: %1% (outer wall %2%, sparse %3%, accel %4%)"
+msgstr ""
+
+#, boost-format
+msgid "This tool head has another nozzle size than the printer preset. Its speeds, accelerations and jerk come from %1%, chosen for its preferred layer height. Every other setting comes from the selected process preset. Values you changed in the selected preset are kept: %2%."
+msgstr ""
+
+msgid "none"
+msgstr ""
+
+#, boost-format
+msgid "Its High Flow speeds are those of the selected process preset, as %1% has no High Flow values."
 msgstr ""
 
 #. TRN Line under the disabled Flow row of a nozzle tab in the sidebar. %1% is the nozzle size of this tool head, e.g. 0.2
@@ -9445,6 +9477,22 @@ msgstr ""
 msgid "Use the presets for these nozzles"
 msgstr ""
 
+msgid "the selected process preset"
+msgstr ""
+
+#, boost-format
+msgid "Tool head %1% (%2% mm) printed with %3% when this project was saved; it now prints with %4%."
+msgstr ""
+
+msgid "The preset is not installed."
+msgstr ""
+
+msgid "The option \"Process speeds follow the nozzle size\" is off."
+msgstr ""
+
+msgid "The nozzle size of the tool head changed."
+msgstr ""
+
 msgid "A filament is printed with the flow type of its tool head. Choose Standard or High Flow for every tool head in the Flow row of the nozzle tabs, then slice again."
 msgstr ""
 
@@ -9796,7 +9844,13 @@ msgstr ""
 msgid "Filament presets follow the nozzle size"
 msgstr ""
 
-msgid "If enabled, each filament gets the preset made for the size of the nozzle that prints it. User presets are kept unless exactly one counterpart for the other size exists. The process preset stays the one of the printer preset; line widths given in percent follow each nozzle."
+msgid "If enabled, each filament gets the preset made for the size of the nozzle that prints it. User presets are kept unless exactly one counterpart for the other size exists. Line widths given in percent follow each nozzle."
+msgstr ""
+
+msgid "Process speeds follow the nozzle size"
+msgstr ""
+
+msgid "If enabled, a tool head whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every tool head."
 msgstr ""
 
 msgid "Group user filament presets"
@@ -11717,6 +11771,19 @@ msgstr "Pluginaren konfigurazioa"
 msgid "Notes"
 msgstr "Oharrak"
 
+#. TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
+#, boost-format
+msgid "Tool head %1% prints with the speeds of %2%. The values below apply to tool heads %3%, and to every tool head for the settings you changed."
+msgstr ""
+
+#. TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
+#, boost-format
+msgid "Tool heads %1% print with the speeds of %2%. The values below apply to tool heads %3%, and to every tool head for the settings you changed."
+msgstr ""
+
+msgid "An override on a part applies on every tool head that prints it."
+msgstr ""
+
 msgid "Frequent"
 msgstr "Ohikoak"
 
@@ -12022,7 +12089,7 @@ msgid "Exact preferred layer heights"
 msgstr ""
 
 msgid ""
-"With exact preferred layer heights the prime tower prints one slab per tool change and bridges the layers between them. Where tool changes fall on neighbouring layers of a very fine grid, those slabs can be thinner than the extruders' minimum layer height, outside the printer's limits.\n"
+"The prime tower prints one slab per tool change on the object layer grid and bridges the layers between them, in either mode. A coarse extruder that purges on a slab of a fine grid extrudes below its minimum layer height there; the finer grid of exact preferred layer heights makes this more likely. Slicing reports the affected slabs per extruder.\n"
 "\n"
 "Keep exact preferred layer heights together with the prime tower?"
 msgstr ""
@@ -13014,6 +13081,9 @@ msgstr ""
 msgid "request to server update preset resource fail with body:%s,error:%s,status:%d"
 msgstr ""
 
+msgid "This profile package was built by an earlier Snapmaker Orca and does not carry every setting of this version; a package built for this version is needed."
+msgstr ""
+
 msgid "needed, but current version is "
 msgstr ""
 
@@ -13319,6 +13389,9 @@ msgstr "Geruza-altuera aldakorra ez da onartzen euskarri organikoekin."
 msgid "The wipe tower filament cannot be a mixed filament."
 msgstr "Purgatze-dorrearen filamentua ezin da filamentu nahasia izan."
 
+msgid "Different filament diameters may not work well when the prime tower is enabled: the tower purges every filament with one filament area."
+msgstr ""
+
 msgid "Different nozzle diameters and different filament diameters may not work well when the prime tower is enabled. It's very experimental, so please proceed with caution."
 msgstr "Pitaren diametro eta filamentu-diametro desberdinek agian ez dute ondo funtzionatuko purgatze-dorrea gaituta dagoenean. Oso esperimentala da; jarraitu kontuz."
 
@@ -13433,7 +13506,7 @@ msgid "The layer height of extruder %1% (%2% mm) is ignored for some object part
 msgstr ""
 
 #, boost-format
-msgid "The preferred layer height of extruder %1% (%2% mm) is not a whole multiple of the object layer height (%3% mm). Set the object layer height (for this object: its own layer height in the object settings) to %4% mm, the coarsest value every preferred layer height is a whole multiple of, or change the preferred layer heights."
+msgid "The preferred layer height of extruder %1% (%2% mm) is not a whole multiple of the object layer height (%3% mm). Set the object layer height (for this object: its own layer height in the object settings) to %4% mm, the object layer height derived from the preferred layer heights of the extruders in use, or change the preferred layer heights."
 msgstr ""
 
 #, boost-format
@@ -13482,6 +13555,9 @@ msgid "Per-extruder layer heights are not supported in spiral vase mode."
 msgstr ""
 
 msgid "Per-extruder layer heights are not supported together with interface shells."
+msgstr ""
+
+msgid "Per-extruder layer heights are not supported together with interlocking beams. Disable the interlocking beams or set the extruders' preferred layer heights to Default."
 msgstr ""
 
 msgid "Per-extruder layer heights are not supported together with variable layer height or height range modifiers that change the layer height. Remove them for this object or set the extruders' preferred layer heights to Default."
@@ -13574,6 +13650,14 @@ msgstr "G-codea esportatzen"
 
 msgid "Generating G-code"
 msgstr "G-codea sortzen"
+
+#, boost-format
+msgid "extruder %1%: %2% slabs down to %3% mm, minimum layer height %4% mm"
+msgstr ""
+
+#, boost-format
+msgid "The prime tower prints %1% slabs on the object layer grid, some thinner than the minimum layer height of an extruder that purges on them (%2%). Preferred layer heights that share a coarser grid, or fewer tool changes per layer, reduce them."
+msgstr ""
 
 msgid "Processing of the filename_format template failed."
 msgstr "filename_format txantiloia prozesatzeak huts egin du."
@@ -15167,6 +15251,12 @@ msgstr "Automatikoki parekatzeko"
 
 msgid "Nozzle Manual"
 msgstr "Pita eskuz"
+
+msgid "Process preset per tool head"
+msgstr ""
+
+msgid "The process preset each tool head printed with when this project was last sliced. A tool head whose nozzle size differs from the printer preset prints with the speeds of a process preset made for its size."
+msgstr ""
 
 msgid "Flush temperature"
 msgstr "Purgatze-tenperatura"
@@ -17008,7 +17098,7 @@ msgstr ""
 msgid "Layer height this extruder should print with, used for printers whose extruders have different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the finest preferred height down to a quarter of it), and the preferred heights are rounded to those multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. A part whose features all follow this extruder prints only on every Nth layer with correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it falls back to the object layer height. When the rest of the part cannot follow, walls assigned to this extruder still combine to this height on their own, full-density top surfaces absorb the solid layers below them, and sparse or 100% dense infill combines to this height where the part prints every layer; inside a part printing on every Nth layer the infill follows that part's layers. 0 means to use the object layer height."
 msgstr ""
 
-msgid "Experimental. Keep every preferred layer height exactly as entered: the object layer height becomes the coarsest height all of them are whole multiples of, which can be very fine (0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers and the areas that cannot follow an extruder's height print at that grid, so slicing and printing can take much longer; the prime tower prints one slab per tool change instead, but those slabs can fall below the extruders' minimum layer height. Off: the preferred heights are rounded to the coarsest grid on which they land within 0.01 mm."
+msgid "Experimental. Keep every preferred layer height exactly as entered: the object layer height becomes the coarsest height all of them are whole multiples of, which can be very fine (0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers and the areas that cannot follow an extruder's height print at that grid, so slicing and printing can take much longer. The prime tower prints one slab per tool change on that grid in either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum layer height there, which slicing reports. Off: the preferred heights are rounded to the coarsest grid on which they land within 0.01 mm."
 msgstr ""
 
 msgid "Min print speed"

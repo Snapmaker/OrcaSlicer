@@ -3607,6 +3607,7 @@ bool GUI_App::on_init_inner()
     preset_bundle = new PresetBundle();
     // Snapmaker Orca: before the presets and the selections are loaded, which read it.
     preset_bundle->nozzle_filament_enabled = app_config->get_bool("filament_follows_nozzle");
+    preset_bundle->process_follows_nozzle  = app_config->get_bool("process_follows_nozzle");
 
     // just checking for existence of Slic3r::data_dir is not enough : it may be an empty directory
     // supplied as argument to --datadir; in that case we should still run the wizard
@@ -9341,6 +9342,23 @@ void GUI_App::update_filament_follows_nozzle()
     // replaces a preset a slot may not hold at all.
     if (enabled && plater_ != nullptr)
         plater_->follow_nozzle_sizes_and_notify(Plater::FollowReason::Preference);
+}
+
+void GUI_App::update_process_follows_nozzle()
+{
+    if (preset_bundle == nullptr || app_config == nullptr)
+        return;
+    const bool enabled = app_config->get_bool("process_follows_nozzle");
+    if (preset_bundle->process_follows_nozzle == enabled)
+        return;
+    preset_bundle->process_follows_nozzle = enabled;
+    if (Tab *tab = get_tab(Preset::TYPE_PRINT); tab != nullptr)
+        tab->update_description_lines();
+    if (plater_ != nullptr) {
+        plater_->sidebar().update_nozzle_process_hints();
+        // The next apply composes or decomposes the process table.
+        plater_->schedule_background_process();
+    }
 }
 
 void GUI_App::open_preferences() { open_preferences(PreferencesTab::General); }

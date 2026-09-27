@@ -9321,6 +9321,9 @@ void GCode::apply_print_config(const PrintConfig& print_config)
 void GCode::append_full_config(const Print& print, std::string& str)
 {
     DynamicPrintConfig cfg = print.full_print_config();
+    // Snapmaker Orca: the transient record of a process table composed per tool head
+    // (PerHeadProcess) stays out of the header, so neither the G-code nor "Import Configs" sees it.
+    cfg.erase("print_extruder_source_column");
     { // correct the flush_volumes_matrix with flush_multiplier values
         // Fast purge mode uses flush_multiplier_fast; Default is inert.
         std::vector<double> temp_cfg_flush_multiplier = (print.config().prime_volume_mode == PrimeVolumeMode::pvmFast)

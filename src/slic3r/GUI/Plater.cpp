@@ -115,6 +115,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/NozzleFilamentPresets.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/ProjectSchemaVersion.hpp"
 #include "libslic3r/PublishSettings.hpp"
 #include "slic3r/Utils/CrealityPrint.hpp"
@@ -1446,6 +1447,7 @@ struct NozzlePage
     wxStaticText *flow_label { nullptr };
     wxStaticText *flow_hint { nullptr };            // the reason line of a ruled out Flow row; may be nullptr
     wxStaticText *layer_height_label { nullptr };
+    wxStaticText *process_hint { nullptr };         // the process preset the tool head prints with (PerHeadProcess); may be nullptr
     ComboBox     *diameter { nullptr };
     ComboBox     *flow { nullptr };
     TextInput    *layer_height { nullptr };
@@ -1497,6 +1499,12 @@ static void layout_nozzle_page(const NozzlePage &page)
         rows->Add(hint_row, 0, wxEXPAND | wxTOP, hint_gap);
     }
     add_row(page.layer_height_label, page.layer_height);
+    if (page.process_hint != nullptr) {
+        page.process_hint->SetMinSize({ panel->FromDIP(40), -1 });   // cut, never widen the page
+        auto *hint_row = new wxBoxSizer(wxHORIZONTAL);
+        hint_row->Add(page.process_hint, 1, wxLEFT, label_w + col_gap);
+        rows->Add(hint_row, 0, wxEXPAND | wxTOP, hint_gap);
+    }
     rows->AddSpacer(row_gap);
 
     auto *page_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -11894,6 +11902,12 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         });
         p->m_nozzle_layer_height_lists.push_back(lh_field);
 
+        // The process preset a tool head of another nozzle size prints with (PerHeadProcess), under
+        // the rows, in the style of the Flow hint. Text and visibility come from
+        // update_nozzle_process_hints().
+        page.process_hint = make_text(wxEmptyString, Label::Body_12, wxColour("#6B6B6B"));
+        page.process_hint->Hide();
+
         // Diameter -> Flow -> Preferred layer height; a hidden or disabled Flow combo is skipped.
         page.flow->MoveAfterInTabOrder(page.diameter);
         page.layer_height->MoveAfterInTabOrder(page.flow);
@@ -11977,10 +11991,73 @@ void Sidebar::update_nozzle_values()
     update_nozzle_flow_values();
 }
 
+// Snapmaker Orca: the Flow row offers a tool head's declared volume types; Standard, locked, without High Flow values.
+// Snapmaker Orca: the nozzle tab hint names the process preset (PerHeadProcess.hpp) an extruder of another
+// nozzle size prints with and its headline values; hidden when it uses the selected preset.
+void Sidebar::update_nozzle_process_hints()
+{
+    if (p->m_nozzle_notebook == nullptr)
+        return;
+    PresetBundle *bundle = wxGetApp().preset_bundle;
+    std::vector<PerHeadProcess::Source> sources;
+    if (bundle != nullptr && bundle->process_follows_nozzle)
+        sources = PerHeadProcess::head_sources(*bundle);
+
+    // The first value of a process key of a preset as a whole number ("120").
+    auto value_of = [](const Preset &preset, const char *key) {
+        const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(preset.config.option(key));
+        if (option == nullptr || option->empty())
+            return std::string("-");
+        return std::to_string(long(std::lround(std::atof(option->vserialize().front().c_str()))));
+    };
+
+    bool changed = false;
+    for (size_t i = 0; i < p->m_nozzle_pages.size(); ++i) {
+        wxStaticText *hint = p->m_nozzle_pages[i].process_hint;
+        if (hint == nullptr)
+            continue;
+        const PerHeadProcess::Source *source = i < sources.size() && sources[i].derived && sources[i].preset != nullptr ? &sources[i] : nullptr;
+        if (source == nullptr) {
+            if (hint->IsShown()) {
+                hint->Hide();
+                changed = true;
+            }
+            continue;
+        }
+        const Preset &preset = *source->preset;
+        // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2%..%4% its outer wall speed, sparse infill speed and acceleration
+        const wxString label = format_wxstr(_L("Speeds: %1% (outer wall %2%, sparse %3%, accel %4%)"), preset.alias.empty() ? preset.name : preset.alias,
+                                            value_of(preset, "outer_wall_speed"), value_of(preset, "sparse_infill_speed"), value_of(preset, "default_acceleration"));
+        std::string kept;
+        for (const std::string &key : source->kept_keys)
+            kept += (kept.empty() ? "" : ", ") + key;
+        wxString tip = format_wxstr(_L("This extruder has another nozzle size than the printer preset. Its speeds, accelerations and jerk come from %1%, "
+                                       "chosen for its preferred layer height. Every other setting comes from the selected process preset. Values you "
+                                       "changed in the selected preset are kept: %2%."),
+                                    preset.name, kept.empty() ? _L("none") : from_u8(kept));
+        if (!source->fallback_variants.empty())
+            tip += " " + format_wxstr(_L("Its High Flow speeds are those of the selected process preset, as %1% has no High Flow values."), preset.name);
+        if (hint->GetLabel() != label) {
+            hint->SetLabel(label);
+            changed = true;
+        }
+        hint->SetToolTip(tip);
+        if (!hint->IsShown()) {
+            hint->Show();
+            changed = true;
+        }
+    }
+    if (changed)
+        p->fit_nozzle_block();
+}
+
 void Sidebar::update_nozzle_flow_values()
 {
     if (p->m_nozzle_notebook == nullptr)
         return;
+
+    // The process hint of every page follows the same events as the Flow row.
+    update_nozzle_process_hints();
 
     const DynamicPrintConfig &printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
     const auto               *volume_types   = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
@@ -13700,6 +13777,9 @@ struct Plater::priv
     // The texts of the two persistent warnings as shown last (check_nozzle_filament_versions()).
     std::string         nozzle_filament_last_text;
     std::string         nozzle_filament_plate_last_text;
+    // Set when a project's config is loaded into the presets; the first apply that follows compares
+    // the loaded per tool head process record and clears it (check_per_head_process_record()).
+    bool                per_head_process_check_pending { false };
     int                 nozzle_follow_scopes { 0 };
     bool                nozzle_follow_scope_all { false };
     std::vector<size_t> nozzle_follow_scope_heads;
@@ -16200,6 +16280,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                         id = agent->to_orca_filament_id(id);
                             }
                             preset_bundle->load_config_model(filename.string(), std::move(config), file_version, &published_config);
+                            // Snapmaker Orca: the record of the process preset each tool head
+                            // printed with is compared once, at the first apply after this load.
+                            per_head_process_check_pending = true;
 
                             // Mixed-filament definitions that collided with one of the
                             // receiver's real slots were relocated during the preset load.
@@ -18336,11 +18419,21 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         if (f_volume_maps.empty()) {
             f_volume_maps = preset_bundle->get_default_nozzle_volume_types_for_filaments(f_maps);
         }
-        invalidated = background_process.apply(this->model, preset_bundle->full_config(false, f_maps, f_volume_maps));
+        // Snapmaker Orca: process speeds follow each extruder's nozzle size (PerHeadProcess.hpp).
+        // A loaded project's record is checked before it is rewritten; every GUI Print::apply
+        // uses full_config_for_print() so all sites apply the same config.
+        q->check_per_head_process_record();
+        PerHeadProcess::record_sources(*preset_bundle);
+        invalidated = background_process.apply(this->model, preset_bundle->full_config_for_print(false, f_maps, f_volume_maps));
         background_process.fff_print()->set_extruder_filament_info(get_extruder_filament_info());
     }
-    else
-        invalidated = background_process.apply(this->model, preset_bundle->full_config(false));
+    else {
+        q->check_per_head_process_record();
+        PerHeadProcess::record_sources(*preset_bundle);
+        invalidated = background_process.apply(this->model, preset_bundle->full_config_for_print(false));
+    }
+    if (sidebar != nullptr)
+        sidebar->update_nozzle_process_hints();
     notify_filament_compatibility_after_apply();
 
     if ((invalidated == Print::APPLY_STATUS_CHANGED) || (invalidated == Print::APPLY_STATUS_INVALIDATED))
@@ -23201,6 +23294,7 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     p->high_flow_last_error_text.clear();
     p->nozzle_filament_last_text.clear();
     p->nozzle_filament_plate_last_text.clear();
+    p->per_head_process_check_pending = false;
 
     if (!silent)
         wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
@@ -24974,7 +25068,7 @@ void Plater::load_gcode(const wxString& filename)
         on_bed_type_change(bed_type);
     }
 
-    current_print.apply(this->model(), wxGetApp().preset_bundle->full_config());
+    current_print.apply(this->model(), wxGetApp().preset_bundle->full_config_for_print(true));
 
     current_print.apply_config_for_render(processor.export_config_for_render());
 
@@ -30137,7 +30231,7 @@ void Plater::apply_background_progress()
     int plate_index = p->partplate_list.get_curr_plate_index();
     bool result_valid = part_plate->is_slice_result_valid();
     //always apply the current plate's print
-    Print::ApplyStatus invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+    Print::ApplyStatus invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config_for_print(true));
     p->notify_filament_compatibility_after_apply();
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, after apply, invalidated= %3%, previous result_valid %4% ") % __LINE__ % plate_index % invalidated % result_valid;
@@ -30180,7 +30274,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
         part_plate->get_print(&print, &gcode_result, NULL);
 
         //always apply the current plate's print
-        invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+        invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config_for_print(true));
         p->notify_filament_compatibility_after_apply();
         bool model_fits, validate_err;
 
@@ -30525,7 +30619,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
 
             part_plate->get_print(&print, &gcode_result, NULL);
             //always apply the current plate's print
-            invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config());
+            invalidated = p->background_process.apply(this->model(), wxGetApp().preset_bundle->full_config_for_print(true));
             p->notify_filament_compatibility_after_apply();
             bool model_fits, validate_err;
             validate_current_plate(model_fits, validate_err);
@@ -32176,6 +32270,39 @@ void Plater::check_nozzle_filament_versions()
             nm->push_notification(NotificationType::SMNozzleFilamentPlateMap, NotificationManager::NotificationLevel::WarningNotificationLevel, plate_text);
         p->nozzle_filament_plate_last_text = plate_text;
     }
+}
+
+void Plater::check_per_head_process_record()
+{
+    // Only the first apply after a project load compares the record: every later apply rewrites it
+    // from the current state, and an edit of a preferred layer height, a nozzle size, the process
+    // preset or the preference in the running session is not a difference to a saved project.
+    if (!p->per_head_process_check_pending)
+        return;
+    p->per_head_process_check_pending = false;
+    PresetBundle        *bundle = wxGetApp().preset_bundle;
+    NotificationManager *nm     = get_notification_manager();
+    if (bundle == nullptr || nm == nullptr)
+        return;
+    std::string text;
+    if (p->printer_technology == ptFFF && !only_gcode_mode()) {
+        const DynamicPrintConfig &printer_config = bundle->printers.get_edited_preset().config;
+        for (const PerHeadProcess::LoadReportEntry &entry : PerHeadProcess::load_report(*bundle)) {
+            const std::string now = entry.current.empty() ? _u8L("the selected process preset") : entry.current;
+            std::string line = GUI::format(_u8L("Extruder %1% (%2% mm) printed with %3% when this project was saved; it now prints with %4%."),
+                                           entry.head + 1, HighFlowNotices::head_nozzle_size_label(printer_config, entry.head), entry.recorded, now);
+            if (!entry.recorded_installed)
+                line += " " + _u8L("The preset is not installed.");
+            else if (entry.reason == PerHeadProcess::Reason::Off)
+                line += " " + _u8L("The option \"Process speeds follow the nozzle size\" is off.");
+            else if (entry.reason == PerHeadProcess::Reason::HomeSize || entry.reason == PerHeadProcess::Reason::NoMachinePreset)
+                line += " " + _u8L("The nozzle size of the extruder changed.");
+            text += (text.empty() ? "" : "\n") + line;
+        }
+    }
+    if (text.empty())
+        return;
+    nm->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, text);
 }
 
 Plater::NozzleFollowScope::NozzleFollowScope(Plater *plater) : m_plater(plater)

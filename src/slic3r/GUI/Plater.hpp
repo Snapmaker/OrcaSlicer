@@ -261,6 +261,9 @@ public:
     // Refresh the Flow row of the nozzle tabs: which types a tool head offers, whether it may be
     // changed, and the selected type (project config "nozzle_volume_type").
     void update_nozzle_flow_values();
+    // Snapmaker Orca: refresh the hint under the rows of the nozzle tabs that names the process
+    // preset a tool head of another nozzle size prints with (libslic3r/PerHeadProcess.hpp).
+    void update_nozzle_process_hints();
     // Shows the nozzle tab of tool head `head` (0-based) with the printer section unfolded.
     void select_nozzle_tab(size_t head);
 
@@ -1079,6 +1082,10 @@ public:
     // another nozzle size although one for their head exists (action: run the pass), and filaments the
     // plate map sends to a head of another size than the project map. Replaced only on text change.
     void check_nozzle_filament_versions();
+    // Snapmaker Orca: after a project load (pending flag set by load_files), notifies where the per-head
+    // process presets recorded in the project differ from the current ones; nothing is switched.
+    // See libslic3r/PerHeadProcess.hpp.
+    void check_per_head_process_record();
     // Both in one: a pass over all tool heads with its own notice, for the events that concern
     // every slot (slots removed, merged, renumbered or written without regard to the tool heads).
     void follow_nozzle_sizes_and_notify(FollowReason reason) { show_nozzle_follow_notice(follow_nozzle_sizes({}, reason)); }

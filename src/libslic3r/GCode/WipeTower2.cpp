@@ -1095,9 +1095,8 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_bridging(float(config.wipe_tower_bridging)),
     m_sparse_layers_skipped(wipe_tower_sparse_layers_skipped(config)),
     m_gcode_flavor(config.gcode_flavor),
-    m_travel_speed(config.travel_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool))),
-    m_infill_speed(default_region_config.sparse_infill_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool))),
-    m_perimeter_speed(default_region_config.inner_wall_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool))),
+    m_head_infill_speed(default_region_config.sparse_infill_speed.values),
+    m_head_perimeter_speed(default_region_config.inner_wall_speed.values),
     m_current_tool(initial_tool),
     wipe_volumes(wiping_matrix), m_wipe_tower_max_purge_speed(float(config.wipe_tower_max_purge_speed)),
     m_change_pressure(config.enable_change_pressure_when_wiping),
@@ -1113,19 +1112,8 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_enable_tower_interface_cooldown_during_tower(config.enable_tower_interface_cooldown_during_tower.value),
     m_wait_for_temp_on_wipe_tower(wait_for_temp_enabled(config))
 {
-    // Read absolute value of first layer speed, if given as percentage,
-    // it is taken over following default. Speeds from config are not
-    // easily accessible here.
-    const float default_speed = 60.f;
-    m_first_layer_speed = config.initial_layer_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool));
-    if (m_first_layer_speed == 0.f) // just to make sure autospeed doesn't break it.
-        m_first_layer_speed = default_speed / 2.f;
-
-    // Autospeed may be used...
-    if (m_infill_speed == 0.f)
-        m_infill_speed = 80.f;
-    if (m_perimeter_speed == 0.f)
-        m_perimeter_speed = 80.f;
+    // The travel, first layer, infill and perimeter speeds are read per filament in set_extruder(),
+    // in the slot of the tool head that holds it.
 
     // If this is a single extruder MM printer, we will use all the SE-specific config values.
     // Otherwise, the defaults will be used to turn off the SE stuff.
@@ -1178,6 +1166,24 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     // The purge and ramming values of a filament hold one value per filament variant column.
     const size_t variant_column = first_filament_variant_column(config.filament_self_index.values, idx);
     m_filpar[idx].material = config.filament_type.get_at(idx);
+    {
+        // Snapmaker Orca: use the speeds of the tool head holding this filament, not the initial tool's.
+        // 0 (autospeed) falls back to the tower defaults: 30 mm/s first layer, 80 mm/s above.
+        const size_t head     = get_extruder_index(config, (unsigned int)idx);
+        auto         value_at = [](const std::vector<double> &values, size_t i) {
+            return values.empty() ? 0.f : float(values[i < values.size() ? i : 0]);
+        };
+        m_filpar[idx].travel_speed      = float(config.travel_speed.get_at(head));
+        m_filpar[idx].first_layer_speed = float(config.initial_layer_speed.get_at(head));
+        if (m_filpar[idx].first_layer_speed == 0.f)
+            m_filpar[idx].first_layer_speed = 30.f;
+        m_filpar[idx].infill_speed = value_at(m_head_infill_speed, head);
+        if (m_filpar[idx].infill_speed == 0.f)
+            m_filpar[idx].infill_speed = 80.f;
+        m_filpar[idx].perimeter_speed = value_at(m_head_perimeter_speed, head);
+        if (m_filpar[idx].perimeter_speed == 0.f)
+            m_filpar[idx].perimeter_speed = 80.f;
+    }
     if (m_wipe_tower_filament > 0)
         m_filpar[idx].is_soluble = (idx != size_t(m_wipe_tower_filament - 1));
     else
@@ -1351,7 +1357,7 @@ std::vector<WipeTower::ToolChangeResult> WipeTower2::prime(
             if (m_set_extruder_trimpot)
                 writer.set_extruder_trimpot(550);
             writer.speed_override_restore()
-                .feedrate(m_travel_speed * 60.f)
+                .feedrate(travel_speed() * 60.f)
                 .flush_planner_queue()
                 .reset_extruder()
                 .append("; CP PRIMING END\n"
@@ -1489,7 +1495,7 @@ WipeTower::ToolChangeResult WipeTower2::emit_planned_tool_change(const WipeTower
     if (m_set_extruder_trimpot)
         writer.set_extruder_trimpot(550); // Reset the extruder current to a normal value.
     writer.speed_override_restore();
-    writer.feedrate(m_travel_speed * 60.f)
+    writer.feedrate(travel_speed() * 60.f)
         .flush_planner_queue()
         .reset_extruder()
         .append("; CP TOOLCHANGE END\n"
@@ -1584,7 +1590,7 @@ WipeTower::ToolChangeResult WipeTower2::local_z_tool_change(size_t new_tool,
     if (m_set_extruder_trimpot)
         writer.set_extruder_trimpot(550);
     writer.speed_override_restore();
-    writer.feedrate(m_travel_speed * 60.f)
+    writer.feedrate(travel_speed() * 60.f)
         .flush_planner_queue()
         .reset_extruder()
         .append("; CP TOOLCHANGE END\n"
@@ -1811,11 +1817,11 @@ void WipeTower2::toolchange_Unload(WipeTowerWriter2&                 writer,
                     float cent = writer.x();
                     writer.load_move_x_advanced(stamping_turning_point, (stamping_dist_e - 5),
                                                 m_filpar[m_current_tool].filament_stamping_loading_speed, 200);
-                    writer.load_move_x_advanced(cent, 5, m_filpar[m_current_tool].filament_stamping_loading_speed, m_travel_speed);
+                    writer.load_move_x_advanced(cent, 5, m_filpar[m_current_tool].filament_stamping_loading_speed, travel_speed());
                     writer.travel(cent, writer.y());
                 } else
                     writer.load_move_x_advanced_there_and_back(stamping_turning_point, stamping_dist_e,
-                                                               m_filpar[m_current_tool].filament_stamping_loading_speed, m_travel_speed);
+                                                               m_filpar[m_current_tool].filament_stamping_loading_speed, travel_speed());
 
                 // Retract while the print head is stationary, so if there is a blob, it is not dragged along.
                 writer.retract(stamping_dist_e, m_filpar[m_current_tool].unloading_speed * 60.f);
@@ -1973,7 +1979,7 @@ void WipeTower2::toolchange_Change(
         }
         if (have_park) {
             const Vec2f stop = writer.rotated(Vec2f(park_x, writer.y()));
-            writer.feedrate(m_travel_speed * 60.f)
+            writer.feedrate(travel_speed() * 60.f)
                   .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(stop.x())
                                      +  " Y"  + Slic3r::float_to_string_decimal_point(stop.y())
                                      + never_skip_tag() + "\n");
@@ -1986,7 +1992,7 @@ void WipeTower2::toolchange_Change(
     // postprocessor that we absolutely want to have this in the gcode, even if it thought it is the same as before.
     Vec2f current_pos = writer.pos_rotated();
     writer
-        .feedrate(m_travel_speed * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
+        .feedrate(travel_speed() * 60.f) // see https://github.com/prusa3d/PrusaSlicer/issues/5483
         .append(std::string("G1 X") + Slic3r::float_to_string_decimal_point(current_pos.x()) + " Y" +
             Slic3r::float_to_string_decimal_point(current_pos.y()) + never_skip_tag() + "\n");
 
@@ -2063,8 +2069,8 @@ void WipeTower2::toolchange_Wipe(
 
     // If spare layers are excluded->if 1 or less toolchange has been done, it must be sill the first layer, too.So slow down.
     const float target_speed = is_first_layer() || (m_num_tool_changes <= 1 && m_sparse_layers_skipped) ?
-                                   m_first_layer_speed * 60.f :
-                                   std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
+                                   first_layer_speed() * 60.f :
+                                   std::min(m_wipe_tower_max_purge_speed * 60.f, infill_speed() * 60.f);
     float       wipe_speed   = 0.33f * target_speed;
 
     // if there is less than 2.5*line_width to the edge, advance straightaway (there is likely a blob anyway)
@@ -2169,7 +2175,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     // Slow down on the 1st layer.
     // If spare layers are excluded -> if 1 or less toolchange has been done, it must be still the first layer, too. So slow down.
     bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_sparse_layers_skipped);
-    float feedrate      = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
+    float feedrate      = first_layer ? first_layer_speed() * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, infill_speed() * 60.f);
     // Orca: after an interface layer, slow the sparse fill down so it bonds to the interface surface.
     if (m_enable_tower_interface_features && m_prev_layer_had_interface)
         feedrate = std::min(feedrate, 20.f * 60.f);
@@ -2248,7 +2254,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
     // Snapmaker: the brim (and the cone wall infill) is laid by the finishing tool, so the loops
     // sit one of its line widths apart; with the widest nozzle's pitch a 0.2 mm head left gaps.
     const float spacing = tool_perimeter_width(m_current_tool) - m_layer_height * float(1. - M_PI_4);
-    feedrate = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_perimeter_speed * 60.f);
+    feedrate = first_layer ? first_layer_speed() * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, perimeter_speed() * 60.f);
 
     Polygon poly;
     if (m_wall_type == (int) wtwCone) {

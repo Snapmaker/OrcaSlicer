@@ -920,12 +920,13 @@ extern std::set<std::string> printer_options_with_variant_1;
 extern std::set<std::string> printer_options_with_variant_2;
 extern std::set<std::string> empty_options;
 
+// `composed`: the variant table was composed per tool head (PerHeadProcess), see the definition.
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
-                          const std::vector<int> &variant_index, int stride = 1);
+                          const std::vector<int> &variant_index, int stride = 1, bool composed = false);
 
 extern std::set<std::string> filament_dev_options;
 
-extern void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride = 1);
+extern void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride = 1, bool composed = false);
 extern void compute_filament_override_value(const std::string& opt_key, const ConfigOption *opt_old_machine, const ConfigOption *opt_new_machine, const ConfigOption *opt_new_filament, const DynamicPrintConfig& new_full_config,
     t_config_option_keys& diff_keys, DynamicPrintConfig& filament_overrides, std::vector<int>& f_map_indices);
 
@@ -1629,6 +1630,10 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionInts,                required_nozzle_HRC))
     ((ConfigOptionEnum<FilamentMapMode>, filament_map_mode))
     ((ConfigOptionInts,                filament_map))
+    // Snapmaker Orca: the process preset each tool head printed with when the plate was last
+    // applied, empty for a head that prints with the selected preset (libslic3r/PerHeadProcess.hpp).
+    // A project option like filament_map.
+    ((ConfigOptionStrings,             extruder_process_preset))
     ((ConfigOptionInts,                filament_volume_map))
     ((ConfigOptionInts,                filament_nozzle_map))
     ((ConfigOptionInts,                filament_map_2)) //used for multi nozzle, map filament to the index identified by extruder+nozzle_volume_type

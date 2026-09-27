@@ -1182,6 +1182,9 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxString too
         if (param == "filament_follows_nozzle")
             wxGetApp().update_filament_follows_nozzle();
 
+        if (param == "process_follows_nozzle")
+            wxGetApp().update_process_follows_nozzle();
+
         if (param == "use_printer_agents")
         {
             // Rebuild the Device tab so the native/web-UI choice reflects the new flag
@@ -1786,10 +1789,18 @@ void PreferencesDialog::create_items()
     // Snapmaker Orca: libslic3r/NozzleFilamentPresets.hpp. The handler of the checkbox hands the new value to the preset bundle.
     auto item_filament_follows_nozzle = create_item_checkbox(_L("Filament presets follow the nozzle size"),
         _L("If enabled, each filament gets the preset made for the size of the nozzle that prints it. User presets are kept unless exactly "
-           "one counterpart for the other size exists. The process preset stays the one of the printer preset; line widths given in percent "
-           "follow each nozzle."),
+           "one counterpart for the other size exists. Line widths given in percent follow each nozzle."),
         "filament_follows_nozzle");
     g_sizer->Add(item_filament_follows_nozzle);
+
+    // Snapmaker Orca: libslic3r/PerHeadProcess.hpp. The handler of the checkbox hands the new value to the preset bundle.
+    auto item_process_follows_nozzle = create_item_checkbox(_L("Process speeds follow the nozzle size"),
+        _L("If enabled, an extruder whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a "
+           "process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, "
+           "walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every "
+           "extruder."),
+        "process_follows_nozzle");
+    g_sizer->Add(item_process_follows_nozzle);
 
     auto item_filament_preset_grouping = create_item_combobox(_L("Group user filament presets"), _L("Group user filament presets based on selection"),
         "group_filament_presets", {_L("All"), _L("None"), _L("By type"), _L("By vendor")}, [](wxString value) {wxGetApp().plater()->sidebar().update_presets(Preset::TYPE_FILAMENT);});

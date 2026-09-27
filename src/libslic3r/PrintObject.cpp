@@ -3903,13 +3903,13 @@ static void clamp_feature_filament_to_valid(ConfigOptionInt &opt, size_t num_ext
         opt.value = 1;
 }
 
-PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index)
+PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObjectConfig &default_object_config, const ModelObject &object, size_t num_extruders, std::vector<int>& variant_index, bool variant_index_composed)
 {
     PrintObjectConfig config = default_object_config;
     {
         DynamicPrintConfig src_normalized(object.config.get());
         src_normalized.normalize_fdm();
-        update_static_print_config_from_dynamic(config, src_normalized, variant_index, print_options_with_variant, 1);
+        update_static_print_config_from_dynamic(config, src_normalized, variant_index, print_options_with_variant, 1, variant_index_composed);
     }
     // Clamp invalid extruders to the default extruder (with index 1).
     clamp_exturder_to_default(config.support_filament,           num_extruders);
@@ -3937,7 +3937,7 @@ struct FeatureFilamentOverrideMask
     bool inner_wall_filament_id     = false;
 };
 
-static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in, FeatureFilamentOverrideMask &feature_overrides, int &base_extruder_through_scopes, std::vector<int>& variant_index)
+static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in, FeatureFilamentOverrideMask &feature_overrides, int &base_extruder_through_scopes, std::vector<int>& variant_index, bool variant_index_composed)
 {
     // 1) Explicit feature filament values take precedence over base extruder fallback.
     auto *opt_extruder = in.opt<ConfigOptionInt>(key_extruder);
@@ -3996,7 +3996,7 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
                         else {
                             ConfigOptionVectorBase* opt_vec_src = static_cast<ConfigOptionVectorBase*>(my_opt);
                             const ConfigOptionVectorBase* opt_vec_dest = static_cast<const ConfigOptionVectorBase*>(it->second.get());
-                            set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index);
+                            set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, 1, variant_index_composed);
                         }
                     }
                 }
@@ -4019,7 +4019,7 @@ static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPr
     }
 }
 
-PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index)
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders, std::vector<int>& variant_index, bool variant_index_composed = false)
 {
     PrintRegionConfig config = default_or_parent_region_config;
     FeatureFilamentOverrideMask feature_overrides;
@@ -4044,17 +4044,17 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
     if (volume.is_model_part()) {
         // default_or_parent_region_config contains the Print's PrintRegionConfig.
         // Override with ModelObject's PrintRegionConfig values.
-        apply_to_print_region_config(config, volume.get_object()->config.get(), feature_overrides, base_extruder_through_scopes, variant_index);
+        apply_to_print_region_config(config, volume.get_object()->config.get(), feature_overrides, base_extruder_through_scopes, variant_index, variant_index_composed);
     } else {
         // default_or_parent_region_config contains parent PrintRegion config, which already contains ModelVolume's config.
     }
-    apply_to_print_region_config(config, volume.config.get(), feature_overrides, base_extruder_through_scopes, variant_index);
+    apply_to_print_region_config(config, volume.config.get(), feature_overrides, base_extruder_through_scopes, variant_index, variant_index_composed);
     if (! volume.material_id().empty())
-        apply_to_print_region_config(config, volume.material()->config.get(), feature_overrides, base_extruder_through_scopes, variant_index);
+        apply_to_print_region_config(config, volume.material()->config.get(), feature_overrides, base_extruder_through_scopes, variant_index, variant_index_composed);
     if (layer_range_config != nullptr) {
         // Not applicable to modifiers.
         assert(volume.is_model_part());
-    	apply_to_print_region_config(config, *layer_range_config, feature_overrides, base_extruder_through_scopes, variant_index);
+    	apply_to_print_region_config(config, *layer_range_config, feature_overrides, base_extruder_through_scopes, variant_index, variant_index_composed);
     }
     // Resolve feature defaults and clamp invalid extruders to index 1.
     clamp_feature_filament_to_valid(config.sparse_infill_filament_id, num_extruders);

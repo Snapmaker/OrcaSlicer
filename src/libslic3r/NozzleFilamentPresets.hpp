@@ -71,6 +71,10 @@ struct State
     }
 };
 State state(const PresetBundle &bundle);
+// The same without the gate on PresetBundle::nozzle_filament_enabled: which tool head carries
+// which size and machine preset, whatever the filament rule is set to. The process rule
+// (PerHeadProcess) reads it under its own preference.
+State head_state(const PresetBundle &bundle);
 
 // Printer sync: keep `edited` when it matches the model and nozzle size of `picked` (from
 // PresetBundle::get_similar_printer_preset()), so the sync only sets tool head sizes and flow

@@ -95,9 +95,12 @@ const Preset* head_machine_preset(const PrinterPresetCollection &printers, const
 
 State state(const PresetBundle &bundle)
 {
+    return bundle.nozzle_filament_enabled ? head_state(bundle) : State();
+}
+
+State head_state(const PresetBundle &bundle)
+{
     State out;
-    if (!bundle.nozzle_filament_enabled)
-        return out;
     const Preset &printer = bundle.printers.get_edited_preset();
     if (printer.printer_technology() != ptFFF)
         return out;

@@ -1012,17 +1012,21 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
 
 				// Orca: record the infill speed of the effective extrusion role, resolved against the
 				// filament that actually prints it (params.extruder, incl. the fork's per-feature remap).
+				// Print::get_extruder_id takes the 0-based filament index while params.extruder is
+				// 1-based here (layerm.flow() above subtracts 1 the same way): the speed is read in
+				// the slot of the tool head that prints the infill.
+				const size_t infill_head = layer.get_extruder_id(params.extruder > 0 ? params.extruder - 1 : 0);
 				params.role_speed = 0;
                 if (params.extrusion_role == erBridgeInfill)
-                    params.role_speed = region_config.bridge_speed.get_at(layer.get_extruder_id(params.extruder));
+                    params.role_speed = region_config.bridge_speed.get_at(infill_head);
                 else if (params.extrusion_role == erInternalBridgeInfill)
-                    params.role_speed = region_config.get_abs_value_at("internal_bridge_speed", layer.get_extruder_id(params.extruder));
+                    params.role_speed = region_config.get_abs_value_at("internal_bridge_speed", infill_head);
                 else if (params.extrusion_role == erInternalInfill)
-                    params.role_speed = region_config.sparse_infill_speed.get_at(layer.get_extruder_id(params.extruder));
+                    params.role_speed = region_config.sparse_infill_speed.get_at(infill_head);
                 else if (params.extrusion_role == erTopSolidInfill)
-                    params.role_speed = region_config.top_surface_speed.get_at(layer.get_extruder_id(params.extruder));
+                    params.role_speed = region_config.top_surface_speed.get_at(infill_head);
                 else if (params.extrusion_role == erSolidInfill)
-                    params.role_speed = region_config.internal_solid_infill_speed.get_at(layer.get_extruder_id(params.extruder));
+                    params.role_speed = region_config.internal_solid_infill_speed.get_at(infill_head);
 				// Calculate flow spacing for infill pattern generation.
 		        if (surface.is_solid() || is_bridge) {
 		            params.spacing = params.flow.spacing();

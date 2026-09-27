@@ -516,8 +516,12 @@ public:
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
 
 private:
+	wxString	per_head_process_description() const;
 	ogStaticText*	m_recommended_thin_wall_thickness_description_line = nullptr;
 	ogStaticText*	m_top_bottom_shell_thickness_explanation = nullptr;
+	// Snapmaker Orca: the line on the Speed page that names the process presets the tool heads of
+	// another nozzle size print with (libslic3r/PerHeadProcess.hpp).
+	ogStaticText*	m_per_head_process_line = nullptr;
 	::CheckBox*		m_legacy_support_check = nullptr;
 };
 

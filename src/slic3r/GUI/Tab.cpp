@@ -3,6 +3,7 @@
 #include "Tab.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Utils.hpp"
@@ -3150,6 +3151,15 @@ void TabPrint::build()
         optgroup->append_single_option_line("ensure_vertical_shell_thickness", "strength_settings_advanced#ensure-vertical-shell-thickness");
 
     page = add_options_page(L("Speed"), "custom-gcode_speed"); // ORCA: icon only visible on placeholders
+        // Snapmaker Orca: which tool heads print with the speeds of another process preset
+        // (libslic3r/PerHeadProcess.hpp); the text comes from update_description_lines().
+        optgroup = page->new_optgroup("");
+        {
+            Line line = Line{ "", "" };
+            line.full_width = 1;
+            line.widget = [this](wxWindow* parent) { return description_line_widget(parent, &m_per_head_process_line); };
+            optgroup->append_line(line);
+        }
         optgroup = page->new_optgroup(L("First layer speed"), L"param_speed_first", 15);
         optgroup->append_single_option_line("initial_layer_speed", "speed_settings_initial_layer_speed#initial-layer", 0);
         optgroup->append_single_option_line("initial_layer_infill_speed", "speed_settings_initial_layer_speed#initial-layer-infill", 0);
@@ -3527,6 +3537,38 @@ void TabPrint::update_description_lines()
             from_u8(PresetHints::top_bottom_shell_thickness_explanation(*m_preset_bundle)));
     }
 
+    if (m_per_head_process_line && m_preset_bundle)
+        m_per_head_process_line->SetText(per_head_process_description());
+}
+
+// Snapmaker Orca: the line at the top of the Speed page. Empty unless a tool head of another
+// nozzle size prints with the speeds of a process preset of its size (libslic3r/PerHeadProcess.hpp).
+wxString TabPrint::per_head_process_description() const
+{
+    if (m_preset_bundle == nullptr || !m_preset_bundle->process_follows_nozzle)
+        return wxEmptyString;
+    const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*m_preset_bundle);
+    const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
+    std::string derived_heads, presets, other_heads;
+    size_t      derived = 0;
+    for (const PerHeadProcess::Source &source : sources) {
+        if (source.derived && source.preset != nullptr) {
+            derived_heads += (derived_heads.empty() ? "" : ", ") + std::to_string(source.head + 1) + " (" + HighFlowNotices::head_nozzle_size_label(printer_config, source.head) + " mm)";
+            presets += (presets.empty() ? "" : ", ") + source.preset->name;
+            ++derived;
+        } else
+            other_heads += (other_heads.empty() ? "" : ", ") + std::to_string(source.head + 1);
+    }
+    if (derived == 0)
+        return wxEmptyString;
+    wxString text = derived == 1 ?
+        // TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
+        format_wxstr(_L("Extruder %1% prints with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads) :
+        // TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
+        format_wxstr(_L("Extruders %1% print with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads);
+    if (this->type() != Preset::TYPE_PRINT)
+        text += " " + _L("An override on a part applies on every extruder that prints it.");
+    return text;
 }
 
 void TabPrint::toggle_options()
@@ -3698,6 +3740,7 @@ void TabPrint::clear_pages()
 
     m_recommended_thin_wall_thickness_description_line = nullptr;
     m_top_bottom_shell_thickness_explanation = nullptr;
+    m_per_head_process_line = nullptr;
 }
 
 //BBS: GUI refactor

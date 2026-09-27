@@ -427,6 +427,8 @@ set(lisbslic3r_sources
     ShortestPath.hpp
     NozzleFilamentPresets.cpp
     NozzleFilamentPresets.hpp
+    PerHeadProcess.cpp
+    PerHeadProcess.hpp
     SnapmakerFlowCompat.cpp
     SnapmakerFlowCompat.hpp
     SSWCPProtocol.cpp

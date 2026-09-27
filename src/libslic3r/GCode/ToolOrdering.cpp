@@ -2275,6 +2275,18 @@ MultiNozzleUtils::LayeredNozzleGroupResult ToolOrdering::get_recommended_filamen
     if (has_multiple_extruder && !print->is_BBL_printer()) {
         for (size_t i = 0; i < filament_nums && i < extruder_nums; i++)
             ret[i] = (int)i;
+        // Snapmaker Orca: on a composed per-extruder table (PerHeadProcess) role speeds follow this
+        // grouping while travel speeds, prime tower and placeholders follow filament_map; warn when they differ.
+        if (const auto *composed = print->full_print_config().option<ConfigOptionInts>("print_extruder_source_column");
+            composed != nullptr && !composed->values.empty()) {
+            const std::vector<int> &map = print_config.filament_map.values;
+            for (unsigned int filament : used_filaments)
+                if (filament < extruder_nums && filament < map.size() && map[filament] - 1 != int(filament)) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": filament %1% is mapped to extruder %2% but grouped on extruder %3%; slice-time and G-code speeds may differ")
+                        % (filament + 1) % map[filament] % (filament + 1);
+                    assert(map[filament] - 1 == int(filament));
+                }
+        }
         auto result_opt = LayeredNozzleGroupResult::create(ret, nozzle_list, used_filaments);
         return result_opt ? *result_opt : LayeredNozzleGroupResult();
     }

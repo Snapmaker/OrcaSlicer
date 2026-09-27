@@ -841,6 +841,9 @@ private:
     // Snapmaker Orca: hands the preference "filament_follows_nozzle" to the preset bundle and lets
     // the filament slots and their combos follow.
     void            update_filament_follows_nozzle();
+    // Snapmaker Orca: hands the preference "process_follows_nozzle" to the preset bundle, refreshes
+    // the nozzle tab hints and the Speed page line and re-applies the background process.
+    void            update_process_follows_nozzle();
     void            open_presetbundledialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     void            open_plugins_dialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     // Dialog-free plugin actions used by the speed dial: they never require the Plugins dialog to be open.

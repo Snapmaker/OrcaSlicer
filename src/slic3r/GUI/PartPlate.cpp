@@ -3730,7 +3730,9 @@ int PartPlate::load_gcode_from_file(const std::string& filename)
 	if (f_volume_maps.empty()) {
 		f_volume_maps = preset_bundle->get_default_nozzle_volume_types_for_filaments(filament_maps);
 	}
-	DynamicPrintConfig full_config   = preset_bundle->full_config(false, filament_maps, f_volume_maps);
+	// Snapmaker Orca: the same composition per tool head as the background process apply
+	// (libslic3r/PerHeadProcess.hpp), so the config over the loaded slice result matches.
+	DynamicPrintConfig full_config   = preset_bundle->full_config_for_print(false, filament_maps, f_volume_maps);
 	full_config.apply(m_config, true);
 	m_print->apply(*m_model, full_config, false);
 	//BBS: need to apply two times, for after the first apply, the m_print got its object,
@@ -4555,7 +4557,7 @@ void PartPlateList::set_default_wipe_tower_pos_for_plate(int plate_idx, bool ini
     if (f_volume_maps.empty()) {
         f_volume_maps = wxGetApp().preset_bundle->get_default_nozzle_volume_types_for_filaments(filament_maps);
     }
-    DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config(false, filament_maps, f_volume_maps);
+    DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config_for_print(false, filament_maps, f_volume_maps);
     WipeTowerFootprint footprint = part_plate->estimate_wipe_tower_footprint(full_config, init_pos ? 2 : 0);
 
     if (!init_pos && (is_approx(footprint.width, 0.0) || is_approx(footprint.depth, 0.0))) {

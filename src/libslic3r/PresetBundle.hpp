@@ -9,6 +9,7 @@
 #include "enum_bitmask.hpp"
 #include "MixedFilament.hpp"
 #include "NozzleFilamentPresets.hpp"
+#include "PerHeadProcess.hpp"
 #include "SnapmakerFlowCompat.hpp"
 
 #include <functional>
@@ -449,6 +450,9 @@ public:
     // (libslic3r/NozzleFilamentPresets.hpp). Off unless the application turns it on from the
     // preference "filament_follows_nozzle"; the command line and the tests leave or set it.
     bool                        nozzle_filament_enabled { false };
+    // Snapmaker Orca: preference "process_follows_nozzle" (PerHeadProcess.hpp), off unless the application
+    // sets it. A preset chosen for a head applies either way (gate: PerHeadProcess::active).
+    bool                        process_follows_nozzle { false };
     // Session memory of the rule, never stored: (family, machine preset name) -> the user preset
     // a slot left because of its size (NozzleFilament::remember_user_preset()). target_for_slot()
     // prefers it over the system version while it exists, is installed and fits.
@@ -532,6 +536,12 @@ public:
     DynamicPrintConfig          full_config(bool apply_extruder = true, std::optional<std::vector<int>>filament_maps = std::nullopt, std::optional<std::vector<int>> filament_volume_maps = std::nullopt) const;
     // full_config() with the some "useless" config removed.
     DynamicPrintConfig          full_config_secure(std::optional<std::vector<int>>filament_maps = std::nullopt) const;
+    // Snapmaker Orca: the config every GUI Print::apply site uses; equals full_config(apply_extruder, maps...)
+    // unless PerHeadProcess::active and a head prints with another process preset, then the process columns
+    // are composed per head on the unexpanded config. `sources` receives what each head prints with.
+    DynamicPrintConfig          full_config_for_print(bool apply_extruder = true, std::optional<std::vector<int>> filament_maps = std::nullopt,
+                                                      std::optional<std::vector<int>> filament_volume_maps = std::nullopt,
+                                                      std::vector<PerHeadProcess::Source> *sources = nullptr) const;
 
     // Default per-filament nozzle-volume types: each filament inherits the volume type of the
     // extruder it maps to (1-based f_maps), Standard when unknown.

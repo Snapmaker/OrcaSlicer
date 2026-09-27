@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "PresetBundle.hpp"
+#include "PerHeadProcess.hpp"
 
 #include "FilamentColorLibrary.hpp"
 #include "PresetCacheFormat.hpp"
@@ -250,6 +251,9 @@ static std::vector<std::string> s_project_options {
     // Per-filament physical-nozzle choice the grouping engine writes back; project-level so a
     // saved project round-trips the assignment alongside filament_map/filament_volume_map.
     "filament_nozzle_map",
+    // Snapmaker Orca: the process preset each tool head printed with (PerHeadProcess), a record
+    // the load compares and reports; preset data like filament_map, not published.
+    "extruder_process_preset",
     // Filament Track Switch device state: whether the switch is installed and ready, and
     // whether dynamic per-nozzle filament mapping is active. Persisted with the project and
     // restored from a saved 3mf; reset to false on load and set true only by live device sync.
@@ -5158,6 +5162,30 @@ DynamicPrintConfig PresetBundle::full_config(bool apply_extruder, std::optional<
     return (this->printers.get_edited_preset().printer_technology() == ptFFF) ?
         this->full_fff_config(apply_extruder, filament_maps, filament_volume_maps) :
         this->full_sla_config();
+}
+
+DynamicPrintConfig PresetBundle::full_config_for_print(bool apply_extruder, std::optional<std::vector<int>> filament_maps,
+                                                       std::optional<std::vector<int>> filament_volume_maps,
+                                                       std::vector<PerHeadProcess::Source> *sources) const
+{
+    if (sources != nullptr)
+        sources->clear();
+    if (!this->process_follows_nozzle || this->printers.get_edited_preset().printer_technology() != ptFFF)
+        return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
+    std::vector<PerHeadProcess::Source> heads = PerHeadProcess::head_sources(*this);
+    if (sources != nullptr)
+        *sources = heads;
+    const bool any_derived = std::any_of(heads.begin(), heads.end(), [](const PerHeadProcess::Source &source) { return source.derived; });
+    if (!any_derived)
+        return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
+    // Composed on the unexpanded config: Print::apply narrows the composed per-head layout the
+    // same way the expansion of full_fff_config(true) would.
+    DynamicPrintConfig out = this->full_fff_config(false, filament_maps, filament_volume_maps);
+    if (!PerHeadProcess::compose(out, PerHeadProcess::edited_keys(*this), heads))
+        return this->full_config(apply_extruder, filament_maps, filament_volume_maps);
+    if (sources != nullptr)
+        *sources = heads;
+    return out;
 }
 
 DynamicPrintConfig PresetBundle::full_config_secure(std::optional<std::vector<int>>filament_maps) const

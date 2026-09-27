@@ -6,6 +6,8 @@
 #include "SVG.hpp"
 #include "BoundingBox.hpp"
 
+#include <algorithm>
+
 #include <boost/log/trivial.hpp>
 
 namespace Slic3r {
@@ -219,17 +221,21 @@ bool Layer::is_perimeter_compatible(const Print& print, const PrintRegion& a, co
 {
     const PrintRegionConfig& config       = a.config();
     const PrintRegionConfig& other_config = b.config();
+    // Print::get_extruder_id takes the 0-based filament index; outer_wall_filament_id is 1-based
+    // (PerimeterGenerator.cpp and MultiMaterialSegmentation.cpp subtract 1 the same way). The
+    // speeds are compared in the slot of the tool head that prints the walls.
+    const size_t wall_head = print.get_extruder_id(static_cast<unsigned int>(std::max(config.outer_wall_filament_id.value, 1) - 1));
 
         return config.outer_wall_filament_id       == other_config.outer_wall_filament_id
 		&& config.inner_wall_filament_id       == other_config.inner_wall_filament_id
 		&& config.wall_loops                  == other_config.wall_loops
 		&& config.wall_sequence               == other_config.wall_sequence
 		&& config.is_infill_first             == other_config.is_infill_first
-		&& config.inner_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.inner_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.outer_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.outer_wall_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.small_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.small_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-		&& config.small_support_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.small_support_perimeter_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
-        && config.gap_infill_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id)) == other_config.gap_infill_speed.get_at(print.get_extruder_id(config.outer_wall_filament_id))
+		&& config.inner_wall_speed.get_at(wall_head) == other_config.inner_wall_speed.get_at(wall_head)
+		&& config.outer_wall_speed.get_at(wall_head) == other_config.outer_wall_speed.get_at(wall_head)
+		&& config.small_perimeter_speed.get_at(wall_head) == other_config.small_perimeter_speed.get_at(wall_head)
+		&& config.small_support_perimeter_speed.get_at(wall_head) == other_config.small_support_perimeter_speed.get_at(wall_head)
+        && config.gap_infill_speed.get_at(wall_head) == other_config.gap_infill_speed.get_at(wall_head)
         && config.filter_out_gap_fill.value == other_config.filter_out_gap_fill.value
 		&& config.detect_overhang_wall                   == other_config.detect_overhang_wall
 		&& config.unsupported_wall_last                  == other_config.unsupported_wall_last

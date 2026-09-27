@@ -18,6 +18,7 @@ add_executable(${_TEST_NAME}_tests
     test_config_value_formatter.cpp # Snapmaker Orca: fork-side formatter guards
     test_sswcp_machine_info.cpp # Snapmaker Orca: device identity parsing
     test_high_flow_notices.cpp # Snapmaker Orca: High Flow allow list and tool head rules
+    test_per_head_process_sites.cpp # Snapmaker Orca: every GUI Print::apply is fed by full_config_for_print
     test_mesh_lod_pool.cpp # Snapmaker Orca: render LOD worker pool and cache
     test_scene_cache.cpp # Snapmaker Orca: scene cache key inputs and the blit texture coordinate
     test_ota_package_digest.cpp # Snapmaker Orca: digest check of a downloaded OTA profile package

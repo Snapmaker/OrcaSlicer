@@ -46,3 +46,35 @@ Standard nozzle keeps the printer's value, the High Flow nozzle overrides it.
 
 `tests/libslic3r/test_snapmaker_hf_profiles.cpp` checks the column counts, M1, M2 and the values
 copied from the parents.
+
+## Process speeds on mixed nozzle sizes
+
+A U1 process preset is made for one nozzle size. When the tool heads carry different sizes, a head
+of another size than the printer preset prints with the speed, acceleration and jerk columns of a
+system process preset of its own size (`src/libslic3r/PerHeadProcess.hpp`). The preset is chosen by
+intent: among the process presets compatible with the machine preset of the head's size, the one
+whose layer height equals the head's preferred layer height (else the selected preset's layer height)
+and whose quality class (the text between `mm ` and ` @`, "Standard", "High Quality") is the selected
+preset's; without an exact height the nearest one of the same class; else the machine preset's
+`default_print_profile`. So a 0.2 mm head at a preferred 0.12 mm under `0.20mm Standard` prints with
+`0.12mm Standard @Snapmaker U1 (0.2 nozzle)`, at 0.10 mm with `0.10mm High Quality`.
+
+Composed are 32 of the 42 variant keys: the 17 role speeds, the 8 accelerations and the 7 jerk /
+junction deviation keys. The 7 travel keys, `enable_overhang_speed`, `slowdown_for_curled_perimeters`
+and `small_perimeter_threshold` stay the selected preset's on every head. Line widths, walls, shells,
+infill, support, layer heights and the prime tower stay the selected preset's as well (widths given
+in percent already follow each nozzle). A value the user changed in the selected preset against its
+system parent keeps the user's value on every head. An override on a part is an absolute value and
+applies on every tool head that prints the part, also on one that otherwise prints with the speeds of
+its own nozzle size. A head switched to High Flow takes its source's High Flow column when the source
+has one, else the selected preset's High Flow column, never the source's Standard column.
+
+The project records the preset of every head in `extruder_process_preset` (one name per tool head,
+empty for a head that prints with the selected preset); a load compares the record with the current
+choice and reports a difference, it never switches. Older readers ignore the key. The command line
+does not compose the table yet and logs a warning per recorded head. The option lives under
+Preferences > Preset ("Process speeds follow the nozzle size"), on by default.
+
+Pre-existing and unchanged: `PerimeterGenerator.cpp` resolves the wall / infill overlap spacing
+against the outer-wall filament's nozzle, so a region whose walls and infill print on heads of
+different sizes uses the wall head's spacing.

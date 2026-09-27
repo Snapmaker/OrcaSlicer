@@ -682,6 +682,7 @@ const std::vector<EnumTranslation> &generated_enum_translations()
         { "seam_position", "aligned_back", "" },
         { "seam_position", "left", "" },
         { "seam_position", "right", "" },
+        { "seam_position", "aligned_front", "" },
         { "sparse_infill_pattern", "rectilinear", "zig-zag" },
         { "sparse_infill_pattern", "quartercubic", "" },
         { "sparse_infill_pattern", "lateral-honeycomb", "" },

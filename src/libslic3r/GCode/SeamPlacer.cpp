@@ -132,7 +132,8 @@ Vec3f sample_power_cosine_hemisphere(const Vec2f &samples, float power) {
 // steering the seam toward the biased side instead). `bias_direction` points toward the biased
 // side; the surfaces that get penalised are the ones facing away from it, i.e. whose normal is
 // close to `-bias_direction`. Aligned back is biased toward the back (+Y): it penalises surfaces
-// facing -Y (front-facing surfaces). Aligned left/right do the same thing along X, biased toward
+// facing -Y (front-facing surfaces). Aligned front is its mirror image, biased toward the front (-Y):
+// it penalises back-facing surfaces. Aligned left/right do the same thing along X, biased toward
 // -X/+X respectively. Every other SeamPosition is left alone (returns false) and keeps no penalty
 // at all.
 // The penalty is applied via `normal.dot(-bias_direction)`, i.e. the existing Aligned back formula
@@ -144,6 +145,7 @@ static inline bool aligned_penalty_direction(SeamPosition setup, Vec3f &bias_dir
   // whether it belongs here.
   switch (setup) {
   case spAlignedBack: bias_direction = Vec3f(0.0f, 1.0f, 0.0f);  return true; // biased to the back
+  case spAlignedFront: bias_direction = Vec3f(0.0f, -1.0f, 0.0f); return true; // biased to the front
   case spLeft:        bias_direction = Vec3f(-1.0f, 0.0f, 0.0f); return true; // biased to the left
   case spRight:        bias_direction = Vec3f(1.0f, 0.0f, 0.0f); return true; // biased to the right
   case spNearest:
@@ -157,10 +159,10 @@ static inline bool aligned_penalty_direction(SeamPosition setup, Vec3f &bias_dir
 
 // True for the setups that are "Aligned" in every other respect (occlusion/visibility computed,
 // candidates picked by visibility and angle, concave-corner preference via central_enforcer, then
-// aligned): plain Aligned plus the three biased variants.
+// aligned): plain Aligned plus the four biased variants.
 static inline bool is_aligned_setup(SeamPosition setup)
 {
-  return setup == spAligned || setup == spAlignedBack || setup == spLeft || setup == spRight;
+  return setup == spAligned || setup == spAlignedBack || setup == spAlignedFront || setup == spLeft || setup == spRight;
 }
 
 std::vector<float> raycast_visibility(const AABBTreeIndirect::Tree<3, float> &raycasting_tree,
@@ -1159,14 +1161,16 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
 #endif
 }
 
-void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po) {
+// With use_painted_seams false the painted enforcers and blockers are left out, as if the object had none
+// (SeamPlacer::plan_object_seams, for Auto-paint replacing the existing paint).
+void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po, bool use_painted_seams = true) {
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: build AABB trees for raycasting enforcers/blockers: start";
 
   auto obj_transform = po->trafo_centered();
 
   for (const ModelVolume *mv : po->model_object()->volumes) {
-    if (mv->is_seam_painted()) {
+    if (use_painted_seams && mv->is_seam_painted()) {
       auto model_transformation = obj_transform * mv->get_matrix();
 
       indexed_triangle_set enforcers = mv->seam_facets.get_facets(*mv, EnforcerBlockerType::ENFORCER);
@@ -1205,6 +1209,7 @@ static inline bool directional_seam_axis(SeamPosition setup, int &axis, float &s
   case spNearest:
   case spAligned:
   case spAlignedBack:
+  case spAlignedFront:
   case spLeft:
   case spRight:
   case spRandom:
@@ -1945,22 +1950,30 @@ void SeamPlacer::align_seam_points(const PrintObject *po, const SeamPlacerImpl::
 }
 
 void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_canceled_func) {
-  using namespace SeamPlacerImpl;
   m_seam_per_object.clear();
 
   for (const PrintObject *po : print.objects()) {
     throw_if_canceled_func();
-    SeamPosition configured_seam_preference = po->config().seam_position.value;
+    init_object(print, po, po->config().seam_position.value, po->config().seam_prefer_part_joints.value, true,
+                throw_if_canceled_func);
+  }
+}
+
+void SeamPlacer::init_object(const Print &print, const PrintObject *po, SeamPosition configured_seam_preference,
+                             bool prefer_part_joints, bool use_painted_seams,
+                             const std::function<void(void)> &throw_if_canceled_func) {
+  using namespace SeamPlacerImpl;
+  {
     SeamComparator comparator { configured_seam_preference };
     bool has_part_joints = false;
 
     {
       GlobalModelInfo global_model_info { };
-      if (po->config().seam_prefer_part_joints.value && is_aligned_setup(configured_seam_preference)) {
+      if (prefer_part_joints && is_aligned_setup(configured_seam_preference)) {
         gather_part_joints(global_model_info, print, po, throw_if_canceled_func);
         has_part_joints = global_model_info.has_part_joints();
       }
-      gather_enforcers_blockers(global_model_info, po);
+      gather_enforcers_blockers(global_model_info, po, use_painted_seams);
       throw_if_canceled_func();
       if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spNearest) {
         compute_global_occlusion(global_model_info, po, throw_if_canceled_func, configured_seam_preference);
@@ -2012,8 +2025,7 @@ void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_can
           << "SeamPlacer: pick_seam_point : end";
     }
     throw_if_canceled_func();
-    if (configured_seam_preference == spAligned || configured_seam_preference == spRear || configured_seam_preference == spAlignedBack ||
-        configured_seam_preference == spLeft || configured_seam_preference == spRight) {
+    if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spRear) {
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: align_seam_points : start";
       align_seam_points(po, comparator);
@@ -2157,6 +2169,71 @@ void SeamPlacer::place_seam(const Layer *layer, ExtrusionLoop &loop,
     loop.split_at(seam_point, true);
   }
 
+}
+
+std::vector<std::vector<SeamPlacer::PlannedSeam>> SeamPlacer::plan_object_seams(
+    const Print &print, const PrintObject &po, SeamPosition seam_position, bool prefer_part_joints,
+    bool use_painted_seams, const std::function<void(void)> &throw_if_canceled_func) {
+  using namespace SeamPlacerImpl;
+  SeamPlacer placer;
+  placer.init_object(print, &po, seam_position, prefer_part_joints, use_painted_seams, throw_if_canceled_func);
+  throw_if_canceled_func();
+
+  std::vector<std::vector<PlannedSeam>> result;
+  auto it = placer.m_seam_per_object.find(&po);
+  if (it == placer.m_seam_per_object.end())
+    return result;
+  std::vector<PrintObjectSeamData::LayerSeams> &layers = it->second.layers;
+  result.resize(layers.size());
+
+  const SeamComparator comparator { seam_position };
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()),
+                    [&layers, &result, &comparator, seam_position](tbb::blocked_range<size_t> r) {
+    for (size_t layer_idx = r.begin(); layer_idx < r.end(); ++layer_idx) {
+      std::vector<SeamCandidate> &points = layers[layer_idx].points;
+      // Each loop of the layer as a polygon, to tell holes from outer outlines by nesting depth (the loop's own
+      // orientation says nothing when the walls are printed clockwise).
+      std::vector<std::pair<size_t, size_t>> loops;
+      std::vector<Polygon>                   polygons;
+      for (size_t start = 0; start < points.size(); start = points[start].perimeter.end_index) {
+        const Perimeter &perimeter = points[start].perimeter;
+        // extract_perimeter_polygons() puts a one-point dummy loop into a layer without walls.
+        if (perimeter.end_index - perimeter.start_index < 3 || perimeter.flow_width <= 0.f)
+          continue;
+        if (seam_position == spNearest)
+          pick_seam_point(points, start, comparator);
+        loops.emplace_back(perimeter.start_index, perimeter.end_index);
+        Polygon polygon;
+        polygon.points.reserve(perimeter.end_index - perimeter.start_index);
+        for (size_t i = perimeter.start_index; i < perimeter.end_index; ++i)
+          polygon.points.emplace_back(Point::new_scale(points[i].position.x(), points[i].position.y()));
+        polygons.emplace_back(std::move(polygon));
+      }
+      std::vector<PlannedSeam> &out = result[layer_idx];
+      out.reserve(loops.size());
+      for (size_t loop_idx = 0; loop_idx < loops.size(); ++loop_idx) {
+        const Perimeter &perimeter = points[loops[loop_idx].first].perimeter;
+        PlannedSeam      seam;
+        seam.position   = perimeter.finalized ? perimeter.final_seam_position : points[perimeter.seam_index].position;
+        if (perimeter.finalized) {
+          // The aligned position comes off a smoothing spline; place_seam() splits the loop at its projection.
+          const Point projected = polygons[loop_idx].point_projection(Point::new_scale(seam.position.x(), seam.position.y()));
+          seam.position.x()     = float(unscale<double>(projected.x()));
+          seam.position.y()     = float(unscale<double>(projected.y()));
+        }
+        seam.flow_width = perimeter.flow_width;
+        // A loop inside an odd number of other loops of the layer outlines a hole.
+        const Point probe = polygons[loop_idx].points.front();
+        size_t      depth = 0;
+        for (size_t other = 0; other < polygons.size(); ++other)
+          if (other != loop_idx && polygons[other].contains(probe))
+            ++depth;
+        seam.is_hole = (depth % 2) == 1;
+        out.push_back(seam);
+      }
+    }
+  });
+  return result;
 }
 
 } // namespace Slic3r

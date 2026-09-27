@@ -311,6 +311,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ColorSplitJob.hpp
     GUI/Jobs/SliceBakeJob.cpp
     GUI/Jobs/SliceBakeJob.hpp
+    GUI/Jobs/SeamAutoPaintJob.cpp
+    GUI/Jobs/SeamAutoPaintJob.hpp
     GUI/Jobs/QuadRemeshJob.cpp
     GUI/Jobs/QuadRemeshJob.hpp
     GUI/Jobs/CreateFontNameImageJob.cpp

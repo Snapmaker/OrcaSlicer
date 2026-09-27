@@ -539,3 +539,35 @@ TEST_CASE("Sparse plane-path anchors match the printed infill", "[Fill][Internal
     // would hide anchors that no longer coincide with printed lines.
     CHECK(unscale<double>(max_distance) <= config.opt_float("resolution"));
 }
+
+TEST_CASE("Locked Zag bands fall back for patterns that need per-object state", "[Fill][LockedZag]")
+{
+    // adaptivecubic, supportcubic and lightning are left out of the locked_sk*_infill_pattern menus
+    // because their fillers need an octree / generator that is only built when a region's own sparse
+    // pattern asks for one. A stored value can still carry them (a Bambu preset lists them; the GUI
+    // combo stored its row index as the value before the key mapping), so slicing must not
+    // dereference the missing state - the band keeps the Locked Zag filler's own pattern instead.
+    const std::string pattern = GENERATE("adaptivecubic", "supportcubic", "lightning");
+    const bool        in_skin = GENERATE(false, true);
+    CAPTURE(pattern, in_skin);
+
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"sparse_infill_pattern", "lockedzag"},
+                                   {"sparse_infill_density", "20%"},
+                                   {"locked_skin_infill_pattern", in_skin ? pattern : std::string("default")},
+                                   {"locked_skeleton_infill_pattern", in_skin ? std::string("default") : pattern},
+                                   {"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2}});
+    Print print;
+    Model model;
+    Slic3r::Test::init_print({make_cube(30, 30, 6)}, print, model, config, false);
+    print.process();
+
+    const Layer &layer = *print.objects().front()->get_layer(10);
+    Polylines printed;
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities)
+            if (entity->role() == erInternalInfill)
+                entity->collect_polylines(printed);
+    CHECK_FALSE(printed.empty());
+}

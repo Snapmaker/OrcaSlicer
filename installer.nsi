@@ -49,13 +49,13 @@ VIAddVersionKey "InternalName" "${PRODUCT_NAME}"
 VIAddVersionKey "LegalTrademarks" ""
 VIAddVersionKey "OriginalFilename" "${OUTPUT_FILE}"
 
-; Installer and uninstaller icon: set by build_and_pack.bat via /DICON_FILE=path (e.g. Snapmaker_Orca.ico or snapmaker.ico)
+; Installer and uninstaller icon: set by build_and_pack.bat via /DICON_FILE=path (e.g. EdgeSlicer.ico or snapmaker.ico)
 !ifdef ICON_FILE
     !define MUI_ICON "${ICON_FILE}"
     !define MUI_UNICON "${ICON_FILE}"
 !else
-    !define MUI_ICON ".\resources\images\Snapmaker_Orca.ico"
-    !define MUI_UNICON ".\resources\images\Snapmaker_Orca.ico"
+    !define MUI_ICON ".\resources\images\EdgeSlicer.ico"
+    !define MUI_UNICON ".\resources\images\EdgeSlicer.ico"
 !endif
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${PRODUCT_NAME} Setup"

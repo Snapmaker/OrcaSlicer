@@ -5167,7 +5167,7 @@ public:
             return false;
         }
         m_icon = new HubTaskBarIcon(m_server, [this]() { m_server.request_quit("tray"); });
-        wxIcon icon(wxString::FromUTF8(Slic3r::var("Snapmaker_Orca.ico")), wxBITMAP_TYPE_ICO);
+        wxIcon icon(wxString::FromUTF8(Slic3r::var("EdgeSlicer.ico")), wxBITMAP_TYPE_ICO);
         if (!icon.IsOk()) icon = wxIcon(wxString::FromUTF8(Slic3r::var("Snapmaker_Orca_128px.png")), wxBITMAP_TYPE_PNG);
         m_icon->set_icon(icon);
         // From here on a printer event shows on the PC as well (accept_event decides which ones).

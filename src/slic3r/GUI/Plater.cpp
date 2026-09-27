@@ -20503,7 +20503,7 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     SetBackgroundColour(m_def_color);
 
     // icon
-    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);

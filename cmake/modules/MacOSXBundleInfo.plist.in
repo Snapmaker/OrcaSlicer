@@ -66,7 +66,7 @@
 			<string>OBJ</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/Snapmaker_Orca.icns</string>
+			<string>images/EdgeSlicer.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>STL</string>
 			<key>CFBundleTypeRole</key>
@@ -83,7 +83,7 @@
 			<string>AMF</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/Snapmaker_Orca.icns</string>
+			<string>images/EdgeSlicer.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>AMF</string>
 			<key>CFBundleTypeRole</key>
@@ -100,7 +100,7 @@
 			<string>3MF</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
-			<string>images/Snapmaker_Orca.icns</string>
+			<string>images/EdgeSlicer.icns</string>
 			<key>CFBundleTypeName</key>
 			<string>3MF</string>
 			<key>CFBundleTypeRole</key>

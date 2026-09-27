@@ -832,6 +832,17 @@ inline int UnsavedChangesDialog::ShowModal()
         BOOST_LOG_TRIVIAL(info) << "UnsavedChangesDialog: auto-answered (" << (m_exit_action == Action::Transfer ? "transfer" : "discard") << ") for a remote request";
         return wxID_OK;
     }
+    // Ultra: don't nag on every preset switch. When transfer is offered (the normal
+    // preset/printer switch), carry all modified values over automatically; they stay
+    // dirty on the new preset and remain individually revertable via the orange markers,
+    // and Save/Discard remain available in the UI. The modal dialog still appears when
+    // transfer is impossible (no compatible target), where the choice is genuinely
+    // Save/Discard/Cancel.
+    if (m_buttons & ActionButtons::TRANSFER) {
+        m_exit_action = Action::Transfer;
+        BOOST_LOG_TRIVIAL(info) << "UnsavedChangesDialog: auto-transferred modified values to the new preset";
+        return wxID_OK;
+    }
     auto choise_key = "save_preset_choise";
     auto choise     = wxGetApp().app_config->get(choise_key);
     long result = 0;

@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <sstream>
 
 using namespace Slic3r;
@@ -666,5 +667,65 @@ TEST_CASE("CLI --align-to-y-axis is a misc bool whose default must stay implicit
         REQUIRE(config.has("align_to_y_axis"));
         CHECK_FALSE(config.opt_bool("align_to_y_axis"));
         CHECK(std::find(keys.begin(), keys.end(), "align_to_y_axis") == keys.end());
+    }
+}
+
+// The settings combo box of a plain enum option shows the option's NUMERIC value as the list index and saves the
+// picked index back as the value (Choice::set_value / Choice::get_value in src/slic3r/GUI/Field.cpp). So
+// enum_values[i] must be the key of enum value i: a key inserted in the middle of the list (seam_position
+// "aligned_front", 2026-09-26) makes every later value show - and, once picked, save - as its neighbour. The
+// options Field.cpp maps through their keys instead (and host_type, which it shifts) are exempt.
+TEST_CASE("Enum options list their keys in the order of their values", "[Config][ConfigDefs]")
+{
+    const std::set<std::string> mapped_by_key = {
+        "top_surface_pattern", "undertop_surface_pattern", "bottom_surface_pattern", "internal_solid_infill_pattern",
+        "sparse_infill_pattern", "support_base_pattern", "support_interface_pattern", "ironing_pattern",
+        "support_ironing_pattern", "support_style", "curr_bed_type", "host_type",
+    };
+    // Already out of order on main when this test was written (2026-09-26); reported, not fixed here. Remove an
+    // entry once its option is fixed - either list order or key mapping in Field.cpp.
+    //  * locked_skin/skeleton_infill_pattern: a subset list starting with "default" (30), not key-mapped in Field.cpp.
+    //  * nozzle_volume_type & co: "Hybrid" (2) and "TPU High Flow" (3) listed in order, "E3D High Flow" is 5 at index 4.
+    const std::set<std::string> known_misordered = {
+        "locked_skin_infill_pattern", "locked_skeleton_infill_pattern",
+        "nozzle_volume_type", "default_nozzle_volume_type", "extruder_nozzle_volume_type",
+    };
+    std::vector<std::string> misordered;
+    size_t                   checked = 0;
+    for (const auto &[key, def] : print_config_def.options) {
+        if ((def.type != coEnum && def.type != coEnums) || def.enum_keys_map == nullptr || def.enum_values.empty() ||
+            mapped_by_key.count(key) != 0 || known_misordered.count(key) != 0)
+            continue;
+        ++checked;
+        for (size_t i = 0; i < def.enum_values.size(); ++i) {
+            const auto it = def.enum_keys_map->find(def.enum_values[i]);
+            if (it == def.enum_keys_map->end() || it->second != int(i)) {
+                misordered.push_back(key + "[" + std::to_string(i) + "] = " + def.enum_values[i] + " -> " +
+                                     (it == def.enum_keys_map->end() ? std::string("unknown") : std::to_string(it->second)));
+                break;
+            }
+        }
+    }
+    INFO("checked " << checked << " enum options");
+    CHECK(checked > 20);
+    for (const std::string &m : misordered)
+        UNSCOPED_INFO(m);
+    CHECK(misordered.empty());
+
+    SECTION("seam_position: every listed key is its own value and round-trips")
+    {
+        const ConfigOptionDef *def = print_config_def.get("seam_position");
+        REQUIRE(def != nullptr);
+        REQUIRE(def->enum_values.size() == def->enum_labels.size());
+        REQUIRE(def->enum_values.size() == def->enum_keys_map->size());
+        CHECK(def->enum_values.back() == "aligned_front");
+        CHECK(def->get_default_value<ConfigOptionEnum<SeamPosition>>()->value == spAligned);
+        for (size_t i = 0; i < def->enum_values.size(); ++i) {
+            ConfigOptionEnum<SeamPosition> opt;
+            INFO("index " << i << ", key " << def->enum_values[i]);
+            REQUIRE(opt.deserialize(def->enum_values[i]));
+            CHECK(int(opt.value) == int(i));
+            CHECK(opt.serialize() == def->enum_values[i]);
+        }
     }
 }

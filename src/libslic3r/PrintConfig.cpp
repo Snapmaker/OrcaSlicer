@@ -6009,22 +6009,26 @@ void PrintConfigDef::init_fff_params()
                      "front/left/right of the bed instead: hidden and low-visibility points on that "
                      "side of the model are still preferred over an exposed point.");
     def->enum_keys_map = &ConfigOptionEnum<SeamPosition>::get_enum_values();
-    def->enum_values.push_back("nearest");
-    def->enum_values.push_back("aligned");
-    def->enum_values.push_back("aligned_back");
-    def->enum_values.push_back("aligned_front");
-    def->enum_values.push_back("back");
-    def->enum_values.push_back("left");
-    def->enum_values.push_back("right");
-    def->enum_values.push_back("random");
+    // The settings combo box maps the enum's NUMBER straight to the list index (Choice::set_value /
+    // get_value in Field.cpp), so this list must follow the SeamPosition order exactly: a value
+    // inserted in the middle makes every later one show - and save - as its neighbour.
+    // test_config.cpp checks it for every enum option.
+    def->enum_values.push_back("nearest");       // spNearest
+    def->enum_values.push_back("aligned");       // spAligned
+    def->enum_values.push_back("aligned_back");  // spAlignedBack
+    def->enum_values.push_back("back");          // spRear
+    def->enum_values.push_back("random");        // spRandom
+    def->enum_values.push_back("left");          // spLeft
+    def->enum_values.push_back("right");         // spRight
+    def->enum_values.push_back("aligned_front"); // spAlignedFront
     def->enum_labels.push_back(L("Nearest"));
     def->enum_labels.push_back(L("Aligned"));
     def->enum_labels.push_back(L("Aligned back"));
-    def->enum_labels.push_back(L("Aligned front"));
     def->enum_labels.push_back(L("Back"));
+    def->enum_labels.push_back(L("Random"));
     def->enum_labels.push_back(L("Aligned left"));
     def->enum_labels.push_back(L("Aligned right"));
-    def->enum_labels.push_back(L("Random"));
+    def->enum_labels.push_back(L("Aligned front"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<SeamPosition>(spAligned));
 

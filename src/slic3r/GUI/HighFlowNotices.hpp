@@ -209,4 +209,46 @@ wxString speeds_hint_label(const wxString &preset, const wxString &state, Speeds
 // The sentence the hint's tooltip adds for a head that prints the Standard speeds by choice.
 wxString standard_chosen_tooltip();
 
+// ---- The Quality page under the speed selector (line widths per tool head) ---------------------
+// Texts of the Quality page's selector, picker and line for the nine line widths; plain strings
+// in, wxStrings out, testable without a window.
+
+// The line under All tool heads: which tool heads print with the line widths of another process
+// preset. `derived_heads` "1 (0.2 mm), 3 (0.6 mm)", `presets` their aliases, `other_heads` the
+// heads that print the selected preset's widths ("2"; may be empty), `several` the plural form.
+wxString widths_description(const std::string &derived_heads, const std::string &presets, const std::string &other_heads, bool several);
+// The line under the picker: what the picked preset supplies on this page and on the other one.
+wxString picker_note(bool quality_page);
+// Under a selected tool head on the Quality page, when its preferred layer height differs from the
+// plate's: the head prints that height (the Layer height field above is greyed). `head` 0-based.
+wxString preferred_height_sentence(double height, size_t head);
+// Under a selected tool head: a line width changed under All tool heads applies to it in place of
+// its width source's value. `label` the setting, `value` the All value, `source_alias` and
+// `source_value` the preset the head takes its widths from and what it has.
+wxString all_edited_width_sentence(const wxString &label, const std::string &value, const wxString &source_alias, const std::string &source_value);
+// The values set for a tool head by kind ("1 line width, 3 speeds"); empty when both counts are zero.
+wxString head_values_by_kind(size_t widths, size_t speeds);
+// The count sentence of the page under a selected tool head ("3 line widths set for this
+// extruder." / "2 speeds set for this extruder."); empty for zero.
+wxString head_values_set_sentence(bool quality_page, size_t count);
+// The closing sentence under a selected tool head, on both pages.
+wxString shared_settings_sentence();
+// The link under a selected tool head that clears the values set for it on this page.
+wxString clear_head_link_label(bool quality_page);
+// What an older version (one value per width) reads from a width written as a full array: the
+// first entry's number, a percent when any entry carries one ("0.42 %"), else in mm ("0.42 mm").
+std::string old_reader_width(const std::vector<std::string> &values);
+// Under a selected tool head: a width set for it has the other unit than the value under All tool
+// heads; the sentence says what an older version reads (old_reader_width).
+wxString mixed_unit_sentence(const wxString &label, const std::string &old_reader_value);
+// A width for the picker's tooltips: "110 % (0.22 mm)" for a percent of `nozzle`, "0.62 mm" for
+// an absolute value, "auto" for zero.
+std::string width_value_label(const FloatOrPercent &width, double nozzle);
+// The nine line widths of two process presets differ in their Standard shared column
+// (PerHeadProcess::flow_independent_keys); a key one of them lacks counts as a difference.
+bool widths_differ(const DynamicPrintConfig &a, const DynamicPrintConfig &b);
+// Object list notice after "Add settings" added a line width to an item printing on several heads:
+// the override applies to all of them; `heads` (0-based) printed it at their own nozzle's widths.
+wxString object_width_notice(const std::vector<size_t> &heads);
+
 }}} // namespace Slic3r::GUI::HighFlowNotices

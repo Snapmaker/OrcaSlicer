@@ -517,14 +517,14 @@ wxString speeds_hint_label(const wxString &preset, const wxString &state, Speeds
     switch (note) {
     case SpeedsNote::HighFlow:
         // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.20mm Standard") whose High Flow column the tool head prints with, %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration
-        return format_wxstr(_L("Speeds: %1%, High Flow %2% · outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+        return format_wxstr(_L("Preset: %1%, High Flow %2% · speeds: outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
     case SpeedsNote::StandardChosen:
         // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset with its state ("0.20mm High Quality", "0.18mm Standard (automatic)") whose Standard speeds the High Flow tool head prints by choice, %2%..%4% the outer wall speed, sparse infill speed and acceleration
-        return format_wxstr(_L("Speeds: %1%, Standard (chosen for this High Flow nozzle) · outer wall %2%, sparse %3%, accel %4%"),
+        return format_wxstr(_L("Preset: %1%, Standard (chosen for this High Flow nozzle) · speeds: outer wall %2%, sparse %3%, accel %4%"),
                             state.IsEmpty() ? preset : preset + " " + state, outer_wall, sparse, accel);
     default:
         // TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-        return format_wxstr(_L("Speeds: %1% %2% · outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
+        return format_wxstr(_L("Preset: %1% %2% · speeds: outer wall %3%, sparse %4%, accel %5%"), preset, state, outer_wall, sparse, accel);
     }
 }
 
@@ -532,6 +532,142 @@ wxString standard_chosen_tooltip()
 {
     return _L("This extruder carries a High Flow nozzle and prints the Standard speeds, accelerations and jerk, chosen with the toggle of the "
               "Speed page; its filament settings stay those of a High Flow nozzle.");
+}
+
+wxString widths_description(const std::string &derived_heads, const std::string &presets, const std::string &other_heads, bool several)
+{
+    if (other_heads.empty())
+        // TRN Line on the Quality page of the process settings when every tool head prints the widths of another preset. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets
+        return format_wxstr(_L("Extruders %1% print with the line widths of %2%. The line widths below apply to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
+                            from_u8(derived_heads), from_u8(presets));
+    return several ?
+        // TRN Line on the Quality page of the process settings. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("2")
+        format_wxstr(_L("Extruders %1% print with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
+                     from_u8(derived_heads), from_u8(presets), from_u8(other_heads)) :
+        // TRN Line on the Quality page of the process settings. %1% is a tool head with its nozzle size ("3 (0.6 mm)"), %2% a process preset, %3% the other tool heads ("1, 2, 4")
+        format_wxstr(_L("Extruder %1% prints with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."),
+                     from_u8(derived_heads), from_u8(presets), from_u8(other_heads));
+}
+
+wxString picker_note(bool quality_page)
+{
+    // TRN Line under the picker of the process preset of a tool head, on the Quality / Speed page of the process settings
+    return quality_page ? _L("Its line widths print on this extruder; so do its speeds (Speed page).") :
+                          _L("Its speeds, accelerations and jerk print on this extruder; so do its line widths (Quality page).");
+}
+
+wxString preferred_height_sentence(double height, size_t head)
+{
+    // TRN Under a selected tool head on the Quality page. %1% a layer height in mm, %2% the nozzle in the sidebar
+    return format_wxstr(_L("This extruder prints %1% mm layers (preferred layer height, nozzle %2% in the sidebar)."), from_u8(float_to_string_decimal_point(height, 2)), head + 1);
+}
+
+wxString all_edited_width_sentence(const wxString &label, const std::string &value, const wxString &source_alias, const std::string &source_value)
+{
+    // TRN Under a selected tool head on the Quality page. %1% a line width setting ("Inner wall"), %2% its value under All tool heads ("110%"), %3% the process preset the tool head takes its widths from, %4% that preset's value
+    return format_wxstr(_L("%1% %2% from All extruders (%3% has %4%)."), label, from_u8(value), source_alias, from_u8(source_value));
+}
+
+wxString head_values_by_kind(size_t widths, size_t speeds)
+{
+    wxString text;
+    if (widths > 0)
+        // TRN A count of line widths set for a tool head, in a list like "1 line width, 3 speeds"
+        text = format_wxstr(_L_PLURAL("%1% line width", "%1% line widths", unsigned(widths)), widths);
+    if (speeds > 0)
+        // TRN A count of speeds, accelerations and jerk values set for a tool head, in a list like "1 line width, 3 speeds"
+        text += (text.IsEmpty() ? "" : ", ") + format_wxstr(_L_PLURAL("%1% speed", "%1% speeds", unsigned(speeds)), speeds);
+    return text;
+}
+
+wxString head_values_set_sentence(bool quality_page, size_t count)
+{
+    if (count == 0)
+        return wxEmptyString;
+    return quality_page ?
+        // TRN Under a selected tool head on the Quality page. %1% the number of line widths set for it
+        format_wxstr(_L_PLURAL("%1% line width set for this extruder.", "%1% line widths set for this extruder.", unsigned(count)), count) :
+        // TRN Under a selected tool head on the Speed page. %1% the number of speeds, accelerations and jerk values set for it
+        format_wxstr(_L_PLURAL("%1% speed set for this extruder.", "%1% speeds set for this extruder.", unsigned(count)), count);
+}
+
+wxString shared_settings_sentence()
+{
+    return _L("Greyed settings are shared by every extruder; the layer height of an extruder is set in the sidebar.");
+}
+
+wxString clear_head_link_label(bool quality_page)
+{
+    // TRN Link under a selected tool head of the Quality / Speed page of the process settings
+    return quality_page ? _L("Clear the line widths set for this extruder") : _L("Clear the speeds set for this extruder");
+}
+
+std::string old_reader_width(const std::vector<std::string> &values)
+{
+    if (values.empty())
+        return std::string();
+    bool percent = false;
+    for (const std::string &value : values)
+        percent = percent || value.find('%') != std::string::npos;
+    std::string number = values.front();
+    boost::trim(number);
+    if (!number.empty() && number.back() == '%')
+        number.pop_back();
+    boost::trim(number);
+    return number + (percent ? " %" : " mm");
+}
+
+wxString mixed_unit_sentence(const wxString &label, const std::string &old_reader_value)
+{
+    // TRN Under a selected tool head on the Quality page: a line width set for it has the other unit than the value under All tool heads. %1% the setting ("Default"), %2% the value an older version reads ("0.42 %")
+    return format_wxstr(_L("Older versions of Snapmaker Orca read this preset's %1% as %2%; use the same unit for every extruder."), label, from_u8(old_reader_value));
+}
+
+std::string width_value_label(const FloatOrPercent &width, double nozzle)
+{
+    if (width.value <= 0.)
+        // TRN A line width of zero in a tooltip: the width follows the nozzle
+        return _u8L("auto");
+    std::string number = ConfigOptionFloatOrPercent(width.value, width.percent).serialize();
+    if (!width.percent)
+        return number + " mm";
+    if (!number.empty() && number.back() == '%')
+        number.pop_back();
+    return number + " % (" + float_to_string_decimal_point(width.value / 100. * nozzle, 2) + " mm)";
+}
+
+bool widths_differ(const DynamicPrintConfig &a, const DynamicPrintConfig &b)
+{
+    const int column_a = PerHeadProcess::shared_column(a, nvtStandard);
+    const int column_b = PerHeadProcess::shared_column(b, nvtStandard);
+    auto text_of = [](const DynamicPrintConfig &config, const std::string &key, int column) {
+        const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(key));
+        if (option == nullptr || option->empty())
+            return std::string();
+        const std::vector<std::string> values = option->vserialize();
+        return values[column >= 0 && size_t(column) < values.size() ? size_t(column) : 0];
+    };
+    for (const std::string &key : PerHeadProcess::flow_independent_keys())
+        if (text_of(a, key, column_a) != text_of(b, key, column_b))
+            return true;
+    return false;
+}
+
+wxString object_width_notice(const std::vector<size_t> &heads)
+{
+    if (heads.empty())
+        return wxEmptyString;
+    wxString list;
+    for (size_t i = 0; i + 1 < heads.size(); ++i)
+        list += wxString(i > 0 ? ", " : "") + from_u8(std::to_string(heads[i] + 1));
+    const wxString last = from_u8(std::to_string(heads.back() + 1));
+    // TRN The last tool head of a list: "1, 3 and 4"
+    list = heads.size() == 1 ? last : format_wxstr(_L("%1% and %2%"), list, last);
+    // TRN Notice of the object list once "Add settings" added a line width to an object printed by several tool heads. %1% the tool heads that printed it with another line width ("1 and 4")
+    return format_wxstr(_L_PLURAL("Line widths added to an object apply on every extruder that prints it; extruder %1% printed it with the line widths of its own nozzle size.",
+                                  "Line widths added to an object apply on every extruder that prints it; extruders %1% printed it with the line widths of their own nozzle size.",
+                                  unsigned(heads.size())),
+                        list);
 }
 
 }}} // namespace Slic3r::GUI::HighFlowNotices

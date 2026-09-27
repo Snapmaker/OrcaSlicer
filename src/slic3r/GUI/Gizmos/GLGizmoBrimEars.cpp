@@ -8,6 +8,7 @@
 #include "slic3r/GUI/Shortcuts.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "GLGizmoUtils.hpp"
 
@@ -1163,7 +1164,8 @@ float GLGizmoBrimEars::get_brim_default_radius() const
     const double              nozzle_diameter = wxGetApp().preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
     const DynamicPrintConfig &print_cfg = wxGetApp().preset_bundle->prints.get_edited_preset().config;
     return std::clamp(
-        float(print_cfg.get_abs_value("initial_layer_line_width", nozzle_diameter) * 8.0),
+        // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+        float(print_cfg.get_abs_value_at("initial_layer_line_width", size_t(PerHeadProcess::shared_column(print_cfg, nvtStandard)), nozzle_diameter) * 8.0),
         BRIM_EAR_RADIUS_MIN,
         BRIM_EAR_RADIUS_MAX);
 }

@@ -356,6 +356,9 @@ public:
     // Applies the rule of the flow toggle's visibility (see the definition); called after every
     // show of the row, which wxSizer::ShowItems shows the toggle with.
     void                          show_flow_toggle();
+    // The active page has an indexed key whose columns differ by flow (a speed); the Quality page
+    // (line widths alone, flow-independent) has none and shows no toggle.
+    bool                          page_has_flow_dependent_key() const;
 
 public:
 	// BBS
@@ -576,6 +579,9 @@ public:
 	// Snapmaker Orca, the speed picker: shows the Speed page with tool head `head` selected and the
 	// focus on the picker (the nozzle tab hint and the notices lead here).
 	void		focus_speed_source_picker(size_t head);
+	// Snapmaker Orca: clears the line widths set for tool head `head` (the "Clear" of the notice
+	// raised when the head's nozzle size changes with an absolute width set for it).
+	void		clear_head_widths(size_t head);
 
 protected:
 	// Snapmaker Orca, the speed selector (libslic3r/PerHeadProcess.hpp): the hooks of the option
@@ -588,9 +594,15 @@ protected:
 	wxString	head_values_tooltip(const std::string &opt_key) const;
 	// The line and the link under the selector: what the selection means, and the clear of the
 	// values set for the selected tool head (no confirmation) or for every head (confirmed).
-	wxSizer*	per_head_line_widget(wxWindow *parent);
+	wxSizer*	per_head_line_widget(wxWindow *parent, int label_em, bool stacked = false);
 	wxString	head_selection_description() const;
 	void		clear_head_values();
+	// The Quality page carries the same selector, line, picker and link for the nine line widths:
+	// which page is active, the width keys among a head's values, and the head-editable keys of
+	// the active page (its clear link clears those alone).
+	bool		quality_page_active() const;
+	static std::vector<std::string> head_width_keys(const std::vector<std::string> &keys);
+	std::set<std::string> page_head_keys() const;
 	void		refresh_after_head_change(bool relayout_columns);
 	// The "Speeds from" picker of the Speed page for the selected tool head. A pick calls PerHeadProcess::set_chosen
 	// ("" = automatic) and refreshes page, entries, sidebar hint and plate. Keys: arrows move the highlight only,
@@ -612,6 +624,9 @@ private:
 	wxStaticText*	m_speed_source_label = nullptr;
 	::ComboBox*		m_speed_source_combo = nullptr;
 	ScalableButton*	m_speed_source_reset = nullptr;
+	ogStaticText*	m_speed_source_note = nullptr;   // the line under the picker: what the preset supplies on this page
+	int				m_speed_source_label_em = 15;    // the label column of the page the picker is on (15 Speed, 20 Quality)
+	bool			m_speed_source_stacked = false;  // Quality page: the label on its own line above a full-width combo
 	std::vector<std::string> m_speed_source_items;
 	// The sources of the tool heads (PerHeadProcess::head_sources) and the composed keys edited under
 	// All, refreshed with the entries; read by the display of a tool head's fields.

@@ -10,6 +10,8 @@
 
 #include <boost/algorithm/string/join.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
+#include <nlohmann/json.hpp>
 
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
@@ -18,6 +20,8 @@
 #include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/Print.hpp"
+#include "libslic3r/calib.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/ProjectSchemaVersion.hpp"
@@ -187,17 +191,42 @@ std::vector<std::string> source_names(const std::vector<PerHeadProcess::Source> 
 
 } // namespace
 
-TEST_CASE("The composed key set is the 32 speed, acceleration and jerk keys of the variant keys", "[PerHeadProcess][phs_key_set]")
+TEST_CASE("The composed key set is the 32 speed, acceleration and jerk keys of the variant keys", "[PerHeadProcess][PerHeadWidth][phs_key_set]")
 {
     const std::set<std::string> &composed = PerHeadProcess::composed_keys();
-    CHECK(composed.size() == 32);
-    // 42 value keys, the ids, the variants and the marker of the values set per tool head.
-    CHECK(print_options_with_variant.size() == 45);
+    // 32 speeds, accelerations and jerk keys plus the nine line widths.
+    CHECK(composed.size() == 41);
+    // 51 value keys (42 speeds, accelerations, jerk and switches plus the nine line widths of the
+    // Quality page), the ids, the variants and the marker of the values set per tool head.
+    CHECK(print_options_with_variant.size() == 54);
     CHECK(print_options_with_variant.count(PerHeadProcess::override_key) == 1);
     CHECK(composed.count(PerHeadProcess::override_key) == 0);
-    // 39 keys can be set per tool head: the value keys without the three uniform switches.
+    // 48 keys can be set per tool head: the value keys without the three uniform switches.
     const std::set<std::string> &editable = PerHeadProcess::head_editable_keys();
-    CHECK(editable.size() == 39);
+    CHECK(editable.size() == 48);
+    // The nine line widths: flow-independent, editable per tool head and composed from the width
+    // source; the Locked Zag widths stay scalar and outside every set.
+    const std::set<std::string> &widths = PerHeadProcess::flow_independent_keys();
+    CHECK(widths == std::set<std::string>{"line_width", "initial_layer_line_width", "outer_wall_line_width", "inner_wall_line_width", "top_surface_line_width",
+                                          "sparse_infill_line_width", "internal_solid_infill_line_width", "support_line_width", "bridge_line_width"});
+    for (const std::string &key : widths) {
+        INFO(key);
+        CHECK(print_options_with_variant.count(key) == 1);
+        CHECK(editable.count(key) == 1);
+        CHECK(composed.count(key) == 1);
+        const ConfigOptionDef *def = print_config_def.get(key);
+        REQUIRE(def != nullptr);
+        CHECK(def->type == coFloatsOrPercents);
+        CHECK(def->nullable);
+        CHECK(def->scalar_when_uniform);
+    }
+    for (const char *scalar : {"skin_infill_line_width", "skeleton_infill_line_width"}) {
+        INFO(scalar);
+        CHECK(print_options_with_variant.count(scalar) == 0);
+        CHECK(editable.count(scalar) == 0);
+        CHECK(widths.count(scalar) == 0);
+        CHECK(print_config_def.get(scalar)->type == coFloatOrPercent);
+    }
     for (const char *uniform : {"enable_overhang_speed", "slowdown_for_curled_perimeters", "small_perimeter_threshold"}) {
         INFO(uniform);
         CHECK(editable.count(uniform) == 0);
@@ -363,7 +392,7 @@ TEST_CASE("On the shipped U1 presets each off-size tool head follows the process
         CHECK(sources[1].reason == PerHeadProcess::Reason::Derived);
         CHECK(sources[2].reason == PerHeadProcess::Reason::Derived);
         CHECK(sources[3].reason == PerHeadProcess::Reason::HomeSize);
-        CHECK(sources[1].composed_keys.size() == 32);
+        CHECK(sources[1].composed_keys.size() == 41);
         CHECK(sources[1].kept_keys.empty());
 
         // One slot per tool head on the U1 (no nozzle stats): the off-size heads carry the 0.2 / 0.6
@@ -426,7 +455,7 @@ TEST_CASE("On the shipped U1 presets each off-size tool head follows the process
         const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*bundle);
         REQUIRE(sources.size() == 4);
         CHECK(sources[1].kept_keys == std::vector<std::string>{"default_acceleration"});
-        CHECK(sources[1].composed_keys.size() == 31);
+        CHECK(sources[1].composed_keys.size() == 40);
         const DynamicPrintConfig composed = bundle->full_config_for_print(false);
         CHECK(floats_of(composed, "default_acceleration") == std::vector<double>{3000., 3000., 3000., 3000.});
         CHECK(floats_of(composed, "outer_wall_speed") == std::vector<double>{200., 120., 120., 200.});
@@ -1911,7 +1940,7 @@ TEST_CASE("The High Flow rule applies to a High Flow tool head without High Flow
         CHECK(sources[1].derived);
         REQUIRE(sources[1].preset != nullptr);
         CHECK(sources[1].preset->name == STD_020_04);
-        CHECK(sources[1].composed_keys.size() == 32);
+        CHECK(sources[1].composed_keys.size() == 41);
         CHECK(sources[1].kept_keys.empty());
         CHECK(PerHeadProcess::reads_high_flow(sources[1], nvtHighFlow, printer));
         // A Standard head of the home size is not derived; the other sizes keep the size rule.
@@ -2444,7 +2473,7 @@ TEST_CASE("The command line empties the record of a loaded project and keeps its
     const std::vector<std::string> lines = PerHeadProcess::command_line_record(config);
     REQUIRE(lines.size() == 3);
     CHECK(lines[0].find("extruder 2 printed with " + std::string(STD_012_02)) != std::string::npos);
-    CHECK(lines[2].find("extruder 3 is set to take its speeds from " + std::string(STD_024_06)) != std::string::npos);
+    CHECK(lines[2].find("extruder 3 is set to take its speeds and line widths from " + std::string(STD_024_06)) != std::string::npos);
     CHECK(config.option<ConfigOptionStrings>(PerHeadProcess::record_key)->values.empty());
     CHECK(config.option<ConfigOptionStrings>(CHOICE)->values == std::vector<std::string>{"", "", STD_024_06});
     CHECK(PerHeadProcess::command_line_record(config).size() == 1);
@@ -2756,4 +2785,715 @@ TEST_CASE("The command line logs a chosen flow and keeps it", "[PerHeadProcess][
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].find("extruder 2 is set to print the Standard speeds") != std::string::npos);
     CHECK(config.option<ConfigOptionStrings>(FLOW)->values == std::vector<std::string>{"", "Standard"});
+}
+
+
+// ---- Line widths per tool head: the width source of the composer ----
+
+namespace {
+
+
+// The text of column `column` of a key ("105%", "0.42").
+std::string text_at(const DynamicPrintConfig &config, const std::string &key, size_t column)
+{
+    const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::vector<std::string> values = option->vserialize();
+    REQUIRE(column < values.size());
+    return values[column];
+}
+
+// The text of a preset's Standard shared column of a key.
+std::string preset_text(const Preset &preset, const std::string &key)
+{
+    return text_at(preset.config, key, size_t(PerHeadProcess::shared_column(preset.config, nvtStandard)));
+}
+
+// Writes the text of a value into column `column` of a key.
+void set_column_text(DynamicPrintConfig &config, const std::string &key, size_t column, const std::string &value)
+{
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::unique_ptr<ConfigOption> parsed(option->clone());
+    REQUIRE(parsed->deserialize(value));
+    option->set_at(parsed.get(), column, 0);
+}
+
+const std::vector<std::string> &width_keys()
+{
+    static const std::vector<std::string> keys(PerHeadProcess::flow_independent_keys().begin(), PerHeadProcess::flow_independent_keys().end());
+    return keys;
+}
+
+} // namespace
+
+TEST_CASE("A tool head of another size prints the line widths of the preset of its size; a High Flow head keeps the widths of its size preset", "[PerHeadProcess][PerHeadWidth][Profiles][phw_source]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_owner_plate(*bundle); // 0.2 / 0.4 High Flow / 0.6 / 0.8 under 0.20mm High Quality (0.4)
+    const Preset &selected = bundle->prints.get_selected_preset();
+    std::vector<PerHeadProcess::Source> sources;
+    const DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(composed.option<ConfigOptionInts>("print_extruder_id")->values == std::vector<int>{1, 2, 3, 4});
+
+    // Tool head 2: the High Flow rule re-picks the speeds to 0.20mm Standard's High Flow column, the
+    // widths stay the selected preset's (a home-size head has no size preset).
+    CHECK(sources[1].reason == PerHeadProcess::Reason::HighFlow);
+    CHECK(sources[1].size_preset == nullptr);
+    CHECK(PerHeadProcess::width_source(sources[1]) == nullptr);
+    CHECK(value_at(composed, "outer_wall_speed", 1) == 500.);
+    for (const std::string &key : width_keys()) {
+        INFO(key);
+        CHECK(text_at(composed, key, 1) == preset_text(selected, key));
+    }
+    CHECK(text_at(composed, "top_surface_line_width", 1) == "105%");
+    CHECK(text_at(composed, "sparse_infill_line_width", 1) == "112.5%");
+
+    // Tool heads 1, 3 and 4: the widths of the preset of their size, the size preset being the source.
+    for (size_t head : {size_t(0), size_t(2), size_t(3)}) {
+        REQUIRE(sources[head].derived);
+        REQUIRE(sources[head].preset != nullptr);
+        CHECK(sources[head].size_preset == sources[head].preset);
+        CHECK(PerHeadProcess::width_source(sources[head]) == sources[head].preset);
+        for (const std::string &key : width_keys()) {
+            INFO("tool head " << head + 1 << ", " << key);
+            CHECK(text_at(composed, key, head) == preset_text(*sources[head].preset, key));
+        }
+    }
+    CHECK(text_at(composed, "line_width", 0) == "110%");
+    CHECK(text_at(composed, "line_width", 2) == "103.33%");
+    CHECK(text_at(composed, "line_width", 3) == "102.5%");
+    CHECK(text_at(composed, "initial_layer_line_width", 0) == "125%");
+
+    // composed_column_for_key: a width reads the width source's Standard shared column, a speed the source column.
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+    const Preset *from = nullptr;
+    CHECK(PerHeadProcess::composed_column_for_key(sources[2], "line_width", nvtStandard, printer, from) == PerHeadProcess::shared_column(sources[2].preset->config, nvtStandard));
+    CHECK(from == sources[2].preset);
+    CHECK(PerHeadProcess::composed_column_for_key(sources[1], "line_width", nvtHighFlow, printer, from) == -1);
+    CHECK(from == nullptr);
+    CHECK(PerHeadProcess::composed_column_for_key(sources[1], "outer_wall_speed", nvtHighFlow, printer, from) == PerHeadProcess::composed_column(sources[1], nvtHighFlow, printer));
+    CHECK(from == sources[1].preset);
+
+    SECTION("a preset chosen for the 0.6 mm head supplies its widths and its speeds") {
+        PerHeadProcess::set_chosen(*bundle, 2, STD_024_06);
+        const Preset *chosen = bundle->prints.find_preset(STD_024_06, false);
+        REQUIRE(chosen != nullptr);
+        const DynamicPrintConfig with_choice = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+        REQUIRE(sources.size() == 4);
+        CHECK(sources[2].step == PerHeadProcess::Step::Chosen);
+        CHECK(PerHeadProcess::width_source(sources[2]) == chosen);
+        CHECK(text_at(with_choice, "line_width", 2) == preset_text(*chosen, "line_width"));
+        CHECK(text_at(with_choice, "line_width", 2) == "103.33%");
+        CHECK(value_at(with_choice, "sparse_infill_speed", 2) == 150.);
+    }
+
+    SECTION("a width changed under All tool heads applies to every tool head") {
+        bundle->prints.get_edited_preset().config.set_key_value("line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(110., true)});
+        CHECK(PerHeadProcess::all_edited_keys(*bundle).count("line_width") == 1);
+        const DynamicPrintConfig edited = bundle->full_config_for_print(false);
+        for (size_t head = 0; head < 4; ++head) {
+            INFO("tool head " << head + 1);
+            CHECK(text_at(edited, "line_width", head) == "110%");
+        }
+        // The other widths still follow the size presets.
+        CHECK(text_at(edited, "outer_wall_line_width", 3) == "102.5%");
+    }
+
+    SECTION("a width set for one tool head beats the preset of its size") {
+        DynamicPrintConfig &process = bundle->prints.get_edited_preset().config;
+        PerHeadProcess::widen(process, printer);
+        const std::vector<int> columns = PerHeadProcess::head_columns(process, 3);
+        REQUIRE_FALSE(columns.empty());
+        set_column_text(process, "sparse_infill_line_width", size_t(columns.front()), "0.9");
+        PerHeadProcess::set_head_value(process, 3, "sparse_infill_line_width", columns.front());
+        const DynamicPrintConfig with_value = bundle->full_config_for_print(false);
+        CHECK(text_at(with_value, "sparse_infill_line_width", 3) == "0.9");
+        CHECK(text_at(with_value, "sparse_infill_line_width", 2) == "103.33%");
+        CHECK(text_at(with_value, "outer_wall_line_width", 3) == "102.5%");
+    }
+}
+
+TEST_CASE("A 0.6 mm High Flow head takes its widths from the preset of its size, not from the High Flow sibling the speeds come from", "[PerHeadProcess][PerHeadWidth][Profiles][phw_source]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.4, 0.6, 0.4}, {0., 0., 0., 0.}, "0.24mm Standard @Snapmaker U1 (0.4 nozzle)");
+    bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtStandard), int(nvtHighFlow), int(nvtStandard)};
+    std::vector<PerHeadProcess::Source> sources;
+    const DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    REQUIRE(sources.size() == 4);
+    REQUIRE(sources[2].derived);
+    REQUIRE(sources[2].size_preset != nullptr);
+    // The size rule gives 0.24mm Standard (0.6) (the U1 matrix); whether or not the High Flow rule
+    // re-picked the speeds source, the widths come from that preset.
+    CHECK(sources[2].size_preset->name == STD_024_06);
+    REQUIRE(PerHeadProcess::width_source(sources[2]) != nullptr);
+    CHECK(PerHeadProcess::width_source(sources[2])->name == STD_024_06);
+    for (const std::string &key : width_keys()) {
+        INFO(key);
+        CHECK(text_at(composed, key, 2) == preset_text(*PerHeadProcess::width_source(sources[2]), key));
+    }
+    CHECK(text_at(composed, "line_width", 2) == "103.33%");
+    CHECK(text_at(composed, "initial_layer_line_width", 2) == "103.33%");
+}
+
+// A plate of one nozzle size never changes its widths through the High Flow rule.
+TEST_CASE("On an all-0.4 plate the High Flow head keeps the selected preset's widths while its speeds come from the sibling with a High Flow column", "[PerHeadProcess][PerHeadWidth][Profiles][phw_source]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.}, "0.24mm Standard @Snapmaker U1 (0.4 nozzle)");
+    bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
+    const Preset &selected = bundle->prints.get_selected_preset();
+    CHECK(preset_text(selected, "top_surface_line_width") == "112.5%");
+    std::vector<PerHeadProcess::Source> sources;
+    const DynamicPrintConfig composed = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    if (sources.empty()) {
+        // Nothing composed: the selected preset has a High Flow column of its own for the head.
+        CHECK(PerHeadProcess::has_high_flow_values(selected.config, 1, bundle->printers.get_edited_preset().config));
+        return;
+    }
+    REQUIRE(sources.size() == 4);
+    CHECK(PerHeadProcess::width_source(sources[1]) == nullptr);
+    CHECK(sources[1].size_preset == nullptr);
+    const auto *ids = composed.option<ConfigOptionInts>("print_extruder_id");
+    REQUIRE(ids != nullptr);
+    for (size_t column = 0; column < ids->values.size(); ++column)
+        for (const std::string &key : width_keys()) {
+            INFO("column " << column << ", " << key);
+            CHECK(text_at(composed, key, column) == preset_text(selected, key));
+        }
+    // With the Standard speeds chosen for the High Flow head likewise.
+    PerHeadProcess::set_chosen_flow(*bundle, 1, nvtStandard);
+    const DynamicPrintConfig standard = bundle->full_config_for_print(false, std::nullopt, std::nullopt, &sources);
+    if (const auto *standard_ids = standard.option<ConfigOptionInts>("print_extruder_id"); standard_ids != nullptr)
+        for (size_t column = 0; column < standard_ids->values.size(); ++column)
+            CHECK(text_at(standard, "top_surface_line_width", column) == "112.5%");
+}
+
+// Round trips of a width set per tool head, and the scalar spelling without one.
+TEST_CASE("A project stores a line width set for a tool head as a full array without nil and a project without one as a string", "[PerHeadProcess][PerHeadWidth][Profiles][phw_round_trip]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+    bundle->project_config.option<ConfigOptionStrings>("filament_colour", true)->values = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    auto json_of = [](const DynamicPrintConfig &config) {
+        std::ostringstream os;
+        config.save_to_json(os, "project", "Project", "1.0.0.0");
+        return nlohmann::json::parse(os.str());
+    };
+
+    SECTION("without a width set per tool head every width is one string") {
+        const DynamicPrintConfig stored = bundle->full_config_secure();
+        const nlohmann::json     j      = json_of(stored);
+        for (const std::string &key : width_keys()) {
+            INFO(key);
+            REQUIRE(j.contains(key));
+            CHECK(j[key].is_string());
+        }
+        CHECK(j["line_width"].get<std::string>() == preset_text(bundle->prints.get_selected_preset(), "line_width"));
+    }
+
+    SECTION("a width set for tool head 4 survives the round trip in both of its columns, written without nil") {
+        DynamicPrintConfig &edited = bundle->prints.get_edited_preset().config;
+        PerHeadProcess::widen(edited, bundle->printers.get_edited_preset().config);
+        REQUIRE(ints_of(edited, "print_extruder_id") == U1_WIDE_IDS);
+        set_column_text(edited, "sparse_infill_line_width", 8, "0.9");
+        PerHeadProcess::set_head_value(edited, 3, "sparse_infill_line_width", 8);
+
+        const DynamicPrintConfig stored = bundle->full_config_secure();
+        const nlohmann::json     j      = json_of(stored);
+        REQUIRE(j["sparse_infill_line_width"].is_array());
+        REQUIRE(j["sparse_infill_line_width"].size() == 10);
+        for (const auto &entry : j["sparse_infill_line_width"])
+            CHECK(entry.get<std::string>() != "nil");
+        CHECK(j["sparse_infill_line_width"][0].get<std::string>() == "112.5%");
+        CHECK(j["sparse_infill_line_width"][8].get<std::string>() == "0.9");
+        CHECK(j["sparse_infill_line_width"][9].get<std::string>() == "0.9");
+        // An untouched width stays one string.
+        CHECK(j["line_width"].is_string());
+        CHECK(strings_of(stored, OVERRIDE)[8] == "sparse_infill_line_width");
+
+        auto          reloaded = load_snapmaker_bundle();
+        PresetBundle &second   = *reloaded;
+        DynamicPrintConfig project = stored;
+        Preset::normalize(project);
+        second.load_config_model("per_head_width.3mf", std::move(project), Semver());
+        const DynamicPrintConfig &loaded = second.prints.get_edited_preset().config;
+        CHECK(ints_of(loaded, "print_extruder_id") == U1_WIDE_IDS);
+        CHECK(text_at(loaded, "sparse_infill_line_width", 8) == "0.9");
+        CHECK(text_at(loaded, "sparse_infill_line_width", 9) == "0.9");
+        CHECK(text_at(loaded, "sparse_infill_line_width", 0) == "112.5%");
+        CHECK(text_at(loaded, "sparse_infill_line_width", 6) == "112.5%");
+        CHECK(strings_of(loaded, OVERRIDE) == strings_of(edited, OVERRIDE));
+        check_invariants(loaded);
+    }
+}
+
+TEST_CASE("A user process preset with a line width set for a tool head is saved without nil and reloads with the marker", "[PerHeadProcess][PerHeadWidth][Profiles][phw_round_trip]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+    Preset *parent = bundle->prints.find_preset(STD_020_04, false, true);
+    REQUIRE(parent != nullptr);
+    const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+
+    ScopedTemporaryDir temp_dir("orca_per_head_width");
+    const std::string  name = "Wide sparse @Snapmaker U1 (0.4 nozzle)";
+    std::string        file;
+    {
+        Preset child(Preset::TYPE_PRINT, name, false);
+        child.config     = parent->config;
+        child.version    = parent->version;
+        child.inherits() = parent->name;
+        child.file       = (temp_dir.path() / PRESET_PRINT_NAME / (name + ".json")).string();
+        file             = child.file;
+        PerHeadProcess::widen(child.config, printer);
+        set_column_text(child.config, "sparse_infill_line_width", 6, "0.9");
+        PerHeadProcess::set_head_value(child.config, 2, "sparse_infill_line_width", 6);
+        child.save(&parent->config);
+        REQUIRE(boost::filesystem::exists(child.file));
+    }
+    {
+        boost::nowide::ifstream in(file);
+        const nlohmann::json    j = nlohmann::json::parse(in);
+        REQUIRE(j.contains("sparse_infill_line_width"));
+        REQUIRE(j["sparse_infill_line_width"].is_array());
+        REQUIRE(j["sparse_infill_line_width"].size() == 10);
+        for (const auto &entry : j["sparse_infill_line_width"])
+            CHECK(entry.get<std::string>() != "nil");
+        CHECK(j["sparse_infill_line_width"][0].get<std::string>() == "112.5%");
+        CHECK(j["sparse_infill_line_width"][6].get<std::string>() == "0.9");
+        // An older reader takes the first number and the percent flag: the shared value.
+        ConfigOptionFloatOrPercent old;
+        std::string joined;
+        for (const auto &entry : j["sparse_infill_line_width"])
+            joined += (joined.empty() ? "" : ",") + entry.get<std::string>();
+        REQUIRE(old.deserialize(joined));
+        CHECK(old.percent);
+        CHECK(old.value == 112.5);
+    }
+    PresetsConfigSubstitutions substitutions;
+    bundle->prints.load_presets(temp_dir.path().string(), PRESET_PRINT_NAME, substitutions, ForwardCompatibilitySubstitutionRule::EnableSilent);
+    const Preset *loaded = bundle->prints.find_preset(name, false);
+    REQUIRE(loaded != nullptr);
+    CHECK(ints_of(loaded->config, "print_extruder_id") == U1_WIDE_IDS);
+    CHECK(text_at(loaded->config, "sparse_infill_line_width", 6) == "0.9");
+    CHECK(text_at(loaded->config, "sparse_infill_line_width", 7) == "0.9");
+    CHECK(text_at(loaded->config, "sparse_infill_line_width", 0) == "112.5%");
+    CHECK(strings_of(loaded->config, OVERRIDE)[6] == "sparse_infill_line_width");
+    check_invariants(loaded->config);
+}
+
+TEST_CASE("A line width is flow-independent: an edit under All fills every shared column and normalise equalises differing flow columns", "[PerHeadProcess][PerHeadWidth][phw_flow_independent]")
+{
+    DynamicPrintConfig config = flow_only_process();
+    config.option<ConfigOptionFloatsOrPercentsNullable>("line_width", true)->values = {FloatOrPercent(105., true), FloatOrPercent(105., true)};
+    // Four heads that declare Standard and High Flow: two columns per head in the wide layout.
+    const DynamicPrintConfig printer = four_head_printer(std::vector<NozzleVolumeType>(4, nvtStandard), false);
+    PerHeadProcess::widen(config, printer);
+    REQUIRE(PerHeadProcess::is_wide(config));
+    const PerHeadProcess::Layout layout = PerHeadProcess::layout_of(config);
+    REQUIRE(layout.ids == U1_WIDE_IDS);
+
+    SECTION("set_shared_value writes the width into both shared columns and every unmarked head column") {
+        set_column_text(config, "line_width", 0, "0.5");
+        PerHeadProcess::set_shared_value(config, "line_width", nvtStandard);
+        for (size_t column = 0; column < layout.size(); ++column) {
+            INFO("column " << column);
+            CHECK(text_at(config, "line_width", column) == "0.5");
+        }
+        // A speed keeps its flow: the Standard shared column fills the Standard head columns alone.
+        set_column(config, "outer_wall_speed", 0, 175.);
+        PerHeadProcess::set_shared_value(config, "outer_wall_speed", nvtStandard);
+        for (size_t column = 0; column < layout.size(); ++column) {
+            INFO("column " << column);
+            CHECK(floats_of(config, "outer_wall_speed")[column] == (PerHeadProcess::variant_names_type(layout.variants[column], nvtHighFlow) ? 500. : 175.));
+        }
+    }
+
+    SECTION("normalise takes the Standard column into a differing High Flow column, shared and per head") {
+        // A speed set for tool head 1 keeps the layout wide through normalise (a wide layout whose
+        // marker names nothing is narrowed, rule I1 of the selector); the width is then read on
+        // every column.
+        set_column(config, "outer_wall_speed", 2, 175.);
+        PerHeadProcess::set_head_value(config, 0, "outer_wall_speed", 2);
+        set_column_text(config, "line_width", 1, "0.7"); // the High Flow shared column
+        set_column_text(config, "line_width", 3, "0.7"); // the High Flow column of tool head 1
+        PerHeadProcess::normalise(config, nullptr, &printer);
+        REQUIRE(PerHeadProcess::is_wide(config));
+        REQUIRE(PerHeadProcess::layout_of(config).size() == layout.size());
+        for (size_t column = 0; column < layout.size(); ++column) {
+            INFO("column " << column);
+            CHECK(text_at(config, "line_width", column) == "105%");
+        }
+    }
+
+    SECTION("without a value set per tool head normalise equalises the flow columns and narrows the layout") {
+        set_column_text(config, "line_width", 1, "0.7");
+        set_column_text(config, "line_width", 3, "0.7");
+        PerHeadProcess::normalise(config, nullptr, &printer);
+        CHECK_FALSE(PerHeadProcess::is_wide(config));
+        const PerHeadProcess::Layout narrowed = PerHeadProcess::layout_of(config);
+        REQUIRE(narrowed.size() == 2);
+        for (size_t column = 0; column < narrowed.size(); ++column) {
+            INFO("column " << column);
+            CHECK(text_at(config, "line_width", column) == "105%");
+        }
+    }
+}
+
+// The clear link of one Process tab page: under a tool head the Quality page clears the head's line
+// widths and keeps its speeds, the Speed page the reverse; clear_head without a key set clears all.
+TEST_CASE("Clearing a tool head for the keys of one page leaves its values of the other page", "[PerHeadProcess][PerHeadWidth][phw_clear_page]")
+{
+    DynamicPrintConfig config = flow_only_process();
+    config.option<ConfigOptionFloatsOrPercentsNullable>("line_width", true)->values = {FloatOrPercent(105., true), FloatOrPercent(105., true)};
+    const DynamicPrintConfig printer = four_head_printer(std::vector<NozzleVolumeType>(4, nvtStandard), false);
+    PerHeadProcess::widen(config, printer);
+    REQUIRE(PerHeadProcess::is_wide(config));
+    // Tool head 3: a speed and a width of its own.
+    const int column = PerHeadProcess::head_columns(config, 2).front();
+    set_column(config, "outer_wall_speed", size_t(column), 90.);
+    PerHeadProcess::set_head_value(config, 2, "outer_wall_speed", column);
+    set_column_text(config, "line_width", size_t(column), "0.5");
+    PerHeadProcess::set_head_value(config, 2, "line_width", column);
+    REQUIRE(PerHeadProcess::head_override_keys(config, 2) == std::vector<std::string>{"line_width", "outer_wall_speed"});
+
+    SECTION("the widths of the page: the speed stays") {
+        PerHeadProcess::clear_head(config, 2, PerHeadProcess::flow_independent_keys());
+        CHECK(PerHeadProcess::head_override_keys(config, 2) == std::vector<std::string>{"outer_wall_speed"});
+        for (int c : PerHeadProcess::head_columns(config, 2))
+            CHECK(text_at(config, "line_width", size_t(c)) == "105%");
+        CHECK(floats_of(config, "outer_wall_speed")[size_t(column)] == 90.);
+        check_invariants(config);
+    }
+
+    SECTION("the speeds of the page: the width stays") {
+        std::set<std::string> speeds;
+        for (const std::string &key : PerHeadProcess::head_editable_keys())
+            if (PerHeadProcess::flow_independent_keys().count(key) == 0)
+                speeds.insert(key);
+        PerHeadProcess::clear_head(config, 2, speeds);
+        CHECK(PerHeadProcess::head_override_keys(config, 2) == std::vector<std::string>{"line_width"});
+        for (int c : PerHeadProcess::head_columns(config, 2))
+            CHECK(text_at(config, "line_width", size_t(c)) == "0.5");
+        check_invariants(config);
+    }
+
+    SECTION("a key set that names nothing of the head changes nothing") {
+        PerHeadProcess::clear_head(config, 2, {"sparse_infill_speed"});
+        CHECK(PerHeadProcess::head_override_keys(config, 2) == std::vector<std::string>{"line_width", "outer_wall_speed"});
+    }
+
+    SECTION("without a key set everything goes") {
+        PerHeadProcess::clear_head(config, 2);
+        CHECK(PerHeadProcess::head_override_keys(config, 2).empty());
+        CHECK(PerHeadProcess::marker_empty(config));
+    }
+}
+
+// Command-line project: one object on tool head 4 with a 0.9 mm sparse infill width for that head, stored
+// in SNAPMAKER_ORCA_PHW_PROJECT_DIR (else a temporary dir) and reloaded to check the columns and marker.
+TEST_CASE("The project of a line width set for a tool head is stored for the command line and loads back", "[PerHeadProcess][PerHeadWidth][Profiles][phw_cli_project]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+    bundle->project_config.option<ConfigOptionStrings>("filament_colour", true)->values = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    DynamicPrintConfig &edited = bundle->prints.get_edited_preset().config;
+    PerHeadProcess::widen(edited, bundle->printers.get_edited_preset().config);
+    REQUIRE(ints_of(edited, "print_extruder_id") == U1_WIDE_IDS);
+    set_column_text(edited, "sparse_infill_line_width", 8, "0.9");
+    PerHeadProcess::set_head_value(edited, 3, "sparse_infill_line_width", 8);
+    DynamicPrintConfig stored = bundle->full_config_secure();
+    REQUIRE(text_at(stored, "sparse_infill_line_width", 8) == "0.9");
+
+    Model model;
+    REQUIRE(load_stl((std::string(TEST_DATA_DIR) + "/test_3mf/Prusa.stl").c_str(), &model));
+    model.add_default_instances();
+    REQUIRE_FALSE(model.objects.empty());
+    // The command line slices a plate only when an instance lies inside its printable area (Model::update_print_volume_state,
+    // exit CLI_NO_SUITABLE_OBJECTS otherwise); the mesh of Prusa.stl lies at negative coordinates, so the instance is
+    // centred on the bed and set down on it, as the plater does with a loaded model.
+    const BoundingBoxf bed(bundle->printers.get_edited_preset().config.opt<ConfigOptionPoints>("printable_area")->values);
+    model.center_instances_around_point(bed.center());
+    model.objects.front()->ensure_on_bed();
+    model.objects.front()->config.set("extruder", 4);
+    ScopedTemporaryDir backup_dir("orca_phw_cli");
+    model.set_backup_path(backup_dir.string());
+    const char *export_dir = std::getenv("SNAPMAKER_ORCA_PHW_PROJECT_DIR");
+    ScopedTemporaryDir temp_dir("orca_phw_cli_project");
+    const std::string path = ((export_dir != nullptr && *export_dir != 0 ? boost::filesystem::path(export_dir) : temp_dir.path()) / "per_head_width_cli.3mf").string();
+    boost::filesystem::create_directories(boost::filesystem::path(path).parent_path());
+    StoreParams store_params;
+    store_params.path     = path.c_str();
+    store_params.model    = &model;
+    store_params.config   = &stored;
+    store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+    PlateData *plate      = new PlateData();
+    plate->plate_index    = 0;
+    plate->objects_and_instances.emplace_back(0, 0);
+    store_params.plate_data_list.push_back(plate);
+    REQUIRE(store_bbs_3mf(store_params));
+    delete plate;
+    INFO("project stored at " << path);
+    REQUIRE(boost::filesystem::exists(path));
+
+    Model                     dst_model;
+    ScopedTemporaryDir        dst_backup_dir("orca_phw_cli_dst");
+    dst_model.set_backup_path(dst_backup_dir.string());
+    DynamicPrintConfig        dst_config;
+    ConfigSubstitutionContext context{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             dst_plates;
+    std::vector<Preset *>     project_presets;
+    Semver                    file_version;
+    bool                      is_bbl_3mf = false, is_orca_3mf = false;
+    REQUIRE(load_bbs_3mf(path.c_str(), &dst_config, &context, &dst_model, &dst_plates, &project_presets, &is_bbl_3mf, &is_orca_3mf, &file_version,
+                         nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig));
+    release_PlateData_list(dst_plates);
+    Preset::normalize(dst_config);
+    CHECK(ints_of(dst_config, "print_extruder_id") == U1_WIDE_IDS);
+    CHECK(text_at(dst_config, "sparse_infill_line_width", 8) == "0.9");
+    CHECK(text_at(dst_config, "sparse_infill_line_width", 0) == "112.5%");
+    CHECK(strings_of(dst_config, OVERRIDE)[8] == "sparse_infill_line_width");
+    REQUIRE_FALSE(dst_model.objects.empty());
+    CHECK(dst_model.objects.front()->config.opt_int("extruder") == 4);
+}
+
+// The pressure advance pattern writes its two line widths in mm (SuggestedConfigCalibPAPattern::
+// nozzle_ratio_pairs) into every column, keeps the marker and the preset applies; a scalar write is refused.
+TEST_CASE("The pressure advance pattern writes its line widths into every column of the process preset", "[PerHeadProcess][PerHeadWidth][Profiles][phw_pa_pattern]")
+{
+    const SuggestedConfigCalibPAPattern pattern;
+    const double                        nozzle_diameter = 0.4;
+    const std::vector<std::pair<std::string, double>> expected_mm = {{"line_width", 0.45}, {"initial_layer_line_width", 0.56}};
+
+    // The loops of the three writers, then what the preset holds and that it applies.
+    auto write_and_check = [&](PresetBundle &bundle, const std::vector<int> &ids, const std::vector<std::string> &marker) {
+        DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+        for (const auto &opt : pattern.nozzle_ratio_pairs)
+            PerHeadProcess::set_every_column(process, opt.first, FloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        for (const auto &[key, mm] : expected_mm) {
+            INFO(key);
+            const auto *option = process.option<ConfigOptionFloatsOrPercentsNullable>(key);
+            REQUIRE(option != nullptr);
+            CHECK(option->values.size() == ids.size());
+            for (const FloatOrPercent &value : option->values) {
+                CHECK_FALSE(value.percent);
+                CHECK(value.value == Catch::Approx(mm));
+            }
+        }
+        CHECK(ints_of(process, "print_extruder_id") == ids);
+        CHECK(strings_of(process, OVERRIDE) == marker);
+        DynamicPrintConfig full;
+        REQUIRE_NOTHROW(full = bundle.full_config_for_print(false));
+        Print print;
+        Model model;
+        REQUIRE_NOTHROW(print.apply(model, full));
+    };
+
+    SECTION("the selected preset with its two flow columns") {
+        auto bundle = load_snapmaker_bundle();
+        select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+        const DynamicPrintConfig &process = bundle->prints.get_edited_preset().config;
+        const std::vector<int>    ids     = ints_of(process, "print_extruder_id");
+        REQUIRE(ids.size() == 2);
+        write_and_check(*bundle, ids, strings_of(process, OVERRIDE));
+    }
+
+    SECTION("a preset with a sparse infill width set for tool head 3 keeps that width and its marker") {
+        auto bundle = load_snapmaker_bundle();
+        select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+        DynamicPrintConfig &process = bundle->prints.get_edited_preset().config;
+        PerHeadProcess::widen(process, bundle->printers.get_edited_preset().config);
+        set_column_text(process, "sparse_infill_line_width", 6, "0.9");
+        PerHeadProcess::set_head_value(process, 2, "sparse_infill_line_width", 6);
+        const std::vector<std::string> marker = strings_of(process, OVERRIDE);
+        REQUIRE(marker[6] == "sparse_infill_line_width");
+        write_and_check(*bundle, U1_WIDE_IDS, marker);
+        CHECK(text_at(process, "sparse_infill_line_width", 6) == "0.9");
+        CHECK(text_at(process, "sparse_infill_line_width", 0) == "112.5%");
+    }
+
+    SECTION("the former scalar write is refused when the preset is applied") {
+        auto bundle = load_snapmaker_bundle();
+        select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+        DynamicPrintConfig &process = bundle->prints.get_edited_preset().config;
+        for (const auto &opt : pattern.nozzle_ratio_pairs)
+            process.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        const auto apply_scalar_widths = [&] {
+            DynamicPrintConfig full = bundle->full_config_for_print(false);
+            Print              print;
+            Model              model;
+            print.apply(model, full);
+        };
+        CHECK_THROWS_AS(apply_scalar_widths(), ConfigurationError);
+    }
+}
+
+// ---- Line widths per tool head: an older reader of a user preset ----
+
+namespace {
+
+// The process definition as an older reader has it (Snapmaker Orca 2.4, mainline OrcaSlicer, this
+// fork before the columns): the nine line widths one value, coFloatOrPercent.
+class OldReaderConfig : public DynamicConfig
+{
+public:
+    OldReaderConfig()
+    {
+        m_def.options = print_config_def.options;
+        for (const std::string &key : PerHeadProcess::flow_independent_keys()) {
+            ConfigOptionDef &def    = m_def.options.at(key);
+            def.type                = coFloatOrPercent;
+            def.nullable            = false;
+            def.scalar_when_uniform = false;
+            def.set_default_value(new ConfigOptionFloatOrPercent(0., false));
+        }
+    }
+    const ConfigDef *def() const override { return &m_def; }
+
+private:
+    ConfigDef m_def;
+};
+
+} // namespace
+
+// A user preset with a per head width is written as the full array without "nil". A scalar-type
+// reader reads its first number (the shared value while all columns share a unit) and no `reason`.
+TEST_CASE("An older reader loads a user preset with a line width set for a tool head and reads the shared value", "[PerHeadProcess][PerHeadWidth][Profiles][phw_old_reader]")
+{
+    ScopedTemporaryDir temp_dir("orca_per_head_width_old_reader");
+
+    SECTION("the file Preset::save writes for a sparse infill width set for tool head 3") {
+        auto bundle = load_snapmaker_bundle();
+        select_u1(*bundle, {0.4, 0.4, 0.4, 0.4}, {0., 0., 0., 0.});
+        Preset *parent = bundle->prints.find_preset(STD_020_04, false, true);
+        REQUIRE(parent != nullptr);
+        Preset child(Preset::TYPE_PRINT, "Old reader @Snapmaker U1 (0.4 nozzle)", false);
+        child.config     = parent->config;
+        child.version    = parent->version;
+        child.inherits() = parent->name;
+        child.file       = (temp_dir.path() / "Old reader @Snapmaker U1 (0.4 nozzle).json").string();
+        PerHeadProcess::widen(child.config, bundle->printers.get_edited_preset().config);
+        set_column_text(child.config, "sparse_infill_line_width", 6, "0.9");
+        PerHeadProcess::set_head_value(child.config, 2, "sparse_infill_line_width", 6);
+        child.save(&parent->config);
+        REQUIRE(boost::filesystem::exists(child.file));
+
+        OldReaderConfig                    reader;
+        std::map<std::string, std::string> key_values;
+        std::string                        reason;
+        REQUIRE_NOTHROW(reader.load_from_json(child.file, ForwardCompatibilitySubstitutionRule::EnableSilent, key_values, reason));
+        CHECK(reason.empty());
+        const auto *width = reader.option<ConfigOptionFloatOrPercent>("sparse_infill_line_width");
+        REQUIRE(width != nullptr);
+        CHECK(width->percent);
+        CHECK(width->value == 112.5);
+        // The untouched widths of the file, one value each, read as before.
+        const auto *line_width = reader.option<ConfigOptionFloatOrPercent>("line_width");
+        if (line_width != nullptr) {
+            CHECK(line_width->percent);
+            CHECK(line_width->value == 112.5);
+        }
+    }
+
+    SECTION("an absolute shared value with a percent head value reads as a percent: the hazard the Quality page warns about") {
+        nlohmann::json j;
+        j["name"]                     = "Hazard @Snapmaker U1 (0.4 nozzle)";
+        j["sparse_infill_line_width"] = nlohmann::json::array({"0.42", "0.42", "0.42", "0.42", "0.42", "0.42", "110%", "110%", "0.42", "0.42"});
+        const std::string file = (temp_dir.path() / "Hazard @Snapmaker U1 (0.4 nozzle).json").string();
+        {
+            boost::nowide::ofstream out(file);
+            out << j.dump(4);
+        }
+        OldReaderConfig                    reader;
+        std::map<std::string, std::string> key_values;
+        std::string                        reason;
+        REQUIRE_NOTHROW(reader.load_from_json(file, ForwardCompatibilitySubstitutionRule::EnableSilent, key_values, reason));
+        CHECK(reason.empty());
+        const auto *width = reader.option<ConfigOptionFloatOrPercent>("sparse_infill_line_width");
+        REQUIRE(width != nullptr);
+        CHECK(width->percent);
+        CHECK(width->value == Catch::Approx(0.42));
+    }
+}
+
+// ---- Line widths per tool head: the seed of a width added to an object ----
+
+// "Add settings" seeds a new override that applies on every head printing the item; override_seed
+// gives the value it prints now (head-4 cube: 102.5 % of 0.8 = 0.82 mm, not the preset's 112.5 %).
+TEST_CASE("A line width added to an object is seeded with the value the object prints", "[PerHeadProcess][PerHeadWidth][Profiles][phw_override_seed]")
+{
+    auto bundle = load_snapmaker_bundle();
+    select_owner_plate(*bundle); // 0.2 / 0.4 High Flow / 0.6 / 0.8 under 0.20mm High Quality (0.4)
+    std::vector<size_t> heads;
+    const std::string   key = "sparse_infill_line_width";
+
+    // One tool head: the value its size preset prints; the home-size High Flow head the selected preset's.
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {4}, &heads) == "102.5%");
+    CHECK(heads.empty());
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {1}, &heads) == "110%");
+    CHECK(heads.empty());
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {2}, &heads) == "112.5%");
+    CHECK(heads.empty());
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {3}, &heads) == "103.33%");
+    // A filament beyond the nozzles and filament 0 name the first head (Print::width_slot); no filament: the shared value.
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {9}, &heads) == "110%");
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {0}, &heads) == "110%");
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {}, &heads) == "112.5%");
+    CHECK(heads.empty());
+    // The same head twice is one head.
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {4, 4}, &heads) == "102.5%");
+    CHECK(heads.empty());
+
+    // Several tool heads: the shared value, and the heads that printed another value are named.
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {1, 4}, &heads) == "112.5%");
+    CHECK(heads == std::vector<size_t>{0, 3});
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {2, 4}, &heads) == "112.5%");
+    CHECK(heads == std::vector<size_t>{3});
+    // Two heads that both print the shared value: nothing to say.
+    CHECK(PerHeadProcess::override_seed(*bundle, key, {2, 2}, &heads) == "112.5%");
+    CHECK(heads.empty());
+    // A key the edited preset lacks: empty, the caller clones.
+    CHECK(PerHeadProcess::override_seed(*bundle, "no_such_key", {4}, &heads).empty());
+    // A key that is no line width: the shared value, no heads.
+    CHECK(PerHeadProcess::override_seed(*bundle, "outer_wall_speed", {1, 4}, &heads) == text_at(bundle->prints.get_edited_preset().config, "outer_wall_speed", size_t(PerHeadProcess::shared_column(bundle->prints.get_edited_preset().config, nvtStandard))));
+    CHECK(heads.empty());
+
+    SECTION("a preset chosen for the 0.6 mm head seeds its value") {
+        PerHeadProcess::set_chosen(*bundle, 2, STD_024_06);
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {3}, &heads) == "103.33%");
+        CHECK(PerHeadProcess::override_seed(*bundle, "line_width", {3}, &heads) == "103.33%");
+    }
+
+    SECTION("a width changed under All tool heads is what every head prints") {
+        bundle->prints.get_edited_preset().config.set_key_value(key, new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(110., true)});
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {4}, &heads) == "110%");
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {1, 4}, &heads) == "110%");
+        CHECK(heads.empty());
+        // The other widths still follow the size presets.
+        CHECK(PerHeadProcess::override_seed(*bundle, "line_width", {4}, &heads) == "102.5%");
+    }
+
+    SECTION("a width set for one tool head is what that head prints") {
+        DynamicPrintConfig       &process = bundle->prints.get_edited_preset().config;
+        const DynamicPrintConfig &printer = bundle->printers.get_edited_preset().config;
+        PerHeadProcess::widen(process, printer);
+        const std::vector<int> columns = PerHeadProcess::head_columns(process, 3);
+        REQUIRE_FALSE(columns.empty());
+        set_column_text(process, key, size_t(columns.front()), "0.9");
+        PerHeadProcess::set_head_value(process, 3, key, columns.front());
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {4}, &heads) == "0.9");
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {3}, &heads) == "103.33%");
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {2, 4}, &heads) == "112.5%");
+        CHECK(heads == std::vector<size_t>{3});
+    }
+
+    SECTION("with the preference off every head prints the selected preset") {
+        bundle->process_follows_nozzle = false;
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {4}, &heads) == "112.5%");
+        CHECK(PerHeadProcess::override_seed(*bundle, key, {1, 4}, &heads) == "112.5%");
+        CHECK(heads.empty());
+    }
 }

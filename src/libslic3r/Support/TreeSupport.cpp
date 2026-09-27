@@ -691,7 +691,9 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     SupportType stype = support_type;
     const coordf_t radius_sample_resolution = g_config_tree_support_collision_resolution;
     const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
-    const coordf_t extrusion_width = config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle,
+    // as the scalar read (the support head is not resolved here, the pre-existing rule).
+    const coordf_t extrusion_width = config.get_abs_value_at("line_width", 0, nozzle_diameter);
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     const coordf_t max_bridge_length = scale_(config.max_bridge_length.value);
     const bool bridge_no_support = max_bridge_length > 0;
@@ -2059,7 +2061,9 @@ void TreeSupport::draw_circles()
         top_interface_layers > 0 ? int(top_interface_layers) - 1 : 0);
     const size_t bottom_interface_layers = number_of_support_interface_bottom_layers(config);
     const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
-    const coordf_t line_width = config.get_abs_value("support_line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle,
+    // as the scalar read (the support head is not resolved here, the pre-existing rule).
+    const coordf_t line_width = config.get_abs_value_at("support_line_width", 0, nozzle_diameter);
     const coordf_t line_width_scaled           = scale_(line_width);
     const bool with_lightning_infill = m_support_params.base_fill_pattern == ipLightning;
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
@@ -3285,7 +3289,9 @@ void TreeSupport::smooth_nodes()
         }
     }
     
-    float max_move = scale_(m_object_config->support_line_width / 2);
+    // Snapmaker Orca: the width is a column per tool head, read at the support head; the raw
+    // number as the scalar read (a percent read as a number, the pre-existing quirk).
+    float max_move = scale_(Flow::width_at(m_object_config->support_line_width, support_head(m_object, m_object_config->support_filament, false)).value / 2);
     // if the branch is very tall, the tip also needs extra wall
     float thresh_tall_branch = 100;
     float thresh_dist_to_top = 30;

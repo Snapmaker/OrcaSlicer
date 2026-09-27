@@ -1087,8 +1087,14 @@ namespace client
     			            ctx->throw_exception("FloatOrPercent variable failed to resolve the \"ratio_over\" dependencies", opt.it_range);
     			        if (boost::ends_with(opt_def->ratio_over, "line_width")) {
                     		// Line width supports defaults and a complex graph of dependencies.
-                            assert(opt_parent->type() == coFloatOrPercent);
-                        	v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            if (opt_parent->is_vector())
+                                // Snapmaker Orca: a line width is a column per tool head, read at the
+                                // tool head of the current filament (the rule of every unindexed vector).
+                                v *= Flow::extrusion_width(opt_def->ratio_over, *ctx, static_cast<unsigned int>(ctx->current_extruder_id), ctx->get_extruder_id());
+                            else {
+                                assert(opt_parent->type() == coFloatOrPercent);
+                                v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            }
                         	break;
                         }
                         if (opt_parent->type() == coFloat || opt_parent->type() == coFloatOrPercent) {
@@ -1125,11 +1131,14 @@ namespace client
             // Helper to resolve a FloatOrPercent value (handles ratio_over chain for percent values).
             // elem_index: the element index used to access this vector element, so that
             // parent vectors (via ratio_over) use the same index rather than the current extruder.
-            auto resolve_float_or_percent = [ctx, &opt, &output](const FloatOrPercent &fop, size_t elem_index) {
+            // nozzle_extruder: the extruder whose nozzle a line width percent resolves against (the
+            // current filament for an unindexed reference, the index for an indexed one).
+            auto resolve_float_or_percent = [ctx, &opt, &output](const FloatOrPercent &fop, size_t elem_index, size_t nozzle_extruder) {
                 std::string opt_key(opt.it_range.begin(), opt.it_range.end());
                 if (boost::ends_with(opt_key, "line_width")) {
                     // Line width supports defaults and a complex graph of dependencies.
-                    output.set_d(Flow::extrusion_width(opt_key, *ctx, static_cast<unsigned int>(ctx->current_extruder_id)));
+                    // Snapmaker Orca: the column of the element (the tool head), the nozzle of the current filament.
+                    output.set_d(Flow::extrusion_width(opt_key, *ctx, static_cast<unsigned int>(nozzle_extruder), elem_index));
                 } else if (! fop.percent) {
                     // Not a percent, just return the value.
                     output.set_d(fop.value);
@@ -1144,8 +1153,13 @@ namespace client
                             ctx->throw_exception("FloatOrPercent variable failed to resolve the \"ratio_over\" dependencies", opt.it_range);
                         if (boost::ends_with(opt_def->ratio_over, "line_width")) {
                             // Line width supports defaults and a complex graph of dependencies.
-                            assert(opt_parent->type() == coFloatOrPercent);
-                            v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            if (opt_parent->is_vector())
+                                // Snapmaker Orca: a line width is a column per tool head, read at the column of the element.
+                                v *= Flow::extrusion_width(opt_def->ratio_over, *ctx, static_cast<unsigned int>(nozzle_extruder), elem_index);
+                            else {
+                                assert(opt_parent->type() == coFloatOrPercent);
+                                v *= Flow::extrusion_width(opt_def->ratio_over, static_cast<const ConfigOptionFloatOrPercent*>(opt_parent), *ctx, static_cast<unsigned int>(ctx->current_extruder_id));
+                            }
                             break;
                         }
                         if (opt_parent->type() == coFloat || opt_parent->type() == coFloatOrPercent) {
@@ -1216,11 +1230,11 @@ namespace client
                     const ConfigOptionFloatsOrPercentsNullable *opt_vec_nullable = dynamic_cast<const ConfigOptionFloatsOrPercentsNullable *>(opt.opt);
                     if (opt_vec_nullable) {
                         size_t elem_index = (opt_vec_nullable->size() == 1) ? 0 : ctx->get_extruder_id();
-                        resolve_float_or_percent(opt_vec_nullable->get_at(elem_index), elem_index);
+                        resolve_float_or_percent(opt_vec_nullable->get_at(elem_index), elem_index, ctx->current_extruder_id);
                     } else {
                         const ConfigOptionFloatsOrPercents *opt_vec = static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt);
                         size_t elem_index = (opt_vec->size() == 1) ? 0 : ctx->get_extruder_id();
-                        resolve_float_or_percent(opt_vec->get_at(elem_index), elem_index);
+                        resolve_float_or_percent(opt_vec->get_at(elem_index), elem_index, ctx->current_extruder_id);
                     }
                     break;
                 }
@@ -1241,9 +1255,9 @@ namespace client
                 case coFloatsOrPercents: {
                     const ConfigOptionFloatsOrPercentsNullable *opt_vec_nullable = dynamic_cast<const ConfigOptionFloatsOrPercentsNullable *>(opt.opt);
                     if (opt_vec_nullable) {
-                        resolve_float_or_percent(opt_vec_nullable->values[idx], idx);
+                        resolve_float_or_percent(opt_vec_nullable->values[idx], idx, idx);
                     } else {
-                        resolve_float_or_percent(static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt)->values[idx], idx);
+                        resolve_float_or_percent(static_cast<const ConfigOptionFloatsOrPercents *>(opt.opt)->values[idx], idx, idx);
                     }
                     break;
                 }

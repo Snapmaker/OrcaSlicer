@@ -767,7 +767,7 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         // pitch and the no-preference filaments follow it instead of vetoing it.
         config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(2));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -828,7 +828,7 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         config.set_key_value("top_surface_filament_id",    new ConfigOptionInt(2));
         config.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(3));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",            new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",            new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -863,8 +863,8 @@ SCENARIO("Fill line width follows the filament that prints the surface", "[Multi
     GIVEN("Internal solid infill mapped to the 0.6 mm filament, bottom surfaces staying on the 0.4 mm filament") {
         DynamicPrintConfig config = two_extruder_config(0.);
         config.set_key_value("internal_solid_filament_id",       new ConfigOptionInt(2));
-        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatOrPercent(125., true));
-        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(125., true)});
+        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -975,7 +975,7 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(2));
         config.set_key_value("max_layer_height",       new ConfigOptionFloats({0.3, 0.45}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -1021,7 +1021,7 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("internal_solid_filament_id", new ConfigOptionInt(2));
         config.set_key_value("min_layer_height",           new ConfigOptionFloats({0.07, 0.3}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",                 new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",                 new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -1105,7 +1105,7 @@ SCENARIO("Support nozzle diameter restricts support printing", "[MultiNozzleLaye
         config.set_key_value("raft_layers",             new ConfigOptionInt(2));
         config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value = stNormalAuto;
         config.set_key_value("support_nozzle_diameter", new ConfigOptionFloat(support_nozzle_diameter));
-        config.set_key_value("support_line_width",      new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("support_line_width",      new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         return config;
     };
 

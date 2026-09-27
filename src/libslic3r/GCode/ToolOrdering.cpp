@@ -908,7 +908,9 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
         for(auto layer : object->layers()){
             for(auto layerm : layer->regions()){
                 for(auto& expoly : layerm->raw_slices){
-                    if (!offset_ex(expoly, -0.2 * scale_(print.config().initial_layer_line_width)).empty()) {
+                    // Snapmaker Orca: the width is a column per tool head; the first column's number,
+                    // as the scalar read (a percent read as a number, the pre-existing quirk).
+                    if (!offset_ex(expoly, -0.2 * scale_(Flow::width_at(print.config().initial_layer_line_width, 0).value)).empty()) {
                         target_layer = layer;
                         break;
                     }
@@ -928,7 +930,7 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
 
             for (auto expoly : layerm->raw_slices) {
                 const double nozzle_diameter = print.config().nozzle_diameter.get_at(0);
-                const coordf_t initial_layer_line_width = print.config().get_abs_value("initial_layer_line_width", nozzle_diameter);
+                const coordf_t initial_layer_line_width = print.config().get_abs_value_at("initial_layer_line_width", 0, nozzle_diameter);
 
                 if (offset_ex(expoly, -0.2 * scale_(initial_layer_line_width)).empty())
                     continue;
@@ -972,7 +974,9 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
     for(auto layer : object.layers()){
         for(auto layerm : layer->regions()){
             for(auto& expoly : layerm->raw_slices){
-                if (!offset_ex(expoly, -0.2 * scale_(object.config().line_width)).empty()) {
+                // Snapmaker Orca: the width is a column per tool head; the first column's number, as
+                // the scalar read (a percent read as a number, the pre-existing quirk).
+                if (!offset_ex(expoly, -0.2 * scale_(Flow::width_at(object.config().line_width, 0).value)).empty()) {
                     target_layer = layer;
                     break;
                 }
@@ -991,7 +995,7 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
         int extruder_id = layerm->region().config().option("outer_wall_filament_id")->getInt();
         for (auto expoly : layerm->raw_slices) {
             const double nozzle_diameter = object.print()->config().nozzle_diameter.get_at(0);
-            const coordf_t line_width = object.config().get_abs_value("line_width", nozzle_diameter);
+            const coordf_t line_width = object.config().get_abs_value_at("line_width", 0, nozzle_diameter);
 
             if (offset_ex(expoly, -0.2 * scale_(line_width)).empty())
                 continue;
@@ -3883,6 +3887,23 @@ static double filament_nozzle_diameter(const Print &print, unsigned int filament
     return print.config().nozzle_diameter.get_at(print.extruder_index_of(filament_id));
 }
 
+// Snapmaker Orca: the nine line widths of the tool heads of two 0-based filaments are equal (the
+// columns of the narrowed table, Print::width_slot). An entity whose widths were computed for its
+// filament's head is handed to another filament only when that head prints the same widths.
+static bool same_width_columns(const Print &print, const PrintObject &object, const PrintRegion &region, unsigned int a, unsigned int b)
+{
+    const size_t ca = print.width_slot(a + 1), cb = print.width_slot(b + 1);
+    if (ca == cb)
+        return true;
+    auto same = [ca, cb](const ConfigOptionVector<FloatOrPercent> &widths) { return Flow::width_at(widths, ca) == Flow::width_at(widths, cb); };
+    const PrintConfig       &print_config  = print.config();
+    const PrintObjectConfig &object_config = object.config();
+    const PrintRegionConfig &region_config = region.config();
+    return same(print_config.initial_layer_line_width) && same(object_config.line_width) && same(object_config.support_line_width) &&
+           same(region_config.outer_wall_line_width) && same(region_config.inner_wall_line_width) && same(region_config.top_surface_line_width) &&
+           same(region_config.sparse_infill_line_width) && same(region_config.internal_solid_infill_line_width) && same(region_config.bridge_line_width);
+}
+
 // Decides whether this entity could be overridden
 bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, const PrintConfig& print_config, const PrintObject& object, const PrintRegion& region) const
 {
@@ -3899,7 +3920,8 @@ bool WipingExtrusions::is_overriddable(const ExtrusionEntityCollection& eec, con
             if (filament != intended_filament &&
                 !print_config.filament_soluble.get_at(filament) &&
                 !print_config.filament_is_support.get_at(filament) &&
-                std::abs(filament_nozzle_diameter(print, (unsigned int)filament) - intended_nozzle) < EPSILON) {
+                std::abs(filament_nozzle_diameter(print, (unsigned int)filament) - intended_nozzle) < EPSILON &&
+                same_width_columns(print, object, region, intended_filament, (unsigned int)filament)) {
                 has_candidate = true;
                 break;
             }
@@ -4000,9 +4022,10 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                         if (!is_overriddable(*fill, print.config(), *object, region))
                             continue;
 
-                        // Only wipe into entities computed for this extruder's nozzle diameter.
+                        // Only wipe into entities computed for this extruder's nozzle diameter and line widths.
                         if (std::abs(filament_nozzle_diameter(print, lt.extruder(*fill, region)) -
-                                     filament_nozzle_diameter(print, new_extruder)) > EPSILON)
+                                     filament_nozzle_diameter(print, new_extruder)) > EPSILON ||
+                            !same_width_columns(print, *object, region, lt.extruder(*fill, region), new_extruder))
                             continue;
 
                         if (wipe_into_infill_only && ! is_infill_first)
@@ -4027,9 +4050,10 @@ float WipingExtrusions::mark_wiping_extrusions(const Print& print, unsigned int 
                     for (const ExtrusionEntity* ee : layerm->perimeters.entities) {
                         auto* fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                         if (is_overriddable(*fill, print.config(), *object, region) && !is_entity_overridden(fill, object, copy) && fill->total_volume() > min_infill_volume &&
-                            // nozzle diameter must match
+                            // nozzle diameter and line widths must match
                             std::abs(filament_nozzle_diameter(print, lt.extruder(*fill, region)) -
-                                     filament_nozzle_diameter(print, new_extruder)) < EPSILON) {
+                                     filament_nozzle_diameter(print, new_extruder)) < EPSILON &&
+                            same_width_columns(print, *object, region, lt.extruder(*fill, region), new_extruder)) {
                             set_extruder_override(fill, object, copy, new_extruder, num_of_copies);
                             if ((volume_to_wipe -= float(fill->total_volume())) <= 0.f)
                             	// More material was purged already than asked for.

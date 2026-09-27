@@ -34,6 +34,8 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <set>
 #include <unordered_map>
 #include <unordered_set>
 #include <sstream>
@@ -2585,20 +2587,45 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 return {L("One or more object were assigned an extruder that the printer does not have.")};
 #endif
 
-        auto validate_extrusion_width = [min_nozzle_diameter, max_nozzle_diameter](const ConfigBase &config, const char *opt_key, double layer_height, std::string &err_msg) -> bool {
-            double extrusion_width_min = config.get_abs_value(opt_key, min_nozzle_diameter);
-            double extrusion_width_max = config.get_abs_value(opt_key, max_nozzle_diameter);
-            if (extrusion_width_min == 0) {
+        // Snapmaker Orca: each per tool head width column (Print::width_slot) is checked against that
+        // head's nozzle; the head is named in the message and StringObjectException::tool_head.
+        auto check_width = [](const ConfigBase &config, const char *opt_key, size_t head, double nozzle, double layer_height, std::string &err_msg) -> bool {
+            const double width = config.get_abs_value_at(opt_key, head, nozzle);
+            if (width == 0) {
                 // Default "auto-generated" extrusion width is always valid.
-            } else if (extrusion_width_min <= layer_height) {
-                    err_msg = L("Line width too small");
-                    return false;
-                } else if (extrusion_width_max > max_nozzle_diameter * MAX_LINE_WIDTH_MULTIPLIER) {
-                err_msg = L("Line width too large");
-				return false;
-			}
-			return true;
-		};
+            } else if (width <= layer_height) {
+                err_msg = Slic3r::format(_u8L("Line width too small on extruder %1%"), head + 1);
+                return false;
+            } else if (width > nozzle * MAX_LINE_WIDTH_MULTIPLIER) {
+                err_msg = Slic3r::format(_u8L("Line width too large on extruder %1%"), head + 1);
+                return false;
+            }
+            return true;
+        };
+        auto refused_on_head = [](const std::string &msg, const ObjectBase *object, const char *opt_key, size_t head) {
+            StringObjectException e;
+            e.string    = msg;
+            e.object    = object;
+            e.opt_key   = opt_key;
+            e.tool_head = int(head);
+            return e;
+        };
+        // The keys of the marker of the values set per tool head (print_extruder_override, narrowed
+        // to one entry per head column): a width the head holds without a mark came from All tool heads.
+        auto marked_on_head = [](const PrintRegionConfig &region_config, size_t head, const char *opt_key) {
+            const std::string &entry = region_config.print_extruder_override.get_at(head);
+            size_t             begin = 0;
+            while (begin <= entry.size()) {
+                size_t end = entry.find(',', begin);
+                if (end == std::string::npos)
+                    end = entry.size();
+                if (entry.compare(begin, end - begin, opt_key) == 0)
+                    return true;
+                begin = end + 1;
+            }
+            return false;
+        };
+        std::set<std::pair<std::string, size_t>> width_warned;
         // ORCA: the per-extruder layer height / support nozzle diagnostics below report through the
         // outer warn() helper. Orca replaced validate()'s single StringObjectException out-param with
         // a std::vector<StringObjectException>, so each diagnostic is now a separate warning entry
@@ -2745,18 +2772,114 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
             if (layer_height > min_nozzle_diameter)
                 return {L("Layer height cannot exceed nozzle diameter."), object, "layer_height"};
 
-            // Validate extrusion widths.
+            // Validate extrusion widths, per tool head (Snapmaker Orca, line widths per tool head).
             std::string err_msg;
-            if (!validate_extrusion_width(object->config(), "line_width", layer_height, err_msg))
-            	return {err_msg, object, "line_width"};
-            if (object->has_support() || object->has_raft()) {
-                if (!validate_extrusion_width(object->config(), "support_line_width", layer_height, err_msg))
-                    return {err_msg, object, "support_line_width"};
+            // Line widths set per tool head are the Snapmaker multi-head machinery: on a Bambu
+            // printer nothing composes or edits them per head, and foreign data with differing
+            // columns is refused rather than printed by slot.
+            if (this->is_BBL_printer()) {
+                auto uniform = [](const ConfigOptionVector<FloatOrPercent> &widths) {
+                    for (size_t column = 1; column < widths.values.size(); ++column)
+                        if (!(Flow::width_at(widths, column) == Flow::width_at(widths, 0)))
+                            return false;
+                    return true;
+                };
+                const char *differing = nullptr;
+                if (!uniform(m_config.initial_layer_line_width))
+                    differing = "initial_layer_line_width";
+                else if (!uniform(object->config().line_width))
+                    differing = "line_width";
+                else if (!uniform(object->config().support_line_width))
+                    differing = "support_line_width";
+                for (const PrintRegion &region : object->all_regions()) {
+                    if (differing != nullptr)
+                        break;
+                    const PrintRegionConfig &region_config = region.config();
+                    if (!uniform(region_config.outer_wall_line_width))
+                        differing = "outer_wall_line_width";
+                    else if (!uniform(region_config.inner_wall_line_width))
+                        differing = "inner_wall_line_width";
+                    else if (!uniform(region_config.top_surface_line_width))
+                        differing = "top_surface_line_width";
+                    else if (!uniform(region_config.sparse_infill_line_width))
+                        differing = "sparse_infill_line_width";
+                    else if (!uniform(region_config.internal_solid_infill_line_width))
+                        differing = "internal_solid_infill_line_width";
+                    else if (!uniform(region_config.bridge_line_width))
+                        differing = "bridge_line_width";
+                }
+                if (differing != nullptr)
+                    return {_u8L("Line widths set per extruder are not supported on this printer; set one value under All extruders."), object, differing};
             }
-            for (const char *opt_key : { "inner_wall_line_width", "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width", "top_surface_line_width","skin_infill_line_width" ,"skeleton_infill_line_width"})
-				for (const PrintRegion &region : object->all_regions())
-                    if (!validate_extrusion_width(region.config(), opt_key, layer_height, err_msg))
-		            	return  {err_msg, object, opt_key};
+            // The default line width of every tool head that prints.
+            for (unsigned int filament : extruders) {
+                const size_t head = this->width_slot(filament + 1);
+                if (!check_width(object->config(), "line_width", head, m_config.nozzle_diameter.get_at(head), layer_height, err_msg))
+                    return refused_on_head(err_msg, object, "line_width", head);
+            }
+            // The support width at the head of the support and of the interface filament.
+            if (object->has_support() || object->has_raft())
+                for (const bool interface_role : {false, true}) {
+                    float        nozzle = 0.f;
+                    const size_t head   = support_head(object, interface_role ? object->config().support_interface_filament.value : object->config().support_filament.value,
+                                                       interface_role, &nozzle);
+                    if (!check_width(object->config(), "support_line_width", head, double(nozzle), layer_height, err_msg))
+                        return refused_on_head(err_msg, object, "support_line_width", head);
+                }
+            for (const PrintRegion &region : object->all_regions()) {
+                const PrintRegionConfig &region_config = region.config();
+                // The role widths at the head of the role's filament; the bottom surfaces print the
+                // internal solid width with the bottom surface filament (Fill.cpp).
+                std::vector<std::pair<const char *, unsigned int>> role_widths = {
+                    {"inner_wall_line_width",            region.extruder(frPerimeter)},
+                    {"outer_wall_line_width",            region.extruder(frExternalPerimeter)},
+                    {"sparse_infill_line_width",         region.extruder(frInfill)},
+                    {"internal_solid_infill_line_width", region.extruder(frSolidInfill)},
+                    {"top_surface_line_width",           region.extruder(frTopSolidInfill)},
+                };
+                if (region_config.bottom_surface_filament_id.value > 0)
+                    role_widths.emplace_back("internal_solid_infill_line_width", (unsigned int)region_config.bottom_surface_filament_id.value);
+                for (const auto &[opt_key, filament] : role_widths) {
+                    const size_t head = this->width_slot(filament);
+                    if (!check_width(region_config, opt_key, head, m_config.nozzle_diameter.get_at(head), layer_height, err_msg))
+                        return refused_on_head(err_msg, object, opt_key, head);
+                }
+                // The Locked Zag widths are scalar and print with the sparse infill filament; a region
+                // of another pattern never reads them (Fill.cpp), so they are checked for Locked Zag alone.
+                if (region_config.sparse_infill_pattern.value == ipLockedZag) {
+                    const size_t head = this->width_slot(region.extruder(frInfill));
+                    for (const char *opt_key : {"skin_infill_line_width", "skeleton_infill_line_width"})
+                        if (!check_width(region_config, opt_key, head, m_config.nozzle_diameter.get_at(head), layer_height, err_msg))
+                            return refused_on_head(err_msg, object, opt_key, head);
+                }
+                // An absolute width that reached a tool head through All tool heads and lies below
+                // the head's nozzle or above twice it is meant for another nozzle size in all
+                // likelihood: a warning naming the head (the sidebar offers to set it for the head).
+                auto warn_all_width = [&](const ConfigBase &config, const ConfigOptionVector<FloatOrPercent> &widths, const char *opt_key, size_t head) {
+                    const ConfigOptionFloatOrPercent width = Flow::width_at(widths, head);
+                    if (width.percent || width.value <= 0. || marked_on_head(region_config, head, opt_key) || !width_warned.emplace(opt_key, head).second)
+                        return;
+                    const double nozzle = m_config.nozzle_diameter.get_at(head);
+                    if (width.value >= nozzle - EPSILON && width.value <= 2. * nozzle + EPSILON)
+                        return;
+                    const ConfigOptionDef *def = config.def() == nullptr ? nullptr : config.def()->get(opt_key);
+                    StringObjectException  w;
+                    w.string = Slic3r::format(_u8L("Extruder %1% (%2% mm nozzle) prints %3% at %4% mm, a value changed under All extruders."),
+                                              head + 1, nozzle, def == nullptr ? std::string(opt_key) : L(def->label), width.value);
+                    w.opt_key   = opt_key;
+                    w.object    = object;
+                    w.tool_head = int(head);
+                    add_warning(std::move(w));
+                };
+                for (const auto &[opt_key, filament] : role_widths) {
+                    const size_t head = this->width_slot(filament);
+                    const auto *widths = region_config.option<ConfigOptionFloatsOrPercentsNullable>(opt_key);
+                    if (widths != nullptr)
+                        warn_all_width(region_config, *widths, opt_key, head);
+                    warn_all_width(object->config(), object->config().line_width, "line_width", head);
+                    warn_all_width(m_config, m_config.initial_layer_line_width, "initial_layer_line_width", head);
+                }
+            }
 
             // ORCA: per-extruder layer height ("extruder_layer_height").
             if (layer_height > EPSILON) {
@@ -3084,10 +3207,14 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                     // width, always considered valid (see validate_extrusion_width() above; the top
                     // surface auto width equals the nozzle diameter exactly, which must not hard-error
                     // an equal pitch).
-                    auto resolve_line_width = [&](const char *width_key, double nozzle) -> double {
-                        auto width_opt = *region_config.option<ConfigOptionFloatOrPercent>(width_key);
+                    // Snapmaker Orca: the widths are columns per tool head, read at the column of the
+                    // head whose nozzle resolves them (Print::width_slot).
+                    auto resolve_line_width = [&](const char *width_key, int filament_id) -> double {
+                        const double nozzle    = filament_nozzle(filament_id);
+                        const size_t column    = this->width_slot((unsigned int)std::max(0, filament_id));
+                        auto         width_opt = Flow::width_at(*region_config.option<ConfigOptionFloatsOrPercentsNullable>(width_key), column);
                         if (width_opt.value == 0.)
-                            width_opt = object->config().line_width;
+                            width_opt = Flow::width_at(object->config().line_width, column);
                         return width_opt.value == 0. ? 0. : width_opt.get_abs_value(nozzle);
                     };
                     // Infill combines up to the preferred height of its printing filament (sparse, or
@@ -3110,7 +3237,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                             combined_infill_filament = combine_filament0;
                             warn_above_max(combined_infill_height, combine_filament0, m_config.max_layer_height.get_at(combine_extruder_idx));
                             const double infill_nozzle = filament_nozzle((int)region.extruder(role));
-                            double width = resolve_line_width(width_key, infill_nozzle);
+                            double width = resolve_line_width(width_key, (int)region.extruder(role));
                             if (width == 0.)
                                 width = double(Flow::auto_extrusion_width(role, float(infill_nozzle)));
                             if (combined_infill_height > layer_height + EPSILON && width <= combined_infill_height + EPSILON)
@@ -3256,7 +3383,7 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                         for (const auto &[filament_id, width_key, pitch, prints] : width_checks) {
                             if (! prints || pitch <= layer_height + EPSILON)
                                 continue;
-                            const double width = resolve_line_width(width_key, filament_nozzle(filament_id));
+                            const double width = resolve_line_width(width_key, filament_id);
                             if (width > 0. && width <= pitch + EPSILON)
                                 return { Slic3r::format(_u8L("The %1% mm line width is too small for the %2% mm layer height of its extruder. "
                                                              "Increase the line width or lower the extruder layer height."),
@@ -3291,21 +3418,27 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
             // Orca: bridge line width sanity check.
             const bool allow_thin_bridge_width = object->config().thick_bridges && object->config().thick_internal_bridges;
             for (const PrintRegion &region : object->all_regions()) {
-                const auto &bridge_width_opt = region.config().bridge_line_width;
-                for (FlowRole bridge_role : { frPerimeter, frInfill, frSolidInfill, frTopSolidInfill }) {
-                    const double nozzle_diameter = m_config.nozzle_diameter.get_at(region.extruder(bridge_role) - 1);
-                    const double bridge_width    = bridge_width_opt.get_abs_value(nozzle_diameter);
+                // Snapmaker Orca: the bridge line width is a column per tool head (Print::width_slot),
+                // checked at the head of every filament that prints a bridge of the region: the roles
+                // and the bottom surface filament, which prints the external bridges (Fill.cpp).
+                auto check_bridge = [&](unsigned int filament) -> std::optional<StringObjectException> {
+                    const size_t head            = this->width_slot(filament);
+                    const double nozzle_diameter = m_config.nozzle_diameter.get_at(head);
+                    const double bridge_width    = Flow::width_at(region.config().bridge_line_width, head).get_abs_value(nozzle_diameter);
                     if (bridge_width <= 0.)
-                        continue;
-                    if (bridge_width > nozzle_diameter) {
-                        err_msg = L("Bridge line width must not exceed nozzle diameter");
-                        return { err_msg, object, "bridge_line_width" };
-                    }
-                    if (!allow_thin_bridge_width && bridge_width <= layer_height) {
-                        err_msg = L("Line width too small");
-                        return { err_msg, object, "bridge_line_width" };
-                    }
-                }
+                        return std::nullopt;
+                    if (bridge_width > nozzle_diameter)
+                        return refused_on_head(Slic3r::format(_u8L("Bridge line width must not exceed the nozzle diameter of extruder %1%"), head + 1), object, "bridge_line_width", head);
+                    if (!allow_thin_bridge_width && bridge_width <= layer_height)
+                        return refused_on_head(Slic3r::format(_u8L("Line width too small on extruder %1%"), head + 1), object, "bridge_line_width", head);
+                    return std::nullopt;
+                };
+                for (FlowRole bridge_role : { frPerimeter, frInfill, frSolidInfill, frTopSolidInfill })
+                    if (auto refused = check_bridge(region.extruder(bridge_role)); refused)
+                        return *refused;
+                if (region.config().bottom_surface_filament_id.value > 0)
+                    if (auto refused = check_bridge((unsigned int)region.config().bottom_surface_filament_id.value); refused)
+                        return *refused;
             }
         }
     }
@@ -3653,11 +3786,15 @@ double Print::skirt_first_layer_height() const
 
 Flow Print::brim_flow() const
 {
-    ConfigOptionFloatOrPercent width = m_config.initial_layer_line_width;
+    // Snapmaker Orca: the widths are columns per tool head, read at the column of the head whose
+    // nozzle the brim uses (the first region's outer wall filament, below). One plate-wide flow:
+    // every object's brim prints at this head's width (a per-object brim flow is not part of this).
+    const size_t column = this->width_slot(m_print_regions.front()->config().outer_wall_filament_id);
+    ConfigOptionFloatOrPercent width = Flow::width_at(m_config.initial_layer_line_width, column);
     if (width.value <= 0)
-        width = m_print_regions.front()->config().inner_wall_line_width;
+        width = Flow::width_at(m_print_regions.front()->config().inner_wall_line_width, column);
     if (width.value <= 0)
-        width = m_objects.front()->config().line_width;
+        width = Flow::width_at(m_objects.front()->config().line_width, column);
 
     /* We currently use a random region's perimeter extruder.
        While this works for most cases, we should probably consider all of the perimeter
@@ -3676,9 +3813,12 @@ Flow Print::skirt_flow() const
 {
 
     // Orca: fall back to m_config if no objects are present
-    ConfigOptionFloatOrPercent width = m_config.initial_layer_line_width;
+    // Snapmaker Orca: the widths are columns per tool head, read at the column of the head whose
+    // nozzle the skirt uses (the first object's support filament, below). One plate-wide flow.
+    const size_t column = m_objects.empty() ? 0 : support_head(m_objects.front(), m_objects.front()->config().support_filament, false);
+    ConfigOptionFloatOrPercent width = Flow::width_at(m_config.initial_layer_line_width, column);
     if (width.value <= 0)
-        width = m_objects.empty() ? m_config.initial_layer_line_width : m_objects.front()->config().line_width;
+        width = m_objects.empty() ? Flow::width_at(m_config.initial_layer_line_width, column) : Flow::width_at(m_objects.front()->config().line_width, column);
 
     /* We currently use a random object's support material extruder.
        While this works for most cases, we should probably consider all of the support material
@@ -6280,9 +6420,13 @@ std::tuple<float, float> Print::object_skirt_offset(double margin_height) const
     if (config().skirt_loops == 0 || config().skirt_type != stPerObject || m_objects.empty())
         return std::make_tuple(0, 0);
     
-    float max_nozzle_diameter = *std::max_element(m_config.nozzle_diameter.values.begin(), m_config.nozzle_diameter.values.end());
     float max_layer_height    = *std::max_element(config().max_layer_height.values.begin(), config().max_layer_height.values.end());
-    float line_width = m_config.initial_layer_line_width.get_abs_value(max_nozzle_diameter);
+    // Snapmaker Orca: the first layer width is a column per tool head; the widest first layer line
+    // over the heads, each column against its own nozzle (equal columns: the largest nozzle's
+    // width, as the scalar read against the largest nozzle gave).
+    float line_width = 0.f;
+    for (size_t head = 0; head < m_config.nozzle_diameter.values.size(); ++head)
+        line_width = std::max(line_width, float(Flow::width_at(m_config.initial_layer_line_width, head).get_abs_value(m_config.nozzle_diameter.values[head])));
     float object_skirt_witdh  = skirt_flow().width() + (config().skirt_loops - 1) * skirt_flow().spacing();
     float object_skirt_offset = 0;
 

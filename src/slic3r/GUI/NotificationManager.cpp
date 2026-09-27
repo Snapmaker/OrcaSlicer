@@ -1933,7 +1933,8 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 			[id = mo ? mo->id() : (mi ? mi->id() : 0),
              parent_id = mi ? mi->get_object()->id() : 0,
              is_inst = (mi != nullptr),
-             opt = error.opt_key](wxEvtHandler*) {
+             opt = error.opt_key,
+             head = error.tool_head](wxEvtHandler*) {
 			auto& objects = wxGetApp().model().objects;
 
             if (is_inst) {
@@ -1982,7 +1983,9 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 				if (opt_type == Preset::TYPE_PRINT && ((!is_inst && id.id) || (is_inst && parent_id.id))) // if object found and it's a print preset option, switch to object first
 					wxGetApp().params_panel()->switch_to_object();
 
-				wxGetApp().sidebar().jump_to_option(opt, opt_type, L"");
+				// Snapmaker Orca: a value refused on one tool head (a line width, Print::validate)
+				// opens its field with that tool head selected (StringObjectException::tool_head).
+				wxGetApp().sidebar().jump_to_option(opt, opt_type, L"", head);
 			}
 			else {
 				wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);

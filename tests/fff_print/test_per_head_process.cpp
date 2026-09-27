@@ -1187,8 +1187,12 @@ struct OwnerPlateSlice
 };
 
 // `before_compose` edits the bundle once the presets are selected, before the table is composed
-// (a value set for a tool head on the Speed page lives in the edited process preset).
-std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(PresetBundle &)> &before_compose = {})
+// (a value set for a tool head on the Speed page lives in the edited process preset). `overrides`
+// replaces the per-object overrides (cube i on tool head i by default). With `slice_plate` false
+// the plate is applied but neither validated nor sliced: the caller reads Print::validate itself.
+std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(PresetBundle &)> &before_compose = {},
+                                                   const std::vector<std::vector<ConfigBase::SetDeserializeItem>> *overrides = nullptr,
+                                                   bool slice_plate = true)
 {
     auto slice = std::make_unique<OwnerPlateSlice>();
     PresetBundle &bundle = slice->bundle;
@@ -1204,11 +1208,10 @@ std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(Pres
     bundle.prints.get_edited_preset().config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
     // A 100 % bridge width at the 0.2 mm head equals the layer height, which Print::validate
     // refuses ("Line width too small"); 0 uses the internal solid infill width. No cube bridges.
-    bundle.prints.get_edited_preset().config.set_key_value("bridge_line_width", new ConfigOptionFloatOrPercent(0., false));
-    // Locked Zag skin / skeleton widths also default to 100 % and are validated for every pattern,
-    // refusing the 0.2 mm head; 0 (auto) passes and only Locked Zag uses them.
-    bundle.prints.get_edited_preset().config.set_key_value("skin_infill_line_width",     new ConfigOptionFloatOrPercent(0., false));
-    bundle.prints.get_edited_preset().config.set_key_value("skeleton_infill_line_width", new ConfigOptionFloatOrPercent(0., false));
+    bundle.prints.get_edited_preset().config.set_key_value("bridge_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
+    // The skin and skeleton line widths of the Locked Zag infill keep their default of 100 % of the
+    // nozzle; Print::validate checks them for a Locked Zag region alone (no cube of the plate has
+    // one), so the 0.2 mm head is not refused for a field the Strength page shows for that pattern only.
     bundle.filament_presets = std::vector<std::string>(HEADS, OWNER_FILAMENT);
     REQUIRE(bundle.filaments.select_preset_by_name(OWNER_FILAMENT, true));
     bundle.project_config.option<ConfigOptionInts>("filament_map", true)->values = {1, 2, 3, 4};
@@ -1228,6 +1231,8 @@ std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(Pres
     config.set_key_value("enable_support",       new ConfigOptionBool(false));
     config.set_key_value("enable_prime_tower",   new ConfigOptionBool(false));
     config.set_key_value("skirt_loops",          new ConfigOptionInt(0));
+    // The solid widths are read as a band (prints_width): no Arachne beads of the narrow-region reroute.
+    config.set_key_value("detect_narrow_internal_solid_infill", new ConfigOptionBool(false));
     // The cooling slowdown and the volumetric ceiling of the filament would rewrite the feed rates
     // under test; every column of both is replaced, the width kept.
     {
@@ -1249,16 +1254,40 @@ std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(Pres
         cube.translate(40.f + 40.f * float(head), 100.f, 0.f);
         meshes.emplace_back(std::move(cube));
     }
-    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides = {
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> default_overrides = {
         {{"extruder", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}}, {{"extruder", "4"}}};
-    init_print(std::move(meshes), slice->print, slice->model, config, &overrides, /*arrange=*/false);
+    init_print(std::move(meshes), slice->print, slice->model, config, overrides != nullptr ? overrides : &default_overrides, /*arrange=*/false);
+    if (!slice_plate)
+        return slice;
     {
         const StringObjectException err = slice->print.validate();
-        INFO(err.string << " (" << err.opt_key << ")");
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
         REQUIRE(err.string.empty());
     }
     slice->gcode = Slic3r::Test::gcode(slice->print);
     return slice;
+}
+
+// Writes the text of a value ("1.1", "105%") into column `column` of a key of the edited preset.
+void set_wide_column_text(DynamicPrintConfig &config, const std::string &key, size_t column, const std::string &value)
+{
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::unique_ptr<ConfigOption> parsed(option->clone());
+    REQUIRE(parsed->deserialize(value));
+    option->set_at(parsed.get(), column, 0);
+}
+
+// A width set for tool head `head` in the edited process preset, as the Quality page writes it
+// (widen, the value in the head's columns, the marker).
+void set_head_width(PresetBundle &bundle, size_t head, const std::string &key, const std::string &value)
+{
+    DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+    PerHeadProcess::widen(process, bundle.printers.get_edited_preset().config);
+    const std::vector<int> columns = PerHeadProcess::head_columns(process, head);
+    REQUIRE_FALSE(columns.empty());
+    set_wide_column_text(process, key, size_t(columns.front()), value);
+    PerHeadProcess::set_head_value(process, head, key, columns.front());
 }
 
 // The speed of a process key in the column of `preset` that serves `flow` (the column whose
@@ -1476,4 +1505,722 @@ TEST_CASE("On a plate of four nozzle sizes the High Flow tool head set to the St
     CHECK(record->values[1].empty());
     CHECK(record->values[2] == "0.18mm Standard @Snapmaker U1 (0.6 nozzle)");
     CHECK(slice->bundle.project_config.option<ConfigOptionStrings>(PerHeadProcess::flow_key)->values == std::vector<std::string>{"", "Standard"});
+}
+
+// ---- Line widths per tool head: the non-uniform column harness ------------------------------------
+// Distinct widths written straight into the narrowed table expose a reader of the wrong column in
+// the ;WIDTH: tags; equal percents on distinct nozzles expose one resolving against the wrong nozzle.
+
+namespace {
+
+// The widths (mm) in effect for the extruding moves of every feature type, per tool, on the layers
+// first_layer..last_layer (1 = the first layer; last_layer 0 = to the end): the ;WIDTH: tag (";
+// LINE_WIDTH: " on a BBL printer) GCode::_extrude writes on every width change.
+std::map<int, std::map<std::string, std::set<double>>> feature_widths(const std::string &gcode, int first_layer, int last_layer = 0)
+{
+    std::map<int, std::map<std::string, std::set<double>>> out;
+    std::istringstream in(executable_block(gcode));
+    std::string        line, feature;
+    int                tool  = 0;
+    int                layer = 0;
+    double             width = -1.;
+    while (std::getline(in, line)) {
+        if (line.rfind(";LAYER_CHANGE", 0) == 0 || line.rfind("; CHANGE_LAYER", 0) == 0) { ++layer; continue; }
+        if (line.rfind(";TYPE:", 0) == 0) { feature = line.substr(6); continue; }
+        if (line.rfind("; FEATURE:", 0) == 0) { feature = line.substr(10); continue; }
+        if (line.rfind(";WIDTH:", 0) == 0) { width = std::atof(line.c_str() + 7); continue; }
+        if (line.rfind("; LINE_WIDTH: ", 0) == 0) { width = std::atof(line.c_str() + 14); continue; }
+        if (const int changed_to = tool_change(line); changed_to >= 0) {
+            tool = changed_to;
+            continue;
+        }
+        if (line.rfind("G1 ", 0) == 0 && layer >= first_layer && (last_layer == 0 || layer <= last_layer) && width > 0. && !feature.empty() &&
+            word_value(line, 'E') > 0. && (word_value(line, 'X') >= 0. || word_value(line, 'Y') >= 0.))
+            out[tool][feature].insert(width);
+    }
+    return out;
+}
+
+// One value per tool head for a width key of the narrowed table ("0.42", "105%").
+void set_head_widths(DynamicPrintConfig &config, const std::string &key, const std::vector<std::string> &values)
+{
+    REQUIRE(values.size() == HEADS);
+    auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::unique_ptr<ConfigOption> parsed(option->clone());
+    for (size_t head = 0; head < HEADS; ++head) {
+        REQUIRE(parsed->deserialize(values[head]));
+        option->set_at(parsed.get(), head, 0);
+    }
+}
+
+// The width of column `head` of a width key against the nozzle of that head, a 0 falling back to
+// the default width of the column (what the flows of that head print).
+double expected_width(const DynamicPrintConfig &config, const std::string &key, size_t head)
+{
+    const double nozzle = config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(head);
+    const double width  = config.get_abs_value_at(key, head, nozzle);
+    return width > 0. ? width : config.get_abs_value_at("line_width", head, nozzle);
+}
+
+bool all_near(const std::set<double> &values, double expected, double tolerance = 0.005)
+{
+    if (values.empty())
+        return false;
+    for (double value : values)
+        if (std::abs(value - expected) > tolerance)
+            return false;
+    return true;
+}
+
+bool all_near_any(const std::set<double> &values, const std::vector<double> &expected, double tolerance = 0.005)
+{
+    if (values.empty())
+        return false;
+    for (double value : values) {
+        bool found = false;
+        for (double candidate : expected)
+            found = found || std::abs(value - candidate) <= tolerance;
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+std::string joined(const std::set<double> &values)
+{
+    std::string out;
+    for (double value : values)
+        out += (out.empty() ? "" : " ") + float_to_string_decimal_point(value);
+    return out;
+}
+
+// Solid fills stretch their spacing (Fill::_adjust_solid_spacing), so their ;WIDTH: tags lie between
+// the configured width and 1.2 x it; walls and sparse infill print it exactly. The fixtures turn off
+// detect_narrow_internal_solid_infill, whose Arachne beads would leave that band.
+bool solid_role(const std::string &role)
+{
+    return role == "Internal solid infill" || role == "Top surface" || role == "Bottom surface";
+}
+
+bool prints_width(const std::set<double> &values, const std::string &role, double expected, double tolerance = 0.005)
+{
+    if (values.empty())
+        return false;
+    if (!solid_role(role))
+        return all_near(values, expected, tolerance);
+    const double widest = *values.rbegin();
+    return widest >= expected - tolerance && widest <= 1.2 * expected + tolerance;
+}
+
+// The four-head table with distinct line widths per tool head and per role. `percent`: equal
+// percents on nozzles of 0.4, 0.5, 0.6 and 0.8 mm (a wrong nozzle shows); else absolute widths on
+// four 0.4 mm nozzles (a wrong column shows). Classic walls print the configured width exactly.
+DynamicPrintConfig width_harness_config(bool percent)
+{
+    DynamicPrintConfig config = four_head_config();
+    config.set_key_value("wall_generator",         new ConfigOptionEnum<PerimeterGeneratorType>(PerimeterGeneratorType::Classic));
+    config.set_key_value("detect_thin_wall",       new ConfigOptionBool(false));
+    config.set_key_value("only_one_wall_top",      new ConfigOptionBool(false));
+    config.set_key_value("gap_fill_target",        new ConfigOptionEnum<GapFillTarget>(gftNowhere));
+    // The narrow-region reroute prints Arachne beads of scattered widths (see prints_width).
+    config.set_key_value("detect_narrow_internal_solid_infill", new ConfigOptionBool(false));
+    config.set_key_value("wall_loops",             new ConfigOptionInt(2));
+    config.set_key_value("top_shell_layers",       new ConfigOptionInt(3));
+    config.set_key_value("bottom_shell_layers",    new ConfigOptionInt(3));
+    config.set_key_value("sparse_infill_density",  new ConfigOptionPercent(20));
+    config.set_key_value("sparse_infill_pattern",  new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+    config.set_key_value("top_surface_pattern",    new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+    config.set_key_value("bottom_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
+    if (percent) {
+        config.set_key_value("nozzle_diameter", new ConfigOptionFloats({0.4, 0.5, 0.6, 0.8}));
+        set_head_widths(config, "line_width",                       std::vector<std::string>(HEADS, "100%"));
+        set_head_widths(config, "initial_layer_line_width",         std::vector<std::string>(HEADS, "130%"));
+        set_head_widths(config, "outer_wall_line_width",            std::vector<std::string>(HEADS, "105%"));
+        set_head_widths(config, "inner_wall_line_width",            std::vector<std::string>(HEADS, "110%"));
+        set_head_widths(config, "sparse_infill_line_width",         std::vector<std::string>(HEADS, "115%"));
+        set_head_widths(config, "internal_solid_infill_line_width", std::vector<std::string>(HEADS, "120%"));
+        set_head_widths(config, "top_surface_line_width",           std::vector<std::string>(HEADS, "125%"));
+        set_head_widths(config, "support_line_width",               std::vector<std::string>(HEADS, "112%"));
+    } else {
+        set_head_widths(config, "line_width",                       {"0.30", "0.42", "0.64", "0.86"});
+        set_head_widths(config, "outer_wall_line_width",            {"0.31", "0.43", "0.65", "0.87"});
+        set_head_widths(config, "inner_wall_line_width",            {"0.33", "0.45", "0.67", "0.89"});
+        set_head_widths(config, "support_line_width",               {"0.34", "0.46", "0.68", "0.90"});
+        set_head_widths(config, "sparse_infill_line_width",         {"0.35", "0.47", "0.69", "0.91"});
+        set_head_widths(config, "internal_solid_infill_line_width", {"0.37", "0.49", "0.71", "0.93"});
+        set_head_widths(config, "top_surface_line_width",           {"0.39", "0.51", "0.73", "0.95"});
+        set_head_widths(config, "initial_layer_line_width",         {"0.41", "0.53", "0.75", "0.97"});
+    }
+    return config;
+}
+
+struct WidthHarnessSlice
+{
+    Print       print;
+    Model       model;
+    std::string gcode;
+};
+
+// Four 20 x 20 x 5 mm cubes, cube i on tool head i with the given extra per-object overrides.
+std::unique_ptr<WidthHarnessSlice> width_harness_slice(const DynamicPrintConfig &config, const std::vector<std::vector<ConfigBase::SetDeserializeItem>> &extra = {})
+{
+    std::vector<TriangleMesh> meshes;
+    std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides;
+    for (size_t head = 0; head < HEADS; ++head) {
+        TriangleMesh cube = mesh(TestMesh::cube_20x20x20);
+        cube.scale(Vec3f(1.f, 1.f, 0.25f)); // 5 mm, 25 layers of 0.2 mm
+        cube.translate(40.f + 40.f * float(head), 100.f, 0.f);
+        meshes.emplace_back(std::move(cube));
+        std::vector<ConfigBase::SetDeserializeItem> items = {{"extruder", std::to_string(head + 1)}};
+        if (head < extra.size())
+            items.insert(items.end(), extra[head].begin(), extra[head].end());
+        overrides.emplace_back(std::move(items));
+    }
+    auto slice = std::make_unique<WidthHarnessSlice>();
+    init_print(std::move(meshes), slice->print, slice->model, config, &overrides, /*arrange=*/false);
+    {
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        REQUIRE(err.string.empty());
+    }
+    slice->gcode = Slic3r::Test::gcode(slice->print);
+    return slice;
+}
+
+const std::vector<std::pair<const char *, const char *>> &role_width_keys()
+{
+    static const std::vector<std::pair<const char *, const char *>> keys = {
+        {"Outer wall", "outer_wall_line_width"},
+        {"Inner wall", "inner_wall_line_width"},
+        {"Sparse infill", "sparse_infill_line_width"},
+        {"Internal solid infill", "internal_solid_infill_line_width"},
+        {"Top surface", "top_surface_line_width"},
+        {"Bottom surface", "internal_solid_infill_line_width"},
+    };
+    return keys;
+}
+
+} // namespace
+
+TEST_CASE("The width column of a filament is its nozzle index, the first column beyond the nozzles", "[PerHeadProcess][PerHeadWidth][columns]")
+{
+    PrintConfig config;
+    config.apply(four_head_config(), true);
+    REQUIRE(config.nozzle_diameter.values.size() == HEADS);
+    CHECK(Print::width_slot(config, 0) == size_t(0));
+    CHECK(Print::width_slot(config, 1) == size_t(0));
+    CHECK(Print::width_slot(config, 3) == size_t(2));
+    CHECK(Print::width_slot(config, 4) == size_t(3));
+    CHECK(Print::width_slot(config, 5) == size_t(0));
+    CHECK(Print::width_slot(config, 17) == size_t(0));
+}
+
+TEST_CASE("Every role of a tool head prints the line width of that head's column, resolved against its nozzle", "[PerHeadProcess][PerHeadWidth][columns]")
+{
+    const bool percent = GENERATE(false, true);
+    CAPTURE(percent);
+    const DynamicPrintConfig config = width_harness_config(percent);
+    const std::unique_ptr<WidthHarnessSlice> slice = width_harness_slice(config);
+
+    // Above the first layer: every role at the head's own column.
+    const auto widths = feature_widths(slice->gcode, 2);
+    if (widths.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widths.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("width_columns", slice->gcode));
+    for (size_t head = 0; head < HEADS; ++head) {
+        const int tool = int(head);
+        REQUIRE(widths.count(tool) == 1);
+        for (const auto &[role, key] : role_width_keys()) {
+            const auto found = widths.at(tool).find(role);
+            if (found == widths.at(tool).end()) {
+                // A cube's bottom surface is its first layer alone (checked below); every other
+                // role prints above it.
+                CHECK(std::string(role) == "Bottom surface");
+                continue;
+            }
+            const double expected = expected_width(config, key, head);
+            INFO("tool " << tool << ", " << role << ": widths " << joined(found->second) << ", expected " << expected << " (" << key << " column " << head << ")");
+            CHECK(prints_width(found->second, role, expected));
+        }
+        // No other head's outer wall width appears on this tool.
+        for (size_t other = 0; other < HEADS; ++other)
+            if (other != head) {
+                INFO("tool " << tool << " against the outer wall width of tool head " << other + 1);
+                CHECK_FALSE(all_near(widths.at(tool).at("Outer wall"), expected_width(config, "outer_wall_line_width", other), 0.001));
+            }
+    }
+
+    // The first layer: every role at the head's first layer column.
+    const auto first = feature_widths(slice->gcode, 1, 1);
+    for (size_t head = 0; head < HEADS; ++head) {
+        const int tool = int(head);
+        REQUIRE(first.count(tool) == 1);
+        const double expected = expected_width(config, "initial_layer_line_width", head);
+        for (const auto &[role, values] : first.at(tool)) {
+            INFO("tool " << tool << ", first layer " << role << ": widths " << joined(values) << ", expected " << expected);
+            CHECK(prints_width(values, role, expected));
+        }
+    }
+}
+
+TEST_CASE("A surface printed by the filament of another tool head takes that head's width column", "[PerHeadProcess][PerHeadWidth][columns]")
+{
+    const DynamicPrintConfig config = width_harness_config(false);
+    // Cube 1 prints its bottom surfaces with filament 3 (tool head 3), cube 2 its top surface with
+    // filament 4 (tool head 4).
+    const std::unique_ptr<WidthHarnessSlice> slice = width_harness_slice(config, {{{"bottom_surface_filament_id", "3"}}, {{"top_surface_filament_id", "4"}}});
+    // A cube's bottom surface is its first layer: tool head 3 prints it at its own first layer
+    // width (the first layer width of a head covers every role of the layer).
+    const auto first = feature_widths(slice->gcode, 1, 1);
+    REQUIRE(first.count(2) == 1);
+    REQUIRE(first.at(2).count("Bottom surface") == 1);
+    {
+        const double expected = expected_width(config, "initial_layer_line_width", 2);
+        INFO("tool 2 bottom surfaces: " << joined(first.at(2).at("Bottom surface")) << ", expected " << expected);
+        CHECK(prints_width(first.at(2).at("Bottom surface"), "Bottom surface", expected));
+    }
+    const auto widths = feature_widths(slice->gcode, 2);
+    REQUIRE(widths.count(3) == 1);
+    REQUIRE(widths.at(3).count("Top surface") == 1);
+    {
+        const double expected = expected_width(config, "top_surface_line_width", 3);
+        INFO("tool 3 top surfaces: " << joined(widths.at(3).at("Top surface")) << ", expected " << expected);
+        CHECK(prints_width(widths.at(3).at("Top surface"), "Top surface", expected));
+    }
+    // Tool head 1 prints no bottom surface of its own any more, tool head 2 no top surface.
+    CHECK((first.count(0) == 0 || first.at(0).count("Bottom surface") == 0));
+    CHECK((widths.count(1) == 0 || widths.at(1).count("Top surface") == 0));
+}
+
+TEST_CASE("The raft of an object prints the support widths of the tool head of its support filament", "[PerHeadProcess][PerHeadWidth][columns]")
+{
+    DynamicPrintConfig config = width_harness_config(false);
+    config.set_key_value("enable_support", new ConfigOptionBool(true));
+    config.set_key_value("raft_layers",    new ConfigOptionInt(2));
+    std::vector<std::vector<ConfigBase::SetDeserializeItem>> extra;
+    for (size_t head = 0; head < HEADS; ++head)
+        extra.push_back({{"support_filament", std::to_string(head + 1)}, {"support_interface_filament", std::to_string(head + 1)}});
+    const std::unique_ptr<WidthHarnessSlice> slice = width_harness_slice(config, extra);
+    const auto widths = feature_widths(slice->gcode, 1);
+    for (size_t head = 0; head < HEADS; ++head) {
+        const int tool = int(head);
+        REQUIRE(widths.count(tool) == 1);
+        std::set<double> support;
+        for (const char *role : {"Support", "Support interface"})
+            if (const auto found = widths.at(tool).find(role); found != widths.at(tool).end())
+                support.insert(found->second.begin(), found->second.end());
+        // The raft's first layer prints the head's first layer width, its other layers the head's
+        // support width (support_material_1st_layer_flow, support_material_flow, the interface flow).
+        const std::vector<double> expected = {expected_width(config, "support_line_width", head), expected_width(config, "initial_layer_line_width", head)};
+        INFO("tool " << tool << " raft widths: " << joined(support) << ", expected " << expected[0] << " or " << expected[1]);
+        CHECK(all_near_any(support, expected));
+    }
+}
+
+// A support material pins the default support filament (PrintObject::resolved_default_support_filament);
+// the support widths follow that filament's tool head, not head 1.
+TEST_CASE("With a support material the raft prints the support widths of the tool head that material resolves to", "[PerHeadProcess][PerHeadWidth][columns]")
+{
+    DynamicPrintConfig config = width_harness_config(false);
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.set_key_value("raft_layers",                new ConfigOptionInt(2));
+    config.set_key_value("filament_type",              new ConfigOptionStrings({"PLA", "PLA", "PETG", "PLA"}));
+    config.set_key_value("support_base_material",      new ConfigOptionString("PETG"));
+    config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+    std::vector<std::vector<ConfigBase::SetDeserializeItem>> extra(HEADS, {{"support_filament", "0"}, {"support_interface_filament", "0"}});
+    const std::unique_ptr<WidthHarnessSlice> slice = width_harness_slice(config, extra);
+    for (const PrintObject *object : slice->print.objects()) {
+        CHECK(object->resolved_default_support_filament(false) == 3u);
+        CHECK(support_head(object, 0, false) == size_t(2));
+        CHECK(support_head(object, 0, true) == size_t(2));
+    }
+    const auto widths = feature_widths(slice->gcode, 1);
+    std::set<double> support;
+    std::set<int>    tools;
+    for (const auto &[tool, features] : widths)
+        for (const char *role : {"Support", "Support interface"})
+            if (const auto found = features.find(role); found != features.end()) {
+                support.insert(found->second.begin(), found->second.end());
+                tools.insert(tool);
+            }
+    const std::vector<double> expected = {expected_width(config, "support_line_width", 2), expected_width(config, "initial_layer_line_width", 2)};
+    INFO("raft widths: " << joined(support) << ", expected " << expected[0] << " or " << expected[1]);
+    CHECK(all_near_any(support, expected));
+    // Tool head 3 prints every raft.
+    CHECK(tools == std::set<int>{2});
+}
+
+
+// ---- Line widths per tool head: Print::validate per head --------------------------
+
+TEST_CASE("The owner plate validates without the Locked Zag widths being lowered", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice({}, nullptr, /*slice_plate=*/false);
+    // (a) The skin and skeleton widths keep their default of 100 % of the nozzle (0.2 mm at the 0.2
+    // mm head, equal to the layer height): checked for a Locked Zag region alone, the plate passes.
+    CHECK(slice->config.opt<ConfigOptionFloatOrPercent>("skin_infill_line_width")->value == 100.);
+    CHECK(slice->config.opt<ConfigOptionFloatOrPercent>("skeleton_infill_line_width")->value == 100.);
+    const StringObjectException err = slice->print.validate();
+    INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+    CHECK(err.string.empty());
+    CHECK(err.tool_head == -1);
+}
+
+TEST_CASE("A line width too wide for one tool head is refused naming that head, and accepted when set for a wide head alone", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (b) 1.1 mm under All tool heads: five times the 0.2 mm nozzle is 1.0 mm.
+    {
+        const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+            [](PresetBundle &bundle) {
+                bundle.prints.get_edited_preset().config.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(1.1, false)});
+            },
+            nullptr, /*slice_plate=*/false);
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        REQUIRE_FALSE(err.string.empty());
+        CHECK(err.opt_key == "outer_wall_line_width");
+        CHECK(err.tool_head == 0);
+        CHECK(err.string.find("extruder 1") != std::string::npos);
+        CHECK(err.string.find("too large") != std::string::npos);
+    }
+    // Set for tool head 4 (0.8 mm nozzle) alone: accepted, the other heads keep the preset's percent.
+    {
+        const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+            [](PresetBundle &bundle) { set_head_width(bundle, 3, "outer_wall_line_width", "1.1"); }, nullptr, /*slice_plate=*/false);
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        CHECK(err.string.empty());
+    }
+}
+
+TEST_CASE("The bridge width and the Locked Zag widths are refused at the tool head whose nozzle they do not fit", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (c) The default bridge width of 100 % equals the 0.2 mm layer height at the 0.2 mm head.
+    {
+        const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+            [](PresetBundle &bundle) {
+                bundle.prints.get_edited_preset().config.set_key_value("bridge_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100., true)});
+            },
+            nullptr, /*slice_plate=*/false);
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        REQUIRE_FALSE(err.string.empty());
+        CHECK(err.opt_key == "bridge_line_width");
+        CHECK(err.tool_head == 0);
+        CHECK(err.string.find("extruder 1") != std::string::npos);
+    }
+    // (d) A Locked Zag region: the skin width of 100 % equals the layer height at the 0.2 mm head.
+    {
+        const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+            [](PresetBundle &bundle) {
+                bundle.prints.get_edited_preset().config.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(ipLockedZag));
+            },
+            nullptr, /*slice_plate=*/false);
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        REQUIRE_FALSE(err.string.empty());
+        CHECK(err.opt_key == "skin_infill_line_width");
+        CHECK(err.tool_head == 0);
+    }
+}
+
+TEST_CASE("The config validator checks each width column against the nozzle of its tool head", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (e) The composed table has one column per tool head (print_extruder_id 1..4): a 0.7 mm bridge
+    // width for the 0.8 mm head alone passes, the same under every head is refused for the 0.2 mm one.
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice({}, nullptr, /*slice_plate=*/false);
+    DynamicPrintConfig config = slice->config;
+    const auto *ids = config.option<ConfigOptionInts>("print_extruder_id");
+    REQUIRE(ids != nullptr);
+    REQUIRE(ids->values == std::vector<int>{1, 2, 3, 4});
+    config.set_deserialize_strict("bridge_line_width", "0,0,0,0.7");
+    CHECK(config.validate().count("bridge_line_width") == 0);
+    config.set_deserialize_strict("bridge_line_width", "0.7,0.7,0.7,0.7");
+    CHECK(config.validate().count("bridge_line_width") == 1);
+    // An outer wall of 1.1 mm: too large for the 0.2 mm head, fine for the 0.8 mm one.
+    config.set_deserialize_strict("bridge_line_width", "0,0,0,0");
+    config.set_deserialize_strict("outer_wall_line_width", "105%,105%,105%,1.1");
+    CHECK(config.validate().count("outer_wall_line_width") == 0);
+    config.set_deserialize_strict("outer_wall_line_width", "1.1,105%,105%,105%");
+    CHECK(config.validate().count("outer_wall_line_width") == 1);
+}
+
+TEST_CASE("An external bridge printed by the bottom surface filament is checked at that filament's tool head", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (f) Cube 1 prints on the 0.4 mm head with its bottom surfaces, and so its external bridges, on
+    // the 0.2 mm head: a 0.3 mm bridge width fits every role's nozzle and not the bottom surface's.
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides = {
+        {{"extruder", "2"}, {"bottom_surface_filament_id", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}}, {{"extruder", "4"}}};
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+        [](PresetBundle &bundle) {
+            bundle.prints.get_edited_preset().config.set_key_value("bridge_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.3, false)});
+        },
+        &overrides, /*slice_plate=*/false);
+    const StringObjectException err = slice->print.validate();
+    INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+    REQUIRE_FALSE(err.string.empty());
+    CHECK(err.opt_key == "bridge_line_width");
+    CHECK(err.tool_head == 0);
+    CHECK(err.string.find("extruder 1") != std::string::npos);
+}
+
+TEST_CASE("Line widths set per tool head are refused on a Bambu printer", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (g) The same plate with a width set for tool head 4 passes on a Snapmaker printer and is
+    // refused with the printer flagged as a Bambu one, where nothing composes or edits per head.
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+        [](PresetBundle &bundle) { set_head_width(bundle, 3, "outer_wall_line_width", "0.9"); }, nullptr, /*slice_plate=*/false);
+    {
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        CHECK(err.string.empty());
+    }
+    slice->print.is_BBL_printer() = true;
+    const StringObjectException err = slice->print.validate();
+    INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+    REQUIRE_FALSE(err.string.empty());
+    // The composed plate gives every head the widths of the preset of its size, so every one of the
+    // nine keys differs between the columns; the refusal names the first key it meets.
+    CHECK(PerHeadProcess::flow_independent_keys().count(err.opt_key) == 1);
+    CHECK(err.string.find("not supported on this printer") != std::string::npos);
+}
+
+TEST_CASE("An absolute width changed under All tool heads warns for the tool heads whose nozzle it does not suit", "[PerHeadProcess][PerHeadWidth][Profiles][validate_head]")
+{
+    // (h) 0.42 mm under All: below the 0.6 and 0.8 mm nozzles, above twice the 0.2 mm one, fine for 0.4.
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice(
+        [](PresetBundle &bundle) {
+            bundle.prints.get_edited_preset().config.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.42, false)});
+        },
+        nullptr, /*slice_plate=*/false);
+    std::vector<StringObjectException> warnings;
+    const StringObjectException        err = slice->print.validate(&warnings);
+    INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+    CHECK(err.string.empty());
+    std::set<int> warned;
+    for (const StringObjectException &w : warnings)
+        if (w.opt_key == "outer_wall_line_width") {
+            CHECK(w.is_warning);
+            CHECK(w.string.find("changed under All extruders") != std::string::npos);
+            warned.insert(w.tool_head);
+        }
+    CHECK(warned == std::set<int>{0, 2, 3});
+    // Set for tool head 4 (0.8 mm) itself: no warning for that head.
+    const std::unique_ptr<OwnerPlateSlice> set_for_head = owner_plate_slice(
+        [](PresetBundle &bundle) { set_head_width(bundle, 3, "outer_wall_line_width", "0.42"); }, nullptr, /*slice_plate=*/false);
+    warnings.clear();
+    CHECK(set_for_head->print.validate(&warnings).string.empty());
+    for (const StringObjectException &w : warnings)
+        if (w.opt_key == "outer_wall_line_width")
+            CHECK(w.tool_head != 3);
+}
+
+
+// ---- Line widths per tool head: the composed widths in the G-code --------------
+
+namespace {
+
+// The width a preset's Standard shared column gives a key against `nozzle`, a 0 falling back to
+// its default line width.
+double preset_width(const Preset &preset, const std::string &key, double nozzle)
+{
+    const size_t column = size_t(PerHeadProcess::shared_column(preset.config, nvtStandard));
+    const auto  *widths = preset.config.option<ConfigOptionFloatsOrPercentsNullable>(key);
+    REQUIRE(widths != nullptr);
+    const ConfigOptionFloatOrPercent width = Flow::width_at(*widths, column);
+    if (width.value > 0.)
+        return width.get_abs_value(nozzle);
+    const auto *defaults = preset.config.option<ConfigOptionFloatsOrPercentsNullable>("line_width");
+    REQUIRE(defaults != nullptr);
+    return Flow::width_at(*defaults, column).get_abs_value(nozzle);
+}
+
+} // namespace
+
+TEST_CASE("On a plate of four nozzle sizes every tool head prints the line widths of the preset of its size", "[PerHeadProcess][PerHeadWidth][Profiles][hs_mixed_plate_widths]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice();
+    REQUIRE(slice->sources.size() == HEADS);
+    const std::vector<double> nozzles = {0.2, 0.4, 0.6, 0.8};
+    const Preset             &selected = slice->bundle.prints.get_selected_preset();
+    // The width source of every head: the selected preset for the High Flow home-size head 2, the
+    // preset of the size for the others.
+    std::vector<const Preset *> width_sources(HEADS, &selected);
+    for (size_t head : {size_t(0), size_t(2), size_t(3)}) {
+        REQUIRE(PerHeadProcess::width_source(slice->sources[head]) != nullptr);
+        width_sources[head] = PerHeadProcess::width_source(slice->sources[head]);
+    }
+    CHECK(PerHeadProcess::width_source(slice->sources[1]) == nullptr);
+
+    const auto widths = feature_widths(slice->gcode, 2);
+    if (widths.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widths.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("hs_mixed_plate_widths", slice->gcode));
+    const std::vector<std::pair<const char *, const char *>> roles = {
+        {"Sparse infill", "sparse_infill_line_width"}, {"Internal solid infill", "internal_solid_infill_line_width"}, {"Top surface", "top_surface_line_width"}};
+    for (size_t head = 0; head < HEADS; ++head) {
+        const int tool = int(head);
+        for (const auto &[role, key] : roles) {
+            REQUIRE(widths.at(tool).count(role) == 1);
+            const double expected = preset_width(*width_sources[head], key, nozzles[head]);
+            INFO("tool " << tool << " (" << width_sources[head]->name << "), " << role << ": " << joined(widths.at(tool).at(role)) << ", expected " << expected);
+            CHECK(prints_width(widths.at(tool).at(role), role, expected));
+        }
+    }
+    // Expected: 110 % of 0.2, the selected preset's 112.5 % / 105 % / 105 %
+    // of 0.4, 103.33 % of 0.6, 102.5 % of 0.8.
+    CHECK(all_near(widths.at(0).at("Sparse infill"), 0.22));
+    CHECK(prints_width(widths.at(0).at("Top surface"), "Top surface", 0.22));
+    CHECK(all_near(widths.at(1).at("Sparse infill"), 0.45));
+    CHECK(prints_width(widths.at(1).at("Internal solid infill"), "Internal solid infill", 0.42));
+    CHECK(prints_width(widths.at(1).at("Top surface"), "Top surface", 0.42));
+    CHECK(all_near(widths.at(2).at("Sparse infill"), 0.62));
+    CHECK(all_near(widths.at(3).at("Sparse infill"), 0.82));
+    // The first layer: 125 % of 0.2 on tool head 1, 102.5 % of 0.8 on tool head 4 (1.00 before).
+    const auto first = feature_widths(slice->gcode, 1, 1);
+    REQUIRE(first.count(0) == 1);
+    REQUIRE(first.count(3) == 1);
+    for (const auto &[role, values] : first.at(0)) {
+        INFO("tool 0 first layer " << role << ": " << joined(values));
+        CHECK(prints_width(values, role, 0.25));
+    }
+    for (const auto &[role, values] : first.at(3)) {
+        INFO("tool 3 first layer " << role << ": " << joined(values));
+        CHECK(prints_width(values, role, 0.82));
+    }
+}
+
+TEST_CASE("On a plate of four nozzle sizes a sparse infill width set for the 0.8 mm tool head reaches its G-code alone", "[PerHeadProcess][PerHeadWidth][Profiles][pho_gcode_head_width]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice([](PresetBundle &bundle) { set_head_width(bundle, 3, "sparse_infill_line_width", "0.9"); });
+    REQUIRE(slice->sources.size() == HEADS);
+    CHECK(slice->sources[3].overridden_keys == std::vector<std::string>{"sparse_infill_line_width"});
+    const auto widths = feature_widths(slice->gcode, 2);
+    if (widths.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widths.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("pho_gcode_head_width", slice->gcode));
+    REQUIRE(widths.at(3).count("Sparse infill") == 1);
+    INFO("tool 3 sparse infill: " << joined(widths.at(3).at("Sparse infill")));
+    CHECK(all_near(widths.at(3).at("Sparse infill"), 0.9));
+    for (int tool : {0, 1, 2}) {
+        REQUIRE(widths.at(tool).count("Sparse infill") == 1);
+        INFO("tool " << tool << " sparse infill: " << joined(widths.at(tool).at("Sparse infill")));
+        CHECK_FALSE(all_near(widths.at(tool).at("Sparse infill"), 0.9, 0.02));
+    }
+    // The other widths of tool head 4 still come from the preset of its size.
+    REQUIRE(widths.at(3).count("Top surface") == 1);
+    CHECK(prints_width(widths.at(3).at("Top surface"), "Top surface", 0.82));
+}
+
+// "Add settings" seeds a line width override with the value the item prints (PerHeadProcess::
+// override_seed): 102.5 % on the head-4 cube slices unchanged; the selected preset's 112.5 %
+// widens head 4's sparse infill to 0.90 mm.
+TEST_CASE("A sparse infill width added to the 0.8 mm cube with the value it prints leaves its G-code unchanged", "[PerHeadProcess][PerHeadWidth][Profiles][phw_override_seed]")
+{
+    const auto plate = [](const char *head4_width) {
+        const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides = {
+            {{"extruder", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}}, {{"extruder", "4"}, {"sparse_infill_line_width", head4_width}}};
+        return owner_plate_slice({}, &overrides);
+    };
+    const std::unique_ptr<OwnerPlateSlice> seeded = plate("102.5%");
+    REQUIRE(seeded->sources.size() == HEADS);
+    const auto widths = feature_widths(seeded->gcode, 2);
+    if (widths.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widths.size() << ": " << gcode_digest(seeded->gcode) << "; G-code kept at "
+             << keep_gcode("phw_override_seed", seeded->gcode));
+    REQUIRE(widths.at(3).count("Sparse infill") == 1);
+    INFO("tool 3 sparse infill with the seed: " << joined(widths.at(3).at("Sparse infill")));
+    CHECK(all_near(widths.at(3).at("Sparse infill"), 0.82));
+    // The other cubes print as before.
+    REQUIRE(widths.at(0).count("Sparse infill") == 1);
+    REQUIRE(widths.at(2).count("Sparse infill") == 1);
+    CHECK(all_near(widths.at(0).at("Sparse infill"), 0.22));
+    CHECK(all_near(widths.at(2).at("Sparse infill"), 0.62));
+
+    // The red case: the selected preset's value as the override prints 112.5 % of 0.8.
+    const std::unique_ptr<OwnerPlateSlice> cloned = plate("112.5%");
+    const auto                             widened = feature_widths(cloned->gcode, 2);
+    if (widened.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widened.size() << ": " << gcode_digest(cloned->gcode) << "; G-code kept at "
+             << keep_gcode("phw_override_seed_clone", cloned->gcode));
+    REQUIRE(widened.at(3).count("Sparse infill") == 1);
+    INFO("tool 3 sparse infill with the clone: " << joined(widened.at(3).at("Sparse infill")));
+    CHECK(all_near(widened.at(3).at("Sparse infill"), 0.90));
+}
+
+// ---- Line widths per tool head: an all-0.4 plate under the High Flow rule ----
+
+namespace {
+
+// The text of column `column` of a key ("112.5%", "0.42").
+std::string column_text(const DynamicPrintConfig &config, const std::string &key, size_t column)
+{
+    const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(config.option(key));
+    REQUIRE(option != nullptr);
+    const std::vector<std::string> values = option->vserialize();
+    REQUIRE(column < values.size());
+    return values[column];
+}
+
+} // namespace
+
+// On an all-0.4 plate the High Flow rule re-picks a High Flow head's speeds (0.20mm Standard), but its
+// widths stay the selected preset's (width_source null for a home-size head): 0.45 mm top surfaces
+// on every tool, also with the Standard speeds of the flow toggle.
+TEST_CASE("On an all-0.4 plate a High Flow tool head under a preset without High Flow speeds keeps that preset's line widths", "[PerHeadProcess][PerHeadWidth][Profiles][hs_all_04_widths]")
+{
+    const bool standard_speeds = GENERATE(false, true);
+    CAPTURE(standard_speeds);
+    const char *const STD_024_04 = "0.24mm Standard @Snapmaker U1 (0.4 nozzle)";
+    const std::unique_ptr<OwnerPlateSlice> slice = owner_plate_slice([standard_speeds, STD_024_04](PresetBundle &bundle) {
+        bundle.printers.get_edited_preset().config.set_key_value("nozzle_diameter", new ConfigOptionFloats(std::vector<double>(HEADS, 0.4)));
+        REQUIRE(bundle.prints.select_preset_by_name(STD_024_04, true));
+        if (standard_speeds)
+            PerHeadProcess::set_chosen_flow(bundle, 1, nvtStandard);
+    });
+    const Preset &selected = slice->bundle.prints.get_selected_preset();
+    REQUIRE(selected.name == STD_024_04);
+    REQUIRE(slice->sources.size() == HEADS);
+    if (standard_speeds) {
+        CHECK(slice->sources[1].flow_chosen);
+        CHECK_FALSE(slice->sources[1].derived);
+    } else {
+        CHECK(slice->sources[1].reason == PerHeadProcess::Reason::HighFlow);
+        REQUIRE(slice->sources[1].derived);
+        REQUIRE(slice->sources[1].preset != nullptr);
+        CHECK(slice->sources[1].preset->name == "0.20mm Standard @Snapmaker U1 (0.4 nozzle)");
+    }
+    for (size_t head = 0; head < HEADS; ++head) {
+        INFO("tool head " << head + 1);
+        CHECK(PerHeadProcess::width_source(slice->sources[head]) == nullptr);
+    }
+    // Every column of the nine keys holds the selected preset's value.
+    const size_t shared = size_t(PerHeadProcess::shared_column(selected.config, nvtStandard));
+    for (const std::string &key : PerHeadProcess::flow_independent_keys()) {
+        const auto *composed = dynamic_cast<const ConfigOptionVectorBase *>(slice->config.option(key));
+        REQUIRE(composed != nullptr);
+        const std::vector<std::string> values = composed->vserialize();
+        const std::string              wanted = column_text(selected.config, key, shared);
+        REQUIRE_FALSE(values.empty());
+        for (size_t column = 0; column < values.size(); ++column) {
+            INFO(key << " column " << column << ": " << values[column] << ", the selected preset's " << wanted);
+            CHECK(values[column] == wanted);
+        }
+    }
+    CHECK(column_text(slice->config, "top_surface_line_width", 1) == "112.5%");
+    // Every tool prints 0.45 mm top surfaces and 0.45 mm sparse infill (112.5 % of 0.4).
+    const auto widths = feature_widths(slice->gcode, 2);
+    if (widths.size() != HEADS)
+        FAIL("tools with extrusions above the first layer: " << widths.size() << ": " << gcode_digest(slice->gcode) << "; G-code kept at "
+             << keep_gcode("hs_all_04_widths", slice->gcode));
+    for (size_t head = 0; head < HEADS; ++head) {
+        const int tool = int(head);
+        REQUIRE(widths.at(tool).count("Top surface") == 1);
+        INFO("tool " << tool << " top surface: " << joined(widths.at(tool).at("Top surface")));
+        CHECK(prints_width(widths.at(tool).at("Top surface"), "Top surface", 0.45));
+        REQUIRE(widths.at(tool).count("Sparse infill") == 1);
+        INFO("tool " << tool << " sparse infill: " << joined(widths.at(tool).at("Sparse infill")));
+        CHECK(all_near(widths.at(tool).at("Sparse infill"), 0.45));
+    }
 }

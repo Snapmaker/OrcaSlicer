@@ -1220,9 +1220,12 @@ double resolve_outer_wall_line_width(const PrintRegionConfig &region_config, con
 {
     // A filament id of 0 underflows, and get_at() then falls back to the first nozzle.
     const double               nozzle_diameter = print_config.nozzle_diameter.get_at(region_config.outer_wall_filament_id - 1);
-    ConfigOptionFloatOrPercent width           = region_config.outer_wall_line_width;
+    // Snapmaker Orca: the widths are columns per tool head, read at the column of the outer wall
+    // filament's head, whose nozzle resolves them.
+    const size_t               column          = Print::width_slot(print_config, region_config.outer_wall_filament_id);
+    ConfigOptionFloatOrPercent width           = Flow::width_at(region_config.outer_wall_line_width, column);
     if (width.value == 0)
-        width = object_config.line_width;
+        width = Flow::width_at(object_config.line_width, column);
     if (!width.percent && width.value <= 0.)
         return Flow::auto_extrusion_width(frExternalPerimeter, float(nozzle_diameter));
     return width.get_abs_value(nozzle_diameter);

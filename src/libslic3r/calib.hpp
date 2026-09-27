@@ -292,6 +292,8 @@ struct SuggestedConfigCalibPAPattern
 {
     const std::vector<std::pair<std::string, std::vector<double>>> floats_pairs{{"initial_layer_speed", {30}}};
 
+    // Snapmaker Orca: both keys are per tool head line widths; writers use PerHeadProcess::set_every_column,
+    // since a scalar ConfigOptionFloatOrPercent under these keys is refused when the preset is applied.
     const std::vector<std::pair<std::string, double>> nozzle_ratio_pairs{{"line_width", 112.5}, {"initial_layer_line_width", 140}};
 
     const std::vector<std::pair<std::string, int>> int_pairs{{"skirt_loops", 0}, {"wall_loops", 3}};

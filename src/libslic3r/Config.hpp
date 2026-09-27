@@ -2298,6 +2298,9 @@ public:
     ConfigOptionType                    type            = coNone;
 	// If a type is nullable, then it accepts a "nil" value (scalar) or "nil" values (vector).
 	bool								nullable		= false;
+    // Snapmaker Orca: a vector option written as one value while all columns are equal (opt_serialize,
+    // save_to_json), keeping the scalar spelling older readers know; used by the line width keys.
+    bool                                scalar_when_uniform = false;
     // Default value of this option. The default value object is owned by ConfigDef, it is released in its destructor.
     Slic3r::clonable_ptr<const ConfigOption> default_value;
     void 								set_default_value(const ConfigOption* ptr) { this->default_value = Slic3r::clonable_ptr<const ConfigOption>(ptr); }
@@ -2808,8 +2811,14 @@ public:
         { ConfigSubstitutionContext ctxt{ ForwardCompatibilitySubstitutionRule::Disable }; this->set_deserialize(items, ctxt); }
 
     double get_abs_value_at(const t_config_option_key &opt_key, size_t index) const;
+    // Absolute value of column `index` of a coFloatsOrPercents option (a coFloatOrPercent scalar
+    // ignores the index), a percent resolved against `ratio_over`, e.g. the head's nozzle; nil reads 0.
+    double get_abs_value_at(const t_config_option_key &opt_key, size_t index, double ratio_over) const;
     double get_abs_value(const t_config_option_key &opt_key) const;
     double get_abs_value(const t_config_option_key &opt_key, double ratio_over) const;
+    // Snapmaker Orca: a vector option whose definition carries scalar_when_uniform, has no nil
+    // column and holds the same value in every column; such an option is serialised as one value.
+    bool uniform_scalar_option(const t_config_option_key &opt_key, const ConfigOption *opt) const;
     void setenv_() const;
     ConfigSubstitutions load(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule);
     //BBS support load from ini string

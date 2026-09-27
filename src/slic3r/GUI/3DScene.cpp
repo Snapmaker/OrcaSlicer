@@ -1123,9 +1123,11 @@ float GLVolumeCollection::get_selection_support_normal_z() const
         // which is more relevant to overhang printing than the default nozzle diameter.
         const double nozzle_diameter = nozzle_diameter_opt->values[wall_extruder_idx];
 
-        double external_perimeter_width = full_cfg.get_abs_value("outer_wall_line_width", nozzle_diameter);
+        // Snapmaker Orca: the widths are columns per tool head; the full config is narrowed to one
+        // column per head, read at the wall extruder.
+        double external_perimeter_width = full_cfg.get_abs_value_at("outer_wall_line_width", wall_extruder_idx, nozzle_diameter);
         if (external_perimeter_width <= 0.0) {
-            external_perimeter_width = full_cfg.get_abs_value("line_width", nozzle_diameter);
+            external_perimeter_width = full_cfg.get_abs_value_at("line_width", wall_extruder_idx, nozzle_diameter);
 
             if (external_perimeter_width <= 0.0)
                 external_perimeter_width = nozzle_diameter;

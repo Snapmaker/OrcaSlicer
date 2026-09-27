@@ -294,14 +294,18 @@ std::pair<double, double> adaptive_fill_line_spacing(const PrintObject &print_ob
     region_fill_data.reserve(print_object.num_printing_regions());
     bool                       build_octree                   = false;
     const std::vector<double> &nozzle_diameters               = print_object.print()->config().nozzle_diameter.values;
-    double                     max_nozzle_diameter            = *std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    const auto                 max_nozzle                     = std::max_element(nozzle_diameters.begin(), nozzle_diameters.end());
+    double                     max_nozzle_diameter            = *max_nozzle;
+    // Snapmaker Orca: the widths are columns per tool head; the octree is sized for the head of
+    // the largest nozzle, whose column is read with it.
+    const size_t               max_nozzle_head                = size_t(max_nozzle - nozzle_diameters.begin());
     double                     default_infill_extrusion_width = Flow::auto_extrusion_width(FlowRole::frInfill, float(max_nozzle_diameter));
     for (size_t region_id = 0; region_id < print_object.num_printing_regions(); ++ region_id) {
         const PrintRegionConfig &config                 = print_object.printing_region(region_id).config();
         bool                     nonempty               = config.sparse_infill_density > 0;
         bool                     has_adaptive_infill    = nonempty && config.sparse_infill_pattern == ipAdaptiveCubic;
         bool                     has_support_infill     = nonempty && config.sparse_infill_pattern == ipSupportCubic;
-        double                   sparse_infill_line_width = config.sparse_infill_line_width.get_abs_value(max_nozzle_diameter);
+        double                   sparse_infill_line_width = Flow::width_at(config.sparse_infill_line_width, max_nozzle_head).get_abs_value(max_nozzle_diameter);
         region_fill_data.push_back(RegionFillData({
             has_adaptive_infill ? Tristate::Maybe : Tristate::No,
             has_support_infill ? Tristate::Maybe : Tristate::No,

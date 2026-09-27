@@ -71,12 +71,19 @@ struct Source
     std::vector<int>         own_standard_variants; // a chosen head: volume types served by the chosen preset's Standard column (it has none of their own)
     NozzleVolumeType         flow { nvtStandard };  // the flow type whose speeds column the head prints (effective_flow)
     bool                     flow_chosen { false };  // `flow` was chosen for the head (flow_key) and is not its nozzle's own
+    // The preset of the head's size before the High Flow rule re-picked a speeds source; nullptr unless derived
+    // at another size. Line widths come from it (width_source): a High Flow nozzle has the bore of its size.
+    const Preset            *size_preset { nullptr };
 };
 
 // The 41 keys a head of another size takes from its size's preset: 17 role speeds, 8 accelerations, 7 jerk /
 // junction deviation keys and the nine line widths. Travel keys, enable_overhang_speed, slowdown_for_curled_perimeters
 // and small_perimeter_threshold stay uniform (read through other head mappings or gated per layer).
 const std::set<std::string>& composed_keys();
+
+// The preset whose line widths head `source.head` prints: the chosen preset or Source::size_preset; nullptr for
+// the selected preset. Neither the High Flow re-pick nor the chosen flow (flow_key) affects widths.
+const Preset *width_source(const Source &source);
 
 // The name of the transient key that records, per composed column, the column of the selected
 // preset that stands in for it. Written by compose(), read by Print::apply for the overrides of
@@ -160,15 +167,22 @@ std::vector<std::string> head_override_keys(const DynamicPrintConfig &config, si
 bool marker_names_any(const DynamicPrintConfig &config);
 // The marker names nothing.
 bool marker_empty(const DynamicPrintConfig &config);
-// The 39 keys a value can be set for per tool head: the value keys of print_options_with_variant
-// without enable_overhang_speed, slowdown_for_curled_perimeters and small_perimeter_threshold,
-// which stay uniform.
+// The 48 keys settable per tool head: the value keys of print_options_with_variant except enable_overhang_speed,
+// slowdown_for_curled_perimeters and small_perimeter_threshold, which stay uniform.
 const std::set<std::string> &head_editable_keys();
+// The nine line width keys of the Quality page. Flow-independent (a High Flow nozzle has the bore of its size): a head
+// value fills both flow columns, an All tool heads edit every shared column, the composer reads the Standard shared
+// column, normalise() equalises flow columns, and neither the flow toggle nor flow_key selects a width column.
+const std::set<std::string> &flow_independent_keys();
 
 // After a write of `key` into `written_column` (one of the head's columns; the first one when
 // negative): the value is copied into the other columns of the head and the key marked on all of
 // them (I4).
 void set_head_value(DynamicPrintConfig &config, size_t head, const std::string &key, int written_column = -1);
+
+// Writes one value into every column of a line width, marker untouched (pressure advance pattern calibration,
+// SuggestedConfigCalibPAPattern). An absent key gets one column, widened when the preset is applied.
+void set_every_column(DynamicPrintConfig &config, const std::string &key, const FloatOrPercent &value);
 // After a write of `key` into the shared column of `type`: the value is copied into every head
 // column of that flow that is not marked for the key (every head column when the layout has one
 // shared column) (I3).
@@ -177,6 +191,9 @@ void set_shared_value(DynamicPrintConfig &config, const std::string &key, Nozzle
 void clear_head_value(DynamicPrintConfig &config, size_t head, const std::string &key);
 // clear_head_value for every key the head's marker names.
 void clear_head(DynamicPrintConfig &config, size_t head);
+// clear_head_value for the keys the head's marker names among `keys` (the indexed keys of one page
+// of the Process tab: the Quality page clears the line widths of the head, the Speed page its speeds).
+void clear_head(DynamicPrintConfig &config, size_t head, const std::set<std::string> &keys);
 // clear_head for every head; the caller narrows.
 void clear_all_heads(DynamicPrintConfig &config);
 // The tool heads (0-based) whose marker names `key`.
@@ -292,12 +309,18 @@ std::vector<Candidate> picker_candidates(const PresetBundle &bundle, size_t head
 // The column of a derived head's source the composer reads for `flow`: source_column, else a chosen
 // preset's Standard shared column; -1 when the selected preset's column serves or the head is not derived.
 int composed_column(const Source &source, NozzleVolumeType flow, const DynamicPrintConfig &printer);
+// Per-key variant: a line width (flow_independent_keys) reads width_source()'s Standard shared column (-1: the
+// selected preset), any other key composed_column(); `from` receives the preset read. Used to display head values.
+int composed_column_for_key(const Source &source, const std::string &key, NozzleVolumeType flow, const DynamicPrintConfig &printer, const Preset *&from);
 
-// One entry per tool head. Empty unless the printer is a Snapmaker FFF printer with more than one
-// tool head (NozzleFilament::head_state). Per head, first match: no system parent -> NoParent (a choice is
-// Inactive); a choice -> Applied or SameAsSelected (NotInstalled / Unfit fall through); preference off -> Off;
-// home size / no machine preset -> HomeSize / NoMachinePreset; else source_for_head. A High Flow head whose
-// source lacks a High Flow column takes its size's preset with one (Reason::HighFlow), else fallback_variants.
+// Initial value of a line width override of an object, part or layer range: what the item prints now, serialised
+// ("102.5%"). One head (filament - 1, as Print::width_slot): its override_key value, else its width source's Standard
+// column; several heads or no composed source: the shared value, differing heads in `differing_heads`. Empty if no key.
+std::string override_seed(const PresetBundle &bundle, const std::string &key, const std::vector<int> &filaments, std::vector<size_t> *differing_heads = nullptr);
+
+// One entry per tool head of a Snapmaker FFF multi-head printer, else empty. First match: no system parent ->
+// NoParent; a choice -> Applied (also with the preference off) or SameAsSelected; preference off -> Off; HomeSize;
+// NoMachinePreset; else Derived. A High Flow head whose source lacks that column moves to a size preset with one.
 std::vector<Source> head_sources(const PresetBundle &bundle);
 
 // Project key: per tool head, the process preset it printed with at the last apply ("" = selected

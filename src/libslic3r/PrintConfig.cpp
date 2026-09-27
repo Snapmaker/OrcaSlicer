@@ -5,6 +5,7 @@
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 #include "FilamentMixer.hpp"
+#include "Flow.hpp"
 #include "MaterialType.hpp"
 #include "I18N.hpp"
 #include "format.hpp"
@@ -19,6 +20,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/thread.hpp>
+#include <cmath>
 #include <float.h>
 
 namespace {
@@ -1590,7 +1592,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1));
 
-    def = this->add("bridge_line_width", coFloatOrPercent);
+    def = this->add("bridge_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Bridge");
     def->category = L("Quality");
     def->tooltip = L("Line width of the Bridge. If expressed as a %, it will be computed over the nozzle diameter.\n"
@@ -1603,7 +1609,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 100;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(100., true));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100., true)});
 
     def = this->add("internal_bridge_flow", coFloat);
     def->label = L("Internal bridge flow ratio");
@@ -2521,7 +2527,11 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels   = def_top_fill_pattern->enum_labels;
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipMonotonic));
     
-    def = this->add("outer_wall_line_width", coFloatOrPercent);
+    def = this->add("outer_wall_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Outer wall");
     def->category = L("Quality");
     def->tooltip = L("Line width of outer wall. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -2531,7 +2541,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("outer_wall_speed", coFloats);
     def->label = L("Outer wall");
@@ -2851,7 +2861,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0.0 });
 
-    def = this->add("line_width", coFloatOrPercent);
+    def = this->add("line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Default");
     def->category = L("Quality");
     def->tooltip = L("Default line width if other line widths are set to 0. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -2861,7 +2875,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0, false)});
 
     def = this->add("reduce_fan_stop_start_freq", coBools);
     def->label = L("Keep fan always on");
@@ -3032,8 +3046,8 @@ void PrintConfigDef::init_fff_params()
     // choice. Project-level; vendor caches (.opc) lacking the key are parsed from JSON once.
     def = this->add("extruder_process_choice", coStrings);
     def->label = L("Process preset chosen per extruder");
-    def->tooltip = L("The process preset an extruder takes its speeds, accelerations and jerk from, chosen in this project. Empty: the "
-                     "preset of the selected process preset's quality made for the extruder's nozzle size.");
+    def->tooltip = L("The process preset an extruder takes its speeds, accelerations, jerk and line widths from, chosen in this project. Empty: "
+                     "the preset of the selected process preset's quality made for the extruder's nozzle size.");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionStrings());
     def->cli = ConfigOptionDef::nocli;
@@ -3887,7 +3901,11 @@ void PrintConfigDef::init_fff_params()
     def->nullable = true;
     def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100, true)});
 
-    def = this->add("initial_layer_line_width", coFloatOrPercent);
+    def = this->add("initial_layer_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("First layer");
     def->category = L("Quality");
     def->tooltip = L("Line width of the first layer. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -3897,7 +3915,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("initial_layer_print_height", coFloat);
     def->label = L("First layer height");
@@ -4817,7 +4835,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
-    def = this->add("sparse_infill_line_width", coFloatOrPercent);
+    def = this->add("sparse_infill_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Sparse infill");
     def->category = L("Quality");
     def->tooltip = L("Line width of internal sparse infill. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -4827,7 +4849,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("infill_wall_overlap", coPercent);
     def->label = L("Infill/wall overlap");
@@ -5832,7 +5854,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<WallSplitDirection>(wsdDecrease));
 
-    def = this->add("inner_wall_line_width", coFloatOrPercent);
+    def = this->add("inner_wall_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Inner wall");
     def->category = L("Quality");
     def->tooltip = L("Line width of inner wall. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -5842,7 +5868,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("inner_wall_speed", coFloats);
     def->label = L("Inner wall");
@@ -6981,7 +7007,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
-    def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
+    def = this->add("internal_solid_infill_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Internal solid infill");
     def->category = L("Quality");
     def->tooltip = L("Line width of internal solid infill. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -6991,7 +7021,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("internal_solid_infill_speed", coFloats);
     def->label = L("Internal solid infill");
@@ -7499,7 +7529,11 @@ void PrintConfigDef::init_fff_params()
         def->enum_values.emplace_back(material);
     def->set_default_value(new ConfigOptionString(""));
 
-    def = this->add("support_line_width", coFloatOrPercent);
+    def = this->add("support_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Support");
     def->category = L("Quality");
     def->tooltip = L("Line width of support. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -7509,7 +7543,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("support_interface_loop_pattern", coBool);
     def->label = L("Loop pattern interface");
@@ -8059,7 +8093,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "" });
 
-    def = this->add("top_surface_line_width", coFloatOrPercent);
+    def = this->add("top_surface_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Top surface");
     def->category = L("Quality");
     def->tooltip = L("Line width for top surfaces. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -8069,7 +8107,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("top_surface_speed", coFloats);
     def->label = L("Top surface");
@@ -10061,6 +10099,17 @@ std::set<std::string> print_options_with_variant = {
     "travel_jerk",
     "initial_layer_travel_jerk",
     "default_junction_deviation",
+    // Snapmaker Orca: the nine line widths of the Quality page, one column per tool head; the
+    // Locked Zag widths (skin_infill_line_width, skeleton_infill_line_width) stay scalar.
+    "line_width", //coFloatsOrPercents
+    "initial_layer_line_width",
+    "outer_wall_line_width",
+    "inner_wall_line_width",
+    "top_surface_line_width",
+    "sparse_infill_line_width",
+    "internal_solid_infill_line_width",
+    "support_line_width",
+    "bridge_line_width",
     "print_extruder_id", //coInts
     "print_extruder_variant", //coStrings
     "print_extruder_override" //coStrings, Snapmaker Orca: the marker of the values set per tool head
@@ -12700,22 +12749,45 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
             "initial_layer_line_width",
             "skin_infill_line_width",
             "skeleton_infill_line_width"};
+        // Snapmaker Orca: with per-head columns (print_extruder_id 1..N) each width is checked against
+        // its head's nozzle, otherwise against the largest / smallest nozzle. Locked Zag widths are scalar.
+        const std::vector<int> &column_ids = cfg.print_extruder_id.values;
+        std::set<int>           distinct_ids;
+        for (int id : column_ids)
+            if (id > 0)
+                distinct_ids.insert(id);
+        const bool per_head = distinct_ids.size() > 1;
         for (size_t i = 0; i < sizeof(widths) / sizeof(widths[i]); ++ i) {
             std::string key(widths[i]);
-            double abs_width = cfg.get_abs_value(key, max_nozzle_diameter);
-            // A percentage bridge width is relative to the nozzle it prints with, so it fits every
-            // nozzle of a multi-nozzle printer as long as it stays within 100 %; an absolute width
-            // has to fit the smallest nozzle.
-            const ConfigOptionFloatOrPercent *bridge_width_opt = key == "bridge_line_width" ? cfg.option<ConfigOptionFloatOrPercent>(key) : nullptr;
-            double allowed_max = (key == "bridge_line_width") ?
-                ((bridge_width_opt != nullptr && bridge_width_opt->percent) ? max_nozzle_diameter : min_nozzle_diameter) :
-                MAX_LINE_WIDTH_MULTIPLIER * max_nozzle_diameter;
-            if (abs_width > allowed_max) {
-                if (key == "bridge_line_width")
-                    error_message.emplace(key, L("Bridge line width must not exceed nozzle diameter: ") + std::to_string(abs_width));
-                else
-                    error_message.emplace(key, L("too large line width ") + std::to_string(abs_width));
-                //return std::string("Too Large line width: ") + key;
+            const ConfigOption *raw = cfg.option(key);
+            size_t columns = 1;
+            if (raw != nullptr && raw->type() == coFloatsOrPercents)
+                columns = std::max<size_t>(1, static_cast<const ConfigOptionVectorBase *>(raw)->size());
+            for (size_t column = 0; column < columns; ++column) {
+                double nozzle_max = max_nozzle_diameter, nozzle_min = min_nozzle_diameter;
+                if (per_head && raw != nullptr && raw->type() == coFloatsOrPercents && column < column_ids.size() && column_ids[column] >= 1 &&
+                    size_t(column_ids[column]) - 1 < cfg.nozzle_diameter.values.size())
+                    nozzle_max = nozzle_min = cfg.nozzle_diameter.values[size_t(column_ids[column]) - 1];
+                double abs_width = cfg.get_abs_value_at(key, column, nozzle_max);
+                // A percentage bridge width is relative to the nozzle it prints with, so it fits every
+                // nozzle of a multi-nozzle printer as long as it stays within 100 %; an absolute width
+                // has to fit the smallest nozzle.
+                bool percent = false;
+                if (raw != nullptr && raw->type() == coFloatsOrPercents)
+                    percent = Flow::width_at(*static_cast<const ConfigOptionVector<FloatOrPercent> *>(raw), column).percent;
+                else if (raw != nullptr && raw->type() == coFloatOrPercent)
+                    percent = static_cast<const ConfigOptionFloatOrPercent *>(raw)->percent;
+                double allowed_max = (key == "bridge_line_width") ?
+                    (percent ? nozzle_max : nozzle_min) :
+                    MAX_LINE_WIDTH_MULTIPLIER * nozzle_max;
+                if (abs_width > allowed_max) {
+                    if (key == "bridge_line_width")
+                        error_message.emplace(key, L("Bridge line width must not exceed nozzle diameter: ") + std::to_string(abs_width));
+                    else
+                        error_message.emplace(key, L("too large line width ") + std::to_string(abs_width));
+                    //return std::string("Too Large line width: ") + key;
+                    break;
+                }
             }
         }
     }
@@ -12740,6 +12812,14 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
         case coPercents:
             for (double v : static_cast<const ConfigOptionVector<double>*>(opt)->values)
                 if (!optdef->is_value_valid(v)) {
+                    out_of_range = true;
+                    break;
+                }
+            break;
+        case coFloatsOrPercents:
+            // Snapmaker Orca: the per tool head line widths; a nil column is no value.
+            for (const FloatOrPercent &v : static_cast<const ConfigOptionVector<FloatOrPercent>*>(opt)->values)
+                if (!std::isnan(v.value) && !optdef->is_value_valid(v.value)) {
                     out_of_range = true;
                     break;
                 }
@@ -13914,9 +13994,16 @@ float get_real_skirt_dist(const DynamicPrintConfig& cfg) {
         loops = 1;
     }
 
-    float width = cfg.opt_float("initial_layer_line_width");
+    // Snapmaker Orca: the line widths are columns per tool head; the arrange spacing reads the
+    // first column's number as the scalar read did (a percent value is read as a number here,
+    // the pre-existing quirk of this function).
+    auto raw_width = [&cfg](const char *key) -> float {
+        const auto *widths = cfg.opt<ConfigOptionFloatsOrPercentsNullable>(key);
+        return widths == nullptr || widths->empty() ? 0.f : float(Flow::width_at(*widths, 0).value);
+    };
+    float width = raw_width("initial_layer_line_width");
     if (width <= 0.f) {
-        width = cfg.opt_float("line_width");
+        width = raw_width("line_width");
     }
     if (width <= 0.f) {
         auto* nd = cfg.opt<ConfigOptionFloats>("nozzle_diameter");

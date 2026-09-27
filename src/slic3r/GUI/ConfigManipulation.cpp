@@ -953,7 +953,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // Gap fill is newly allowed in between perimeter lines even for empty infill (see GH #1476).
     toggle_field("gap_infill_speed", have_perimeters, variant_index);
     
-    toggle_field("top_surface_line_width", has_top_shell);
+    toggle_field("top_surface_line_width", has_top_shell, variant_index);
     toggle_field("top_surface_speed", has_top_shell, variant_index);
 
     bool have_default_acceleration = config->opt_float_nullable("default_acceleration", variant_index) > 0;
@@ -1091,7 +1091,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
     // BBS
     //toggle_field("support_material_synchronize_layers", have_support_soluble);
 
-    toggle_field("inner_wall_line_width", have_perimeters || have_skirt || have_brim);
+    toggle_field("inner_wall_line_width", have_perimeters || have_skirt || have_brim, variant_index);
     toggle_field("support_filament", have_support_material || have_skirt);
 
     // ORCA: support_nozzle_diameter only applies to printers whose extruders have differing

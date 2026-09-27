@@ -940,7 +940,8 @@ void PrintObject::detect_overhangs_for_lift()
 {
     if (this->set_started(posDetectOverhangsForLift)) {
         const double nozzle_diameter = m_print->config().nozzle_diameter.get_at(0);
-        const coordf_t line_width = this->config().get_abs_value("line_width", nozzle_diameter);
+        // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle.
+        const coordf_t line_width = this->config().get_abs_value_at("line_width", 0, nozzle_diameter);
 
         const float min_overlap = line_width * g_min_overhang_percent_for_lift;
         size_t num_layers = this->layer_count();

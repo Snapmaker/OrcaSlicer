@@ -118,7 +118,7 @@ TEST_CASE("Device calibration overrides match the option types of their keys", "
 {
     const std::pair<const char *, ConfigOptionType> expected[] = {
         {"slow_down_layer_time", coFloats},
-        {"outer_wall_line_width", coFloatOrPercent},
+        {"outer_wall_line_width", coFloatsOrPercents}, // a column per tool head (nullable vector)
         {"enable_overhang_speed", coBools},
         {"filament_max_volumetric_speed", coFloats},
     };
@@ -140,16 +140,20 @@ TEST_CASE("Device calibration overrides match the option types of their keys", "
     SECTION("the former option types are rejected by the merge") {
         REQUIRE_THROWS_AS(merge("slow_down_layer_time", new ConfigOptionInts{0}), ConfigurationError);
         REQUIRE_THROWS_AS(merge("outer_wall_line_width", new ConfigOptionFloat(0.7)), ConfigurationError);
+        // Snapmaker Orca: the line widths are columns per tool head; the scalar option is a former type too.
+        REQUIRE_THROWS_AS(merge("outer_wall_line_width", new ConfigOptionFloatOrPercent(0.7, false)), ConfigurationError);
     }
 
     SECTION("the option types written by the device calibrations merge and keep their value") {
         DynamicPrintConfig cfg = merge("slow_down_layer_time", new ConfigOptionFloats{0.0});
         REQUIRE(cfg.option<ConfigOptionFloats>("slow_down_layer_time")->values == std::vector<double>{0.0});
 
-        cfg = merge("outer_wall_line_width", new ConfigOptionFloatOrPercent(0.7, false));
-        const auto *width = cfg.option<ConfigOptionFloatOrPercent>("outer_wall_line_width");
-        REQUIRE(width->value == Catch::Approx(0.7));
-        REQUIRE_FALSE(width->percent);
+        cfg = merge("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.7, false)});
+        const auto *width = cfg.option<ConfigOptionFloatsOrPercentsNullable>("outer_wall_line_width");
+        REQUIRE(width != nullptr);
+        REQUIRE(width->values.size() == 1);
+        REQUIRE(width->values.front().value == Catch::Approx(0.7));
+        REQUIRE_FALSE(width->values.front().percent);
 
         cfg = merge("enable_overhang_speed", new ConfigOptionBoolsNullable({false}));
         REQUIRE(cfg.option<ConfigOptionBools>("enable_overhang_speed")->get_at(0) == false);

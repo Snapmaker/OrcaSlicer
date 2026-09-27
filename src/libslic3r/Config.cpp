@@ -5,6 +5,7 @@
 #include "Preset.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <assert.h>
 #include <fstream>
 #include <sstream>
@@ -552,10 +553,37 @@ t_config_option_keys ConfigBase::equal(const ConfigBase &other) const
     return equal;
 }
 
+bool ConfigBase::uniform_scalar_option(const t_config_option_key &opt_key, const ConfigOption *opt) const
+{
+    if (opt == nullptr || opt->is_scalar())
+        return false;
+    const ConfigDef *def = this->def();
+    if (def == nullptr)
+        return false;
+    const ConfigOptionDef *opt_def = def->get(opt_key);
+    if (opt_def == nullptr || !opt_def->scalar_when_uniform)
+        return false;
+    const auto *vec = static_cast<const ConfigOptionVectorBase *>(opt);
+    if (vec->empty())
+        return false;
+    for (size_t i = 0; i < vec->size(); ++i)
+        if (vec->is_nil(i))
+            return false;
+    const std::vector<std::string> values = vec->vserialize();
+    for (size_t i = 1; i < values.size(); ++i)
+        if (values[i] != values.front())
+            return false;
+    return true;
+}
+
 std::string ConfigBase::opt_serialize(const t_config_option_key &opt_key) const
 {
     const ConfigOption* opt = this->option(opt_key);
     assert(opt != nullptr);
+    // Snapmaker Orca: a per tool head line width whose columns are all equal is written as the one
+    // value older readers know (ConfigOptionDef::scalar_when_uniform).
+    if (this->uniform_scalar_option(opt_key, opt))
+        return static_cast<const ConfigOptionVectorBase *>(opt)->vserialize().front();
     return opt->serialize();
 }
 
@@ -710,17 +738,53 @@ double ConfigBase::get_abs_value_at(const t_config_option_key &opt_key, size_t i
         const ConfigOptionDef *opt_def = def->get(opt_key);
         assert(opt_def != nullptr);
 
+        const auto *widths = static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt);
+        if (widths->empty())
+            return 0;
+        const FloatOrPercent value = widths->get_at(index);
+        // Snapmaker Orca: a role line width of 0 reads the default line width of the same column,
+        // as the scalar branch of get_abs_value() does for the scalar keys.
+        if (std::isnan(value.value))
+            return 0;
+        if (value.value == 0 && boost::ends_with(opt_key, "_line_width") && this->option("line_width") != nullptr)
+            return this->get_abs_value_at("line_width", index);
+        if (!value.percent)
+            return value.value;
         if (opt_def->ratio_over.empty()) {
             return 0;
         } else {
             const ConfigOption *ratio_opt = this->option(opt_def->ratio_over);
-            assert(ratio_opt->type() == coFloats);
-            const ConfigOptionFloats *ratio_values = static_cast<const ConfigOptionFloats *>(ratio_opt);
-            return static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt)->get_at(index).get_abs_value(ratio_values->get_at(index));
+            if (ratio_opt == nullptr)
+                throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_def->ratio_over + "\" is not defined");
+            // A percent line width resolves against the nozzle of its column: on a table narrowed
+            // to one column per tool head (Print::apply) the column is the head, on a wide GUI
+            // layout the caller passes the nozzle explicitly (the three-argument overload).
+            if (ratio_opt->type() == coFloats) {
+                const ConfigOptionFloats *ratio_values = static_cast<const ConfigOptionFloats *>(ratio_opt);
+                return value.get_abs_value(ratio_values->get_at(index));
+            }
+            return value.get_abs_value(this->get_abs_value(opt_def->ratio_over));
         }
     }
 
     throw ConfigurationError("ConfigBase::get_abs_value_at(): Not a valid option type for get_abs_value_at()");
+}
+
+double ConfigBase::get_abs_value_at(const t_config_option_key &opt_key, size_t index, double ratio_over) const
+{
+    const ConfigOption *raw_opt = this->option(opt_key);
+    if (raw_opt == nullptr)
+        throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_key + "\" is not defined");
+    if (raw_opt->type() == coFloatOrPercent)
+        return static_cast<const ConfigOptionFloatOrPercent *>(raw_opt)->get_abs_value(ratio_over);
+    if (raw_opt->type() == coFloatsOrPercents) {
+        const auto *widths = static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt);
+        if (widths->empty())
+            return 0;
+        const FloatOrPercent value = widths->get_at(index);
+        return std::isnan(value.value) ? 0. : value.get_abs_value(ratio_over);
+    }
+    throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_key + "\" is neither coFloatOrPercent nor coFloatsOrPercents");
 }
 
 // Return an absolute value of a possibly relative config variable.
@@ -742,6 +806,10 @@ double ConfigBase::get_abs_value(const t_config_option_key &opt_key) const
       return static_cast<const ConfigOptionInt *>(raw_opt)->value;
     if (raw_opt->type() == coBool)
       return static_cast<const ConfigOptionBool *>(raw_opt)->value ? 1 : 0;
+    // Snapmaker Orca: the line width keys are columns per tool head; without a column the value is
+    // the first column, the GUI's shared value (a ratio_over chain ending in a line width lands here).
+    if (raw_opt->type() == coFloatsOrPercents)
+        return this->get_abs_value_at(opt_key, 0);
 
     const ConfigOptionPercent *cast_opt = nullptr;
     if (raw_opt->type() == coFloatOrPercent) {
@@ -1676,6 +1744,11 @@ void ConfigBase::save_to_json(std::ostream &os, const std::string &name, const s
                 j[opt_key] = (dynamic_cast<const ConfigOptionString *>(opt))->value;
             else
                 j[opt_key] = opt->serialize();
+        }
+        else if (this->uniform_scalar_option(opt_key, opt)) {
+            // Snapmaker Orca: a per tool head line width whose columns are all equal is written as
+            // the one string older readers know (ConfigOptionDef::scalar_when_uniform).
+            j[opt_key] = static_cast<const ConfigOptionVectorBase *>(opt)->vserialize().front();
         }
         else {
             const ConfigOptionVectorBase* vec = static_cast<const ConfigOptionVectorBase*>(opt);

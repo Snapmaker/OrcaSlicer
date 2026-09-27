@@ -3,6 +3,8 @@
 #include "libslic3r/LifecycleEvents.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
+#include "HighFlowNotices.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 //#include "GUI_ObjectLayers.hpp"
 #include "GUI_App.hpp"
 #include "Shortcuts.hpp"
@@ -28,6 +30,7 @@
 #include "StepMeshDialog.hpp"
 
 
+#include <algorithm>
 #include <vector>
 #include <unordered_map>
 #include <functional>
@@ -2096,6 +2099,57 @@ void ObjectList::OnDrop(wxDataViewEvent &event)
     wxGetApp().plater()->set_current_canvas_as_dirty();
 }
 
+// Snapmaker Orca: seed of a line width added to an object, part or layer range: the one value the
+// item prints now (PerHeadProcess::override_seed); `differing_heads` gets heads printing another.
+// nullptr for a non-width key, no object or a missing key: the caller clones the preset's option.
+static ConfigOption *width_override_seed(const ModelObject *object, const ModelConfig &item_config, const std::string &opt_key, std::vector<size_t> &differing_heads)
+{
+    differing_heads.clear();
+    if (object == nullptr || PerHeadProcess::flow_independent_keys().count(opt_key) == 0)
+        return nullptr;
+    const PresetBundle &bundle = *wxGetApp().preset_bundle;
+    const auto int_of = [](const ModelConfig &config, const std::string &key) {
+        const auto *option = dynamic_cast<const ConfigOptionInt *>(config.option(key));
+        return option == nullptr ? 0 : option->value;
+    };
+    std::vector<int> filaments;
+    int extruder = int_of(item_config, "extruder");
+    if (extruder <= 0)
+        extruder = int_of(object->config, "extruder");
+    filaments.emplace_back(extruder > 0 ? extruder : 1);
+    for (const char *key : filament_selector_keys) {
+        int filament = int_of(item_config, key);
+        if (filament <= 0)
+            filament = int_of(object->config, key);
+        if (filament > 0)
+            filaments.emplace_back(filament);
+    }
+    if (object->is_mm_painted())
+        for (size_t filament = 1; filament <= bundle.filament_presets.size(); ++filament)
+            filaments.emplace_back(int(filament));
+    const std::string seed = PerHeadProcess::override_seed(bundle, opt_key, filaments, &differing_heads);
+    if (seed.empty())
+        return nullptr;
+    auto *option = new ConfigOptionFloatsOrPercentsNullable();
+    if (!option->deserialize(seed)) {
+        delete option;
+        return nullptr;
+    }
+    return option;
+}
+
+// The notice of width_override_seed, once per add: the tool heads collected over every key, each once.
+static void notify_width_override_heads(std::vector<size_t> differing_heads)
+{
+    if (differing_heads.empty())
+        return;
+    std::sort(differing_heads.begin(), differing_heads.end());
+    differing_heads.erase(std::unique(differing_heads.begin(), differing_heads.end()), differing_heads.end());
+    wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                                       NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                                       into_u8(HighFlowNotices::object_width_notice(differing_heads)));
+}
+
 void ObjectList::add_category_to_settings_from_selection(const std::vector< std::pair<std::string, bool> >& category_options, wxDataViewItem item)
 {
     if (category_options.empty())
@@ -2108,6 +2162,9 @@ void ObjectList::add_category_to_settings_from_selection(const std::vector< std:
 
     assert(m_config);
     auto opt_keys = m_config->keys();
+    const int          obj_idx = m_objects_model->GetObjectIdByItem(item);
+    const ModelObject *object  = obj_idx >= 0 && size_t(obj_idx) < m_objects->size() ? (*m_objects)[size_t(obj_idx)] : nullptr;
+    std::vector<size_t> differing_heads, heads_of_key;
 
     const std::string snapshot_text =  item_type & itLayer   ? _u8L("Layer setting added") :
                                     item_type & itVolume  ? _u8L("Part setting added") :
@@ -2130,9 +2187,12 @@ void ObjectList::add_category_to_settings_from_selection(const std::vector< std:
                 // get it from default config values
                 option = DynamicPrintConfig::new_from_defaults_keys({ opt_key })->option(opt_key);
             }
-            m_config->set_key_value(opt_key, option->clone());
+            ConfigOption *seed = printer_technology() == ptFFF ? width_override_seed(object, *m_config, opt_key, heads_of_key) : nullptr;
+            differing_heads.insert(differing_heads.end(), heads_of_key.begin(), heads_of_key.end());
+            m_config->set_key_value(opt_key, seed != nullptr ? seed : option->clone());
         }
     }
+    notify_width_override_heads(differing_heads);
 
     // Add settings item for object/sub-object and show them
     if (!(item_type & (itPlate | itObject | itVolume | itLayer)))
@@ -2156,6 +2216,9 @@ void ObjectList::add_category_to_settings_from_frequent(const std::vector<std::s
     take_snapshot(snapshot_text);
 
     const DynamicPrintConfig& from_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    const int          obj_idx = m_objects_model->GetObjectIdByItem(item);
+    const ModelObject *object  = obj_idx >= 0 && size_t(obj_idx) < m_objects->size() ? (*m_objects)[size_t(obj_idx)] : nullptr;
+    std::vector<size_t> differing_heads, heads_of_key;
     for (auto& opt_key : options)
     {
         if (find(opt_keys.begin(), opt_keys.end(), opt_key) == opt_keys.end()) {
@@ -2165,9 +2228,12 @@ void ObjectList::add_category_to_settings_from_frequent(const std::vector<std::s
                 // get it from default config values
                 option = DynamicPrintConfig::new_from_defaults_keys({ opt_key })->option(opt_key);
             }
-            m_config->set_key_value(opt_key, option->clone());
+            ConfigOption *seed = printer_technology() == ptFFF ? width_override_seed(object, *m_config, opt_key, heads_of_key) : nullptr;
+            differing_heads.insert(differing_heads.end(), heads_of_key.begin(), heads_of_key.end());
+            m_config->set_key_value(opt_key, seed != nullptr ? seed : option->clone());
         }
     }
+    notify_width_override_heads(differing_heads);
 
     // Add settings item for object/sub-object and show them
     if (!(item_type & (itPlate | itObject | itVolume | itLayer)))

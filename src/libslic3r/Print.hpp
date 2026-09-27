@@ -1311,6 +1311,17 @@ public:
     // Per-extruder vector index of a 0-based filament: this fork's classic multi-tool printers
     // index per-extruder options by the filament directly.
     size_t extruder_index_of(unsigned int filament_idx) const { return size_t(filament_idx); }
+    // Snapmaker Orca: line width column and nozzle index of the 1-based filament `filament_1based`:
+    // filament - 1, as nozzle_diameter.get_at() resolves it (past the nozzle count, the first entry).
+    // Matches get_recommended_filament_maps on non-BBL printers unless a manual filament map is set.
+    size_t width_slot(unsigned int filament_1based) const { return width_slot(m_config, filament_1based); }
+    // The same on a print config alone, for readers that hold no Print (PerimeterGenerator, the
+    // segmentation).
+    static size_t width_slot(const PrintConfig &config, unsigned int filament_1based)
+    {
+        const size_t n = config.nozzle_diameter.values.size();
+        return filament_1based == 0 || size_t(filament_1based) - 1 >= n ? 0 : size_t(filament_1based) - 1;
+    }
     // ORCA: whether re-rounding the raft -> object gap (support height regime change) moves object layers.
     bool   raft_gap_rounding_moves_objects() const;
     WipeTowerType wipe_tower_type() const { return is_BBL_printer() ? WipeTowerType::Type1 : m_config.wipe_tower_type.value; }

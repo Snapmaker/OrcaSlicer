@@ -614,7 +614,8 @@ double CalibPressureAdvancePattern::flow_val() const
 {
     double flow_mult = m_config.option<ConfigOptionFloats>("filament_flow_ratio")->get_at(0);
     double nozzle_diameter = m_config.option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
-    double line_width = m_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle.
+    double line_width = m_config.get_abs_value_at("line_width", 0, nozzle_diameter);
     if (line_width <= 0.) line_width = Flow::auto_extrusion_width(frPerimeter, nozzle_diameter);
     double layer_height = m_config.get_abs_value("layer_height");
     double speed = speed_perimeter();
@@ -814,7 +815,8 @@ double CalibPressureAdvancePattern::line_width_first_layer() const
 {
     // TODO: FIXME: find out current filament/extruder?
     const double nozzle_diameter = m_config.opt_float("nozzle_diameter", m_params.extruder_id);
-    const double width           = m_config.get_abs_value("initial_layer_line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the column of the calibrated head.
+    const double width           = m_config.get_abs_value_at("initial_layer_line_width", size_t(m_params.extruder_id), nozzle_diameter);
     if (width <= 0.)
         return Flow::auto_extrusion_width(frExternalPerimeter, nozzle_diameter);
     return width;
@@ -824,7 +826,8 @@ double CalibPressureAdvancePattern::line_width() const
 {
     // TODO: FIXME: find out current filament/extruder?
     const double nozzle_diameter = m_config.opt_float("nozzle_diameter", 0);
-    const double width           = m_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle.
+    const double width           = m_config.get_abs_value_at("line_width", 0, nozzle_diameter);
     if (width <= 0.)
         return Flow::auto_extrusion_width(frExternalPerimeter, nozzle_diameter);
     return width;

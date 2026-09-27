@@ -846,7 +846,12 @@ void Preset::save(DynamicPrintConfig* parent_config)
                 ConfigOptionVectorBase* opt_vec_src = static_cast<ConfigOptionVectorBase*>(opt_src);
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
                 const ConfigOptionVectorBase* opt_vec_inherit = static_cast<const ConfigOptionVectorBase*>(reference.option(option));
+                const ConfigOptionDef *opt_def = print_config_def.get(option);
                 if (opt_vec_src->size() == 1)
+                    opt_dst->set(opt_src);
+                else if (opt_def != nullptr && opt_def->scalar_when_uniform)
+                    // Snapmaker Orca: full vector without "nil": older readers parse the key as a scalar
+                    // and delete a preset whose first entry is "nil". print_extruder_override marks set columns.
                     opt_dst->set(opt_src);
                 else if (key_set1->find(option) != key_set1->end()) {
                     opt_vec_dst->set_with_nil(opt_vec_src, opt_vec_inherit, 1);

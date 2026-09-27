@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Snapmaker Orca\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-26 14:08+0200\n"
+"POT-Creation-Date: 2026-09-27 22:15+0200\n"
 "PO-Revision-Date: \n"
 "Last-Translator: \n"
 "Language-Team: \n"
@@ -2771,6 +2771,7 @@ msgstr "Ondersteuning"
 msgid "Flush options"
 msgstr "Uitspoel-opties"
 
+#. TRN Prefix of a speed, acceleration or jerk setting in the list of values set for a tool head ("Speed: Outer wall")
 msgid "Speed"
 msgstr "Snelheid"
 
@@ -4010,6 +4011,7 @@ msgstr "De minimumtemperatuur mag niet lager zijn dan %d"
 msgid "Type to filter..."
 msgstr "Typ om te filteren..."
 
+#. TRN The first entry of the speed selector on the Process tab, in a narrow sidebar (short for "All extruders")
 msgid "All"
 msgstr "Alles"
 
@@ -5347,6 +5349,185 @@ msgstr ""
 
 msgid "Flow type of this nozzle. A High Flow nozzle prints with the High Flow values of the filament and process presets."
 msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a layer height in mm
+#, boost-format
+msgid "Automatic: the nearest layer height to the preferred %1% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a layer height in mm
+#, boost-format
+msgid "Automatic: the nearest layer height to the plate's %1% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+#, boost-format
+msgid "Automatic: the plate's quality (%1%), nearest to the preferred layer height %2% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+#, boost-format
+msgid "Automatic: the plate's quality (%1%), nearest to the plate's layer height %2% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+#, boost-format
+msgid "Automatic: %1%, nearest to the preferred layer height %2% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a quality class ("Standard"), %2% a layer height in mm
+#, boost-format
+msgid "Automatic: %1%, nearest to the plate's layer height %2% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is the plate's quality class ("High Quality"), %2% a nozzle size, %3% the class used instead ("Standard"), %4% a layer height in mm
+#, boost-format
+msgid "Automatic: no %1% preset exists for a %2% mm nozzle, so %3%, nearest to the preferred layer height %4% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is the plate's quality class ("High Quality"), %2% a nozzle size, %3% the class used instead ("Standard"), %4% a layer height in mm
+#, boost-format
+msgid "Automatic: no %1% preset exists for a %2% mm nozzle, so %3%, nearest to the plate's layer height %4% mm."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a nozzle size
+#, boost-format
+msgid "Automatic: the default preset of a %1% mm nozzle."
+msgstr ""
+
+#. TRN Why a tool head prints with a process preset. %1% is a nozzle size
+#, boost-format
+msgid "Automatic: the first preset installed for a %1% mm nozzle."
+msgstr ""
+
+#. TRN Line on the Speed page under a selected High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+#, boost-format
+msgid "Extruder %1%, %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."
+msgstr ""
+
+#. TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#, boost-format
+msgid "Extruder %1%, %2% mm nozzle, %3%."
+msgstr ""
+
+#. TRN Tooltip of an entry of the speed selector: a High Flow tool head that prints the Standard speeds by choice. %1% the tool head, %2% its nozzle size
+#, boost-format
+msgid "Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, High Flow, printing the Standard speeds (chosen)."
+msgstr ""
+
+#. TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#, boost-format
+msgid "Extruder %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."
+msgstr ""
+
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.20mm Standard") whose High Flow column the tool head prints with, %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration
+#, boost-format
+msgid "Preset: %1%, High Flow %2% · speeds: outer wall %3%, sparse %4%, accel %5%"
+msgstr ""
+
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset with its state ("0.20mm High Quality", "0.18mm Standard (automatic)") whose Standard speeds the High Flow tool head prints by choice, %2%..%4% the outer wall speed, sparse infill speed and acceleration
+#, boost-format
+msgid "Preset: %1%, Standard (chosen for this High Flow nozzle) · speeds: outer wall %2%, sparse %3%, accel %4%"
+msgstr ""
+
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2% "(automatic)" or "(chosen)", %3%..%5% the outer wall speed, sparse infill speed and acceleration the tool head prints with
+#, boost-format
+msgid "Preset: %1% %2% · speeds: outer wall %3%, sparse %4%, accel %5%"
+msgstr ""
+
+msgid "This extruder carries a High Flow nozzle and prints the Standard speeds, accelerations and jerk, chosen with the toggle of the Speed page; its filament settings stay those of a High Flow nozzle."
+msgstr ""
+
+#. TRN Line on the Quality page of the process settings when every tool head prints the widths of another preset. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets
+#, boost-format
+msgid "Extruders %1% print with the line widths of %2%. The line widths below apply to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgstr ""
+
+#. TRN Line on the Quality page of the process settings. %1% lists tool heads with their nozzle sizes ("1 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("2")
+#, boost-format
+msgid "Extruders %1% print with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgstr ""
+
+#. TRN Line on the Quality page of the process settings. %1% is a tool head with its nozzle size ("3 (0.6 mm)"), %2% a process preset, %3% the other tool heads ("1, 2, 4")
+#, boost-format
+msgid "Extruder %1% prints with the line widths of %2%. The line widths below apply to extruders %3%, and to every extruder for the widths you changed; every other setting on this page applies to every extruder."
+msgstr ""
+
+#. TRN Line under the picker of the process preset of a tool head, on the Quality / Speed page of the process settings
+msgid "Its line widths print on this extruder; so do its speeds (Speed page)."
+msgstr ""
+
+msgid "Its speeds, accelerations and jerk print on this extruder; so do its line widths (Quality page)."
+msgstr ""
+
+#. TRN Under a selected tool head on the Quality page. %1% a layer height in mm, %2% the nozzle in the sidebar
+#, boost-format
+msgid "This extruder prints %1% mm layers (preferred layer height, nozzle %2% in the sidebar)."
+msgstr ""
+
+#. TRN Under a selected tool head on the Quality page. %1% a line width setting ("Inner wall"), %2% its value under All tool heads ("110%"), %3% the process preset the tool head takes its widths from, %4% that preset's value
+#, boost-format
+msgid "%1% %2% from All extruders (%3% has %4%)."
+msgstr ""
+
+#. TRN A count of line widths set for a tool head, in a list like "1 line width, 3 speeds"
+#, boost-format
+msgid "%1% line width"
+msgid_plural "%1% line widths"
+msgstr[0] ""
+msgstr[1] ""
+
+#. TRN A count of speeds, accelerations and jerk values set for a tool head, in a list like "1 line width, 3 speeds"
+#, boost-format
+msgid "%1% speed"
+msgid_plural "%1% speeds"
+msgstr[0] ""
+msgstr[1] ""
+
+#. TRN Under a selected tool head on the Quality page. %1% the number of line widths set for it
+#, boost-format
+msgid "%1% line width set for this extruder."
+msgid_plural "%1% line widths set for this extruder."
+msgstr[0] ""
+msgstr[1] ""
+
+#. TRN Under a selected tool head on the Speed page. %1% the number of speeds, accelerations and jerk values set for it
+#, boost-format
+msgid "%1% speed set for this extruder."
+msgid_plural "%1% speeds set for this extruder."
+msgstr[0] ""
+msgstr[1] ""
+
+msgid "Greyed settings are shared by every extruder; the layer height of an extruder is set in the sidebar."
+msgstr ""
+
+#. TRN Link under a selected tool head of the Quality / Speed page of the process settings
+msgid "Clear the line widths set for this extruder"
+msgstr ""
+
+msgid "Clear the speeds set for this extruder"
+msgstr ""
+
+#. TRN Under a selected tool head on the Quality page: a line width set for it has the other unit than the value under All tool heads. %1% the setting ("Default"), %2% the value an older version reads ("0.42 %")
+#, boost-format
+msgid "Older versions of Snapmaker Orca read this preset's %1% as %2%; use the same unit for every extruder."
+msgstr ""
+
+#. TRN A line width of zero in a tooltip: the width follows the nozzle
+msgid "auto"
+msgstr ""
+
+#. TRN The last tool head of a list: "1, 3 and 4"
+#, boost-format
+msgid "%1% and %2%"
+msgstr ""
+
+#. TRN Notice of the object list once "Add settings" added a line width to an object printed by several tool heads. %1% the tool heads that printed it with another line width ("1 and 4")
+#, boost-format
+msgid "Line widths added to an object apply on every extruder that prints it; extruder %1% printed it with the line widths of its own nozzle size."
+msgid_plural "Line widths added to an object apply on every extruder that prints it; extruders %1% printed it with the line widths of their own nozzle size."
+msgstr[0] ""
+msgstr[1] ""
 
 msgid "Printing"
 msgstr "Printen"
@@ -7763,6 +7944,7 @@ msgstr "Laag: N.v.t."
 msgid "Click to view thermal preconditioning explanation"
 msgstr "Klik om de uitleg over thermische voorconditionering te bekijken"
 
+#. TRN Hypertext of the notice: clears the line widths set for the tool head
 msgid "Clear"
 msgstr "Wissen"
 
@@ -8926,23 +9108,23 @@ msgstr ""
 msgid "Loading 3MF"
 msgstr ""
 
-msgid "This project was saved by Snapmaker Orca 2.4 with a flow type for every filament. In this version a filament is printed with the values of the nozzle of its tool head."
+msgid "This project was saved by Snapmaker Orca 2.4 with a flow type for every filament. In this version a filament is printed with the values of the nozzle of its extruder."
 msgstr ""
 
 #, boost-format
-msgid "Tool head %1% was set to a High Flow nozzle, as its filaments were."
+msgid "Extruder %1% was set to a High Flow nozzle, as its filaments were."
 msgstr ""
 
 #, boost-format
-msgid "Tool head %1% was set to a Standard nozzle, as its filaments were."
+msgid "Extruder %1% was set to a Standard nozzle, as its filaments were."
 msgstr ""
 
 #, boost-format
-msgid "Filament %1% was set to High Flow, but the filaments of tool head %2% did not agree: it is printed with the Standard values of that tool head."
+msgid "Filament %1% was set to High Flow, but the filaments of extruder %2% did not agree: it is printed with the Standard values of that extruder."
 msgstr ""
 
 #, boost-format
-msgid "Filament %1% was set to Standard, but the filaments of tool head %2% did not agree: it is printed with the High Flow values of that tool head."
+msgid "Filament %1% was set to Standard, but the filaments of extruder %2% did not agree: it is printed with the High Flow values of that extruder."
 msgstr ""
 
 msgid "Check that the nozzles of the printer match."
@@ -9380,9 +9562,41 @@ msgstr "De voorkeurslaaghoogte van mondstuk %1% past er niet meer doorheen en is
 msgid "Filament %1% of nozzle %2% has no value of its own for some of these settings and prints with the printer's."
 msgstr ""
 
-#. TRN %1% the tool head, %2% the number of values set for it on the Speed page of the process settings
+#. TRN %1% the tool head, %2% the number of values set for it on the Speed and Quality pages of the process settings
 #, boost-format
-msgid "Tool head %1% keeps %2% values set for it on the Speed page."
+msgid "Extruder %1% keeps %2% values set for it (Speed and Quality pages)."
+msgstr ""
+
+#. TRN %1% the tool head, %2% a line width in mm set for it, %3% the nozzle size it had, %4% the new nozzle size
+#, boost-format
+msgid "Extruder %1% keeps a line width of %2% mm set for a %3% mm nozzle; it now has %4% mm."
+msgstr ""
+
+#. TRN %1% the tool head, %2% line widths in mm set for it ("0.45, 0.5"), %3% the nozzle size it had, %4% the new nozzle size
+#, boost-format
+msgid "Extruder %1% keeps line widths of %2% mm set for a %3% mm nozzle; it now has %4% mm."
+msgstr ""
+
+msgid "the selected preset"
+msgstr ""
+
+#. TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the nozzle size the preset is made for, %4% the new size, %5% the preset the head prints with now
+#, boost-format
+msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is made for a %3% mm nozzle and does not apply while the nozzle is %4% mm; the extruder uses %5% (automatic)."
+msgstr ""
+
+#. TRN %1% the nozzle, %2% the process preset chosen for its tool head, %3% the new size, %4% the preset the head prints with now
+#, boost-format
+msgid "Nozzle %1%: %2%, chosen for this extruder in this project, is not made for a %3% mm nozzle and does not apply; the extruder uses %4% (automatic)."
+msgstr ""
+
+#. TRN %1% the nozzle, %2% the process preset chosen for its tool head
+#, boost-format
+msgid "Nozzle %1%: %2%, chosen for this extruder in this project, applies again."
+msgstr ""
+
+#. TRN Hypertext of the notice: opens the picker of the tool head's preset
+msgid "Choose preset"
 msgstr ""
 
 msgid "Diameter of this nozzle. This printer has presets for one nozzle diameter only."
@@ -9405,30 +9619,67 @@ msgstr ""
 msgid "The layer height of extruder %1% cannot exceed its nozzle diameter (%2% mm)."
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset ("0.12mm Standard"), %2%..%4% the outer wall speed, sparse infill speed and acceleration the tool head prints with
-#, boost-format
-msgid "Speeds: %1% (outer wall %2%, sparse %3%, accel %4%)"
+#. TRN The state of the process preset a tool head prints with: given by the rule; empty for the selected preset itself
+#. TRN Marks a process preset a tool head takes its speeds from by the user's choice
+msgid "(chosen)"
 msgstr ""
 
+msgid "(automatic)"
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% is the process preset the user chose for the tool head, %2% the default line width it prints ("110 % (0.22 mm)"), %3% a list of settings or "none"
 #, boost-format
-msgid "This tool head has another nozzle size than the printer preset. Its speeds, accelerations and jerk come from %1%, chosen for its preferred layer height. Every other setting comes from the selected process preset. Values you changed in the selected preset are kept: %2%."
+msgid "This extruder takes its speeds, accelerations, jerk and line widths from %1%, chosen in this project. Line width %2%. Every other setting comes from the selected process preset. Values you changed in the selected preset are kept: %3%."
 msgstr ""
 
 msgid "none"
 msgstr ""
 
 #, boost-format
+msgid "%1% has no High Flow values; the extruder prints its Standard values."
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% is a process preset, %2% the preset the tool head's line widths come from, %3% a list of settings or "none"
+#, boost-format
+msgid "This extruder carries a High Flow nozzle and the selected process preset has no High Flow speeds. Its speeds, accelerations and jerk come from the High Flow column of %1%, the process preset of its nozzle size that has one. Its line widths are those of %2%. Every other setting comes from the selected process preset. Values you changed in the selected preset are kept: %3%."
+msgstr ""
+
+msgid "the selected process preset"
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% is a process preset, %2% a sentence that says why the rule chose it, %3% the default line width the tool head prints ("110 % (0.22 mm)"), %4% a list of settings or "none"
+#, boost-format
+msgid "This extruder has another nozzle size than the printer preset. Its speeds, accelerations, jerk and line widths come from %1%. %2% Line width %3%. Every other setting comes from the selected process preset. Values you changed in the selected preset are kept: %4%."
+msgstr ""
+
+#, boost-format
 msgid "Its High Flow speeds are those of the selected process preset, as %1% has no High Flow values."
 msgstr ""
 
-#. TRN Line under the rows of a nozzle tab in the sidebar. %1% the number of values set for the tool head on the Speed page, %2%..%4% the outer wall speed, sparse infill speed and acceleration it prints with
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% the number of values set for the tool head on the Speed and Quality pages, %2%..%4% the outer wall speed, sparse infill speed and acceleration it prints with
 #, boost-format
-msgid "Speeds: %1% values set for this tool head (outer wall %2%, sparse %3%, accel %4%)"
+msgid "Values set for this extruder: %1% (outer wall %2%, sparse %3%, accel %4%)"
 msgstr ""
 
-#. TRN Tooltip of the line under a nozzle tab. %1% lists the settings set for the tool head on the Speed page of the process settings
+#. TRN Line under the rows of a nozzle tab in the sidebar. %1% is a process preset chosen for the tool head that does not apply now, %2%..%4% the outer wall speed, sparse infill speed and acceleration the tool head prints with
 #, boost-format
-msgid "Values set for this tool head on the Speed page: %1%."
+msgid "Preset: %1% (inactive) · speeds: outer wall %2%, sparse %3%, accel %4%"
+msgstr ""
+
+msgid "The process preset chosen for this extruder in this project does not apply now; the extruder prints with the selected process preset."
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% is a process preset chosen for the tool head that does not apply now
+#, boost-format
+msgid "%1%, chosen in this project for this extruder, does not apply now."
+msgstr ""
+
+#. TRN Tooltip of the line under a nozzle tab. %1% lists the settings set for the tool head on the Speed and Quality pages of the process settings
+#, boost-format
+msgid "Values set for this extruder: %1%."
+msgstr ""
+
+msgid "Click to choose the preset of this extruder."
 msgstr ""
 
 #. TRN Line under the disabled Flow row of a nozzle tab in the sidebar. %1% is the nozzle size of this tool head, e.g. 0.2
@@ -9752,6 +10003,9 @@ msgstr ""
 msgid "Automatic slicing skipped: \"%1%\" would be sliced into about %2% layers at a layer height of %3% mm, which takes very long. Use Slice to slice anyway."
 msgstr ""
 
+msgid "Set for this extruder"
+msgstr ""
+
 msgid "(unknown)"
 msgstr ""
 
@@ -9850,6 +10104,16 @@ msgstr "Fout tijdens herladen"
 # AI Translated
 msgid "Reload all"
 msgstr "Alles opnieuw laden"
+
+#. TRN After a switch of the process preset. %1% a tool head, %2% the preset chosen for it, %3% the new process preset
+#, boost-format
+msgid "Extruder %1% keeps %2%, chosen in this project; the other extruders follow %3%."
+msgstr ""
+
+#. TRN After a switch of the process preset. %1% tool heads ("1, 4"), %2% the presets chosen for them, %3% the new process preset
+#, boost-format
+msgid "Extruders %1% keep %2%, chosen in this project; the other extruders follow %3%."
+msgstr ""
 
 msgid "There are warnings after slicing models:"
 msgstr "Er zijn waarschuwingen na het slicen van modellen:"
@@ -10316,7 +10580,7 @@ msgid "Installing %1%..."
 msgstr "%1% installeren..."
 
 #, boost-format
-msgid "Tool head %1% was set back to a Standard nozzle: there are no High Flow values for a nozzle of its size with this printer preset."
+msgid "Extruder %1% was set back to a Standard nozzle: there are no High Flow values for a nozzle of its size with this printer preset."
 msgstr ""
 
 #, boost-format
@@ -10377,23 +10641,23 @@ msgstr ""
 msgid "Use the presets for these nozzles"
 msgstr ""
 
-msgid "the selected process preset"
-msgstr ""
-
 #, boost-format
-msgid "Tool head %1% (%2% mm) printed with %3% when this project was saved; it now prints with %4%."
+msgid "Extruder %1% (%2% mm) printed with %3% when this project was saved; it now prints with %4%."
 msgstr ""
 
 msgid "The preset is not installed."
 msgstr ""
 
-msgid "The option \"Process speeds follow the nozzle size\" is off."
+msgid "The option \"Process speeds and line widths follow the nozzle size\" is off."
 msgstr ""
 
-msgid "The nozzle size of the tool head changed."
+msgid "The nozzle size of the extruder changed."
 msgstr ""
 
-msgid "A filament is printed with the flow type of its tool head. Choose Standard or High Flow for every tool head in the Flow row of the nozzle tabs, then slice again."
+msgid "The quality rule of Snapmaker Orca changed."
+msgstr ""
+
+msgid "A filament is printed with the flow type of its extruder. Choose Standard or High Flow for every extruder in the Flow row of the nozzle tabs, then slice again."
 msgstr ""
 
 #, boost-format
@@ -10401,21 +10665,21 @@ msgid "%1%mm High Flow nozzles are not recommended for %2%"
 msgstr ""
 
 #, boost-format
-msgid "%1% has no High Flow values; its Standard values are used on tool head %2%."
+msgid "%1% has no High Flow values; its Standard values are used on extruder %2%."
 msgstr ""
 
 #, boost-format
-msgid "The process preset has no High Flow speeds; tool head %1% prints at Standard speeds."
+msgid "The process preset has no High Flow speeds; extruder %1% prints at Standard speeds."
 msgstr ""
 
 #. TRN N7: %1% is a filament preset name, %2% a tool head number, %3% the name of the system preset %1% was made from
 #, boost-format
-msgid "%1% changes Standard values that its High Flow column does not follow; tool head %2% prints with the High Flow values of %3%."
+msgid "%1% changes Standard values that its High Flow column does not follow; extruder %2% prints with the High Flow values of %3%."
 msgstr ""
 
 #. TRN N7: %1% is a list of tool head numbers, %2% the name of the system process preset
 #, boost-format
-msgid "The process preset changes Standard speeds that its High Flow column does not follow; tool head %1% prints with the High Flow speeds of %2%."
+msgid "The process preset changes Standard speeds that its High Flow column does not follow; extruder %1% prints with the High Flow speeds of %2%."
 msgstr ""
 
 #, boost-format
@@ -10423,7 +10687,7 @@ msgid "These filaments cannot be printed with the %1%mm high flow nozzle: %2%"
 msgstr ""
 
 #, boost-format
-msgid "Load another filament or set tool head %1% to a Standard nozzle."
+msgid "Load another filament or set extruder %1% to a Standard nozzle."
 msgstr ""
 
 # AI Translated
@@ -10790,10 +11054,10 @@ msgstr ""
 msgid "If enabled, each filament gets the preset made for the size of the nozzle that prints it. User presets are kept unless exactly one counterpart for the other size exists. Line widths given in percent follow each nozzle."
 msgstr ""
 
-msgid "Process speeds follow the nozzle size"
+msgid "Process speeds and line widths follow the nozzle size"
 msgstr ""
 
-msgid "If enabled, a tool head whose nozzle size differs from the printer preset prints with the speeds, accelerations and jerk of a process preset made for its size (chosen for its preferred layer height and the quality of the selected preset). Line widths, walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every tool head. Values set for one tool head on the Speed page apply to that tool head whether this is on or off."
+msgid "If enabled, an extruder whose nozzle size differs from the printer preset prints with the speeds, accelerations, jerk and line widths of the process preset of the same quality as the selected preset made for its size, at the nearest layer height. Walls, infill and every other setting stay those of the selected process preset, and values you changed in it are kept on every extruder. Values set for one extruder on the Speed or Quality page, and a process preset chosen for an extruder there, apply to that extruder whether this is on or off."
 msgstr ""
 
 # AI Translated
@@ -11469,6 +11733,16 @@ msgstr "De debug instellingen zijn succesvol opgeslagen!"
 
 msgid "Cloud environment switched; please login again!"
 msgstr "Cloudomgeving geschakeld; log alsjeblieft nogmaals in!"
+
+#. TRN One tool head in the tooltip of the process combo. %1% the tool head, %2% the process preset it prints with
+#, boost-format
+msgid "extruder %1% %2%"
+msgstr ""
+
+#. TRN Tooltip of the process combo of the sidebar. %1% lists tool heads with the process preset each prints with
+#, boost-format
+msgid "Extruders of other nozzle sizes print with presets of this quality for their size: %1%."
+msgstr ""
 
 #. TRN: the nozzle size a filament preset is made for, in front of its name in the filament list. %1% is a number like 0.2.
 #, boost-format
@@ -12794,6 +13068,7 @@ msgstr "volledige profielnaam"
 msgid "symbolic profile name"
 msgstr "symbolische profielnaam"
 
+#. TRN Prefix of a line width setting in the list of values set for a tool head ("Line width: Outer wall")
 msgid "Line width"
 msgstr "Lijn dikte"
 
@@ -12895,66 +13170,169 @@ msgstr "Plug-inconfiguratie"
 msgid "Notes"
 msgstr "Opmerkingen"
 
+#. TRN %1% a tool head, %2% the values set for it by kind ("1 line width, 3 speeds")
+#. TRN %1% a tool head, %2% the value set for it
 #, boost-format
-msgid "Head %1% (%2%)"
+msgid "Extruder %1%: %2%"
 msgstr ""
 
-#. TRN Line on the Speed page. %1% lists tool heads with the number of values set for each ("Head 2 (3), Head 4 (2)")
+#. TRN Line on the Speed and Quality pages. %1% lists tool heads with the values set for each ("Extruder 2: 3 speeds, Extruder 4: 1 line width, 2 speeds")
 #, boost-format
-msgid "Values set per tool head: %1%."
+msgid "Values set per extruder: %1%."
 msgstr ""
 
-msgid "Clear the values set for this tool head"
+msgid "Clear the values set per extruder..."
 msgstr ""
 
-msgid "Clear the values set per tool head..."
+msgid "An override on a part applies on every extruder that prints it."
 msgstr ""
 
 #. TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
 #, boost-format
-msgid "Tool head %1% prints with the speeds of %2%. The values below apply to tool heads %3%, and to every tool head for the settings you changed."
+msgid "Extruder %1% prints with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."
 msgstr ""
 
 #. TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
 #, boost-format
-msgid "Tool heads %1% print with the speeds of %2%. The values below apply to tool heads %3%, and to every tool head for the settings you changed."
+msgid "Extruders %1% print with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."
 msgstr ""
 
-msgid "An override on a part applies on every tool head that prints it."
+msgid "Set per extruder:"
 msgstr ""
 
-msgid "Set per tool head:"
+#. TRN Label of the picker on the Speed and Quality pages: the process preset a tool head takes its speeds and line widths from
+msgid "Extruder preset:"
 msgstr ""
 
-#. TRN %1% a tool head, %2% the value set for it
+#. TRN Tooltip of the button beside the speed picker that clears the process preset chosen for the tool head
+msgid "Use the automatic preset again"
+msgstr ""
+
+#. TRN The first item of the speed picker. %1% is a process preset ("0.24mm Standard")
 #, boost-format
-msgid "Head %1%: %2%"
+msgid "%1% (automatic)"
 msgstr ""
 
-#. TRN Line on the Speed page under a selected tool head. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+msgid "Selected preset (automatic)"
+msgstr ""
+
+#. TRN An item of the speed picker: the chosen process preset is not installed
 #, boost-format
-msgid "Tool head %1%, %2% mm nozzle, %3%."
+msgid "%1% (not installed)"
 msgstr ""
 
-#. TRN %1% is a process preset
+#. TRN An item of the speed picker: the chosen process preset does not apply to this tool head now
 #, boost-format
-msgid "Speeds from %1%."
+msgid "%1% (inactive)"
 msgstr ""
 
-#. TRN %1% the number of values set for the selected tool head
+#. TRN Header in the speed picker above the vendor's process presets of a nozzle size. %1% is the size ("0.8")
 #, boost-format
-msgid "%1% values set for this tool head."
+msgid "System presets · %1% mm nozzle"
 msgstr ""
 
-msgid "Greyed settings apply to every tool head."
+msgid "Chosen user presets travel with the project only where they are installed."
+msgstr ""
+
+#. TRN Header in the speed picker above the process presets embedded in the project
+msgid "Project presets"
+msgstr ""
+
+#. TRN Second line of an item tooltip of the picker on the Quality page: the line widths this tool head would print from the preset ("110 % (0.22 mm)")
+#, boost-format
+msgid "default %1%, outer wall %2%, first layer %3%"
+msgstr ""
+
+#. TRN Second line of an item tooltip of the speed picker: the values this tool head would print from the preset
+#, boost-format
+msgid "outer wall %1%, sparse %2%, accel %3%"
+msgstr ""
+
+msgid "Standard values only; this extruder is at High Flow."
+msgstr ""
+
+msgid "Line widths differ from the automatic preset."
+msgstr ""
+
+#. TRN Item tooltip of the speed picker. %1% the layer height the preset is made for, %2% the one the tool head prints
+#, boost-format
+msgid "Made for %1% mm layers; this extruder prints %2% mm layers."
+msgstr ""
+
+msgid "Also the automatic choice today. Choosing it by name keeps this preset for the extruder when the plate's quality changes; automatic follows the quality."
+msgstr ""
+
+msgid "The selected process preset. Choosing it by name keeps it for the extruder when the plate's preset changes."
+msgstr ""
+
+msgid "Speeds, accelerations, jerk and line widths come from this preset; every other setting stays the plate's."
+msgstr ""
+
+msgid "The process preset this extruder takes its speeds, accelerations, jerk and line widths from. Every other setting stays the plate's."
+msgstr ""
+
+msgid "The process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it."
+msgstr ""
+
+#. TRN Tooltip of the disabled speed picker. %1% is a nozzle size
+#. TRN %1% is a nozzle size
+#, boost-format
+msgid "No process preset for a %1% mm nozzle is installed; the extruder prints with the speeds and line widths of the selected preset."
+msgstr ""
+
+#. TRN Under a tool head whose process preset was chosen in the picker. %1% is the preset the rule would give it
+#, boost-format
+msgid "Chosen in this project; automatic would be %1%."
+msgstr ""
+
+msgid "Chosen in this project; automatic would be the selected preset."
+msgstr ""
+
+msgid "Chosen in this project; the same as the selected process preset, so the extruder keeps it when the plate's preset changes."
+msgstr ""
+
+#. TRN %1% the chosen process preset, %2% the preset the tool head prints with instead
+#, boost-format
+msgid "%1%, chosen in this project, is not installed; the extruder uses %2% (automatic)."
+msgstr ""
+
+#. TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the size of the tool head, %4% the preset the tool head prints with instead
+#, boost-format
+msgid "%1%, chosen in this project, is made for a %2% mm nozzle and does not apply while the nozzle is %3% mm; the extruder uses %4% (automatic)."
+msgstr ""
+
+#. TRN %1% the chosen process preset, %2% the size of the tool head, %3% the preset the tool head prints with instead
+#, boost-format
+msgid "%1%, chosen in this project, is not made for a %2% mm nozzle and does not apply; the extruder uses %3% (automatic)."
+msgstr ""
+
+#. TRN %1% the chosen process preset
+#, boost-format
+msgid "%1%, chosen in this project, does not apply: the process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it."
+msgstr ""
+
+msgid "\"Process speeds and line widths follow the nozzle size\" is off in Preferences, so the extruder prints with the selected process preset; a preset chosen here still applies."
+msgstr ""
+
+msgid "This extruder has the nozzle size of the printer preset and prints with the selected process preset."
+msgstr ""
+
+#. TRN Under a High Flow tool head. %1% is the process preset whose High Flow speeds it prints, %2% the preset its line widths come from
+#, boost-format
+msgid "Automatic: %1%, the preset of this nozzle size with High Flow speeds; the selected preset has none. Line widths stay those of %2%."
+msgstr ""
+
+#. TRN %1% the number of settings changed under All tool heads
+#, boost-format
+msgid "%1% settings changed under All extruders apply here too."
 msgstr ""
 
 #. TRN Confirmation before every value set per tool head is cleared. %1% the number of values, %2% the tool heads ("2, 4")
 #, boost-format
-msgid "This clears %1% values set for tool heads %2%. They will follow All tool heads again."
+msgid "This clears %1% values set for extruders %2%. They will follow All extruders again."
 msgstr ""
 
-msgid "Clear the values set per tool head"
+msgid "Clear the values set per extruder"
 msgstr ""
 
 msgid "Frequent"
@@ -13339,6 +13717,11 @@ msgstr ""
 msgid "Are you sure you want to %1% the selected preset?"
 msgstr "Weet u zeker dat u de geselecteerde preset wilt %1%?"
 
+#. TRN Notice after a process preset chosen for a tool head was deleted. %1% the preset, %2% the tool head, %3% the preset the head prints with now
+#, boost-format
+msgid "%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% (automatic) until another preset is chosen."
+msgstr ""
+
 # AI Translated
 msgid "Select printers"
 msgstr "Printers selecteren"
@@ -13399,17 +13782,32 @@ msgstr "Doorgaan"
 msgid "Don't warn again for this preset"
 msgstr "Niet meer waarschuwen voor deze voorinstelling"
 
-msgid "The values below apply to every tool head that has no value of its own for them."
+msgid "The values below apply to every extruder that has no value of its own for them."
 msgstr ""
 
-#. TRN Tooltip of an entry of the speed selector. %1% the tool head, %2% its nozzle size, %3% its flow type ("Standard")
+#. TRN %1% is the process preset the user chose for the tool head (its speeds and line widths)
 #, boost-format
-msgid "Tool head %1% (sidebar: Nozzle %1%), %2% mm nozzle, %3%."
+msgid "Preset %1% (chosen in this project)."
+msgstr ""
+
+#. TRN %1% is a process preset whose High Flow column the tool head prints with by the automatic rule
+#, boost-format
+msgid "Preset %1%, High Flow (automatic)."
+msgstr ""
+
+#. TRN %1% is a process preset the tool head prints with by the automatic rule
+#, boost-format
+msgid "Preset %1% (automatic)."
+msgstr ""
+
+#. TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
+#, boost-format
+msgid "%1%, chosen in this project, does not apply now."
 msgstr ""
 
 #. TRN %1% the number of values set for the tool head, %2% their names
 #, boost-format
-msgid "%1% values set for this tool head: %2%."
+msgid "%1% values set for this extruder: %2%."
 msgstr ""
 
 # AI Translated
@@ -13417,17 +13815,27 @@ msgstr ""
 msgid "%s: %s"
 msgstr "%s: %s"
 
-msgid "All tool heads"
+msgid "All extruders"
 msgstr ""
 
-#. TRN An entry of the speed selector on the Process tab: the tool head and its nozzle size ("Head 2 · 0.2")
+#. TRN An entry of the speed selector on the Process tab: the tool head and its nozzle size ("Extruder 2 · 0.2")
 #, boost-format
-msgid "Head %1% · %2%"
+msgid "Extruder %1% · %2%"
+msgstr ""
+
+#. TRN An entry of the speed selector in a narrow sidebar: the tool head and its nozzle size ("E2 · 0.2")
+#, boost-format
+msgid "E%1% · %2%"
 msgstr ""
 
 #. TRN An entry of the speed selector on the Process tab
 #, boost-format
-msgid "Head %1%"
+msgid "Extruder %1%"
+msgstr ""
+
+#. TRN An entry of the speed selector in a narrow sidebar (short for "Extruder 2")
+#, boost-format
+msgid "E%1%"
 msgstr ""
 
 # AI Translated
@@ -14804,11 +15212,13 @@ msgstr "De prime toren wordt alleen ondersteund als alle objecten dezelfde varia
 msgid "One or more object were assigned an extruder that the printer does not have."
 msgstr "Aan een of meer objecten is een extruder toegewezen die de printer niet heeft."
 
-msgid "Line width too small"
-msgstr "Te kleine lijnbreedte"
+#, boost-format
+msgid "Line width too small on extruder %1%"
+msgstr ""
 
-msgid "Line width too large"
-msgstr "Te groote lijnbreedte"
+#, boost-format
+msgid "Line width too large on extruder %1%"
+msgstr ""
 
 # AI Translated
 msgid "Printing with multiple extruders of differing nozzle diameters. If support is to be printed with the current filament (support_filament == 0 or support_interface_filament == 0), all nozzles have to be of the same diameter."
@@ -14869,6 +15279,13 @@ msgstr "Er zijn support handhavers ingesteld, maar support staat uit. Schakel  s
 
 msgid "Layer height cannot exceed nozzle diameter."
 msgstr "De laaghoogte kan niet groter zijn dan de diameter van het mondstuk"
+
+msgid "Line widths set per extruder are not supported on this printer; set one value under All extruders."
+msgstr ""
+
+#, boost-format
+msgid "Extruder %1% (%2% mm nozzle) prints %3% at %4% mm, a value changed under All extruders."
+msgstr ""
 
 #, boost-format
 msgid "The maximum width of a segmented region (%1% mm) is narrower than the outer wall of filament %2% (%3% mm): painted regions of that filament print nothing where the cut leaves less than one wall, and the base filament shows instead. Use at least the widest painted outer wall (more on slopes printed in thick runs), or 0 for no limit."
@@ -14936,9 +15353,9 @@ msgstr ""
 msgid "Per-extruder layer heights are not supported together with variable layer height or height range modifiers that change the layer height. Remove them for this object or set the extruders' preferred layer heights to Default."
 msgstr ""
 
-# AI Translated
-msgid "Bridge line width must not exceed nozzle diameter"
-msgstr "De lijnbreedte van bruggen mag de mondstukdiameter niet overschrijden"
+#, boost-format
+msgid "Bridge line width must not exceed the nozzle diameter of extruder %1%"
+msgstr ""
 
 # AI Translated
 msgid "\"G92 E0\" was found in before_layer_change_gcode, but the G or E are not uppercase. Please change them to the exact uppercase \"G92 E0\"."
@@ -16828,10 +17245,22 @@ msgstr "Automatisch voor overeenkomst"
 msgid "Nozzle Manual"
 msgstr "Handleiding nozzle"
 
-msgid "Process preset per tool head"
+msgid "Process preset per extruder"
 msgstr ""
 
-msgid "The process preset each tool head printed with when this project was last sliced. A tool head whose nozzle size differs from the printer preset prints with the speeds of a process preset made for its size."
+msgid "The process preset each extruder printed with when this project was last sliced. An extruder whose nozzle size differs from the printer preset prints with the speeds of a process preset made for its size."
+msgstr ""
+
+msgid "Process preset chosen per extruder"
+msgstr ""
+
+msgid "The process preset an extruder takes its speeds, accelerations, jerk and line widths from, chosen in this project. Empty: the preset of the selected process preset's quality made for the extruder's nozzle size."
+msgstr ""
+
+msgid "Speeds flow type chosen per extruder"
+msgstr ""
+
+msgid "The flow type whose speeds, accelerations and jerk an extruder prints with, chosen in this project when it is not the flow type of its nozzle: a High Flow nozzle set to the Standard speeds. Empty: the nozzle's own flow type."
 msgstr ""
 
 # AI Translated
@@ -28400,6 +28829,16 @@ msgid ""
 "Avoid warping\n"
 "Did you know that when printing materials that are prone to warping such as ABS, appropriately increasing the heatbed temperature can reduce the probability of warping."
 msgstr ""
+
+#~ msgid "Line width too small"
+#~ msgstr "Te kleine lijnbreedte"
+
+#~ msgid "Line width too large"
+#~ msgstr "Te groote lijnbreedte"
+
+# AI Translated
+#~ msgid "Bridge line width must not exceed nozzle diameter"
+#~ msgstr "De lijnbreedte van bruggen mag de mondstukdiameter niet overschrijden"
 
 # AI Translated
 #~ msgid "Tab"

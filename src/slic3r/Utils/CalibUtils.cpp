@@ -8,6 +8,7 @@
 #include "../GUI/PartPlate.hpp"
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/Utils.hpp"
 
 #include "libslic3r/Model.hpp"
@@ -123,7 +124,8 @@ void update_speed_parameter( const std::string& key)
 
     float nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter")->values[0];
     float layer_height = print_config.option<ConfigOptionFloat>("layer_height")->value;
-    float line_width = print_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+    float line_width = print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter);
     if (line_width <= 0.) line_width = Flow::auto_extrusion_width(frPerimeter, nozzle_diameter);
 
     Flow flow = Flow(line_width, layer_height, nozzle_diameter);
@@ -152,7 +154,8 @@ std::vector<double> generate_max_speed_parameter_value(const std::string &key, c
 
     float nozzle_diameter = printer_config.option<ConfigOptionFloats>("nozzle_diameter")->values[0];
     float layer_height    = print_config.option<ConfigOptionFloat>("layer_height")->value;
-    float line_width      = print_config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the shared value of the edited preset.
+    float line_width      = print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter);
 
     Flow flow = Flow(line_width, layer_height, nozzle_diameter);
 
@@ -761,8 +764,9 @@ bool CalibUtils::calib_flowrate(int pass, const CalibInfo &calib_info, wxString 
         _obj->config.set_key_value("detect_thin_wall", new ConfigOptionBool(true));
         _obj->config.set_key_value("filter_out_gap_fill", new ConfigOptionFloat(0));  // OrcaSlicer parameter
         _obj->config.set_key_value("sparse_infill_pattern", new ConfigOptionEnum<InfillPattern>(ipRectilinear));
-        _obj->config.set_key_value("top_surface_line_width", new ConfigOptionFloatOrPercent(nozzle_diameter * 1.2f, false));
-        _obj->config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatOrPercent(nozzle_diameter * 1.2f, false));
+        // Snapmaker Orca: the widths are columns per tool head; a one-element override applies to every slot.
+        _obj->config.set_key_value("top_surface_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(nozzle_diameter * 1.2f, false)});
+        _obj->config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(nozzle_diameter * 1.2f, false)});
         _obj->config.set_key_value("top_surface_pattern", new ConfigOptionEnum<InfillPattern>(ipMonotonic));
         _obj->config.set_key_value("top_solid_infill_flow_ratio", new ConfigOptionFloat(1.0f));
         _obj->config.set_key_value("infill_direction", new ConfigOptionFloat(45));
@@ -824,12 +828,14 @@ void CalibUtils::calib_pa_pattern(const CalibInfo &calib_info, Model& model)
     }
 
     int index = get_index_for_extruder_parameter(print_config, "outer_wall_speed", calib_info.extruder_id, calib_info.extruder_type, calib_info.nozzle_volume_type);
-    float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value("line_width"), print_config.get_abs_value("layer_height"), calib_info.extruder_id, 0);
+    // Snapmaker Orca: the width is a column per tool head; the shared value against the calibrated nozzle.
+    float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter), print_config.get_abs_value("layer_height"), calib_info.extruder_id, 0);
     ConfigOptionFloatsNullable *wall_speed_speed_opt = print_config.option<ConfigOptionFloatsNullable>("outer_wall_speed");
     wall_speed_speed_opt->values[index]              = wall_speed;
 
     for (const auto& opt : config_pattern.nozzle_ratio_pairs) {
-        print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        // Snapmaker Orca: the line widths are columns per tool head; the pattern's width fills every column.
+        PerHeadProcess::set_every_column(print_config, opt.first, FloatOrPercent(nozzle_diameter * opt.second / 100, false));
     }
 
     for (const auto& opt : config_pattern.int_pairs) {
@@ -878,7 +884,8 @@ void CalibUtils::set_for_auto_pa_model_and_config(const std::vector<CalibInfo> &
 
     for (const CalibInfo &calib_info : calib_infos) {
         int   index      = get_index_for_extruder_parameter(print_config, "outer_wall_speed", calib_info.extruder_id, calib_info.extruder_type, calib_info.nozzle_volume_type);
-        float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value("line_width"), print_config.get_abs_value("layer_height"),
+        // Snapmaker Orca: the width is a column per tool head; the shared value against the calibrated nozzle.
+        float wall_speed = CalibPressureAdvance::find_optimal_PA_speed(full_config, print_config.get_abs_value_at("line_width", size_t(PerHeadProcess::shared_column(print_config, nvtStandard)), nozzle_diameter), print_config.get_abs_value("layer_height"),
                                                                        calib_info.extruder_id, 0);
 
         ConfigOptionFloatsNullable *wall_speed_speed_opt = print_config.option<ConfigOptionFloatsNullable>("outer_wall_speed");
@@ -889,7 +896,8 @@ void CalibUtils::set_for_auto_pa_model_and_config(const std::vector<CalibInfo> &
     }
 
     for (const auto& opt : config_pattern.nozzle_ratio_pairs) {
-        print_config.set_key_value(opt.first, new ConfigOptionFloatOrPercent(nozzle_diameter * opt.second / 100, false));
+        // Snapmaker Orca: the line widths are columns per tool head; the pattern's width fills every column.
+        PerHeadProcess::set_every_column(print_config, opt.first, FloatOrPercent(nozzle_diameter * opt.second / 100, false));
     }
 
     for (const auto& opt : config_pattern.int_pairs) { print_config.set_key_value(opt.first, new ConfigOptionInt(opt.second)); }
@@ -1237,8 +1245,8 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     print_config.set_key_value("sparse_infill_density", new ConfigOptionPercent(0));
     print_config.set_key_value("overhang_reverse", new ConfigOptionBool(false));
     print_config.set_key_value("spiral_mode", new ConfigOptionBool(true));
-    // outer_wall_line_width is defined as coFloatOrPercent; the value is an absolute width in mm.
-    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloatOrPercent(line_width, false));
+    // outer_wall_line_width is a column per tool head (coFloatsOrPercents); one absolute width in mm for every slot.
+    print_config.set_key_value("outer_wall_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(line_width, false)});
     print_config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(layer_height));
     print_config.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
     obj->config.set_key_value("brim_type", new ConfigOptionEnum<BrimType>(btOuterAndInner));

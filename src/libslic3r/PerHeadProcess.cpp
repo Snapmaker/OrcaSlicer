@@ -40,8 +40,24 @@ const std::set<std::string>& composed_keys()
         // jerk / junction deviation
         "default_jerk", "outer_wall_jerk", "inner_wall_jerk", "infill_jerk", "top_surface_jerk", "initial_layer_jerk",
         "default_junction_deviation",
+        // line widths (flow_independent_keys): read from the width source's Standard shared column
+        "line_width", "initial_layer_line_width", "outer_wall_line_width", "inner_wall_line_width", "top_surface_line_width",
+        "sparse_infill_line_width", "internal_solid_infill_line_width", "support_line_width", "bridge_line_width",
     };
     return keys;
+}
+
+const Preset *width_source(const Source &source)
+{
+    if (!source.derived || source.preset == nullptr)
+        return nullptr;
+    if (source.step == Step::Chosen)
+        return source.preset;
+    if (source.reason == Reason::HighFlow)
+        // The speeds come from the sibling with a High Flow column; the widths from the preset of
+        // the head's size the rule gave it first, or the selected preset for a home-size head.
+        return source.size_preset;
+    return source.preset;
 }
 
 std::string quality_class(const std::string &preset_name)
@@ -386,6 +402,10 @@ std::vector<Source> compute_sources(const PresetBundle &bundle, bool with_choice
     // its shared columns tell has_high_flow_values whether a home-size head has High Flow values of
     // its own (once any head has a value the copy is wide and every head owns a High Flow column).
     const DynamicPrintConfig &edited_config = bundle.prints.get_edited_preset().config;
+    // The preset of the head's size before the High Flow rule below may re-pick a speeds source:
+    // the line widths of the head come from it (width_source).
+    for (Source &source : out)
+        source.size_preset = source.derived && source.preset != nullptr ? source.preset : nullptr;
     // The High Flow rule: a head whose effective flow is High Flow and whose source has no High Flow
     // column takes the preset of its size that has one. Heads the size rule left alone stay; a chosen
     // head keeps its choice, its Standard column serving High Flow (compose, own_standard_variants).
@@ -416,7 +436,7 @@ std::vector<Source> compute_sources(const PresetBundle &bundle, bool with_choice
             source.class_used = trace.class_used;
             split_keys(source);
         }
-    // The keys set for a tool head on the Speed page, whatever its reason.
+    // The keys set for a tool head on the Speed or Quality page, whatever its reason.
     for (Source &source : out)
         source.overridden_keys = head_override_keys(edited_config, source.head);
     return out;
@@ -661,6 +681,65 @@ int composed_column(const Source &source, NozzleVolumeType flow, const DynamicPr
     return shared_column(source.preset->config, nvtStandard);
 }
 
+int composed_column_for_key(const Source &source, const std::string &key, NozzleVolumeType flow, const DynamicPrintConfig &printer, const Preset *&from)
+{
+    if (flow_independent_keys().count(key) > 0) {
+        from = width_source(source);
+        return from == nullptr ? -1 : shared_column(from->config, nvtStandard);
+    }
+    from = source.derived ? source.preset : nullptr;
+    return composed_column(source, flow, printer);
+}
+
+std::string override_seed(const PresetBundle &bundle, const std::string &key, const std::vector<int> &filaments, std::vector<size_t> *differing_heads)
+{
+    if (differing_heads != nullptr)
+        differing_heads->clear();
+    const DynamicPrintConfig &process = bundle.prints.get_edited_preset().config;
+    const DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+    const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(process.option(key));
+    if (option == nullptr || option->empty())
+        return std::string();
+    const auto text_of = [](const std::vector<std::string> &texts, int column) {
+        return texts[column >= 0 && size_t(column) < texts.size() ? size_t(column) : 0];
+    };
+    const std::vector<std::string> values = option->vserialize();
+    const std::string              shared = text_of(values, shared_column(process, nvtStandard));
+    // The tool head of a filament as every width site resolves it (Print::width_slot).
+    const auto  *nozzles      = printer.option<ConfigOptionFloats>("nozzle_diameter");
+    const size_t nozzle_count = nozzles == nullptr ? 0 : nozzles->values.size();
+    std::set<size_t> heads;
+    for (int filament : filaments)
+        heads.insert(filament <= 0 || size_t(filament) - 1 >= nozzle_count ? size_t(0) : size_t(filament) - 1);
+    if (heads.empty())
+        return shared;
+    const std::vector<Source> sources = flow_independent_keys().count(key) > 0 && active(bundle) ? head_sources(bundle) : std::vector<Source>();
+    // What a tool head prints for the key: the value set for it, its width source's, or the shared value.
+    const auto printed = [&](size_t head) -> std::string {
+        for (int column : head_columns(process, head))
+            if (is_marked(process, size_t(column), key))
+                return text_of(values, column);
+        if (head < sources.size()) {
+            const Source &source = sources[head];
+            if (std::find(source.kept_keys.begin(), source.kept_keys.end(), key) == source.kept_keys.end()) {
+                const Preset *from   = nullptr;
+                const int     column = composed_column_for_key(source, key, source.flow, printer, from);
+                if (from != nullptr && column >= 0)
+                    if (const auto *theirs = dynamic_cast<const ConfigOptionVectorBase *>(from->config.option(key)); theirs != nullptr && !theirs->empty())
+                        return text_of(theirs->vserialize(), column);
+            }
+        }
+        return shared;
+    };
+    if (heads.size() == 1)
+        return printed(*heads.begin());
+    if (differing_heads != nullptr)
+        for (size_t head : heads)
+            if (printed(head) != shared)
+                differing_heads->emplace_back(head);
+    return shared;
+}
+
 std::vector<std::string> command_line_record(DynamicPrintConfig &config)
 {
     std::vector<std::string> lines;
@@ -674,7 +753,7 @@ std::vector<std::string> command_line_record(DynamicPrintConfig &config)
     if (const auto *chosen = config.option<ConfigOptionStrings>(choice_key); chosen != nullptr)
         for (size_t head = 0; head < chosen->values.size(); ++head)
             if (!chosen->values[head].empty())
-                lines.emplace_back((boost::format("extruder %1% is set to take its speeds from %2% in the application; the command line slices every extruder with the loaded process preset") % (head + 1) % chosen->values[head]).str());
+                lines.emplace_back((boost::format("extruder %1% is set to take its speeds and line widths from %2% in the application; the command line slices every extruder with the loaded process preset") % (head + 1) % chosen->values[head]).str());
     if (const auto *flows = config.option<ConfigOptionStrings>(flow_key); flows != nullptr)
         for (size_t head = 0; head < flows->values.size(); ++head)
             if (!flows->values[head].empty())
@@ -874,6 +953,9 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
         if (original == nullptr || original->empty())
             continue;
         const bool composed = composed_keys().count(key) > 0 && edited.count(key) == 0;
+        // A line width is flow-independent: it comes from the width source's Standard shared
+        // column (the size preset, not the High Flow sibling), whatever the flow of the column.
+        const bool width = flow_independent_keys().count(key) > 0;
         std::unique_ptr<ConfigOptionVectorBase> selected(static_cast<ConfigOptionVectorBase*>(original->clone()));
         std::unique_ptr<ConfigOptionVectorBase> out(static_cast<ConfigOptionVectorBase*>(original->clone()));
         out->resize(columns.size());
@@ -881,9 +963,17 @@ bool compose(DynamicPrintConfig &full, const std::set<std::string> &edited, std:
             const Column &column = columns[c];
             const ConfigOptionVectorBase *from = selected.get();
             int                           index = source_columns[c];
-            // A value set for the tool head on the Speed page beats the source of its size.
+            // A value set for the tool head on the Speed or Quality page beats the source of its size.
             const bool marked = is_marked(marker_snapshot, size_t(index), key);
-            if (composed && !marked && preset_columns[c] >= 0) {
+            if (composed && !marked && width) {
+                if (const Preset *source_of_width = column.head < sources.size() ? width_source(sources[column.head]) : nullptr; source_of_width != nullptr) {
+                    const auto *preset_option = dynamic_cast<const ConfigOptionVectorBase*>(source_of_width->config.option(key));
+                    if (preset_option != nullptr && !preset_option->empty() && preset_option->type() == out->type()) {
+                        from  = preset_option;
+                        index = shared_column(source_of_width->config, nvtStandard);
+                    }
+                }
+            } else if (composed && !marked && preset_columns[c] >= 0) {
                 const auto *preset_option = dynamic_cast<const ConfigOptionVectorBase*>(sources[column.head].preset->config.option(key));
                 if (preset_option != nullptr && !preset_option->empty() && preset_option->type() == out->type()) {
                     from  = preset_option;
@@ -1342,6 +1432,15 @@ const std::set<std::string> &head_editable_keys()
     return keys;
 }
 
+const std::set<std::string> &flow_independent_keys()
+{
+    static const std::set<std::string> keys = {
+        "line_width", "initial_layer_line_width", "outer_wall_line_width", "inner_wall_line_width", "top_surface_line_width",
+        "sparse_infill_line_width", "internal_solid_infill_line_width", "support_line_width", "bridge_line_width",
+    };
+    return keys;
+}
+
 void set_head_value(DynamicPrintConfig &config, size_t head, const std::string &key, int written_column)
 {
     const std::vector<int> columns = head_columns(config, head);
@@ -1368,10 +1467,18 @@ void set_shared_value(DynamicPrintConfig &config, const std::string &key, Nozzle
     auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
     if (option == nullptr)
         return;
+    // A line width is flow-independent: the written shared column fills the other shared columns
+    // and every unmarked head column whatever their flow.
+    const bool flow_independent = flow_independent_keys().count(key) > 0;
     for (size_t column = 0; column < layout.size(); ++column) {
-        if (layout.ids[column] == 0 || int(column) == source)
+        if (int(column) == source)
             continue;
-        if (!single && layout.variants[column] != layout.variants[size_t(source)])
+        if (layout.ids[column] == 0) {
+            if (flow_independent)
+                copy_column(*option, *option, column, size_t(source));
+            continue;
+        }
+        if (!single && !flow_independent && layout.variants[column] != layout.variants[size_t(source)])
             continue;
         if (is_marked(config, column, key))
             continue;
@@ -1399,6 +1506,13 @@ void clear_head(DynamicPrintConfig &config, size_t head)
         clear_head_value(config, head, key);
 }
 
+void clear_head(DynamicPrintConfig &config, size_t head, const std::set<std::string> &keys)
+{
+    for (const std::string &key : head_override_keys(config, head))
+        if (keys.count(key) > 0)
+            clear_head_value(config, head, key);
+}
+
 void clear_all_heads(DynamicPrintConfig &config)
 {
     for (int head : distinct_heads(layout_of(config)))
@@ -1415,6 +1529,19 @@ std::vector<size_t> heads_marked_for(const DynamicPrintConfig &config, const std
                 break;
             }
     return out;
+}
+
+void set_every_column(DynamicPrintConfig &config, const std::string &key, const FloatOrPercent &value)
+{
+    auto *option = config.option<ConfigOptionFloatsOrPercentsNullable>(key);
+    if (option == nullptr) {
+        config.set_key_value(key, new ConfigOptionFloatsOrPercentsNullable{value});
+        return;
+    }
+    if (option->values.empty())
+        option->values.emplace_back(value);
+    else
+        std::fill(option->values.begin(), option->values.end(), value);
 }
 
 void normalise(DynamicPrintConfig &config, const DynamicPrintConfig *parent, const DynamicPrintConfig *printer)
@@ -1513,6 +1640,45 @@ void normalise(DynamicPrintConfig &config, const DynamicPrintConfig *parent, con
                     keys.insert(key);
             }
             write_marker(config, column, keys);
+        }
+    }
+
+    // Line widths are flow-independent: differing flow columns collapse to Standard (logged once per
+    // key). A layout with one column per head and no shared columns is left as is.
+    for (const std::string &key : flow_independent_keys()) {
+        auto *option = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+        if (option == nullptr || option->size() < layout.size())
+            continue;
+        bool logged   = false;
+        auto equalise = [&](const std::vector<size_t> &columns) {
+            if (columns.size() < 2)
+                return;
+            size_t source = columns.front();
+            for (size_t column : columns)
+                if (variant_names_type(layout.variants[column], nvtStandard)) {
+                    source = column;
+                    break;
+                }
+            for (size_t column : columns) {
+                if (column == source || element(*option, column) == element(*option, source))
+                    continue;
+                if (!logged) {
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": %1% differs between the flow columns of one extruder or of the shared value; the Standard column is taken") % key;
+                    logged = true;
+                }
+                copy_column(*option, *option, column, source);
+            }
+        };
+        std::vector<size_t> shared;
+        for (size_t column = 0; column < layout.size(); ++column)
+            if (is_wide(config) ? layout.ids[column] == 0 : !ids_name_heads(layout.ids))
+                shared.emplace_back(column);
+        equalise(shared);
+        for (int head : distinct_heads(layout)) {
+            std::vector<size_t> columns;
+            for (int column : head_columns(config, size_t(head)))
+                columns.emplace_back(size_t(column));
+            equalise(columns);
         }
     }
 

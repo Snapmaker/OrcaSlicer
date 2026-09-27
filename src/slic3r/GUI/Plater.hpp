@@ -190,7 +190,9 @@ public:
     void sys_color_changed();
     void search();
     void jump_to_option(size_t selected);
-    void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category);
+    // Snapmaker Orca: `tool_head` (0-based) selects that tool head on the process tab after the
+    // page is shown (a validation message about a value set per tool head); -1 selects none.
+    void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category, int tool_head = -1);
     // BBS. Add on_filaments_change() method.
     void on_filaments_change(size_t num_filaments);
     // Orca-named alias for on_filaments_change(); kept so upstream call sites compile.

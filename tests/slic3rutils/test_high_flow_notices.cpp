@@ -835,19 +835,104 @@ TEST_CASE("The texts of a High Flow tool head printing the Standard speeds name 
 
     // The hint: the selected preset without a state, an automatic source, the High Flow column, a chosen preset.
     const wxString hint = HighFlowNotices::speeds_hint_label("0.20mm High Quality", wxString(), SpeedsNote::StandardChosen, "60", "100", "4000");
-    CHECK(hint.Contains("Speeds: 0.20mm High Quality, Standard (chosen for this High Flow nozzle)"));
-    CHECK(hint.Contains("outer wall 60"));
+    CHECK(hint.Contains("Preset: 0.20mm High Quality, Standard (chosen for this High Flow nozzle)"));
+    CHECK(hint.Contains("speeds: outer wall 60"));
+    CHECK_FALSE(hint.Contains("Speeds:"));
     CHECK(hint.Contains("sparse 100"));
     CHECK(hint.Contains("accel 4000"));
     const wxString automatic = HighFlowNotices::speeds_hint_label("0.18mm Standard", "(automatic)", SpeedsNote::StandardChosen, "120", "100", "10000");
     CHECK(automatic.Contains("0.18mm Standard (automatic), Standard (chosen for this High Flow nozzle)"));
     const wxString high_flow = HighFlowNotices::speeds_hint_label("0.20mm Standard", "(automatic)", SpeedsNote::HighFlow, "500", "600", "10000");
-    CHECK(high_flow.Contains("0.20mm Standard, High Flow (automatic)"));
+    CHECK(high_flow.Contains("Preset: 0.20mm Standard, High Flow (automatic)"));
+    CHECK(high_flow.Contains("speeds: outer wall 500"));
     CHECK_FALSE(high_flow.Contains("chosen"));
     const wxString chosen = HighFlowNotices::speeds_hint_label("0.12mm Standard", "(chosen)", SpeedsNote::Plain, "120", "150", "10000");
-    CHECK(chosen.Contains("0.12mm Standard (chosen)"));
+    CHECK(chosen.Contains("Preset: 0.12mm Standard (chosen)"));
     CHECK(chosen.Contains("accel 10000"));
 
     CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("High Flow nozzle"));
     CHECK(HighFlowNotices::standard_chosen_tooltip().Contains("Standard speeds"));
+}
+
+// The texts of the Quality page under the speed selector.
+TEST_CASE("The texts of the Quality page name line widths, the values by kind and what an older version reads", "[HighFlow][SpeedSelector][PerHeadWidth][hs_quality_page_text]")
+{
+    // The line under All tool heads: one derived head, several, and every head derived.
+    const wxString one = HighFlowNotices::widths_description("3 (0.6 mm)", "0.18mm Standard", "1, 2, 4", false);
+    CHECK(one.Contains("Extruder 3 (0.6 mm) prints with the line widths of 0.18mm Standard."));
+    CHECK(one.Contains("apply to extruders 1, 2, 4, and to every extruder for the widths you changed"));
+    CHECK(one.Contains("every other setting on this page applies to every extruder"));
+    const wxString several = HighFlowNotices::widths_description("1 (0.2 mm), 3 (0.6 mm), 4 (0.8 mm)", "0.10mm High Quality, 0.18mm Standard, 0.24mm Standard", "2", true);
+    CHECK(several.Contains("Extruders 1 (0.2 mm), 3 (0.6 mm), 4 (0.8 mm) print with the line widths of"));
+    CHECK(several.Contains("apply to extruders 2, and"));
+    const wxString all = HighFlowNotices::widths_description("1 (0.2 mm), 2 (0.6 mm)", "0.10mm High Quality, 0.18mm Standard", "", true);
+    CHECK(all.Contains("apply to every extruder for the widths you changed"));
+    CHECK_FALSE(all.Contains("extruders ,"));
+
+    // The line under the picker, per page.
+    CHECK(HighFlowNotices::picker_note(true).Contains("Its line widths print on this extruder"));
+    CHECK(HighFlowNotices::picker_note(true).Contains("(Speed page)"));
+    CHECK(HighFlowNotices::picker_note(false).Contains("speeds, accelerations and jerk print on this extruder"));
+    CHECK(HighFlowNotices::picker_note(false).Contains("(Quality page)"));
+
+    // Under a head: the preferred layer height, a width changed under All, the counts.
+    const wxString height = HighFlowNotices::preferred_height_sentence(0.1, 0);
+    CHECK(height.Contains("prints 0.10 mm layers"));
+    CHECK(height.Contains("nozzle 1 in the sidebar"));
+    const wxString edited = HighFlowNotices::all_edited_width_sentence("Inner wall", "110%", "0.10mm High Quality", "112.5%");
+    CHECK(edited == "Inner wall 110% from All extruders (0.10mm High Quality has 112.5%).");
+    CHECK(HighFlowNotices::head_values_by_kind(1, 3) == "1 line width, 3 speeds");
+    CHECK(HighFlowNotices::head_values_by_kind(2, 0) == "2 line widths");
+    CHECK(HighFlowNotices::head_values_by_kind(0, 1) == "1 speed");
+    CHECK(HighFlowNotices::head_values_by_kind(0, 0).IsEmpty());
+    CHECK(HighFlowNotices::head_values_set_sentence(true, 1) == "1 line width set for this extruder.");
+    CHECK(HighFlowNotices::head_values_set_sentence(true, 3) == "3 line widths set for this extruder.");
+    CHECK(HighFlowNotices::head_values_set_sentence(false, 1) == "1 speed set for this extruder.");
+    CHECK(HighFlowNotices::head_values_set_sentence(false, 2) == "2 speeds set for this extruder.");
+    CHECK(HighFlowNotices::head_values_set_sentence(true, 0).IsEmpty());
+    CHECK(HighFlowNotices::shared_settings_sentence().Contains("Greyed settings are shared by every extruder"));
+    CHECK(HighFlowNotices::shared_settings_sentence().Contains("layer height of an extruder is set in the sidebar"));
+    CHECK(HighFlowNotices::clear_head_link_label(true) == "Clear the line widths set for this extruder");
+    CHECK(HighFlowNotices::clear_head_link_label(false) == "Clear the speeds set for this extruder");
+
+    // What an older version reads from a width written as a full array, and the guard.
+    CHECK(HighFlowNotices::old_reader_width({"0.42", "0.42", "110%", "110%"}) == "0.42 %");
+    CHECK(HighFlowNotices::old_reader_width({"105%", "105%", "0.5", "0.5"}) == "105 %");
+    CHECK(HighFlowNotices::old_reader_width({"0.42", "0.42", "0.5"}) == "0.42 mm");
+    CHECK(HighFlowNotices::old_reader_width({}).empty());
+    const wxString guard = HighFlowNotices::mixed_unit_sentence("Default", "0.42 %");
+    CHECK(guard.Contains("Older versions of Snapmaker Orca read this preset's Default as 0.42 %"));
+    CHECK(guard.Contains("use the same unit for every extruder"));
+    CHECK_FALSE(guard.Contains("OrcaSlicer"));
+
+    // A width in a tooltip: a percent against the head's nozzle, an absolute value, zero.
+    CHECK(HighFlowNotices::width_value_label(FloatOrPercent(110., true), 0.2) == "110 % (0.22 mm)");
+    CHECK(HighFlowNotices::width_value_label(FloatOrPercent(112.5, true), 0.4) == "112.5 % (0.45 mm)");
+    CHECK(HighFlowNotices::width_value_label(FloatOrPercent(0.62, false), 0.6) == "0.62 mm");
+    CHECK(HighFlowNotices::width_value_label(FloatOrPercent(0., true), 0.4) == "auto");
+
+    // Two presets differ in their widths when a Standard shared column of one of the nine keys differs.
+    DynamicPrintConfig a, b;
+    for (const char *key : {"line_width", "outer_wall_line_width"}) {
+        a.option<ConfigOptionFloatsOrPercentsNullable>(key, true)->values = {FloatOrPercent(105., true)};
+        b.option<ConfigOptionFloatsOrPercentsNullable>(key, true)->values = {FloatOrPercent(105., true)};
+    }
+    CHECK_FALSE(HighFlowNotices::widths_differ(a, b));
+    b.option<ConfigOptionFloatsOrPercentsNullable>("outer_wall_line_width", true)->values = {FloatOrPercent(110., true)};
+    CHECK(HighFlowNotices::widths_differ(a, b));
+    b.option<ConfigOptionFloatsOrPercentsNullable>("outer_wall_line_width", true)->values = {FloatOrPercent(105., true)};
+    a.option<ConfigOptionFloatsOrPercentsNullable>("bridge_line_width", true)->values = {FloatOrPercent(100., true)};
+    CHECK(HighFlowNotices::widths_differ(a, b)); // a key one of them lacks
+}
+
+TEST_CASE("The notice of a line width added to an object names the tool heads that printed another value", "[HighFlow][SpeedSelector][PerHeadWidth][hs_object_width_text]")
+{
+    CHECK(HighFlowNotices::object_width_notice({}).IsEmpty());
+    const wxString two = HighFlowNotices::object_width_notice({0, 3});
+    CHECK(two.Contains("Line widths added to an object apply on every extruder that prints it"));
+    CHECK(two.Contains("extruders 1 and 4 printed it with the line widths of their own nozzle size"));
+    CHECK(HighFlowNotices::object_width_notice({0, 2, 3}).Contains("extruders 1, 3 and 4 printed it"));
+    const wxString one = HighFlowNotices::object_width_notice({2});
+    CHECK(one.Contains("extruder 3 printed it with the line widths of its own nozzle size"));
+    CHECK_FALSE(one.Contains("extruders"));
 }

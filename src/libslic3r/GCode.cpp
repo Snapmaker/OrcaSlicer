@@ -666,9 +666,11 @@ static bool custom_gcode_changes_tool(const std::string& custom_gcode, const std
         float outer_wall_volumetric_speed = 0;
         float filament_max_volumetric_speed = config.filament_max_volumetric_speed.get_at(filament_variant_idx);
         const double filament_diameter = config.filament_diameter.get_at(filament_id);
-        float outer_wall_line_width = print.default_region_config().get_abs_value("outer_wall_line_width", filament_diameter);
+        // Snapmaker Orca: the widths are columns per tool head, read at the process slot; the ratio
+        // stays the filament diameter (the pre-existing quirk of this estimate).
+        float outer_wall_line_width = print.default_region_config().get_abs_value_at("outer_wall_line_width", size_t(process_slot), filament_diameter);
         if (outer_wall_line_width == 0.0) {
-            float default_line_width = print.default_object_config().get_abs_value("line_width", filament_diameter);
+            float default_line_width = print.default_object_config().get_abs_value_at("line_width", size_t(process_slot), filament_diameter);
             outer_wall_line_width = default_line_width == 0.0 ? filament_diameter : default_line_width;
         }
         Flow outer_wall_flow = Flow(outer_wall_line_width, config.layer_height, config.nozzle_diameter.get_at(extruder_id));
@@ -3546,7 +3548,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         file.write_format("; top infill extrusion width = %.2fmm\n", region.flow(*first_object, frTopSolidInfill, layer_height).width());
         if (print.has_support_material())
             file.write_format("; support material extrusion width = %.2fmm\n", support_material_flow(first_object).width());
-        if (print.config().initial_layer_line_width.value > 0)
+        if (Flow::width_at(print.config().initial_layer_line_width, 0).value > 0)
             file.write_format("; first layer extrusion width = %.2fmm\n",
                               region.flow(*first_object, frPerimeter, initial_layer_print_height, true).width());
         file.write_format("\n");
@@ -9573,8 +9575,10 @@ std::string GCode::extrude_loop(const ExtrusionLoop&        loop_ref,
     }
 
     if (enable_seam_slope && m_config.seam_slope_conditional.value && m_config.scarf_overhang_threshold.value > 0.0f) {
-        const auto _line_width = loop.role() == erExternalPerimeter ? m_config.outer_wall_line_width.get_abs_value(nozzle_diameter) :
-                                                                      m_config.inner_wall_line_width.get_abs_value(nozzle_diameter);
+        // Snapmaker Orca: the widths are columns per tool head, read at the slot of the tool.
+        const auto _line_width = loop.role() == erExternalPerimeter ?
+            Flow::width_at(m_config.outer_wall_line_width, m_writer.process_slot()).get_abs_value(nozzle_diameter) :
+            Flow::width_at(m_config.inner_wall_line_width, m_writer.process_slot()).get_abs_value(nozzle_diameter);
         enable_seam_slope      = seam_overhang < m_config.scarf_overhang_threshold.value * 0.01f * _line_width;
     }
 

@@ -153,6 +153,16 @@ struct FirstRun
             bundle.on_extruders_count_changed(int(nozzles->size()));
     }
 
+    // The first material of the model's default_materials that is installed and compatible with
+    // the printer preset, else Generic PLA (the material Snapmaker Orca 2.4 ended its wizard on).
+    std::string expected_material()
+    {
+        for (const std::string &name : u1_model().default_materials)
+            if (const Preset *preset = bundle.filaments.find_preset(name, false); preset != nullptr && preset->is_visible && preset->is_compatible)
+                return name;
+        return "Generic PLA";
+    }
+
     std::string report()
     {
         std::ostringstream out;
@@ -171,14 +181,25 @@ struct FirstRun
         INFO(report());
         REQUIRE(bundle.printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter")->size() == 4);
 
+        // The process the machine preset names as its default (the only 0.4 mm process with High
+        // Flow speeds), whatever process was selected before the wizard.
+        const std::string default_process = bundle.printers.get_edited_preset().config.opt_string("default_print_profile");
+        CHECK_FALSE(default_process.empty());
+        CHECK(bundle.prints.get_edited_preset().name == default_process);
+
         CHECK(bundle.filament_presets.size() == 4);
         const Preset *first = bundle.filaments.find_preset(bundle.filament_presets.front(), false);
         REQUIRE(first != nullptr);
         CHECK(first->config.opt_string("filament_type", 0u) == "PLA");
+        // The material of the rule (PresetBundle::default_material_rank): the default material
+        // of the model when one is installed and compatible, else Generic PLA. Never the
+        // alphabetically first compatible preset.
+        const std::string expected = expected_material();
         for (size_t slot = 0; slot < bundle.filament_presets.size(); ++slot) {
             INFO("slot " << slot + 1 << ": " << bundle.filament_presets[slot]);
             const Preset *preset = bundle.filaments.find_preset(bundle.filament_presets[slot], false);
             REQUIRE(preset != nullptr);
+            CHECK(preset->name == expected);
             CHECK(preset->alias == first->alias);
             CHECK(preset->is_visible);
             CHECK(preset->is_compatible);
@@ -266,5 +287,140 @@ TEST_CASE("Selecting a U1 printer preset without an edit leaves it clean", "[Fir
         CHECK(bundle->printers.current_is_dirty());
         CHECK(std::find(dirty.begin(), dirty.end(), "nozzle_diameter#0") != dirty.end());
         CHECK(std::any_of(dirty.begin(), dirty.end(), listable));
+    }
+}
+
+TEST_CASE("A printer switch selects the default process of the new printer preset", "[FirstRun][Preset][fr1_default_process]")
+{
+    // PresetBundle::update_compatible, PreferedPrintProfileMatch: for a Snapmaker printer the new
+    // preset's "default_print_profile" beats a process of the selected layer height; only the twin
+    // (same alias) of the selected process beats it. Other vendors keep mainline's order.
+    auto bundle = std::make_unique<PresetBundle>();
+    bundle->load_vendor_configs_from_json(PROFILES_DIR, SNAPMAKER, PresetBundle::LoadSystem,
+                                          ForwardCompatibilitySubstitutionRule::EnableSilent, nullptr, /*allow_cache=*/false);
+    const char *const u1_0_2 = "Snapmaker U1 (0.2 nozzle)";
+    const char *const u1_0_4 = "Snapmaker U1 (0.4 nozzle)";
+    REQUIRE(bundle->printers.select_preset_by_name(u1_0_2, true));
+    bundle->update_compatible(PresetSelectCompatibleType::Always);
+    const std::string default_0_4 = bundle->printers.find_preset(u1_0_4, false)->config.opt_string("default_print_profile");
+    REQUIRE(default_0_4 == "0.20mm Standard @Snapmaker U1 (0.4 nozzle)");
+
+    SECTION("a process without a twin for the new size: the default of the new printer, not the layer height") {
+        // The state a Snapmaker Orca 2.4 data directory leaves for the 0.2 mm preset.
+        REQUIRE(bundle->prints.select_preset_by_name("0.08mm High Quality @Snapmaker U1 (0.2 nozzle)", true));
+        REQUIRE(bundle->printers.select_preset_by_name(u1_0_4, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        INFO("process: " << bundle->prints.get_edited_preset().name);
+        CHECK(bundle->prints.get_edited_preset().name == default_0_4);
+    }
+    SECTION("the twin of the selected process for the new size stays the user's choice") {
+        REQUIRE(bundle->prints.select_preset_by_name("0.12mm Standard @Snapmaker U1 (0.2 nozzle)", true));
+        REQUIRE(bundle->printers.select_preset_by_name(u1_0_4, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        CHECK(bundle->prints.get_edited_preset().name == "0.12mm Standard @Snapmaker U1 (0.4 nozzle)");
+    }
+    SECTION("the default process itself, selected, stays") {
+        REQUIRE(bundle->printers.select_preset_by_name(u1_0_4, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        REQUIRE(bundle->prints.select_preset_by_name(default_0_4, true));
+        REQUIRE(bundle->printers.select_preset_by_name(u1_0_2, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        CHECK(bundle->prints.get_edited_preset().name == "0.10mm High Quality @Snapmaker U1 (0.2 nozzle)");
+    }
+    SECTION("a printer of another vendor keeps mainline's order: the layer height beats the default") {
+        // Two vendorless printers with own processes; the selected process has no twin on B, but B
+        // has one of its layer height, which mainline ranks (x10) above B's default process.
+        auto add_printer = [&bundle](const std::string &name, const std::string &default_process) {
+            DynamicPrintConfig config = bundle->printers.default_preset().config;
+            config.set_key_value("default_print_profile", new ConfigOptionString(default_process));
+            bundle->printers.load_preset(std::string(), name, std::move(config), false);
+        };
+        auto add_process = [&bundle](const std::string &name, const std::string &alias, double layer_height, const std::string &printer) {
+            DynamicPrintConfig config = bundle->prints.default_preset().config;
+            config.set_key_value("layer_height", new ConfigOptionFloat(layer_height));
+            config.set_key_value("compatible_printers", new ConfigOptionStrings({ printer }));
+            bundle->prints.load_preset(std::string(), name, std::move(config), false).alias = alias;
+        };
+        const char *const printer_a = "Other vendor printer A";
+        const char *const printer_b = "Other vendor printer B";
+        add_printer(printer_a, "0.20mm Fine @Other A");
+        add_printer(printer_b, "0.20mm Fine @Other B");
+        add_process("0.20mm Fine @Other A", "0.20mm Fine", 0.20, printer_a);
+        add_process("0.28mm Draft @Other A", "0.28mm Draft", 0.28, printer_a);
+        add_process("0.20mm Fine @Other B", "0.20mm Fine", 0.20, printer_b);
+        add_process("0.28mm Coarse @Other B", "0.28mm Coarse", 0.28, printer_b);
+
+        REQUIRE(bundle->printers.select_preset_by_name(printer_a, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        REQUIRE(bundle->prints.select_preset_by_name("0.28mm Draft @Other A", true));
+        REQUIRE(bundle->printers.select_preset_by_name(printer_b, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        INFO("process: " << bundle->prints.get_edited_preset().name);
+        CHECK(bundle->prints.get_edited_preset().name == "0.28mm Coarse @Other B");
+        // The twin keeps winning, as in mainline.
+        REQUIRE(bundle->prints.select_preset_by_name("0.20mm Fine @Other B", true));
+        REQUIRE(bundle->printers.select_preset_by_name(printer_a, true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        CHECK(bundle->prints.get_edited_preset().name == "0.20mm Fine @Other A");
+    }
+}
+
+TEST_CASE("The default material rule ranks the filaments of a Snapmaker printer", "[FirstRun][Preset][fr1_default_material]")
+{
+    // PresetBundle::default_material_rank: the model's default_materials first, then a Generic
+    // PLA, then a Snapmaker PLA, then nothing; the searches of update_compatible take it in place
+    // of the alphabetical order of the list.
+    auto bundle = std::make_unique<PresetBundle>();
+    bundle->load_vendor_configs_from_json(PROFILES_DIR, SNAPMAKER, PresetBundle::LoadSystem,
+                                          ForwardCompatibilitySubstitutionRule::EnableSilent, nullptr, /*allow_cache=*/false);
+    REQUIRE(bundle->printers.select_preset_by_name("Snapmaker U1 (0.4 nozzle)", true));
+    bundle->update_compatible(PresetSelectCompatibleType::Always);
+    const VendorProfile::PrinterModel model = u1_model();
+    REQUIRE_FALSE(model.default_materials.empty());
+
+    auto preset = [&bundle](const char *name) -> const Preset& {
+        const Preset *found = bundle->filaments.find_preset(name, false);
+        REQUIRE(found != nullptr);
+        return *found;
+    };
+
+    SECTION("the ranks") {
+        const std::string default_material = "Snapmaker PLA SnapSpeed @U1";
+        REQUIRE(std::find(model.default_materials.begin(), model.default_materials.end(), default_material) != model.default_materials.end());
+        CHECK(bundle->default_material_rank(preset(default_material.c_str())) == 3);
+        CHECK(bundle->default_material_rank(preset("Generic PLA")) == 2);
+        CHECK(bundle->default_material_rank(preset("Generic PLA Silk")) == 2);
+        CHECK(bundle->default_material_rank(preset("Snapmaker PLA Basic @U1")) == 1);
+        CHECK(bundle->default_material_rank(preset("Generic ABS")) == 0);
+        CHECK(bundle->default_material_rank(preset("Snapmaker ABS @U1 0.4 nozzle")) == 0);
+        CHECK(bundle->default_material_rank(bundle->filaments.default_preset()) == 0);
+    }
+
+    SECTION("a filament of another printer selected: the fallback name, the editor and the broken slots take the default material") {
+        // Printer switch with no filament chosen: the editor holds a PLA of another printer (the
+        // U1's default_filament_profile "Snapmaker PLA"); the U1's alphabetically first is Generic ABS.
+        REQUIRE(bundle->filaments.select_preset_by_name("Snapmaker PLA @J1", true));
+        REQUIRE_FALSE(bundle->filaments.get_selected_preset().is_compatible);
+        // The replacement of a placeholder slot (load_selections / update_selections) and of a
+        // new slot without a tool head of another size.
+        CHECK(bundle->filament_slot_fallback_name() == "Snapmaker PLA SnapSpeed @U1");
+        CHECK(bundle->first_slot_fit(0).name == "Snapmaker PLA SnapSpeed @U1");
+        // The editor's filament and the slots whose preset is gone.
+        bundle->filament_presets.assign(4, "no such filament");
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        INFO("slots: " << joined(bundle->filament_presets));
+        CHECK(bundle->filaments.get_edited_preset().name == "Snapmaker PLA SnapSpeed @U1");
+        for (const std::string &slot : bundle->filament_presets)
+            CHECK(slot == "Snapmaker PLA SnapSpeed @U1");
+    }
+
+    SECTION("a chosen material is kept, the rule only breaks ties") {
+        REQUIRE(bundle->filaments.select_preset_by_name("Snapmaker ABS @U1 0.4 nozzle", true));
+        bundle->filament_presets.assign(4, "Snapmaker ABS @U1 0.4 nozzle");
+        REQUIRE(bundle->printers.select_preset_by_name("Snapmaker U1 (0.6 nozzle)", true));
+        bundle->update_compatible(PresetSelectCompatibleType::Always);
+        INFO("slots: " << joined(bundle->filament_presets));
+        for (const std::string &slot : bundle->filament_presets)
+            CHECK(slot == "Snapmaker ABS @U1 0.6 nozzle");
     }
 }

@@ -94,6 +94,7 @@
 #include <wx/timer.h>
 #include <wx/tokenzr.h>
 #include <wx/aui/aui.h>
+#include <wx/bookctrl.h>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/LifecycleEvents.hpp"
@@ -1324,8 +1325,14 @@ protected:
 
         int tabIndex = HitTest(pos);
         if (tabIndex != -1 && tabIndex != m_selectedIndex) {
+            const int previous = m_selectedIndex;
             SetSelection(tabIndex);
             Refresh();
+            // Snapmaker Orca: a tab click sends wxEVT_BOOKCTRL_PAGE_CHANGED like a wxBookCtrl; SetSelection()
+            // stays silent, as Sidebar::update_nozzle_settings selects through it while building the tabs.
+            wxBookCtrlEvent changed(wxEVT_BOOKCTRL_PAGE_CHANGED, GetId(), tabIndex, previous);
+            changed.SetEventObject(this);
+            GetEventHandler()->ProcessEvent(changed);
         }
     }
 
@@ -4341,6 +4348,19 @@ Sidebar::Sidebar(Plater *parent)
 
         // 创建notebook
         p->m_nozzle_notebook = new CustomNotebook(nozzle_container, wxID_ANY);
+        // Snapmaker Orca: a nozzle tab click moves the process tab's Standard / High Flow selector
+        // to that tool head's nozzle volume type (Tab::update_extruder_variants sets a new one).
+        p->m_nozzle_notebook->Bind(wxEVT_BOOKCTRL_PAGE_CHANGED, [](wxBookCtrlEvent &evt) {
+            evt.Skip();
+            const int head = evt.GetSelection();
+            if (head < 0)
+                return;
+            const auto *volume_types = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+            if (volume_types == nullptr || size_t(head) >= volume_types->values.size())
+                return;
+            if (Tab *tab = wxGetApp().get_tab(Preset::TYPE_PRINT); tab != nullptr)
+                tab->select_flow_column(NozzleVolumeType(volume_types->values[head]));
+        });
 
         // 创建nozzle_sizer并添加notebook
         wxBoxSizer* nozzle_sizer = new wxBoxSizer(wxVERTICAL);
@@ -12112,6 +12132,14 @@ void Sidebar::select_nozzle_tab(size_t head)
         p->m_nozzle_notebook->SetSelection(head);
     if (head < p->m_nozzle_flow_lists.size() && p->m_nozzle_flow_lists[head] != nullptr && p->m_nozzle_flow_lists[head]->IsShownOnScreen())
         p->m_nozzle_flow_lists[head]->SetFocus();
+}
+
+size_t Sidebar::selected_nozzle_tab() const
+{
+    if (p->m_nozzle_notebook == nullptr)
+        return 0;
+    const int selection = p->m_nozzle_notebook->GetSelection();
+    return selection < 0 ? 0 : size_t(selection);
 }
 
 ObjectList* Sidebar::obj_list()

@@ -473,6 +473,10 @@ public:
 	std::vector<wxString>  generate_extruder_options();
     // Snapmaker Orca: shows the sync button next to a shown extruder switch, never in flow selector mode.
     void                   show_extruder_sync();
+    // Snapmaker Orca: shows the Standard / High Flow column of a flow type in the filament tab's
+    // variant list (HighFlowNotices::variant_column_for_type) or the process tab's flow selector.
+    // No-op when the preset has no such column or the tab has no such control.
+    void                   select_flow_column(NozzleVolumeType type);
     NozzleVolumeType       get_actual_nozzle_volume_type(int extruder_id);
 
 protected:

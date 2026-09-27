@@ -1,6 +1,7 @@
 #include "PresetComboBoxes.hpp"
 
 #include <cstddef>
+#include <cctype>
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
@@ -600,10 +601,15 @@ wxString PresetComboBox::nozzle_size_marker(const NozzleFilament::State &state, 
     if ((head_size <= 0. || std::abs(size - head_size) < EPSILON) && (home <= 0. || std::abs(size - home) < EPSILON))
         return {};
     // TRN: the nozzle size a filament preset is made for, in front of its name in the filament list. %1% is a number like 0.2.
+    return format_wxstr(_L("%1% mm"), nozzle_size_text(size));
+}
+
+std::string PresetComboBox::nozzle_size_text(double size)
+{
     std::string number = float_to_string_decimal_point(size, 2);
     while (number.find('.') != std::string::npos && (number.back() == '0' || number.back() == '.'))
         number.pop_back();
-    return format_wxstr(_L("%1% mm"), number);
+    return number;
 }
 
 wxString PresetComboBox::get_preset_item_name(unsigned int index)
@@ -1302,6 +1308,16 @@ bool PlaterPresetComboBox::switch_to_tab()
             else {
                 return false;
             }
+            // Snapmaker Orca: the Standard / High Flow column of the tool head that prints the
+            // slot, so that a High Flow tool head opens its material on its High Flow values.
+            if (m_filament_idx >= 0) {
+                const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+                size_t      head         = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(m_filament_idx));
+                if (head == NozzleFilament::no_head)
+                    head = size_t(m_filament_idx);
+                if (volume_types != nullptr && head < volume_types->values.size())
+                    tab->select_flow_column(NozzleVolumeType(volume_types->values[head]));
+            }
         }
     }
 
@@ -1555,6 +1571,27 @@ wxString PlaterPresetComboBox::get_preset_name(const Preset& preset)
     return from_u8(preset.label(false));
 }
 
+// Snapmaker Orca: one spelling per filament vendor, compared without case: the one that starts with
+// a capital letter, else the first met, so "snapmaker" and "Snapmaker" share one sub menu.
+static void unify_vendor_spelling(std::map<wxString, std::string> &preset_vendors)
+{
+    std::map<std::string, std::string> spelling; // lower case -> the spelling shown
+    for (const auto &entry : preset_vendors) {
+        const std::string &vendor = entry.second;
+        if (vendor.empty())
+            continue;
+        std::string key = boost::algorithm::to_lower_copy(vendor);
+        auto        it  = spelling.find(key);
+        if (it == spelling.end())
+            spelling.emplace(std::move(key), vendor);
+        else if (std::isupper(static_cast<unsigned char>(vendor.front())) && !std::isupper(static_cast<unsigned char>(it->second.front())))
+            it->second = vendor;
+    }
+    for (auto &entry : preset_vendors)
+        if (!entry.second.empty())
+            entry.second = spelling.at(boost::algorithm::to_lower_copy(entry.second));
+}
+
 // Only the compatible presets are shown.
 // If an incompatible preset is selected, it is shown as well.
 void PlaterPresetComboBox::update()
@@ -1626,6 +1663,17 @@ void PlaterPresetComboBox::update()
     std::map<wxString, std::string> preset_aliases; // ORCA
     std::map<wxString, std::string> preset_bundle_ids;
     std::map<wxString, std::string> preset_bundle_names;
+    // Snapmaker Orca: listed presets with no version for the nozzle size of the slot's tool head.
+    // They go after the matching presets, behind a separator that names the missing size.
+    std::set<wxString> off_size_presets;
+    wxString           off_size_label;
+    if (slot_rule) {
+        const size_t head      = slot_state.head_of(size_t(m_filament_idx));
+        const double head_size = head < slot_state.head_size.size() ? slot_state.head_size[head] : 0.;
+        if (head_size > 0.)
+            // TRN: separator in the filament list of a tool head, above the materials that have no preset for its nozzle size. %1% is a number like 0.6.
+            off_size_label = format_wxstr(_L("No %1% mm version:"), nozzle_size_text(head_size));
+    }
     //BBS:  move system to the end
     wxString selected_system_preset;
     wxString selected_user_preset;
@@ -1707,6 +1755,8 @@ void PlaterPresetComboBox::update()
 
         const bool listed = slot_rule ? is_selected || m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) :
                                         preset.is_compatible;
+        if (slot_rule && listed && !off_size_label.IsEmpty() && !m_preset_bundle->filament_slot_fits(slot_state, preset, size_t(m_filament_idx)))
+            off_size_presets.insert(name);
         if (!listed) {
             if (boost::ends_with(name, " template"))
                 continue;
@@ -1866,11 +1916,15 @@ void PlaterPresetComboBox::update()
     }
 
 
+    // Snapmaker Orca: the vendor keys the sub menus below; one spelling per vendor gives one menu.
+    unify_vendor_spelling(preset_filament_vendors);
+
     std::vector<wxString> filament_orders = {"Bambu PLA Basic", "Bambu PLA Matte", "Bambu PETG HF",    "Bambu ABS",      "Bambu PLA Silk", "Bambu PLA-CF",
                                                 "Bambu PLA Galaxy", "Bambu PLA Metal", "Bambu PLA Marble", "Bambu PETG-CF", "Bambu PETG Translucent", "Bambu ABS-GF"};
     std::vector<std::string> first_vendors     = {"", "Bambu", "Generic"}; // Empty vendor for non-system presets
     std::vector<std::string> first_types     = {"PLA", "PETG", "ABS", "TPU"};
-    auto  add_presets       = [this, &preset_descriptions, &filament_orders, &preset_filament_vendors, &first_vendors, &preset_filament_types, &preset_aliases, &preset_bundle_ids, &preset_bundle_names, &first_types, &selected_in_ams]
+    auto  add_presets       = [this, &preset_descriptions, &filament_orders, &preset_filament_vendors, &first_vendors, &preset_filament_types, &preset_aliases, &preset_bundle_ids, &preset_bundle_names, &first_types, &selected_in_ams,
+                               &off_size_presets, &off_size_label]
             (std::map<wxString, wxBitmap *> const &presets, wxString const &selected, std::string const &group, wxString const &groupName) {
         if (!presets.empty()) {
             set_label_marker(Append(_L(group), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
@@ -1923,6 +1977,11 @@ void PlaterPresetComboBox::update()
                              : l->first < r->first;
                     });
                 }
+                // Snapmaker Orca: presets of the slot's nozzle size first, then those of another size;
+                // each sub menu gets a separator naming the missing size before the first of them.
+                if (m_type == Preset::TYPE_FILAMENT && !off_size_presets.empty())
+                    std::stable_partition(list.begin(), list.end(), [&off_size_presets](auto *item) { return off_size_presets.count(item->first) == 0; });
+                std::set<wxString> separated_groups;
                 bool unsupported = group == "Unsupported presets";
                 for (auto it : list) {
                     // ORCA add sorting support for vendor / type for user presets
@@ -1931,6 +1990,12 @@ void PlaterPresetComboBox::update()
                                     : groupName == "by_vendor"   ? (preset_filament_vendors[it->first].empty() ? _L("Unspecified") : from_u8(preset_filament_vendors[it->first]))
                                     : groupByGroup               ? groupName
                                     : from_u8(preset_filament_vendors[it->first]);
+                    if (off_size_presets.count(it->first) != 0 && separated_groups.insert(groupName2).second) {
+                        const int separator = groupName == "by_bundle"
+                            ? Append(off_size_label, wxNullBitmap, from_u8(preset_bundle_ids[it->first]), groupName2, nullptr, DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED)
+                            : Append(off_size_label, wxNullBitmap, groupName2, nullptr, DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED);
+                        set_label_marker(separator, LABEL_ITEM_DISABLED);
+                    }
                     int  index = groupName == "by_bundle"
                         ? Append(from_u8(preset_aliases[it->first]), *it->second,
                                  from_u8(preset_bundle_ids[it->first]), groupName2, nullptr,

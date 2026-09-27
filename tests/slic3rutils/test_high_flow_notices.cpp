@@ -429,6 +429,32 @@ TEST_CASE("Only ids that differ name tool heads in the list of changed settings"
     CHECK(HighFlowNotices::ids_name_tool_heads({ 1, 2, 3, 4 }));
 }
 
+TEST_CASE("The flow selector opens on the entry of a flow type", "[HighFlow][FlowSelector]")
+{
+    // Tab::update_extruder_variants: the entry of the flow type of the tool head whose nozzle tab
+    // the sidebar shows; the first entry when the preset has no column of that type.
+    const std::vector<int> standard_first{ int(nvtStandard), int(nvtHighFlow) };
+    CHECK(HighFlowNotices::flow_selector_index(standard_first, int(nvtStandard)) == 0);
+    CHECK(HighFlowNotices::flow_selector_index(standard_first, int(nvtHighFlow)) == 1);
+    CHECK(HighFlowNotices::flow_selector_index({ int(nvtHighFlow), int(nvtStandard) }, int(nvtHighFlow)) == 0);
+    CHECK(HighFlowNotices::flow_selector_index(standard_first, int(nvtHybrid)) == 0);
+    CHECK(HighFlowNotices::flow_selector_index({}, int(nvtHighFlow)) == 0);
+}
+
+TEST_CASE("The Material settings open on the column of the tool head's flow type", "[HighFlow][FlowSelector]")
+{
+    // Tab::select_flow_column on the filament tab: the column of "filament_extruder_variant"
+    // whose name ends in the flow type; -1 when the preset has no such column.
+    const std::vector<std::string> snapmaker{ "Direct Drive Standard", "Direct Drive High Flow" };
+    CHECK(HighFlowNotices::variant_column_for_type(snapmaker, int(nvtStandard)) == 0);
+    CHECK(HighFlowNotices::variant_column_for_type(snapmaker, int(nvtHighFlow)) == 1);
+    CHECK(HighFlowNotices::variant_column_for_type({ "Direct Drive High Flow", "Direct Drive Standard" }, int(nvtHighFlow)) == 0);
+    CHECK(HighFlowNotices::variant_column_for_type({ "Direct Drive Standard" }, int(nvtHighFlow)) == -1);
+    // "TPU High Flow" is a type of its own, not a High Flow column.
+    CHECK(HighFlowNotices::variant_column_for_type({ "Direct Drive Standard", "Direct Drive TPU High Flow" }, int(nvtHighFlow)) == -1);
+    CHECK(HighFlowNotices::variant_column_for_type({}, int(nvtStandard)) == -1);
+}
+
 TEST_CASE("A Flow row is hidden, a choice, or ruled out by the nozzle size", "[HighFlow][FlowRow]")
 {
     using HighFlowNotices::FlowRowState;

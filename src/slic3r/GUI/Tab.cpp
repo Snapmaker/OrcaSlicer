@@ -9019,16 +9019,29 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
         const int previous_selection = m_extruder_switch->GetSelection();
         const bool was_flow_selector = !m_flow_selector_types.empty();
         m_flow_selector_types.clear();
+        std::vector<int> selector_types;
         if (m_type != Preset::TYPE_PRINTER && extruder_nums > 2)
-            for (int type : HighFlowNotices::flow_selector_types(m_preset_bundle->printers.get_edited_preset().config, *m_config))
-                m_flow_selector_types.push_back(NozzleVolumeType(type));
+            selector_types = HighFlowNotices::flow_selector_types(m_preset_bundle->printers.get_edited_preset().config, *m_config);
+        for (int type : selector_types)
+            m_flow_selector_types.push_back(NozzleVolumeType(type));
 
         if (!m_flow_selector_types.empty()) {
             m_extruder_switch->SetOptions(generate_extruder_options());
 
             // A tool head that changed its flow type brings its column to the front; otherwise the
-            // column that was edited stays.
-            int selection_index = was_flow_selector && previous_selection >= 0 && previous_selection < int(m_flow_selector_types.size()) ? previous_selection : 0;
+            // column that was edited stays. A selector that just appeared opens on the column of
+            // the flow type of the tool head whose nozzle tab the sidebar shows.
+            int selection_index;
+            if (was_flow_selector && previous_selection >= 0 && previous_selection < int(m_flow_selector_types.size()))
+                selection_index = previous_selection;
+            else {
+                size_t sidebar_head = 0;
+                if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                    sidebar_head = plater->sidebar().selected_nozzle_tab();
+                if (sidebar_head >= size_t(extruder_nums))
+                    sidebar_head = 0;
+                selection_index = HighFlowNotices::flow_selector_index(selector_types, nozzle_volumes->values[sidebar_head]);
+            }
             if (extruder_id >= 0 && extruder_id < extruder_nums) {
                 const NozzleVolumeType changed = NozzleVolumeType(nozzle_volumes->values[extruder_id]);
                 if (std::find(m_flow_selector_types.begin(), m_flow_selector_types.end(), changed) != m_flow_selector_types.end())
@@ -9089,6 +9102,37 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
         show_extruder_sync();
         GetParent()->Layout();
     }
+}
+
+void Tab::select_flow_column(NozzleVolumeType type)
+{
+    if (m_variant_combo != nullptr) {
+        const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
+        if (variants == nullptr)
+            return;
+        const int column = HighFlowNotices::variant_column_for_type(variants->values, int(type));
+        if (column < 0 || column >= int(m_variant_combo->GetCount()) || column == m_variant_combo->GetSelection())
+            return;
+        m_variant_combo->SetSelection(column);
+        // What the selection event of the combo does: switch_excluder reloads the page.
+        switch_excluder(column);
+        return;
+    }
+    if (m_extruder_switch == nullptr || m_flow_selector_types.empty() || !m_extruder_switch->IsThisEnabled())
+        return;
+    // The entry of the type; nothing when the selector has none (calculate_selection_index_for_extruder
+    // and HighFlowNotices::flow_selector_index answer 0 for a missing type, which is the Standard entry).
+    const auto entry = std::find(m_flow_selector_types.begin(), m_flow_selector_types.end(), type);
+    if (entry == m_flow_selector_types.end())
+        return;
+    const int selection = int(entry - m_flow_selector_types.begin());
+    if (selection == m_extruder_switch->GetSelection())
+        return;
+    if (m_actual_nozzle_volumes.empty())
+        m_actual_nozzle_volumes.resize(1, NozzleVolumeType::nvtStandard);
+    m_actual_nozzle_volumes[0] = m_flow_selector_types[selection];
+    m_extruder_switch->SetSelection(selection);
+    switch_excluder(0);
 }
 
 void Tab::show_extruder_sync()

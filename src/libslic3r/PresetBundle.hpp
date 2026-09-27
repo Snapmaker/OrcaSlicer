@@ -480,6 +480,10 @@ public:
     // The preset a broken filament slot takes when all extruders share one nozzle size: the edited
     // filament (update_compatible()'s pick) if installed and compatible, else the first compatible one.
     std::string                 filament_slot_fallback_name() const;
+    // Rank of a filament as default material of the edited Snapmaker printer: in the model's
+    // "default_materials" -> 3, Generic PLA -> 2, Snapmaker PLA -> 1, else 0 (0 for other vendors).
+    // Last tie-breaker of update_compatible(), first_slot_fit() and filament_slot_fallback_name().
+    int                         default_material_rank(const Preset &filament) const;
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;

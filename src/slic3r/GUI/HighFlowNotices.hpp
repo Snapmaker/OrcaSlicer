@@ -117,6 +117,15 @@ std::map<std::string, std::vector<Report::Entry>> group_by_nozzle_size(const std
 // NozzleVolumeType values in order; selection s edits column s. Empty when no selector applies.
 std::vector<int> flow_selector_types(const DynamicPrintConfig &printer_config, const DynamicPrintConfig &process_config);
 
+// The entry of the flow selector for a flow type: the index of `type` (NozzleVolumeType as int)
+// in `types` (flow_selector_types()), 0 when the type has no column or the list is empty. The
+// Process tab opens on the column of the tool head whose nozzle tab the sidebar shows.
+int flow_selector_index(const std::vector<int> &types, int type);
+
+// The column of a preset's variant list ("filament_extruder_variant") for a flow type: the first
+// whose name ends in the name of `type` (split_variant_name), e.g. "Direct Drive High Flow"; -1 if none.
+int variant_column_for_type(const std::vector<std::string> &variants, int type);
+
 // A variant name as the presets spell it, "Direct Drive High Flow", in its two parts. A name
 // without a known volume type splits at its last blank; one without a blank is all drive.
 struct VariantName

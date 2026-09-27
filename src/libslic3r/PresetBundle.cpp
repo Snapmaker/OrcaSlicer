@@ -1794,13 +1794,18 @@ bool PresetBundle::apply_vendor_config(
     if (!supplemented_filaments.empty()) {
         bool active_filament_selected = supplemented_filaments.count(this->filament_presets.front()) > 0;
         if (!active_filament_selected) {
+            // Snapmaker Orca: the best of the ticked filaments by default_material_rank(), the
+            // first by name among equals (the map is ordered by name, which was the whole rule).
+            const Preset *best = nullptr;
             for (const auto& [filament_name, _] : supplemented_filaments) {
                 const Preset* preset = this->filaments.find_preset(filament_name);
-                if (preset && preset->is_visible && preset->is_compatible) {
-                    this->filaments.select_preset_by_name(filament_name, true);
-                    this->filament_presets.front() = this->filaments.get_selected_preset_name();
-                    break;
-                }
+                if (preset && preset->is_visible && preset->is_compatible &&
+                    (best == nullptr || this->default_material_rank(*preset) > this->default_material_rank(*best)))
+                    best = preset;
+            }
+            if (best != nullptr) {
+                this->filaments.select_preset_by_name(best->name, true);
+                this->filament_presets.front() = this->filaments.get_selected_preset_name();
             }
         }
     }
@@ -4053,7 +4058,8 @@ bool PresetBundle::filament_slot_selectable(const Preset &preset, size_t slot) c
 
 const Preset& PresetBundle::first_slot_fit(size_t slot, const std::function<int(const Preset&)> &preference) const
 {
-    auto quality = [&preference](const Preset &preset) -> int { return preference ? preference(preset) : 0; };
+    // Without a preference of the caller the default material of the printer ranks first.
+    auto quality = [this, &preference](const Preset &preset) -> int { return preference ? preference(preset) : this->default_material_rank(preset); };
     const NozzleFilament::State state = NozzleFilament::state(*this);
     if (state.mixed && state.machine_of(slot) != nullptr) {
         const size_t idx = this->filaments.first_compatible_idx(quality, [this, &state, slot](const Preset &preset) { return this->filament_slot_fits(state, preset, slot); });
@@ -4130,7 +4136,30 @@ std::string PresetBundle::filament_slot_fallback_name() const
         if (! selected.is_default && selected.is_visible && selected.is_compatible)
             return selected.name;
     }
-    return this->filaments.first_compatible().name;
+    return this->filaments.preset(this->filaments.first_compatible_idx([this](const Preset &preset) { return this->default_material_rank(preset); })).name;
+}
+
+int PresetBundle::default_material_rank(const Preset &filament) const
+{
+    if (filament.is_default)
+        return 0;
+    const Preset &printer = this->printers.get_edited_preset();
+    if (printer.vendor == nullptr || printer.vendor->id != SM_BUNDLE)
+        return 0;
+    if (const VendorProfile::PrinterModel *model = PresetUtils::system_printer_model(printer); model != nullptr)
+        if (std::find(model->default_materials.begin(), model->default_materials.end(), filament.name) != model->default_materials.end())
+            return 3;
+    const auto *type = filament.config.option<ConfigOptionStrings>("filament_type");
+    if (type == nullptr || type->values.empty() || type->values.front() != "PLA")
+        return 0;
+    const auto *vendor = filament.config.option<ConfigOptionStrings>("filament_vendor");
+    if (vendor == nullptr || vendor->values.empty())
+        return 0;
+    if (boost::iequals(vendor->values.front(), "Generic"))
+        return 2;
+    if (boost::iequals(vendor->values.front(), SM_BUNDLE))
+        return 1;
+    return 0;
 }
 
 bool PresetBundle::repair_filament_slots_per_head()
@@ -8522,6 +8551,10 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                         preset.name == m_prefered_name;
         }
 
+    protected:
+        // The preset the printer preset names as its default ("default_print_profile").
+        bool is_prefered_name(const Preset &preset) const { return ! m_prefered_name.empty() && preset.name == m_prefered_name; }
+
     private:
         const std::string  m_prefered_alias;
         const std::string &m_prefered_name;
@@ -8531,8 +8564,11 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
     class PreferedPrintProfileMatch : public PreferedProfileMatch
     {
     public:
-        PreferedPrintProfileMatch(const Preset *preset, const std::string &prefered_name) :
-            PreferedProfileMatch(preset ? preset->alias : std::string(), prefered_name), m_prefered_layer_height(preset ? preset->config.opt_float("layer_height") : 0) {}
+        // `default_wins`: the rule of a Snapmaker printer, see operator().
+        PreferedPrintProfileMatch(const Preset *preset, const std::string &prefered_name, bool default_wins) :
+            PreferedProfileMatch(preset ? preset->alias : std::string(), prefered_name),
+            m_prefered_layer_height(preset ? preset->config.opt_float("layer_height") : 0),
+            m_default_wins(default_wins) {}
 
         int operator()(const Preset &preset) const
         {
@@ -8541,6 +8577,11 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                 return 0;
             int match_quality = PreferedProfileMatch::operator()(preset);
             if (match_quality < std::numeric_limits<int>::max()) {
+                // Snapmaker Orca: for a Snapmaker printer the printer's default process beats the
+                // previously selected layer height; a preset of the same alias still wins. Other
+                // vendors keep mainline's order (alias, layer height, default name, first).
+                if (m_default_wins && this->is_prefered_name(preset) && preset.is_visible)
+                    return std::numeric_limits<int>::max() - 1;
                 match_quality += 1;
                 if (preset.is_visible)
                     match_quality += 1;
@@ -8552,14 +8593,16 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 
     private:
         const double m_prefered_layer_height;
+        const bool   m_default_wins;
     };
 
     // Matching by the layer height in addition.
     class PreferedFilamentProfileMatch : public PreferedProfileMatch
     {
     public:
-        PreferedFilamentProfileMatch(const Preset *preset, const std::string &prefered_name) :
+        PreferedFilamentProfileMatch(const PresetBundle &bundle, const Preset *preset, const std::string &prefered_name) :
             PreferedProfileMatch(preset ? preset->alias : std::string(), prefered_name),
+            m_bundle(bundle),
             m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : std::string()) {}
 
         int operator()(const Preset &preset) const
@@ -8574,19 +8617,24 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                     match_quality += 1;
                 if (! m_prefered_filament_type.empty() && m_prefered_filament_type == preset.config.opt_string("filament_type", 0))
                     match_quality *= 10;
+                // Snapmaker Orca: among presets that match equally the default material of the
+                // printer, not the alphabetically first (PresetBundle::default_material_rank).
+                match_quality = match_quality * 4 + m_bundle.default_material_rank(preset);
             }
             return match_quality;
         }
 
     private:
-        const std::string m_prefered_filament_type;
+        const PresetBundle &m_bundle;
+        const std::string   m_prefered_filament_type;
     };
 
     // Matching by the layer height in addition.
     class PreferedFilamentsProfileMatch
     {
     public:
-        PreferedFilamentsProfileMatch(const Preset *preset, const std::vector<std::string> &prefered_names) :
+        PreferedFilamentsProfileMatch(const PresetBundle &bundle, const Preset *preset, const std::vector<std::string> &prefered_names) :
+            m_bundle(bundle),
             m_prefered_alias(preset ? preset->alias : std::string()),
             m_prefered_filament_type(preset ? preset->config.opt_string("filament_type", 0) : std::string("PLA")), // BBS: default choose PLA
             m_prefered_names(prefered_names)
@@ -8603,16 +8651,22 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
             int match_quality = (std::find(m_prefered_names.begin(), m_prefered_names.end(), preset.name) != m_prefered_names.end()) + 1;
             if (! m_prefered_filament_type.empty() && m_prefered_filament_type == preset.config.opt_string("filament_type", 0))
                 match_quality *= 10;
-            return match_quality;
+            // Snapmaker Orca: among presets that match equally the default material of the
+            // printer, not the alphabetically first (PresetBundle::default_material_rank).
+            return match_quality * 4 + m_bundle.default_material_rank(preset);
         }
 
     private:
+        const PresetBundle             &m_bundle;
         const std::string               m_prefered_alias;
         const std::string               m_prefered_filament_type;
         const std::vector<std::string> &m_prefered_names;
     };
 
     BOOST_LOG_TRIVIAL(info) << boost::format("update_compatibility for all presets enter, select_other_print_if_incompatible %1%, select_other_filament_if_incompatible %2%")%(int)select_other_print_if_incompatible %(int)select_other_filament_if_incompatible;
+    // Snapmaker Orca: the vendor of the printer preset, or of the system preset a user copy inherits
+    // (get_preset_with_vendor_profile), decides whether the default process rule applies.
+    const bool snapmaker_printer = printer_preset_with_vendor_profile.vendor != nullptr && printer_preset_with_vendor_profile.vendor->id == SM_BUNDLE;
 	switch (printer_preset.printer_technology()) {
     case ptFFF:
     {
@@ -8620,7 +8674,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 		assert(printer_preset.config.has("default_filament_profile"));
         const std::vector<std::string> &prefered_filament_profiles = printer_preset.config.option<ConfigOptionStrings>("default_filament_profile")->values;
         this->prints.update_compatible(printer_preset_with_vendor_profile, nullptr, select_other_print_if_incompatible,
-            PreferedPrintProfileMatch(this->prints.get_selected_idx() == size_t(-1) ? nullptr : &this->prints.get_edited_preset(), printer_preset.config.opt_string("default_print_profile")));
+            PreferedPrintProfileMatch(this->prints.get_selected_idx() == size_t(-1) ? nullptr : &this->prints.get_edited_preset(), printer_preset.config.opt_string("default_print_profile"), snapmaker_printer));
         const PresetWithVendorProfile   print_preset_with_vendor_profile = this->prints.get_edited_preset_with_vendor_profile();
         // Remember whether the filament profiles were compatible before updating the filament compatibility.
         std::vector<char> 				filament_preset_was_compatible(this->filament_presets.size(), false);
@@ -8653,7 +8707,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
             BOOST_LOG_TRIVIAL(info) << boost::format("prefered filament： %1%") % prefered_filament_profiles[idx];
         }
         this->filaments.update_compatible(printer_preset_with_vendor_profile, &print_preset_with_vendor_profile, select_other_filament_if_incompatible,
-            PreferedFilamentsProfileMatch(this->filaments.get_selected_idx() == size_t(-1) ? nullptr : &this->filaments.get_edited_preset(), prefered_filament_profiles),
+            PreferedFilamentsProfileMatch(*this, this->filaments.get_selected_idx() == size_t(-1) ? nullptr : &this->filaments.get_edited_preset(), prefered_filament_profiles),
             keep_selected_filament);
         if (select_other_filament_if_incompatible != PresetSelectCompatibleType::Never) {
             // Verify validity of the current filament presets.
@@ -8671,7 +8725,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                         continue;
                     std::string replacement = preset == nullptr ? std::string() : usable_nozzle_filament_target(*this, nozzle_filament_state, idx);
                     if (replacement.empty())
-                        replacement = this->first_slot_fit(idx, PreferedFilamentProfileMatch(preset,
+                        replacement = this->first_slot_fit(idx, PreferedFilamentProfileMatch(*this, preset,
                             (idx < prefered_filament_profiles.size()) ? prefered_filament_profiles[idx] : prefered_filament_profile)).name;
                     filament_name = replacement;
                 }
@@ -8692,7 +8746,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
                         if ((like == nullptr || like->is_default) && this->filaments.get_selected_idx() != size_t(-1))
                             like = &this->filaments.get_selected_preset();
                         filament_name = this->filaments.first_compatible(
-                            PreferedFilamentProfileMatch(like,
+                            PreferedFilamentProfileMatch(*this, like,
                                 (idx < prefered_filament_profiles.size()) ? prefered_filament_profiles[idx] : prefered_filament_profile)).name;
                     }
                 }
@@ -8705,7 +8759,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
 		assert(printer_preset.config.has("default_sla_print_profile"));
 		assert(printer_preset.config.has("default_sla_material_profile"));
 		this->sla_prints.update_compatible(printer_preset_with_vendor_profile, nullptr, select_other_print_if_incompatible,
-            PreferedPrintProfileMatch(this->sla_prints.get_selected_idx() == size_t(-1) ? nullptr : &this->sla_prints.get_edited_preset(), printer_preset.config.opt_string("default_sla_print_profile")));
+            PreferedPrintProfileMatch(this->sla_prints.get_selected_idx() == size_t(-1) ? nullptr : &this->sla_prints.get_edited_preset(), printer_preset.config.opt_string("default_sla_print_profile"), snapmaker_printer));
         const PresetWithVendorProfile sla_print_preset_with_vendor_profile = this->sla_prints.get_edited_preset_with_vendor_profile();
 		this->sla_materials.update_compatible(printer_preset_with_vendor_profile, &sla_print_preset_with_vendor_profile, select_other_filament_if_incompatible,
             PreferedProfileMatch(this->sla_materials.get_selected_idx() == size_t(-1) ? std::string() : this->sla_materials.get_edited_preset().alias, printer_preset.config.opt_string("default_sla_material_profile")));

@@ -266,6 +266,9 @@ public:
     void update_nozzle_process_hints();
     // Shows the nozzle tab of tool head `head` (0-based) with the printer section unfolded.
     void select_nozzle_tab(size_t head);
+    // The tool head (0-based) whose nozzle tab is shown; 0 without the tabs. The flow selector
+    // of the Process tab opens on the flow type of this tool head.
+    size_t selected_nozzle_tab() const;
 
     PlaterPresetComboBox *  printer_combox();
     ObjectList*             obj_list();

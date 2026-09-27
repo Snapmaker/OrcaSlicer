@@ -145,6 +145,8 @@ protected:
     // the printer preset, else empty. Display only, put before the label (size_marked_label) so a
     // narrow combo cuts the name; the item alias keeps the preset name.
     wxString nozzle_size_marker(const NozzleFilament::State &state, const Preset &preset) const;
+    // "0.2" for 0.2, "0.25" for 0.25: the number of a nozzle size as the markers spell it.
+    static std::string nozzle_size_text(double size);
 
     // parameters for an icon's drawing
     int icon_height;

@@ -332,6 +332,21 @@ bool ids_name_tool_heads(const std::vector<int> &ids)
     return std::any_of(ids.begin(), ids.end(), [&ids](int id) { return id != ids.front(); });
 }
 
+int flow_selector_index(const std::vector<int> &types, int type)
+{
+    const auto it = std::find(types.begin(), types.end(), type);
+    return it == types.end() ? 0 : int(it - types.begin());
+}
+
+int variant_column_for_type(const std::vector<std::string> &variants, int type)
+{
+    const std::string wanted = get_nozzle_volume_type_string(NozzleVolumeType(type));
+    for (size_t column = 0; column < variants.size(); ++column)
+        if (split_variant_name(variants[column]).volume_type == wanted)
+            return int(column);
+    return -1;
+}
+
 bool flow_choice_usable(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
 {
     return !head_declares_high_flow(printer_config, head) || head_can_use_high_flow(printer_config, head, size_offers);

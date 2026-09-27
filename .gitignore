@@ -1,6 +1,7 @@
 Build
 Build.bat
 /build*/
+/out/
 CMakeLists.txt.user
 CMakeUserPresets.json
 **/CMakeLists.txt.autosave
@@ -52,6 +53,8 @@ __pycache__/
 *.pyc
 # Cached system presets
 *.opc
+/.test/
+docs/superpowers/
 .claude/
 .hermes/
 CLAUDE.md

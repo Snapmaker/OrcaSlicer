@@ -9,31 +9,43 @@
     "Snapmaker U1 (0.4 nozzle)"
   ],
   "enable_pressure_advance": [
+    "1",
     "1"
   ],
   "fan_min_speed": [
+    "100",
     "100"
   ],
-  "filament_flow_ratio": ["1"],
+  "filament_flow_ratio": [
+    "1",
+    "0.95"
+  ],
   "filament_minimal_purge_on_wipe_tower": [
+    "20",
     "20"
   ],
   "filament_multitool_ramming_flow": [
+    "20",
     "20"
   ],
   "filament_retract_length_toolchange": [
+    "5",
     "5"
   ],
   "filament_retraction_length": [
+    "1",
     "1"
   ],
   "nozzle_temperature": [
+    "210",
     "210"
   ],
   "nozzle_temperature_initial_layer": [
+    "210",
     "210"
   ],
   "pressure_advance": [
+    "0.03",
     "0.03"
   ],
   "supertack_plate_temp": [
@@ -43,6 +55,7 @@
     "40"
   ],
   "fan_max_speed": [
+    "100",
     "100"
   ],
   "filament_cost": [
@@ -51,12 +64,24 @@
   "filament_density": [
     "1.32"
   ],
-  "filament_flow_support": ["standard", "high_flow"],
-  "filament_max_volumetric_speed": ["12"],
+  "filament_flow_support": [
+    "standard",
+    "high_flow"
+  ],
+  "filament_extruder_variant": [
+    "Direct Drive Standard",
+    "Direct Drive High Flow"
+  ],
+  "filament_max_volumetric_speed": [
+    "12",
+    "18"
+  ],
   "filament_retraction_minimum_travel": [
+    "nil",
     "nil"
   ],
   "filament_wipe_distance": [
+    "nil",
     "nil"
   ],
   "pellet_flow_coefficient": [

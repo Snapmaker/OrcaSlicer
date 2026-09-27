@@ -6,6 +6,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/Utils/NetworkAgent.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 
 #include <wx/sizer.h>

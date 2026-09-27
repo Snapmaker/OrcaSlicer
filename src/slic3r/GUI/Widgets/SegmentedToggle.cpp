@@ -3,6 +3,7 @@
 #include <wx/sizer.h>
 
 #include "Button.hpp"
+#include "Label.hpp"
 #include "StaticBox.hpp"
 #include "../GUI_App.hpp"
 

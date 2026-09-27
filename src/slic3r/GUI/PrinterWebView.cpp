@@ -112,6 +112,9 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
 
     wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) + "/web/flutter_web/index.html?path=2");
     auto     real_url = wxGetApp().get_international_url(url);
+    // Snapmaker upstream 5970fea62d: arms the app-wide Flutter run-result watch (a no-op when the
+    // home view has armed it already).
+    wxGetApp().start_flutter_wcp_timeout_watch();
       // Create the webview
     m_browser = WebView::CreateWebView(this, real_url);
     if (m_browser == nullptr) {
@@ -383,6 +386,9 @@ void PrinterWebView::OnScriptMessage(wxWebViewEvent& evt) {
         return;
     }
 
+    // Snapmaker upstream 5970fea62d. It sits after the early return above, so a message of a host
+    // page (Elegoo) is never taken for a sign of life of the Flutter app.
+    wxGetApp().on_flutter_wcp_received();
     SSWCP::handle_web_message(evt.GetString().ToUTF8().data(), m_browser);
 }
 

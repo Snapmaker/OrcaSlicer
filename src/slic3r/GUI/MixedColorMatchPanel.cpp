@@ -2,6 +2,7 @@
 #include "MixedColorMatchHelpers.hpp"
 #include "MixedFilamentColorMapPanel.hpp"
 #include "MixedGradientSelector.hpp"
+#include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 

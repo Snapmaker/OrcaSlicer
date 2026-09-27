@@ -451,13 +451,28 @@ void GLModel::init_from(const indexed_triangle_set& its)
         return;
     }
 
-    Geometry& data = m_render_data.geometry;
+    // Read user preference: smooth normals enabled
+    const bool smooth_normals_enabled = wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool(SETTING_OPENGL_PHONG_SMOOTH_NORMALS);
+
+    // The conversion lives in make_geometry(); a colour set before init_from() is kept.
+    Geometry data = make_geometry(its, smooth_normals_enabled);
+    data.color = m_render_data.geometry.color;
+    // init_from(Geometry&&) builds the bounding box from the same positions.
+    init_from(std::move(data));
+}
+
+// Snapmaker Orca: the body of init_from(const indexed_triangle_set&) without its two ties to the
+// main thread, the preference read and the write into a GLModel. It touches neither wxGetApp()
+// nor OpenGL, so the render LOD (upstream #737) can prepare its geometry on a worker thread.
+GLModel::Geometry GLModel::make_geometry(const indexed_triangle_set& its, bool smooth_normals_enabled)
+{
+    Geometry data;
+    if (its.vertices.empty() || its.indices.empty())
+        return data;
+
     data.format = { Geometry::EPrimitiveType::Triangles, Geometry::EVertexLayout::P3N3 };
     data.reserve_vertices(3 * its.indices.size());
     data.reserve_indices(3 * its.indices.size());
-
-    // Read user preference: smooth normals enabled
-    const bool smooth_normals_enabled = wxGetApp().app_config != nullptr && wxGetApp().app_config->get_bool(SETTING_OPENGL_PHONG_SMOOTH_NORMALS);
 
     if (smooth_normals_enabled) {
         // Use per-corner smooth normals (via IGL)
@@ -492,10 +507,7 @@ void GLModel::init_from(const indexed_triangle_set& its)
         }
     }
 
-    // update bounding box
-    for (size_t i = 0; i < vertices_count(); ++i) {
-        m_bounding_box.merge(data.extract_position_3(i).cast<double>());
-    }
+    return data;
 }
 
 void GLModel::init_from(const Polygons& polygons, float z)

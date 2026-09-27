@@ -303,7 +303,7 @@ int wmain(int argc, wchar_t** argv)
     //	printf("Loading Slic3r library: %S\n", path_to_slic3r);
     HINSTANCE hInstance_Slic3r = LoadLibraryExW(path_to_slic3r, nullptr, 0);
     if (hInstance_Slic3r == nullptr) {
-        printf("Snapmaker_Orca.dll was not loaded, error=%d\n", GetLastError());
+        printf("Snapmaker_Orca.dll was not loaded, error=%lu\n", GetLastError());
 
         auto soft_end_time = get_time_timestamp();
         std::string softEndTime = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);

@@ -278,11 +278,6 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
             no_overlap
         );
 
-        // Detect overhangs / bridges against the layer below the whole combined group or wall run
-        // (wall_combined_lower_layer() == lower_layer for regular regions).
-        if (lower_layer != nullptr)
-            // Cummulative sum of polygons over all the regions.
-            g.lower_slices = &lower_layer->lslices;
         if (this->layer()->upper_layer != NULL) {
             g.upper_slices             = &this->layer()->upper_layer->lslices;
             g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
@@ -299,6 +294,16 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         g.sparse_infill_flow    = this->flow(frInfill, height);
         // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
         g.gap_fill_flow         = this->flow(frSolidInfill, height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
+
+        // Cumulative sum of polygons over all the regions, less what the lower layer could not print.
+        // ORCA: the overhang reference is the layer below the whole combined group or wall run
+        // (wall_combined_lower_layer() == lower_layer for regular regions). Declared after g so it
+        // outlives the process_*() calls below.
+        ExPolygons lower_slices;
+        if (lower_layer != nullptr) {
+            lower_slices   = g.printable_slices(lower_layer->lslices);
+            g.lower_slices = &lower_slices;
+        }
 
         if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
             g.process_arachne();

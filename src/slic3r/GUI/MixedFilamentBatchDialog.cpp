@@ -2,6 +2,7 @@
 #include "MixedFilamentBadge.hpp"
 #include "MixedColorMatchHelpers.hpp"
 #include "FilamentColorUtils.hpp"
+#include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "PresetBundle.hpp"

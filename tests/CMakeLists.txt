@@ -85,4 +85,9 @@ add_subdirectory(fff_print)
 add_subdirectory(sla_print)
 add_subdirectory(filament_group)
 
+# End-to-end checks of the snapmaker-orca binary. Linux only: they read result.json, which the CLI
+# writes on Linux only. src/ is added before tests/, so the target is known here.
+if (UNIX AND NOT APPLE AND TARGET Snapmaker_Orca)
+    add_subdirectory(cli)
+endif ()
 

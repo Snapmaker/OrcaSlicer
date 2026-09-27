@@ -14,6 +14,14 @@ find_package(libnoise REQUIRED)
 # Add MQTT library
 add_subdirectory(mqtt)
 
+# --- Snapmaker Orca: vendored Paho MQTT -------------------------------------------------
+# src/mqtt (Paho MQTT C++ and C, unedited) is built with warnings off like deps_src, so
+# -Werror never stops inside third-party code.
+if (NOT SLIC3R_BUNDLED_WARNINGS)
+    orcaslicer_silence_third_party_warnings("${CMAKE_CURRENT_SOURCE_DIR}/mqtt")
+endif ()
+# --- end of vendored Paho MQTT ----------------------------------------------------------
+
 # Set MQTT paths for use in slic3r GUI
 set(PAHO_MQTT_CPP_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt" CACHE PATH "Paho MQTT C++ path")
 set(PAHO_MQTT_C_PATH "${CMAKE_CURRENT_SOURCE_DIR}/mqtt/externals/paho-mqtt-c" CACHE PATH "Paho MQTT C path")
@@ -40,7 +48,8 @@ if (SLIC3R_GUI)
         set (wxWidgets_CONFIG_OPTIONS "--toolkit=gtk${SLIC3R_GTK}")
         find_package(wxWidgets 3.3 REQUIRED COMPONENTS base core adv html gl aui net media webview)
     else ()
-        find_package(wxWidgets 3.3 CONFIG REQUIRED COMPONENTS html adv gl core base webview aui net media)
+        # propgrid is required by wxInspector.
+        find_package(wxWidgets 3.3 CONFIG REQUIRED COMPONENTS html adv gl core base webview aui net media propgrid)
     endif ()
 
     if(UNIX)
@@ -97,6 +106,16 @@ if (SLIC3R_GUI)
 #    list(REMOVE_ITEM wxWidgets_LIBRARIES oleacc)
 
     find_package(wxInspector REQUIRED)
+
+    # wxInspector's exported interface names the release wxWidgets import
+    # libraries, which a Debug build cannot link. wx is linked above instead.
+    get_target_property(_wxinspector_interface wxInspector::wxInspector INTERFACE_LINK_LIBRARIES)
+    if (_wxinspector_interface)
+        list(FILTER _wxinspector_interface EXCLUDE REGEX "wx(base|msw)3[0-9]u[_.]")
+        set_target_properties(wxInspector::wxInspector PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${_wxinspector_interface}")
+    endif ()
+
     list(APPEND wxWidgets_LIBRARIES "wxInspector::wxInspector")
 
     message(STATUS "wx libs: ${wxWidgets_LIBRARIES}")
@@ -135,6 +154,13 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/osx/Info.plist.in 
 if (WIN32)
     add_library(Snapmaker_Orca SHARED Snapmaker_Orca.cpp Snapmaker_Orca.hpp dev-utils/BaseException.cpp dev-utils/BaseException.h dev-utils/StackWalker.cpp dev-utils/StackWalker.h sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
     target_compile_definitions(Snapmaker_Orca PRIVATE BURY_EXPORTS)
+    # dev-utils/BaseException.cpp is compiled into this target too and includes the generated
+    # git_commit_hash.h, which lives in the binary dir of src/slic3r (a PRIVATE include of
+    # libslic3r_gui). The header is produced by git_commit_hash_header.
+    target_include_directories(Snapmaker_Orca PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/slic3r)
+    if (TARGET git_commit_hash_header)
+        add_dependencies(Snapmaker_Orca git_commit_hash_header)
+    endif ()
 else ()
     add_executable(Snapmaker_Orca Snapmaker_Orca.cpp Snapmaker_Orca.hpp sentry_wrapper/SentryWrapper.hpp sentry_wrapper/SentryWrapper.cpp bury_cfg/bury_point.hpp bury_cfg/bury_point.cpp common_func/common_func.hpp common_func/common_func.cpp)
 endif ()

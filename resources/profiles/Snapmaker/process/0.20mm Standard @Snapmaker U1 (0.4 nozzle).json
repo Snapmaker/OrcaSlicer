@@ -36,9 +36,32 @@
     "wipe_tower_extra_rib_length": "8",
     "wipe_tower_wall_type": "rib",
     "gap_fill_target": "topbottom",
-    "inner_wall_speed": ["300"],
-    "outer_wall_speed": ["200"],
-    "internal_solid_infill_speed": ["250"],
-    "sparse_infill_speed": ["270"],
-    "process_flow_support": ["standard", "high_flow"]
+    "inner_wall_speed": [
+        "300",
+        "600"
+    ],
+    "outer_wall_speed": [
+        "200",
+        "500"
+    ],
+    "internal_solid_infill_speed": [
+        "250",
+        "600"
+    ],
+    "sparse_infill_speed": [
+        "270",
+        "600"
+    ],
+    "process_flow_support": [
+        "standard",
+        "high_flow"
+    ],
+    "print_extruder_id": [
+        "1",
+        "1"
+    ],
+    "print_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow"
+    ]
 }

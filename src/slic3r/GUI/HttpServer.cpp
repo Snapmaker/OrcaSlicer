@@ -11,12 +11,17 @@
 #include "slic3r/Utils/Http.hpp"
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "slic3r/Utils/BBLNetworkPlugin.hpp"
+#include "libslic3r/Thread.hpp"
 #include  "sentry_wrapper/SentryWrapper.hpp"
 #include <boost/beast/core/detail/base64.hpp>
+#include <nlohmann/json.hpp>
+// windows.h stays last: its min/max/GetObject macros break nlohmann/json.hpp.
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
 #endif
+
+using json = nlohmann::json;
 
 namespace Slic3r { namespace GUI {
 

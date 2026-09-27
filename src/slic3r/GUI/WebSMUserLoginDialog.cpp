@@ -6,6 +6,8 @@
 #include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/SnapLogWiring.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include "common_func/common_func.hpp"
 #include "slic3r/GUI/Widgets/StateColor.hpp"
 #include "Widgets/Button.hpp"
@@ -278,6 +280,16 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                         wxGetApp().sm_get_userinfo()->set_user_token(token);
                         wxGetApp().sm_get_userinfo()->set_user_login(true);
                         wxGetApp().sm_on_token_captured(refresh_generation);
+                        // Pass the login identity to SnapLog (a non-empty token opens its login gate).
+                        // apply_consent() also honours "snaplog_upload", unlike set_consent().
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(token);
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(user_id);
+                        if (wxGetApp().app_config)
+                            SnapLogWiring::apply_consent(*wxGetApp().app_config);
+
+                        SNAP_LOG_BATCH(Info, "user login success",
+                            {"eventName", "user_login_result"}, {"source", "cpp"},
+                            {"success", "true"}, {"userId", user_id});
                     }
                 })
                 .on_error([&](std::string body, std::string, unsigned status) {
@@ -287,6 +299,10 @@ void SMUserLogin::OnNavigationRequest(wxWebViewEvent &evt)
                     std::string http_code = BP_LOGIN_HTTP_CODE + string(":") + std::to_string(status) +
                                             ", body_size=" + std::to_string(body.size());
                     sentryReportLog(SENTRY_LOG_TRACE, http_code, BP_LOGIN);
+                    // After the generation check above: a superseded attempt reports nothing.
+                    SNAP_LOG_BATCH(Error, "user login failed",
+                        {"eventName", "user_login_result"}, {"source", "cpp"},
+                        {"success", "false"}, {"httpStatus", std::to_string(status)});
                 })
                 .perform_sync();
         });

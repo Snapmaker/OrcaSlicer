@@ -30,7 +30,6 @@
 #include <memory>
 
 //#include "BedShapeDialog.hpp"
-#include "Event.hpp"
 #include "wxExtensions.hpp"
 #include "ConfigManipulation.hpp"
 #include "OptionsGroup.hpp"
@@ -38,7 +37,6 @@
 //BBS: GUI refactor
 #include "Notebook.hpp"
 #include "ParamsPanel.hpp"
-#include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/TextInput.hpp"
 #include "Widgets/CheckBox.hpp" // ORCA
 
@@ -96,6 +94,10 @@ public:
 	void		reload_config();
     void        update_visibility(ConfigOptionMode mode, bool update_contolls_visibility);
     void        activate(ConfigOptionMode mode, std::function<void()> throw_if_canceled);
+    // Whether an option group has no controls yet.
+    bool        build_pending() const;
+    // Builds the next option group that has no controls yet; true while some remain.
+    bool        build_step(ConfigOptionMode mode);
     void        clear();
     void        msw_rescale();
     void        sys_color_changed();
@@ -123,6 +125,8 @@ public:
     std::map<std::string, std::string> m_opt_id_map;
 
 protected:
+    size_t      next_group_to_build() const;
+    bool        activate_group(size_t i, ConfigOptionMode mode, std::function<void()> throw_if_canceled);
 	// Color of TreeCtrlItem. The wxColour will be updated only if the new wxColour pointer differs from the currently rendered one.
 	const wxColour*		m_item_color;
 };
@@ -314,6 +318,10 @@ public:
     ScalableButton *m_extruder_sync   = nullptr;
 	wxPanel *       m_extruder_sync_box  = nullptr;
     std::vector<NozzleVolumeType> m_actual_nozzle_volumes;
+    // Snapmaker Orca: flow selector mode of m_extruder_switch. The process preset holds one column
+    // per flow type (HighFlowNotices::flow_selector_types) and the switch offers these types
+    // instead of extruders; empty in every other case.
+    std::vector<NozzleVolumeType> m_flow_selector_types;
 
 public:
 	// BBS
@@ -403,6 +411,16 @@ public:
     void            toggle_option(const std::string &opt_key, bool toggle, int opt_index = -1);
     void            toggle_line(const std::string &opt_key, bool toggle, int opt_index = -1); // BBS: hide some line
     void            set_option_label(const std::string &opt_key, const wxString &label, int opt_index = -1);
+
+    // Live state of the settings row that owns an option, read from the built pages.
+    struct SettingRowState
+    {
+        bool     visible{true}; // false when ConfigManipulation hides the row
+        wxString label;         // Line::label the row draws (may change at runtime)
+        bool     multi{false};  // row packs several options, so label is precomposed
+    };
+    SettingRowState setting_row_state(const std::string &opt_id) const;
+
 	wxSizer*		description_line_widget(wxWindow* parent, ogStaticText** StaticText, wxString text = wxEmptyString);
 	bool			current_preset_is_dirty() const;
 	bool			saved_preset_is_dirty() const;
@@ -429,6 +447,10 @@ public:
 	// BBS: new layout
 	void set_expanded(bool value);
 	void restore_last_select_item();
+	// page_build_pending() says whether the selected page has groups without controls, and
+	// page_build_step() builds one.
+	bool page_build_pending() const;
+	bool page_build_step();
 
 	static bool validate_custom_gcode(const wxString& title, const std::string& gcode);
 	bool        validate_custom_gcodes();
@@ -449,6 +471,8 @@ public:
 	int         get_current_active_extruder();
 
 	std::vector<wxString>  generate_extruder_options();
+    // Snapmaker Orca: shows the sync button next to a shown extruder switch, never in flow selector mode.
+    void                   show_extruder_sync();
     NozzleVolumeType       get_actual_nozzle_volume_type(int extruder_id);
 
 protected:
@@ -472,6 +496,7 @@ protected:
     std::string m_last_sparse_infill_rotate_template_value;
     ConfigManipulation get_config_manipulation();
     friend class EditGCodeDialog;
+    friend class PublishSettingsDialog;
 };
 
 class TabPrint : public Tab
@@ -627,13 +652,14 @@ private:
 	bool		m_rebuild_kinematics_page = false;
 	void        update_input_shaper_menu(GCodeFlavor flavor);
 
-	ogStaticText*	m_fff_print_host_upload_description_line {nullptr};
-	ogStaticText*	m_sla_print_host_upload_description_line {nullptr};
 
     std::vector<PageShp>			m_pages_fff;
     std::vector<PageShp>			m_pages_sla;
 
-    wxBoxSizer*         m_presets_sizer                 {nullptr};
+	// Snapmaker Orca: the flow combos of the extruder pages that are built at the moment, by
+	// extruder index (page controls come and go with the active page).
+	std::map<int, ::ComboBox*>		m_nozzle_flow_combos;
+
 public:
 	ScalableButton*	m_reset_to_filament_color = nullptr;
 
@@ -673,6 +699,11 @@ public:
 	bool 		supports_printer_technology(const PrinterTechnology /* tech */) const override { return true; }
 
 	void		set_extruder_volume_type(int extruder_id, NozzleVolumeType type);
+	// Snapmaker Orca: the "Nozzle flow" line of the extruder pages. It edits the project's
+	// "nozzle_volume_type" (no key of the printer preset), so it is a widget, kept in step with
+	// the Flow row of the sidebar by update_nozzle_flow_lines().
+	wxSizer*	create_nozzle_flow_widget(wxWindow* parent, int extruder_idx);
+	void		update_nozzle_flow_lines(bool refresh_page = true);
 	void		on_value_change(const std::string& opt_key, const boost::any& value) override;
 
 	wxSizer*	create_bed_shape_widget(wxWindow* parent);

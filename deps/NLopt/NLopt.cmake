@@ -8,6 +8,8 @@ Snapmaker_Orca_add_cmake_project(NLopt
     -DNLOPT_GUILE:BOOL=OFF
     -DNLOPT_SWIG:BOOL=OFF
     -DNLOPT_TESTS:BOOL=OFF
+    # testopt is built regardless of NLOPT_TESTS; see deps-windows.cmake.
+    "${DEP_LLD_FORCE_MULTIPLE}"
 )
 
 if (MSVC)

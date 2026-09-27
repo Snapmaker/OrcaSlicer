@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_App_hpp_
 #define slic3r_GUI_App_hpp_
 
+#include <functional>
 #include <memory>
 #include <chrono>
 #include <string>
@@ -8,20 +9,16 @@
 #include "ImGuiWrapper.hpp"
 #include "ConfigWizard.hpp"
 #include "OpenGLManager.hpp"
-#include "PresetBundleDialog.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
-#include "slic3r/GUI/DeviceManager.hpp"
 #include "slic3r/GUI/UserNotification.hpp"
-#include "slic3r/Utils/NetworkAgent.hpp"
-#include "slic3r/Utils/BBLCloudServiceAgent.hpp"
+#include "slic3r/Utils/CloudProvider.hpp"
+// Snapmaker: WebViewPanel must be complete here (inline Fltviews::reload_all calls load_url);
+// fork translation units rely on these dialog headers transitively. Other Web types are forward-declared.
 #include "slic3r/GUI/WebViewDialog.hpp"
-#include "slic3r/GUI/WebUserLoginDialog.hpp"
 #include "slic3r/GUI/WebSMUserLoginDialog.hpp"
 #include "slic3r/GUI/WebDeviceDialog.hpp"
 #include "slic3r/GUI/WebPreprintDialog.hpp"
-#include "slic3r/GUI/BindDialog.hpp"
-#include "slic3r/GUI/HMS.hpp"
 #include "slic3r/GUI/Jobs/UpgradeNetworkJob.hpp"
 #include "slic3r/GUI/HttpServer.hpp"
 #include "../Utils/PrintHost.hpp"
@@ -79,13 +76,21 @@ class ModelObject;
 class Model;
 class UserManager;
 class DeviceManager;
+class MachineObject;
 class NetworkAgent;
+class IPrinterAgent;
 class TaskManager;
+
+// Same typedef as in bambu_networking.hpp, so this header need not include it.
+typedef std::function<bool()> WasCancelledFn;
 
 namespace GUI{
 
 class RemovableDriveManager;
 class OtherInstanceMessageHandler;
+class ShortcutRegistry;
+enum class ShortcutContext : uint8_t;
+enum class PreferencesTab;
 class MainFrame;
 class Sidebar;
 class ObjectSettings;
@@ -96,11 +101,14 @@ class ParamsPanel;
 class NotificationManager;
 class Downloader;
 class DownloadManager;
+class MeshLodCache;
 struct GUI_InitParams;
 class ParamsDialog;
 class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
+class PresetBundleDialog;
+class ZUserLogin;
 class NetworkErrorDialog;
 class PluginsDialog;
 class SpeedDialWebDialog;
@@ -271,6 +279,7 @@ private:
     std::atomic<bool> m_flutter_web_config_update_dlg_open{ false };
     /// Set only for the duration of profile/preset `MsgUpdateConfig::ShowModal()` (atomic: safe vs updater threads + CallAfter).
     std::atomic<bool> m_profile_config_update_dlg_open{ false };
+    std::chrono::steady_clock::time_point m_last_input{ std::chrono::steady_clock::now() };
 #ifdef __linux__
     bool            m_opengl_initialized{ false };
 #endif
@@ -312,6 +321,7 @@ private:
     std::unique_ptr<RemovableDriveManager> m_removable_drive_manager;
 
     std::unique_ptr<ImGuiWrapper> m_imgui;
+    std::unique_ptr<ShortcutRegistry> m_shortcuts;
     std::unique_ptr<PrintHostJobQueue> m_printhost_job_queue;
 	std::unique_ptr <OtherInstanceMessageHandler> m_other_instance_message_handler;
     std::unique_ptr <wxSingleInstanceChecker> m_single_instance_checker;
@@ -320,6 +330,10 @@ private:
 
     std::unique_ptr<Downloader> m_downloader;
     DownloadManager* m_download_manager;
+    // Snapmaker Orca: the render LOD models and their worker pool. Created before the main frame,
+    // shut down (workers joined) in shutdown() and again in the destructor; whatever still holds a
+    // MeshLod after that stays valid, see MeshLodCache.hpp.
+    std::shared_ptr<MeshLodCache> m_mesh_lod_cache;
 
     //BBS
     std::atomic<bool> m_is_closing {false};
@@ -428,6 +442,11 @@ private:
     int             OnExit() override;
     bool            initialized() const { return m_initialized; }
     inline bool     is_enable_multi_machine() { return this->app_config&& this->app_config->get("enable_multi_machine") == "true"; }
+#ifdef SLIC3R_CAD
+    inline bool     is_enable_cad_feature() { return this->app_config && this->app_config->get_bool("enable_cad_feature"); }
+    inline bool     is_auto_close_sketch_loops() { return !this->app_config
+        || this->app_config->get_bool("auto_close_sketch_loops"); }
+#endif
 
     std::map<std::string, bool> test_url_state;
 
@@ -457,6 +476,11 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
+    // Milliseconds since the last mouse or keyboard event the app processed.
+    int  input_idle_ms() const;
+    int  FilterEvent(wxEvent& event) override;
+    // The Preferences "Default page" choice, stored as its index: 0 Home, 1 Prepare.
+    bool starts_on_prepare() const;
     bool flutter_web_config_update_dlg_open() const
     {
         return m_flutter_web_config_update_dlg_open.load(std::memory_order_acquire);
@@ -576,7 +600,7 @@ private:
     void            recreate_GUI(const wxString& message);
     void            schedule_recreate_gui_when_no_modal(const wxString& message);
     void            system_info();
-    void            keyboard_shortcuts();
+    void            keyboard_shortcuts(ShortcutContext page, wxWindow* parent = nullptr);   // the main frame when null
     void            troubleshoot();
     void            load_project(wxWindow *parent, wxString& input_file) const;
     void            import_model(wxWindow *parent, wxArrayString& input_files) const;
@@ -662,6 +686,12 @@ private:
     bool            sm_is_token_refresh_current(std::size_t refresh_generation) const;
     std::size_t     sm_token_refresh_generation() const { return m_silent_refresh_generation; }
 
+    // Flutter run-result watch (Snapmaker upstream 5970fea62d): one report per process, success when
+    // the first WCP message of a Flutter view arrives, failure when none arrived within the timeout.
+    void            start_flutter_wcp_timeout_watch();
+    void            on_flutter_wcp_received();
+    void            report_flutter_run_result_once(bool success);
+
     void            request_user_logout(const std::string& provider = ORCA_CLOUD_PROVIDER);
     int             request_user_unbind(std::string dev_id, const std::string& provider = ORCA_CLOUD_PROVIDER);
     std::string     handle_web_request(std::string cmd);
@@ -743,8 +773,6 @@ private:
     void            report_flutter_web_copy_failure(FlutterWebCopyStatus status);
     void            try_notify_flutter_web_copy_failure();
 
-    void            switch_staff_pick(bool on);
-
     void            on_show_check_privacy_dlg(int online_login = 0, const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            show_check_privacy_dlg(wxCommandEvent& evt);
     void            on_check_privacy_update(wxCommandEvent &evt);
@@ -757,7 +785,6 @@ private:
     void            persist_window_geometry(wxTopLevelWindow *window, bool default_maximized = false);
     void            update_ui_from_settings();
 
-    bool            switch_language();
     bool            load_language(wxString language, bool initial);
 
     Tab*            get_tab(Preset::Type type);
@@ -769,6 +796,11 @@ private:
     std::string     get_saved_mode_str();
     std::string     get_mode_str();
     void            save_mode(const /*ConfigOptionMode*/int mode) ;
+    // Switch to `mode` from the Speed Dial: a developer-mode override hides the saved mode
+    // (get_mode returns comDevelop), so clear it first and persist the choice.
+    void            set_mode(ConfigOptionMode mode);
+    // Turn the developer-mode override on and refresh the UI (used before jumping to a Developer setting).
+    void            enable_developer_mode();
     void            update_mode();
     void            update_internal_development();
     void            show_ip_address_enter_dialog(wxString title = wxEmptyString);
@@ -804,9 +836,16 @@ private:
     wxString 		current_language_code_safe() const;
     bool            is_localized() const { return m_wxLocale->GetLocale() != "English"; }
 
-    void            open_preferences(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    void            open_preferences();   // on the General tab
+    void            open_preferences(PreferencesTab tab, const std::string& highlight_option = std::string());
+    // Snapmaker Orca: hands the preference "filament_follows_nozzle" to the preset bundle and lets
+    // the filament slots and their combos follow.
+    void            update_filament_follows_nozzle();
     void            open_presetbundledialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     void            open_plugins_dialog(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    // Dialog-free plugin actions used by the speed dial: they never require the Plugins dialog to be open.
+    void            refresh_plugins();
+    void            install_local_plugin();
     void            open_terminal_dialog();
     void            open_speed_dial();
     ActionRegistry& action_registry() { return m_action_registry; }
@@ -901,6 +940,9 @@ private:
 	size_t      get_instance_hash_int ()              { return m_instance_hash_int; }
 
     ImGuiWrapper* imgui() { return m_imgui.get(); }
+    ShortcutRegistry& shortcuts() { return *m_shortcuts; }
+    // Saves the bindings and refreshes every menu label, tooltip and accelerator table that shows one.
+    void          on_shortcuts_changed();
 
     PrintHostJobQueue& printhost_job_queue() { return *m_printhost_job_queue.get(); }
 
@@ -979,7 +1021,6 @@ private:
     bool            window_pos_restore(wxTopLevelWindow* window, const std::string &name, bool default_maximized = false);
     void            window_pos_sanitize(wxTopLevelWindow* window);
     void            window_pos_center(wxTopLevelWindow *window);
-    bool            select_language();
 
     // Dynamic printer agent selection - internal helpers for switch_printer_agent
     // and the plugin load/unload callbacks (init_plugin_gui_wiring).
@@ -1018,6 +1059,12 @@ private:
     std::unique_ptr<wxTimer>              m_silent_refresh_timeout_timer;
     void     on_token_check_timer(wxTimerEvent &event);
     void     on_silent_refresh_timeout(wxTimerEvent &event);
+
+    // Flutter run-result watch (Snapmaker upstream 5970fea62d)
+    bool                     m_flutter_wcp_reported{false};
+    std::unique_ptr<wxTimer> m_flutter_wcp_timeout_timer;
+    static constexpr int     FLUTTER_WCP_TIMEOUT_MS = 120 * 1000;
+    void                     on_flutter_wcp_timeout(wxTimerEvent &event);
 
 public:
     std::unordered_map<void*, std::weak_ptr<SSWCP_Instance>> m_recent_file_subscribers;
@@ -1133,7 +1180,7 @@ wxDECLARE_EVENT(EVT_UPDATE_BUNDLE_COMPLETE, wxCommandEvent);
 bool is_support_filament(int extruder_id, bool strict_check = true);
 bool is_soluble_filament(int extruder_id);
 // check if the filament for model is in the list
-bool has_filaments(const std::vector<string>& model_filaments);
+bool has_filaments(const std::vector<std::string>& model_filaments);
 } // namespace GUI
 } // Slic3r
 

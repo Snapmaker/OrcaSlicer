@@ -9,9 +9,11 @@
         "Snapmaker U1 (0.4 nozzle)"
     ],
     "additional_cooling_fan_speed": [
+        "70",
         "70"
     ],
     "complete_print_exhaust_fan_speed": [
+        "70",
         "70"
     ],
     "cool_plate_temp": [
@@ -21,10 +23,12 @@
         "60"
     ],
     "during_print_exhaust_fan_speed": [
+        "70",
         "70"
     ],
     "enable_pressure_advance": [
-        "0"
+        "0",
+        "1"
     ],
     "eng_plate_temp": [
         "60"
@@ -36,9 +40,11 @@
         "100"
     ],
     "fan_max_speed": [
+        "100",
         "100"
     ],
     "fan_min_speed": [
+        "100",
         "100"
     ],
     "filament_cooling_final_speed": [
@@ -57,12 +63,14 @@
         "1.24"
     ],
     "filament_deretraction_speed": [
+        "nil",
         "nil"
     ],
     "filament_end_gcode": [
         "; filament end gcode \n"
     ],
     "filament_flow_ratio": [
+        "0.966",
         "0.966"
     ],
     "filament_loading_speed": [
@@ -72,24 +80,31 @@
         "50"
     ],
     "filament_max_volumetric_speed": [
-        "20"
+        "20",
+        "40"
     ],
     "filament_minimal_purge_on_wipe_tower": [
+        "15",
         "15"
     ],
     "filament_multitool_ramming": [
+        "1",
         "1"
     ],
     "filament_multitool_ramming_flow": [
-        "30"
+        "30",
+        "40"
     ],
     "filament_multitool_ramming_volume": [
+        "5",
         "5"
     ],
     "filament_retraction_length": [
+        "1.2",
         "1.2"
     ],
     "filament_retraction_speed": [
+        "nil",
         "nil"
     ],
     "filament_stamping_distance": [
@@ -108,9 +123,11 @@
         "Snapmaker"
     ],
     "filament_z_hop": [
+        "0.4",
         "0.4"
     ],
     "filament_z_hop_types": [
+        "Slope Lift",
         "Slope Lift"
     ],
     "hot_plate_temp": [
@@ -120,9 +137,11 @@
         "65"
     ],
     "nozzle_temperature": [
+        "220",
         "220"
     ],
     "nozzle_temperature_initial_layer": [
+        "220",
         "220"
     ],
     "overhang_fan_threshold": [
@@ -132,7 +151,8 @@
         "0.4157"
     ],
     "pressure_advance": [
-        "0.02"
+        "0.02",
+        "0.024"
     ],
     "required_nozzle_HRC": [
         "0"
@@ -153,6 +173,7 @@
         "65"
     ],
     "filament_retract_length_toolchange": [
+        "5",
         "5"
     ],
     "graphic_effect_plate_temp": [
@@ -164,6 +185,10 @@
     "filament_flow_support": [
         "standard",
         "high_flow"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow"
     ],
     "supertack_plate_temp": [
         "40"
@@ -178,6 +203,7 @@
         "2"
     ],
     "activate_air_filtration": [
+        "0",
         "0"
     ],
     "activate_chamber_temp_control": [
@@ -223,6 +249,7 @@
         "0"
     ],
     "filament_long_retractions_when_cut": [
+        "nil",
         "nil"
     ],
     "filament_notes": [
@@ -232,30 +259,39 @@
         "120 100 6.6 6.8 7.2 7.6 7.9 8.2 8.7 9.4 9.9 10.0| 0.05 6.6 0.45 6.8 0.95 7.8 1.45 8.3 1.95 9.7 2.45 10 2.95 7.6 3.45 7.6 3.95 7.6 4.45 7.6 4.95 7.6"
     ],
     "filament_retract_before_wipe": [
+        "nil",
         "nil"
     ],
     "filament_retract_lift_above": [
+        "nil",
         "nil"
     ],
     "filament_retract_lift_below": [
+        "nil",
         "nil"
     ],
     "filament_retract_lift_enforce": [
+        "nil",
         "nil"
     ],
     "filament_retract_restart_extra": [
+        "nil",
         "nil"
     ],
     "filament_retract_restart_extra_toolchange": [
+        "nil",
         "nil"
     ],
     "filament_retract_when_changing_layer": [
+        "nil",
         "nil"
     ],
     "filament_retraction_distances_when_cut": [
+        "nil",
         "nil"
     ],
     "filament_retraction_minimum_travel": [
+        "nil",
         "nil"
     ],
     "filament_settings_id": [
@@ -283,9 +319,11 @@
         "100"
     ],
     "filament_wipe": [
+        "nil",
         "nil"
     ],
     "filament_wipe_distance": [
+        "nil",
         "nil"
     ],
     "full_fan_speed_layer": [

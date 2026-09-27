@@ -8,9 +8,11 @@
         "Snapmaker U1 (0.4 nozzle)"
     ],
     "additional_cooling_fan_speed": [
+        "100",
         "100"
     ],
     "complete_print_exhaust_fan_speed": [
+        "70",
         "70"
     ],
     "cool_plate_temp": [
@@ -20,9 +22,11 @@
         "60"
     ],
     "during_print_exhaust_fan_speed": [
+        "70",
         "70"
     ],
     "enable_pressure_advance": [
+        "1",
         "1"
     ],
     "eng_plate_temp": [
@@ -50,6 +54,7 @@
         "; filament end gcode \n"
     ],
     "filament_flow_ratio": [
+        "0.97",
         "0.97"
     ],
     "filament_loading_speed": [
@@ -59,27 +64,35 @@
         "3"
     ],
     "filament_max_volumetric_speed": [
+        "12",
         "12"
     ],
     "filament_minimal_purge_on_wipe_tower": [
+        "50",
         "50"
     ],
     "filament_multitool_ramming": [
+        "1",
         "1"
     ],
     "filament_multitool_ramming_flow": [
+        "20",
         "20"
     ],
     "filament_multitool_ramming_volume": [
+        "10",
         "10"
     ],
     "filament_retract_before_wipe": [
+        "nil",
         "nil"
     ],
     "filament_retraction_length": [
+        "0.2",
         "0.2"
     ],
     "filament_retraction_speed": [
+        "nil",
         "nil"
     ],
     "filament_start_gcode": [
@@ -92,12 +105,15 @@
         "100"
     ],
     "filament_wipe": [
+        "nil",
         "nil"
     ],
     "filament_wipe_distance": [
+        "nil",
         "nil"
     ],
     "filament_z_hop_types": [
+        "Slope Lift",
         "Slope Lift"
     ],
     "hot_plate_temp_initial_layer": [
@@ -113,7 +129,10 @@
     "pellet_flow_coefficient": [
         "0.4157"
     ],
-    "pressure_advance": ["0.02"],
+    "pressure_advance": [
+        "0.02",
+        "0.024"
+    ],
     "required_nozzle_HRC": [
         "0"
     ],
@@ -133,6 +152,7 @@
         "65"
     ],
     "filament_retract_length_toolchange": [
+        "5",
         "5"
     ],
     "graphic_effect_plate_temp": [
@@ -147,5 +167,12 @@
     "supertack_plate_temp_initial_layer": [
         "45"
     ],
-    "filament_flow_support": ["standard", "high_flow"]
+    "filament_flow_support": [
+        "standard",
+        "high_flow"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow"
+    ]
 }

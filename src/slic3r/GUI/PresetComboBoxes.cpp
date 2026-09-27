@@ -557,6 +557,55 @@ wxString PresetComboBox::get_tooltip(const Preset &preset)
     return tooltip;
 }
 
+// Snapmaker Orca: filament presets follow the nozzle size of their tool head.
+bool PresetComboBox::filament_slot_state(NozzleFilament::State &state) const
+{
+    if (m_type != Preset::TYPE_FILAMENT || m_filament_idx < 0 || m_preset_bundle == nullptr ||
+        size_t(m_filament_idx) >= m_preset_bundle->filament_presets.size())
+        return false;
+    state = NozzleFilament::state(*m_preset_bundle);
+    return state.rule_on && state.head_of(size_t(m_filament_idx)) != NozzleFilament::no_head;
+}
+
+const Preset* PresetComboBox::machine_filament_for_slot(const NozzleFilament::State &state, const std::string &filament_name, const Preset *mainline_match) const
+{
+    const Preset *machine = state.mixed ? state.machine_of(size_t(m_filament_idx)) : nullptr;
+    if (machine == nullptr || machine == &m_preset_bundle->printers.get_edited_preset())
+        return mainline_match;
+    // The tool head carries another size than the printer preset. The name probe of the caller
+    // rates against the printer preset, so it finds the version of that size or nothing at all;
+    // the version for the tool head is the member of the same family that serves its machine preset.
+    const PresetCollection &filaments = m_preset_bundle->filaments;
+    if (mainline_match != nullptr)
+        if (const Preset *system = NozzleFilament::system_ancestor(filaments, *mainline_match); system != nullptr)
+            if (const Preset *version = NozzleFilament::version_for(filaments, *system, *machine); version != nullptr)
+                return version;
+    for (const Preset &candidate : filaments)
+        if (candidate.is_system && candidate.alias == filament_name)
+            if (const Preset *version = NozzleFilament::version_for(filaments, candidate, *machine); version != nullptr)
+                return version;
+    return mainline_match;
+}
+
+wxString PresetComboBox::nozzle_size_marker(const NozzleFilament::State &state, const Preset &preset) const
+{
+    if (m_preset_bundle == nullptr || m_filament_idx < 0 || preset.is_default)
+        return {};
+    const double size = NozzleFilament::preset_nozzle_size(*m_preset_bundle, preset);
+    if (size <= 0.)
+        return {};
+    const size_t head      = state.head_of(size_t(m_filament_idx));
+    const double head_size = head < state.head_size.size() ? state.head_size[head] : 0.;
+    const double home      = NozzleFilament::home_nozzle_size(m_preset_bundle->printers.get_edited_preset().config);
+    if ((head_size <= 0. || std::abs(size - head_size) < EPSILON) && (home <= 0. || std::abs(size - home) < EPSILON))
+        return {};
+    // TRN: the nozzle size a filament preset is made for, in front of its name in the filament list. %1% is a number like 0.2.
+    std::string number = float_to_string_decimal_point(size, 2);
+    while (number.find('.') != std::string::npos && (number.back() == '0' || number.back() == '.'))
+        number.pop_back();
+    return format_wxstr(_L("%1% mm"), number);
+}
+
 wxString PresetComboBox::get_preset_item_name(unsigned int index)
 {
     if (m_type == Preset::TYPE_PRINTER) {
@@ -1104,10 +1153,15 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
                 return;
             }
 
-            // Get filament_id from filament_presets
+            // Get filament_id from filament_presets. FilamentPickerDialog looks up
+            // filaments_color_codes.json, which is downloaded from Bambu and keyed by the
+            // printer's own ids, so translate our OF id (the "GFA00" fallback is already one).
             const std::string& preset_name = m_preset_bundle->filament_presets[m_filament_idx];
             const Preset* selected_preset = m_collection->find_preset(preset_name);
-            wxString fila_id = selected_preset ? wxString::FromUTF8(selected_preset->filament_id) : "GFA00";
+            auto* agent = wxGetApp().getAgent();
+            wxString fila_id = "GFA00";
+            if (selected_preset)
+                fila_id = wxString::FromUTF8(agent ? agent->from_orca_filament_id(selected_preset->filament_id) : selected_preset->filament_id);
             EncodedFilamentColor fila_color = get_cur_color_info();
 
             // Show filament picker dialog
@@ -1237,7 +1291,12 @@ bool PlaterPresetComboBox::switch_to_tab()
         const std::string& selected_preset = GetString(GetSelection()).ToUTF8().data();
         if (!boost::algorithm::starts_with(selected_preset, Preset::suffix_modified()))
         {
-            const std::string& preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
+            std::string preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
+            // Snapmaker Orca: the displayed alias is shared by the versions of a material for the
+            // nozzle sizes, and the lookup above returns the one of the printer preset. The editor
+            // opens the preset the slot holds.
+            if (NozzleFilament::State slot_state; this->filament_slot_state(slot_state))
+                preset_name = m_preset_bundle->filament_presets[m_filament_idx];
             if (wxGetApp().get_tab(m_type)->select_preset(preset_name))
                 wxGetApp().get_tab(m_type)->get_combo_box()->set_filament_idx(m_filament_idx);
             else {
@@ -1544,6 +1603,14 @@ void PlaterPresetComboBox::update()
     // and draw a red flag in front of the selected preset.
     bool wide_icons = selected_preset && !selected_preset->is_compatible;
 
+    // Snapmaker Orca: filament presets follow the nozzle size of their tool head. The combo of a
+    // slot with a tool head rates the presets against that tool head, and always lists the preset
+    // the slot holds. Every other combo keeps reading Preset::is_compatible.
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
+    if (slot_rule)
+        wide_icons = selected_preset && !m_preset_bundle->filament_slot_fits(slot_state, *selected_preset, size_t(m_filament_idx));
+
     std::map<wxString, wxBitmap*> nonsys_presets;
     //BBS: add project embedded presets logic
     std::map<wxString, wxBitmap*>  project_embedded_presets;
@@ -1592,6 +1659,11 @@ void PlaterPresetComboBox::update()
         bool single_bar = false;
         wxString name = from_u8(preset.name);
         preset_aliases[name] = get_preset_name(preset).utf8_string(); // ORCA
+        // Snapmaker Orca: the versions of a material share the alias; one that is made for another
+        // size than the tool head of the slot, or than the printer preset, tells its size, in
+        // front of the alias so that a narrow combo keeps it.
+        if (slot_rule)
+            preset_aliases[name] = NozzleFilament::size_marked_label(preset_aliases[name], this->nozzle_size_marker(slot_state, preset).utf8_string());
 
         // Track bundle names for bundled presets
         if (preset.is_from_bundle()) {
@@ -1633,7 +1705,9 @@ void PlaterPresetComboBox::update()
 
         preset_descriptions.emplace(name, from_u8(preset.description));
 
-        if (!preset.is_compatible) {
+        const bool listed = slot_rule ? is_selected || m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) :
+                                        preset.is_compatible;
+        if (!listed) {
             if (boost::ends_with(name, " template"))
                 continue;
             uncompatible_presets.emplace(name, bmp);
@@ -1729,7 +1803,9 @@ void PlaterPresetComboBox::update()
         std::string currentNozzleInfo;
         if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             nd_opt && !nd_opt->values.empty()) {
-            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            // Snapmaker Orca: the size of the tool head that prints the slot, not of the first one.
+            const size_t slot_head = slot_rule ? slot_state.head_of(size_t(m_filament_idx)) : 0;
+            currentNozzleInfo = float_to_string_decimal_point(slot_head < nd_opt->values.size() ? nd_opt->values[slot_head] : nd_opt->values.front(), 2);
             while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
                 currentNozzleInfo.pop_back();
             if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
@@ -1765,8 +1841,13 @@ void PlaterPresetComboBox::update()
                 return false;
             });
 
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
+            // Snapmaker Orca: on a tool head of another size than the printer preset the entry
+            // stands for the version of the material for that size; the item stores its name,
+            // because the displayed alias resolves to the version of the printer preset.
+            const Preset *mainline_match = item_iter != filaments.end() ? &*item_iter : nullptr;
+            const Preset *machine_preset = slot_rule ? this->machine_filament_for_slot(slot_state, filament_name, mainline_match) : mainline_match;
+            if (machine_preset != nullptr) {
+                const_cast<Preset&>(*machine_preset).is_visible = true;
                 const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
                 std::vector<std::string> colors = machineInfo.multiColors;
                 if (colors.empty() && !machineInfo.color_info.empty())
@@ -1776,7 +1857,9 @@ void PlaterPresetComboBox::update()
                 if (icon == nullptr)
                     icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
                 wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                const int item = Append(get_preset_name(*machine_preset), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                if (machine_preset != mainline_match)
+                    SetItemAlias(item, from_u8(machine_preset->name));
             }
         }
         m_last_ams_filament = GetCount();
@@ -2370,7 +2453,7 @@ void TabPresetComboBox::OnSelect(wxCommandEvent &evt)
         default: break;
         }
         if (sp != ConfigWizard::SP_WELCOME) {
-            wxTheApp->CallAfter([this, sp]() {
+            wxTheApp->CallAfter([sp]() {
                 run_wizard(sp);
             });
         }
@@ -2436,10 +2519,29 @@ void TabPresetComboBox::update()
             m_preset_bundle->physical_printers.unselect_printer();
     }
 
+    // Snapmaker Orca: filament presets follow the nozzle size of their tool head. While the tab
+    // edits the filament of a slot with a tool head, the list is rated against that tool head, as
+    // the combo of the slot in the sidebar is.
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
+    auto listed = [this, &slot_state, slot_rule](const Preset &preset) {
+        return slot_rule ? m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) : preset.is_compatible;
+    };
+    // Size markers of the user presets, by preset name (nozzle_size_marker()), and the label of
+    // an item: the marker in front of the name, the name alone without one.
+    std::map<wxString, wxString> size_markers;
+    auto marker_of = [&size_markers](const wxString &name) {
+        const auto it = size_markers.find(name);
+        return it == size_markers.end() ? wxString() : it->second;
+    };
+    auto marked_label = [&marker_of](const wxString &name) {
+        return from_u8(NozzleFilament::size_marked_label(into_u8(name), into_u8(marker_of(name))));
+    };
+
     for (size_t i = presets.front().is_visible ? 0 : m_collection->num_default_presets(); i < presets.size(); ++i)
     {
         const Preset& preset = presets[i];
-        if (!preset.is_visible || (!show_incompatible && !preset.is_compatible && i != idx_selected))
+        if (!preset.is_visible || (!show_incompatible && i != idx_selected && !listed(preset)))
             continue;
 
         // marker used for disable incompatible printer models for the selected physical printer
@@ -2450,6 +2552,12 @@ void TabPresetComboBox::update()
 
         const wxString name = from_u8(preset.name);
         preset_aliases[name] = get_preset_name(preset).utf8_string();
+        // Snapmaker Orca: a user preset made for another nozzle size than the tool head of the
+        // slot, or than the printer preset, tells its size. The system presets are listed by
+        // their full names here, which name the size already.
+        if (slot_rule && !preset.is_system && !preset.is_from_bundle())
+            if (const wxString marker = this->nozzle_size_marker(slot_state, preset); !marker.empty())
+                size_markers[name] = marker;
         if (preset.is_system)
             preset_descriptions.emplace(name, from_u8(preset.description));
 
@@ -2511,7 +2619,9 @@ void TabPresetComboBox::update()
         std::string currentNozzleInfo;
         if (const auto* nd_opt = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
             nd_opt && !nd_opt->values.empty()) {
-            currentNozzleInfo = float_to_string_decimal_point(nd_opt->values.front(), 2);
+            // Snapmaker Orca: the size of the tool head that prints the slot, not of the first one.
+            const size_t slot_head = slot_rule ? slot_state.head_of(size_t(m_filament_idx)) : 0;
+            currentNozzleInfo = float_to_string_decimal_point(slot_head < nd_opt->values.size() ? nd_opt->values[slot_head] : nd_opt->values.front(), 2);
             while (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '0')
                 currentNozzleInfo.pop_back();
             if (!currentNozzleInfo.empty() && currentNozzleInfo.back() == '.')
@@ -2546,8 +2656,13 @@ void TabPresetComboBox::update()
                 return false;                
                 });
 
-            if (item_iter != filaments.end()) {
-                const_cast<Preset&>(*item_iter).is_visible = true;
+            // Snapmaker Orca: on a tool head of another size than the printer preset the entry
+            // stands for the version of the material for that size; the item stores its name,
+            // because the displayed alias resolves to the version of the printer preset.
+            const Preset *mainline_match = item_iter != filaments.end() ? &*item_iter : nullptr;
+            const Preset *machine_preset = slot_rule ? this->machine_filament_for_slot(slot_state, filament_name, mainline_match) : mainline_match;
+            if (machine_preset != nullptr) {
+                const_cast<Preset&>(*machine_preset).is_visible = true;
                 const ConnectMachineInfo& machineInfo = machine_nozzles_list[i];
                 std::vector<std::string> colors = machineInfo.multiColors;
                 if (colors.empty() && !machineInfo.color_info.empty())
@@ -2557,7 +2672,9 @@ void TabPresetComboBox::update()
                 if (icon == nullptr)
                     icon = get_extruder_color_icon(machineInfo.color_info, name, 24, 16);
                 wxBitmap bmp(*icon);
-                Append(get_preset_name(*item_iter), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                const int item = Append(get_preset_name(*machine_preset), bmp.ConvertToImage(), &m_first_ams_filament + i);
+                if (machine_preset != mainline_match)
+                    SetItemAlias(item, from_u8(machine_preset->name));
             }
         }
 
@@ -2569,7 +2686,10 @@ void TabPresetComboBox::update()
     {
         set_label_marker(Append(_L("Project-inside presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = project_embedded_presets.begin(); it != project_embedded_presets.end(); ++it) {
-            int item_id = Append(it->first, *it->second.first);
+            int item_id = Append(marked_label(it->first), *it->second.first);
+            // A marked item is resolved by the name it carries, not by its label.
+            if (!marker_of(it->first).empty())
+                SetItemAlias(item_id, it->first);
             SetItemTooltip(item_id, preset_descriptions[it->first]);
             bool is_enabled = it->second.second;
             if (!is_enabled)
@@ -2581,7 +2701,7 @@ void TabPresetComboBox::update()
     {
         set_label_marker(Append(_L("User presets"), wxNullBitmap, DD_ITEM_STYLE_SPLIT_ITEM));
         for (std::map<wxString, std::pair<wxBitmap*, bool>>::iterator it = nonsys_presets.begin(); it != nonsys_presets.end(); ++it) {
-            int item_id = Append(it->first, *it->second.first);
+            int item_id = Append(marked_label(it->first), *it->second.first);
             SetItemAlias(item_id, it->first);
             SetItemTooltip(item_id, preset_descriptions[it->first]);
             bool is_enabled = it->second.second;
@@ -2645,6 +2765,8 @@ void TabPresetComboBox::update_dirty()
 
     // 2) Update the labels.
     wxWindowUpdateLocker noUpdates(this);
+    NozzleFilament::State slot_state;
+    const bool            slot_rule = this->filament_slot_state(slot_state);
     for (unsigned int ui_id = 0; ui_id < GetCount(); ++ui_id) {
         auto marker = reinterpret_cast<Marker>(this->GetClientData(ui_id));
         if (marker >= LABEL_ITEM_MARKER)
@@ -2653,6 +2775,17 @@ void TabPresetComboBox::update_dirty()
         std::string   old_label = GetString(ui_id).utf8_str().data();
         std::string   preset_name = Preset::remove_suffix_modified(old_label);
         std::string   ph_printer_name;
+        // Snapmaker Orca: a filament item with a size marker is resolved by the name it carries.
+        // Only the presets update() marks get the marker back: the system and bundle items carry
+        // a stored name too, and their full names tell the size already.
+        std::string   size_marker;
+        if (slot_rule && marker != LABEL_ITEM_PHYSICAL_PRINTER)
+            if (const wxString stored = GetItemAlias(ui_id); !stored.empty())
+                if (const Preset *marked = m_collection->find_preset(into_u8(stored), false); marked != nullptr) {
+                    preset_name = marked->name;
+                    if (!marked->is_system && !marked->is_from_bundle())
+                        size_marker = into_u8(this->nozzle_size_marker(slot_state, *marked));
+                }
 
         if (marker == LABEL_ITEM_PHYSICAL_PRINTER) {
             ph_printer_name = PhysicalPrinter::get_short_name(preset_name);
@@ -2661,7 +2794,7 @@ void TabPresetComboBox::update_dirty()
 
         Preset* preset = m_collection->find_preset(preset_name, false);
         if (preset) {
-            std::string new_label = preset->label(true);
+            std::string new_label = NozzleFilament::size_marked_label(preset->label(true), size_marker);
 
             if (marker == LABEL_ITEM_PHYSICAL_PRINTER)
                 new_label = ph_printer_name + PhysicalPrinter::separator() + new_label;
@@ -2686,7 +2819,7 @@ GUI::CalibrateFilamentComboBox::CalibrateFilamentComboBox(wxWindow *parent)
 {
     clr_picker->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
     clr_picker->SetToolTip("");
-    clr_picker->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {});
+    clr_picker->Bind(wxEVT_BUTTON, [](wxCommandEvent& e) {});
 }
 
 GUI::CalibrateFilamentComboBox::~CalibrateFilamentComboBox()

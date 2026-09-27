@@ -324,7 +324,7 @@ static bool preset_deep_equal(const Preset& a, const Preset& b)
         && a.is_compatible == b.is_compatible && a.is_project_embedded == b.is_project_embedded
         && a.name == b.name && a.file == b.file && a.loaded == b.loaded
         && a.config.equals(b.config)
-        && a.alias == b.alias && a.renamed_from == b.renamed_from
+        && a.alias == b.alias && a.system_inherits == b.system_inherits && a.renamed_from == b.renamed_from
         && a.m_excluded_from == b.m_excluded_from && a.m_from_orca_filament_lib == b.m_from_orca_filament_lib
         && a.bundle_id == b.bundle_id && a.version == b.version && a.ini_str == b.ini_str
         && a.setting_id == b.setting_id && a.filament_id == b.filament_id && a.user_id == b.user_id

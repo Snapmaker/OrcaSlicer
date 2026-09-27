@@ -1,7 +1,9 @@
 // Implementation of web communication protocol for Slicer Studio
 #include "SSWCP.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 #include "FilamentColorUtils.hpp"
 #include "GUI_App.hpp"
+#include "DeviceManager.hpp"
 #include "MainFrame.hpp"
 #include "DownloadManager.hpp"
 #include "Timelapse/TimelapseDownloadPopup.hpp"
@@ -9,6 +11,7 @@
 #include "slic3r/GUI/Tab.hpp"
 #include "libslic3r/Model.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include <algorithm>
 #include <iterator>
 #include <exception>
@@ -29,6 +32,9 @@
 #include <boost/asio/ip/host_name.hpp>
 #include <wx/stdpaths.h>
 #include <wx/msgdlg.h>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 #include "slic3r/Utils/Http.hpp"
 
 #include <slic3r/GUI/Widgets/WebView.hpp>
@@ -49,7 +55,6 @@
 #include "slic3r/Utils/Http.hpp"
 #include "libslic3r/Utils.hpp"
 #include <boost/filesystem/operations.hpp>
-#include <openssl/sha.h>
 
 namespace pt = boost::property_tree;
 
@@ -253,7 +258,7 @@ std::vector<std::string> load_thumbnails(const std::string& file, size_t image_c
     ifs.clear();
     ifs.seekg(0);
 
-    return std::move(res);
+    return res;
 }
 
 // Util
@@ -396,24 +401,13 @@ std::string make_wcp_download_url(const std::string& file_path)
 // Compute SHA-256 digest → standard Base64, matching Flutter's base64Encode(sha256.convert(bytes).bytes)
 static std::string calc_sha256_base64(const std::string& file_path)
 {
-    std::ifstream ifs(file_path, std::ios::binary);
-    if (!ifs.is_open()) {
+    // The digest lives in libslic3r (EVP, UTF-8 path, never a partial hash) so that it has a unit
+    // test. "" means "no checksum", which is what an unreadable file always produced here.
+    std::array<unsigned char, 32> digest;
+    if (!Slic3r::calc_file_sha256(file_path, digest)) {
         return "";
     }
-
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-
-    static constexpr size_t kChunkSize = 64 * 1024;
-    std::string             buf(kChunkSize, 0);
-    while (ifs.read(buf.data(), buf.size()) || ifs.gcount() > 0) {
-        SHA256_Update(&ctx, buf.data(), ifs.gcount());
-    }
-
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256_Final(digest, &ctx);
-
-    return base64_encode((const char*) digest, SHA256_DIGEST_LENGTH);
+    return base64_encode((const char*) digest.data(), digest.size());
 }
 
 json get_or_create_zip_json(const std::string& name1,   // origin file "1.gcode"
@@ -496,6 +490,8 @@ void SSWCP_Instance::process() {
         sw_UnsubscribeCacheKeys();
     } else if (m_cmd == "sw_UploadEvent") {
         sw_UploadEvent();
+    } else if (m_cmd == "sw_SnapLog") {
+        sw_SnapLog();
     } else if (m_cmd == "sw_OpenOrcaWebview") {
         sw_OpenOrcaWebview();
     } else if (m_cmd == "sw_OpenBrowser") {
@@ -545,6 +541,90 @@ void SSWCP_Instance::sw_UploadEvent() {
     catch (std::exception& e) {
         handle_general_fail();
     }
+}
+
+namespace {
+// Snapmaker Orca: limits for what a web page may put into the SnapLog queue. The client caps a
+// rendered line much lower (2000 bytes per value, 8000 per ext object), but only when it renders;
+// until then the queue of up to 4096 entries would hold whatever a page sends.
+constexpr std::size_t SNAPLOG_WCP_MAX_TEXT_BYTES = 64 * 1024;
+constexpr std::size_t SNAPLOG_WCP_MAX_LOG_BYTES  = 8 * 1024;
+constexpr std::size_t SNAPLOG_WCP_MAX_EXT_PAIRS  = 64;
+
+// Cuts on a UTF-8 character boundary.
+void snaplog_wcp_clip(std::string& text, std::size_t max_bytes)
+{
+    if (text.size() <= max_bytes)
+        return;
+    std::size_t cut = max_bytes;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80)
+        --cut;
+    text.resize(cut);
+}
+} // namespace
+
+// Forwards a page event to SnapLog, clipped by snaplog_wcp_clip(). Exists in every build: without
+// SnapLog the event is dropped, but "log" still reaches the local log and the page gets an answer.
+void SSWCP_Instance::sw_SnapLog()
+{
+    const auto require_string = [this](const char* name) -> bool {
+        auto it = m_param_data.find(name);
+        if (it == m_param_data.end() || !it->is_string()) return false;
+        return true;
+    };
+    if (!require_string("level")) {
+        handle_general_fail(-1, "param [level] required!");
+        return;
+    }
+    if (!require_string("message")) {
+        handle_general_fail(-1, "param [message] required!");
+        return;
+    }
+    if (m_param_data.count("policy") && !m_param_data["policy"].is_string()) {
+        handle_general_fail(-1, "param [policy] must be a string!");
+        return;
+    }
+
+    std::string level_str = m_param_data["level"].get<std::string>();
+    std::string message   = m_param_data["message"].get<std::string>();
+    snaplog_wcp_clip(message, SNAPLOG_WCP_MAX_TEXT_BYTES);
+
+    if (m_param_data.count("log") && !m_param_data["log"].empty()) {
+        const auto& log_value = m_param_data["log"];
+        std::string local_log = log_value.is_string() ? log_value.get<std::string>() : log_value.dump();
+        boost::algorithm::trim(local_log);
+        snaplog_wcp_clip(local_log, SNAPLOG_WCP_MAX_LOG_BYTES);
+        if (!local_log.empty()) {
+            BOOST_LOG_TRIVIAL(warning) << "[WCP] [SnapLog] " << local_log;
+        }
+    }
+
+    using namespace Slic3r::SnapLog::v1;
+    SnapLogExt ext;
+    if (m_param_data.count("ext") && m_param_data["ext"].is_object()) {
+        for (auto it = m_param_data["ext"].begin(); it != m_param_data["ext"].end(); ++it) {
+            if (ext.size() >= SNAPLOG_WCP_MAX_EXT_PAIRS)
+                break;
+            ext.emplace_back(it.key(), it.value().is_string() ? it.value().get<std::string>() : it.value().dump());
+            snaplog_wcp_clip(ext.back().first, SNAPLOG_WCP_MAX_TEXT_BYTES);
+            snaplog_wcp_clip(ext.back().second, SNAPLOG_WCP_MAX_TEXT_BYTES);
+        }
+    }
+    ext.emplace_back("source", "flutter");
+
+    std::string policy_str = m_param_data.count("policy")
+        ? m_param_data["policy"].get<std::string>() : "realtime";
+
+    SnapLogLevel lvl = (level_str == "ERROR" || level_str == "error") ? SnapLogLevel::Error
+                    : (level_str == "WARN"  || level_str == "warning") ? SnapLogLevel::Warning
+                    : SnapLogLevel::Info;
+    SnapLogPolicy pol = (policy_str == "batched" || policy_str == "batch")
+        ? SnapLogPolicy::Buffered : SnapLogPolicy::Realtime;
+
+    SnapLogClient::instance().log(lvl, message, std::move(ext), pol, "flutter", 0);
+
+    send_to_js();
+    finish_job();
 }
 
 void SSWCP_Instance::sw_GetSoftwareInfo()
@@ -1602,6 +1682,16 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                 return;
             }
 
+            // Validate optional nozzle_volume_types
+            std::vector<std::string> nozzle_volume_types;
+            const auto flow_status = SSWCPProtocol::parse_optional_flow_types(
+                j_value, "nozzle_volume_types", j_value["filament_official"].size(), nozzle_volume_types);
+            if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Invalid) {
+                // Degrade: treat malformed flow data as absent rather than aborting the
+                // entire filament update, which would discard otherwise-valid entries.
+                nozzle_volume_types.clear();
+            }
+
             // save filament and update the gui filament
             auto& filaments = wxGetApp().preset_bundle->machine_filaments;
             auto& machine_nozzles = wxGetApp().preset_bundle->m_connect_machine_info_list;
@@ -1694,6 +1784,8 @@ void SSWCP_Instance::update_filament_info(const json& objects, bool send_message
                         machineData.colorMode = FilamentColorMode::Segment;
                     if (j_value["nozzle_diameters"].is_array() && !j_value["nozzle_diameters"].empty())
                         machineData.nozzle_info = j_value["nozzle_diameters"][i].get<std::string>();
+                    if (flow_status == SSWCPProtocol::OptionalFlowTypesStatus::Valid && i < nozzle_volume_types.size())
+                        machineData.nozzle_volume_type = nozzle_volume_types[i];
                     machine_nozzles.push_back(machineData);
                 }
             }
@@ -1834,6 +1926,9 @@ void SSWCP_MachineFind_Instance::sw_WakeupFind()
 void SSWCP_MachineFind_Instance::sw_StartMachineFind()
 {
     try {
+        SNAP_LOG_BATCH(Info, "device discovery start",
+            {"eventName", "device_discovery_start"},
+            {"source", "cpp"});
 
         std::vector<string> protocols;
 
@@ -3172,11 +3267,30 @@ void SSWCP_MachineOption_Instance::sw_FinishFilamentMapping()
                 }else{
                     dialog->SafeEndModal(wxID_CANCEL);
                 }
+
+                // Dispatch the post-close action selected by params.event. Absent, unknown and
+                // malformed values close the webview only.
+                switch (SSWCPProtocol::parse_finish_filament_mapping_event(m_param_data)) {
+                case SSWCPProtocol::FinishFilamentMappingEvent::CustomFlowRegroup:
+                    on_finish_filament_mapping_custom_flow_regroup();
+                    break;
+                case SSWCPProtocol::FinishFilamentMappingEvent::None:
+                    break;
+                }
             }
         }
     } catch (std::exception& e) {
         handle_general_fail();
     }
+}
+void SSWCP_MachineOption_Instance::on_finish_filament_mapping_custom_flow_regroup()
+{
+    // Filaments print with the flow type of their tool head, so the request opens the Flow row of
+    // the sidebar nozzle tabs. CallAfter lets the modal webview close first.
+    wxGetApp().CallAfter([]() {
+        if (wxGetApp().plater() != nullptr)
+            wxGetApp().plater()->show_tool_head_flow_types();
+    });
 }
 void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
 {
@@ -3284,6 +3398,30 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 filament_types.emplace_back(std::move(filament_type));
             }
             response["filament_type"] = filament_types;
+        }
+
+        // Flow types of the file in the wire spelling: tool heads as sliced (else the project's); a
+        // filament reports the type of the tool head that prints it.
+        {
+            size_t filament_count = 0;
+            if (const auto* ftype_opt = full_config.option<ConfigOptionStrings>("filament_type"))
+                filament_count = std::max(filament_count, ftype_opt->values.size());
+            if (const auto* fcolour_opt = full_config.option<ConfigOptionStrings>("filament_colour"))
+                filament_count = std::max(filament_count, fcolour_opt->values.size());
+            if (filament_count == 0) filament_count = 1;
+
+            const auto* volume_types = full_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+            if (volume_types == nullptr)
+                volume_types = wxGetApp().preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+            const std::vector<int> head_types = volume_types != nullptr ? volume_types->values : std::vector<int>();
+            size_t head_count = head_types.size();
+            if (const auto* diameters = full_config.option<ConfigOptionFloats>("nozzle_diameter"))
+                head_count = diameters->values.size();
+
+            const std::vector<int> filament_types = SSWCPProtocol::filament_volume_types_by_head(
+                head_types, wxGetApp().plater()->filament_tool_heads(filament_count, head_count), filament_count);
+            response["filament_volume_type"] = SSWCPProtocol::build_filament_volume_types(&filament_types, filament_count);
+            response["nozzle_volume_types"]  = SSWCPProtocol::build_nozzle_volume_types(head_types, head_count);
         }
 
         // file nozzle diameters
@@ -6556,11 +6694,21 @@ void SSWCP_MachineManage_Instance::sw_UpdateDeviceInfo()
 
 // SSWCP_MqttAgent_Instance
 
+namespace {
+// Fresh UUID string for connectSessionId — the funnel-correlation key shared by
+// every mqtt-agent event in one connection attempt (see SSWCP.hpp).
+std::string make_connect_session_id()
+{
+    return boost::uuids::to_string(boost::uuids::random_generator()());
+}
+} // namespace
+
 std::unordered_map<wxWebView*, std::pair<std::string, std::shared_ptr<MqttClient>>> SSWCP_MqttAgent_Instance::m_mqtt_engine_map;
 std::mutex                                          SSWCP_MqttAgent_Instance::m_engine_map_mtx;
 std::map<std::pair<std::string, wxWebView*>, std::string>   SSWCP_MqttAgent_Instance::m_subscribe_map;
 std::map<std::pair<std::string, wxWebView*>, std::weak_ptr<SSWCP_Instance>> SSWCP_MqttAgent_Instance::m_subscribe_instance_map;
 WebPresetDialog*                                                                    SSWCP_MqttAgent_Instance::m_dialog = nullptr;
+std::unordered_map<wxWebView*, std::string>                                          SSWCP_MqttAgent_Instance::m_connect_session_map;
 
 void SSWCP_MqttAgent_Instance::process()
 {
@@ -6606,6 +6754,16 @@ void SSWCP_MqttAgent_Instance::set_Instance_illegal()
     SSWCP_Instance::set_Instance_illegal();
 
     clean_current_engine();
+}
+
+// Snapmaker Orca: see SSWCP.hpp. Called by SSWCP::on_webview_delete() with the real pointer.
+// Without it the map keeps one entry per destroyed view, and a new wxWebView at the same address
+// inherits a stale funnel id until its first sw_create_mqtt_client.
+void SSWCP_MqttAgent_Instance::forget_webview(wxWebView* view)
+{
+    std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+    if (m_connect_session_map.erase(view) > 0)
+        BOOST_LOG_TRIVIAL(debug) << "SSWCP_MqttAgent_Instance::forget_webview: connect session id dropped";
 }
 
 // detele mqtt instance
@@ -6675,6 +6833,22 @@ void SSWCP_MqttAgent_Instance::mqtt_msg_cb(const std::string& topic, const std::
 void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 {
     try {
+        // Assign the funnel id for this connection attempt; all subsequent
+        // mqtt-agent events (connect/subscribe/set_engine/disconnect) reuse it.
+        set_connect_session_id(make_connect_session_id());
+        const std::string session_id = get_connect_session_id();
+
+        // A new connect attempt starts here. Reset the per-device SnapLog identity so
+        // this session's preamble events (create/connect/subscribe, which fire BEFORE
+        // sw_mqtt_set_engine refreshes them) don't inherit the PREVIOUS device's values.
+        // Without this, switching devices without a disconnect in between mis-tags the
+        // whole connect funnel with the prior printerSN/connect_clientid.
+        // print_sn stays empty here (sn is only known to sw_mqtt_set_engine); connect_clientid
+        // is re-filled just below, right after clientId is validated.
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
+
+        // Parse connection parameters.
         std::string server_address = "";
         std::string clientId       = "";
         std::string ca             = "";
@@ -6687,11 +6861,17 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("server_address") || !m_param_data["server_address"].is_string()) {
             server_address = m_param_data["server_address"].get<std::string>();
             if (server_address == "") {
+                SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                    {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                    {"connectSessionId", session_id}, {"reason", "server_address illegal"});
                 handle_general_fail(-1, "the value of param [server_address] is illegal");
                 return;
             }
         }
         else {
+            SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                {"connectSessionId", session_id}, {"reason", "server_address missing"});
             handle_general_fail(-1, "param [server_address] is required or wrong type");
             return;
         }
@@ -6699,13 +6879,24 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         if (m_param_data.count("clientId") || !m_param_data["clientId"].is_string()) {
             clientId = m_param_data["clientId"].get<std::string>();
             if (clientId == "") {
+                SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                    {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                    {"connectSessionId", session_id}, {"reason", "clientId illegal"});
                 handle_general_fail(-1, "the value of param [clientId] is illegal");
                 return;
             }
         } else {
+            SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                {"connectSessionId", session_id}, {"reason", "clientId missing"});
             handle_general_fail(-1, "param [clientId] is required or wroing type");
             return;
         }
+
+        // clientId is validated and non-empty here — mirror it into SnapLog now so this
+        // session's connect-stage events carry the correct connect_clientid (matches what
+        // sw_mqtt_set_engine sets later at SSWCP.cpp:5847), instead of the cleared value above.
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid(clientId);
 
         ca = m_param_data.count("ca") ? m_param_data["ca"].get<std::string>() : "";
         cert = m_param_data.count("cert") ? m_param_data["cert"].get<std::string>() : "";
@@ -6726,7 +6917,11 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
             client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
         }
 
-        if (client == nullptr) {            
+        if (client == nullptr) {
+            // Report client creation failure before returning.
+            SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                {"connectSessionId", session_id}, {"reason", "create instance failed"});
             handle_general_fail(-1, "create instance failed");
             return;
         }
@@ -6741,6 +6936,9 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         //
         bool flag = set_current_engine({std::to_string(int64_t(client.get())), client});
         if (!flag) {
+            SNAP_LOG_BATCH(Error, "mqtt client create failed",
+                {"eventName", "mqtt_client_create_failed"}, {"source", "cpp"},
+                {"connectSessionId", session_id}, {"reason", "set_current_engine failed"});
             handle_general_fail(-1, "create failed");
             return;
         }
@@ -6750,9 +6948,14 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         m_res_data["type"] = type;
         m_res_data["id"]   = std::to_string(int64_t(get_current_engine().get()));
 
+        SNAP_LOG_BATCH(Info, "mqtt client created",
+            {"eventName", "mqtt_client_create"}, {"source", "cpp"},
+            {"connectSessionId", session_id},
+            {"transport", type}, {"useTls", type == "mqtts" ? "true" : "false"},
+            {"server", server_address});
+
         send_to_js();
         finish_job();
-
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -6762,6 +6965,9 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
 void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
 {
     try {
+        SNAP_LOG_BATCH(Info, "mqtt connect attempt",
+            {"eventName", "mqtt_connect_attempt"}, {"source", "cpp"},
+            {"connectSessionId", get_connect_session_id()});
         if (!m_param_data.count("id") || !m_param_data["id"].is_string()) {
             handle_general_fail(-1, "param [id] is required or wrong type");
 
@@ -6788,8 +6994,12 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
                 return;
             }
             auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
 
-            engine->SetConnectionFailureCallback([engine]() {
+            engine->SetConnectionFailureCallback([engine, session_id]() {
+                SNAP_LOG_BATCH(Error, "mqtt connection failure callback",
+                    {"eventName", "mqtt_connect_failure"}, {"source", "cpp"},
+                    {"connectSessionId", session_id});
                 std::string msg = "";
                 engine->Disconnect(msg);
             });
@@ -6797,14 +7007,21 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
             std::string msg;
             bool flag = engine->Connect(msg);
 
-            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+            wxGetApp().CallAfter([weak_ptr, msg, flag, session_id]() {
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
+                        SNAP_LOG_BATCH(Info, "mqtt connect result",
+                            {"eventName", "mqtt_connect_result"}, {"source", "cpp"},
+                            {"connectSessionId", session_id}, {"success", "true"});
                         self->m_msg = msg;
                         self->send_to_js();
                         self->finish_job();
                     } else {
+                        SNAP_LOG_BATCH(Error, "mqtt connect result",
+                            {"eventName", "mqtt_connect_result"}, {"source", "cpp"},
+                            {"connectSessionId", session_id}, {"success", "false"},
+                            {"reason", msg});
                         self->handle_general_fail(-1, msg);
                     }
                 }
@@ -6844,14 +7061,25 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_disconnect()
                 return;
             }
             auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
 
             std::string msg  = "success";
             bool        flag = engine->Disconnect(msg);
+            if (flag && self) {
+                // Connection gone — drop the funnel id so later events don't reuse it.
+                self->clear_connect_session_id();
+            }
 
-            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+            wxGetApp().CallAfter([weak_ptr, msg, flag, session_id]() {
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
+                        SNAP_LOG_BATCH(Info, "device disconnect",
+                            {"eventName", "device_disconnect"}, {"source", "cpp"},
+                            {"connectSessionId", session_id});
+                        // Printer disconnected — clear Flutter MQTT identity in SnapLog.
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid("");
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
                         self->m_msg = msg;
                         self->send_to_js();
                         self->finish_job();
@@ -6921,15 +7149,20 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                 return;
             }
             auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
+            const std::string session_id = self ? self->get_connect_session_id() : std::string{};
 
             std::string msg  = "success";
             bool        flag = engine->Subscribe(topic, qos, msg);
 
-            wxGetApp().CallAfter([weak_ptr, msg, flag]() {
+            wxGetApp().CallAfter([weak_ptr, msg, flag, topic, qos, session_id]() {
                 auto self = weak_ptr.lock();
                 if (self) {
                     if (flag) {
-                        // response set event_id 
+                        SNAP_LOG_BATCH(Info, "mqtt subscribe result",
+                            {"eventName", "mqtt_subscribe_result"}, {"source", "cpp"},
+                            {"connectSessionId", session_id}, {"success", "true"},
+                            {"topic", topic}, {"qos", std::to_string(qos)});
+                        // response set event_id
                         if (self->m_event_id != "") {
                             self->m_msg = msg;
                             self->send_to_js();
@@ -6942,6 +7175,11 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_subscribe()
                         }
 
                     } else {
+                        SNAP_LOG_BATCH(Warning, "mqtt subscribe result",
+                            {"eventName", "mqtt_subscribe_result"}, {"source", "cpp"},
+                            {"connectSessionId", session_id}, {"success", "false"},
+                            {"topic", topic}, {"qos", std::to_string(qos)},
+                            {"reason", msg});
                         self->handle_general_fail(-1, msg);
                     }
                 }
@@ -7111,6 +7349,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                         host->m_sn_mtx.lock();
                         host->m_sn = m_param_data["sn"].get<std::string>();
                         host->m_sn_mtx.unlock();
+                        // Mirror-push printer SN into SnapLog (emitted in ext as print_sn).
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn(m_param_data["sn"].get<std::string>());
                     } else {
                         handle_general_fail(-1, "param [sn] is required or wrong type");
                         return;
@@ -7156,11 +7396,20 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                     if (m_param_data.count("clientId")) {
                         connect_params["clientId"] = m_param_data["clientId"];
                         host->m_client_id           = m_param_data["clientId"].get<std::string>();
+                        // Mirror-push MQTT clientId into SnapLog (emitted in ext as connect_clientid).
+                        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_connect_clientid(host->m_client_id);
                     }
 
 
                     std::string link_mode       = m_param_data.count("link_mode") ? m_param_data["link_mode"] : "lan";
                     connect_params["link_mode"] = link_mode;
+
+                    SNAP_LOG_BATCH(Info, "device engine set",
+                        {"eventName", "device_engine_set"}, {"source", "cpp"},
+                        {"connectSessionId", get_connect_session_id()},
+                        {"printerSN", host->m_sn},
+                        {"clientId", host->m_client_id},
+                        {"linkMode", link_mode});
 
                     std::string id     = m_param_data.count("id") ? m_param_data["id"].get<std::string>() : "";
                     std::string userid = m_param_data.count("userid") ? m_param_data["userid"].get<std::string>() : "";
@@ -7319,7 +7568,8 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_set_engine()
                                     wxGetApp().mainframe->m_print_enable = true;
                                     wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
 
-                                    if (!wxGetApp().mainframe->m_printer_view->isSnapmakerPage()) {
+                                    PrinterWebView* printer_view = PrinterWebView::if_built();
+                                    if (printer_view == nullptr || !printer_view->isSnapmakerPage()) {
                                         wxString url      = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
                                                                                "/web/flutter_web/index.html?path=2");
                                         auto     real_url = wxGetApp().get_international_url(url);
@@ -7816,6 +8066,9 @@ void SSWCP::on_webview_delete(wxWebView* view)
         }
     }
 
+    // Snapmaker Orca: the only place where the pointer of the dead view is still known.
+    SSWCP_MqttAgent_Instance::forget_webview(view);
+
     auto& device_map = wxGetApp().m_device_card_subscribers;
     for (auto iter = device_map.begin(); iter != device_map.end();) {
         if (iter->first == view) {
@@ -7918,114 +8171,82 @@ void SSWCP::update_active_filename(const std::string& filename)
 // query the info of the machine
 bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second)
 {
-    if (!host) return false;
+    // One implementation of the request and of the parsing: resolve_machine_info(). The outputs
+    // are touched only by what the printer answered, as before.
+    const SSWCPProtocol::ResolveResult result = resolve_machine_info(host, timeout_second);
+    if (result.status == SSWCPProtocol::ResolveStatus::NoResponse)
+        return false;
+    // Firmware aliases ("lava", "Snapmaker test") arrive as "Snapmaker U1".
+    out_model = result.info.model;
+    out_nozzle_diameters.insert(out_nozzle_diameters.end(), result.info.nozzle_diameters.begin(), result.info.nozzle_diameters.end());
+    if (!result.info.device_name.empty())
+        device_name = result.info.device_name;
+    return true;
+}
 
-    // Create condition variables and mutexes for synchronized waiting.
-    std::condition_variable cv;
-    std::shared_ptr<std::mutex> mutex(new std::mutex);
-    std::weak_ptr<std::mutex>   cb_mutex = mutex;
-    bool received = false;
-    bool timeout = false;
+// The two answers are merged by SSWCPProtocol::merge_machine_info(), which is unit tested.
+SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second)
+{
+    if (!host) return {};
+
+    // The callbacks own the state: one that fires after the timeout finds it alive and unused.
+    struct Shared {
+        std::mutex              mutex;
+        std::condition_variable cv;
+        bool                    done { false };
+        bool                    system_answered { false };
+        bool                    objects_answered { false };
+        json                    system_info;
+        json                    objects_query;
+    };
+    auto shared = std::make_shared<Shared>();
+
+    auto on_system_info = [shared](const json& response) {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (shared->done) return;
+        if (!response.is_null() && !response.count("error"))
+            shared->system_info = response;
+        shared->system_answered = true;
+        shared->cv.notify_all();
+    };
+    auto on_objects_query = [shared](const json& response) {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (shared->done) return;
+        if (!response.is_null() && !response.count("error"))
+            shared->objects_query = response;
+        shared->objects_answered = true;
+        shared->cv.notify_all();
+    };
+
+    // Send both requests in parallel; seq_ids are distinct so they never collide.
+    // Query up to 8 extruder objects. Moonraker ignores keys that don't exist on the printer,
+    // so extra entries are harmless. The parser dynamically discovers whatever is returned.
+    std::vector<std::pair<std::string, std::vector<std::string>>> extruder_targets;
+    extruder_targets.emplace_back("extruder", std::vector<std::string>{});
+    for (int i = 1; i <= 7; ++i)
+        extruder_targets.emplace_back("extruder" + std::to_string(i), std::vector<std::string>{});
+    host->async_get_system_info(on_system_info);
+    host->async_get_machine_info(extruder_targets, on_objects_query);
+
     json system_info;
-
-    // send to check request
-    host->async_get_system_info(
-        [&, cb_mutex](const json& response) {
-            if (cb_mutex.expired()) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(*mutex);
-            if (!response.is_null() && !response.count("error")) {
-                system_info = response;
-            }
-            received = true;
-            cv.notify_one();
-        }
-    );
-
-    // wait response
+    json objects_query;
     {
-        std::unique_lock<std::mutex> lock(*mutex);
-        auto predicate = [&received]() { return received; };
-        timeout = !cv.wait_for(lock, std::chrono::seconds(timeout_second), predicate);
+        std::unique_lock<std::mutex> lock(shared->mutex);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_second);
+        shared->cv.wait_until(lock, deadline, [&shared]() { return shared->system_answered; });
+        // The identity is in (or will not come): the extruder objects get a short while more.
+        const auto objects_deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::seconds(3));
+        shared->cv.wait_until(lock, objects_deadline, [&shared]() { return shared->system_answered && shared->objects_answered; });
+        shared->done  = true;
+        system_info   = std::move(shared->system_info);
+        objects_query = std::move(shared->objects_query);
     }
 
-    if (!timeout && !system_info.is_null()) {
-        // success to get data
-        if (system_info.count("data")) {
-            system_info = system_info["data"];
-        }
-        if (system_info.contains("system_info")) {
-            auto& system_data = system_info["system_info"];
-
-            if(system_data.contains("product_info")){
-                auto& product_info = system_data["product_info"];
-
-                // get the type for machine
-                if(product_info.contains("machine_type")){
-                    out_model = product_info["machine_type"].get<std::string>();
-                }
-
-                // get diameter
-                if(product_info.contains("nozzle_diameter")){
-                    try {
-                        if (product_info["nozzle_diameter"].is_array()) {
-                            for (const auto& nozzle : product_info["nozzle_diameter"]) {
-                                // todo not sure is string
-                                if (nozzle.is_number()) {
-                                    double temp = nozzle.get<double>();
-                                    if (fabs(temp - 0.2) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.2");
-                                    } else if (fabs(temp - 0.4) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.4");
-                                    } else if (fabs(temp - 0.6) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.6");
-                                    } else if (fabs(temp - 0.8) < 1e-6) {
-                                        out_nozzle_diameters.push_back("0.8");
-                                    }
-
-                                } else {
-                                    std::string temp = nozzle.get<std::string>();
-                                    if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
-                                        out_nozzle_diameters.push_back(temp);
-                                    }
-                                }
-
-                            }
-                        } else {                            
-                            if (product_info["nozzle_diameter"].is_number()) {
-                                double temp = product_info["nozzle_diameter"].get<double>();
-                                if (fabs(temp - 0.2) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.4) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.6) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                } else if (fabs(temp - 0.8) < 1e-6) {
-                                    out_nozzle_diameters.push_back("0.2");
-                                }
-
-                            } else {
-                                std::string temp = product_info["nozzle_diameter"].get<std::string>();
-                                if (temp == "0.2" || temp == "0.4" || temp == "0.6" || temp == "0.8") {
-                                    out_nozzle_diameters.push_back(temp);
-                                }
-                            }
-                        }
-                    }
-                    catch (std::exception& e) {
-                        return false;
-                    }
-                }
-                if (product_info.contains("device_name")) {
-                    device_name = product_info["device_name"].get<std::string>();
-                }
-            }
-            return true;
-        }
+    try {
+        return SSWCPProtocol::merge_machine_info(system_info, objects_query);
+    } catch (std::exception&) {
+        return {};
     }
-
-    return false;
 }
 
 MachineIPType* MachineIPType::getInstance()

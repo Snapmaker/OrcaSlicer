@@ -1,0 +1,20 @@
+{
+    "type": "process",
+    "name": "My 0.20 2.4",
+    "from": "User",
+    "inherits": "0.20mm Standard @Snapmaker U1 (0.4 nozzle)",
+    "version": "2.4.0",
+    "print_settings_id": "My 0.20 2.4",
+    "process_flow_support": [
+        "standard",
+        "high_flow"
+    ],
+    "outer_wall_speed": [
+        "150",
+        "420"
+    ],
+    "ironing_speed": [
+        "30",
+        "45"
+    ]
+}

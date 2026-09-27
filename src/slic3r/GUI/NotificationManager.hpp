@@ -191,6 +191,13 @@ enum class NotificationType
     // Active preset references a capability the installed+loaded plugin does not provide (outdated
     // plugin). Informational; cannot be auto-resolved; persistent, blocks slicing.
     OrcaPluginCapabilityUnavailableError,
+    // Snapmaker Orca: filament slots hold presets made for another nozzle size than the tool head
+    // that prints them; carries the action that switches them. One notification, persistent,
+    // does not block slicing (Plater::check_nozzle_filament_versions()).
+    SMNozzleFilamentMismatch,
+    // Snapmaker Orca: the filament map of the current plate sends a filament to a tool head of
+    // another size than the one its preset follows. One notification, persistent.
+    SMNozzleFilamentPlateMap,
     NotificationTypeCount
 };
 
@@ -381,7 +388,9 @@ public:
     void bbl_close_plateinfo_notification();
 
     //BBS-- 3mf warning
-    void bbl_show_3mf_warn_notification(const std::string &text);
+    // level defaults to the historical error styling; callers reporting informational
+    // 3MF load notices (published settings) pass WarningNotificationLevel instead.
+    void bbl_show_3mf_warn_notification(const std::string &text, NotificationLevel level = NotificationLevel::ErrorNotificationLevel);
     void bbl_close_3mf_warn_notification();
 
     //BBS--preview only mode
@@ -1056,6 +1065,11 @@ private:
 	bool m_is_dark = false;
 	// set by init(), until false notifications are only added not updated and frame is not requested after push
 	bool m_initialized{ false };
+	// set by render_notifications() on the first rendered frame. m_initialized only proves the
+	// manager exists, not that the ImGui context can measure text: the font atlas is built lazily
+	// in ImGuiWrapper::new_frame() on the first GL render, so updating a notification before that
+	// (PopNotification::init -> count_spaces -> ImGui::CalcTextSize) dereferences a null font.
+	bool m_imgui_ready{ false };
 	// Target for wxWidgets events sent by clicking on the hyperlink available at some notifications.
 	wxEvtHandler*                m_evt_handler;
 	// Cache of IDs to identify and reuse ImGUI windows.
@@ -1081,7 +1095,10 @@ private:
 		NotificationType::PrintHostUpload,
         NotificationType::SimplifySuggestion,
         NotificationType::ValidateError,
-        NotificationType::ValidateWarning
+        NotificationType::ValidateWarning,
+        // A published file load can produce several distinct 3MF warnings (invalid values,
+        // skipped settings, changed slots); let them stack rather than clobber each other.
+        NotificationType::BBL3MFInfo
 	};
 	//prepared (basic) notifications
 	// non-static so its not loaded too early. If static, the translations wont load correctly.

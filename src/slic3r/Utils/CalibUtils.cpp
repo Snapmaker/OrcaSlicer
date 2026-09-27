@@ -3,6 +3,7 @@
 #include "../GUI/GUI_App.hpp"
 #include "../GUI/DeviceCore/DevStorage.h"
 #include "../GUI/DeviceManager.hpp"
+#include "NetworkAgent.hpp"
 #include "../GUI/Jobs/ProgressIndicator.hpp"
 #include "../GUI/PartPlate.hpp"
 #include "libslic3r/CutUtils.hpp"
@@ -62,22 +63,29 @@ std::vector<std::string> not_support_auto_pa_cali_filaments = {
 
 void get_default_k_n_value(const std::string &filament_id, float &k, float &n)
 {
-    if (filament_id.compare("GFU01") == 0) {
+    // filament_id is our OF id; the literals below are the printer's own. An id the agent has
+    // no mapping for (e.g. a caller still on the old id) passes through unchanged.
+    auto* agent = wxGetApp().getAgent();
+    const std::string printer_filament_id = agent ? agent->from_orca_filament_id(filament_id) : filament_id;
+    if (printer_filament_id.compare("GFU01") == 0) {
         /* TPU 95A */
         k = 0.25;
         n = 1.0;
-    } else if (filament_id.compare("GFU03") == 0) {
+    } else if (printer_filament_id.compare("GFU03") == 0) {
         /* TPU 90A */
         k = 0.35;
         n = 1.0;
-    } else if (filament_id.compare("GFU04") == 0) {
+    } else if (printer_filament_id.compare("GFU04") == 0) {
         /* TPU 85A */
         k = 0.65;
         n = 1.0;
-    } else if (filament_id.compare("GFG00") == 0 || filament_id.compare("GFG01") == 0 || filament_id.compare("GFG60") == 0 || filament_id.compare("GFL06") == 0 ||
-               filament_id.compare("GFL55") == 0 || filament_id.compare("GFG99") == 0 || filament_id.compare("GFG98") == 0 || filament_id.compare("GFG97") == 0 ||
-               filament_id.compare("GFG50") == 0 || filament_id.compare("GFU02") == 0 || filament_id.compare("GFU98") == 0 || filament_id.compare("GFS00") == 0 ||
-               filament_id.compare("GFS02") == 0) {
+    } else if (printer_filament_id.compare("GFG00") == 0 || printer_filament_id.compare("GFG01") == 0 ||
+               printer_filament_id.compare("GFG60") == 0 || printer_filament_id.compare("GFL06") == 0 ||
+               printer_filament_id.compare("GFL55") == 0 || printer_filament_id.compare("GFG99") == 0 ||
+               printer_filament_id.compare("GFG98") == 0 || printer_filament_id.compare("GFG97") == 0 ||
+               printer_filament_id.compare("GFG50") == 0 || printer_filament_id.compare("GFU02") == 0 ||
+               printer_filament_id.compare("GFU98") == 0 || printer_filament_id.compare("GFS00") == 0 ||
+               printer_filament_id.compare("GFS02") == 0) {
         /* 0.04 filaments */
         k = 0.04;
         n = 1.0;
@@ -449,6 +457,17 @@ bool CalibUtils::validate_input_flow_ratio(wxString flow_ratio, float* output_va
 
     *output_value = flow_ratio_value;
     return true;
+}
+
+// filament_max_volumetric_speed holds one value per filament variant column (Standard / High
+// Flow). A calibration overrides all of them, so the head that prints the test gets the value
+// whatever its flow type is and the vector keeps the width the preset declares.
+static void set_max_volumetric_speed_for_calibration(DynamicPrintConfig &filament_config, double value)
+{
+    size_t columns = 1;
+    if (const auto *variants = filament_config.option<ConfigOptionStrings>("filament_extruder_variant"))
+        columns = std::max<size_t>(variants->values.size(), 1);
+    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats(columns, value));
 }
 
 static void cut_model(Model &model, double z, ModelObjectCutAttributes attributes)
@@ -1088,6 +1107,7 @@ bool CalibUtils::calib_generic_PA(const CalibInfo &calib_info, wxString &error_m
         calib_pa_pattern(calib_info, model);
 
     DynamicPrintConfig print_config    = calib_info.print_prest->config;
+    print_config.set_key_value("wipe_inward", new ConfigOptionBool(false));
     DynamicPrintConfig filament_config = calib_info.filament_prest->config;
     DynamicPrintConfig printer_config  = calib_info.printer_prest->config;
 
@@ -1203,7 +1223,7 @@ void CalibUtils::calib_max_vol_speed(const CalibInfo &calib_info, wxString &erro
     auto max_lh = printer_config.option<ConfigOptionFloats>("max_layer_height");
     if (max_lh->values[0] < layer_height) max_lh->values[0] = {layer_height};
 
-    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{50});
+    set_max_volumetric_speed_for_calibration(filament_config, 50.);
     // slow_down_layer_time is defined as coFloats; a coInts option here throws in ConfigBase::apply_only.
     filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
@@ -1282,7 +1302,7 @@ void CalibUtils::calib_VFA(const CalibInfo &calib_info, wxString &error_message)
 
     // slow_down_layer_time is defined as coFloats; a coInts option here throws in ConfigBase::apply_only.
     filament_config.set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
-    filament_config.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{200});
+    set_max_volumetric_speed_for_calibration(filament_config, 200.);
     filament_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(calib_info.bed_type));
 
     print_config.set_key_value("enable_overhang_speed", new ConfigOptionBoolsNullable({false}));
@@ -1352,6 +1372,7 @@ void CalibUtils::calib_retraction(const CalibInfo &calib_info, wxString &error_m
     read_model_from_file(input_file, model);
 
     DynamicPrintConfig print_config    = calib_info.print_prest->config;
+    print_config.set_key_value("wipe_inward", new ConfigOptionBool(false));
     DynamicPrintConfig filament_config = calib_info.filament_prest->config;
     DynamicPrintConfig printer_config  = calib_info.printer_prest->config;
 
@@ -1396,7 +1417,10 @@ void CalibUtils::calib_retraction(const CalibInfo &calib_info, wxString &error_m
 
 bool CalibUtils::is_support_auto_pa_cali(std::string filament_id)
 {
-    auto iter = std::find(not_support_auto_pa_cali_filaments.begin(), not_support_auto_pa_cali_filaments.end(), filament_id);
+    // filament_id is our OF id; not_support_auto_pa_cali_filaments holds the printer's own ids.
+    auto* agent = wxGetApp().getAgent();
+    const std::string printer_filament_id = agent ? agent->from_orca_filament_id(filament_id) : filament_id;
+    auto iter = std::find(not_support_auto_pa_cali_filaments.begin(), not_support_auto_pa_cali_filaments.end(), printer_filament_id);
     if (iter != not_support_auto_pa_cali_filaments.end()) {
         return false;
     }

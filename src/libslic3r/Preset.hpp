@@ -95,8 +95,8 @@ class PresetBundle;
 
 // Deterministic preset setting_id: uuid5(vendor/type/name) -> 16 base62 chars.
 // Pure function of a system preset's identity, so the value can be assigned by
-// scripts/assign_vendor_setting_ids.py and recomputed here when a profile ships
-// without it. MUST stay byte-identical to scripts/assign_vendor_setting_ids.py.
+// scripts/orca_profile_tool.py and recomputed here when a profile ships without it.
+// MUST stay byte-identical to scripts/orca_profile_tool.py.
 // This is NOT the per-user cloud-sync setting_id
 // (OrcaCloudServiceAgent::generate_uuid_for_setting_id) - do not conflate them.
 std::string generate_preset_setting_id(const std::string& vendor,
@@ -122,6 +122,10 @@ extern int get_values_from_json(std::string file_path, std::vector<std::string>&
 extern ConfigFileType guess_config_file_type(const boost::property_tree::ptree &tree);
 
 extern void extend_default_config_length(DynamicPrintConfig& config, const bool set_nil_to_default, const DynamicPrintConfig& defaults);
+// Rewrites the Standard / High Flow keys of a Snapmaker Orca 2.4 user preset into variant columns
+// (normalize_snapmaker_flow_config() of SnapmakerFlowCompat.hpp). Called on the values read from a
+// preset file, before they are matched with the parent's columns. Returns true for such a preset.
+extern bool normalize_snapmaker_flow_preset(DynamicPrintConfig& config);
 
 class VendorProfile
 {
@@ -294,6 +298,10 @@ public:
 
     // Alias of the preset
     std::string         alias;
+    // Snapmaker Orca: the "inherits" of a system preset in its vendor file (the flattened config has
+    // none); it tells versions of one material from presets sharing an alias
+    // (libslic3r/NozzleFilamentPresets.hpp). Empty for every other preset.
+    std::string         system_inherits;
     // List of profile names, from which this profile was renamed at some point of time.
     // This list is then used to match profiles by their names when loaded from .gcode, .3mf, .amf,
     // and to match the "inherits" field of user profiles with updated system profiles.
@@ -464,6 +472,11 @@ protected:
 bool is_compatible_with_print  (const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_print, const PresetWithVendorProfile &active_printer);
 bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra_config);
 bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer);
+// ORCA: same check for callers that hold raw configs rather than Presets (the CLI). Wraps them in
+// throwaway Preset shells and delegates, so the compatibility policy -- including the fail-open on a
+// malformed compatible_printers_condition -- lives in one place for the GUI and the CLI alike.
+bool is_compatible_with_printer(const DynamicPrintConfig &preset_config, Preset::Type preset_type,
+                                const DynamicPrintConfig &printer_config, const std::string &printer_name);
 
 // Where a preset is being loaded from. `Auto` lets load_presets() infer from the directory path.
 struct PresetOrigin {
@@ -563,7 +576,7 @@ public:
     void            add_default_preset(const std::vector<std::string> &keys, const Slic3r::StaticPrintConfig &defaults, const std::string &preset_name);
 
     // Load ini files of the particular type from the provided directory path.
-    void            load_presets(const std::string &dir_path, const std::string &subdir, PresetsConfigSubstitutions& substitutions, ForwardCompatibilitySubstitutionRule rule, std::function<void(Preset&)> preset_loaded_fn = nullptr, const PresetOrigin &load_origin = PresetOrigin());
+    void            load_presets(const std::string &dir_path, const std::string &subdir, PresetsConfigSubstitutions& substitutions, ForwardCompatibilitySubstitutionRule rule, std::function<void(Preset&)> preset_loaded_fn = nullptr, const PresetOrigin &load_origin = PresetOrigin(), bool read_only = false);
 
     //BBS: update user presets directory
     void            update_user_presets_directory(const std::string& dir_path, const std::string& type);
@@ -636,6 +649,22 @@ public:
     // All presets are marked as not modified and the new preset is activated.
     //BBS: add project embedded preset logic
     void            save_current_preset(const std::string &new_name, bool detach = false, bool save_to_project = false, Preset* _curr_preset = nullptr);
+    // Insert a standalone user preset holding the full resolved config (no inheritance,
+    // no vendor links): the libslic3r equivalent of "Detach from parent". Takes a
+    // resolved config, clears parent/vendor/alias metadata, stamps filament_settings_id.
+    // Unlike save_current_preset it does not force-select or diff against a parent.
+    // Used by the published-3MF Full Publish path. The optional filament_id seeds the
+    // preset's stable material grouping (get_filament_presets groups user bases by
+    // filament_id); the published entry's filament_id is forwarded so the copy keeps
+    // the author's grouping.
+    // The copy is a project-embedded preset ("Preset Inside Project"): it lives inside
+    // the loaded project only, is serialized into the saved .3mf via
+    // get_current_project_embedded_presets(), and is never written to the user's
+    // library directory.
+    // Returns the final (uniquified) name; on collision the suffix rule is:
+    // "<base>" -> "<base> (Published)" -> "<base> (Published 2)" ...
+    std::string     add_detached_preset(const std::string &name_base, DynamicPrintConfig config,
+                                        const std::string &filament_id = std::string());
 
     // Delete the current preset, activate the first visible preset.
     // returns true if the preset was deleted successfully.
@@ -749,13 +778,20 @@ public:
     // If one of the prefered_alternates is compatible, select it.
     template<typename PreferedCondition> size_t first_compatible_idx(PreferedCondition prefered_condition) const
     {
+        return this->first_compatible_idx(prefered_condition, [](const Preset &preset) { return preset.is_compatible; });
+    }
+    // Snapmaker Orca: the same search with the compatibility asked from `is_compatible` instead of
+    // read from the flag. PresetBundle::first_slot_fit() rates the presets against the tool head of
+    // one filament slot with it; the overload above is mainline's search, unchanged in effect.
+    template<typename PreferedCondition, typename CompatibleCondition> size_t first_compatible_idx(PreferedCondition prefered_condition, CompatibleCondition is_compatible) const
+    {
         size_t i             = m_default_suppressed ? m_num_default_presets : 0;
         size_t n             = this->m_presets.size();
         size_t i_compatible  = n;
         int    match_quality = -1;
         for (; i < n; ++i)
             // Since we use the filament selection from Wizard, it's needed to control the preset visibility too
-            if (m_presets[i].is_compatible && m_presets[i].is_visible) {
+            if (is_compatible(m_presets[i]) && m_presets[i].is_visible) {
                 int this_match_quality = prefered_condition(m_presets[i]);
                 if (this_match_quality > match_quality) {
                     if (match_quality == std::numeric_limits<int>::max())
@@ -789,10 +825,13 @@ public:
     bool            has_defaults_only() const   { return m_presets.size() <= m_num_default_presets; }
 
     // For Print / Filament presets, disable those, which are not compatible with the printer.
+    // Snapmaker Orca: `keep_selected` keeps an incompatible selected preset selected (still flagged
+    // incompatible); PresetBundle::update_compatible sets it for a filament that fits a tool head of
+    // another nozzle size.
     template<typename PreferedCondition>
-    void            update_compatible(const PresetWithVendorProfile &active_printer, const PresetWithVendorProfile *active_print, PresetSelectCompatibleType select_other_if_incompatible, PreferedCondition prefered_condition)
+    void            update_compatible(const PresetWithVendorProfile &active_printer, const PresetWithVendorProfile *active_print, PresetSelectCompatibleType select_other_if_incompatible, PreferedCondition prefered_condition, bool keep_selected = false)
     {
-        if (this->update_compatible_internal(active_printer, active_print, select_other_if_incompatible) == (size_t)-1) {
+        if (this->update_compatible_internal(active_printer, active_print, select_other_if_incompatible, keep_selected) == (size_t)-1) {
             // Find some other compatible preset, or the "-- default --" preset.
             size_t index = this->first_compatible_idx(prefered_condition);
             this->select_preset(index);
@@ -848,13 +887,12 @@ public:
 
 protected:
     PresetCollection() = default;
-    // Copy constructor and copy operators are not to be used from outside PresetBundle,
-    // as the Profile::vendor points to an instance of VendorProfile stored at parent PresetBundle!
-    PresetCollection(const PresetCollection &other) = default;
-    //BBS: add operator= logic insteadof default
+    // Deleted by the std::recursive_mutex member. PresetBundle copies by assignment.
+    PresetCollection(const PresetCollection &other) = delete;
+    //BBS: hand-written because m_mutex cannot be copy-assigned.
     PresetCollection& operator=(const PresetCollection &other);
-    // After copying a collection with the default operators above, call this function
-    // to adjust Profile::vendor pointers.
+    // Copying leaves every Preset::vendor pointing into the source bundle's vendor map.
+    // This re-points them at the matching entries in vendors.
     void            update_vendor_ptrs_after_copy(const VendorMap &vendors);
 
     // Select a preset, if it exists. If it does not exist, select an invalid (-1) index.
@@ -934,7 +972,7 @@ private:
     std::deque<Preset>::const_iterator find_preset_renamed(const std::string &name) const
         { return const_cast<PresetCollection*>(this)->find_preset_renamed(name); }
 
-    size_t update_compatible_internal(const PresetWithVendorProfile &active_printer, const PresetWithVendorProfile *active_print, PresetSelectCompatibleType unselect_if_incompatible);
+    size_t update_compatible_internal(const PresetWithVendorProfile &active_printer, const PresetWithVendorProfile *active_print, PresetSelectCompatibleType unselect_if_incompatible, bool keep_selected = false);
 public:
     static bool                     is_dirty(const Preset *edited, const Preset *reference);
     static std::vector<std::string> dirty_options(const Preset *edited, const Preset *reference, const bool deep_compare = false);
@@ -992,7 +1030,8 @@ public:
     bool            only_default_printers() const;
 private:
     PrinterPresetCollection() = default;
-    PrinterPresetCollection(const PrinterPresetCollection &other) = default;
+    // Deleted along with the base copy constructor.
+    PrinterPresetCollection(const PrinterPresetCollection &other) = delete;
     PrinterPresetCollection& operator=(const PrinterPresetCollection &other) = default;
 
     friend class PresetBundle;

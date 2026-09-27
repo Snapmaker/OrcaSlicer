@@ -5,12 +5,18 @@
 #include "PresetCacheFormat.hpp"
 #include "AppConfig.hpp"
 #include "FilamentColorLibrary.hpp"
+#include "PublishSettings.hpp"
 #include "enum_bitmask.hpp"
 #include "MixedFilament.hpp"
+#include "NozzleFilamentPresets.hpp"
+#include "SnapmakerFlowCompat.hpp"
 
+#include <functional>
 #include <memory>
+#include <map>
 #include <set>
 #include <shared_mutex>
+#include <tuple>
 #include <unordered_map>
 #include <optional>
 #include <array>
@@ -41,6 +47,10 @@ struct ConnectMachineInfo
     std::string filament_info {""};
     std::string filament_type {""};
     std::string nozzle_info {""};
+    // Flow type the printer reports for the nozzle of this slot, in the wire spelling of
+    // SSWCPProtocol ("standard" / "high_flow"); empty when the printer reports none.
+    // Upstream #794 784cfd18b1.
+    std::string nozzle_volume_type {""};
     std::string color_info{""};
     std::vector<std::string> multiColors;
     Slic3r::FilamentColorMode colorMode { Slic3r::FilamentColorMode::Segment };
@@ -183,6 +193,30 @@ struct PresetBundleMetadata
     }
 };
 
+// A "published" 3MF project: keeps the user's currently-selected presets and overlays only the
+// author-selected published keys onto the edited presets.
+struct PublishedConfig
+{
+    bool                        published = false;
+    std::vector<std::string>    published_keys;
+    // Per-slot published material keys, applied positionally (author slot N -> receiver slot N).
+    // Partial entries are gated by the author's optional type requirement and written onto the
+    // slot's stored preset in place; full entries instead detach (see PublishedMaterialEntry in
+    // PublishSettings.hpp).
+    std::vector<PublishedMaterialEntry> material_keys;
+    // Keys that could not be applied (missing on the user's machine or vector size mismatch),
+    // filled in by load_config_file_config for notification purposes.
+    std::vector<std::string>    skipped_keys;
+    // Human-readable notices of the slot material replacements performed while loading a
+    // published project, for the load notification.
+    std::vector<std::string>    material_replacements;
+    // Mixed-filament entries that had to be moved off their authored slot on load (a real,
+    // physical filament occupied it): maps the author's zero-based slot number to its final
+    // zero-based slot. Consumers (e.g. model extruder/color-painting remapping) use this to
+    // keep geometry references pointing at the relocated definitions.
+    std::map<int, int>          mixed_slot_relocations;
+};
+
 // Bundle of Print + Filament + Printer presets.
 class PresetBundle
 {
@@ -245,7 +279,22 @@ public:
     // Load selections (current print, current filaments, current printer) from config.ini
     // select preferred presets, if any exist
     PresetsConfigSubstitutions load_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule rule,
-                                            const PresetPreferences& preferred_selection = PresetPreferences());
+                                            const PresetPreferences& preferred_selection = PresetPreferences(),
+                                            std::string *errors = nullptr, bool read_only = false);
+
+    // Resolve an explicitly named source file through a canonical flattened
+    // preset. Exact loaded-file identity is preferred; otherwise a manifest-
+    // backed vendor tree is loaded from that source root without using caches.
+    bool resolve_preset_config(DynamicPrintConfig &config, Preset::Type type,
+                               const std::string &source_file,
+                               ForwardCompatibilitySubstitutionRule compatibility_rule,
+                               std::string &error, bool allow_source_manifest = true);
+    // Resolve a source file whose JSON omits `type`. Succeeds only when exactly
+    // one FFF preset collection owns the file and returns that collection's type.
+    bool resolve_preset_config_type(DynamicPrintConfig &config, Preset::Type &type,
+                                    const std::string &source_file,
+                                    ForwardCompatibilitySubstitutionRule compatibility_rule,
+                                    std::string &error, bool allow_source_manifest = true);
 
     // Load selections (current print, current filaments, current printer) from config.ini
     // This is done just once on application start up.
@@ -253,7 +302,7 @@ public:
     void     load_selections(AppConfig &config, const PresetPreferences& preferred_selection = PresetPreferences());
 
     // BBS Load user presets
-    PresetsConfigSubstitutions load_user_presets(std::string user, ForwardCompatibilitySubstitutionRule rule);
+    PresetsConfigSubstitutions load_user_presets(std::string user, ForwardCompatibilitySubstitutionRule rule, bool read_only = false);
     PresetsConfigSubstitutions load_user_presets(AppConfig &config, std::map<std::string, std::map<std::string, std::string>>& my_presets, ForwardCompatibilitySubstitutionRule rule);
     // Orca: Import subscribed bundle presets (load and save to disk in one operation), handles one bundle at a time
     PresetsConfigSubstitutions update_subscribed_presets(AppConfig& config,
@@ -368,6 +417,13 @@ public:
     std::vector<std::vector<DynamicPrintConfig>> get_extruder_filament_info() const;
 
     std::set<std::string> get_printer_names_by_printer_type_and_nozzle(const std::string &printer_type, std::string nozzle_diameter_str, bool system_only = true);
+    // Orca: the root filament presets a connected machine can use, resolved with the rule the rest
+    // of the app applies (is_compatible_with_printer): an empty compatible_printers means every
+    // printer, minus the alias shadowing exclusions the Orca Filament Library records in
+    // Preset::m_excluded_from.
+    std::vector<Preset *> get_filament_presets_for_machine(const std::string &printer_type,
+                                                           const std::string &nozzle_diameter_str,
+                                                           bool               include_user_presets);
     bool                  check_filament_temp_equation_by_printer_type_and_nozzle_for_mas_tray(const std::string &printer_type,
                                                                                                std::string &      nozzle_diameter_str,
                                                                                                std::string &      setting_id,
@@ -389,6 +445,34 @@ public:
     // Filament preset names for a multi-extruder or multi-material print.
     // extruders.size() should be the same as printers.get_edited_preset().config.nozzle_diameter.size()
     std::vector<std::string>    filament_presets;
+    // Snapmaker Orca: the filament presets follow the nozzle size of the tool head that prints them
+    // (libslic3r/NozzleFilamentPresets.hpp). Off unless the application turns it on from the
+    // preference "filament_follows_nozzle"; the command line and the tests leave or set it.
+    bool                        nozzle_filament_enabled { false };
+    // Session memory of the rule, never stored: (family, machine preset name) -> the user preset
+    // a slot left because of its size (NozzleFilament::remember_user_preset()). target_for_slot()
+    // prefers it over the system version while it exists, is installed and fits.
+    std::map<std::pair<std::string, std::string>, std::string> nozzle_filament_memory;
+    // Per slot compatibility: Preset::is_compatible, unless State::mixed and the slot has a tool
+    // head; then "fits" rates against that head's machine preset and "selectable" also admits user
+    // presets and system presets without a version for its size. A State lasts until slots change.
+    bool                        filament_slot_fits(const Preset &preset, size_t slot) const;
+    bool                        filament_slot_fits(const NozzleFilament::State &state, const Preset &preset, size_t slot) const;
+    bool                        filament_slot_selectable(const Preset &preset, size_t slot) const;
+    bool                        filament_slot_selectable(const NozzleFilament::State &state, const Preset &preset, size_t slot) const;
+    // The first visible preset that fits the slot, the best by `preference` (the match quality
+    // PresetCollection::first_compatible_idx takes; none: the first). When no visible preset fits
+    // the tool head, the first compatible one as mainline picks it.
+    const Preset&               first_slot_fit(size_t slot, const std::function<int(const Preset&)> &preference = {}) const;
+    // What the slots should hold, one entry per slot whose tool head is among `heads` (empty: every
+    // slot, those without a tool head included). Changes nothing. Empty when the rule is off.
+    std::vector<NozzleFilament::SlotTarget> nozzle_filament_targets(const std::vector<size_t> &heads = {}) const;
+    // Writes the targets into the slots that still hold `from`; returns the number of changed slots.
+    // A hidden target becomes visible and, with `app_config`, is entered in its filament section.
+    size_t                      apply_nozzle_filament_targets(const std::vector<NozzleFilament::SlotTarget> &targets, AppConfig *app_config = nullptr);
+    // The per slot form of the loop that ends update_selections() and load_selections(); false when
+    // tool heads of different nozzle sizes are not in use and mainline's loop has to run.
+    bool                        repair_filament_slots_per_head();
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
@@ -401,6 +485,10 @@ public:
     std::vector<ConnectMachineInfo>                    m_connect_machine_info_list;
 
     std::vector<std::map<int, int>> extruder_ams_counts;
+    // What reading the last project changed about the flow types of its tool heads and filaments
+    // (a project of Snapmaker Orca 2.4, see normalize_snapmaker_flow_config()). Empty for every
+    // other project. Filled by load_config_file_config().
+    FlowImportReport last_flow_import_report;
 
     // Calibrate
     Preset const * calibrate_printer = nullptr;
@@ -468,8 +556,8 @@ public:
 
     // Load configuration that comes from a model file containing configuration, such as 3MF et al.
     // This method is called by the Plater.
-    void                        load_config_model(const std::string &name, DynamicPrintConfig config, Semver file_version = Semver())
-        { this->load_config_file_config(name, true, std::move(config), file_version); }
+    void                        load_config_model(const std::string &name, DynamicPrintConfig config, Semver file_version = Semver(), PublishedConfig *published_config = nullptr)
+        { this->load_config_file_config(name, true, std::move(config), file_version, false, published_config); }
 
     // Load an external config file containing the print, filament and printer presets.
     // Instead of a config file, a G-code may be loaded containing the full set of parameters.
@@ -500,10 +588,13 @@ public:
     //Orca: load config bundle from json, pass the base bundle to support cross vendor inheritance
     // Orca: `dir` is where the vendor is looked for — its own directory, whether or
     // not the profile JSONs are still there. A whole-vendor load comes from the
-    // vendor's preset cache whenever one covers the profile on disk, and is parsed
-    // from the JSONs in `dir` only when none does. Nothing here reads resources.
+    // vendor's preset cache whenever one covers the profile on disk and allow_cache
+    // is true, and is parsed from the JSONs in `dir` otherwise. Nothing here reads
+    // resources implicitly.
     std::pair<PresetsConfigSubstitutions, size_t> load_vendor_configs_from_json(
-        const std::string &dir, const std::string &vendor_name, LoadConfigBundleAttributes flags, ForwardCompatibilitySubstitutionRule compatibility_rule, const PresetBundle* base_bundle = nullptr);
+        const std::string &dir, const std::string &vendor_name, LoadConfigBundleAttributes flags,
+        ForwardCompatibilitySubstitutionRule compatibility_rule, const PresetBundle* base_bundle = nullptr,
+        bool allow_cache = true);
 
     // Export a config bundle file containing all the presets and the names of the active presets.
     //void                        export_configbundle(const std::string &path, bool export_system_settings = false, bool export_physical_printers = false);
@@ -707,6 +798,11 @@ public:
     // compatible_prints references a deleted (unknown) or renamed (old) preset name.
     bool check_preset_references() const;
 
+    // Validator-only: every system FFF printer variant needs a compatible system filament
+    // named in its model's default_materials, every name there and in the printer's
+    // default_filament_profile must resolve to a system filament.
+    bool check_printer_default_materials() const;
+
     // Merge one vendor's presets with the other vendor's presets, report duplicates.
     // Public so per-vendor-cache consumers (e.g. the setup wizard) can assemble a
     // bundle out of several per-vendor caches loaded into separate PresetBundle instances.
@@ -741,6 +837,18 @@ private:
 
     // Whether to (re)write a per-vendor cache after a JSON parse.
     bool m_generate_vendor_caches { false };
+    bool m_preserve_vendor_source_paths { false };
+
+    // Vendor trees loaded by resolve_preset_config's manifest path, so every preset
+    // resolved through this bundle shares one load per source root and vendor. The
+    // filament library is one such tree, shared by every vendor under its root.
+    std::map<std::tuple<std::string, std::string, ForwardCompatibilitySubstitutionRule>, std::unique_ptr<PresetBundle>>
+        m_source_vendor_bundles;
+
+    const PresetBundle *load_source_vendor(const boost::filesystem::path &root_dir,
+                                           const std::string &vendor_id,
+                                           ForwardCompatibilitySubstitutionRule compatibility_rule,
+                                           std::string &error);
 
     // Orca: validation only - flag any printer with two or more compatible
     // filament presets sharing one filament_id (ambiguous AMS subtype match).
@@ -748,7 +856,7 @@ private:
 
     //std::pair<PresetsConfigSubstitutions, std::string> load_system_presets(ForwardCompatibilitySubstitutionRule compatibility_rule);
     //BBS: add json related logic
-    std::pair<PresetsConfigSubstitutions, std::string> load_system_presets_from_json(ForwardCompatibilitySubstitutionRule compatibility_rule);
+    std::pair<PresetsConfigSubstitutions, std::string> load_system_presets_from_json(ForwardCompatibilitySubstitutionRule compatibility_rule, bool allow_cache = true);
     // Orca: merge_presets is declared in the public section above - the per-vendor preset
     // cache assembles a bundle out of several caches loaded into separate PresetBundles.
     void                        build_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
@@ -771,7 +879,7 @@ private:
     // Load print, filament & printer presets from a config. If it is an external config, then the name is extracted from the external path.
     // and the external config is just referenced, not stored into user profile directory.
     // If it is not an external config, then the config will be stored into the user profile directory.
-    void                        load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version = Semver(), bool selected = false);
+    void                        load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version = Semver(), bool selected = false, PublishedConfig *published_config = nullptr);
     /*ConfigSubstitutions         load_config_file_config_bundle(
         const std::string &path, const boost::property_tree::ptree &tree, ForwardCompatibilitySubstitutionRule compatibility_rule);*/
 

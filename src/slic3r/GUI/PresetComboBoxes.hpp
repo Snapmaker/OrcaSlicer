@@ -8,6 +8,7 @@
 
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/NozzleFilamentPresets.hpp"
 #include "wxExtensions.hpp"
 #include "BitmapComboBox.hpp"
 #include "Widgets/ComboBox.hpp"
@@ -133,6 +134,17 @@ protected:
     int  m_filament_idx       = -1;
     int m_first_ams_filament = 0;
     int m_last_ams_filament = 0;
+
+    // Snapmaker Orca: filament presets follow the nozzle size of their tool head (NozzleFilamentPresets.hpp).
+    // True, with `state` filled, when this combo is a slot under that rule; else Preset::is_compatible applies.
+    bool filament_slot_state(NozzleFilament::State &state) const;
+    // The version of the machine-reported filament `filament_name` for the nozzle size of the slot's
+    // tool head; `mainline_match` (may be nullptr) when that is the printer preset's size or no such version exists.
+    const Preset* machine_filament_for_slot(const NozzleFilament::State &state, const std::string &filament_name, const Preset *mainline_match) const;
+    // Size marker ("0.2 mm") for a preset pinned to a nozzle size other than the slot's tool head or
+    // the printer preset, else empty. Display only, put before the label (size_marked_label) so a
+    // narrow combo cuts the name; the item alias keeps the preset name.
+    wxString nozzle_size_marker(const NozzleFilament::State &state, const Preset &preset) const;
 
     // parameters for an icon's drawing
     int icon_height;

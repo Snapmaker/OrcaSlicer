@@ -9,24 +9,29 @@
     "Snapmaker U1 (0.4 nozzle)"
   ],
   "enable_pressure_advance": [
+    "1",
     "1"
   ],
   "close_fan_the_first_x_layers": [
     "3"
   ],
   "complete_print_exhaust_fan_speed": [
+    "70",
     "70"
   ],
   "during_print_exhaust_fan_speed": [
+    "70",
     "70"
   ],
   "fan_cooling_layer_time": [
     "30"
   ],
   "fan_max_speed": [
+    "40",
     "40"
   ],
   "fan_min_speed": [
+    "5",
     "5"
   ],
   "filament_cooling_final_speed": [
@@ -47,15 +52,24 @@
   "filament_loading_speed_start": [
     "3"
   ],
-  "filament_max_volumetric_speed": ["12"],
+  "filament_max_volumetric_speed": [
+    "12",
+    "18"
+  ],
   "filament_minimal_purge_on_wipe_tower": [
+    "30",
     "30"
   ],
   "filament_multitool_ramming": [
+    "1",
     "1"
   ],
-  "filament_multitool_ramming_volume": ["5"],
+  "filament_multitool_ramming_volume": [
+    "5",
+    "0.5"
+  ],
   "filament_retract_before_wipe": [
+    "5%",
     "5%"
   ],
   "filament_unloading_speed": [
@@ -73,8 +87,14 @@
   "hot_plate_temp": [
     "80"
   ],
-  "nozzle_temperature": ["255"],
-  "nozzle_temperature_initial_layer": ["255"],
+  "nozzle_temperature": [
+    "255",
+    "260"
+  ],
+  "nozzle_temperature_initial_layer": [
+    "255",
+    "260"
+  ],
   "nozzle_temperature_range_high": [
     "270"
   ],
@@ -84,7 +104,10 @@
   "overhang_fan_speed": [
     "100"
   ],
-  "pressure_advance": ["0.02"],
+  "pressure_advance": [
+    "0.02",
+    "0.028"
+  ],
   "temperature_vitrification": [
     "70"
   ],
@@ -104,6 +127,7 @@
     "PETG-CF"
   ],
   "activate_air_filtration": [
+    "0",
     "0"
   ],
   "activate_chamber_temp_control": [
@@ -121,7 +145,10 @@
   "adaptive_pressure_advance_overhangs": [
     "0"
   ],
-  "additional_cooling_fan_speed": ["0"],
+  "additional_cooling_fan_speed": [
+    "0",
+    "20"
+  ],
   "chamber_temperature": [
     "0"
   ],
@@ -153,6 +180,7 @@
     "1.25"
   ],
   "filament_deretraction_speed": [
+    "nil",
     "nil"
   ],
   "filament_diameter": [
@@ -161,8 +189,18 @@
   "filament_end_gcode": [
     ""
   ],
-  "filament_flow_ratio": ["0.95"],
-  "filament_flow_support": ["standard", "high_flow"],
+  "filament_flow_ratio": [
+    "0.95",
+    "1.01"
+  ],
+  "filament_flow_support": [
+    "standard",
+    "high_flow"
+  ],
+  "filament_extruder_variant": [
+    "Direct Drive Standard",
+    "Direct Drive High Flow"
+  ],
   "filament_is_high_temperature": [
     "0"
   ],
@@ -170,9 +208,13 @@
     "0"
   ],
   "filament_long_retractions_when_cut": [
+    "nil",
     "nil"
   ],
-  "filament_multitool_ramming_flow": ["10"],
+  "filament_multitool_ramming_flow": [
+    "10",
+    "13"
+  ],
   "filament_notes": [
     ""
   ],
@@ -180,34 +222,47 @@
     "120 100 6.6 6.8 7.2 7.6 7.9 8.2 8.7 9.4 9.9 10.0| 0.05 6.6 0.45 6.8 0.95 7.8 1.45 8.3 1.95 9.7 2.45 10 2.95 7.6 3.45 7.6 3.95 7.6 4.45 7.6 4.95 7.6"
   ],
   "filament_retract_length_toolchange": [
+    "nil",
     "nil"
   ],
   "filament_retract_lift_above": [
+    "nil",
     "nil"
   ],
   "filament_retract_lift_below": [
+    "nil",
     "nil"
   ],
   "filament_retract_lift_enforce": [
+    "nil",
     "nil"
   ],
   "filament_retract_restart_extra": [
+    "nil",
     "nil"
   ],
   "filament_retract_restart_extra_toolchange": [
+    "nil",
     "nil"
   ],
   "filament_retract_when_changing_layer": [
+    "nil",
     "nil"
   ],
   "filament_retraction_distances_when_cut": [
+    "nil",
     "nil"
   ],
-  "filament_retraction_length": ["nil"],
+  "filament_retraction_length": [
+    "nil",
+    "0.6"
+  ],
   "filament_retraction_minimum_travel": [
+    "nil",
     "nil"
   ],
   "filament_retraction_speed": [
+    "nil",
     "nil"
   ],
   "filament_settings_id": [
@@ -241,15 +296,19 @@
     "Snapmaker"
   ],
   "filament_wipe": [
+    "nil",
     "nil"
   ],
   "filament_wipe_distance": [
+    "nil",
     "nil"
   ],
   "filament_z_hop": [
+    "nil",
     "nil"
   ],
   "filament_z_hop_types": [
+    "nil",
     "nil"
   ],
   "full_fan_speed_layer": [
@@ -282,7 +341,9 @@
   "slow_down_for_layer_cooling": [
     "1"
   ],
-  "slow_down_layer_time": ["8"],
+  "slow_down_layer_time": [
+    "8"
+  ],
   "slow_down_min_speed": [
     "10"
   ],

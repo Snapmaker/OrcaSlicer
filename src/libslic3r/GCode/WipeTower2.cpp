@@ -1092,7 +1092,7 @@ WipeTower2::WipeTower2(const PrintConfig& config, const PrintRegionConfig& defau
     m_y_shift(0.f),
     m_z_pos(0.f),
     m_bridging(float(config.wipe_tower_bridging)),
-    m_no_sparse_layers(config.wipe_tower_no_sparse_layers),
+    m_sparse_layers_skipped(wipe_tower_sparse_layers_skipped(config)),
     m_gcode_flavor(config.gcode_flavor),
     m_travel_speed(config.travel_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool))),
     m_infill_speed(default_region_config.sparse_infill_speed.get_at(get_extruder_index(config, (unsigned int)initial_tool))),
@@ -1174,6 +1174,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     // grouping the per-variant arrays may hold several columns per filament; the tower has no
     // layer dimension here, so it keeps the filament's first column (tower x per-layer
     // grouping is a documented follow-up).
+    // The purge and ramming values of a filament hold one value per filament variant column.
+    const size_t variant_column = first_filament_variant_column(config.filament_self_index.values, idx);
     m_filpar[idx].material = config.filament_type.get_at(idx);
     if (m_wipe_tower_filament > 0)
         m_filpar[idx].is_soluble = (idx != size_t(m_wipe_tower_filament - 1));
@@ -1182,7 +1184,7 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_filpar[idx].is_support = config.filament_is_support.get_at(idx);
     m_filpar[idx].temperature = config.nozzle_temperature.get_at(idx);
     m_filpar[idx].first_layer_temperature              = config.nozzle_temperature_initial_layer.get_at(idx);
-    m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(idx);
+    m_filpar[idx].filament_minimal_purge_on_wipe_tower = config.filament_minimal_purge_on_wipe_tower.get_at(variant_column);
     {
         int interface_temp = config.filament_tower_interface_print_temp.get_at(idx);
         if (interface_temp == -1)
@@ -1237,9 +1239,9 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
         // and the same time step has to be used when the ramming is performed.
     } else {
         // We will use the same variables internally, but the correspondence to the configuration options will be different.
-        float vol                                      = config.filament_multitool_ramming_volume.get_at(idx);
-        float flow                                     = config.filament_multitool_ramming_flow.get_at(idx);
-        m_filpar[idx].multitool_ramming                = config.filament_multitool_ramming.get_at(idx) && vol > 0.f && flow > 0.f;
+        float vol                                      = config.filament_multitool_ramming_volume.get_at(variant_column);
+        float flow                                     = config.filament_multitool_ramming_flow.get_at(variant_column);
+        m_filpar[idx].multitool_ramming                = config.filament_multitool_ramming.get_at(variant_column) && vol > 0.f && flow > 0.f;
         m_filpar[idx].ramming_line_width_multiplicator = m_ramming_width_ratio;
         m_filpar[idx].ramming_step_multiplicator       = 1.;
 
@@ -1910,7 +1912,7 @@ void WipeTower2::toolchange_Change(
         } else if (m_wall_type == (int)wtwCone) {
             const double support_scale = get_wipe_tower_cone_base(m_wipe_tower_width, m_wipe_tower_height, m_wipe_tower_depth,
                                                                   m_wipe_tower_cone_angle).second;
-            const double z = m_no_sparse_layers ? (m_current_height + m_layer_info->height) : m_layer_info->z;
+            const double z = m_sparse_layers_skipped ? (m_current_height + m_layer_info->height) : m_layer_info->z;
             const double r = std::tan(Geometry::deg2rad(m_wipe_tower_cone_angle / 2.f)) * (m_wipe_tower_height - z);
             const double w = m_layer_info->depth + m_perimeter_width;
             if (r > 0.5 * w + 0.01) { // same guard as generate_support_cone_wall
@@ -2051,7 +2053,7 @@ void WipeTower2::toolchange_Wipe(
     // All the calculations in all other places take the spacing into account for all the layers.
 
     // If spare layers are excluded->if 1 or less toolchange has been done, it must be sill the first layer, too.So slow down.
-    const float target_speed = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers) ?
+    const float target_speed = is_first_layer() || (m_num_tool_changes <= 1 && m_sparse_layers_skipped) ?
                                    m_first_layer_speed * 60.f :
                                    std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
     float       wipe_speed   = 0.33f * target_speed;
@@ -2157,7 +2159,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
 
     // Slow down on the 1st layer.
     // If spare layers are excluded -> if 1 or less toolchange has been done, it must be still the first layer, too. So slow down.
-    bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_no_sparse_layers);
+    bool  first_layer   = is_first_layer() || (m_num_tool_changes <= 1 && m_sparse_layers_skipped);
     float feedrate      = first_layer ? m_first_layer_speed * 60.f : std::min(m_wipe_tower_max_purge_speed * 60.f, m_infill_speed * 60.f);
     // Orca: after an interface layer, slow the sparse fill down so it bonds to the interface surface.
     if (m_enable_tower_interface_features && m_prev_layer_had_interface)
@@ -2334,7 +2336,7 @@ WipeTower::ToolChangeResult WipeTower2::finish_layer()
 
     // Ask our writer about how much material was consumed.
     // Skip this in case the layer is sparse and config option to not print sparse layers is enabled.
-    if (!m_no_sparse_layers || toolchanges_on_layer || first_layer) {
+    if (!m_sparse_layers_skipped || toolchanges_on_layer || first_layer) {
         if (m_current_tool < m_used_filament_length.size())
             m_used_filament_length[m_current_tool] += writer.get_and_reset_used_filament_length();
         m_current_height += m_layer_info->height;
@@ -2358,6 +2360,23 @@ std::pair<double, double> WipeTower2::get_wipe_tower_cone_base(double width, dou
         support_scale = (w / 2. + t / tan + t * tan) / (w / 2.);
     }
     return std::make_pair(R, support_scale);
+}
+
+Polygon WipeTower2::cone_base_polygon(double width, double depth, double height, double angle_deg)
+{
+    Polygon box({Point::new_scale(Vec2d(0., 0.)), Point::new_scale(Vec2d(width, 0.)),
+                 Point::new_scale(Vec2d(width, depth)), Point::new_scale(Vec2d(0., depth))});
+    if (angle_deg <= EPSILON || height <= EPSILON || width <= EPSILON || depth <= EPSILON)
+        return box;
+    const auto [R, x_scale] = get_wipe_tower_cone_base(width, height, depth, angle_deg);
+    if (R <= EPSILON)
+        return box;
+    const Vec2d center(width / 2., depth / 2.);
+    Polygon ellipse;
+    for (double alpha = 0.; alpha < 2. * M_PI; alpha += M_PI / 20.)
+        ellipse.points.push_back(Point::new_scale(center + R * Vec2d(std::cos(alpha) / x_scale, std::sin(alpha))));
+    Polygons u = union_({box, ellipse});
+    return u.empty() ? box : u.front();
 }
 
 // Static method to extract wipe_volumes[from][to] from the configuration.
@@ -2400,10 +2419,15 @@ std::vector<std::vector<float>> WipeTower2::extract_wipe_volumes(const ConfigBas
     }
 
     // Also include filament_minimal_purge_on_wipe_tower. This is needed for the preview.
+    // The minimal purge holds one value per filament variant column; without the index (or once the
+    // columns were narrowed) the column of a filament is its id.
     const auto *minimal_purge = config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower");
+    const auto *self_index    = config.option<ConfigOptionInts>("filament_self_index");
+    const std::vector<int> no_index;
+    const std::vector<int> &columns = self_index ? self_index->values : no_index;
     for (unsigned int i = 0; i<number_of_extruders; ++i)
         for (unsigned int j = 0; j<number_of_extruders; ++j)
-            wipe_volumes[i][j] = std::max<float>(wipe_volumes[i][j], minimal_purge->get_at(j));
+            wipe_volumes[i][j] = std::max<float>(wipe_volumes[i][j], minimal_purge->get_at(first_filament_variant_column(columns, j)));
 
     return wipe_volumes;
 }
@@ -2442,7 +2466,7 @@ void WipeTower2::plan_toolchange(float z_par, float layer_height_par, unsigned i
         m_plan.back().start_tool = int(old_tool);
     }
 
-    if (m_first_layer_idx == size_t(-1) && (!m_no_sparse_layers || old_tool != new_tool || m_plan.size() == 1))
+    if (m_first_layer_idx == size_t(-1) && (!m_sparse_layers_skipped || old_tool != new_tool || m_plan.size() == 1))
         m_first_layer_idx = m_plan.size() - 1;
 
     if (old_tool == new_tool) // new layer without toolchanges - we are done
@@ -2508,7 +2532,7 @@ void WipeTower2::plan_local_z_toolchange(float z_par, float layer_height_par, un
         m_plan.back().start_tool = int(old_tool);
     }
 
-    if (m_first_layer_idx == size_t(-1) && (!m_no_sparse_layers || old_tool != new_tool || m_plan.size() == 1))
+    if (m_first_layer_idx == size_t(-1) && (!m_sparse_layers_skipped || old_tool != new_tool || m_plan.size() == 1))
         m_first_layer_idx = m_plan.size() - 1;
 
     if (old_tool == new_tool)
@@ -3086,7 +3110,7 @@ Polygon WipeTower2::generate_support_cone_wall(
     const auto [R, support_scale] = get_wipe_tower_cone_base(m_wipe_tower_width, m_wipe_tower_height, m_wipe_tower_depth,
                                                              m_wipe_tower_cone_angle);
 
-    double z = m_no_sparse_layers ?
+    double z = m_sparse_layers_skipped ?
                    (m_current_height + m_layer_info->height) :
                    m_layer_info->z; // the former should actually work in both cases, but let's stay on the safe side (the 2.6.0 is close)
 

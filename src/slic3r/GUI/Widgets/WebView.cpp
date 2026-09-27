@@ -2,6 +2,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
 
+#include <algorithm>
 #include <boost/log/trivial.hpp>
 
 #include <wx/webviewarchivehandler.h>
@@ -183,8 +184,9 @@ private:
 class WebViewWebKit : public wxWebViewWebKit
 {
 public:
-    WebViewWebKit()
+    explicit WebViewWebKit(const wxString &initialUrl)
         : wxWebViewWebKit(MakeConfiguration())
+        , m_pendingUrl(initialUrl)
     {
     }
 
@@ -193,7 +195,142 @@ public:
         RemoveScriptMessageHandler("wx");
     }
 
+    // WKWebView starts loading inside Create(), but the "wx" handler is installed later from
+    // a CallAfter; the navigation is held back until then so page JS finds messageHandlers.wx.
+    void LoadURL(const wxString &url) override
+    {
+        if (!m_scriptMessageHandlerInstalled && url != wxString("about:blank")) {
+            m_pendingUrl = url;
+            m_hasPendingPage = false;
+            return;
+        }
+        RequestLoad(url);
+    }
+
+    void SetScriptMessageHandlerInstalled()
+    {
+        m_scriptMessageHandlerInstalled = true;
+        auto url = std::move(m_pendingUrl);
+        m_pendingUrl.clear();
+        if (m_hasPendingPage) {
+            m_hasPendingPage = false;
+            auto html    = std::move(m_pendingHtml);
+            auto baseUrl = std::move(m_pendingBaseUrl);
+            m_pendingHtml.clear();
+            m_pendingBaseUrl.clear();
+            wxWebViewWebKit::DoSetPage(html, baseUrl);
+        } else if (!url.empty() && url != wxString("about:blank"))
+            RequestLoad(url);
+    }
+
+    void AttachNavigationGate()
+    {
+        Bind(wxEVT_WEBVIEW_LOADED, &WebViewWebKit::OnNavigationSettled, this);
+        Bind(wxEVT_WEBVIEW_ERROR, &WebViewWebKit::OnNavigationSettled, this);
+    }
+
+protected:
+    // SetPage() is held back the same way and replaces the pending URL, so whichever of
+    // LoadURL() / SetPage() came last is released once the handler is installed.
+    void DoSetPage(const wxString &html, const wxString &baseUrl) override
+    {
+        if (!m_scriptMessageHandlerInstalled) {
+            m_pendingUrl.clear();
+            m_pendingHtml    = html;
+            m_pendingBaseUrl = baseUrl;
+            m_hasPendingPage = true;
+            return;
+        }
+        // The page replaces whatever navigation is in flight or queued.
+        m_inFlightUrl.clear();
+        m_queuedUrl.clear();
+        wxWebViewWebKit::DoSetPage(html, baseUrl);
+    }
+
 private:
+    static bool IsBlankUrl(const wxString &url)
+    {
+        return url.empty() || url == wxString("about:blank");
+    }
+
+    static wxString CanonicalUrl(const wxString &url)
+    {
+        if (IsBlankUrl(url))
+            return url;
+        return wxURI(url).BuildURI();
+    }
+
+    static bool IsFlutterUrl(const wxString &url)
+    {
+        return url.find("flutter_web") != std::string::npos;
+    }
+
+    static wxString UrlPath(const wxString &url)
+    {
+        if (IsBlankUrl(url))
+            return url;
+        return wxURI(url).GetPath();
+    }
+
+    // A loadRequest during a provisional navigation cancels it (-999) and can blank the view.
+    // Serialized: the in-flight canonical URL (query included: Flutter pages differ only in
+    // ?path=) is dropped, Flutter over Flutter is queued, anything else loads at once.
+    void RequestLoad(const wxString &url)
+    {
+        if (IsBlankUrl(url)) {
+            wxWebViewWebKit::LoadURL(url);
+            return;
+        }
+
+        const wxString target = CanonicalUrl(url);
+        if (!m_inFlightUrl.empty()) {
+            if (target == m_inFlightUrl) {
+                // The most recent request is the one already loading, so an older queued
+                // switch to another page is obsolete and must not replace it afterwards.
+                if (!m_queuedUrl.empty())
+                    BOOST_LOG_TRIVIAL(info) << "WebViewWebKit: unqueued " << m_queuedUrl.ToUTF8().data() << ", superseded";
+                m_queuedUrl.clear();
+                BOOST_LOG_TRIVIAL(info) << "WebViewWebKit: dropped " << target.ToUTF8().data() << ", same URL in flight";
+                return;
+            }
+            // Flutter interrupted by another Flutter → -999 white screen. Queue that case only.
+            // missing_connection.gif sitting in-flight while the view is hidden never settles,
+            // so queuing path=2 behind it leaves Device on the GIF forever.
+            if (IsFlutterUrl(m_inFlightUrl) && IsFlutterUrl(target)) {
+                BOOST_LOG_TRIVIAL(info) << "WebViewWebKit: queued " << target.ToUTF8().data() << " behind " << m_inFlightUrl.ToUTF8().data();
+                m_queuedUrl = target;
+                return;
+            }
+        }
+
+        m_queuedUrl.clear();
+        m_inFlightUrl = target;
+        wxWebViewWebKit::LoadURL(target);
+    }
+
+    void FlushQueued()
+    {
+        if (m_queuedUrl.empty())
+            return;
+        auto url = std::move(m_queuedUrl);
+        m_queuedUrl.clear();
+        m_inFlightUrl = url;
+        wxWebViewWebKit::LoadURL(url);
+    }
+
+    void OnNavigationSettled(wxWebViewEvent &evt)
+    {
+        evt.Skip();
+        const wxString eventUrl = CanonicalUrl(evt.GetURL());
+        if (IsBlankUrl(eventUrl))
+            return;
+        // Ignore the document that was just replaced (GIF -999 after jumping to path=2).
+        if (!m_inFlightUrl.empty() && UrlPath(eventUrl) != UrlPath(m_inFlightUrl))
+            return;
+        m_inFlightUrl.clear();
+        FlushQueued();
+    }
+
     static wxWebViewConfiguration MakeConfiguration()
     {
         wxWebViewConfiguration config = wxWebView::NewConfiguration(wxWebViewBackendWebKit);
@@ -202,6 +339,14 @@ private:
         Slic3r::GUI::WKWebViewConfiguration_keepActiveWhenHidden(config.GetNativeConfiguration());
         return config;
     }
+
+    bool     m_scriptMessageHandlerInstalled = false;
+    bool     m_hasPendingPage                = false;
+    wxString m_pendingUrl;
+    wxString m_pendingHtml;
+    wxString m_pendingBaseUrl;
+    wxString m_inFlightUrl;
+    wxString m_queuedUrl;
 };
 
 #endif
@@ -256,6 +401,12 @@ public:
         assert(iter != g_webviews.end());
         if (iter != g_webviews.end())
             g_webviews.erase(iter);
+        // Drop pending handler installs so a later g_delay_webviews flush never
+        // calls AddScriptMessageHandler() on a destroyed view.
+        // See bambulab/BambuStudio #11004 and #10968.
+        auto diter = std::find(g_delay_webviews.begin(), g_delay_webviews.end(), m_webView);
+        if (diter != g_delay_webviews.end())
+            g_delay_webviews.erase(diter);
     }
     wxWebView *m_webView;
     // Guards against registering the "wx" handler twice (a duplicate throws on WKWebView).
@@ -290,7 +441,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #ifdef __WIN32__
     wxWebView* webView = new WebViewEdge;
 #elif defined(__WXOSX__)
-    wxWebView* webView = new WebViewWebKit;
+    wxWebView* webView = new WebViewWebKit(url2);
 #else
     auto webView = wxWebView::New();
 #endif
@@ -323,12 +474,24 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #endif
+        const wxString user_agent = wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) BBL-Language/%s",
+                                                     SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light", language_code.mb_str());
+#ifdef __WXMAC__
+        // WKWebView starts loading during Create(), before the delayed handler callback
+        // runs. The initial document is kept blank; the subclass flushes the pending URL
+        // once the "wx" handler is installed.
+        webView->Create(parent, wxID_ANY, wxString("about:blank"), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
+        // SetUserAgent() only after Create(): before it the native view pointer is
+        // uninitialised. Only about:blank is loading yet, so the real navigation has the agent.
+        webView->SetUserAgent(user_agent);
+#else
         // Set the user agent BEFORE Create(): wx buffers it and applies it ahead of the
-        // first navigation, so the live WKWebView is not mutated mid-provisional-load.
+        // first navigation, so the live view is not mutated mid-provisional-load.
         // Mirrors the Windows branch order.
-        webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) BBL-Language/%s",
-                                               SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light", language_code.mb_str()));
+        webView->SetUserAgent(user_agent);
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#endif
 #endif
 #ifdef __WXMAC__
         WKWebView * wkWebView = (WKWebView *) webView->GetNativeBackend();
@@ -336,6 +499,19 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         Slic3r::GUI::WKWebView_keepActiveWhenHidden(wkWebView);
 #endif
         auto addScriptMessageHandler = [] (wxWebView *webView) {
+#ifdef __WXMAC__
+            // Releases the deferred initial URL on every exit path, after
+            // set_adding_script_handler(false). AddScriptMessageHandler() pumps the event
+            // loop and can destroy the view, so the guard checks g_webviews first.
+            struct ReleasePendingUrl {
+                wxWebView *view;
+                ~ReleasePendingUrl()
+                {
+                    if (std::find(g_webviews.begin(), g_webviews.end(), view) != g_webviews.end())
+                        static_cast<WebViewWebKit *>(view)->SetScriptMessageHandlerInstalled();
+                }
+            } release{webView};
+#endif
             // Skip if SendAPIKey() already registered "wx"; a duplicate add throws an
             // uncatchable NSException on WKWebView, killing the app at startup.
             WebViewRef *ref = webview_ref(webView);
@@ -345,13 +521,20 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
             Slic3r::GUI::wxGetApp().set_adding_script_handler(true);
             if (!webView->AddScriptMessageHandler("wx"))
                 wxLogError("Could not add script message handler");
-            else if (ref)
+            // The call above pumps the event loop. A view destroyed meanwhile has taken its
+            // WebViewRef along, so the ref is only written while the view is still registered.
+            else if (ref && std::find(g_webviews.begin(), g_webviews.end(), webView) != g_webviews.end())
                 ref->m_script_handler_added = true;
             Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": finished add script message handler for wx.";
         };
 #ifndef __WIN32__
         webView->CallAfter([webView, addScriptMessageHandler] {
+            // CallAfter can run after this webView has been destroyed (macOS 26.5+).
+            // g_webviews holds only live views; skip dangling pointers.
+            // See bambulab/BambuStudio #11004 and #10968.
+            if (std::find(g_webviews.begin(), g_webviews.end(), webView) == g_webviews.end())
+                return;
 #endif
             if (Slic3r::GUI::wxGetApp().is_adding_script_handler()) {
                 g_delay_webviews.push_back(webView);
@@ -359,8 +542,11 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                 addScriptMessageHandler(webView);
                 while (!g_delay_webviews.empty()) {
                     auto views = std::move(g_delay_webviews);
-                    for (auto wv : views)
+                    for (auto wv : views) {
+                        if (std::find(g_webviews.begin(), g_webviews.end(), wv) == g_webviews.end())
+                            continue;
                         addScriptMessageHandler(wv);
+                    }
                 }
             }
 #ifndef __WIN32__

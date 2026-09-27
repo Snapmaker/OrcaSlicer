@@ -47,6 +47,7 @@ add_executable(${_TEST_NAME}_tests
     test_ordering_strategies.cpp
     # test_png_io.cpp
     test_indexed_triangle_set.cpp
+    TestMD5.cpp
     ../libnest2d/printer_parts.cpp
     )
 
@@ -56,7 +57,7 @@ endif()
 
 target_link_libraries(${_TEST_NAME}_tests test_common libslic3r Catch2::Catch2WithMain OpenSSL::Crypto)
 if (WIN32)
-    target_link_libraries(${_TEST_NAME}_tests bcrypt.lib)
+    target_link_libraries(${_TEST_NAME}_tests bcrypt.lib crypt32.lib)
 endif()
 target_include_directories(${_TEST_NAME}_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")

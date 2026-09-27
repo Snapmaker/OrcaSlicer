@@ -13,6 +13,8 @@
 #include <boost/uuid/detail/md5.hpp>
 #include <boost/regex.hpp>
 
+#include <openssl/md5.h>
+
 #include <wx/mstream.h>
 
 #include "nlohmann/json.hpp"

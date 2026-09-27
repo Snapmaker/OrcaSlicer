@@ -3472,6 +3472,11 @@ void TabPrint::toggle_options()
             cb->Append(_(def->enum_labels[i]));
         }
         cb->SetValue(n);
+        // The stale label (e.g. a tree style left over after support_type changed while support
+        // is disabled) may not exist in the rebuilt list; GetValue()/SetValue() then leaves the
+        // selection invalid, and Choice::get_value would index enum_values out of bounds.
+        if (cb->GetSelection() == wxNOT_FOUND && cb->GetCount() > 0)
+            cb->SetSelection(0);
     }
 
     // Keep plate bed-type list in sync with currently selected printer.
@@ -3549,6 +3554,10 @@ void TabPrint::toggle_options()
             cb->Append(_(def->enum_labels[i]));
         }
         cb->SetValue(n);
+        // Same repair as for support_style above: the rebuilt list may not contain the stale
+        // label, and Choice::get_value would index enum_values with wxNOT_FOUND.
+        if (cb->GetSelection() == wxNOT_FOUND && cb->GetCount() > 0)
+            cb->SetSelection(0);
     }
 }
 
@@ -7507,8 +7516,17 @@ bool Tab::select_preset(
                         oldFilamentColors[i] = "#26A69A";
                     if (oldFilamentMultiColors[i].empty())
                         oldFilamentMultiColors[i] = oldFilamentColors[i];
-                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                    const FilamentColorMode mode = FilamentColorModeFromConfig(oldFilamentColourModes[i]);
+                    oldFilamentColourModes[i] = FilamentColorModeToConfig(mode);
                 }
+                // Keep the flush volumes with the carried-over filaments: update_selections() may
+                // load a matrix sized for another filament count (heap corruption, OOB reads when slicing).
+                std::vector<double> oldFlushVolumesMatrix;
+                std::vector<double> oldFlushVolumesVector;
+                if (const ConfigOptionFloats* flushMatrix = projectConfig.option<ConfigOptionFloats>("flush_volumes_matrix"))
+                    oldFlushVolumesMatrix = flushMatrix->values;
+                if (const ConfigOptionFloats* flushVector = projectConfig.option<ConfigOptionFloats>("flush_volumes_vector"))
+                    oldFlushVolumesVector = flushVector->values;
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
 
@@ -7517,11 +7535,24 @@ bool Tab::select_preset(
                 projectConfig.option<ConfigOptionStrings>("filament_colour")->values = oldFilamentColors;
                 projectConfig.option<ConfigOptionStrings>("filament_multi_colors", true)->values = oldFilamentMultiColors;
                 projectConfig.option<ConfigOptionInts>("filament_colour_mode", true)->values = oldFilamentColourModes;
+                // The matrix is stored as one n x n block per extruder; only restore it when it
+                // still matches the carried-over filament count and the new printer's extruder count.
+                const size_t nozzleNums = size_t(std::max(1, m_preset_bundle->get_printer_extruder_count()));
+                if (!oldFlushVolumesMatrix.empty() && oldFlushVolumesMatrix.size() == oldFilamentCount * oldFilamentCount * nozzleNums) {
+                    if (ConfigOptionFloats* flushMatrix = projectConfig.option<ConfigOptionFloats>("flush_volumes_matrix"))
+                        flushMatrix->values = oldFlushVolumesMatrix;
+                    if (ConfigOptionFloats* flushVector = projectConfig.option<ConfigOptionFloats>("flush_volumes_vector"))
+                        flushVector->values = oldFlushVolumesVector;
+                } else {
+                    BOOST_LOG_TRIVIAL(error) << "select_preset: flush matrix size " << oldFlushVolumesMatrix.size()
+                                             << " does not match " << oldFilamentCount << " filaments x " << nozzleNums
+                                             << " extruders, not carried over";
+                }
 
                 std::vector<std::string> filamentColourModeStrings;
                 filamentColourModeStrings.reserve(oldFilamentColourModes.size());
-                for (int mode : oldFilamentColourModes)
-                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                for (const int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(std::to_string(mode));
                 const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
                 const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
                 const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");

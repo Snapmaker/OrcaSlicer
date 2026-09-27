@@ -2102,3 +2102,135 @@ SCENARIO("The prime tower prints one slab per tool change with per-extruder laye
         }
     }
 }
+
+// A stored layer height profile stays fixed for the extruder_layer_height guard after the initial
+// layer height changes, as long as generate_object_layers() never samples its stale first segment;
+// a stale segment reaching above the new first layer changes the second layer and stays rejected.
+SCENARIO("A fixed layer height profile stored under another first layer height stays fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](const DynamicPrintConfig &config) {
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, 10., std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    auto fixed_profile = [&slicing_params](DynamicPrintConfig config, double initial_layer_height) {
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(initial_layer_height));
+        const SlicingParameters params = slicing_params(config);
+        REQUIRE(params.first_object_layer_height_fixed());
+        const std::vector<coordf_t> profile = layer_height_profile_from_ranges(params, t_layer_config_ranges{});
+        REQUIRE(check_object_layers_fixed(params, profile));
+        return profile;
+    };
+    auto layer_heights = [](const std::vector<coordf_t> &layers) {
+        std::vector<double> heights;
+        for (size_t i = 0; i + 1 < layers.size(); i += 2)
+            heights.emplace_back(layers[i + 1] - layers[i]);
+        return heights;
+    };
+
+    GIVEN("Fixed profiles with 0.2 mm layers stored under a 0.2 mm and a 0.25 mm first layer") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        const std::vector<coordf_t> profile_020 = fixed_profile(config, 0.2);
+        const std::vector<coordf_t> profile_025 = fixed_profile(config, 0.25);
+        REQUIRE(profile_020.size() == 4);
+        REQUIRE(profile_025.size() == 8);
+
+        WHEN("the initial layer height is now 0.4 mm") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("both profiles count as fixed and slice to a 0.4 mm first layer over 0.2 mm layers") {
+                for (const std::vector<coordf_t> *profile : { &profile_020, &profile_025 }) {
+                    CHECK(check_object_layers_fixed(params_now, *profile));
+                    const std::vector<double> heights = layer_heights(generate_object_layers(params_now, *profile, false));
+                    REQUIRE(heights.size() >= 3);
+                    CHECK(heights.front() == Catch::Approx(0.4).margin(1e-6));
+                    for (size_t i = 1; i < heights.size(); ++ i)
+                        CHECK(heights[i] == Catch::Approx(0.2).margin(1e-6));
+                }
+            }
+            THEN("genuinely variable profiles are still rejected") {
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 5., 0.2, 5., 0.3, 10., 0.3}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 2., 0.2, 4., 0.3, 6., 0.2, 8., 0.3, 10., 0.2}));
+            }
+        }
+
+        WHEN("a profile stored under a 0.4 mm first layer meets a 0.25 mm first layer") {
+            const std::vector<coordf_t> profile_040 = fixed_profile(config, 0.4);
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("the stale first segment is sampled into the second layer, so the profile is not fixed") {
+                const std::vector<double> heights = layer_heights(generate_object_layers(params_now, profile_040, false));
+                REQUIRE(heights.size() >= 3);
+                CHECK(heights[0] == Catch::Approx(0.25).margin(1e-6));
+                CHECK(heights[1] == Catch::Approx(0.4).margin(1e-6));
+                CHECK(! check_object_layers_fixed(params_now, profile_040));
+            }
+        }
+    }
+
+    GIVEN("A two-part print with per-extruder layer heights and a stored fixed profile") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        REQUIRE(print.validate().string.empty());
+        ModelObject &object = *model.objects.front();
+        object.layer_height_profile.set(fixed_profile(config, 0.25));
+        print.apply(model, config);
+        REQUIRE(print.validate().string.empty());
+
+        WHEN("the initial layer height grows to 0.4 mm afterwards") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            print.apply(model, config);
+            THEN("validation still accepts the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                CHECK(err.string.empty());
+            }
+        }
+
+        WHEN("the stored profile is variable") {
+            object.layer_height_profile.set(std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2});
+            print.apply(model, config);
+            THEN("validation rejects the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                REQUIRE(! err.string.empty());
+                CHECK(err.opt_key == "extruder_layer_height");
+            }
+        }
+    }
+}
+
+// An object barely taller than its first layer: generate_object_layers() still samples the stored
+// profile for the second layer, so a profile whose top segment is not the regular layer height is
+// not fixed, even though the second layer's centre lies above the object top.
+SCENARIO("A stale layer height profile on a very short object is not taken for fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](double first_layer_height, double object_height) {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(first_layer_height));
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, object_height, std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    GIVEN("a 0.28 mm tall object with 0.2 mm first and regular layers") {
+        const SlicingParameters params = slicing_params(0.2, 0.28);
+        REQUIRE(params.first_object_layer_height_fixed());
+        THEN("a profile holding 0.08 mm all the way is rejected, in its 4 and 8 value forms") {
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.08, 0.28, 0.08}));
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.15, 0.15, 0.15, 0.15, 0.08, 0.28, 0.08}));
+        }
+        THEN("the profile generated for the object itself stays fixed") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
+        }
+    }
+    GIVEN("an object no taller than its first layer") {
+        const SlicingParameters params = slicing_params(0.2, 0.2);
+        THEN("its generated profile is fixed: only the hard-coded first layer prints") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
+        }
+    }
+}

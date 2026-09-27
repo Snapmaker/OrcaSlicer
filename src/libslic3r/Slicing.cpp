@@ -931,7 +931,21 @@ bool check_object_layers_fixed(
     if (! fixed_step1 || ! fixed_step2)
         return false;
 
-    if (layer_height_profile[2] < 0.5 * slicing_params.first_object_layer_height + EPSILON ||
+    if (slicing_params.first_object_layer_height_fixed()) {
+        // generate_object_layers() fixes the first layer at first_object_layer_height and samples the
+        // profile above it: a profile saved under another first layer height still gives fixed layers
+        // if its first segment ends below that layer or already has the regular layer height.
+        if (layer_height_profile.size() == 8 &&
+            layer_height_profile[4] > slicing_params.first_object_layer_height + EPSILON &&
+            ! is_approx(layer_height_profile[3], slicing_params.layer_height))
+            return false;
+        // The z_2nd > z_max early return below skips short objects, yet a second layer that fits above
+        // the first is still sampled from the profile: the top segment must hold the regular height too.
+        if (slicing_params.first_object_layer_height + 0.5 * slicing_params.min_layer_height <
+                slicing_params.object_print_z_height() &&
+            ! is_approx(layer_height_profile.back(), slicing_params.layer_height))
+            return false;
+    } else if (layer_height_profile[2] < 0.5 * slicing_params.first_object_layer_height + EPSILON ||
         ! is_approx(layer_height_profile[3], slicing_params.first_object_layer_height))
         return false;
 

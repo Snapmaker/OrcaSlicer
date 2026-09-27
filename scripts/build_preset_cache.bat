@@ -123,10 +123,11 @@ for %%c in ("%PROFILES%\*.opc") do (
         set /a PRUNED+=1
     )
     if exist "%TARGET%\!VENDOR!\" (
-        rem The filament rules files are not presets (FilamentHotBedNozzleRules, PresetUpdater):
-        rem the cache does not carry them, so they stay.
+        rem The filament rules files (FilamentHotBedNozzleRules, AllowlistManager, PresetUpdater) and
+        rem the colour library (FilamentColorLibrary) are not presets: the cache does not carry them,
+        rem so they stay.
         for /f "delims=" %%j in ('dir /s /b "%TARGET%\!VENDOR!\*.json" 2^>nul') do (
-            if /i not "%%~nxj"=="filament_hot_bed_nozzles.json" if /i not "%%~nxj"=="filament_compatibility.json" (
+            if /i not "%%~nxj"=="filament_hot_bed_nozzles.json" if /i not "%%~nxj"=="filament_compatibility.json" if /i not "%%~nxj"=="filament_allow_list.json" if /i not "%%~nxj"=="filaments_colours.json" (
                 del /q "%%j" >nul 2>&1
                 set /a PRUNED+=1
             )

@@ -146,7 +146,12 @@ option(SLIC3R_WARNINGS          "Emit compiler warnings for OrcaSlicer sources" 
 option(SLIC3R_BUNDLED_WARNINGS  "Emit compiler warnings for bundled third-party sources" 0)
 option(SLIC3R_MSVC_COMPILE_PARALLEL "Compile on Visual Studio in parallel" 1)
 option(SLIC3R_MSVC_PDB          "Generate PDB files on MSVC in Release mode" 1)
-option(SLIC3R_ASAN              "Enable ASan on Clang and GCC" 0)
+# Sanitizers: ENABLE_ASAN / ENABLE_UBSAN are declared in cmake/sanitizers.cmake.
+# SLIC3R_ASAN is the legacy name; forward it with a deprecation warning.
+if(SLIC3R_ASAN)
+    message(WARNING "SLIC3R_ASAN is deprecated - use ENABLE_ASAN instead")
+    set(ENABLE_ASAN ${SLIC3R_ASAN} CACHE BOOL "Enable AddressSanitizer (ASan)" FORCE)
+endif()
 
 # Sentry crash reporting - on by default everywhere except the Flatpak build
 # (Flathub distribution stays telemetry-free).
@@ -637,24 +642,8 @@ if ((NOT MSVC OR IS_CLANG_CL) AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR 
 
 endif()
 
-if (SLIC3R_ASAN)
-    # ASAN should be available on MSVC starting with Visual Studio 2019 16.9
-    # https://devblogs.microsoft.com/cppblog/address-sanitizer-for-msvc-now-generally-available/
-    add_compile_options(-fsanitize=address)
-
-    if (NOT MSVC)
-        add_compile_options(-fno-omit-frame-pointer)
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
-        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
-        set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address")
-    else()
-        add_compile_definitions(_DISABLE_STRING_ANNOTATION=1 _DISABLE_VECTOR_ANNOTATION=1)
-    endif ()
-
-    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lasan")
-    endif ()
-endif ()
+# Sanitizers (ASan / UBSan), both opt-in and OFF by default.
+include(cmake/sanitizers.cmake)
 
 if (APPLE)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=partial-availability -Werror=unguarded-availability -Werror=unguarded-availability-new")
@@ -900,6 +889,10 @@ endif ()
 find_package(PNG REQUIRED)
 
 set(OpenGL_GL_PREFERENCE "LEGACY")
+if (APPLE)
+    # FindOpenGL on CMake < 4 resolves OPENGL_glu_LIBRARY to the AGL framework, which the macOS 26 SDK no longer ships.
+    set(OPENGL_glu_LIBRARY "" CACHE FILEPATH "Do not link AGL (removed in macOS 26 SDK)")
+endif ()
 find_package(OpenGL REQUIRED)
 
 if(APPLE AND CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
@@ -1303,6 +1296,19 @@ if(BUILD_TESTS)
         # Catch2 is vendored under tests/ and sets its own warning flags too.
         orcaslicer_silence_third_party_warnings("${CMAKE_CURRENT_SOURCE_DIR}/tests/catch2")
     endif ()
+endif()
+
+if(BUILD_TESTS)
+    # Aggregate target: `cmake --build <dir> --target tests` builds every test suite.
+    if(NOT TARGET tests)
+        add_custom_target(tests)
+    endif()
+    foreach(_t IN ITEMS libnest2d_tests libslic3r_tests slic3rutils_tests fff_print_tests sla_print_tests filament_group_tests)
+        if(TARGET ${_t})
+            add_dependencies(tests ${_t})
+        endif()
+    endforeach()
+    unset(_t)
 endif()
 
 if (NOT WIN32 AND NOT APPLE)

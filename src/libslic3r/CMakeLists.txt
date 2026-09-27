@@ -31,6 +31,8 @@ set(lisbslic3r_sources
     Algorithm/RegionExpansion.cpp
     Algorithm/RegionExpansion.hpp
     AnyPtr.hpp
+    AllowlistManager.cpp
+    AllowlistManager.hpp
     AppConfig.cpp
     AppConfig.hpp
     Arachne/BeadingStrategy/BeadingStrategy.cpp
@@ -650,6 +652,11 @@ target_link_libraries(libslic3r
         ZLIB::ZLIB
         OpenSSL::Crypto
     )
+
+if (WIN32)
+    # Static OpenSSL libcrypto needs the Windows crypto and socket system libraries
+    target_link_libraries(libslic3r PRIVATE crypt32 ws2_32)
+endif()
 
 if(NOT WIN32)
     # Link freetype for OCCT dependency (CAD operations need font rendering)

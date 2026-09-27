@@ -1333,6 +1333,20 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                         wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders, flush_matrix.begin() + (i + 1) * number_of_extruders));
                     int   next_extruder = current_extruder;
                     float min_flush     = std::numeric_limits<float>::max();
+                    // The matrix is dimensioned from the stored flush_volumes_matrix, the ids from the
+                    // print's filament list; when they disagree (stale matrix) the lookup below would
+                    // read out of bounds. Fall back to the first usable candidate instead.
+                    const bool matrix_covers_ids =
+                        extruder_interface > 0 && extruder_interface - 1 < number_of_extruders &&
+                        std::all_of(extruders.begin(), extruders.end(), [number_of_extruders](unsigned int id) { return id < number_of_extruders; });
+                    if (! matrix_covers_ids) {
+                        BOOST_LOG_TRIVIAL(error) << "support filament selection: flush matrix (" << number_of_extruders
+                                                 << ") does not cover the filament ids, skipping flush lookup";
+                        for (auto extruder_id : extruders)
+                            if (! object.print()->config().filament_soluble.get_at(extruder_id) && extruder_id != current_extruder)
+                                return int(extruder_id);
+                        return next_extruder;
+                    }
                     for (auto extruder_id : extruders) {
                         if (object.print()->config().filament_soluble.get_at(extruder_id) || extruder_id == current_extruder) continue;
                         if (wipe_volumes[extruder_interface - 1][extruder_id] < min_flush) {
@@ -1477,10 +1491,14 @@ void ToolOrdering::fill_wipe_tower_partitions(const PrintConfig &config, coordf_
                     LayerTools lt_new(0.5f * (lt.print_z + lt_object.print_z));
                     // Find the 1st layer above lt_new.
                     for (j = i + 1; j < m_layer_tools.size() && m_layer_tools[j].print_z < lt_new.print_z - EPSILON; ++ j);
-                    if (std::abs(m_layer_tools[j].print_z - lt_new.print_z) < EPSILON) {
+                    if (j < m_layer_tools.size() && std::abs(m_layer_tools[j].print_z - lt_new.print_z) < EPSILON) {
 						m_layer_tools[j].has_wipe_tower = true;
-					} else {
-						LayerTools &lt_extra = *m_layer_tools.insert(m_layer_tools.begin() + j, lt_new);
+					} else if (j < m_layer_tools.size() && ! m_layer_tools[j].extruders.empty()) {
+                        // The layer right above the inserted one may carry no extruders, e.g. when
+                        // support generation was toggled off after a slice that had it enabled: the
+                        // layer plan for the raft gap then contains no extrusions for some layers.
+                        // lt_next.extruders.front() would dereference a null begin() and crash.
+                        LayerTools &lt_extra = *m_layer_tools.insert(m_layer_tools.begin() + j, lt_new);
                         //LayerTools &lt_prev  = m_layer_tools[j];
                         LayerTools &lt_next  = m_layer_tools[j + 1];
                         assert(! m_layer_tools[j - 1].extruders.empty() && ! lt_next.extruders.empty());

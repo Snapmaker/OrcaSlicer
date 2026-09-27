@@ -32,6 +32,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp"
 #include "common_func/common_func.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -1668,7 +1669,7 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
                                        << print_in_rsrc.string();
         }
 
-        // Rules files are not slicer presets; deploy even when full vendor dir sync was skipped above.
+        // Rules and colour-library files are not slicer presets; deploy even when full vendor dir sync was skipped above.
         if (bundle == PresetBundle::SM_BUNDLE) {
             {
                 fs::path rules_src = rsrc_path / bundle / "filament" / "filament_hot_bed_nozzles.json";
@@ -1681,6 +1682,22 @@ bool PresetUpdater::priv::install_bundles_rsrc(const std::vector<std::string>& b
             {
                 fs::path rules_src = rsrc_path / bundle / "filament" / "filament_compatibility.json";
                 fs::path rules_dst = vendor_path / bundle / "filament" / "filament_compatibility.json";
+                if (fs::exists(rules_src)) {
+                    fs::create_directories(rules_dst.parent_path());
+                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+                }
+            }
+            {
+                fs::path rules_src = rsrc_path / bundle / "filament" / "filament_allow_list.json";
+                fs::path rules_dst = vendor_path / bundle / "filament" / "filament_allow_list.json";
+                if (fs::exists(rules_src)) {
+                    fs::create_directories(rules_dst.parent_path());
+                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
+                }
+            }
+            {
+                fs::path rules_src = rsrc_path / bundle / "filament" / "filaments_colours.json";
+                fs::path rules_dst = vendor_path / bundle / "filament" / "filaments_colours.json";
                 if (fs::exists(rules_src)) {
                     fs::create_directories(rules_dst.parent_path());
                     updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), Version(), bundle, "", "", false, false, true);
@@ -1918,7 +1935,7 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                                                      "", "",
                                                      should_skip_file, force_update, true, legal);
 
-                        // Rules files are not slicer presets; ensure they are always deployed next to system filament JSON.
+                        // Rules and colour-library files are not slicer presets; ensure they are always deployed next to system filament JSON.
                         if (vendor_name == PresetBundle::SM_BUNDLE) {
                             {
                                 fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_hot_bed_nozzles.json";
@@ -1932,6 +1949,24 @@ Updates PresetUpdater::priv::get_config_updates(const Semver &old_slic3r_version
                             {
                                 fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_compatibility.json";
                                 fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_compatibility.json";
+                                if (fs::exists(rules_src)) {
+                                    fs::create_directories(rules_dst.parent_path());
+                                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
+                                                                 force_update, false, legal);
+                                }
+                            }
+                            {
+                                fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filament_allow_list.json";
+                                fs::path rules_dst = vendor_path / vendor_name / "filament" / "filament_allow_list.json";
+                                if (fs::exists(rules_src)) {
+                                    fs::create_directories(rules_dst.parent_path());
+                                    updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
+                                                                 force_update, false, legal);
+                                }
+                            }
+                            {
+                                fs::path rules_src = cache_profile_path / vendor_name / "filament" / "filaments_colours.json";
+                                fs::path rules_dst = vendor_path / vendor_name / "filament" / "filaments_colours.json";
                                 if (fs::exists(rules_src)) {
                                     fs::create_directories(rules_dst.parent_path());
                                     updates.updates.emplace_back(std::move(rules_src), std::move(rules_dst), version, vendor_name, "", "",
@@ -2100,6 +2135,12 @@ static bool reload_configs_update_gui()
 	GUI::wxGetApp().load_current_presets();
 	if (GUI::Plater* pl = GUI::wxGetApp().plater())
 		pl->set_bed_shape();
+
+	// The vendor directory copied in by an update also carries filaments_colours.json
+	// (hot-updated color palette / Full Spectrum SKUs). The color library caches that
+	// file for the process lifetime, so reload it here — same UI thread as the preset
+	// reload above — to make hot-updated colors visible without an app restart.
+	FilamentColorLibrary::Instance().Reload();
 
 	return true;
 }

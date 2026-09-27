@@ -8,6 +8,7 @@
 #include "MixedColorMatchHelpers.hpp"
 #include "../Utils/NetworkAgent.hpp"
 #include "../Utils/NetworkAgentFactory.hpp"
+#include "libslic3r/FilamentColorLibrary.hpp" // kFullSpectrumSlotCount (recommended slot write-back)
 #include "libslic3r/Config.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/filament_mixer.h"
@@ -4341,8 +4342,8 @@ Sidebar::Sidebar(Plater *parent)
     p->m_btn_batch_match->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_batch_match->SetToolTip(_L("Automatically calculate the color mixing scheme that best matches the original model colors and complete color mapping.\n"
                                         "Note:\n"
-                                        "1.Color mixing match is based on the official recommended CMYG filaments. The matched colors may differ from the original model.\n"
-                                        "2.The order of the Color Mapping list may differ from that of the Color Mixing list."));
+                                        "1. Color mixing match is based on the official recommended filaments. The matched colors may differ from the original model.\n"
+                                        "2. The order of the Color Mapping list may differ from that of the Color Mixing list."));
     p->m_btn_batch_match->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (!wxGetApp().preset_bundle) return;
         // No loaded model → batch match has nothing to map. Surface as a confirmation
@@ -4420,9 +4421,9 @@ Sidebar::Sidebar(Plater *parent)
         // NOTE: deliberately NO take_snapshot() here. The UndoRedo stack only
         // captures the Model (object painting), not the preset_bundle palette
         // or mixed_filaments. Snapshotting batch match would make Ctrl+Z revert
-        // painting while leaving the expanded CMYG palette in place → silent
+        // painting while leaving the expanded recommended palette in place → silent
         // wrong colors. Re-enable only after UndoRedo covers preset_bundle.
-        // For recommended mode, apply CMYG to the first 4 physical slots.
+        // For recommended mode, apply the matched palette colors to the first 4 physical slots.
         // < 4 filaments: expand to 4.  >= 4 filaments: keep every slot THROUGH
         // this stage (virtual ids / add_batch compute over the full slot
         // space).  The batch match is a project-wide re-plan of the filament
@@ -4438,7 +4439,7 @@ Sidebar::Sidebar(Plater *parent)
             const size_t current_count = pb->filament_presets.size();
             const size_t target_count  = std::max<size_t>(4, current_count);
 
-            // Build full palette: CMYG in slots 1-4, original in 5+.
+            // Build full palette: matched colors in slots 1-4, original in 5+.
             colors_vec = fc ? fc->values : std::vector<std::string>{};
             colors_vec.resize(target_count);
 
@@ -4462,7 +4463,7 @@ Sidebar::Sidebar(Plater *parent)
                     color_modes->values[i] = 0;
             }
 
-            // Write before set_num_filaments so auto_generate sees CMYG palette.
+            // Write before set_num_filaments so auto_generate sees the matched palette.
             if (fc) fc->values = colors_vec;
 
             // Snapshot the old mixed list BEFORE set_num_filaments clears
@@ -4554,14 +4555,30 @@ Sidebar::Sidebar(Plater *parent)
                 }
             }
 
-            // Write Full Spectrum to slots 1-4 only when the preset is
-            // selectable under the current printer (present + visible +
-            // compatible, matching the filament combobox filter).
-            const std::string full_spectrum_preset = full_spectrum_preset_name();
-            const Preset*     fs_preset = pb->filaments.find_preset(full_spectrum_preset);
-            if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible) {
-                for (size_t i = 0; i < std::min<size_t>(4, target_count); ++i)
-                    pb->set_filament_preset(i, full_spectrum_preset);
+            // Write a Full Spectrum preset into each of slots 1-4, per the FAMILY the
+            // user selected in that slot's palette dropdown (phase 2 multi-family:
+            // e.g. PLA in slots 1-2, PETG in 3-4). When a slot's family has no
+            // selectable preset, the slot KEEPS its current preset — per spec §5.1
+            // ("Configured filaments will be used instead", the same promise the
+            // Confirm-time note in MixedFilamentBatchDialog makes). The
+            // default-family single preset is only used for legacy results that
+            // carry no per-slot family info (pre-phase-2 behavior).
+            for (size_t i = 0; i < std::min<size_t>(static_cast<size_t>(kFullSpectrumSlotCount), target_count); ++i) {
+                std::string preset_name;
+                if (i < result.recommended_physical_family_names.size()) {
+                    preset_name = find_selectable_full_spectrum_family_preset(result.recommended_physical_family_names[i], static_cast<int>(i));
+                    // Family not selectable: leave empty on purpose — the slot keeps
+                    // the user's configured preset (§5.1). Do NOT substitute the
+                    // default family here: the user explicitly chose this family.
+                } else {
+                    // Legacy result without per-slot family info: the pre-phase-2
+                    // single default-family preset, all-or-nothing per slot.
+                    const Preset* fs_preset = pb->filaments.find_preset(full_spectrum_preset_name());
+                    if (fs_preset != nullptr && fs_preset->is_visible && fs_preset->is_compatible)
+                        preset_name = fs_preset->name;
+                }
+                if (!preset_name.empty())
+                    pb->set_filament_preset(i, preset_name);
             }
 
             wxGetApp().plater()->on_filaments_change(static_cast<int>(target_count));
@@ -4754,6 +4771,9 @@ Sidebar::Sidebar(Plater *parent)
         for (size_t i = 0; i < fcombos.size(); ++i) {
             if (fcombos[i]) fcombos[i]->update();
         }
+        // No undo snapshot in this apply path: mark dirty so close-without-save prompts
+        // instead of silently dropping the match result.
+        wxGetApp().plater()->update_project_dirty_from_presets();
         // §70: wxPD_AUTO_HIDE only fires at 100%, so reach 100 here for a clean
         // dismiss (otherwise the bar visibly aborts when the dialog leaves scope).
         set_progress(100);
@@ -5342,9 +5362,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         const auto& edit_preset = preset_bundle.printers.get_edited_preset();
 
-        static bool is_sm_page = false;
+        const bool showing_u1_device = p_mainframe->m_printer_view && p_mainframe->m_printer_view->is_u1_device_page();
+        // Non-U1: always leave path=2 for missing_connection / print_host. Keep skipping
+        // when use_new_connect already sits on the GIF (connect flow loads path=2 afterwards).
+        const bool load_non_u1_page = !is_snapmaker_u1 && reload_printer_view && (!use_new_connection || showing_u1_device);
 
-        if (!use_new_connection && !is_snapmaker_u1 && reload_printer_view) {
+        if (load_non_u1_page) {
 
             p->combo_printer->set_show_connection_button(true);
             wxString url = cfg.opt_string("print_host_webui").empty() ? cfg.opt_string("print_host") : cfg.opt_string("print_host_webui");
@@ -5368,7 +5391,6 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             }
             
             p_mainframe->load_printer_url(url, apikey);
-            is_sm_page = false;
 
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
@@ -5394,9 +5416,8 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                                                   "/web/flutter_web/index.html?path=2");
                 auto real_url = wxGetApp().get_international_url(url);
                 
-                if (!is_sm_page && reload_printer_view) {
+                if (reload_printer_view && !showing_u1_device) {
                     wxGetApp().mainframe->load_printer_url(real_url); 
-                    is_sm_page = true;
                 }                   
             }
 
@@ -10887,6 +10908,10 @@ void Sidebar::show_sync_filament_dialog()
         std::vector<FilamentData> syncedData = dlg.getSyncDataList();
 
         size_t effective_size = syncedData.size();
+        // The number of filaments cannot be reduced to zero.
+        if (effective_size == 0)
+            return;
+
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
             if (effective_size > combo_Size &&
@@ -13908,9 +13933,16 @@ bool PlaterDropTarget::OnDropFiles(wxCoord x, wxCoord y, const wxArrayString &fi
 #endif // WIN32
 
     m_mainframe.Raise();
-    m_mainframe.select_tab(TAB_ID_PREPARE);
-    if (wxGetApp().is_editor())
-        m_plater.select_view_3D("3D");
+    // Do not force the 3D editor before we even know what was dropped. When a
+    // G-code is already loaded (only-gcode mode) the user is on the Preview
+    // tab: load_gcode()'s same-file guard switches straight back to Preview
+    // on a repeat drop, and the other load paths select their own final view,
+    // so switching here would only flash the (empty) 3D editor.
+    if (!m_plater.only_gcode_mode()) {
+        m_mainframe.select_tab(TAB_ID_PREPARE);
+        if (wxGetApp().is_editor())
+            m_plater.select_view_3D("3D");
+    }
 
     // When only one .svg file is dropped on scene
     if (filenames.size() == 1) {
@@ -19360,6 +19392,10 @@ void Plater::priv::on_slicing_update(SlicingStatusEvent &evt)
 void Plater::priv::on_slicing_completed(wxCommandEvent & evt)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": event_type %1%, string %2%") % evt.GetEventType() % evt.GetString();
+
+    if (GUI::wxGetApp().is_recreating_gui())
+        return;
+
     //BBS: add slice project logic
     if (m_slice_all && (m_cur_slice_plate < (partplate_list.get_plate_count() - 1))) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format("slicing all, finished plate %1%, will continue next.")%m_cur_slice_plate;
@@ -19954,8 +19990,32 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
         const bool selecting_web_device_tab = main_frame->m_printer_view &&
             main_frame->m_tabpanel->GetPage(new_sel) == main_frame->m_printer_view;
         if (selecting_web_device_tab) {
-            // Use the selected discovered machine when the preset has no host.
-            main_frame->load_printer_url();
+            // Loads queued while the Device WKWebView is hidden may never settle, so the
+            // document is reconciled with the current printer when the tab is shown.
+            bool is_snapmaker_u1 = false;
+            if (wxGetApp().preset_bundle != nullptr) {
+                auto cfg               = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+                auto printer_model_opt = cfg.option<ConfigOptionString>("printer_model");
+                if (printer_model_opt) {
+                    const std::string &printer_model = printer_model_opt->value;
+                    is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
+                }
+                const bool showing_u1 = main_frame->m_printer_view->is_u1_device_page();
+                if (is_snapmaker_u1 && !showing_u1) {
+                    wxString u1_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
+                                                         "/web/flutter_web/index.html?path=2");
+                    main_frame->load_printer_url(wxGetApp().get_international_url(u1_url));
+                } else if (!is_snapmaker_u1 && showing_u1 && PrintHost::get_print_host_webui(&cfg).empty()) {
+                    // No host page to replace the U1 page with; the load below still
+                    // overrides this when a discovered machine supplies a host.
+                    std::string base_url = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port());
+                    main_frame->load_printer_url(wxString::Format("%s/web/orca/missing_connection.html", from_u8(base_url)));
+                }
+            }
+            // Load the discovered machine's host when the preset has none. Skipped for a U1,
+            // whose device page is the Flutter path=2 document set above.
+            if (!is_snapmaker_u1)
+                main_frame->load_printer_url();
         } else if (new_name == TAB_ID_MONITOR && wxGetApp().preset_bundle != nullptr) {
             auto     cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
             wxString url = from_u8(PrintHost::get_print_host_webui(&cfg));
@@ -23919,10 +23979,21 @@ void Plater::load_gcode(const wxString& filename)
 {
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << __LINE__ << " entry and filename: " << filename;
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__;
-    if (! is_gcode_file(into_u8(filename))
-        || (m_last_loaded_gcode == filename && m_only_gcode)
-        )
+    if (! is_gcode_file(into_u8(filename)))
         return;
+
+    if (m_last_loaded_gcode == filename && m_only_gcode) {
+        // The same G-code is already loaded: reloading would be a no-op, so
+        // just make sure the user is looking at its preview - callers may
+        // have left the UI on another view (e.g. the 3D editor after a
+        // drag & drop).
+        wxGetApp().mainframe->select_tab(TAB_ID_PREVIEW);
+        p->set_current_panel(p->preview, true);
+        GLCanvas3D* canvas = p->get_current_canvas3D();
+        if (canvas)
+            canvas->render();
+        return;
+    }
 
     // Reject a missing / inaccessible file up front. Without this check the
     // code below would walk through process_file -> parse_file_raw_internal,

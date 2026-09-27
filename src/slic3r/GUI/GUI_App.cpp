@@ -2,6 +2,7 @@
 #include "OrcaCloudServiceAgent.hpp"
 #include "libslic3r/Technologies.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
+#include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/Platform.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Init.hpp"
@@ -1163,23 +1164,36 @@ void GUI_App::post_init()
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", finished rendering a first frame for test";
             }
         }
-        // Defer the final tab selection to after pending events are
-        // processed. During GL init, the PAGE_CHANGED handler posts
-        // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
-        // select_tab(TAB_ID_HOME) and switch back to the Prepare tab.
-        CallAfter([this] {
-            if (is_editor() && app_config->get("default_page") != "1")
-                mainframe->select_tab(TAB_ID_HOME);
-            else if (app_config->get("default_page") == "1")
-                mainframe->select_tab(TAB_ID_PREPARE);
-        });
+        // A pending URL open has already selected the 3D view; switching to the home page would undo it.
+        // On macOS the URL arrives later through MacOpenURL, so switch_to_3d above cannot see it.
+        if (m_url_open_pending) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, staying on the 3D view";
+        } else {
+            // Defer the final tab selection to after pending events are
+            // processed. During GL init, the PAGE_CHANGED handler posts
+            // EVT_GLVIEWTOOLBAR_3D which would undo a synchronous
+            // select_tab(TAB_ID_HOME) and switch back to the Prepare tab.
+            CallAfter([this] {
+                if (is_editor() && app_config->get("default_page") != "1")
+                    mainframe->select_tab(TAB_ID_HOME);
+                else if (app_config->get("default_page") == "1")
+                    mainframe->select_tab(TAB_ID_PREPARE);
+            });
+        }
 #ifndef __linux__
         mainframe->Thaw();
 #endif
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", end load_gl_resources";
     }
 
-    plater_->trigger_restore_project(1);
+    // The restore falls back to a blank project when there is no backup, which would discard
+    // the model a pending URL open is loading. The call sits outside the !switch_to_3d block
+    // here, so it needs its own guard.
+    if (m_url_open_pending) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ", url open pending, skipping the blank project";
+    } else {
+        plater_->trigger_restore_project(1);
+    }
     //#endif
 
     // BBS: to be checked
@@ -2607,6 +2621,15 @@ GUI_App::~GUI_App()
 {
     GUI_App::m_app_alive.store(false);
 
+    if (m_token_check_timer) {
+        m_token_check_timer->Stop();
+        m_token_check_timer.reset();
+    }
+    if (m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer->Stop();
+        m_silent_refresh_timeout_timer.reset();
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": enter");
 
     if (m_agent)
@@ -2630,6 +2653,8 @@ GUI_App::~GUI_App()
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(": destroy preset updater");
         delete preset_updater;
     }
+
+    AllowlistManager::uninit();
 
     StaticBambuLib::release();
     BBLNetworkPlugin::shutdown();
@@ -3014,6 +3039,7 @@ void GUI_App::on_start_subscribe_again(std::string dev_id)
 {
     auto start_subscribe_timer = new wxTimer(this, wxID_ANY);
     Bind(wxEVT_TIMER, [this, start_subscribe_timer, dev_id](auto& e) {
+        if (e.GetId() != start_subscribe_timer->GetId()) return;
         start_subscribe_timer->Stop();
         Slic3r::DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
         if (!dev) return;
@@ -5511,6 +5537,9 @@ void GUI_App::sm_request_login(bool show_user_info)
 
 void GUI_App::sm_ShowUserLogin(bool show)
 {
+    if (show)
+        sm_stop_silent_token_refresh();
+
     // BBS: User Login Dialog
     if (show) {
         try {
@@ -5520,8 +5549,11 @@ void GUI_App::sm_ShowUserLogin(bool show)
                 delete sm_login_dlg;
                 sm_login_dlg = new SMUserLogin();
             }
+            m_sm_login_dialog_showing = true;
             sm_login_dlg->ShowModal();
+            m_sm_login_dialog_showing = false;
         } catch (std::exception&) {
+            m_sm_login_dialog_showing = false;
             ;
         }
     } else {
@@ -5541,6 +5573,10 @@ void GUI_App::sm_ShowUserLogin(bool show)
 
 void GUI_App::sm_request_user_logout()
 {
+    sm_stop_silent_token_refresh();
+    if (m_token_check_timer)
+        m_token_check_timer->Stop();
+
     if (m_login_userinfo.is_user_login()) {
         m_login_userinfo.set_user_login(false);
     }
@@ -5557,6 +5593,94 @@ void GUI_App::sm_request_user_logout()
         http.form_add("token", m_login_userinfo.get_user_token()).perform();
     } catch (std::exception&) {
         ;
+    }
+}
+
+void GUI_App::sm_maybe_refresh_login_token()
+{
+    if (!m_login_userinfo.is_user_login())
+        return;
+    if (m_sm_login_dialog_showing || m_sm_silent_refresh_in_progress)
+        return;
+
+    auto now = std::chrono::system_clock::now();
+    if (now - m_token_last_refresh_success < std::chrono::hours(SM_TOKEN_REFRESH_INTERVAL_H))
+        return;
+    if (now - m_token_last_refresh_attempt < std::chrono::minutes(SM_TOKEN_REFRESH_RETRY_MIN))
+        return;
+
+    m_token_last_refresh_attempt   = now;
+    m_sm_silent_refresh_in_progress = true;
+    ++m_silent_refresh_generation;
+    BOOST_LOG_TRIVIAL(info) << "sm: start silent login-token refresh";
+
+    if (!m_silent_refresh_timeout_timer) {
+        m_silent_refresh_timeout_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_silent_refresh_timeout, this, m_silent_refresh_timeout_timer->GetId());
+    }
+    m_silent_refresh_timeout_timer->Start(std::chrono::seconds(SM_TOKEN_REFRESH_TIMEOUT_S).count() * 1000, wxTIMER_ONE_SHOT);
+
+    auto refresh_generation = m_silent_refresh_generation;
+    CallAfter([refresh_generation]() {
+        if (refresh_generation == wxGetApp().sm_token_refresh_generation())
+            wxGetApp().sm_ShowUserLogin(false);
+    });
+}
+
+void GUI_App::on_silent_refresh_timeout(wxTimerEvent &event)
+{
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        BOOST_LOG_TRIVIAL(warning) << "sm: silent login-token refresh timed out, keep old token and retry later";
+    }
+}
+
+void GUI_App::sm_on_token_captured(std::size_t refresh_generation)
+{
+    if (refresh_generation != m_silent_refresh_generation) {
+        BOOST_LOG_TRIVIAL(warning) << "sm: ignore stale login-token capture";
+        return;
+    }
+
+    m_token_last_refresh_success = std::chrono::system_clock::now();
+    if (m_sm_silent_refresh_in_progress) {
+        m_sm_silent_refresh_in_progress = false;
+        if (m_silent_refresh_timeout_timer)
+            m_silent_refresh_timeout_timer->Stop();
+        BOOST_LOG_TRIVIAL(info) << "sm: silent login-token refresh succeeded";
+    }
+
+    if (!m_token_check_timer) {
+        m_token_check_timer = std::make_unique<wxTimer>(this, wxID_ANY);
+        Bind(wxEVT_TIMER, &GUI_App::on_token_check_timer, this, m_token_check_timer->GetId());
+    }
+    m_token_check_timer->Start(SM_TOKEN_CHECK_INTERVAL_MS);
+
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
+    }
+}
+
+bool GUI_App::sm_is_token_refresh_current(std::size_t refresh_generation) const
+{ return refresh_generation == m_silent_refresh_generation; }
+
+void GUI_App::on_token_check_timer(wxTimerEvent &event)
+{
+    sm_maybe_refresh_login_token();
+}
+
+void GUI_App::sm_stop_silent_token_refresh()
+{
+    ++m_silent_refresh_generation;
+    m_sm_silent_refresh_in_progress = false;
+    if (m_silent_refresh_timeout_timer)
+        m_silent_refresh_timeout_timer->Stop();
+
+    // Drop the hidden login dialog so a late redirect cannot re-login the user.
+    if (!m_sm_login_dialog_showing && sm_login_dlg) {
+        delete sm_login_dlg;
+        sm_login_dlg = nullptr;
     }
 }
 
@@ -9732,6 +9856,10 @@ void GUI_App::MacOpenURL(const wxString& url)
 {
     if (url.empty())
         return;
+    // post_init() decides whether to start a blank project based on init_params->input_files,
+    // which is always empty here: macOS launches the app first and delivers the URL afterwards.
+    // Without this flag post_init resets the project that this download is about to load.
+    m_url_open_pending = true;
     start_download(into_u8(url));
 }
 
@@ -10337,6 +10465,23 @@ void GUI_App::page_state_notify_webview(wxWebView* webview, const std::string& s
                 ptr->m_res_data = notification_data;
                 ptr->send_to_js();
             }
+        }
+    }
+}
+
+void GUI_App::notify_foreground_change(const bool active)
+{
+    if (active)
+        sm_maybe_refresh_login_token();
+
+    json data;
+    data["state"] = active;
+
+    for (const auto& instance : m_foreground_change_subscribers) {
+        auto ptr = instance.second.lock();
+        if (ptr) {
+            ptr->m_res_data = data;
+            ptr->send_to_js();
         }
     }
 }

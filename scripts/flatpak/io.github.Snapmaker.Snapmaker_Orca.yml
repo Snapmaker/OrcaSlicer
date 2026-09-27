@@ -387,6 +387,15 @@ modules:
           rm -f "/app/bin/${_tool}"
         done
 
+      - | # Keep the AppStream <release> entry in sync with version.inc (it went stale at 2.3.6 otherwise)
+        set -euo pipefail
+        _ver=$(sed -n 's/^set(Snapmaker_VERSION "\([^"]*\)").*/\1/p' version.inc)
+        test -n "${_ver}"
+        sed -e "s|<release version=\"[^\"]*\" date=\"[^\"]*\">|<release version=\"${_ver}\" date=\"$(date -u +%Y-%m-%d)\">|" \
+            -e "s|<p>Version [^ ]* release|<p>Version ${_ver} release|" ${FLATPAK_ID}.metainfo.xml > ${FLATPAK_ID}.metainfo.xml.tmp
+        mv ${FLATPAK_ID}.metainfo.xml.tmp ${FLATPAK_ID}.metainfo.xml
+        grep -q "<release version=\"${_ver}\" date=" ${FLATPAK_ID}.metainfo.xml
+
       - | # Desktop Integration files
         install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/Snapmaker_Orca.svg
         install -Dm644 ${FLATPAK_ID}.metainfo.xml /app/share/metainfo/${FLATPAK_ID}.metainfo.xml

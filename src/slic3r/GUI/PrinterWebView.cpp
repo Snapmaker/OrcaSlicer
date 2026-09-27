@@ -129,8 +129,9 @@ PrinterWebView::PrinterWebView(wxWindow *parent)
     webkit_cookie_manager_set_persistent_storage(cookieManager, cookiesPath.c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 #endif
 
-    m_browser->Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this);
-    m_browser->Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this);
+    // Panel bind so WebViewWebKit's navigation gate (also on the webview) still sees LOADED/ERROR.
+    Bind(wxEVT_WEBVIEW_ERROR, &PrinterWebView::OnError, this, m_browser->GetId());
+    Bind(wxEVT_WEBVIEW_LOADED, &PrinterWebView::OnLoaded, this, m_browser->GetId());
     m_browser->Bind(wxEVT_WEBVIEW_NEWWINDOW, &PrinterWebView::OnNewWindow, this);
     m_browser->Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &PrinterWebView::OnScriptMessage, this, m_browser->GetId());
 
@@ -201,6 +202,14 @@ bool PrinterWebView::isSnapmakerPage()
         return false;
     auto url = m_browser->GetCurrentURL();
     return (url.find("flutter_web") != std::string::npos);
+}
+
+bool PrinterWebView::is_u1_device_page()
+{
+    if (m_browser == nullptr)
+        return false;
+    auto url = m_browser->GetCurrentURL();
+    return url.find("flutter_web") != std::string::npos && url.find("path=2") != std::string::npos;
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {
@@ -308,6 +317,7 @@ void PrinterWebView::SendAPIKey()
 
 void PrinterWebView::OnError(wxWebViewEvent &evt)
 {
+    evt.Skip();
     auto e = "unknown error";
     switch (evt.GetInt()) {
       case wxWEBVIEW_NAV_ERR_CONNECTION:
@@ -340,6 +350,7 @@ void PrinterWebView::OnError(wxWebViewEvent &evt)
 
 void PrinterWebView::OnLoaded(wxWebViewEvent& evt)
 {
+    evt.Skip();
     if (evt.GetURL().IsEmpty())
         return;
     if (evt.GetURL() != m_browser->GetCurrentURL())

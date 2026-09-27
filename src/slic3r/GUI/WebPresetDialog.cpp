@@ -191,8 +191,8 @@ WebPresetDialog::WebPresetDialog(GUI_App* pGUI, long style)
     // Bind(wxEVT_CLOSE_WINDOW, &WebPresetDialog::OnClose, this);
     m_load_thread = std::make_unique<std::thread>([this]() { LoadProfile(); });
 
-    // UI
-    SetStartPage(BBL_REGION);
+    // Same document as CreateWebView (preset_bind/24); do not LoadURL again.
+    SetStartPage(BBL_REGION, false);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(",  finished");
     wxGetApp().UpdateDlgDarkUI(this);
@@ -1127,11 +1127,9 @@ int WebPresetDialog::GetFilamentInfo(std::string VendorDirectory, const json& pF
                 std::string FPath = inherited["sub_path"];
                 BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Before Format Inherits Path: VendorDirectory - " << VendorDirectory
                                         << ", sub_path - " << FPath;
-                wxString                strNewFile = wxString::Format("%s%c%s", wxString(VendorDirectory.c_str(), wxConvUTF8),
-                                                                      boost::filesystem::path::preferred_separator, FPath);
-                boost::filesystem::path inherits_path(w2s(strNewFile));
+                // Avoid w2s()/mb_str(): ANSI code page breaks Unicode paths on Windows.
+                boost::filesystem::path inherits_path = (boost::filesystem::path(VendorDirectory) / FPath).make_preferred();
 
-                // boost::filesystem::path nf(strNewFile.c_str());
                 if (boost::filesystem::exists(inherits_path))
                     return GetFilamentInfo(VendorDirectory, pFilaList, inherits_path.string(), sVendor, sType);
                 else {

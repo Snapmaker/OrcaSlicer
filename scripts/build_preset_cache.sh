@@ -152,10 +152,13 @@ for target in "$@"; do
             pruned=$(( pruned + 1 ))
         fi
         [ -d "$resolved/$vendor" ] || continue
-        # The filament rules files are not presets (FilamentHotBedNozzleRules, PresetUpdater):
-        # the cache does not carry them, so they stay.
-        n=$(find "$resolved/$vendor" -name '*.json' ! -name 'filament_hot_bed_nozzles.json' ! -name 'filament_compatibility.json' | wc -l)
-        find "$resolved/$vendor" -name '*.json' ! -name 'filament_hot_bed_nozzles.json' ! -name 'filament_compatibility.json' -delete
+        # The filament rules files (FilamentHotBedNozzleRules, AllowlistManager, PresetUpdater) and
+        # the colour library (FilamentColorLibrary) are not presets: the cache does not carry them,
+        # so they stay.
+        n=$(find "$resolved/$vendor" -name '*.json' ! -name 'filament_hot_bed_nozzles.json' ! -name 'filament_compatibility.json' \
+                 ! -name 'filament_allow_list.json' ! -name 'filaments_colours.json' | wc -l)
+        find "$resolved/$vendor" -name '*.json' ! -name 'filament_hot_bed_nozzles.json' ! -name 'filament_compatibility.json' \
+             ! -name 'filament_allow_list.json' ! -name 'filaments_colours.json' -delete
         find "$resolved/$vendor" -type d -empty -delete
         pruned=$(( pruned + n ))
     done

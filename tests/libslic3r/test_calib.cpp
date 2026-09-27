@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "libslic3r/calib.hpp"
 #include "libslic3r/Model.hpp"
@@ -107,4 +109,52 @@ TEST_CASE("PA pattern resets the extruder after the final layer in absolute E mo
 
     REQUIRE(state.max_e > 1.);
     REQUIRE_THAT(state.final_e, Catch::Matchers::WithinAbs(0., 1e-9));
+}
+
+// CalibUtils::calib_max_vol_speed and CalibUtils::calib_VFA live in libslic3r_gui and need presets plus a
+// connected device, so they cannot run here. This pins the contract they depend on: an override merged into a
+// config built from FullPrintConfig::defaults() has to carry the option type PrintConfig.cpp defines for the key.
+TEST_CASE("Device calibration overrides match the option types of their keys", "[Calib][Regression]")
+{
+    const std::pair<const char *, ConfigOptionType> expected[] = {
+        {"slow_down_layer_time", coFloats},
+        {"outer_wall_line_width", coFloatOrPercent},
+        {"enable_overhang_speed", coBools},
+        {"filament_max_volumetric_speed", coFloats},
+    };
+    for (const auto &[key, type] : expected) {
+        const ConfigOptionDef *opt_def = print_config_def.get(key);
+        REQUIRE(opt_def != nullptr);
+        REQUIRE(opt_def->type == type);
+    }
+
+    auto merge = [](const std::string &key, ConfigOption *opt) {
+        DynamicPrintConfig overrides;
+        overrides.set_key_value(key, opt);
+        DynamicPrintConfig full_config;
+        full_config.apply(FullPrintConfig::defaults());
+        full_config.apply(overrides);
+        return full_config;
+    };
+
+    SECTION("the former option types are rejected by the merge") {
+        REQUIRE_THROWS_AS(merge("slow_down_layer_time", new ConfigOptionInts{0}), ConfigurationError);
+        REQUIRE_THROWS_AS(merge("outer_wall_line_width", new ConfigOptionFloat(0.7)), ConfigurationError);
+    }
+
+    SECTION("the option types written by the device calibrations merge and keep their value") {
+        DynamicPrintConfig cfg = merge("slow_down_layer_time", new ConfigOptionFloats{0.0});
+        REQUIRE(cfg.option<ConfigOptionFloats>("slow_down_layer_time")->values == std::vector<double>{0.0});
+
+        cfg = merge("outer_wall_line_width", new ConfigOptionFloatOrPercent(0.7, false));
+        const auto *width = cfg.option<ConfigOptionFloatOrPercent>("outer_wall_line_width");
+        REQUIRE(width->value == Catch::Approx(0.7));
+        REQUIRE_FALSE(width->percent);
+
+        cfg = merge("enable_overhang_speed", new ConfigOptionBoolsNullable({false}));
+        REQUIRE(cfg.option<ConfigOptionBools>("enable_overhang_speed")->get_at(0) == false);
+
+        cfg = merge("filament_max_volumetric_speed", new ConfigOptionFloats{50});
+        REQUIRE(cfg.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values == std::vector<double>{50.});
+    }
 }

@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/EnumChoice.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 
 #include <boost/filesystem.hpp>
@@ -677,24 +678,14 @@ TEST_CASE("CLI --align-to-y-axis is a misc bool whose default must stay implicit
 // options Field.cpp maps through their keys instead (and host_type, which it shifts) are exempt.
 TEST_CASE("Enum options list their keys in the order of their values", "[Config][ConfigDefs]")
 {
-    const std::set<std::string> mapped_by_key = {
-        "top_surface_pattern", "undertop_surface_pattern", "bottom_surface_pattern", "internal_solid_infill_pattern",
-        "sparse_infill_pattern", "support_base_pattern", "support_interface_pattern", "ironing_pattern",
-        "support_ironing_pattern", "support_style", "curr_bed_type", "host_type",
-    };
-    // Already out of order on main when this test was written (2026-09-26); reported, not fixed here. Remove an
-    // entry once its option is fixed - either list order or key mapping in Field.cpp.
-    //  * locked_skin/skeleton_infill_pattern: a subset list starting with "default" (30), not key-mapped in Field.cpp.
-    //  * nozzle_volume_type & co: "Hybrid" (2) and "TPU High Flow" (3) listed in order, "E3D High Flow" is 5 at index 4.
-    const std::set<std::string> known_misordered = {
-        "locked_skin_infill_pattern", "locked_skeleton_infill_pattern",
-        "nozzle_volume_type", "default_nozzle_volume_type", "extruder_nozzle_volume_type",
-    };
+    // The GUI Choice combo stores its row index as the value unless the option is mapped by key
+    // (libslic3r/EnumChoice.hpp, used by Field.cpp). host_type has its own handling in Field.cpp and the
+    // physical printer dialogs build their own combo for it.
     std::vector<std::string> misordered;
     size_t                   checked = 0;
     for (const auto &[key, def] : print_config_def.options) {
         if ((def.type != coEnum && def.type != coEnums) || def.enum_keys_map == nullptr || def.enum_values.empty() ||
-            mapped_by_key.count(key) != 0 || known_misordered.count(key) != 0)
+            enum_choice_maps_by_key(key) || key == "host_type")
             continue;
         ++checked;
         for (size_t i = 0; i < def.enum_values.size(); ++i) {
@@ -726,6 +717,76 @@ TEST_CASE("Enum options list their keys in the order of their values", "[Config]
             REQUIRE(opt.deserialize(def->enum_values[i]));
             CHECK(int(opt.value) == int(i));
             CHECK(opt.serialize() == def->enum_values[i]);
+        }
+    }
+}
+
+TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row", "[Config][ConfigDefs]")
+{
+    // Every option Field.cpp maps by key: each listed key is a known value, the row a pick stores
+    // shows that same row again, and the key survives a serialize round trip.
+    size_t mapped = 0;
+    for (const auto &[key, def] : print_config_def.options) {
+        if (!enum_choice_maps_by_key(key))
+            continue;
+        ++mapped;
+        INFO("option " << key);
+        REQUIRE((def.type == coEnum || def.type == coEnums));
+        REQUIRE(def.enum_keys_map != nullptr);
+        REQUIRE(!def.enum_values.empty());
+        REQUIRE(def.enum_labels.size() == def.enum_values.size());
+        std::set<int> seen;
+        for (size_t row = 0; row < def.enum_values.size(); ++row) {
+            INFO("row " << row << ", key " << def.enum_values[row]);
+            const int value = enum_choice_value_at_index(def, int(row));
+            REQUIRE(value >= 0);
+            CHECK(value == def.enum_keys_map->at(def.enum_values[row]));
+            CHECK(seen.insert(value).second);
+            CHECK(enum_choice_index_of_value(def, value) == int(row));
+            std::unique_ptr<ConfigOption> opt(def.create_default_option());
+            REQUIRE(opt->deserialize(def.enum_values[row]));
+            CHECK(opt->serialize() == def.enum_values[row]);
+            if (def.type == coEnum)
+                CHECK(opt->getInt() == value);
+        }
+        CHECK(enum_choice_value_at_index(def, -1) == -1);
+        CHECK(enum_choice_value_at_index(def, int(def.enum_values.size())) == -1);
+    }
+    // The helper names 16 options; a typo there would silently drop one from the mapping.
+    CHECK(mapped == 16);
+
+    SECTION("locked_*_infill_pattern: the first row is \"default\" (ipCount), not ipMonotonic")
+    {
+        for (const char *key : { "locked_skin_infill_pattern", "locked_skeleton_infill_pattern" }) {
+            INFO("option " << key);
+            const ConfigOptionDef *def = print_config_def.get(key);
+            REQUIRE(def != nullptr);
+            CHECK(def->get_default_value<ConfigOptionEnum<InfillPattern>>()->value == ipCount);
+            CHECK(enum_choice_index_of_value(*def, ipCount) == 0);
+            CHECK(enum_choice_value_at_index(*def, 0) == int(ipCount));
+            const int grid_row = int(std::find(def->enum_values.begin(), def->enum_values.end(), "grid") - def->enum_values.begin());
+            REQUIRE(grid_row < int(def->enum_values.size()));
+            CHECK(enum_choice_value_at_index(*def, grid_row) == int(ipGrid));
+            CHECK(enum_choice_index_of_value(*def, ipGrid) == grid_row);
+            // Patterns the band menus leave out show no row of their own.
+            for (InfillPattern p : { ipMonotonic, ipLockedZag, ipAdaptiveCubic, ipSupportCubic, ipLightning })
+                CHECK(enum_choice_index_of_value(*def, p) == -1);
+        }
+    }
+
+    SECTION("nozzle_volume_type & co: \"E3D High Flow\" is row 4 and value 5; no value 4")
+    {
+        for (const char *key : { "nozzle_volume_type", "default_nozzle_volume_type", "extruder_nozzle_volume_type" }) {
+            INFO("option " << key);
+            const ConfigOptionDef *def = print_config_def.get(key);
+            REQUIRE(def != nullptr);
+            REQUIRE(def->enum_values.size() == 5);
+            CHECK(def->enum_values[4] == "E3D High Flow");
+            CHECK(enum_choice_value_at_index(*def, 4) == int(nvtE3DHighFlow));
+            CHECK(enum_choice_index_of_value(*def, nvtE3DHighFlow) == 4);
+            CHECK(enum_choice_index_of_value(*def, 4) == -1);
+            for (NozzleVolumeType t : { nvtStandard, nvtHighFlow, nvtHybrid, nvtTPUHighFlow })
+                CHECK(enum_choice_value_at_index(*def, enum_choice_index_of_value(*def, t)) == int(t));
         }
     }
 }

@@ -24,7 +24,7 @@
 // "the directory this fork started out in".
 #define SLIC3R_LEGACY_APP_KEY "Snapmaker_Orca"
 #define SLIC3R_VERSION "01.10.01.50"
-#define Snapmaker_VERSION "2.4.0.1" // the one version number; version.inc reads it back for CMake/CPack
+#define Snapmaker_VERSION "2.4.1.1" // the one version number; version.inc reads it back for CMake/CPack
 #define MIN_FIRM_VER "1.5.0"
 #ifndef GIT_COMMIT_HASH
 #define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized

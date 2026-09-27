@@ -40,7 +40,7 @@ GenericDownloadDialog::GenericDownloadDialog(wxString title,
     , m_file_name(file_name)
     , m_dest_path(dest_path)
 {
-    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     SetBackgroundColour(*wxWHITE);

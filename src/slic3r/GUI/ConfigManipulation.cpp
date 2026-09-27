@@ -630,7 +630,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     // Part joints only steer the Aligned family (Aligned, Aligned back, Aligned left/right).
     const SeamPosition seam_pos = config->opt_enum<SeamPosition>("seam_position");
     toggle_field("seam_prefer_part_joints", have_perimeters && (seam_pos == spAligned || seam_pos == spAlignedBack ||
-                                                                seam_pos == spLeft || seam_pos == spRight));
+                                                                seam_pos == spLeft || seam_pos == spRight ||
+                                                                seam_pos == spAlignedFront));
 
     bool have_infill = config->option<ConfigOptionPercent>("sparse_infill_density")->value > 0;
     // sparse_infill_filament uses the same logic as in Print::extruders()

@@ -1,4 +1,9 @@
-# Privacy: crash reports
+# Privacy
+
+EdgeSlicer collects no usage statistics and no analytics. This page covers the two things that
+can leave your computer: crash reports (off unless you turn them on) and phone app notifications.
+
+# Crash reports
 
 EdgeSlicer collects no usage statistics and no analytics. The one thing it can send by itself is
 a **crash report**, and only after you turn that on.
@@ -67,6 +72,47 @@ With reports on or off, the crash handler keeps its minidumps on your machine fo
 They are in `%LOCALAPPDATA%\EdgeSlicer\reports` on Windows and in
 `~/Library/Application Support/EdgeSlicer/SentryData` on macOS. An instance started with
 `--datadir <dir>` keeps them in `<dir>/SentryData` instead. You can delete them at any time.
+
+# Phone app notifications
+
+The EdgeSlicer phone app can show notifications when a printer starts, finishes, fails or reports
+an error. Your EdgeSlicer on the PC (the phone hub) creates them.
+
+## How a notification reaches your phone
+
+Apple and Google only deliver notifications to an app when the request is signed with the app
+developer's keys. Starting with 2.4.1.0, a hub that doesn't have its own keys hands each
+notification to the **EdgeSlicer push service** at `push.edgeslicer.com`, which forwards it to
+Apple (APNs) or Google (Firebase Cloud Messaging). You don't need to change anything to use it.
+
+**The content is end-to-end encrypted.** Your hub encrypts the title and text with a key that only
+your phone holds (Web Push encryption, RFC 8291). The push service, Apple and Google only see a
+placeholder ("Printer update", "Tap to open") and an encrypted blob. The phone decrypts it on the
+device.
+
+## What the push service sees and keeps
+
+| What | Kept |
+|---|---|
+| Your hub's random ID and its public signing key (created by the hub, not tied to you or your account) | until the hub is unused for 365 days |
+| When the hub registered and when it was last seen, and how many notifications it sent per day | daily counts for 90 days |
+| Your phone's push token (issued by Apple or Google for this app), with each notification | not stored; passed on to Apple or Google (a keyed hash is held in memory for the day, to count devices per hub) |
+| A service log line per request: time, hub ID, result, platform, size | 7 days |
+| Your IP address | not logged; used only in memory, as a hashed network prefix, to limit sign-up abuse |
+
+Nightly backups of the hub list are kept for 30 days. The service never sees printer names, file
+names, your e-mail or anything else about your prints; those are inside the encrypted part.
+
+The service runs on a server rented from Hetzner in Helsinki, Finland. There is a limit of 300
+notifications per hub per day; past it, the hub page shows a notice and the rest of that day's
+notifications are not sent.
+
+## Not using it
+
+- To use your own Apple/Firebase keys instead, add them in the hub page's push settings. A hub
+  with its own keys uses them and never contacts the push service.
+- To have no phone notifications at all, don't pair the phone app, or turn notifications off for
+  the app in your phone's settings.
 
 ---
 

@@ -631,3 +631,45 @@ TEST_CASE("Bambu Studio's spellings of two settings load as what they mean", "[3
     CHECK(legacy("top_one_wall_type", "topmost") == "only_one_wall_top=1");
     CHECK(legacy("top_one_wall_type", "not apply") == "only_one_wall_top=0");
 }
+
+// Aligned front (Auto-paint seam, 2026-09-25): a seam position of ours that Bambu Studio does not have. It must come
+// back unchanged from our own project files, and export to Bambu as its closest equivalent, plain "aligned".
+TEST_CASE("Aligned front round-trips through a project and exports to Bambu as aligned", "[3mf][BambuExport][Seam]")
+{
+    CHECK(BambuExport::translate_enum_value("seam_position", "aligned_front") == "aligned");
+
+    Model model;
+    build_model(model);
+    model.objects.front()->config.set_key_value("seam_position", new ConfigOptionEnum<SeamPosition>(spAlignedFront));
+    DynamicPrintConfig cfg = project_config(1, 2);
+    cfg.set_key_value("seam_position", new ConfigOptionEnum<SeamPosition>(spAlignedFront));
+
+    SECTION("our own project")
+    {
+        const std::string path = temp_file("aligned_front.3mf");
+        REQUIRE(store(path, model, cfg, two_plates(), {}, nullptr));
+        const json project = json::parse(zip_entry(path, "Metadata/project_settings.config"));
+        CHECK(project["seam_position"] == "aligned_front");
+        Loaded back;
+        load(path, back);
+        REQUIRE(back.ok);
+        CHECK(back.config.opt_enum<SeamPosition>("seam_position") == spAlignedFront);
+        REQUIRE(back.model.objects.size() == 1);
+        const ConfigOption *object_seam = back.model.objects[0]->config.option("seam_position");
+        REQUIRE(object_seam != nullptr);
+        CHECK(object_seam->serialize() == "aligned_front");
+        boost::filesystem::remove(path);
+    }
+    SECTION("exported for Bambu Studio")
+    {
+        const std::string   path = temp_file("aligned_front_bambu.3mf");
+        BambuExport::Report report;
+        REQUIRE(store(path, model, cfg, two_plates(), {}, &report));
+        const json project = json::parse(zip_entry(path, "Metadata/project_settings.config"));
+        CHECK(project["seam_position"] == "aligned");
+        const std::string model_settings = zip_entry(path, "Metadata/model_settings.config");
+        CHECK(model_settings.find("key=\"seam_position\" value=\"aligned\"") != std::string::npos);
+        CHECK(model_settings.find("aligned_front") == std::string::npos);
+        boost::filesystem::remove(path);
+    }
+}

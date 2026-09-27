@@ -53,6 +53,12 @@ button).
 (`check_for_updates_on_startup`, default on) turns the startup check off; the Help
 menu item keeps working.
 
+**Update channel:** Preferences > General > "Update channel" (`update_channel`, default
+`stable`). Everything above is the Stable channel. The Nightly channel reads
+`/releases/tags/nightly` instead and compares build dates and commits; a nightly build on
+the Stable channel is offered a release only when it is newer than the code the nightly was
+built from. See `docs/nightly.md`.
+
 ## Release notes in the dialog: the update-notice block
 
 GitHub release bodies are long. The dialog shows only a compact section of the body,

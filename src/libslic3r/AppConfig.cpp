@@ -47,6 +47,8 @@ static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/Snapm
 static const std::string PROFILE_UPDATE_URL = "/upgrade/profile/";
 // Mainline Orca profile CDN (third-party vendor profile updates only; Snapmaker vendor uses the Snapmaker OTA)
 static const std::string ORCA_PROFILE_UPDATE_URL = "https://check-version.orcaslicer.com/profile";
+// Hidden app config key overriding the Orca profile CDN above.
+constexpr const char* CONFIG_ORCA_UPDATER_URL = "orca_updater_url";
 static const std::string FLUTTER_UPDATE_URL = "/upgrade/flutter/";
 static const std::string MODELS_STR = "models";
 
@@ -242,6 +244,12 @@ void AppConfig::set_defaults()
         set("preview_dim_previous_layers_brightness", std::to_string(std::max(0, std::min(brightness, 99))));
     }
 
+    // ORCA: view type the G-code preview opens with. "auto" keeps the automatic choice (Filament for
+    // multi material prints, Line Type for single material ones), "last" restores the view type the user
+    // picked last, any other value is a fixed view type name, see GCodeViewer::view_type_to_config_name().
+    if (get("preview_default_view_type").empty())
+        set("preview_default_view_type", "auto");
+
     if (get("filaments_area_preferred_count").empty())
         set("filaments_area_preferred_count", "10");
 
@@ -301,8 +309,23 @@ void AppConfig::set_defaults()
         set(SETTING_OPENGL_FPS_CAP, std::to_string(fps_cap));
     }
 
+    // Snapmaker Orca: on by default, as in mainline; the fork's canvas state is covered by
+    // SceneCache::Key or marks the canvas dirty. Only an empty value is filled, a stored choice stays.
+    if (get(SETTING_OPENGL_SCENE_CACHE).empty())
+        set_bool(SETTING_OPENGL_SCENE_CACHE, true);
+
+    if (get(SETTING_OPENGL_SKIP_IDENTICAL_FRAMES).empty())
+        set_bool(SETTING_OPENGL_SKIP_IDENTICAL_FRAMES, true);
+
+    // Snapmaker Orca: render LOD on by default on every platform, as in Snapmaker Orca 2.4 (#737).
+    // Only an empty value is filled, never "false", so a stored choice stays.
+    if (get(SETTING_OPENGL_MESH_LOD).empty())
+        set_bool(SETTING_OPENGL_MESH_LOD, true);
+
     // The getter already defaults, parses and clamps; write back what it resolves to.
     set(SETTING_PLUGIN_PAGES_VISIBLE_COUNT, std::to_string(get_plugin_pages_visible_count()));
+
+    set(SETTING_SPEED_DIAL_RECENT_COUNT, std::to_string(get_speed_dial_recent_count()));
 
     if (get(SETTING_OPENGL_SHOW_FPS_OVERLAY).empty())
         set_bool(SETTING_OPENGL_SHOW_FPS_OVERLAY, false);
@@ -312,6 +335,9 @@ void AppConfig::set_defaults()
 
     if (get(SETTING_OPENGL_REALISTIC_PHONG).empty())
         set_bool(SETTING_OPENGL_REALISTIC_PHONG, true);
+
+    if (get(SETTING_OPENGL_REALISTIC_PREVIEW).empty())
+        set_bool(SETTING_OPENGL_REALISTIC_PREVIEW, false);
 
     if (get(SETTING_OPENGL_SHADING_MODEL).empty())
         set(SETTING_OPENGL_SHADING_MODEL, "gouraud");
@@ -330,6 +356,30 @@ void AppConfig::set_defaults()
 
     if (get("zoom_to_mouse").empty())
         set_bool("zoom_to_mouse", false);
+
+    // SnapLog event/log upload; only effective while privacy_policy_isagree is true.
+    if (get("snaplog_upload").empty())
+        set_bool("snaplog_upload", true);
+
+#ifdef SLIC3R_CAD
+    // Experimental parametric Design tab. Off by default: the tab is not created at all
+    // until this is turned on, so nothing it builds reaches an unsuspecting user.
+    if (get("enable_cad_feature").empty())
+        set_bool("enable_cad_feature", false);
+
+    // Auto-weld sketch endpoints within kSketchJoinTol when building closed loops.
+    // Default ON: it is what the ~90% case wants; OFF makes the kernel demand an exact
+    // joint. The GUI pushes it into SketchEngine via set_sketch_auto_close().
+    if (get("auto_close_sketch_loops").empty())
+        set_bool("auto_close_sketch_loops", true);
+
+    // Design tab: draw a mate connector as a face rather than as the abstract disc + roll
+    // quadrant. Defaults ON — face orientation is hardwired perception, so the roll and the
+    // verse read without being learned, which no abstract glyph achieves. Turning it off
+    // restores the conventional CAD representation for users who expect it (x0kd).
+    if (get("design_connector_face_glyph").empty())
+        set_bool("design_connector_face_glyph", true);
+#endif
 
 //#ifdef SUPPORT_SHOW_HINTS
     if (get("show_hints").empty())
@@ -354,8 +404,10 @@ void AppConfig::set_defaults()
     if (get("show_plate_gridlines").empty())
         set_bool("show_plate_gridlines", true);
 
+    // Snapmaker Orca: on by default (mainline seeds false), closest to the always-on selection
+    // outline of Snapmaker Orca 2.4 until the highlight of #764 is ported. A stored choice stays.
     if (get("show_outline").empty())
-        set_bool("show_outline", false);
+        set_bool("show_outline", true);
     
     if (get("show_axes").empty())
         set_bool("show_axes", true);
@@ -417,9 +469,10 @@ void AppConfig::set_defaults()
     }
 
     // Orca
-    if (get("stealth_mode").empty()) {
-        set_bool("stealth_mode", false);
-    }
+    // Snapmaker Orca: forced on at every start. The Orca / Bambu cloud channels are not shipped by
+    // this fork, and stealth mode is the switch that keeps them off. The Snapmaker OTA, the Snapmaker
+    // account login (SSWCP) and the application update check do not depend on this flag.
+    set_bool("stealth_mode", true);
     if (get("hide_login_side_panel").empty()) {
         set_bool("hide_login_side_panel", false);
     }
@@ -485,6 +538,19 @@ void AppConfig::set_defaults()
 
     if (get("remember_printer_config").empty()) {
         set_bool("remember_printer_config", true);
+    }
+
+    // Snapmaker Orca: each filament gets the preset made for the nozzle size of the tool head
+    // that prints it (libslic3r/NozzleFilamentPresets.hpp). Read by GUI_App into
+    // PresetBundle::nozzle_filament_enabled; the command line never sets that member.
+    if (get("filament_follows_nozzle").empty()) {
+        set_bool("filament_follows_nozzle", true);
+    }
+
+    // Snapmaker Orca: a tool head of another nozzle size prints with the speeds of a process preset
+    // for its size (PerHeadProcess.hpp). GUI_App copies it into PresetBundle::process_follows_nozzle.
+    if (get("process_follows_nozzle").empty()) {
+        set_bool("process_follows_nozzle", true);
     }
 
     if (get("group_filament_presets").empty()) {
@@ -648,9 +714,8 @@ void AppConfig::set_defaults()
         set_bool("is_split_compound", false);
     }
 
-    if(get("installed_networking").empty()) {
-        set_bool("installed_networking", false);
-    }
+    // Snapmaker Orca: forced off at every start, the Bambu network plug-in is not shipped.
+    set_bool("installed_networking", false);
 
 #ifdef __linux__
     if (get("window_buttons_on_left").empty())
@@ -661,6 +726,11 @@ void AppConfig::set_defaults()
     {
         // false = legacy behavior using print hosts
         set_bool("use_printer_agents", false);
+    }
+
+    if (get("enable_ota").empty())
+    {
+        set_bool("enable_ota", false);
     }
 
     // Remove legacy window positions/sizes
@@ -1504,6 +1574,7 @@ void AppConfig::set_mouse_device(const std::string& name, double translation_spe
     it->second["invert_yaw"] = invert_yaw ? "1" : "0";
     it->second["invert_pitch"] = invert_pitch ? "1" : "0";
     it->second["invert_roll"] = invert_roll ? "1" : "0";
+    m_dirty = true;
 }
 
 std::vector<std::string> AppConfig::get_mouse_device_names() const
@@ -1719,6 +1790,22 @@ int AppConfig::get_plugin_pages_visible_count() const
     return std::clamp(visible_count, PLUGIN_PAGES_VISIBLE_COUNT_MIN, PLUGIN_PAGES_VISIBLE_COUNT_MAX);
 }
 
+int AppConfig::get_speed_dial_recent_count() const
+{
+    std::string value = get(SETTING_SPEED_DIAL_RECENT_COUNT);
+    if (value.empty())
+        return SPEED_DIAL_RECENT_COUNT_DEFAULT;
+
+    int recent_count = SPEED_DIAL_RECENT_COUNT_DEFAULT;
+    try {
+        recent_count = std::stoi(value);
+    }
+    catch (...) {
+        return SPEED_DIAL_RECENT_COUNT_DEFAULT;
+    }
+    return std::clamp(recent_count, SPEED_DIAL_RECENT_COUNT_MIN, SPEED_DIAL_RECENT_COUNT_MAX);
+}
+
 std::vector<std::string> AppConfig::get_skipped_network_versions() const
 {
     std::vector<std::string> result;
@@ -1929,7 +2016,11 @@ std::string AppConfig::get_version_upgrade_url(bool stable_only /* = false*/)
 
 std::string AppConfig::orca_profile_update_url() const
 {
-    return ORCA_PROFILE_UPDATE_URL;
+    // Hidden "orca_updater_url" key overrides the mainline profile CDN.
+    std::string orca_updater_url = get(CONFIG_ORCA_UPDATER_URL);
+    if (orca_updater_url.empty())
+        return ORCA_PROFILE_UPDATE_URL;
+    return orca_updater_url;
 }
 
 std::string AppConfig::version_check_url(bool stable_only/* = false*/) const
@@ -2133,6 +2224,11 @@ void AppConfig::update_filament_names(json& j)
     //    boost::nowide::ofstream ofs(conf_path);
     //    ofs << std::setw(4) << j << std::endl;
     //}
+}
+
+std::string AppConfig::load_if_exists()
+{
+    return boost::filesystem::exists(loading_path()) ? load() : std::string();
 }
 
 }; // namespace Slic3r

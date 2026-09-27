@@ -325,11 +325,16 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     float z                          = zs[z_idx];
                     int   idx_first_printable_region = -1;
                     bool  complex                    = false;
+                    std::vector<int> printable_region_ids;
                     for (int idx_region = 0; idx_region < int(layer_range.volume_regions.size()); ++ idx_region) {
                         const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_region];
                         if (region.bbox->min().z() <= z && region.bbox->max().z() >= z) {
-                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part())
+                            if (region.model_volume->is_model_part())
+                                printable_region_ids.push_back(idx_region);
+
+                            if (idx_first_printable_region == -1 && region.model_volume->is_model_part()) {
                                 idx_first_printable_region = idx_region;
+                            }
                             else if (idx_first_printable_region != -1) {
                                 // Test for overlap with some other region.
                                 for (int idx_region2 = idx_first_printable_region; idx_region2 < idx_region; ++ idx_region2) {
@@ -345,22 +350,10 @@ static std::vector<std::vector<ExPolygons>> slices_to_regions(
                     if (complex)
                         zs_complex.push_back({ z_idx, z });
                     else if (idx_first_printable_region >= 0) {
-                        // No printable volumes overlap in XY at this z: every printable volume's
-                        // slices land in their own region without any clipping. Assigning only the
-                        // first printable region here dropped the slices of the remaining disjoint
-                        // parts entirely (e.g. a two-part object with per-part extruders printed
-                        // only its first part) once trafo_for_bbox() started keeping the volumes'
-                        // local XY offsets (d322b1a156).
-                        for (int idx_region = idx_first_printable_region; idx_region < int(layer_range.volume_regions.size()); ++ idx_region) {
-                            const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[idx_region];
-                            if (region.model_volume->is_model_part() && region.bbox->min().z() <= z && region.bbox->max().z() >= z) {
-                                ExPolygons &dst = slices_by_region[region.region->print_object_region_id()][z_idx];
-                                ExPolygons  src = std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]);
-                                if (dst.empty())
-                                    dst = std::move(src);
-                                else
-                                    append(dst, std::move(src));
-                            }
+                        // Every printable volume that is disjoint in XY at this z contributes its own slices (#15499).
+                        for (int printable_region_id : printable_region_ids) {
+                            const PrintObjectRegions::VolumeRegion &region = layer_range.volume_regions[printable_region_id];
+                            append(slices_by_region[region.region->print_object_region_id()][z_idx], std::move(volume_slices_find_by_id(volume_slices, region.model_volume->id()).slices[z_idx]));
                         }
                     }
                 }
@@ -563,7 +556,7 @@ bool groupingVolumes(std::vector<VolumeSlices> objSliceByVolume, std::vector<gro
     }
 
     tbb::parallel_for(tbb::blocked_range<int>(0, osvIndex.size()),
-        [&osvIndex, &objSliceByVolume, &offsetValue, &resolution](const tbb::blocked_range<int>& range) {
+        [&osvIndex, &objSliceByVolume, &resolution](const tbb::blocked_range<int>& range) {
             for (auto k = range.begin(); k != range.end(); ++k) {
                 for (ExPolygon& poly_ex : objSliceByVolume[osvIndex[k][0]].slices[osvIndex[k][1]])
                     poly_ex.douglas_peucker(resolution);
@@ -571,7 +564,7 @@ bool groupingVolumes(std::vector<VolumeSlices> objSliceByVolume, std::vector<gro
         });
 
     tbb::parallel_for(tbb::blocked_range<int>(0, osvIndex.size()),
-        [&osvIndex, &objSliceByVolume,&offsetValue, &resolution](const tbb::blocked_range<int>& range) {
+        [&osvIndex, &objSliceByVolume,&offsetValue](const tbb::blocked_range<int>& range) {
             for (auto k = range.begin(); k != range.end(); ++k) {
                 objSliceByVolume[osvIndex[k][0]].slices[osvIndex[k][1]] = offset_ex(objSliceByVolume[osvIndex[k][0]].slices[osvIndex[k][1]], offsetValue);
             }
@@ -963,7 +956,7 @@ void PrintObject::apply_extruder_layer_heights()
     // Never combine the first printed layer: it keeps its own height for bed adhesion (mirrors the
     // id() == 0 exclusion in PrintObject::combine_infill()), and with a raft detect_surfaces_type()
     // needs its slices to seed the object's bottom surfaces.
-    const size_t first_idx = 1;
+    const size_t first_idx = first_combined_layer_idx;
     if (m_layers.size() <= first_idx + 1)
         return;
 
@@ -5353,12 +5346,12 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     if (clamp_parent_to_geometry)
                         clamped_parent_expolygons = intersection_ex(parent_layer_region.slices.surfaces, layer_geometry_mask);
 
-                    int               self_extruder_id         = -1; // 1-based extruder ID
+                    // 1-based extruder ID whose painted target region IS the parent region; set only by
+                    // the alias branch below. Not the outer-wall filament: with an outer-wall override
+                    // its painted region differs from the parent and takes the area, so both would print it.
+                    int               self_extruder_id         = -1;
                     ExPolygons        explicit_self_expolygons;
                     ExPolygons        default_self_expolygons;
-                    if (const int cfg_wall = parent_print_region.config().outer_wall_filament_id.value;
-                        cfg_wall >= 1 && cfg_wall <= int(by_extruder.size()))
-                        self_extruder_id = cfg_wall;
                     if (clamp_parent_to_geometry && default_bbox.defined && parent_layer_region_bbox.overlap(default_bbox))
                         default_self_expolygons = intersection_ex(parent_layer_region.slices.surfaces, default_segmentation);
                     std::vector<bool> assigned_extruder(by_extruder.size(), false);

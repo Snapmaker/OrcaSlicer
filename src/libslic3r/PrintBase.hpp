@@ -39,6 +39,9 @@ struct StringObjectException
     StringExceptionType         type = STRING_EXCEPT_NOT_DEFINED;   // warning type for tips
     bool is_warning = false;
     std::vector<std::string>    params; // warning params for tips
+    // Snapmaker Orca: the 0-based tool head a per tool head value (a line width) was refused or
+    // warned about on, -1 when the message names none; the jump of the sidebar selects it.
+    int tool_head = -1;
 };
 
 class CanceledException : public std::exception

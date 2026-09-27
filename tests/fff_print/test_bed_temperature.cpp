@@ -122,3 +122,49 @@ TEST_CASE("bed_temperature_initial_layer_single expands to the max", "[BedTemper
     // start gcode already sets the temperature, so no additional M190 is emitted by the slicer.
     REQUIRE(gcode.find("M190 S65") != std::string::npos);
 }
+
+namespace {
+// A 20 mm cube with one filament whose plate temperature for `bed_type` (first and later layers) is
+// `temp`, on a non-BBL printer without support_multi_bed_types - the Snapmaker U1 case. Returns the
+// blocking error of Print::validate.
+StringObjectException validate_on_plate(BedType bed_type, int temp)
+{
+    DynamicPrintConfig config = Slic3r::DynamicPrintConfig::full_print_config();
+    config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(bed_type));
+    config.set_key_value("support_multi_bed_types", new ConfigOptionBool(false));
+    config.set_key_value(get_bed_temp_key(bed_type), new ConfigOptionInts{ temp });
+    config.set_key_value(get_bed_temp_1st_layer_key(bed_type), new ConfigOptionInts{ temp });
+    config.set_key_value("layer_change_gcode", new ConfigOptionString("G92 E0\n")); // relative-E reset of validate()
+
+    Slic3r::Model model;
+    Slic3r::Print print;
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+    return print.validate();
+}
+} // namespace
+
+// The Graphic Effect Plate is offered to the U1 without support_multi_bed_types, and the Snapmaker
+// filaments mark "not for this plate" with graphic_effect_plate_temp 0. Print::validate refuses such
+// a print with the plate/filament mismatch instead of letting it slice with a cold bed.
+TEST_CASE("Graphic Effect Plate refuses a filament without a plate temperature", "[BedTemperature][GraphicEffectPlate]")
+{
+    SECTION("0 on the Graphic Effect Plate is refused") {
+        const StringObjectException err = validate_on_plate(btGESP, 0);
+        INFO(err.string);
+        REQUIRE(err.type == STRING_EXCEPT_FILAMENT_NOT_MATCH_BED_TYPE);
+        REQUIRE(err.params.size() == 3);
+        REQUIRE(err.params[2] == "1");
+    }
+    SECTION("65 on the Graphic Effect Plate passes") {
+        const StringObjectException err = validate_on_plate(btGESP, 65);
+        INFO(err.string);
+        REQUIRE(err.type != STRING_EXCEPT_FILAMENT_NOT_MATCH_BED_TYPE);
+        REQUIRE(err.string.empty());
+    }
+    SECTION("the other plates keep the old scope") {
+        // Without support_multi_bed_types a 0 on the High Temp Plate is not checked, as before.
+        const StringObjectException err = validate_on_plate(btPEI, 0);
+        INFO(err.string);
+        REQUIRE(err.type != STRING_EXCEPT_FILAMENT_NOT_MATCH_BED_TYPE);
+    }
+}

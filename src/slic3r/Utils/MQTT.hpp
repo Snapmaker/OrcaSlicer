@@ -73,6 +73,10 @@ public:
     // Destructor
     ~MqttClient();
 
+    // Releases a reference on a detached thread. The destructor may block up to 2 s + 5 s (reconnect
+    // checks, disconnect ack), so the last shared_ptr must not die on the UI thread or under a lock.
+    static void dispose_async(std::shared_ptr<MqttClient> client);
+
     // Connect to the MQTT broker
     bool Connect(std::string& msg);
 

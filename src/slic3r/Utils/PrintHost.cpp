@@ -16,6 +16,7 @@
 #include "MoonRaker.hpp"
 #include "OctoPrint.hpp"
 #include "Duet.hpp"
+#include "UltiMaker.hpp"
 #include "FlashAir.hpp"
 #include "AstroBox.hpp"
 #include "Repetier.hpp"
@@ -24,6 +25,7 @@
 #include "CrealityPrint.hpp"
 #include "../GUI/PrintHostDialogs.hpp"
 #include "../GUI/MainFrame.hpp"
+#include "slic3r/plugin/PluginManager.hpp"
 #include "Obico.hpp"
 #include "Flashforge.hpp"
 #include "SimplyPrint.hpp"
@@ -59,6 +61,7 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config, bool change_eng
             case htMoonRaker: return new Moonraker(config);
             case htOctoPrint: return new OctoPrint(config);
             case htDuet:      return new Duet(config);
+            case htUltiMaker: return new UltiMaker(config);
             case htFlashAir:  return new FlashAir(config);
             case htAstroBox:  return new AstroBox(config);
             case htRepetier:  return new Repetier(config);
@@ -360,11 +363,28 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
 {
     emit_progress(0);   // Indicate the upload is starting
 
+    // Captured before upload_data is moved into upload() below.
+    const std::string upload_filename = the_job.upload_data.source_path.filename().string();
+
+    {
+        LifecycleEventContext ctx;
+        ctx.name = upload_filename;
+        ctx.code = LifecycleEvtCode::Ok;
+        fire_lifecycle_event(LifecycleEvent::UploadStarted, ctx);
+    }
+
     bool success = the_job.printhost->upload(std::move(the_job.upload_data),
         [this](Http::Progress progress, bool &cancel)   { this->progress_fn(std::move(progress), cancel); },
         [this](wxString error)                          { this->error_fn(std::move(error)); },
         [this](wxString tag, wxString host)             { this->info_fn(std::move(tag), std::move(host)); }
     );
+
+    {
+        LifecycleEventContext ctx;
+        ctx.name  = upload_filename;
+        ctx.code  = success ? LifecycleEvtCode::Ok : LifecycleEvtCode::Error;
+        fire_lifecycle_event(LifecycleEvent::UploadFinished, ctx);
+    }
 
     if (success) {
         emit_progress(100);

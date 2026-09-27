@@ -68,6 +68,14 @@ if (MSVC AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
   set(_curl_probe_overrides -DHAVE_IOCTLSOCKET_CAMEL=0 -DHAVE_IOCTLSOCKET_CAMEL_FIONBIO=0)
 endif ()
 
+# curl 7.75 probes __builtin_available(macOS ...) with a try_compile that is not valid C
+# off Apple platforms. curl_internal_test() skips a probe whose result is already cached, so
+# answer it up front everywhere but on macOS, where the probe is meaningful.
+set(_curl_builtin_available "")
+if (NOT APPLE)
+  set(_curl_builtin_available -DHAVE_BUILTIN_AVAILABLE:INTERNAL=0)
+endif ()
+
 Snapmaker_Orca_add_cmake_project(CURL
   # GIT_REPOSITORY      https://github.com/curl/curl.git
   # GIT_TAG             curl-7_75_0
@@ -83,6 +91,7 @@ Snapmaker_Orca_add_cmake_project(CURL
     -DCURL_STATICLIB=${_curl_static}
     "${_curl_c_flags_line}"
     ${_curl_probe_overrides}
+    ${_curl_builtin_available}
     ${_curl_platform_flags}
 )
 

@@ -35,7 +35,7 @@ AdaptivePAProcessor::AdaptivePAProcessor(GCode &gcodegen, const std::vector<unsi
     // Constructor body can be used for further initialization if necessary
     for (unsigned int tool : tools_used) {
         // Only enable model for the tool if both PA and adaptive PA options are enabled
-        if(m_config.adaptive_pressure_advance.get_at(tool) && m_config.enable_pressure_advance.get_at(tool)){
+        if(m_config.adaptive_pressure_advance.get_at(tool) && m_config.enable_pressure_advance.get_at(pressure_advance_column(tool))){
             auto interpolator = std::make_unique<AdaptivePAInterpolator>();
             // Get calibration values from extruder
             std::string pa_calibration_values = m_config.adaptive_pressure_advance_model.get_at(tool);
@@ -44,6 +44,20 @@ AdaptivePAProcessor::AdaptivePAProcessor(GCode &gcodegen, const std::vector<unsi
             m_AdaptivePAInterpolators[tool] = std::move(interpolator);
         }
     }
+}
+
+// Pressure advance holds one value per filament variant column. This filter runs beside the
+// G-code generator, so the column is resolved from the config alone instead of through the
+// generator's per layer lookup.
+size_t AdaptivePAProcessor::pressure_advance_column(int filament_id) const
+{
+    return first_filament_variant_column(m_config.filament_self_index.values, size_t(std::max(filament_id, 0)));
+}
+
+double AdaptivePAProcessor::default_pressure_advance(int filament_id) const
+{
+    const size_t column = pressure_advance_column(filament_id);
+    return m_config.enable_pressure_advance.get_at(column) ? m_config.pressure_advance.get_at(column) : 0.;
 }
 
 // Method to get the interpolator for a specific tool ID
@@ -219,7 +233,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
             
                 if(!interpolator){ // Tool not found in the interpolator map
                     // Tool not found in the PA interpolator to tool map
-                    predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                    predicted_pa = default_pressure_advance(m_last_extruder_id);
                     if(m_config.gcode_comments) output << "; APA: Tool doesnt have APA enabled\n";
                 } else if (!interpolator->isInitialised() || (!m_config.adaptive_pressure_advance.get_at(m_last_extruder_id)) )
                     // Check if the model is not initialised by the constructor for the active extruder
@@ -228,7 +242,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                     // however check for robustness sake.
                 {
                     // Model failed or adaptive pressure advance not enabled - use default value from m_config
-                    predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                    predicted_pa = default_pressure_advance(m_last_extruder_id);
                     if(m_config.gcode_comments) output << "; APA: Interpolator setup failed, using default pressure advance\n";
                 } else { // Model setup succeeded
                     // Proceed to identify the print speed to use to calculate the adaptive PA value
@@ -253,7 +267,7 @@ std::string AdaptivePAProcessor::process_layer(std::string &&gcode) {
                         predicted_pa = m_config.adaptive_pressure_advance_bridges.get_at(m_last_extruder_id);
                     
                     if (predicted_pa < 0) { // If extrapolation fails, fall back to the default PA for the extruder.
-                        predicted_pa = m_config.enable_pressure_advance.get_at(m_last_extruder_id) ? m_config.pressure_advance.get_at(m_last_extruder_id) : 0;
+                        predicted_pa = default_pressure_advance(m_last_extruder_id);
                         if(m_config.gcode_comments) output << "; APA: Interpolation failed, using fallback pressure advance value\n";
                     }
                 }

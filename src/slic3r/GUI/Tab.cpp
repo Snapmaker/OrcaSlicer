@@ -3,10 +3,13 @@
 #include "Tab.hpp"
 #include "PresetHints.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/LocalesUtils.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/PublishSettings.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 
 #include "Search.hpp"
@@ -36,10 +39,12 @@
 #include <wx/wupdlock.h>
 
 #include "GUI_App.hpp"
+#include "HighFlowNotices.hpp"
 #include "GUI_ObjectList.hpp"
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
 #include "slic3r/plugin/PluginConfig.hpp"
+#include "slic3r/plugin/PluginManager.hpp"
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
@@ -48,6 +53,8 @@
 #include "EditGCodeDialog.hpp"
 #include "MultiChoiceDialog.hpp"
 #include "MsgDialog.hpp"
+#include "ConfigValueFormatter.hpp"
+#include "Widgets/HyperLink.hpp"
 #include "Notebook.hpp"
 
 #include "Widgets/ComboBox.hpp"
@@ -70,6 +77,7 @@
 #endif // WIN32
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <unordered_set>
 
@@ -244,11 +252,20 @@ Tab::Tab(ParamsPanel* parent, const wxString& title, Preset::Type type) :
 
     m_config_manipulation = get_config_manipulation();
 
-    Bind(wxEVT_SIZE, ([](wxSizeEvent &evt) {
+    Bind(wxEVT_SIZE, ([this](wxSizeEvent &evt) {
         //for (auto page : m_pages)
         //    if (! page.get()->IsShown())
         //        page->layout_valid = false;
         evt.Skip();
+        // Snapmaker Orca: the speed selector fits its labels to the new width. Deferred: the
+        // layout that set this size is still running.
+        if (m_head_selector && !m_head_fit_pending) {
+            m_head_fit_pending = true;
+            CallAfter([this]() {
+                m_head_fit_pending = false;
+                fit_head_selector();
+            });
+        }
     }));
 
     m_highlighter.set_timer_owner(this, 0);
@@ -526,7 +543,7 @@ void Tab::create_preset_tab()
     // tree
     m_tabctrl = new TabCtrl(panel, wxID_ANY, wxDefaultPosition, wxSize(20 * m_em_unit, -1),
         wxTR_NO_BUTTONS | wxTR_HIDE_ROOT | wxTR_SINGLE | wxTR_NO_LINES | wxBORDER_NONE | wxWANTS_CHARS | wxTR_FULL_ROW_HIGHLIGHT);
-    m_tabctrl->Bind(wxEVT_RIGHT_DOWN, [this](auto &e) {}); // disable right select
+    m_tabctrl->Bind(wxEVT_RIGHT_DOWN, [](auto &e) {}); // disable right select
     m_tabctrl->SetFont(Label::Body_14);
     //m_left_sizer->Add(m_tabctrl, 1, wxEXPAND);
     const int img_sz = int(32 * scale_factor + 0.5f);
@@ -585,6 +602,12 @@ void Tab::create_preset_tab()
                 m_actual_nozzle_volumes[extruder_id] = nozzle_type;
 
             switch_excluder(extruder_id);
+            // Snapmaker Orca: a click on a tool head of the speed selector shows that head's nozzle
+            // tab in the sidebar, the reverse of the sidebar's page change (select_tool_head). A
+            // selection set by the code moves nothing; All tool heads leaves the sidebar as it is.
+            if (m_head_selector && !m_head_selection_by_program && m_type == Preset::TYPE_PRINT && extruder_id >= 0)
+                if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                    plater->sidebar().show_nozzle_tab(size_t(extruder_id));
         });
         m_extruder_sync_box = new wxPanel(panel, wxID_ANY);
         m_extruder_sync_box->SetBackgroundColour(panel->GetBackgroundColour());
@@ -605,6 +628,28 @@ void Tab::create_preset_tab()
 
         m_variant_sizer->AddStretchSpacer(1);
         m_variant_sizer->Add(m_extruder_switch, 0, wxALIGN_CENTER, 0);
+        // Snapmaker Orca: the Standard / High Flow toggle of the speed selector (show_flow_toggle):
+        // under "All extruders" the shared column the fields edit, when the process preset has more
+        // than one; under a High Flow tool head the speeds column that head prints.
+        m_flow_toggle = new MultiSwitchButton(panel);
+        m_flow_toggle->Hide();
+        m_flow_toggle->Bind(wxCUSTOMEVT_MULTISWITCH_SELECTION, [this](auto &evt) {
+            evt.Skip();
+            if (m_flow_toggle_updating || !m_head_selector)
+                return;
+            const int selection = evt.GetInt();
+            if (m_flow_toggle_head >= 0) {
+                if (selection >= 0)
+                    choose_head_flow(size_t(m_flow_toggle_head), selection == 0 ? NozzleVolumeType::nvtHighFlow : NozzleVolumeType::nvtStandard);
+                return;
+            }
+            if (selection < 0 || selection >= int(m_head_flow_types.size()))
+                return;
+            m_all_flow = m_head_flow_types[size_t(selection)];
+            if (m_extruder_switch != nullptr && m_extruder_switch->GetSelection() <= 0)
+                switch_excluder(-1);
+        });
+        m_variant_sizer->Add(m_flow_toggle, 0, wxALIGN_CENTER | wxLEFT, m_em_unit);
         m_variant_sizer->Add(right_sizer, 1, wxALIGN_CENTER);
         right_sizer->AddStretchSpacer(1);
         right_sizer->Add(m_extruder_sync_box, 0, wxALIGN_CENTER | wxRIGHT, m_em_unit);
@@ -679,6 +724,26 @@ void Tab::create_preset_tab()
 
 void Tab::parse_extruder_selection(int selection, int &extruder_id, NozzleVolumeType &nozzle_type)
 {
+    // Snapmaker Orca: the speed selector. Entry 0 is All tool heads (no head, the toggle's flow),
+    // entry k tool head k-1 with its own flow.
+    if (m_head_selector) {
+        if (selection <= 0) {
+            extruder_id = -1;
+            nozzle_type = m_all_flow;
+        } else {
+            extruder_id = selection - 1;
+            nozzle_type = head_speed_flow(size_t(extruder_id));
+        }
+        return;
+    }
+    // Snapmaker Orca: in flow selector mode selection s is column s of a preset whose columns belong
+    // to every tool head; the lookup runs for the first one with the type of the column.
+    if (!m_flow_selector_types.empty()) {
+        extruder_id = 0;
+        nozzle_type = selection >= 0 && selection < int(m_flow_selector_types.size()) ? m_flow_selector_types[selection] : m_flow_selector_types.front();
+        return;
+    }
+
     auto nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     int  extruder_nums  = m_preset_bundle->get_printer_extruder_count();
 
@@ -714,6 +779,15 @@ void Tab::parse_extruder_selection(int selection, int &extruder_id, NozzleVolume
 
 int Tab::calculate_selection_index_for_extruder(int extruder_id, NozzleVolumeType nozzle_type)
 {
+    // Snapmaker Orca: the speed selector: All tool heads first, then one entry per tool head.
+    if (m_head_selector)
+        return extruder_id < 0 ? 0 : extruder_id + 1;
+    // Snapmaker Orca: in flow selector mode the entry of the flow type, whichever tool head asks.
+    if (!m_flow_selector_types.empty()) {
+        auto it = std::find(m_flow_selector_types.begin(), m_flow_selector_types.end(), nozzle_type);
+        return it == m_flow_selector_types.end() ? 0 : int(it - m_flow_selector_types.begin());
+    }
+
     auto nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     int  extruder_nums  = m_preset_bundle->get_printer_extruder_count();
 
@@ -868,6 +942,10 @@ void Tab::OnActivate()
 	    }
     }
 #endif
+
+    // The OnActivate() that shows the tab builds the page.
+    if (wxGetApp().mainframe != nullptr && !wxGetApp().mainframe->is_active_and_shown_tab(m_parent))
+        return;
 
     // BBS: select on first active
     if (!m_active_page)
@@ -1093,6 +1171,8 @@ void Tab::update_changed_ui()
 
     decorate();
     update_extruder_switch_colors();
+    // Snapmaker Orca: the dots and tooltips of the speed selector follow the values set per tool head.
+    update_head_entries();
 
     wxTheApp->CallAfter([this]() {
         if (parent()) //To avoid a crash, parent should be exist for a moment of a tree updating
@@ -1207,7 +1287,7 @@ void Tab::update_extruder_switch_colors()
         std::vector<PageShp> pages_to_check;
 
         if (m_active_page) {
-            if (m_active_page->title() == "Speed" || m_active_page->title() == "Motion ability" || m_active_page->title() == "Filament" ||
+            if (m_active_page->title() == "Speed" || m_active_page->title() == "Quality" || m_active_page->title() == "Motion ability" || m_active_page->title() == "Filament" ||
                 m_active_page->title() == "Setting Overrides" || m_active_page->title() == "Multimaterial") {
                 for (auto page_ptr : m_pages) {
                     if (page_ptr.get() == m_active_page) {
@@ -1239,7 +1319,16 @@ void Tab::update_extruder_switch_colors()
 void Tab::check_extruder_options_status(int index, bool &sys_extruder, bool &modified_extruder, const std::vector<PageShp>& pages_to_check)
 {
     int config_index = index;
-    if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_PRINTER || m_type == Preset::TYPE_MODEL) {
+    if (m_head_selector) {
+        // Snapmaker Orca: the speed selector resolves its entries through the layout primitive.
+        config_index = head_selection_column(index);
+    } else if (!m_flow_selector_types.empty()) {
+        // Snapmaker Orca: a flow selector entry is the shared column of its flow.
+        int extruder_id;
+        NozzleVolumeType nozzle_type;
+        parse_extruder_selection(index, extruder_id, nozzle_type);
+        config_index = PerHeadProcess::shared_column(*m_config, nozzle_type);
+    } else if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_PRINTER || m_type == Preset::TYPE_MODEL) {
         int extruder_id;
         NozzleVolumeType nozzle_type;
         parse_extruder_selection(index, extruder_id, nozzle_type);
@@ -1414,7 +1503,7 @@ void Tab::update_changed_tree_ui()
                     get_sys_and_mod_flags("compatible_printers", sys_page, modified_page);
                 }
             }
-            if (page->title() == "Speed" || page->title() == "Motion ability" || page->title() == "Filament" || page->title() == "Setting Overrides" || page->title() == "Multimaterial") {
+            if (page->title() == "Speed" || page->title() == "Quality" || page->title() == "Motion ability" || page->title() == "Filament" || page->title() == "Setting Overrides" || page->title() == "Multimaterial") {
                 auto options = generate_extruder_options();
                 for (size_t switch_index = 0; switch_index < options.size(); ++switch_index) {
                     std::vector<PageShp> pages_to_check = { page };
@@ -1480,6 +1569,14 @@ void Tab::on_roll_back_value(const bool to_sys /*= true*/)
     }
 
     m_postpone_update_ui = true;
+
+    // Snapmaker Orca: a revert to system values first clears the values set per tool head and narrows
+    // the preset; the loop below reverts the shared columns.
+    if (to_sys && m_type == Preset::TYPE_PRINT && m_config != nullptr && PerHeadProcess::is_wide(*m_config)) {
+        PerHeadProcess::clear_all_heads(*m_config);
+        PerHeadProcess::narrow(*m_config);
+        switch_excluder(-1, false);
+    }
 
     // BBS: restore all preset
     for (auto page : m_pages)
@@ -1640,6 +1737,8 @@ void Tab::msw_rescale()
         m_mode_view->Rescale();
     if (m_extruder_switch)
         m_extruder_switch->Rescale();
+    if (m_flow_toggle)
+        m_flow_toggle->Rescale();
     if (m_variant_combo)
         m_variant_combo->Rescale();
 
@@ -1709,6 +1808,8 @@ void Tab::sys_color_changed()
         m_active_page->sys_color_changed();
     if (m_extruder_switch)
         m_extruder_switch->Rescale();
+    if (m_flow_toggle)
+        m_flow_toggle->Rescale();
     if (m_variant_combo)
         m_variant_combo->Rescale();
 
@@ -1766,16 +1867,46 @@ void Tab::toggle_option(const std::string& opt_key, bool toggle, int opt_index/*
 
 void Tab::toggle_line(const std::string &opt_key, bool toggle, int opt_index)
 {
-    if (!m_active_page) return;
-    Line *line = m_active_page->get_line(opt_key, opt_index);
-    if (line) line->toggle_visible = toggle;
+    // Apply to every page that owns the option, not just m_active_page. ConfigManipulation runs while
+    // each tab updates at preset load, so the Speed Dial sees the same visibility regardless of page.
+    for (const PageShp& page : m_pages) {
+        if (!page) continue;
+        if (Line *line = page->get_line(opt_key, opt_index))
+            line->toggle_visible = toggle;
+    }
 };
 
 void Tab::set_option_label(const std::string &opt_key, const wxString &label, int opt_index)
 {
-    if (!m_active_page) return;
-    Line *line = m_active_page->get_line(opt_key, opt_index);
-    if (line) line->set_label(label);
+    // Same as toggle_line: a runtime rename (brim_width -> "Brim ear radius") must reach every page
+    // so the Speed Dial titles the setting before the page has been shown.
+    for (const PageShp& page : m_pages) {
+        if (!page) continue;
+        if (Line *line = page->get_line(opt_key, opt_index))
+            line->set_label(label);
+    }
+}
+
+Tab::SettingRowState Tab::setting_row_state(const std::string &opt_id) const
+{
+    bool found = false;
+    for (const PageShp& page : m_pages) {
+        if (!page) continue;
+        for (const ConfigOptionsGroupShp& group : page->m_optgroups) {
+            if (!group) continue;
+            for (const Line& line : group->get_lines()) {
+                for (const Option& opt : line.get_options()) {
+                    if (opt.opt_id != opt_id)
+                        continue;
+                    if (line.toggle_visible) // shown on any owning page is enough
+                        return {true, line.label, line.get_options().size() > 1};
+                    found = true;
+                }
+            }
+        }
+    }
+    // Never registered on a page -> visible, but with no row label to contribute.
+    return {!found, wxString(), false};
 }
 
 // To be called by custom widgets, load a value into a config,
@@ -2098,6 +2229,20 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
     // reload scene to update timelapse wipe tower
     if (opt_key == "timelapse_type") {
+        // Smooth timelapse parks the nozzle on the prime tower every layer, so it needs a tower on
+        // every layer. That is exactly what "No sparse layers" removes, and with both on the tower is
+        // planned full height and then dropped on emission. Drop "No sparse layers" and tell the user.
+        if (boost::any_cast<int>(value) == (int) TimelapseType::tlSmooth && m_config->opt_bool("wipe_tower_no_sparse_layers")) {
+            MessageDialog dlg(wxGetApp().plater(),
+                              _L("Smooth timelapse needs a prime tower on every layer, which is not compatible with \"No sparse layers\". "
+                                 "\"No sparse layers\" has been turned off."),
+                              _L("Warning"), wxICON_WARNING | wxOK);
+            dlg.ShowModal();
+            DynamicPrintConfig new_conf = *m_config;
+            new_conf.set_key_value("wipe_tower_no_sparse_layers", new ConfigOptionBool(false));
+            m_config_manipulation.apply(m_config, &new_conf);
+        }
+
         bool wipe_tower_enabled = m_config->option<ConfigOptionBool>("enable_prime_tower")->value;
         if (!wipe_tower_enabled && boost::any_cast<int>(value) == (int)TimelapseType::tlSmooth) {
             MessageDialog dlg(wxGetApp().plater(), _L("A prime tower is required for smooth timelapse mode. There may be flaws on the model without prime tower. Do you want to enable the prime tower\?"),
@@ -2109,6 +2254,23 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 wxGetApp().plater()->update();
             }
         } else {
+            wxGetApp().plater()->update();
+        }
+    }
+
+    // Mirror of the timelapse_type branch above: enabling "No sparse layers" while smooth timelapse
+    // is active would leave the tower on every layer anyway, so fall back to traditional timelapse.
+    if (opt_key == "wipe_tower_no_sparse_layers" && boost::any_cast<bool>(value)) {
+        auto timelapse_type = m_config->option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
+        if (timelapse_type && timelapse_type->value == TimelapseType::tlSmooth) {
+            MessageDialog dlg(wxGetApp().plater(),
+                              _L("\"No sparse layers\" is not compatible with smooth timelapse, which needs a prime tower on every layer. "
+                                 "Timelapse has been switched to traditional mode."),
+                              _L("Warning"), wxICON_WARNING | wxOK);
+            dlg.ShowModal();
+            DynamicPrintConfig new_conf = *m_config;
+            new_conf.set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(TimelapseType::tlTraditional));
+            m_config_manipulation.apply(m_config, &new_conf);
             wxGetApp().plater()->update();
         }
     }
@@ -2382,6 +2544,11 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 physical = updated;
             }
         }
+        // Snapmaker Orca: the speed selector of the Process tab follows the tool heads of the
+        // printer (its entries, and the columns of a process preset with values set per tool
+        // head, which is laid out for the new count in update_extruder_variants).
+        if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT); print_tab != nullptr && print_tab != this && print_tab->completed())
+            print_tab->update_extruder_variants(-1, true);
     }
 
     //Orca: disable purge_in_prime_tower if single_extruder_multi_material is disabled
@@ -2405,6 +2572,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         if (wxGetApp().app_config->get("auto_calculate_flush") == "all") {
             wxGetApp().plater()->sidebar().auto_calc_flushing_volumes(-1,extruder_idx);
         }
+        // Snapmaker Orca: the Flow row of the sidebar and, through it, the line of the extruder pages.
+        if (wxGetApp().plater() != nullptr)
+            wxGetApp().plater()->sidebar().update_nozzle_flow_values();
     }
 
     // Orca: allow different layer height for non-bbl printers
@@ -2615,7 +2785,15 @@ void Tab::apply_searcher()
 void Tab::cache_config_diff(const std::vector<std::string>& selected_options, const DynamicPrintConfig* config/* = nullptr*/)
 {
     m_cache_options = selected_options;
-    m_cache_config.apply_only(config ? *config : m_presets->get_edited_preset().config, selected_options);
+    const DynamicPrintConfig &source = config ? *config : m_presets->get_edited_preset().config;
+    m_cache_config.apply_only(source, selected_options);
+    // Snapmaker Orca: the layout of the source, for the indexed rows of a process preset with
+    // values per tool head (apply_config_from_cache).
+    m_cache_process_source.clear();
+    if (m_type == Preset::TYPE_PRINT) {
+        std::vector<std::string> keys(print_options_with_variant.begin(), print_options_with_variant.end());
+        m_cache_process_source.apply_only(source, keys, true);
+    }
 }
 
 void Tab::apply_config_from_cache()
@@ -2627,17 +2805,34 @@ void Tab::apply_config_from_cache()
         was_applied = static_cast<TabPrinter*>(this)->apply_extruder_cnt_from_cache();
 
     if (!m_cache_config.empty()) {
-        m_presets->get_edited_preset().config.apply_only(m_cache_config, m_cache_options);
+        DynamicPrintConfig &edited = m_presets->get_edited_preset().config;
+        // Snapmaker Orca: with values per tool head on either side, indexed rows are copied by (id, variant)
+        // through the layout primitive; apply_only("key#N") would hit the wrong column in another layout.
+        if (m_type == Preset::TYPE_PRINT && !m_cache_process_source.empty() &&
+            (PerHeadProcess::is_wide(m_cache_process_source) || PerHeadProcess::is_wide(edited))) {
+            std::vector<std::string> indexed, plain;
+            for (const std::string &option : m_cache_options) {
+                const size_t hash = option.find('#');
+                if (hash != std::string::npos && print_options_with_variant.count(option.substr(0, hash)) > 0)
+                    indexed.emplace_back(option);
+                else
+                    plain.emplace_back(option);
+            }
+            PerHeadProcess::transfer_columns(edited, m_cache_process_source, indexed, m_preset_bundle->printers.get_edited_preset().config);
+            m_cache_options = plain;
+        }
+        edited.apply_only(m_cache_config, m_cache_options);
         m_cache_config.clear();
         m_cache_options.clear();
+        m_cache_process_source.clear();
 
         was_applied = true;
     }
 
     if (was_applied) {
+        // update_dirty() sets the flag from the diff; the transferred values stay in the edited
+        // preset either way, and a forced is_dirty would show "(modified)" with an empty diff.
         update_dirty();
-        // 标记为 dirty 以保留修改
-        m_presets->get_edited_preset().is_dirty = true;
     }
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<<boost::format(": exit, was_applied=%1%")%was_applied;
 }
@@ -2857,21 +3052,32 @@ void TabPrint::build()
     load_initial_data();
 
     auto page = add_options_page(L("Quality"), "custom-gcode_quality"); // ORCA: icon only visible on placeholders
-        auto optgroup = page->new_optgroup(L("Layer height"), L"param_layer_height");
+        // Snapmaker Orca: the speed selector's line, picker and clear link, for the nine line widths
+        // below; stacked, since the 20 em label column would leave the combo too narrow.
+        auto optgroup = page->new_optgroup("");
+        {
+            Line line = Line{ "", "" };
+            line.full_width = 1;
+            line.widget = [this](wxWindow* parent) { return per_head_line_widget(parent, 20, true); };
+            optgroup->append_line(line);
+        }
+        optgroup = page->new_optgroup(L("Layer height"), L"param_layer_height");
         optgroup->append_single_option_line("layer_height","quality_settings_layer_height");
         optgroup->append_single_option_line("initial_layer_print_height","quality_settings_layer_height");
         optgroup->append_single_option_line("enable_mixed_color_sublayer");
 
+        // Snapmaker Orca: the nine line widths are per tool head columns (print_options_with_variant);
+        // the selector above points the fields at the column of the selected tool head.
         optgroup = page->new_optgroup(L("Line width"), L"param_line_width");
-        optgroup->append_single_option_line("line_width","quality_settings_line_width");
-        optgroup->append_single_option_line("initial_layer_line_width","quality_settings_line_width#first-layer");
-        optgroup->append_single_option_line("outer_wall_line_width","quality_settings_line_width#outer-wall");
-        optgroup->append_single_option_line("inner_wall_line_width","quality_settings_line_width#inner-wall");
-        optgroup->append_single_option_line("top_surface_line_width","quality_settings_line_width#top-surface");
-        optgroup->append_single_option_line("sparse_infill_line_width","quality_settings_line_width#sparse-infill");
-        optgroup->append_single_option_line("internal_solid_infill_line_width","quality_settings_line_width#internal-solid-infill");
-        optgroup->append_single_option_line("support_line_width","quality_settings_line_width#support");
-        optgroup->append_single_option_line("bridge_line_width","quality_settings_line_width#bridge");
+        optgroup->append_single_option_line("line_width","quality_settings_line_width", 0);
+        optgroup->append_single_option_line("initial_layer_line_width","quality_settings_line_width#first-layer", 0);
+        optgroup->append_single_option_line("outer_wall_line_width","quality_settings_line_width#outer-wall", 0);
+        optgroup->append_single_option_line("inner_wall_line_width","quality_settings_line_width#inner-wall", 0);
+        optgroup->append_single_option_line("top_surface_line_width","quality_settings_line_width#top-surface", 0);
+        optgroup->append_single_option_line("sparse_infill_line_width","quality_settings_line_width#sparse-infill", 0);
+        optgroup->append_single_option_line("internal_solid_infill_line_width","quality_settings_line_width#internal-solid-infill", 0);
+        optgroup->append_single_option_line("support_line_width","quality_settings_line_width#support", 0);
+        optgroup->append_single_option_line("bridge_line_width","quality_settings_line_width#bridge", 0);
 
         optgroup = page->new_optgroup(L("Seam"), L"param_seam");
         optgroup->append_single_option_line("seam_position", "quality_settings_seam#seam-position");
@@ -2891,6 +3097,8 @@ void TabPrint::build()
         optgroup->append_single_option_line("role_based_wipe_speed","quality_settings_seam#role-based-wipe-speed");
         optgroup->append_single_option_line("wipe_speed", "quality_settings_seam#wipe-speed");
         optgroup->append_single_option_line("wipe_on_loops","quality_settings_seam#wipe-on-loop-inward-movement");
+        optgroup->append_single_option_line("wipe_inward", "quality_settings_seam#wipe-inward");
+        optgroup->append_single_option_line("wipe_inward_distance", "quality_settings_seam#wipe-inward");
         optgroup->append_single_option_line("wipe_before_external_loop","quality_settings_seam#wipe-before-external");
 
 
@@ -2983,6 +3191,7 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Overhangs"), L"param_overhang");
         optgroup->append_single_option_line("detect_overhang_wall", "quality_settings_overhangs#detect-overhang-wall");
+        optgroup->append_single_option_line("unsupported_wall_last", "quality_settings_overhangs#unsupported-wall-last");
         optgroup->append_single_option_line("make_overhang_printable", "quality_settings_overhangs#make-overhang-printable");
         optgroup->append_single_option_line("make_overhang_printable_angle", "quality_settings_overhangs#maximum-angle");
         optgroup->append_single_option_line("make_overhang_printable_hole_size", "quality_settings_overhangs#hole-area");
@@ -3062,6 +3271,15 @@ void TabPrint::build()
         optgroup->append_single_option_line("ensure_vertical_shell_thickness", "strength_settings_advanced#ensure-vertical-shell-thickness");
 
     page = add_options_page(L("Speed"), "custom-gcode_speed"); // ORCA: icon only visible on placeholders
+        // Snapmaker Orca: which tool heads print with the speeds of another process preset
+        // (libslic3r/PerHeadProcess.hpp); the text comes from update_description_lines().
+        optgroup = page->new_optgroup("");
+        {
+            Line line = Line{ "", "" };
+            line.full_width = 1;
+            line.widget = [this](wxWindow* parent) { return per_head_line_widget(parent, 15); };
+            optgroup->append_line(line);
+        }
         optgroup = page->new_optgroup(L("First layer speed"), L"param_speed_first", 15);
         optgroup->append_single_option_line("initial_layer_speed", "speed_settings_initial_layer_speed#initial-layer", 0);
         optgroup->append_single_option_line("initial_layer_infill_speed", "speed_settings_initial_layer_speed#initial-layer-infill", 0);
@@ -3079,8 +3297,11 @@ void TabPrint::build()
         optgroup->append_single_option_line("ironing_speed", "speed_settings_other_layers_speed#ironing-speed");
         optgroup->append_single_option_line("support_speed", "speed_settings_other_layers_speed#support", 0);
         optgroup->append_single_option_line("support_interface_speed", "speed_settings_other_layers_speed#support-interface", 0);
-        optgroup->append_single_option_line("small_support_perimeter_speed", "speed_settings_other_layers_speed#small-tree-support-perimeters", 0);
-        optgroup->append_single_option_line("small_support_perimeter_threshold", "speed_settings_other_layers_speed#small-tree-support-perimeters-threshold", 0);
+        // Snapmaker Orca: the two small support perimeter keys are not variant keys (they hold one
+        // value for every tool head); appended without an index like the other uniform scalars, so
+        // that the per tool head selector never writes a high column into a one-value key.
+        optgroup->append_single_option_line("small_support_perimeter_speed", "speed_settings_other_layers_speed#small-tree-support-perimeters");
+        optgroup->append_single_option_line("small_support_perimeter_threshold", "speed_settings_other_layers_speed#small-tree-support-perimeters-threshold");
         optgroup = page->new_optgroup(L("Overhang speed"), L"param_overhang_speed", 15);
         optgroup->append_single_option_line("enable_overhang_speed", "speed_settings_overhang_speed#slow-down-for-overhang", 0);
 
@@ -3287,6 +3508,8 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Advanced"), L"advanced");
         optgroup->append_single_option_line("interlocking_beam", "multimaterial_settings_advanced#interlocking-beam");
         optgroup->append_single_option_line("toolchange_ordering", "multimaterial_settings_advanced#toolchange-ordering");
+        optgroup->append_single_option_line("toolchange_cyclic_order", "multimaterial_settings_advanced#toolchange-order");
+        optgroup->append_single_option_line("toolchange_cyclic_first_layer", "multimaterial_settings_advanced#toolchange-order");
         optgroup->append_single_option_line("interface_shells", "multimaterial_settings_advanced#interface-shells");
         optgroup->append_single_option_line("mmu_segmented_region_max_width", "multimaterial_settings_advanced#maximum-width-of-segmented-region");
         optgroup->append_single_option_line("mmu_segmented_region_interlocking_depth", "multimaterial_settings_advanced#interlocking-depth-of-segmented-region");
@@ -3412,12 +3635,22 @@ void TabPrint::build()
     //     optgroup->append_single_option_line(option);
 
     //     build_preset_description_line(optgroup.get());
+
+    // Snapmaker Orca: the hooks of the speed selector (values set per tool head).
+    install_head_hooks();
 }
 
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
 void TabPrint::reload_config()
 {
     this->compatible_widget_reload(m_compatible_printers);
+    // Snapmaker Orca: what the fields of a selected tool head show for the values its preset does
+    // not store (head_display_source) is read from the sources of the tool heads and the keys
+    // edited under All tool heads at this moment.
+    if (m_head_selector && m_type == Preset::TYPE_PRINT && m_preset_bundle != nullptr) {
+        m_head_sources    = PerHeadProcess::active(*m_preset_bundle) ? PerHeadProcess::head_sources(*m_preset_bundle) : std::vector<PerHeadProcess::Source>();
+        m_all_edited_keys = PerHeadProcess::all_edited_keys(*m_preset_bundle);
+    }
     Tab::reload_config();
 }
 
@@ -3437,6 +3670,850 @@ void TabPrint::update_description_lines()
             from_u8(PresetHints::top_bottom_shell_thickness_explanation(*m_preset_bundle)));
     }
 
+    if (m_per_head_process_line && m_preset_bundle) {
+        // Snapmaker Orca: under a tool head of the speed selector the line describes that head,
+        // under All tool heads the composer's sentence plus the values set per tool head. The
+        // Speed page speaks of speeds, the Quality page of line widths (quality_page_active).
+        wxString text = m_head_selector && selected_head() >= 0 ? head_selection_description() : per_head_process_description();
+        if (m_head_selector && selected_head() < 0 && m_config != nullptr) {
+            std::string heads;
+            for (int head = 0; head < m_preset_bundle->get_printer_extruder_count(); ++head)
+                if (const std::vector<std::string> keys = PerHeadProcess::head_override_keys(*m_config, size_t(head)); !keys.empty()) {
+                    const size_t widths = head_width_keys(keys).size();
+                    // TRN %1% a tool head, %2% the values set for it by kind ("1 line width, 3 speeds")
+                    heads += (heads.empty() ? "" : ", ") + into_u8(format_wxstr(_L("Extruder %1%: %2%"), head + 1, HighFlowNotices::head_values_by_kind(widths, keys.size() - widths)));
+                }
+            if (!heads.empty())
+                // TRN Line on the Speed and Quality pages. %1% lists tool heads with the values set for each ("Extruder 2: 3 speeds, Extruder 4: 1 line width, 2 speeds")
+                text += (text.IsEmpty() ? "" : " ") + format_wxstr(_L("Values set per extruder: %1%."), from_u8(heads));
+        }
+        m_per_head_process_line->SetText(text);
+        update_speed_source_picker();
+        if (m_per_head_clear_link != nullptr && m_config != nullptr) {
+            const int  head = selected_head();
+            // Under a tool head the link clears the values of this page alone (the line widths on
+            // the Quality page, the speeds on the Speed page) and shows when the head has one of them.
+            bool show = false;
+            if (!m_head_selector)
+                show = false;
+            else if (head < 0)
+                show = PerHeadProcess::marker_names_any(*m_config);
+            else {
+                const std::set<std::string> page_keys = page_head_keys();
+                for (const std::string &key : PerHeadProcess::head_override_keys(*m_config, size_t(head)))
+                    show = show || page_keys.count(key) > 0;
+            }
+            m_per_head_clear_link->SetLabel(head >= 0 ? HighFlowNotices::clear_head_link_label(quality_page_active()) : _L("Clear the values set per extruder..."));
+            m_per_head_clear_link->Show(show);
+            if (wxSizer *sizer = m_per_head_clear_link->GetContainingSizer(); sizer != nullptr)
+                sizer->Layout();
+        }
+    }
+}
+
+// The alias of a preset ("0.20mm Standard"), its name when it has none.
+static std::string alias_of(const Preset &preset)
+{
+    return preset.alias.empty() ? preset.name : preset.alias;
+}
+
+// Snapmaker Orca: the pages of the Process tab that carry the speed selector, its line, its picker
+// and its clear link: the Speed page (the speeds, accelerations and jerk) and the Quality page
+// (the nine line widths). Compared on the untranslated page title.
+static bool head_selector_page(const wxString &title)
+{
+    return title == "Speed" || title == "Quality";
+}
+
+bool TabPrint::quality_page_active() const
+{
+    return m_active_page != nullptr && m_active_page->title() == "Quality";
+}
+
+// The line width keys among `keys` (PerHeadProcess::flow_independent_keys), in their order.
+std::vector<std::string> TabPrint::head_width_keys(const std::vector<std::string> &keys)
+{
+    std::vector<std::string> widths;
+    for (const std::string &key : keys)
+        if (PerHeadProcess::flow_independent_keys().count(key) > 0)
+            widths.push_back(key);
+    return widths;
+}
+
+// The keys a value can be set for per tool head on the active page: its indexed lines that are in
+// PerHeadProcess::head_editable_keys (the Speed page: the speeds; the Quality page: the widths).
+std::set<std::string> TabPrint::page_head_keys() const
+{
+    std::set<std::string> keys;
+    if (m_active_page == nullptr)
+        return keys;
+    for (const ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+        for (const auto &kvp : group->opt_map())
+            if (kvp.second.second >= 0 && PerHeadProcess::head_editable_keys().count(kvp.second.first) > 0)
+                keys.insert(kvp.second.first);
+    return keys;
+}
+
+// Snapmaker Orca: the line atop the Speed and Quality pages; empty unless a head of another nozzle
+// size uses a process preset of its size. High Flow re-picks speeds, never widths (width_source).
+wxString TabPrint::per_head_process_description() const
+{
+    if (m_preset_bundle == nullptr || !PerHeadProcess::active(*m_preset_bundle))
+        return wxEmptyString;
+    const bool quality = quality_page_active();
+    const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*m_preset_bundle);
+    const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
+    std::string derived_heads, presets, other_heads;
+    size_t      derived = 0;
+    for (const PerHeadProcess::Source &source : sources) {
+        const Preset *preset = quality ? PerHeadProcess::width_source(source) : (source.derived ? source.preset : nullptr);
+        if (preset != nullptr) {
+            // "2 (0.4 mm, High Flow)" for a head that prints the High Flow column of its speeds source.
+            derived_heads += (derived_heads.empty() ? "" : ", ") + std::to_string(source.head + 1) + " (" + HighFlowNotices::head_nozzle_size_label(printer_config, source.head) + " mm" +
+                             (!quality && PerHeadProcess::reads_high_flow(source, head_speed_flow(source.head), printer_config) ? ", " + into_u8(_L("High Flow")) : std::string()) + ")";
+            presets += (presets.empty() ? "" : ", ") + alias_of(*preset) +
+                       // TRN Marks a process preset a tool head takes its speeds from by the user's choice
+                       (source.step == PerHeadProcess::Step::Chosen ? " " + into_u8(_L("(chosen)")) : std::string());
+            ++derived;
+        } else
+            other_heads += (other_heads.empty() ? "" : ", ") + std::to_string(source.head + 1);
+    }
+    if (derived == 0)
+        return wxEmptyString;
+    if (quality) {
+        wxString text = HighFlowNotices::widths_description(derived_heads, presets, other_heads, derived > 1);
+        if (this->type() != Preset::TYPE_PRINT)
+            text += " " + _L("An override on a part applies on every extruder that prints it.");
+        return text;
+    }
+    wxString text = derived == 1 ?
+        // TRN Line on the Speed page of the process settings. %1% is a tool head with its nozzle size ("2 (0.2 mm)"), %2% a process preset, %3% the other tool heads ("1, 3, 4")
+        format_wxstr(_L("Extruder %1% prints with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads) :
+        // TRN Line on the Speed page of the process settings. %1% lists tool heads with their nozzle sizes ("2 (0.2 mm), 3 (0.6 mm)"), %2% process presets, %3% the other tool heads ("1, 4")
+        format_wxstr(_L("Extruders %1% print with the speeds of %2%. The values below apply to extruders %3%, and to every extruder for the settings you changed."), derived_heads, presets, other_heads);
+    if (this->type() != Preset::TYPE_PRINT)
+        text += " " + _L("An override on a part applies on every extruder that prints it.");
+    return text;
+}
+
+// Snapmaker Orca: the speed selector of the Process tab (libslic3r/PerHeadProcess.hpp).
+
+void TabPrint::install_head_hooks()
+{
+    // The process tab alone: the plate, object and part tabs derive from this class but edit the
+    // flow-only space of the overrides under "All" and get no head entries. They get one hook: a
+    // line width written into an override fills every column of it (after_head_change), a width
+    // being flow-independent and an override never per tool head.
+    if (m_type != Preset::TYPE_PRINT) {
+        for (PageShp &page : m_pages)
+            for (ConfigOptionsGroupShp &group : page->m_optgroups)
+                group->m_after_change = [this](const std::string &key, int index) { after_head_change(key, index); };
+        return;
+    }
+    for (PageShp &page : m_pages)
+        for (ConfigOptionsGroupShp &group : page->m_optgroups) {
+            group->m_before_change      = [this](const std::string &key, int &index) { return before_head_change(key, index); };
+            group->m_after_change       = [this](const std::string &key, int index) { after_head_change(key, index); };
+            group->m_before_revert      = [this](const std::string &key, bool to_sys) { return before_head_revert(key, to_sys); };
+            group->m_display_source     = [this](const std::string &key, int index, const DynamicPrintConfig *&config, int &source_index) {
+                return head_display_source(key, index, config, source_index);
+            };
+            group->head_values_tooltip  = [this](const std::string &key) { return head_values_tooltip(key); };
+        }
+}
+
+// Snapmaker Orca: lays a wide process preset out for the printer's tool heads (PerHeadProcess::wide_layout):
+// a gained head takes the shared columns, a lost one drops its column and marks. Returns whether it changed.
+static bool relayout_heads_to_printer(DynamicPrintConfig &config, const DynamicPrintConfig &printer)
+{
+    if (!PerHeadProcess::is_wide(config))
+        return false;
+    const PerHeadProcess::Layout to = PerHeadProcess::wide_layout(config, printer);
+    if (to.size() == 0 || to == PerHeadProcess::layout_of(config))
+        return false;
+    PerHeadProcess::relayout(config, to);
+    return true;
+}
+
+bool TabPrint::before_head_change(const std::string &opt_key, int &opt_index)
+{
+    if (!m_head_selector || m_config == nullptr)
+        return true;
+    const int head = selected_head();
+    if (head < 0)
+        return true;
+    if (print_options_with_variant.count(opt_key) == 0)
+        // A scalar key has no column: the write lands in it, for every tool head, whatever the
+        // selection (the pages without the selector are edited under a selected head as under All).
+        return true;
+    if (PerHeadProcess::head_editable_keys().count(opt_key) == 0)
+        // A uniform key of the variant set is written under All tool heads only (its field is disabled under a head).
+        return false;
+    if (!PerHeadProcess::is_wide(*m_config)) {
+        // The first value set for a tool head: the preset gets its shared columns and one column
+        // per tool head, and the fields of the page point at the head's columns from now on.
+        PerHeadProcess::widen(*m_config, m_preset_bundle->printers.get_edited_preset().config);
+        switch_excluder(-1, false);
+    } else if (PerHeadProcess::head_columns(*m_config, size_t(head)).empty()) {
+        // A preset laid out for another printer (a project, a user preset, a tool head added
+        // since): it follows this printer's tool heads first, so that the write lands in the
+        // head's own column and not in the shared one every other head reads.
+        if (relayout_heads_to_printer(*m_config, m_preset_bundle->printers.get_edited_preset().config))
+            switch_excluder(-1, false);
+    }
+    opt_index = head_selection_column(head + 1);
+    return true;
+}
+
+void TabPrint::after_head_change(const std::string &opt_key, int opt_index)
+{
+    if (m_config == nullptr || print_options_with_variant.count(opt_key) == 0)
+        return;
+    if (!m_head_selector) {
+        // Without the speed selector a line width has one value: the written column fills every
+        // other column, so column 0 (switch_excluder) and overrides read the same on every slot.
+        if (PerHeadProcess::flow_independent_keys().count(opt_key) > 0)
+            if (auto *option = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key)); option != nullptr && !option->empty()) {
+                const size_t source = opt_index >= 0 && size_t(opt_index) < option->size() ? size_t(opt_index) : 0;
+                for (size_t column = 0; column < option->size(); ++column)
+                    if (column != source)
+                        option->set_at(option, column, source);
+            }
+        return;
+    }
+    const int head = selected_head();
+    if (head < 0) {
+        // Under All: the shared column was written; every tool head without a value of its own for
+        // the key follows it.
+        PerHeadProcess::set_shared_value(*m_config, opt_key, m_all_flow);
+    } else {
+        // Under a tool head: both of its flow columns hold the value and are marked for the key.
+        PerHeadProcess::set_head_value(*m_config, size_t(head), opt_key, opt_index);
+    }
+    update_head_entries();
+    update_description_lines();
+}
+
+bool TabPrint::before_head_revert(const std::string &opt_key, bool to_sys)
+{
+    if (!m_head_selector || m_config == nullptr)
+        return false;
+    const int head = selected_head();
+    if (head < 0 || !PerHeadProcess::is_wide(*m_config) || print_options_with_variant.count(opt_key) == 0)
+        return false;
+    const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, size_t(head));
+    const bool marked = !columns.empty() && PerHeadProcess::is_marked(*m_config, size_t(columns.front()), opt_key);
+    if (marked) {
+        // The arrow and the lock of a value set for this tool head clear that value: the head
+        // follows All tool heads again for the key.
+        PerHeadProcess::clear_head_value(*m_config, size_t(head), opt_key);
+        refresh_after_head_change(PerHeadProcess::marker_empty(*m_config));
+        return true;
+    }
+    // An unmarked field shows the shared value: its revert is the revert under All tool heads,
+    // which writes the shared column and every tool head without a value of its own.
+    const Preset *reference_preset = to_sys ? m_presets->get_selected_preset_parent() : &m_presets->get_selected_preset();
+    if (reference_preset == nullptr)
+        return true;
+    DynamicPrintConfig        storage;
+    const DynamicPrintConfig &reference = PerHeadProcess::reference_in_layout_of(*m_config, reference_preset->config, storage);
+    auto       *mine   = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key));
+    const auto *theirs = dynamic_cast<const ConfigOptionVectorBase *>(reference.option(opt_key));
+    if (mine == nullptr || theirs == nullptr || theirs->empty() || mine->type() != theirs->type())
+        return true;
+    const NozzleVolumeType flow   = head_speed_flow(size_t(head));
+    const int              shared = PerHeadProcess::shared_column(*m_config, flow);
+    if (shared >= 0 && size_t(shared) < mine->size())
+        mine->set_at(theirs, size_t(shared), size_t(shared) < theirs->size() ? size_t(shared) : 0);
+    PerHeadProcess::set_shared_value(*m_config, opt_key, flow);
+    refresh_after_head_change(false);
+    return true;
+}
+
+bool TabPrint::head_display_source(const std::string &opt_key, int opt_index, const DynamicPrintConfig *&config, int &index)
+{
+    if (!m_head_selector || m_config == nullptr || opt_index < 0)
+        return false;
+    const int head = selected_head();
+    if (head < 0 || PerHeadProcess::composed_keys().count(opt_key) == 0)
+        return false;
+    if (PerHeadProcess::is_marked(*m_config, size_t(opt_index), opt_key) || m_all_edited_keys.count(opt_key) > 0)
+        return false;
+    if (size_t(head) >= m_head_sources.size() || !m_head_sources[size_t(head)].derived || m_head_sources[size_t(head)].preset == nullptr)
+        return false;
+    // A speed comes from the head's speeds source at the flow it prints; a line width from its width
+    // source's Standard shared column (the selected preset, -1, for a home-size head and for a High
+    // Flow head whose speeds were re-picked).
+    const PerHeadProcess::Source &source = m_head_sources[size_t(head)];
+    const Preset                 *from   = nullptr;
+    const int column = PerHeadProcess::composed_column_for_key(source, opt_key, head_speed_flow(size_t(head)), m_preset_bundle->printers.get_edited_preset().config, from);
+    if (column < 0 || from == nullptr)
+        return false;
+    config = &from->config;
+    index  = column;
+    return true;
+}
+
+wxString TabPrint::head_values_tooltip(const std::string &opt_key) const
+{
+    if (!m_head_selector || m_config == nullptr || selected_head() >= 0 || print_options_with_variant.count(opt_key) == 0)
+        return wxEmptyString;
+    const std::vector<size_t> heads = PerHeadProcess::heads_marked_for(*m_config, opt_key);
+    if (heads.empty())
+        return wxEmptyString;
+    wxString text = _L("Set per extruder:");
+    for (size_t i = 0; i < heads.size(); ++i) {
+        const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, heads[i]);
+        if (columns.empty())
+            continue;
+        // TRN %1% a tool head, %2% the value set for it
+        text += " " + format_wxstr(_L("Extruder %1%: %2%"), heads[i] + 1, get_string_value(opt_key + "#" + std::to_string(columns.front()), *m_config));
+        if (i + 1 < heads.size())
+            text += ",";
+    }
+    return text;
+}
+
+// Page controls are destroyed when another page activates or the pages are rebuilt: the cached
+// pointer is dropped with the window.
+template<typename T> static void forget_on_destroy(T *&pointer)
+{
+    T *window = pointer;
+    window->Bind(wxEVT_DESTROY, [&pointer, window](wxWindowDestroyEvent &evt) {
+        if (pointer == window)
+            pointer = nullptr;
+        evt.Skip();
+    });
+}
+
+wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool stacked)
+{
+    auto *sizer = new wxBoxSizer(wxVERTICAL);
+    // Picker of the tool head's preset: label, combo (min 12 em) and reset to automatic. Speed page: one
+    // row, label in the `label_em` column, never wider than the option lines. Quality page (`stacked`):
+    // label above a full-width combo. One page is alive at a time, so the pointers serve both.
+    m_speed_source_label_em = label_em;
+    m_speed_source_stacked  = stacked;
+    auto *row = new wxBoxSizer(wxHORIZONTAL);
+    // TRN Label of the picker on the Speed and Quality pages: the process preset a tool head takes its speeds and line widths from
+    m_speed_source_label = new wxStaticText(parent, wxID_ANY, _L("Extruder preset:"), wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+    m_speed_source_label->SetFont(wxGetApp().normal_font());
+    if (stacked)
+        // The label line takes the label's own width; hidden with the picker it takes no height.
+        sizer->Add(m_speed_source_label, 0, wxALIGN_LEFT | wxBOTTOM, 2);
+    else {
+        m_speed_source_label->SetMinSize({label_em * m_em_unit, -1});
+        row->Add(m_speed_source_label, 0, wxALIGN_CENTER_VERTICAL);
+    }
+    m_speed_source_combo = new ::ComboBox(parent, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(24)}, 0, nullptr, wxCB_READONLY);
+    m_speed_source_combo->SetMinSize({12 * m_em_unit, -1});
+    m_speed_source_combo->GetDropDown().SetUseContentWidth(true, true);
+    m_speed_source_combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent &evt) {
+        const int index = evt.GetInt();
+        if (m_speed_source_combo == nullptr || index < 0 || size_t(index) >= m_speed_source_items.size())
+            return;
+        choose_speed_source(m_speed_source_items[size_t(index)]);
+    });
+    // The dynamic handlers run before the class's key handler, on the combo and on its list (the
+    // list has the focus while it is open).
+    m_speed_source_combo->Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &evt) { on_speed_source_key(evt); });
+    m_speed_source_combo->GetDropDown().Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent &evt) { on_speed_source_key(evt); });
+    // Proportion 1: the combo takes what the label (one row) or nothing (stacked) leaves of the row.
+    row->Add(m_speed_source_combo, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, stacked ? 0 : m_em_unit / 2);
+    m_speed_source_reset = new ScalableButton(parent, wxID_ANY, "undo");
+    // TRN Tooltip of the button beside the speed picker that clears the process preset chosen for the tool head
+    m_speed_source_reset->SetToolTip(_L("Use the automatic preset again"));
+    m_speed_source_reset->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { choose_speed_source(std::string()); });
+    row->Add(m_speed_source_reset, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit / 2);
+    sizer->Add(row, 0, wxEXPAND | wxBOTTOM, 2);
+    m_speed_source_label->Hide();
+    m_speed_source_combo->Hide();
+    m_speed_source_reset->Hide();
+    forget_on_destroy(m_speed_source_label);
+    forget_on_destroy(m_speed_source_combo);
+    forget_on_destroy(m_speed_source_reset);
+    // The line under the picker: what the picked preset supplies on this page and on the other one
+    // (HighFlowNotices::picker_note); wrapped like the description line, shown with the picker.
+    m_speed_source_note = new ogStaticText(parent, wxEmptyString, wxST_NO_AUTORESIZE);
+    m_speed_source_note->SetFont(wxGetApp().normal_font());
+    m_speed_source_note->WrapToWidth([this]() {
+        if (m_speed_source_note != nullptr && m_speed_source_note->GetParent() != nullptr)
+            m_speed_source_note->GetParent()->Layout();
+        if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
+            m_page_view->GetParent()->Layout();
+    });
+    m_speed_source_note->Hide();
+    forget_on_destroy(m_speed_source_note);
+    sizer->Add(m_speed_source_note, 0, wxEXPAND | wxBOTTOM, 2);
+
+    // The line wraps to the width of the page, again on every width change (a narrow sidebar), and
+    // the page is laid out for the lines it takes.
+    m_per_head_process_line = new ogStaticText(parent, wxEmptyString, wxST_NO_AUTORESIZE);
+    m_per_head_process_line->SetFont(wxGetApp().normal_font());
+    m_per_head_process_line->WrapToWidth([this]() {
+        if (m_per_head_process_line != nullptr && m_per_head_process_line->GetParent() != nullptr)
+            m_per_head_process_line->GetParent()->Layout();
+        if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
+            m_page_view->GetParent()->Layout();
+    });
+    forget_on_destroy(m_per_head_process_line);
+    sizer->Add(m_per_head_process_line, 0, wxEXPAND);
+    m_per_head_clear_link = new HyperLink(parent, HighFlowNotices::clear_head_link_label(quality_page_active()));
+    m_per_head_clear_link->SetFont(wxGetApp().normal_font());
+    m_per_head_clear_link->Hide();
+    m_per_head_clear_link->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent &) { clear_head_values(); });
+    forget_on_destroy(m_per_head_clear_link);
+    sizer->Add(m_per_head_clear_link, 0, wxALIGN_LEFT | wxTOP, 2);
+    return sizer;
+}
+
+// The value tool head `head` would print for `key` from `preset`: the column of its flow, else its
+// Standard shared column (what a chosen preset without a column for the flow serves), as a whole number.
+static std::string preset_value_for_head(const Preset &preset, size_t head, NozzleVolumeType flow, const char *key, const DynamicPrintConfig &printer)
+{
+    const auto *option = dynamic_cast<const ConfigOptionVectorBase *>(preset.config.option(key));
+    if (option == nullptr || option->empty())
+        return "-";
+    int column = PerHeadProcess::source_column(preset, head, flow, printer);
+    if (column < 0)
+        column = PerHeadProcess::shared_column(preset.config, nvtStandard);
+    const std::vector<std::string> values = option->vserialize();
+    return std::to_string(long(std::lround(std::atof(values[column >= 0 && size_t(column) < values.size() ? size_t(column) : 0].c_str()))));
+}
+
+// The line width `key` of `preset` as a tooltip shows it ("110 % (0.22 mm)", "0.62 mm"): the
+// Standard shared column, a percent resolved against `nozzle` (HighFlowNotices::width_value_label).
+static std::string preset_width_for_head(const Preset &preset, const char *key, double nozzle)
+{
+    const auto *option = preset.config.option<ConfigOptionFloatsOrPercentsNullable>(key);
+    if (option == nullptr || option->values.empty())
+        return "-";
+    int column = PerHeadProcess::shared_column(preset.config, nvtStandard);
+    if (column < 0 || size_t(column) >= option->values.size())
+        column = 0;
+    return HighFlowNotices::width_value_label(option->values[size_t(column)], nozzle);
+}
+
+void TabPrint::update_speed_source_picker()
+{
+    if (m_speed_source_combo == nullptr || m_speed_source_label == nullptr || m_speed_source_reset == nullptr)
+        return;
+    const int head = selected_head();
+    std::vector<PerHeadProcess::Source> sources;
+    if (m_type == Preset::TYPE_PRINT && m_head_selector && head >= 0 && m_preset_bundle != nullptr)
+        sources = PerHeadProcess::head_sources(*m_preset_bundle);
+    const bool show    = size_t(std::max(head, 0)) < sources.size() && head >= 0;
+    const bool quality_page = quality_page_active();
+    if (m_speed_source_combo->IsShown() != show) {
+        m_speed_source_label->Show(show);
+        m_speed_source_combo->Show(show);
+        m_speed_source_reset->Show(show);
+    }
+    if (m_speed_source_note != nullptr) {
+        if (show)
+            m_speed_source_note->SetText(HighFlowNotices::picker_note(quality_page));
+        if (m_speed_source_note->IsShown() != show)
+            m_speed_source_note->Show(show);
+    }
+    if (!show) {
+        if (wxSizer *sizer = m_speed_source_combo->GetContainingSizer(); sizer != nullptr)
+            sizer->Layout();
+        return;
+    }
+    using PerHeadProcess::ChosenState;
+    const PerHeadProcess::Source &source   = sources[size_t(head)];
+    const Preset                 &selected = m_preset_bundle->prints.get_selected_preset();
+    const DynamicPrintConfig     &printer  = m_preset_bundle->printers.get_edited_preset().config;
+    const NozzleVolumeType        flow     = head_speed_flow(size_t(head));
+    const std::string             size     = HighFlowNotices::head_nozzle_size_label(printer, size_t(head));
+    bool                          preferred = false;
+    const double                  height    = PerHeadProcess::target_layer_height(*m_preset_bundle, size_t(head), &preferred);
+    const std::string             quality   = PerHeadProcess::plate_quality_class(*m_preset_bundle);
+    // The preset the rule gives the head today: the selected preset on a head the rule leaves alone.
+    const Preset *automatic = source.step == PerHeadProcess::Step::Chosen ? source.automatic : (source.derived ? source.preset : nullptr);
+    if (automatic == nullptr && source.reason != PerHeadProcess::Reason::NoProcessPreset)
+        automatic = &selected;
+    // The widths an item supplies are compared with the automatic width source's: the size preset
+    // of a derived head, the selected preset otherwise (the High Flow re-pick moves no width).
+    const Preset *automatic_widths = source.step == PerHeadProcess::Step::Chosen ? source.automatic :
+                                     source.size_preset != nullptr                ? source.size_preset : nullptr;
+    if (automatic_widths == nullptr)
+        automatic_widths = &selected;
+    const double nozzle = [&printer, head]() {
+        const auto *diameters = printer.option<ConfigOptionFloats>("nozzle_diameter");
+        return diameters == nullptr || diameters->values.empty() ? 0.4 : diameters->get_at(size_t(head));
+    }();
+    const wxString reason = source.derived && source.step != PerHeadProcess::Step::Chosen ?
+                                HighFlowNotices::automatic_reason(source.step, quality, source.class_used, size, height, preferred) :
+                                wxString();
+
+    m_speed_source_combo->Clear();
+    m_speed_source_items.clear();
+    auto append = [this](const wxString &text, const std::string &name, const wxString &tip, int style = 0) {
+        const int item = m_speed_source_combo->Append(text, wxNullBitmap, style);
+        m_speed_source_combo->SetItemTooltip(unsigned(item), tip);
+        m_speed_source_items.emplace_back(name);
+        return item;
+    };
+    // TRN The first item of the speed picker. %1% is a process preset ("0.24mm Standard")
+    append(automatic != nullptr ? format_wxstr(_L("%1% (automatic)"), from_u8(alias_of(*automatic))) : _L("Selected preset (automatic)"), std::string(), reason);
+    // A choice the list does not hold: not installed, not made for this size, inactive.
+    int selection = 0;
+    if (!source.chosen.empty() && source.chosen_state != ChosenState::Applied && source.chosen_state != ChosenState::SameAsSelected) {
+        const Preset  *chosen = PerHeadProcess::resolve_chosen(*m_preset_bundle, source.chosen);
+        const wxString shown  = from_u8(chosen != nullptr ? alias_of(*chosen) : source.chosen);
+        selection = append(source.chosen_state == ChosenState::NotInstalled ?
+                               // TRN An item of the speed picker: the chosen process preset is not installed
+                               format_wxstr(_L("%1% (not installed)"), shown) :
+                               // TRN An item of the speed picker: the chosen process preset does not apply to this tool head now
+                               format_wxstr(_L("%1% (inactive)"), shown),
+                           source.chosen, from_u8(source.chosen), DD_ITEM_STYLE_DISABLED);
+    }
+    const std::vector<PerHeadProcess::Candidate> candidates = PerHeadProcess::picker_candidates(*m_preset_bundle, size_t(head));
+    for (PerHeadProcess::Candidate::Group group : {PerHeadProcess::Candidate::System, PerHeadProcess::Candidate::User, PerHeadProcess::Candidate::Project}) {
+        bool any = false;
+        for (const PerHeadProcess::Candidate &candidate : candidates)
+            any = any || candidate.group == group;
+        if (!any)
+            continue;
+        wxString header, header_tip;
+        switch (group) {
+        // TRN Header in the speed picker above the vendor's process presets of a nozzle size. %1% is the size ("0.8")
+        case PerHeadProcess::Candidate::System: header = format_wxstr(_L("System presets · %1% mm nozzle"), from_u8(size)); break;
+        // TRN Header in the speed picker above the user's process presets
+        case PerHeadProcess::Candidate::User:
+            header     = _L("User presets");
+            header_tip = _L("Chosen user presets travel with the project only where they are installed.");
+            break;
+        // TRN Header in the speed picker above the process presets embedded in the project
+        case PerHeadProcess::Candidate::Project: header = _L("Project presets"); break;
+        }
+        append(header, std::string(), header_tip, DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED);
+        for (const PerHeadProcess::Candidate &candidate : candidates) {
+            if (candidate.group != group)
+                continue;
+            const Preset &preset = *candidate.preset;
+            wxString tip = from_u8(preset.name) + "\n" +
+                           (quality_page ?
+                                // TRN Second line of an item tooltip of the picker on the Quality page: the line widths this tool head would print from the preset ("110 % (0.22 mm)")
+                                format_wxstr(_L("default %1%, outer wall %2%, first layer %3%"), from_u8(preset_width_for_head(preset, "line_width", nozzle)),
+                                             from_u8(preset_width_for_head(preset, "outer_wall_line_width", nozzle)), from_u8(preset_width_for_head(preset, "initial_layer_line_width", nozzle))) :
+                                // TRN Second line of an item tooltip of the speed picker: the values this tool head would print from the preset
+                                format_wxstr(_L("outer wall %1%, sparse %2%, accel %3%"), preset_value_for_head(preset, size_t(head), flow, "outer_wall_speed", printer),
+                                             preset_value_for_head(preset, size_t(head), flow, "sparse_infill_speed", printer),
+                                             preset_value_for_head(preset, size_t(head), flow, "default_acceleration", printer)));
+            if (!quality_page && flow == nvtHighFlow && !candidate.has_flow_column)
+                tip += "\n" + _L("Standard values only; this extruder is at High Flow.");
+            if (automatic_widths != nullptr && &preset != automatic_widths && HighFlowNotices::widths_differ(preset.config, automatic_widths->config))
+                tip += "\n" + _L("Line widths differ from the automatic preset.");
+            if (const auto *layer = preset.config.option<ConfigOptionFloat>("layer_height"); layer != nullptr && std::abs(layer->value - height) > EPSILON)
+                // TRN Item tooltip of the speed picker. %1% the layer height the preset is made for, %2% the one the tool head prints
+                tip += "\n" + format_wxstr(_L("Made for %1% mm layers; this extruder prints %2% mm layers."), from_u8(float_to_string_decimal_point(layer->value, 2)),
+                                          from_u8(float_to_string_decimal_point(height, 2)));
+            if (candidate.is_automatic)
+                tip += "\n" + _L("Also the automatic choice today. Choosing it by name keeps this preset for the extruder when the plate's quality changes; automatic follows the quality.");
+            if (candidate.is_selected)
+                tip += "\n" + _L("The selected process preset. Choosing it by name keeps it for the extruder when the plate's preset changes.");
+            tip += "\n" + _L("Speeds, accelerations, jerk and line widths come from this preset; every other setting stays the plate's.");
+            const int item = append(from_u8(group == PerHeadProcess::Candidate::System ? alias_of(preset) : preset.name), preset.name, tip);
+            m_speed_source_combo->SetItemAlias(unsigned(item), from_u8(preset.name));
+            if (!source.chosen.empty() && preset.name == source.chosen)
+                selection = item;
+        }
+    }
+    m_speed_source_combo->SetSelection(selection);
+    // The closed text of an item the list holds under another name: the automatic and the disabled entries carry their own.
+    m_speed_source_combo->SetLabel(m_speed_source_combo->GetString(unsigned(selection)));
+    m_speed_source_reset->Show(!source.chosen.empty());
+    const bool enabled = source.reason != PerHeadProcess::Reason::NoMachinePreset && source.reason != PerHeadProcess::Reason::NoParent;
+    m_speed_source_combo->Enable(enabled);
+    m_speed_source_combo->SetToolTip(enabled ? _L("The process preset this extruder takes its speeds, accelerations, jerk and line widths from. Every other setting stays the plate's.") :
+                                     source.reason == PerHeadProcess::Reason::NoParent ?
+                                         _L("The process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it.") :
+                                         // TRN Tooltip of the disabled speed picker. %1% is a nozzle size
+                                         format_wxstr(_L("No process preset for a %1% mm nozzle is installed; the extruder prints with the speeds and line widths of the selected preset."), from_u8(size)));
+    if (wxSizer *sizer = m_speed_source_combo->GetContainingSizer(); sizer != nullptr)
+        sizer->Layout();
+}
+
+void TabPrint::choose_speed_source(const std::string &name)
+{
+    const int head = selected_head();
+    if (head < 0 || m_preset_bundle == nullptr || m_type != Preset::TYPE_PRINT)
+        return;
+    if (PerHeadProcess::chosen_of(*m_preset_bundle, size_t(head)) == name) {
+        update_speed_source_picker();
+        return;
+    }
+    PerHeadProcess::set_chosen(*m_preset_bundle, size_t(head), name);
+    // The page under the head shows the new source's values for the fields it does not store, the
+    // entries their dots and tooltips, the line and the picker their texts; the sidebar hint and
+    // the plate follow (the record is rewritten at the apply).
+    reload_config();
+    update_head_entries();
+    update_description_lines();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+        plater->sidebar().update_nozzle_process_hints();
+        plater->update_project_dirty_from_presets();
+        plater->schedule_background_process();
+    }
+    if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
+        m_page_view->GetParent()->Layout();
+    if (m_speed_source_combo != nullptr && m_speed_source_combo->IsShown())
+        m_speed_source_combo->SetFocus();
+}
+
+void TabPrint::on_speed_source_key(wxKeyEvent &event)
+{
+    ::ComboBox *combo = m_speed_source_combo;
+    if (combo == nullptr) {
+        event.Skip();
+        return;
+    }
+    DropDown &drop = combo->GetDropDown();
+    const int key  = event.GetKeyCode();
+    if (combo->is_drop_down()) {
+        // The open list: the arrows move a highlight, Enter commits it, Escape cancels; the class's
+        // handler would select on every arrow key.
+        switch (key) {
+        case WXK_UP:    drop.MoveHighlight(-1); return;
+        case WXK_DOWN:  drop.MoveHighlight(1); return;
+        case WXK_RETURN:
+        case WXK_NUMPAD_ENTER: drop.CommitHighlighted(); return;
+        case WXK_ESCAPE: drop.Cancel(); return;
+        case WXK_LEFT:
+        case WXK_RIGHT: return;
+        default: event.Skip(); return;
+        }
+    }
+    switch (key) {
+    case WXK_UP:
+    case WXK_DOWN:  combo->ForceDropdownOpen(); return; // Alt+Down arrives as Down
+    case WXK_LEFT:
+    case WXK_RIGHT: return;                              // an arrow key never chooses
+    default: event.Skip(); return;                       // Return and Space open the list, Tab navigates
+    }
+}
+
+void TabPrint::focus_speed_source_picker(size_t head)
+{
+    if (m_type != Preset::TYPE_PRINT)
+        return;
+    wxGetApp().mainframe->select_tab((wxPanel *) m_parent);
+    select_page_by_category("Speed");
+    select_tool_head(head, head_flow(head));
+    update_description_lines();
+    if (m_speed_source_combo != nullptr && m_speed_source_combo->IsShown() && m_speed_source_combo->IsThisEnabled())
+        m_speed_source_combo->SetFocus();
+}
+
+void TabPrint::msw_rescale()
+{
+    Tab::msw_rescale();
+    // The one-row layout pins the label to the page's label column; the stacked label keeps its own width.
+    if (m_speed_source_label != nullptr && !m_speed_source_stacked)
+        m_speed_source_label->SetMinSize({m_speed_source_label_em * m_em_unit, -1});
+    if (m_speed_source_combo != nullptr) {
+        m_speed_source_combo->SetMinSize({12 * m_em_unit, -1});
+        m_speed_source_combo->Rescale();
+    }
+    if (m_speed_source_reset != nullptr)
+        m_speed_source_reset->msw_rescale();
+}
+
+void TabPrint::sys_color_changed()
+{
+    Tab::sys_color_changed();
+    if (m_speed_source_reset != nullptr)
+        m_speed_source_reset->msw_rescale();
+}
+
+wxString TabPrint::head_selection_description() const
+{
+    const int head = selected_head();
+    if (head < 0 || m_config == nullptr)
+        return wxEmptyString;
+    const bool quality = quality_page_active();
+    const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
+    const std::string size = HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head));
+    // The head, its nozzle and, for a High Flow nozzle set to the Standard speeds, that choice.
+    wxString text = HighFlowNotices::head_flow_description(size_t(head), size, head_flow(size_t(head)), PerHeadProcess::flow_chosen(*m_preset_bundle, size_t(head)));
+    // One sentence for the head: the choice, or why the rule gave it its preset (aliases only).
+    // Sources are read afresh: a choice applies with the preference off too.
+    const std::vector<PerHeadProcess::Source> sources = m_preset_bundle != nullptr ? PerHeadProcess::head_sources(*m_preset_bundle) : std::vector<PerHeadProcess::Source>();
+    if (size_t(head) < sources.size()) {
+        using PerHeadProcess::ChosenState;
+        using PerHeadProcess::Reason;
+        const PerHeadProcess::Source &source = sources[size_t(head)];
+        const wxString automatic = source.derived && source.step != PerHeadProcess::Step::Chosen ? from_u8(alias_of(*source.preset)) :
+                                   source.automatic != nullptr ? from_u8(alias_of(*source.automatic)) : _L("the selected preset");
+        wxString sentence;
+        switch (source.chosen_state) {
+        case ChosenState::Applied:
+            sentence = source.automatic != nullptr ?
+                // TRN Under a tool head whose process preset was chosen in the picker. %1% is the preset the rule would give it
+                format_wxstr(_L("Chosen in this project; automatic would be %1%."), automatic) :
+                _L("Chosen in this project; automatic would be the selected preset.");
+            break;
+        case ChosenState::SameAsSelected:
+            sentence = _L("Chosen in this project; the same as the selected process preset, so the extruder keeps it when the plate's preset changes.");
+            break;
+        case ChosenState::NotInstalled:
+            // TRN %1% the chosen process preset, %2% the preset the tool head prints with instead
+            sentence = format_wxstr(_L("%1%, chosen in this project, is not installed; the extruder uses %2% (automatic)."), from_u8(source.chosen), automatic);
+            break;
+        case ChosenState::Unfit: {
+            const Preset  *chosen = PerHeadProcess::resolve_chosen(*m_preset_bundle, source.chosen);
+            const wxString name   = from_u8(chosen != nullptr ? alias_of(*chosen) : source.chosen);
+            if (source.chosen_reason.rfind("size ", 0) == 0)
+                // TRN %1% the chosen process preset, %2% the nozzle size it is made for, %3% the size of the tool head, %4% the preset the tool head prints with instead
+                sentence = format_wxstr(_L("%1%, chosen in this project, is made for a %2% mm nozzle and does not apply while the nozzle is %3% mm; the extruder uses %4% (automatic)."),
+                                        name, from_u8(source.chosen_reason.substr(5)), from_u8(size), automatic);
+            else
+                // TRN %1% the chosen process preset, %2% the size of the tool head, %3% the preset the tool head prints with instead
+                sentence = format_wxstr(_L("%1%, chosen in this project, is not made for a %2% mm nozzle and does not apply; the extruder uses %3% (automatic)."),
+                                        name, from_u8(size), automatic);
+            break;
+        }
+        case ChosenState::Inactive:
+            // TRN %1% the chosen process preset
+            sentence = format_wxstr(_L("%1%, chosen in this project, does not apply: the process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it."),
+                                    from_u8(source.chosen));
+            break;
+        case ChosenState::None:
+            switch (source.reason) {
+            case Reason::Off:
+                sentence = _L("\"Process speeds and line widths follow the nozzle size\" is off in Preferences, so the extruder prints with the selected process preset; a preset chosen here still applies.");
+                break;
+            case Reason::HomeSize:
+                sentence = _L("This extruder has the nozzle size of the printer preset and prints with the selected process preset.");
+                break;
+            case Reason::NoMachinePreset:
+            case Reason::NoProcessPreset:
+                // TRN %1% is a nozzle size
+                sentence = format_wxstr(_L("No process preset for a %1% mm nozzle is installed; the extruder prints with the speeds and line widths of the selected preset."), from_u8(size));
+                break;
+            case Reason::NoParent:
+                sentence = _L("The process preset is detached from its system preset, so the speeds and line widths of other presets cannot be combined with it.");
+                break;
+            case Reason::HighFlow: {
+                // The re-pick moves the speeds alone: the widths stay with the size preset or the selected preset.
+                const Preset *widths_from = PerHeadProcess::width_source(source);
+                // TRN Under a High Flow tool head. %1% is the process preset whose High Flow speeds it prints, %2% the preset its line widths come from
+                sentence = format_wxstr(_L("Automatic: %1%, the preset of this nozzle size with High Flow speeds; the selected preset has none. Line widths stay those of %2%."), automatic,
+                                        widths_from != nullptr ? from_u8(alias_of(*widths_from)) : _L("the selected preset"));
+                break;
+            }
+            default: {
+                bool         preferred = false;
+                const double height    = PerHeadProcess::target_layer_height(*m_preset_bundle, size_t(head), &preferred);
+                sentence = HighFlowNotices::automatic_reason(source.step, PerHeadProcess::plate_quality_class(*m_preset_bundle), source.class_used, size, height, preferred);
+                break;
+            }
+            }
+            break;
+        }
+        if (!sentence.IsEmpty())
+            text += " " + sentence;
+        if (!quality && source.derived && !source.kept_keys.empty())
+            // TRN %1% the number of settings changed under All tool heads
+            text += " " + format_wxstr(_L("%1% settings changed under All extruders apply here too."), source.kept_keys.size());
+        if (quality) {
+            // The Layer height field above is greyed: the head's own layer height is named when it
+            // differs from the plate's (a preferred layer height of the nozzle tab).
+            bool         preferred = false;
+            const double height    = PerHeadProcess::target_layer_height(*m_preset_bundle, size_t(head), &preferred);
+            const double plate     = m_preset_bundle->prints.get_selected_preset().config.opt_float("layer_height");
+            if (preferred && std::abs(height - plate) > EPSILON)
+                text += " " + HighFlowNotices::preferred_height_sentence(height, size_t(head));
+            // A line width changed under All tool heads applies here in place of the width source's.
+            if (const Preset *from = PerHeadProcess::width_source(source); from != nullptr) {
+                const int shared = PerHeadProcess::shared_column(*m_config, nvtStandard);
+                const int theirs = PerHeadProcess::shared_column(from->config, nvtStandard);
+                for (const std::string &key : source.kept_keys) {
+                    if (PerHeadProcess::flow_independent_keys().count(key) == 0)
+                        continue;
+                    const ConfigOptionDef *def = m_config->def()->get(key);
+                    text += " " + HighFlowNotices::all_edited_width_sentence(def == nullptr ? from_u8(key) : _(def->label),
+                                                                             into_u8(get_string_value(key + "#" + std::to_string(std::max(shared, 0)), *m_config)),
+                                                                             from_u8(alias_of(*from)),
+                                                                             into_u8(get_string_value(key + "#" + std::to_string(std::max(theirs, 0)), from->config)));
+                }
+            }
+        }
+    }
+    const std::vector<std::string> set_keys = PerHeadProcess::head_override_keys(*m_config, size_t(head));
+    const std::vector<std::string> widths   = head_width_keys(set_keys);
+    if (quality) {
+        // A width set for the head in the other unit than the value under All tool heads: an older
+        // version reads the first entry's number with the percent sign of any entry.
+        const std::vector<int> columns = PerHeadProcess::head_columns(*m_config, size_t(head));
+        const int              shared  = PerHeadProcess::shared_column(*m_config, nvtStandard);
+        for (const std::string &key : widths) {
+            const auto *option = m_config->option<ConfigOptionFloatsOrPercentsNullable>(key);
+            if (option == nullptr || columns.empty() || shared < 0 || size_t(columns.front()) >= option->values.size() || size_t(shared) >= option->values.size())
+                continue;
+            if (option->values[size_t(columns.front())].percent != option->values[size_t(shared)].percent) {
+                const ConfigOptionDef *def = m_config->def()->get(key);
+                text += " " + HighFlowNotices::mixed_unit_sentence(def == nullptr ? from_u8(key) : _(def->label), HighFlowNotices::old_reader_width(option->vserialize()));
+            }
+        }
+    }
+    if (const wxString counts = HighFlowNotices::head_values_set_sentence(quality, quality ? widths.size() : set_keys.size() - widths.size()); !counts.IsEmpty())
+        text += " " + counts;
+    text += " " + HighFlowNotices::shared_settings_sentence();
+    return text;
+}
+
+void TabPrint::clear_head_values()
+{
+    if (!m_head_selector || m_config == nullptr)
+        return;
+    const int head = selected_head();
+    if (head >= 0) {
+        // The values of this page alone: the widths on the Quality page, the speeds on the Speed page.
+        PerHeadProcess::clear_head(*m_config, size_t(head), page_head_keys());
+    } else {
+        std::string heads;
+        size_t      count = 0;
+        for (int candidate = 0; candidate < m_preset_bundle->get_printer_extruder_count(); ++candidate)
+            if (const std::vector<std::string> keys = PerHeadProcess::head_override_keys(*m_config, size_t(candidate)); !keys.empty()) {
+                heads += (heads.empty() ? "" : ", ") + std::to_string(candidate + 1);
+                count += keys.size();
+            }
+        if (count == 0)
+            return;
+        // TRN Confirmation before every value set per tool head is cleared. %1% the number of values, %2% the tool heads ("2, 4")
+        MessageDialog dialog(this, format_wxstr(_L("This clears %1% values set for extruders %2%. They will follow All extruders again."), count, from_u8(heads)),
+                             _L("Clear the values set per extruder"), wxOK | wxCANCEL | wxICON_QUESTION);
+        if (dialog.ShowModal() != wxID_OK)
+            return;
+        PerHeadProcess::clear_all_heads(*m_config);
+    }
+    refresh_after_head_change(PerHeadProcess::marker_empty(*m_config));
+}
+
+void TabPrint::clear_head_widths(size_t head)
+{
+    if (!m_head_selector || m_config == nullptr)
+        return;
+    PerHeadProcess::clear_head(*m_config, head, PerHeadProcess::flow_independent_keys());
+    refresh_after_head_change(PerHeadProcess::marker_empty(*m_config));
+}
+
+void TabPrint::refresh_after_head_change(bool relayout_columns)
+{
+    if (relayout_columns && m_config != nullptr && PerHeadProcess::is_wide(*m_config) && PerHeadProcess::marker_empty(*m_config))
+        PerHeadProcess::narrow(*m_config);
+    switch_excluder(-1, false);
+    update_dirty();
+    reload_config();
+    update_changed_ui();
+    toggle_options();
+    update_head_entries();
+    update_description_lines();
+    if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
+        m_page_view->GetParent()->Layout();
 }
 
 void TabPrint::toggle_options()
@@ -3447,6 +4524,16 @@ void TabPrint::toggle_options()
         bool is_BBL_printer = wxGetApp().preset_bundle->is_bbl_vendor();
         m_config_manipulation.set_is_BBL_Printer(is_BBL_printer);
     }
+
+    // Snapmaker Orca: on a page of the speed selector (Speed, Quality) the scalar fields a selected
+    // tool head made read-only are enabled again before the manipulation decides their state under
+    // All tool heads; the manipulation does not touch every scalar of the Quality page.
+    const bool selector_page = m_head_selector && head_selector_page(m_active_page->title());
+    if (selector_page && selected_head() < 0)
+        for (ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+            for (const auto &kvp : group->opt_map())
+                if (kvp.second.second < 0)
+                    toggle_option(kvp.second.first, true);
 
     m_config_manipulation.toggle_print_fff_options(m_config, int(intptr_t(m_extruder_switch->GetClientData())), m_type < Preset::TYPE_COUNT);
     // The visibility pass may have switched the legacy toggle on for a loaded selection.
@@ -3472,6 +4559,11 @@ void TabPrint::toggle_options()
             cb->Append(_(def->enum_labels[i]));
         }
         cb->SetValue(n);
+        // The stale label (e.g. a tree style left over after support_type changed while support
+        // is disabled) may not exist in the rebuilt list; GetValue()/SetValue() then leaves the
+        // selection invalid, and Choice::get_value would index enum_values out of bounds.
+        if (cb->GetSelection() == wxNOT_FOUND && cb->GetCount() > 0)
+            cb->SetSelection(0);
     }
 
     // Keep plate bed-type list in sync with currently selected printer.
@@ -3549,6 +4641,25 @@ void TabPrint::toggle_options()
             cb->Append(_(def->enum_labels[i]));
         }
         cb->SetValue(n);
+        // Same repair as for support_style above: the rebuilt list may not contain the stale
+        // label, and Choice::get_value would index enum_values with wxNOT_FOUND.
+        if (cb->GetSelection() == wxNOT_FOUND && cb->GetCount() > 0)
+            cb->SetSelection(0);
+    }
+
+    // Snapmaker Orca: under a tool head of the speed selector the uniform settings of the Speed
+    // and Quality pages (the scalars and the three switches every head shares) are read-only; the
+    // manipulation above decides their state under All tool heads (every scalar enabled first).
+    if (selector_page && selected_head() >= 0) {
+        for (ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+            for (const auto &kvp : group->opt_map()) {
+                const std::string &key   = kvp.second.first;
+                const int          index = kvp.second.second;
+                if (index < 0)
+                    toggle_option(key, false);
+                else if (PerHeadProcess::head_editable_keys().count(key) == 0 && print_options_with_variant.count(key) > 0)
+                    toggle_option(key, false, index + 256);
+            }
     }
 }
 
@@ -3599,6 +4710,12 @@ void TabPrint::clear_pages()
 
     m_recommended_thin_wall_thickness_description_line = nullptr;
     m_top_bottom_shell_thickness_explanation = nullptr;
+    m_per_head_process_line = nullptr;
+    m_per_head_clear_link   = nullptr;
+    m_speed_source_label    = nullptr;
+    m_speed_source_combo    = nullptr;
+    m_speed_source_reset    = nullptr;
+    m_speed_source_items.clear();
 }
 
 //BBS: GUI refactor
@@ -3931,6 +5048,9 @@ void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any&
     // always add object config
     bool set   = true; // *m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end();
     auto tab_opt = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key));
+    // Snapmaker Orca: an object, part or layer range override holds one value per flow type, as wide
+    // as the preset's shared columns (PerHeadProcess::shared_width); values set per tool head never widen it.
+    const size_t override_width = tab_opt == nullptr ? 1 : std::max<size_t>(1, PerHeadProcess::shared_width(*m_config));
     static std::map<ConfigOptionType, ConfigOptionVectorBase const *> null_vecs {
         {coBools, new ConfigOptionBoolsNullable(std::initializer_list<unsigned char>{ConfigOptionBoolsNullable::nil_value()})},
         {coInts, new ConfigOptionIntsNullable(1, ConfigOptionIntsNullable::nil_value())},
@@ -3947,7 +5067,7 @@ void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any&
                 auto opt  = config.second->option(opt_key);
                 if (opt) {
                     auto opt2 = opt->clone();
-                    dynamic_cast<ConfigOptionVectorBase *>(opt2)->resize(tab_opt->size());
+                    dynamic_cast<ConfigOptionVectorBase *>(opt2)->resize(override_width);
                     dynamic_cast<ConfigOptionVectorBase *>(opt2)->set_at(null_vecs[tab_opt->type()], opt_index, 0);
                     if (opt2->is_nil()) {
                         delete opt2;
@@ -3967,7 +5087,7 @@ void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any&
             for (auto config : m_object_configs) {
                 auto opt = config.second->option(opt_key);
                 auto opt2 = opt ? opt->clone() : null_vecs[tab_opt->type()]->clone();
-                dynamic_cast<ConfigOptionVectorBase *>(opt2)->resize(tab_opt->size());
+                dynamic_cast<ConfigOptionVectorBase *>(opt2)->resize(override_width);
                 dynamic_cast<ConfigOptionVectorBase *>(opt2)->set_at(tab_opt, opt_index, opt_index);
                 config.second->set_key_value(opt_key, opt2);
             }
@@ -4340,7 +5460,7 @@ void TabPrintLayer::update_custom_dirty(std::vector<std::string> &dirty_options,
 bool Tab::validate_custom_gcode(const wxString& title, const std::string& gcode)
 {
     std::vector<std::string> tags;
-    bool invalid = GCodeProcessor::contains_reserved_tags(gcode, 5, tags);
+    bool invalid = GCodeProcessor::contains_reserved_tags(gcode, 5, tags, wxGetApp().preset_bundle->is_bbl_vendor());
     if (invalid) {
         std::string lines = ":\n";
         for (const std::string& keyword : tags)
@@ -4369,11 +5489,27 @@ static void validate_custom_gcode_cb(Tab* tab, ConfigOptionsGroupShp opt_group, 
     tab->on_value_change(opt_key, value);
 }
 
+// Orca: names the field the way its page does. The option label alone is ambiguous, as the machine's
+// and the filament's custom G-code are both labelled "Start G-code".
+static wxString custom_gcode_group_title(const Page* page, const t_config_option_key& opt_key)
+{
+    if (page)
+        for (const auto& opt_group : page->m_optgroups)
+            for (const auto& opt : opt_group->opt_map())
+                if (opt.second.first == opt_key)
+                    return opt_group->title;
+    return from_u8(opt_key);
+}
+
 void Tab::edit_custom_gcode(const t_config_option_key& opt_key)
 {
     EditGCodeDialog dlg = EditGCodeDialog(this, opt_key, get_custom_gcode(opt_key));
     if (dlg.ShowModal() == wxID_OK) {
-        set_custom_gcode(opt_key, dlg.get_edited_gcode());
+        const std::string edited_gcode = dlg.get_edited_gcode();
+        // Orca: this dialog writes the value straight into the config, bypassing the field's change
+        // handler, so the reserved keyword check has to run here as it does when editing in place.
+        validate_custom_gcodes_was_shown = !validate_custom_gcode(custom_gcode_group_title(m_active_page, opt_key), edited_gcode);
+        set_custom_gcode(opt_key, edited_gcode);
         update_dirty();
         update();
     }
@@ -4747,8 +5883,8 @@ void TabFilament::build()
         optgroup->append_single_option_line("pellet_flow_coefficient", "printer_basic_information_advanced#pellet-modded-printer");
         optgroup->append_single_option_line("filament_flow_ratio", "material_flow_ratio_and_pressure_advance#flow-ratio", 0);
 
-        optgroup->append_single_option_line("enable_pressure_advance", "material_flow_ratio_and_pressure_advance#pressure-advance");
-        optgroup->append_single_option_line("pressure_advance", "material_flow_ratio_and_pressure_advance#pressure-advance");
+        optgroup->append_single_option_line("enable_pressure_advance", "material_flow_ratio_and_pressure_advance#pressure-advance", 0);
+        optgroup->append_single_option_line("pressure_advance", "material_flow_ratio_and_pressure_advance#pressure-advance", 0);
 
         // Orca: adaptive pressure advance and calibration model
         optgroup->append_single_option_line("adaptive_pressure_advance", "material_flow_ratio_and_pressure_advance#enable-adaptive-pressure-advance-beta");
@@ -4919,12 +6055,12 @@ void TabFilament::build()
         optgroup = page->new_optgroup(L("Part cooling fan"), L"param_cooling_part_fan");
         line = { L("Min fan speed threshold"), L("The part cooling fan will run at the minimum fan speed when the estimated layer time is longer than the threshold value. When the layer time is shorter than the threshold, the fan speed will be interpolated between the minimum and maximum fan speed according to layer printing time.") };
         line.label_path = "material_cooling#material-part-cooling-fan";
-        line.append_option(optgroup->get_option("fan_min_speed"));
+        line.append_option(optgroup->get_option("fan_min_speed", 0));
         line.append_option(optgroup->get_option("fan_cooling_layer_time"));
         optgroup->append_line(line);
         line = { L("Max fan speed threshold"), L("The part cooling fan will run at maximum speed when the estimated layer time is shorter than the threshold value.") };
         line.label_path = "material_cooling#material-part-cooling-fan";
-        line.append_option(optgroup->get_option("fan_max_speed"));
+        line.append_option(optgroup->get_option("fan_max_speed", 0));
         line.append_option(optgroup->get_option("slow_down_layer_time"));
         optgroup->append_line(line);
         optgroup->append_single_option_line("reduce_fan_stop_start_freq", "material_cooling#keep-fan-always-on");
@@ -4940,7 +6076,7 @@ void TabFilament::build()
         optgroup->append_single_option_line("ironing_fan_speed", "material_cooling#ironing-fan-speed"); // ORCA: Add support for ironing fan speed control
 
         optgroup = page->new_optgroup(L("Auxiliary part cooling fan"), L"param_cooling_aux_fan");
-        optgroup->append_single_option_line("additional_cooling_fan_speed", "material_cooling#auxiliary-part-cooling-fan");
+        optgroup->append_single_option_line("additional_cooling_fan_speed", "material_cooling#auxiliary-part-cooling-fan", 0);
 
         optgroup = page->new_optgroup(L("Exhaust fan"),L"param_cooling_exhaust");
 
@@ -5004,7 +6140,7 @@ void TabFilament::build()
 
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Wipe tower parameters"), "param_tower");
-        optgroup->append_single_option_line("filament_minimal_purge_on_wipe_tower", "material_multimaterial#multimaterial-wipe-tower-parameters");
+        optgroup->append_single_option_line("filament_minimal_purge_on_wipe_tower", "material_multimaterial#multimaterial-wipe-tower-parameters", 0);
         optgroup->append_single_option_line("filament_tower_interface_pre_extrusion_dist", "material_multimaterial#multimaterial-wipe-tower-parameters");
         optgroup->append_single_option_line("filament_tower_interface_pre_extrusion_length", "material_multimaterial#multimaterial-wipe-tower-parameters");
         optgroup->append_single_option_line("filament_tower_ironing_area", "material_multimaterial#multimaterial-wipe-tower-parameters");
@@ -5048,9 +6184,9 @@ void TabFilament::build()
         });
 
         optgroup = page->new_optgroup(L("Tool change parameters with multi extruder MM printers"), "param_toolchange_multi_extruder");
-        optgroup->append_single_option_line("filament_multitool_ramming", "material_multimaterial#tool-change-parameters-with-multi-extruder");
-        optgroup->append_single_option_line("filament_multitool_ramming_volume", "material_multimaterial#multi-tool-ramming-volume");
-        optgroup->append_single_option_line("filament_multitool_ramming_flow", "material_multimaterial#multi-tool-ramming-flow");
+        optgroup->append_single_option_line("filament_multitool_ramming", "material_multimaterial#tool-change-parameters-with-multi-extruder", 0);
+        optgroup->append_single_option_line("filament_multitool_ramming_volume", "material_multimaterial#multi-tool-ramming-volume", 0);
+        optgroup->append_single_option_line("filament_multitool_ramming_flow", "material_multimaterial#multi-tool-ramming-flow", 0);
 
     page = add_options_page(L("Dependencies"), "advanced");
         optgroup = page->new_optgroup(L("Compatible printers"), "param_dependencies_printers");
@@ -5129,6 +6265,11 @@ void TabFilament::toggle_options()
 
     auto printer_cfg = m_preset_bundle->printers.get_edited_preset().config;
 
+    // Keys of filament_options_with_variant are shown for the column picked in the variant selector,
+    // so their state is read from that column. Their lines are built with index 0 and keep the id
+    // "key#0" whatever column is shown, hence the index 0 in the toggles below.
+    const unsigned int active_variant_column = (unsigned int) std::max(m_variant_combo ? m_variant_combo->GetSelection() : 0, 0);
+
     if (m_active_page->title() == L("Cooling")) {
         bool has_enable_overhang_bridge_fan = m_config->opt_bool("enable_overhang_bridge_fan", 0);
         for (auto el : {"overhang_fan_speed", "overhang_fan_threshold", "internal_bridge_fan_speed"}) // ORCA: Add support for separate internal bridge fan speed control
@@ -5161,7 +6302,7 @@ void TabFilament::toggle_options()
             }
         }
 
-        toggle_line("additional_cooling_fan_speed", printer_cfg.opt_bool("auxiliary_fan"));
+        toggle_line("additional_cooling_fan_speed", printer_cfg.opt_bool("auxiliary_fan"), 0);
 
         bool support_air_filtration = printer_cfg.opt_bool("support_air_filtration");
         for (auto el : {"activate_air_filtration", "during_print_exhaust_fan_speed", "complete_print_exhaust_fan_speed"})
@@ -5177,8 +6318,8 @@ void TabFilament::toggle_options()
     }
     if (m_active_page->title() == L("Filament"))
     {
-        bool pa = m_config->opt_bool("enable_pressure_advance", 0);
-        toggle_option("pressure_advance", pa);
+        bool pa = m_config->opt_bool("enable_pressure_advance", active_variant_column);
+        toggle_option("pressure_advance", pa, 0);
 
         // BBS: 控制床温选项的显示
         auto support_multi_bed_types = is_BBL_printer || printer_cfg.opt_bool("support_multi_bed_types");
@@ -5282,14 +6423,20 @@ void TabFilament::toggle_options()
 
     if (m_active_page->title() == L("Multimaterial")) {
         // Orca: hide specific settings for BBL printers
-        for (auto el : {"filament_minimal_purge_on_wipe_tower", "filament_loading_speed_start", "filament_loading_speed",
+        // Snapmaker Orca: only the single extruder multi material path reads the minimal purge; a
+        // toolchanger purges prime_volume per change and carries no colour over, so the line is hidden.
+        const bool toolchanger = !is_BBL_printer && !printer_cfg.opt_bool("single_extruder_multi_material") &&
+                                 printer_cfg.option<ConfigOptionFloats>("nozzle_diameter")->size() > 1;
+        toggle_line("filament_minimal_purge_on_wipe_tower", !is_BBL_printer && !toolchanger, 0);
+        toggle_option("filament_minimal_purge_on_wipe_tower", !is_BBL_printer, 0);
+        for (auto el : {"filament_loading_speed_start", "filament_loading_speed",
                         "filament_unloading_speed_start", "filament_unloading_speed", "filament_toolchange_delay", "filament_cooling_moves",
                         "filament_cooling_initial_speed", "filament_cooling_final_speed"})
             toggle_option(el, !is_BBL_printer);
 
-        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", 0);
-        toggle_option("filament_multitool_ramming_volume", multitool_ramming);
-        toggle_option("filament_multitool_ramming_flow", multitool_ramming);
+        bool multitool_ramming = m_config->opt_bool("filament_multitool_ramming", active_variant_column);
+        toggle_option("filament_multitool_ramming_volume", multitool_ramming, 0);
+        toggle_option("filament_multitool_ramming_flow", multitool_ramming, 0);
 
         bool is_BBL_multi_extruder = is_BBL_printer && printer_cfg.option<ConfigOptionFloats>("nozzle_diameter")->size() > 1;
         const int selection = m_variant_combo ? m_variant_combo->GetSelection() : 0;
@@ -5522,32 +6669,17 @@ void TabPrinter::build_fff()
             auto registered_printer_agents = NetworkAgentFactory::get_registered_printer_agents();
             if (!registered_printer_agents.empty())
             {
-                ConfigOptionDef def;
-                def.type = coString;
-                def.gui_type = ConfigOptionDef::GUIType::printer_agent_select;
-                def.width = 3 * Field::def_width_wider() / 2;
-                def.label = L("Printer Agent");
-                def.tooltip = L("Select the network agent implementation for printer communication. "
+                option = optgroup->get_option("printer_agent");
+                option.opt.gui_type = ConfigOptionDef::GUIType::printer_agent_select;
+                option.opt.width = 3 * Field::def_width_wider() / 2;
+                option.opt.tooltip = L("Select the network agent implementation for printer communication. "
                     "Available agents are registered at startup.");
-                def.mode = comAdvanced;
-
-                // Create the field without get_option() so it is not registered in m_opt_map.
-                // ConfigOptionsGroup handles printer_agent before the generic mapped write path.
-                Line agent_line = optgroup->create_single_option_line(Option(def, "printer_agent"));
-                optgroup->append_line(agent_line);
-                if (Field* agent_field = get_field("printer_agent"))
-                {
-                    if (auto* choice = dynamic_cast<PrinterAgentChoice*>(agent_field); choice && choice->getWindow())
-                        choice->set_value(m_config->opt_string("printer_agent"), false);
-                }
-
-                // Register by hand so the UnsavedChanges dialog can render a row for it.
-                wxGetApp().sidebar().get_searcher().add_key("printer_agent", m_type, optgroup->title,
-                                                            optgroup->config_category());
+                optgroup->append_single_option_line(option);
             }
         }
 
         optgroup->append_single_option_line("use_3mf");
+        optgroup->append_single_option_line("scan_first_layer" , "printer_basic_information_advanced#scan-first-layer");
         optgroup->append_single_option_line("enable_power_loss_recovery", "printer_basic_information_advanced#power-loss-recovery");
         //option  = optgroup->get_option("wrapping_exclude_area");
         //option.opt.full_width = true;
@@ -5613,6 +6745,7 @@ void TabPrinter::build_fff()
 
         optgroup = page->new_optgroup(L("Extruder Clearance"), "param_extruder_clearance");
         optgroup->append_single_option_line("extruder_clearance_radius", "printer_basic_information_extruder_clearance#radius");
+        optgroup->append_single_option_line("extruder_clearance_dist_to_rod", "printer_basic_information_extruder_clearance#distance-to-rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_rod", "printer_basic_information_extruder_clearance#height-to-rod");
         optgroup->append_single_option_line("extruder_clearance_height_to_lid", "printer_basic_information_extruder_clearance#height-to-lid");
 
@@ -5623,7 +6756,7 @@ void TabPrinter::build_fff()
         optgroup->append_single_option_line("adaptive_bed_mesh_margin", "printer_basic_information_adaptive_bed_mesh#mesh-margin");
 
         optgroup = page->new_optgroup(L("Accessory"), "param_accessory");
-        optgroup->append_single_option_line("nozzle_type", "printer_basic_information_accessory#nozzle-type");
+        optgroup->append_single_option_line("nozzle_type", "printer_basic_information_accessory#nozzle-type", 0);
         optgroup->append_single_option_line("nozzle_hrc", "printer_basic_information_accessory#nozzle-hrc");
         optgroup->append_single_option_line("auxiliary_fan", "printer_basic_information_accessory#auxiliary-part-cooling-fan");
         optgroup->append_single_option_line("fan_direction");
@@ -6155,7 +7288,24 @@ if (is_marlin_flavor)
 
         auto optgroup = page->new_optgroup(L("Basic information"), L"param_information", -1, true);
             optgroup->append_single_option_line("nozzle_diameter", "printer_extruder_basic_information#nozzle-diameter", extruder_idx);
+            // Snapmaker Orca: mainline's option line for "nozzle_volume_type" stays out - the key
+            // belongs to the project, not to the printer preset, so an option field has nothing to
+            // read or write. The line below shows the same choice as the Flow row of the sidebar.
             //optgroup->append_single_option_line("nozzle_volume_type", "", extruder_idx);
+            if (const ConfigOptionDef *flow_def = print_config_def.get("nozzle_volume_type"); flow_def != nullptr) {
+                // The first sentences are those of the Flow row of the sidebar.
+                Line line{ _L("Nozzle flow"), HighFlowNotices::flow_tooltip(HighFlowNotices::FlowRowState::Choice, {}) + " " +
+                                                  _L("The choice belongs to the project and does not change the printer preset.") };
+                line.append_option(Option(*flow_def, "nozzle_volume_type#" + std::to_string(extruder_idx)));
+                line.widget = [this, extruder_idx](wxWindow* parent) { return create_nozzle_flow_widget(parent, int(extruder_idx)); };
+                // No undo buttons: nothing of the preset is edited.
+                line.set_undo_bitmap(&m_bmp_white_bullet);
+                line.set_undo_to_sys_bitmap(&m_bmp_white_bullet);
+                line.set_undo_tooltip(&m_tt_white_bullet);
+                line.set_undo_to_sys_tooltip(&m_tt_white_bullet);
+                line.set_label_colour(&m_default_text_clr);
+                optgroup->append_line(line);
+            }
 
             optgroup->append_single_option_line("nozzle_volume", "printer_extruder_basic_information#nozzle-volume", extruder_idx);
             optgroup->append_single_option_line("extruder_printable_height", "printer_extruder_basic_information#extruder-layer-height-limits", extruder_idx);
@@ -6198,8 +7348,13 @@ if (is_marlin_flavor)
 
                 update_dirty();
                 on_value_change(opt_key, value);
-                if (opt_key.find("nozzle_diameter") != std::string::npos)
+                if (opt_key.find("nozzle_diameter") != std::string::npos) {
+                    // Snapmaker Orca: the filaments this tool head prints move to the presets
+                    // made for its new size (the slots are written after this handler returned).
+                    if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                        plater->show_nozzle_follow_notice(plater->follow_nozzle_sizes({size_t(extruder_idx)}, Plater::FollowReason::PrinterTab));
                     validate_filament_hot_bed_nozzle_relation(parent());
+                }
                 update();
             };
 
@@ -6213,27 +7368,16 @@ if (is_marlin_flavor)
             optgroup->append_single_option_line("extruder_offset", "printer_extruder_basic_information#extruder-offset-position", extruder_idx);
 
             //BBS: don't show retract related config menu in machine page
+            // These optgroups are built from publishable_printer_retraction/z_hop_options() so the
+            // published-3MF printer allowlist (their union in libslic3r/PublishSettings.hpp) can
+            // never drift from what the machine page actually shows.
             optgroup = page->new_optgroup(L("Retraction"), L"param_retraction");
-            optgroup->append_single_option_line("retraction_length", "printer_extruder_retraction#length", extruder_idx);
-            optgroup->append_single_option_line("retract_restart_extra", "printer_extruder_retraction#extra-length-on-restart", extruder_idx);
-            optgroup->append_single_option_line("retraction_speed", "printer_extruder_retraction#retraction-speed", extruder_idx);
-            optgroup->append_single_option_line("deretraction_speed", "printer_extruder_retraction#deretraction-speed", extruder_idx);
-            optgroup->append_single_option_line("retraction_minimum_travel", "printer_extruder_retraction#travel-distance-threshold", extruder_idx);
-            optgroup->append_single_option_line("retract_when_changing_layer", "printer_extruder_retraction#retract-on-layer-change", extruder_idx);
-            optgroup->append_single_option_line("wipe", "printer_extruder_retraction#wipe-while-retracting", extruder_idx);
-            optgroup->append_single_option_line("wipe_distance", "printer_extruder_retraction#wipe-distance", extruder_idx);
-            optgroup->append_single_option_line("retract_before_wipe", "printer_extruder_retraction#retract-amount-before-wipe", extruder_idx);
-            // Orca
-            optgroup->append_single_option_line("retract_after_wipe", "printer_extruder_retraction#retract-amount-after-wipe", extruder_idx);
+            for (const PublishablePrinterOption& opt : publishable_printer_retraction_options())
+                optgroup->append_single_option_line(opt.key, opt.icon, extruder_idx);
 
             optgroup = page->new_optgroup(L("Z-Hop"), L"param_extruder_lift_enforcement");
-            optgroup->append_single_option_line("retract_lift_enforce", "printer_extruder_z_hop#on-surfaces", extruder_idx);
-            optgroup->append_single_option_line("z_hop_types", "printer_extruder_z_hop#z-hop-type", extruder_idx);
-            optgroup->append_single_option_line("z_hop", "printer_extruder_z_hop#z-hop-height", extruder_idx);
-            optgroup->append_single_option_line("z_hop_when_prime", "printer_extruder_z_hop#z-hop-height", extruder_idx);
-            optgroup->append_single_option_line("travel_slope", "printer_extruder_z_hop#traveling-angle", extruder_idx);
-            optgroup->append_single_option_line("retract_lift_above", "printer_extruder_z_hop#only-lift-z-above", extruder_idx);
-            optgroup->append_single_option_line("retract_lift_below", "printer_extruder_z_hop#only-lift-z-below", extruder_idx);
+            for (const PublishablePrinterOption& opt : publishable_printer_z_hop_options())
+                optgroup->append_single_option_line(opt.key, opt.icon, extruder_idx);
 
             optgroup = page->new_optgroup(L("Retraction when switching material"), L"param_retraction_material_change");
             optgroup->append_single_option_line("retract_length_toolchange", "printer_extruder_retraction#retraction-when-switching-materials", extruder_idx);
@@ -6285,11 +7429,11 @@ if (is_marlin_flavor)
     } else if (m_extruders_count_old == 1) {
         first_extruder_title = wxString::Format("Extruder %d", 1);
     }
-    auto & searcher = wxGetApp().sidebar().get_searcher();
+    auto & index = wxGetApp().sidebar().settings_index();
     for (auto &group : m_pages[n_before_extruders]->m_optgroups) {
         group->set_config_category_and_type(first_extruder_title, m_type);
         for (auto &opt : group->opt_map())
-            searcher.add_key(opt.first + "#0", m_type, group->title, first_extruder_title);
+            index.add_key(opt.first + "#0", m_type, group->title, first_extruder_title, group->icon);
     }
 
     Thaw();
@@ -6384,9 +7528,28 @@ void TabPrinter::on_preset_loaded()
     const auto *nozzle_stats = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionStrings>("extruder_nozzle_stats");
     if (nozzle_stats == nullptr || nozzle_stats->values.empty())
         seedExtruderNozzleStats(m_preset_bundle);
+    // Snapmaker Orca: reset High Flow to Standard for tool heads this preset cannot run it on (no
+    // High Flow values for the nozzle size, or no High Flow columns); a notification follows the load.
+    if (auto *nozzle_volume_type = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type")) {
+        const std::vector<size_t> reset = HighFlowNotices::sanitize(*m_config, nozzle_volume_type->values,
+                                                                    HighFlowNotices::size_offers_high_flow(*m_preset_bundle));
+        if (!reset.empty()) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": " << reset.size() << " High Flow extruder(s) set back to a Standard nozzle for " << current_printer.name;
+            if (!m_base_preset_name.empty())
+                wxGetApp().app_config->save_nozzle_volume_types_to_config(m_base_preset_name, nozzle_volume_type->serialize());
+            wxGetApp().CallAfter([reset]() {
+                if (Plater *plater = wxGetApp().plater(); plater != nullptr && wxGetApp().mainframe != nullptr)
+                    plater->get_notification_manager()->push_notification(NotificationType::CustomNotification,
+                                                                         NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                                                         Plater::nozzle_flow_reset_text(reset));
+            });
+        }
+    }
+
     if (auto *nozzle_volume_type = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type"))
         for (size_t idx = 0; idx < nozzle_volume_type->values.size(); ++idx)
             updateNozzleCountDisplay(m_preset_bundle, idx, NozzleVolumeType(nozzle_volume_type->values[idx]));
+    update_nozzle_flow_lines();
 }
 
 void TabPrinter::update_pages()
@@ -6436,15 +7599,6 @@ void TabPrinter::reload_config()
     if (m_active_page && m_active_page->title() == "Multimaterial")
         m_active_page->set_value("extruders_count", int(m_extruders_count));
 
-    // m_opt_map-driven reload does not cover printer_agent, so sync this custom field explicitly.
-    if (Field* agent_field = get_field("printer_agent"))
-    {
-        if (auto* choice = dynamic_cast<PrinterAgentChoice*>(agent_field); choice && choice->getWindow())
-        {
-            const std::string selected_agent = m_config->opt_string("printer_agent");
-            choice->set_value(selected_agent, false);
-        }
-    }
 }
 
 void TabPrinter::activate_selected_page(std::function<void()> throw_if_canceled)
@@ -6456,15 +7610,6 @@ void TabPrinter::activate_selected_page(std::function<void()> throw_if_canceled)
     if (m_active_page && m_active_page->title() == "Multimaterial")
         m_active_page->set_value("extruders_count", int(m_extruders_count));
 
-    // m_opt_map-driven reload does not cover printer_agent, so sync this custom field explicitly.
-    if (Field* agent_field = get_field("printer_agent"))
-    {
-        if (auto* choice = dynamic_cast<PrinterAgentChoice*>(agent_field); choice && choice->getWindow())
-        {
-            const std::string selected_agent = m_config->opt_string("printer_agent");
-            choice->set_value(selected_agent, false);
-        }
-    }
 }
 
 void TabPrinter::clear_pages()
@@ -6590,7 +7735,7 @@ void TabPrinter::toggle_options()
     auto nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     auto extruders      = m_config->option<ConfigOptionEnumsGeneric>("extruder_type");
         auto get_index_for_extruder =
-            [this, &extruders, &nozzle_volumes](int extruder_id, int stride = 1) {
+            [this, &extruders](int extruder_id, int stride = 1) {
         return m_config->get_index_for_extruder(extruder_id + 1, "printer_extruder_id",
             ExtruderType(extruders->values[extruder_id]), get_actual_nozzle_volume_type(extruder_id), "printer_extruder_variant", stride);
     };
@@ -6839,10 +7984,11 @@ static bool confirm_exact_extruder_heights(wxWindow *parent, bool ask_experiment
     }
     if (ask_prime_tower) {
         MessageDialog dlg(parent,
-                          _L("With exact preferred layer heights the prime tower prints one slab per tool change and bridges "
-                             "the layers between them. Where tool changes fall on neighbouring layers of a very fine grid, "
-                             "those slabs can be thinner than the extruders' minimum layer height, outside the printer's "
-                             "limits.\n\nKeep exact preferred layer heights together with the prime tower?"),
+                          _L("The prime tower prints one slab per tool change on the object layer grid and bridges the "
+                             "layers between them, in either mode. A coarse extruder that purges on a slab of a fine grid "
+                             "extrudes below its minimum layer height there; the finer grid of exact preferred layer heights "
+                             "makes this more likely. Slicing reports the affected slabs per extruder.\n\nKeep exact "
+                             "preferred layer heights together with the prime tower?"),
                           _L("Prime tower layer height"), wxICON_WARNING | wxYES | wxNO);
         if (dlg.ShowModal() != wxID_YES)
             return false;
@@ -7507,8 +8653,17 @@ bool Tab::select_preset(
                         oldFilamentColors[i] = "#26A69A";
                     if (oldFilamentMultiColors[i].empty())
                         oldFilamentMultiColors[i] = oldFilamentColors[i];
-                    oldFilamentColourModes[i] = oldFilamentColourModes[i] == 1 ? 1 : 0;
+                    const FilamentColorMode mode = FilamentColorModeFromConfig(oldFilamentColourModes[i]);
+                    oldFilamentColourModes[i] = FilamentColorModeToConfig(mode);
                 }
+                // Keep the flush volumes with the carried-over filaments: update_selections() may
+                // load a matrix sized for another filament count (heap corruption, OOB reads when slicing).
+                std::vector<double> oldFlushVolumesMatrix;
+                std::vector<double> oldFlushVolumesVector;
+                if (const ConfigOptionFloats* flushMatrix = projectConfig.option<ConfigOptionFloats>("flush_volumes_matrix"))
+                    oldFlushVolumesMatrix = flushMatrix->values;
+                if (const ConfigOptionFloats* flushVector = projectConfig.option<ConfigOptionFloats>("flush_volumes_vector"))
+                    oldFlushVolumesVector = flushVector->values;
 
                 m_preset_bundle->update_selections(*wxGetApp().app_config);
 
@@ -7517,11 +8672,24 @@ bool Tab::select_preset(
                 projectConfig.option<ConfigOptionStrings>("filament_colour")->values = oldFilamentColors;
                 projectConfig.option<ConfigOptionStrings>("filament_multi_colors", true)->values = oldFilamentMultiColors;
                 projectConfig.option<ConfigOptionInts>("filament_colour_mode", true)->values = oldFilamentColourModes;
+                // The matrix is stored as one n x n block per extruder; only restore it when it
+                // still matches the carried-over filament count and the new printer's extruder count.
+                const size_t nozzleNums = size_t(std::max(1, m_preset_bundle->get_printer_extruder_count()));
+                if (!oldFlushVolumesMatrix.empty() && oldFlushVolumesMatrix.size() == oldFilamentCount * oldFilamentCount * nozzleNums) {
+                    if (ConfigOptionFloats* flushMatrix = projectConfig.option<ConfigOptionFloats>("flush_volumes_matrix"))
+                        flushMatrix->values = oldFlushVolumesMatrix;
+                    if (ConfigOptionFloats* flushVector = projectConfig.option<ConfigOptionFloats>("flush_volumes_vector"))
+                        flushVector->values = oldFlushVolumesVector;
+                } else {
+                    BOOST_LOG_TRIVIAL(error) << "select_preset: flush matrix size " << oldFlushVolumesMatrix.size()
+                                             << " does not match " << oldFilamentCount << " filaments x " << nozzleNums
+                                             << " extruders, not carried over";
+                }
 
                 std::vector<std::string> filamentColourModeStrings;
                 filamentColourModeStrings.reserve(oldFilamentColourModes.size());
-                for (int mode : oldFilamentColourModes)
-                    filamentColourModeStrings.emplace_back(mode == 1 ? "1" : "0");
+                for (const int mode : oldFilamentColourModes)
+                    filamentColourModeStrings.emplace_back(std::to_string(mode));
                 const std::string filamentColors = boost::algorithm::join(oldFilamentColors, ",");
                 const std::string filamentMultiColors = boost::algorithm::join(oldFilamentMultiColors, ",");
                 const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");
@@ -7536,7 +8704,26 @@ bool Tab::select_preset(
                 wxGetApp().plater()->sidebar().on_filament_count_change(m_preset_bundle->filament_presets.size());
             }
         }
+        // Snapmaker Orca: a printer preset switch changes the nozzle sizes, so each filament follows to
+        // its matching preset. Runs after the block above, which carries filament names over literally.
+        if (m_type == Preset::TYPE_PRINTER)
+            if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                plater->show_nozzle_follow_notice(plater->follow_nozzle_sizes({}, Plater::FollowReason::PrinterPreset));
         load_current_preset();
+        {
+            Slic3r::LifecycleEventContext ctx;
+            ctx.name = preset_name;
+            ctx.code = Slic3r::LifecycleEvtCode::Ok;
+            switch (m_type) {
+            case Preset::TYPE_PRINT:        ctx.msg = "print"; break;
+            case Preset::TYPE_SLA_PRINT:    ctx.msg = "sla_print"; break;
+            case Preset::TYPE_FILAMENT:     ctx.msg = "filament"; break;
+            case Preset::TYPE_SLA_MATERIAL: ctx.msg = "sla_material"; break;
+            case Preset::TYPE_PRINTER:      ctx.msg = "printer"; break;
+            default: break;
+            }
+            Slic3r::fire_lifecycle_event(Slic3r::LifecycleEvent::PresetSelected, ctx);
+        }
 
         if (delete_third_printer) {
             wxGetApp().CallAfter([filament_presets, process_presets]() {
@@ -7603,6 +8790,14 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection *presets /*= nullptr
     if (presets == nullptr) presets = m_presets;
 
     UnsavedChangesDialog dlg(m_type, presets, new_printer_name, no_transfer);
+
+    // Snapmaker Orca: no dialog when it would list nothing (all dirty keys are internal strings).
+    // GUI_App::check_and_keep_current_preset_changes has the same guard.
+    if (dlg.getUpdateItemCount() == 0) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": no listable change in " << presets->get_edited_preset().name
+                                << ", dirty keys: " << boost::algorithm::join(presets->current_dirty_options(true), ", ");
+        return true;
+    }
 
     if (dlg.ShowModal() == wxID_CANCEL)
         return false;
@@ -7735,6 +8930,16 @@ void Tab::restore_last_select_item()
     if (item == -1)
         item = m_tabctrl->GetFirstVisibleItem();
     m_tabctrl->SelectItem(item);
+}
+
+bool Tab::page_build_pending() const
+{
+    return m_active_page != nullptr && m_active_page->build_pending();
+}
+
+bool Tab::page_build_step()
+{
+    return m_active_page != nullptr && m_active_page->build_step(m_mode);
 }
 
 void Tab::update_description_lines()
@@ -7875,7 +9080,8 @@ bool Tab::tree_sel_change_delayed(wxCommandEvent& event)
         if (m_variant_sizer) {
             wxWindow *variant_ctrl = m_extruder_switch ? (wxWindow *) m_extruder_switch : m_variant_combo;
             m_main_sizer->Show(m_variant_sizer, variant_ctrl->IsThisEnabled() && !m_active_page->m_opt_id_map.empty() && !m_active_page->title().StartsWith("Extruder "));
-            if (m_extruder_sync) m_extruder_sync->Show(variant_ctrl->IsShown());
+            show_extruder_sync();
+            show_flow_toggle();
             GetParent()->Layout();
         }
 
@@ -7891,7 +9097,8 @@ bool Tab::tree_sel_change_delayed(wxCommandEvent& event)
     if (m_variant_sizer) {
         wxWindow *variant_ctrl = m_extruder_switch ? (wxWindow *) m_extruder_switch : m_variant_combo;
         m_main_sizer->Show(m_variant_sizer, variant_ctrl->IsThisEnabled() && !m_active_page->m_opt_id_map.empty() && !m_active_page->title().StartsWith("Extruder"));
-        if (m_extruder_sync) m_extruder_sync->Show(variant_ctrl->IsShown());
+        show_extruder_sync();
+        show_flow_toggle();
         GetParent()->Layout();
     }
 
@@ -7953,7 +9160,7 @@ void Tab::OnKeyDown(wxKeyEvent& event)
 
 void Tab::compare_preset()
 {
-    wxGetApp().mainframe->diff_dialog.show(m_type);
+    DiffPresetDialog::ensure()->show(m_type);
 }
 
 void Tab::transfer_options(const std::string &name_from, const std::string &name_to, std::vector<std::string> options)
@@ -8121,8 +9328,10 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
             wxGetApp().get_tab(preset_type)->update_tab_ui();
     }
 
-    // update preset comboboxes in DiffPresetDlg
-    wxGetApp().mainframe->diff_dialog.update_presets(m_type);
+    // show() reloads the presets, so only a visible Compare dialog needs updating.
+    DiffPresetDialog* diff_dialog = DiffPresetDialog::if_built();
+    if (diff_dialog != nullptr && diff_dialog->IsShown())
+        diff_dialog->update_presets(m_type);
 }
 
 // Called for a currently selected preset.
@@ -8250,9 +9459,30 @@ void Tab::delete_preset()
     if (m_type == Preset::TYPE_PRINTER && !physical_printers.empty())
         physical_printers.delete_preset_from_printers(current_preset.name);
 
+    // Snapmaker Orca: the tool heads that took their speeds from this process preset by choice (the
+    // speed picker). The choice stays in the project and applies again when a preset of the name is
+    // installed; until then the rule prints, and a notice says so.
+    std::vector<size_t> chosen_heads;
+    if (m_type == Preset::TYPE_PRINT && m_preset_bundle != nullptr)
+        for (int head = 0; head < m_preset_bundle->get_printer_extruder_count(); ++head)
+            if (PerHeadProcess::chosen_of(*m_preset_bundle, size_t(head)) == current_preset.name)
+                chosen_heads.emplace_back(size_t(head));
+
     // Select will handle of the preset dependencies, of saving & closing the depending profiles, and
     // finally of deleting the preset.
     this->select_preset("", true);
+
+    if (!chosen_heads.empty() && wxGetApp().plater() != nullptr) {
+        const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*m_preset_bundle);
+        std::string text;
+        for (size_t head : chosen_heads) {
+            const std::string now = head < sources.size() && sources[head].derived && sources[head].preset != nullptr ? alias_of(*sources[head].preset) : _u8L("the selected preset");
+            // TRN Notice after a process preset chosen for a tool head was deleted. %1% the preset, %2% the tool head, %3% the preset the head prints with now
+            text += (text.empty() ? "" : "\n") + GUI::format(_u8L("%1% supplied the speeds and line widths of extruder %2% in this project; the extruder uses %3% (automatic) until another preset is chosen."),
+                                                              current_preset.name, head + 1, now);
+        }
+        wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, text);
+    }
 
     BOOST_LOG_TRIVIAL(info) << boost::format("delete preset finished");
 }
@@ -8346,18 +9576,18 @@ wxSizer* Tab::compatible_widget_create(wxWindow* parent, PresetDependencies &dep
         this->update_changed_ui();
     };
 
-    deps.checkbox_title->Bind(wxEVT_LEFT_DOWN,([this, &deps, on_toggle](wxMouseEvent& e) {
+    deps.checkbox_title->Bind(wxEVT_LEFT_DOWN,([&deps, on_toggle](wxMouseEvent& e) {
         if (e.GetEventType() == wxEVT_LEFT_DCLICK) return;
         on_toggle(!deps.checkbox->GetValue());
         e.Skip();
     }));
 
-    deps.checkbox_title->Bind(wxEVT_LEFT_DCLICK,([this, &deps, on_toggle](wxMouseEvent& e) {
+    deps.checkbox_title->Bind(wxEVT_LEFT_DCLICK,([&deps, on_toggle](wxMouseEvent& e) {
         on_toggle(!deps.checkbox->GetValue());
         e.Skip();
     }));
 
-    deps.checkbox->Bind(wxEVT_TOGGLEBUTTON, ([this, on_toggle](wxCommandEvent& e) {
+    deps.checkbox->Bind(wxEVT_TOGGLEBUTTON, ([on_toggle](wxCommandEvent& e) {
         on_toggle(e.IsChecked());
         e.Skip();
     }), deps.checkbox->GetId());
@@ -8476,6 +9706,73 @@ void TabPrinter::set_extruder_volume_type(int extruder_id, NozzleVolumeType type
 
 }
 
+wxSizer* TabPrinter::create_nozzle_flow_widget(wxWindow* parent, int extruder_idx)
+{
+    auto *combo = new ::ComboBox(parent, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(Field::def_width_wider() * m_em_unit, -1), 0,
+                                 nullptr, wxCB_READONLY);
+    combo->GetDropDown().SetUseContentWidth(true);
+    combo->SetFont(Label::Body_14);
+    m_nozzle_flow_combos[extruder_idx] = combo;
+    // Page controls are destroyed when another page activates; drop the cached pointer.
+    combo->Bind(wxEVT_DESTROY, [this, combo, extruder_idx](wxWindowDestroyEvent& evt) {
+        if (auto it = m_nozzle_flow_combos.find(extruder_idx); it != m_nozzle_flow_combos.end() && it->second == combo)
+            m_nozzle_flow_combos.erase(it);
+        evt.Skip();
+    });
+    combo->Bind(wxEVT_COMBOBOX, [this, combo, extruder_idx](wxCommandEvent& evt) {
+        const int selection = evt.GetInt();
+        if (selection < 0 || selection >= int(combo->GetCount()))
+            return;
+        const NozzleVolumeType type = NozzleVolumeType(intptr_t(combo->GetClientData(selection)));
+        // Same route as the Flow row of the sidebar.
+        set_extruder_volume_type(extruder_idx, type);
+        if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+            plater->update_filament_volume_map(extruder_idx, int(type));
+            plater->check_high_flow_filaments();
+            // Snapmaker Orca: the filaments of this tool head are passed with the new flow type
+            // (the slots are written after this handler returned).
+            plater->show_nozzle_follow_notice(plater->follow_nozzle_sizes({size_t(extruder_idx)}, Plater::FollowReason::FlowType));
+        }
+    });
+
+    auto *sizer = new wxBoxSizer(wxHORIZONTAL);
+    sizer->Add(combo, 0, wxALIGN_CENTER_VERTICAL);
+    // Fill it; the page that is being built applies the visibility of its lines itself.
+    update_nozzle_flow_lines(false);
+    return sizer;
+}
+
+// The line shows on tool heads for which the printer declares more than one nozzle volume type,
+// and can be changed where the head carries a nozzle size the vendor data has High Flow values for.
+void TabPrinter::update_nozzle_flow_lines(bool refresh_page)
+{
+    if (m_config == nullptr || m_preset_bundle == nullptr)
+        return;
+    const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    const auto  size_offers  = HighFlowNotices::size_offers_high_flow(*m_preset_bundle);
+
+    bool visibility_changed = false;
+    for (size_t head = 0; head < m_extruders_count; ++head) {
+        // The same rule as the sidebar's nozzle tabs: shown for a Standard-only head as well when
+        // the printer model offers High Flow at another size (ruled out, disabled with the reason).
+        const bool visible = HighFlowNotices::flow_row_state(*m_config, head, size_offers) != HighFlowNotices::FlowRowState::Hidden;
+        for (const PageShp &page : m_pages)
+            if (Line *line = page ? page->get_line("nozzle_volume_type", int(head)) : nullptr; line != nullptr && line->toggle_visible != visible) {
+                line->toggle_visible = visible;
+                visibility_changed   = true;
+            }
+
+        if (auto it = m_nozzle_flow_combos.find(int(head)); it != m_nozzle_flow_combos.end())
+            HighFlowNotices::fill_flow_combo(it->second, *m_config, head,
+                                             volume_types != nullptr && head < volume_types->values.size() ? volume_types->values[head] : int(nvtStandard),
+                                             size_offers);
+    }
+    if (refresh_page && visibility_changed && m_active_page != nullptr) {
+        m_active_page->update_visibility(m_mode, true);
+        m_page_view->GetParent()->Layout();
+    }
+}
+
 // Return a callback to create a TabPrinter widget to edit bed shape
 wxSizer* TabPrinter::create_bed_shape_widget(wxWindow* parent)
 {
@@ -8509,10 +9806,10 @@ wxSizer* TabPrinter::create_bed_shape_widget(wxWindow* parent)
         }));
 
     {
-        Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
-        const Search::GroupAndCategory& gc = searcher.get_group_and_category("printable_area");
-        searcher.add_key("bed_custom_texture", m_type, gc.group, gc.category);
-        searcher.add_key("bed_custom_model", m_type, gc.group, gc.category);
+        Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+        const Search::GroupAndCategory& gc = index.get_group_and_category("printable_area");
+        index.add_key("bed_custom_texture", m_type, gc.group, gc.category, gc.icon);
+        index.add_key("bed_custom_model", m_type, gc.group, gc.category, gc.icon);
     }
 
     return sizer;
@@ -8709,6 +10006,8 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << extruder_id;
     if (m_extruder_switch) {
+        // The selections below restore or open the row; none is a click (the sidebar stays).
+        m_head_selection_by_program = true;
         auto    nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
         int extruder_nums = m_preset_bundle->get_printer_extruder_count();
         nozzle_volumes->values.resize(extruder_nums);
@@ -8717,9 +10016,106 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
         m_actual_nozzle_volumes.resize(extruder_nums, NozzleVolumeType::nvtStandard);
         for (int i = 0; i < extruder_nums; i++) m_actual_nozzle_volumes[i] = (NozzleVolumeType)nozzle_volumes->values[i];
 
+        // Snapmaker Orca: flow selector mode. With more than two tool heads and one process column per
+        // flow type, the switch shows "Standard" / "High Flow" on process, plate and object tabs.
+        // Otherwise it stays hidden; missing High Flow speeds are flagged by the slicing notice.
+        const int previous_selection = m_extruder_switch->GetSelection();
+        const bool was_flow_selector = !m_flow_selector_types.empty();
+        const bool was_head_selector = m_head_selector;
+        m_flow_selector_types.clear();
+        m_head_selector = false;
+
+        // Snapmaker Orca: the speed selector (libslic3r/PerHeadProcess.hpp) on the process tab of
+        // every printer with more than one extruder, except a Bambu two-head printer, whose process
+        // presets name their tool heads in the ids and keep mainline's row and sync.
+        bool bambu_two_head = false;
+        if (extruder_nums == 2 && m_preset_bundle->support_different_extruders()) {
+            const Preset *parent = m_presets->get_selected_preset_parent();
+            const auto   *ids    = (parent != nullptr ? parent->config : *m_config).option<ConfigOptionInts>("print_extruder_id");
+            bambu_two_head       = ids != nullptr && HighFlowNotices::ids_name_tool_heads(ids->values);
+        }
+        if (m_type == Preset::TYPE_PRINT && extruder_nums > 1 && !bambu_two_head) {
+            m_head_selector = true;
+            // A preset with values set per tool head is first laid out for this printer's tool heads,
+            // so the entries and field columns below match them; a changed layout marks the preset dirty.
+            if (m_config != nullptr && relayout_heads_to_printer(*m_config, m_preset_bundle->printers.get_edited_preset().config))
+                m_presets->update_dirty();
+            m_head_flow_types.clear();
+            for (const std::string &variant : PerHeadProcess::shared_variants(*m_config)) {
+                const NozzleVolumeType type = PerHeadProcess::variant_names_type(variant, NozzleVolumeType::nvtHighFlow) ? NozzleVolumeType::nvtHighFlow : NozzleVolumeType::nvtStandard;
+                if (std::find(m_head_flow_types.begin(), m_head_flow_types.end(), type) == m_head_flow_types.end())
+                    m_head_flow_types.push_back(type);
+            }
+            if (std::find(m_head_flow_types.begin(), m_head_flow_types.end(), m_all_flow) == m_head_flow_types.end())
+                m_all_flow = m_head_flow_types.empty() ? NozzleVolumeType::nvtStandard : m_head_flow_types.front();
+
+            // The row is laid out by its sizer: five or more entries do not fit the cap of the
+            // two-entry row.
+            m_extruder_switch->SetMaxSize(wxDefaultSize);
+            m_extruder_switch->SetOptions(generate_extruder_options());
+            m_head_labels_short_shown = false;
+            // The selection stays: All stays All, a selected tool head stays selected; a changed
+            // flow or size of a tool head never moves it (its label and columns are refreshed).
+            int selection_index = was_head_selector && previous_selection >= 0 && previous_selection <= extruder_nums ? previous_selection : 0;
+            // The toggle's entries follow the selection (show_flow_toggle, from switch_excluder).
+            update_head_entries();
+            m_extruder_switch->SetSelection(selection_index);
+            m_extruder_switch->Enable(true);
+            m_extruder_sync->Enable(false);
+            fit_head_selector();
+            extruder_id = -1;
+        } else {
+        // The two-entry row of mainline and the flow selector keep their width cap.
+        m_extruder_switch->SetMaxSize({em_unit(this) * 40, -1});
+        std::vector<int> selector_types;
+        if (m_type != Preset::TYPE_PRINTER && extruder_nums > 2) {
+            // A preset with values set per tool head (wide) offers its shared flow columns on the
+            // plate, object and part tabs, which edit the flow-only space of the overrides.
+            if (PerHeadProcess::is_wide(*m_config)) {
+                if (PerHeadProcess::shared_width(*m_config) > 1)
+                    for (const std::string &variant : PerHeadProcess::shared_variants(*m_config))
+                        selector_types.push_back(PerHeadProcess::variant_names_type(variant, NozzleVolumeType::nvtHighFlow) ? int(NozzleVolumeType::nvtHighFlow) : int(NozzleVolumeType::nvtStandard));
+            } else
+                selector_types = HighFlowNotices::flow_selector_types(m_preset_bundle->printers.get_edited_preset().config, *m_config);
+        }
+        for (int type : selector_types)
+            m_flow_selector_types.push_back(NozzleVolumeType(type));
+        if (m_flow_toggle != nullptr && m_flow_toggle->IsShown())
+            m_flow_toggle->Hide();
+
+        if (!m_flow_selector_types.empty()) {
+            m_extruder_switch->SetOptions(generate_extruder_options());
+
+            // A tool head that changed its flow type brings its column to the front; otherwise the
+            // column that was edited stays. A selector that just appeared opens on the column of
+            // the flow type of the tool head whose nozzle tab the sidebar shows.
+            int selection_index;
+            if (was_flow_selector && previous_selection >= 0 && previous_selection < int(m_flow_selector_types.size()))
+                selection_index = previous_selection;
+            else {
+                size_t sidebar_head = 0;
+                if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+                    sidebar_head = plater->sidebar().selected_nozzle_tab();
+                if (sidebar_head >= size_t(extruder_nums))
+                    sidebar_head = 0;
+                selection_index = HighFlowNotices::flow_selector_index(selector_types, nozzle_volumes->values[sidebar_head]);
+            }
+            if (extruder_id >= 0 && extruder_id < extruder_nums) {
+                const NozzleVolumeType changed = NozzleVolumeType(nozzle_volumes->values[extruder_id]);
+                if (std::find(m_flow_selector_types.begin(), m_flow_selector_types.end(), changed) != m_flow_selector_types.end())
+                    selection_index = calculate_selection_index_for_extruder(extruder_id, changed);
+            }
+            // The lookups of this tab run for the first tool head with the type of the selected column.
+            m_actual_nozzle_volumes[0] = m_flow_selector_types[selection_index];
+            m_extruder_switch->SetSelection(selection_index);
+            m_extruder_switch->Enable(true);
+            m_extruder_sync->Enable(false);
+            // Every tool head shares the columns, so the refresh below is not for one of them.
+            extruder_id = -1;
+        }
         // Orca: a non-Bambu dual-nozzle printer has two extruders but a single variant column, so
         // the nozzle switch and sync button have nothing to act on. Only enable with real variants.
-        if (extruder_nums == 2 && m_preset_bundle->support_different_extruders()) {
+        else if (extruder_nums == 2 && m_preset_bundle->support_different_extruders()) {
             auto options = generate_extruder_options();
             m_extruder_switch->SetOptions(options);
 
@@ -8741,6 +10137,8 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
             m_extruder_switch->Enable(false);
             m_extruder_sync->Enable(false);
         }
+        } // not the speed selector
+        m_head_selection_by_program = false;
     } else if (m_variant_combo) {
         if (extruder_id >= 0)
             return;
@@ -8761,9 +10159,296 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
     if (m_variant_sizer) {
         wxWindow *variant_ctrl = m_extruder_switch ? (wxWindow *) m_extruder_switch : m_variant_combo;
         m_main_sizer->Show(m_variant_sizer, variant_ctrl->IsThisEnabled() && m_active_page && !m_active_page->m_opt_id_map.empty() && !m_active_page->title().StartsWith("Extruder "));
-        if (m_extruder_sync) m_extruder_sync->Show(variant_ctrl->IsShown());
+        show_extruder_sync();
+        show_flow_toggle();
         GetParent()->Layout();
     }
+}
+
+void Tab::select_flow_column(NozzleVolumeType type)
+{
+    if (m_variant_combo != nullptr) {
+        const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
+        if (variants == nullptr)
+            return;
+        const int column = HighFlowNotices::variant_column_for_type(variants->values, int(type));
+        if (column < 0 || column >= int(m_variant_combo->GetCount()) || column == m_variant_combo->GetSelection())
+            return;
+        m_variant_combo->SetSelection(column);
+        // What the selection event of the combo does: switch_excluder reloads the page.
+        switch_excluder(column);
+        return;
+    }
+    if (m_extruder_switch == nullptr || m_flow_selector_types.empty() || !m_extruder_switch->IsThisEnabled())
+        return;
+    // The entry of the type; nothing when the selector has none (calculate_selection_index_for_extruder
+    // and HighFlowNotices::flow_selector_index answer 0 for a missing type, which is the Standard entry).
+    const auto entry = std::find(m_flow_selector_types.begin(), m_flow_selector_types.end(), type);
+    if (entry == m_flow_selector_types.end())
+        return;
+    const int selection = int(entry - m_flow_selector_types.begin());
+    if (selection == m_extruder_switch->GetSelection())
+        return;
+    if (m_actual_nozzle_volumes.empty())
+        m_actual_nozzle_volumes.resize(1, NozzleVolumeType::nvtStandard);
+    m_actual_nozzle_volumes[0] = m_flow_selector_types[selection];
+    m_extruder_switch->SetSelection(selection);
+    switch_excluder(0);
+}
+
+void Tab::select_tool_head(size_t head, NozzleVolumeType type)
+{
+    if (m_head_selector && m_extruder_switch != nullptr && m_extruder_switch->IsThisEnabled()) {
+        const int selection = int(head) + 1;
+        if (selection < int(m_extruder_switch->GetCount()) && selection != m_extruder_switch->GetSelection()) {
+            // The selection event resolves the columns; the sidebar asked, so it is not moved back.
+            m_head_selection_by_program = true;
+            m_extruder_switch->SetSelection(selection);
+            m_head_selection_by_program = false;
+        }
+        return;
+    }
+    select_flow_column(type);
+}
+
+void Tab::select_page_by_category(const wxString &category)
+{
+    const wxString page_title = translate_category(category, m_type);
+    for (auto item = m_tabctrl->GetFirstVisibleItem(); item >= 0; item = m_tabctrl->GetNextVisible(item))
+        if (m_tabctrl->GetItemText(item) == page_title) {
+            if (item != m_tabctrl->GetSelection())
+                m_tabctrl->SelectItem(item);
+            return;
+        }
+}
+
+int Tab::head_selection() const
+{
+    if (!m_head_selector || m_extruder_switch == nullptr)
+        return 0;
+    return std::max(0, m_extruder_switch->GetSelection());
+}
+
+NozzleVolumeType Tab::head_flow(size_t head) const
+{
+    const auto *volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    if (volumes == nullptr || head >= volumes->values.size())
+        return NozzleVolumeType::nvtStandard;
+    const auto type = NozzleVolumeType(volumes->values[head]);
+    return type == NozzleVolumeType::nvtHybrid ? NozzleVolumeType::nvtStandard : type;
+}
+
+NozzleVolumeType Tab::head_speed_flow(size_t head) const
+{
+    return PerHeadProcess::effective_flow(m_preset_bundle->project_config, head);
+}
+
+int Tab::head_selection_column(int selection) const
+{
+    if (m_config == nullptr)
+        return 0;
+    if (selection <= 0)
+        return PerHeadProcess::shared_column(*m_config, m_all_flow);
+    const size_t head  = size_t(selection - 1);
+    const auto  *types = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnumsGeneric>("extruder_type");
+    const ExtruderType extruder_type = types != nullptr && !types->values.empty() ? ExtruderType(types->get_at(head)) : etDirectDrive;
+    // The head's column at the flow whose speeds it prints (the Standard column of a High Flow
+    // nozzle set to the Standard speeds); a value set for the head lands in both of its columns.
+    const int index = m_config->get_index_for_extruder(int(head) + 1, "print_extruder_id", extruder_type, head_speed_flow(head), "print_extruder_variant");
+    return index >= 0 ? index : PerHeadProcess::shared_column(*m_config, head_speed_flow(head));
+}
+
+void Tab::update_head_entries()
+{
+    if (!m_head_selector || m_extruder_switch == nullptr || m_config == nullptr)
+        return;
+    const int extruder_nums = m_preset_bundle->get_printer_extruder_count();
+    if (int(m_extruder_switch->GetCount()) != extruder_nums + 1)
+        return;
+    const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
+    const std::vector<PerHeadProcess::Source> sources = PerHeadProcess::active(*m_preset_bundle) ? PerHeadProcess::head_sources(*m_preset_bundle) : std::vector<PerHeadProcess::Source>();
+    if (Button *all = m_extruder_switch->GetButton(0); all != nullptr)
+        all->SetToolTip(_L("The values below apply to every extruder that has no value of its own for them."));
+    for (int head = 0; head < extruder_nums; ++head) {
+        const std::vector<std::string> keys        = PerHeadProcess::head_override_keys(*m_config, size_t(head));
+        const std::string              chosen      = PerHeadProcess::chosen_of(*m_preset_bundle, size_t(head));
+        const bool                     flow_chosen = PerHeadProcess::flow_chosen(*m_preset_bundle, size_t(head));
+        // The dot: the tool head has something of its own, values set, a chosen preset or a chosen flow.
+        m_extruder_switch->SetOptionIndicator(unsigned(head + 1), !keys.empty() || !chosen.empty() || flow_chosen);
+        Button *button = m_extruder_switch->GetButton(unsigned(head + 1));
+        if (button == nullptr)
+            continue;
+        wxString tip = HighFlowNotices::head_entry_tooltip(size_t(head), HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head)), head_flow(size_t(head)), flow_chosen);
+        if (size_t(head) < sources.size() && sources[size_t(head)].step == PerHeadProcess::Step::Chosen && sources[size_t(head)].preset != nullptr)
+            // TRN %1% is the process preset the user chose for the tool head (its speeds and line widths)
+            tip += " " + format_wxstr(_L("Preset %1% (chosen in this project)."), from_u8(sources[size_t(head)].preset->name));
+        else if (size_t(head) < sources.size() && sources[size_t(head)].derived && sources[size_t(head)].preset != nullptr)
+            tip += " " + (PerHeadProcess::reads_high_flow(sources[size_t(head)], head_speed_flow(size_t(head)), printer_config) ?
+                              // TRN %1% is a process preset whose High Flow column the tool head prints with by the automatic rule
+                              format_wxstr(_L("Preset %1%, High Flow (automatic)."), from_u8(sources[size_t(head)].preset->name)) :
+                              // TRN %1% is a process preset the tool head prints with by the automatic rule
+                              format_wxstr(_L("Preset %1% (automatic)."), from_u8(sources[size_t(head)].preset->name)));
+        if (!chosen.empty() && (size_t(head) >= sources.size() || sources[size_t(head)].step != PerHeadProcess::Step::Chosen))
+            // TRN %1% is a process preset chosen for the tool head that cannot apply now (not installed, another nozzle size)
+            tip += " " + format_wxstr(_L("%1%, chosen in this project, does not apply now."), from_u8(chosen));
+        if (!keys.empty()) {
+            std::string labels;
+            for (const std::string &key : keys) {
+                const ConfigOptionDef *def = m_config->def()->get(key);
+                // The group before the label: "Outer wall" is a line width and a speed.
+                // TRN Prefix of a line width setting in the list of values set for a tool head ("Line width: Outer wall")
+                const wxString group = PerHeadProcess::flow_independent_keys().count(key) > 0 ? _L("Line width") :
+                                       // TRN Prefix of a speed, acceleration or jerk setting in the list of values set for a tool head ("Speed: Outer wall")
+                                       _L("Speed");
+                labels += (labels.empty() ? "" : ", ") + into_u8(group) + ": " + (def == nullptr ? key : into_u8(_(def->label)));
+            }
+            // TRN %1% the number of values set for the tool head, %2% their names
+            tip += " " + format_wxstr(_L("%1% values set for this extruder: %2%."), keys.size(), from_u8(labels));
+        }
+        button->SetToolTip(tip);
+    }
+}
+
+// The active page has an indexed key whose columns differ by flow (a speed): the toggle has
+// something to choose there. The Quality page holds the line widths alone, which are
+// flow-independent (PerHeadProcess::flow_independent_keys): no toggle.
+bool Tab::page_has_flow_dependent_key() const
+{
+    if (m_active_page == nullptr)
+        return false;
+    for (const ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+        for (const auto &kvp : group->opt_map())
+            if (kvp.second.second >= 0 && PerHeadProcess::flow_independent_keys().count(kvp.second.first) == 0)
+                return true;
+    return false;
+}
+
+// Snapmaker Orca: the Standard / High Flow toggle. Under All it picks the shared column edited (if the
+// preset has two); under a High Flow head the speeds column it prints (PerHeadProcess::flow_key); else hidden.
+// Called after every m_main_sizer->Show(m_variant_sizer, ...), which shows all windows of the row.
+void Tab::show_flow_toggle()
+{
+    if (m_flow_toggle == nullptr)
+        return;
+    const bool            row_shown = m_extruder_switch != nullptr && m_extruder_switch->IsShown();
+    bool                  show      = false;
+    int                   head      = -1;
+    int                   selection = 0;
+    std::vector<wxString> options;
+    if (row_shown && m_head_selector && m_preset_bundle != nullptr && page_has_flow_dependent_key()) {
+        const int selected = selected_head();
+        if (selected < 0) {
+            for (NozzleVolumeType type : m_head_flow_types)
+                options.push_back(get_nozzle_volume_type_name(type));
+            const auto it = std::find(m_head_flow_types.begin(), m_head_flow_types.end(), m_all_flow);
+            selection     = it == m_head_flow_types.end() ? 0 : int(it - m_head_flow_types.begin());
+            show          = options.size() > 1;
+        } else if (PerHeadProcess::nozzle_flow(m_preset_bundle->project_config, size_t(selected)) == NozzleVolumeType::nvtHighFlow) {
+            head      = selected;
+            options   = {get_nozzle_volume_type_name(NozzleVolumeType::nvtHighFlow), get_nozzle_volume_type_name(NozzleVolumeType::nvtStandard)};
+            selection = head_speed_flow(size_t(selected)) == NozzleVolumeType::nvtHighFlow ? 0 : 1;
+            show      = true;
+        }
+    }
+    bool changed = m_flow_toggle->IsShown() != show;
+    if (show) {
+        // SetOptions and SetSelection fire the selection event: muted, this is no choice.
+        m_flow_toggle_updating = true;
+        bool same = m_flow_toggle->GetCount() == options.size();
+        for (size_t i = 0; same && i < options.size(); ++i)
+            same = m_flow_toggle->GetOptionText(unsigned(i)) == options[i];
+        if (!same) {
+            m_flow_toggle->SetOptions(options);
+            changed = true;
+        }
+        m_flow_toggle->SetSelection(selection);
+        m_flow_toggle_head     = head;
+        m_flow_toggle_updating = false;
+    }
+    if (!changed)
+        return;
+    m_flow_toggle->Show(show);
+    if (m_variant_sizer != nullptr)
+        m_variant_sizer->Layout();
+    // The toggle takes width from the row: the labels are fitted to what is left.
+    fit_head_selector();
+}
+
+void Tab::choose_head_flow(size_t head, NozzleVolumeType flow)
+{
+    if (!m_head_selector || m_preset_bundle == nullptr || m_type != Preset::TYPE_PRINT)
+        return;
+    if (PerHeadProcess::effective_flow(m_preset_bundle->project_config, head) == flow)
+        return;
+    PerHeadProcess::set_chosen_flow(*m_preset_bundle, head, flow);
+    // The fields point at the column of the chosen flow and show the values the head prints with,
+    // the entries their dots and tooltips, the line its text (switch_excluder with reload); the
+    // sidebar hint and the plate follow (the record is rewritten at the apply).
+    switch_excluder(-1, true);
+    update_head_entries();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr) {
+        plater->sidebar().update_nozzle_process_hints();
+        plater->update_project_dirty_from_presets();
+        plater->schedule_background_process();
+    }
+}
+
+// Snapmaker Orca: the speed selector in a narrow panel. The long labels while they fit the width
+// the row may take, else the short ones, on one row or on as many as the width needs
+// (HighFlowNotices::head_selector_fit); the full text stays in the tooltip of every entry.
+void Tab::fit_head_selector()
+{
+    if (!m_head_selector || m_extruder_switch == nullptr || m_head_labels_long.empty() ||
+        size_t(m_extruder_switch->GetCount()) != m_head_labels_long.size() || m_head_labels_short.size() != m_head_labels_long.size())
+        return;
+    // The width the row may take: the panel, less the flow toggle beside the row under All and a margin.
+    int available = GetClientSize().x - 2 * m_em_unit;
+    if (m_flow_toggle != nullptr && m_flow_toggle->IsShown())
+        available -= m_flow_toggle->GetBestSize().x + m_em_unit;
+    if (available <= 0)
+        return;
+    std::vector<int> long_widths, short_widths;
+    for (size_t i = 0; i < m_head_labels_long.size(); ++i) {
+        long_widths.push_back(m_extruder_switch->MeasureOption(unsigned(i), m_head_labels_long[i]));
+        short_widths.push_back(m_extruder_switch->MeasureOption(unsigned(i), m_head_labels_short[i]));
+    }
+    const HighFlowNotices::SelectorFit fit       = HighFlowNotices::head_selector_fit(long_widths, short_widths, available);
+    const bool                         use_short = fit != HighFlowNotices::SelectorFit::Long;
+    bool                               changed   = false;
+    if (use_short != m_head_labels_short_shown) {
+        const std::vector<wxString> &labels = use_short ? m_head_labels_short : m_head_labels_long;
+        for (size_t i = 0; i < labels.size(); ++i)
+            m_extruder_switch->SetOptionText(unsigned(i), labels[i]);
+        m_head_labels_short_shown = use_short;
+        changed                   = true;
+    }
+    const int max_row_width = fit == HighFlowNotices::SelectorFit::ShortRows ? available : 0;
+    if (max_row_width != m_extruder_switch->GetMaxRowWidth()) {
+        m_extruder_switch->SetMaxRowWidth(max_row_width);
+        changed = true;
+    }
+    if (!changed)
+        return;
+    // The row changed its width or its number of rows, so its height: the panel that holds the
+    // tab gives the tab its new size (a layout of the tab alone keeps the old height and cuts
+    // the row), as update_extruder_variants does after it rebuilds the row.
+    if (wxWindow *parent = GetParent(); parent != nullptr)
+        parent->Layout();
+    else
+        Layout();
+}
+
+void Tab::show_extruder_sync()
+{
+    if (m_extruder_sync == nullptr || m_extruder_switch == nullptr)
+        return;
+    // Snapmaker Orca: the button copies the values of one extruder to the other of two. The columns
+    // of the flow selector belong to every tool head and hold different values on purpose, so
+    // neither the button nor the box with its "not supported" tooltip shows there.
+    const bool flow_selector = !m_flow_selector_types.empty() || m_head_selector;
+    m_extruder_sync->Show(m_extruder_switch->IsShown() && !flow_selector);
+    if (m_extruder_sync_box != nullptr)
+        m_extruder_sync_box->Show(!flow_selector && m_extruder_switch->IsShown());
 }
 
 std::vector<wxString> Tab::generate_extruder_options()
@@ -8774,39 +10459,14 @@ std::vector<wxString> Tab::generate_extruder_options()
         if (!variants)
             return options;
 
-        for (auto &v : variants->values) {
-            std::string drive, nozzle;
-
-            static std::vector<std::string> known_nozzle_types;
-            if (known_nozzle_types.empty()) {
-                for (auto nvt : get_valid_nozzle_volume_type()) {
-                    known_nozzle_types.push_back(get_nozzle_volume_type_string(nvt));
-                }
-                std::sort(known_nozzle_types.begin(), known_nozzle_types.end(),
-                    [](const std::string& a, const std::string& b) { return a.size() > b.size(); });
-            }
-            bool found = false;
-            for (const auto& nozzle_type : known_nozzle_types) {
-                if (v.size() > nozzle_type.size() &&
-                    v.substr(v.size() - nozzle_type.size()) == nozzle_type &&
-                    v[v.size() - nozzle_type.size() - 1] == ' ') {
-                    drive = v.substr(0, v.size() - nozzle_type.size() - 1);
-                    nozzle = nozzle_type;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                size_t pos = v.rfind(' ');
-                if (pos != std::string::npos) {
-                    drive = v.substr(0, pos);
-                    nozzle = v.substr(pos + 1);
-                } else {
-                    drive = v;
-                    nozzle = "";
-                }
-            }
-            options.push_back(wxString::Format(_L("%s: %s"), _L(drive), _L(nozzle)));
+        // Snapmaker Orca: the drive is left out when every column names the same one, so the two
+        // columns of a Snapmaker filament read "Standard" / "High Flow".
+        for (size_t column = 0; column < variants->values.size(); ++column) {
+            const HighFlowNotices::VariantName name = HighFlowNotices::variant_column_label(variants->values, column);
+            if (name.drive.empty() || name.volume_type.empty())
+                options.push_back(_L(name.drive.empty() ? name.volume_type : name.drive));
+            else
+                options.push_back(wxString::Format(_L("%s: %s"), _L(name.drive), _L(name.volume_type)));
         }
         return options;
     }
@@ -8816,6 +10476,45 @@ std::vector<wxString> Tab::generate_extruder_options()
     int  extruder_nums      = m_preset_bundle->get_printer_extruder_count();
 
     if (!nozzle_volumes || extruder_nums <= 0) {
+        return options;
+    }
+
+    // Snapmaker Orca: the speed selector: "All extruders", then one entry per tool head, with the
+    // nozzle size when the sizes differ ("Extruder 2 · 0.2"). The short labels ("All", "E2 · 0.2") are
+    // kept beside them for a panel the long ones do not fit (fit_head_selector).
+    if (m_head_selector) {
+        const DynamicPrintConfig &printer_config = m_preset_bundle->printers.get_edited_preset().config;
+        std::set<std::string>     sizes;
+        for (int head = 0; head < extruder_nums; ++head)
+            sizes.insert(HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head)));
+        m_head_labels_short.clear();
+        options.push_back(_L("All extruders"));
+        // TRN The first entry of the speed selector on the Process tab, in a narrow sidebar (short for "All extruders")
+        m_head_labels_short.push_back(_L("All"));
+        for (int head = 0; head < extruder_nums; ++head) {
+            const wxString size = from_u8(HighFlowNotices::head_nozzle_size_label(printer_config, size_t(head)));
+            if (sizes.size() > 1) {
+                // TRN An entry of the speed selector on the Process tab: the tool head and its nozzle size ("Extruder 2 · 0.2")
+                options.push_back(format_wxstr(_L("Extruder %1% · %2%"), head + 1, size));
+                // TRN An entry of the speed selector in a narrow sidebar: the tool head and its nozzle size ("E2 · 0.2")
+                m_head_labels_short.push_back(format_wxstr(_L("E%1% · %2%"), head + 1, size));
+            } else {
+                // TRN An entry of the speed selector on the Process tab
+                options.push_back(format_wxstr(_L("Extruder %1%"), head + 1));
+                // TRN An entry of the speed selector in a narrow sidebar (short for "Extruder 2")
+                m_head_labels_short.push_back(format_wxstr(_L("E%1%"), head + 1));
+            }
+        }
+        m_head_labels_long = options;
+        return options;
+    }
+
+    // Snapmaker Orca: flow selector mode offers the flow types of the preset's columns. The columns
+    // belong to every tool head, so no tool head is named (the display names below know the two
+    // extruders of a dual extruder printer only).
+    if (!m_flow_selector_types.empty()) {
+        for (NozzleVolumeType type : m_flow_selector_types)
+            options.push_back(get_nozzle_volume_type_name(type));
         return options;
     }
 
@@ -8918,11 +10617,28 @@ void Tab::switch_excluder(int extruder_id, bool reload)
 
     if (!m_variant_combo && (extruder_id >= (int)nozzle_volumes->size() || extruder_id >= (int)extruders->size()))
         extruder_id = 0;
+    int index = -1;
+    if (m_head_selector && m_extruder_switch) {
+        // Snapmaker Orca: the speed selector. A refresh for an unselected head updates the entries only.
+        // All edits the shared column of the toggle's flow, a head its own column (on a narrow
+        // preset the shared column of its flow until a write widens it, before_head_change).
+        const int selection = std::max(0, m_extruder_switch->GetSelection());
+        if (extruder_id >= 0 && extruder_id + 1 != selection) {
+            update_head_entries();
+            return;
+        }
+        index = head_selection_column(selection);
+        m_extruder_sync->Enable(false);
+        m_extruder_sync->Show(false);
+        show_flow_toggle();
+        extruder_id = std::max(0, selection - 1);
+    } else {
     if (m_extruder_switch) {
         int current_extruder = get_current_active_extruder();
         bool sync_enable = get_extruder_sync_enable_state(current_extruder);
-        m_extruder_sync->Enable(m_extruder_switch->IsThisEnabled() && sync_enable);
-        m_extruder_sync->Show();
+        // Snapmaker Orca: no copy between the columns of the flow selector (show_extruder_sync()).
+        m_extruder_sync->Enable(m_extruder_switch->IsThisEnabled() && sync_enable && m_flow_selector_types.empty());
+        m_extruder_sync->Show(m_flow_selector_types.empty());
         if (m_type != Preset::TYPE_PRINTER) {
             if (extruder_id == -1)
                 extruder_id = current_extruder;
@@ -8939,13 +10655,23 @@ void Tab::switch_excluder(int extruder_id, bool reload)
             return;
     }
     auto get_index_for_extruder =
-            [this, &extruders, &nozzle_volumes, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, int stride = 1) {
+            [this, &extruders, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, int stride = 1) {
         return m_config->get_index_for_extruder(extruder_id + 1, variant_keys.first,
             ExtruderType(extruders->values[extruder_id]), get_actual_nozzle_volume_type(extruder_id), variant_keys.second, stride);
     };
-    auto index = m_variant_combo ? extruder_id : get_index_for_extruder(extruder_id == -1 ? 0 : extruder_id);
+    // Snapmaker Orca: a flow selector entry edits the shared column of its flow, which on a preset
+    // with values set per tool head is not the column of tool head 1.
+    index = m_variant_combo ? extruder_id :
+            !m_flow_selector_types.empty() ? PerHeadProcess::shared_column(*m_config, get_actual_nozzle_volume_type(0)) :
+                                             get_index_for_extruder(extruder_id == -1 ? 0 : extruder_id);
     if (index < 0)
         return;
+    } // not the speed selector
+    auto get_index_for_extruder =
+            [this, &extruders, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, int stride = 1) {
+        return m_config->get_index_for_extruder(extruder_id + 1, variant_keys.first,
+            ExtruderType(extruders->values[extruder_id]), get_actual_nozzle_volume_type(extruder_id), variant_keys.second, stride);
+    };
     if (m_extruder_switch) m_extruder_switch->SetClientData(reinterpret_cast<void*>(static_cast<std::uintptr_t>(index)));
     if (m_variant_combo) m_variant_combo->SetClientData(reinterpret_cast<void *>(static_cast<std::uintptr_t>(index)));
     wxWindow *variant_ctrl = m_extruder_switch ? (wxWindow *) m_extruder_switch : m_variant_combo;
@@ -8973,9 +10699,15 @@ void Tab::switch_excluder(int extruder_id, bool reload)
                 }
 
                 if (opt.second.second >= 0) {
-                    const_cast<int &>(opt.second.second) = index;
-                    page->m_opt_id_map.insert({opt.second.first + "#" + std::to_string(index), opt.first});
-                    group->draw_multi_extruder = !is_extruder && variant_ctrl->IsThisEnabled();
+                    // Snapmaker Orca: without the speed selector (mainline's Left / Right row, one
+                    // tool head, the plate, object and part tabs) a line width has one value and
+                    // its field shows column 0; a write fills every column (after_head_change).
+                    const bool one_value = !m_head_selector && PerHeadProcess::flow_independent_keys().count(opt.second.first) > 0;
+                    const int  column    = one_value ? 0 : index;
+                    const_cast<int &>(opt.second.second) = column;
+                    page->m_opt_id_map.insert({opt.second.first + "#" + std::to_string(column), opt.first});
+                    if (!one_value)
+                        group->draw_multi_extruder = !is_extruder && variant_ctrl->IsThisEnabled();
                 }
             }
         }
@@ -8984,6 +10716,8 @@ void Tab::switch_excluder(int extruder_id, bool reload)
         reload_config();
         update_changed_ui();
         toggle_options();
+        if (m_head_selector)
+            update_description_lines();
         if (m_active_page)
             m_active_page->update_visibility(m_mode, true);
         m_page_view->GetParent()->Layout();
@@ -8992,20 +10726,26 @@ void Tab::switch_excluder(int extruder_id, bool reload)
 
 void Tab::sync_excluder()
 {
+    // Snapmaker Orca: "the other extruder" below is 1 - active; there is none in flow selector mode
+    // nor with the speed selector.
+    if (!m_flow_selector_types.empty() || m_head_selector || m_active_page == nullptr)
+        return;
     Preset & printer_preset = m_preset_bundle->printers.get_edited_preset();
     auto nozzle_volumes = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
     auto extruders      = printer_preset.config.option<ConfigOptionEnumsGeneric>("extruder_type");
+    // Motion ability options hold a (normal, silent) pair per variant, so switch_excluder indexes that page with stride 2.
+    const int stride = m_active_page->title().StartsWith("Motion ability") ? 2 : 1;
     auto get_index_for_extruder =
-            [this, &extruders, &nozzle_volumes, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, NozzleVolumeType nozzle_type) {
+            [this, &extruders, stride, variant_keys = extruder_variant_keys[m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type]](int extruder_id, NozzleVolumeType nozzle_type) {
         return m_config->get_index_for_extruder(extruder_id + 1, variant_keys.first,
-            ExtruderType(extruders->values[extruder_id]), nozzle_type, variant_keys.second);
+            ExtruderType(extruders->values[extruder_id]), nozzle_type, variant_keys.second, stride);
     };
     int active_index = get_current_active_extruder();
     auto active_nozzle = get_actual_nozzle_volume_type(active_index);
     int from_index = get_index_for_extruder(active_index, active_nozzle);
     int dest_index = get_index_for_extruder(1 - active_index, active_nozzle);
-    auto from_str = std::to_string(from_index);
-    auto dest_str = std::to_string(dest_index);
+    if (from_index < 0 || dest_index < 0) // no variant column for this nozzle on one of the extruders
+        return;
     auto dirty_options = m_presets->current_dirty_options(true);
     DynamicConfig config_origin, config_to_apply;
     for (int i = 0; i < dirty_options.size(); ++i) {
@@ -9018,16 +10758,21 @@ void Tab::sync_excluder()
         if (field == nullptr || line == nullptr)
             continue;
         ++n;
-        bool dirty  = opt.substr(n) == from_str;
+        auto is_from_slot = [&](const std::string &dirty_opt) {
+            int slot = std::atoi(dirty_opt.c_str() + n);
+            return slot >= from_index && slot < from_index + stride;
+        };
+        bool dirty = is_from_slot(opt);
         while (i + 1 < dirty_options.size() && dirty_options[i + 1].compare(0, n, opt, 0, n) == 0) {
-            dirty |= dirty_options[i + 1].substr(n) == from_str;
+            dirty |= is_from_slot(dirty_options[i + 1]);
             ++i;
         }
         if (dirty) {
             auto key = opt.substr(0, n - 1);
             auto option = dynamic_cast<ConfigOptionVectorBase*>(m_config->option(key));
             auto option2 = dynamic_cast<ConfigOptionVectorBase*>(option->clone());
-            option2->set_at(option, dest_index, from_index);
+            for (int s = 0; s < stride; ++s)
+                option2->set_at(option, dest_index + s, from_index + s);
             if (*option == *option2) {
                 delete option2;
                 continue;
@@ -9037,7 +10782,7 @@ void Tab::sync_excluder()
         }
     }
     if (config_to_apply.empty()) {
-        MessageDialog md(wxGetApp().plater(), _L("No modifications need to be copied."), _L("Copy paramters"), wxICON_INFORMATION | wxOK);
+        MessageDialog md(wxGetApp().plater(), _L("No modifications need to be copied."), _L("Copy parameters"), wxICON_INFORMATION | wxOK);
         md.ShowModal();
         return;
     }
@@ -9045,7 +10790,7 @@ void Tab::sync_excluder()
     std::string pt = m_preset_bundle->printers.get_edited_preset().get_printer_type(m_preset_bundle);
     std::string active_nozzle_name = DevPrinterConfigUtil::get_toolhead_display_name(pt, active_index, ToolHeadComponent::Nozzle, ToolHeadNameCase::LowerCase);
     std::string other_nozzle_name  = DevPrinterConfigUtil::get_toolhead_display_name(pt, 1 - active_index, ToolHeadComponent::Nozzle, ToolHeadNameCase::LowerCase);
-    wxString title  = wxString::Format(_L("Modify paramters of %s"), _L(active_nozzle_name));
+    wxString title  = wxString::Format(_L("Modify parameters of %s"), _L(active_nozzle_name));
     wxString header = wxString::Format(_L("Do you want to modify the following parameters of the %s to that of the %s?"),
                                        _L(active_nozzle_name), _L(other_nozzle_name));
     UnsavedChangesDialog dlg(title, header, &config_origin, from_index, dest_index, active_index == 0, active_nozzle);
@@ -9172,20 +10917,8 @@ void Page::activate(ConfigOptionMode mode, std::function<void()> throw_if_cancel
 #else
     //m_vsizer->AddSpacer(10);
 #endif
-#if HIDE_FIRST_SPLIT_LINE
-    // BBS: no line spliter for first group
-    bool first = true;
-#endif
-    for (auto group : m_optgroups) {
-        if (!group->activate(throw_if_canceled))
-            continue;
-        m_vsizer->Add(group->sizer, 0, wxEXPAND | (group->is_legend_line() ? (wxLEFT|wxTOP) : wxALL), m_parent->FromDIP(5)); // ORCA use less margin on parameters section
-        group->update_visibility(mode);
-#if HIDE_FIRST_SPLIT_LINE
-        if (first) group->stb->Hide();
-        first = false;
-#endif
-        group->reload_config();
+    for (size_t i = 0; i < m_optgroups.size(); ++i) {
+        activate_group(i, mode, throw_if_canceled);
         throw_if_canceled();
     }
 
@@ -9202,6 +10935,41 @@ void Page::activate(ConfigOptionMode mode, std::function<void()> throw_if_cancel
         }
     });
 #endif
+}
+
+// Builds one option group; false when it already has its controls.
+bool Page::activate_group(size_t i, ConfigOptionMode mode, std::function<void()> throw_if_canceled)
+{
+    auto& group = m_optgroups[i];
+    if (!group->activate(throw_if_canceled))
+        return false;
+    m_vsizer->Add(group->sizer, 0, wxEXPAND | (group->is_legend_line() ? (wxLEFT|wxTOP) : wxALL), m_parent->FromDIP(5)); // ORCA use less margin on parameters section
+    group->update_visibility(mode);
+#if HIDE_FIRST_SPLIT_LINE
+    // BBS: no line spliter for first group
+    if (i == 0) group->stb->Hide();
+#endif
+    group->reload_config();
+    return true;
+}
+
+// The first group without controls.
+size_t Page::next_group_to_build() const
+{
+    return std::find_if(m_optgroups.begin(), m_optgroups.end(), [](const auto& group) { return !group->is_activated(); }) - m_optgroups.begin();
+}
+
+bool Page::build_pending() const
+{
+    return next_group_to_build() < m_optgroups.size();
+}
+
+bool Page::build_step(ConfigOptionMode mode)
+{
+    const size_t i = next_group_to_build();
+    if (i < m_optgroups.size())
+        activate_group(i, mode, [] {});
+    return build_pending();
 }
 
 void Page::clear()

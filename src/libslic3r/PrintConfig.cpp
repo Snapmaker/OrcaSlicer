@@ -1,8 +1,11 @@
 #include "PrintConfig.hpp"
+#include "PerHeadProcess.hpp"
+#include "ProjectSchemaVersion.hpp"
 #include "PrintConfigConstants.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 #include "FilamentMixer.hpp"
+#include "Flow.hpp"
 #include "MaterialType.hpp"
 #include "I18N.hpp"
 #include "format.hpp"
@@ -17,6 +20,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/thread.hpp>
+#include <cmath>
 #include <float.h>
 
 namespace {
@@ -152,6 +156,7 @@ static t_config_enum_values s_keys_map_PrintHostType {
     { "octoprint",      htOctoPrint },
     { "crealityprint",  htCrealityPrint },
     { "duet",           htDuet },
+    { "ultimaker",      htUltiMaker },
     { "flashair",       htFlashAir },
     { "astrobox",       htAstroBox },
     { "repetier",       htRepetier },
@@ -275,6 +280,7 @@ static t_config_enum_values s_keys_map_InfillPattern {
     { "tpmsfk", ipTpmsFK },
     { "gyroid", ipGyroid },
     { "concentric", ipConcentric },
+    { "spiralinset", ipSpiralInset },
     { "hilbertcurve", ipHilbertCurve },
     { "archimedeanchords", ipArchimedeanChords },
     { "octagramspiral", ipOctagramSpiral }
@@ -371,6 +377,7 @@ static t_config_enum_values s_keys_map_SupportMaterialInterfacePattern {
     { "auto",           smipAuto },
     { "rectilinear",    smipRectilinear },
     { "concentric",     smipConcentric },
+    { "spiralinset",    smipSpiralInset },
     { "rectilinear_interlaced", smipRectilinearInterlaced},
     { "grid",           smipGrid }
 };
@@ -1585,7 +1592,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1));
 
-    def = this->add("bridge_line_width", coFloatOrPercent);
+    def = this->add("bridge_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Bridge");
     def->category = L("Quality");
     def->tooltip = L("Line width of the Bridge. If expressed as a %, it will be computed over the nozzle diameter.\n"
@@ -1598,7 +1609,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 100;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(100., true));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100., true)});
 
     def = this->add("internal_bridge_flow", coFloat);
     def->label = L("Internal bridge flow ratio");
@@ -2385,6 +2396,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("rectilinear");
     def->enum_values.push_back("alignedrectilinear");
     def->enum_values.push_back("concentric");
+    def->enum_values.push_back("spiralinset");
     def->enum_values.push_back("hilbertcurve");
     def->enum_values.push_back("archimedeanchords");
     def->enum_values.push_back("octagramspiral");
@@ -2393,6 +2405,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Aligned Rectilinear"));
     def->enum_labels.push_back(L("Concentric"));
+    def->enum_labels.push_back(L("Spiral Inset"));
     def->enum_labels.push_back(L("Hilbert Curve"));
     def->enum_labels.push_back(L("Archimedean Chords"));
     def->enum_labels.push_back(L("Octagram Spiral"));
@@ -2475,7 +2488,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Top surface fill order");
     def->category = L("Strength");
     def->tooltip = L("Direction in which top surfaces are filled when using a center-based pattern "
-                     "(Concentric, Archimedean Chords, Octagram Spiral).\n"
+                     "(Concentric, Spiral Inset, Archimedean Chords, Octagram Spiral).\n"
                      "Outward starts at the center of the surface, so any excess material is pushed "
                      "towards the edge where it is least visible. Inward starts at the edge and ends "
                      "with the tight curves at the center.\n"
@@ -2494,7 +2507,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Bottom surface fill order");
     def->category = L("Strength");
     def->tooltip = L("Direction in which bottom surfaces are filled when using a center-based pattern "
-                     "(Concentric, Archimedean Chords, Octagram Spiral).\n"
+                     "(Concentric, Spiral Inset, Archimedean Chords, Octagram Spiral).\n"
                      "Inward starts each surface with the wider outer curves, which improves first layer "
                      "adhesion on build plates where the tight curves at the center may not stick. "
                      "Outward starts at the center, pushing any excess material towards the edge.\n"
@@ -2514,7 +2527,11 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels   = def_top_fill_pattern->enum_labels;
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipMonotonic));
     
-    def = this->add("outer_wall_line_width", coFloatOrPercent);
+    def = this->add("outer_wall_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Outer wall");
     def->category = L("Quality");
     def->tooltip = L("Line width of outer wall. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -2524,7 +2541,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("outer_wall_speed", coFloats);
     def->label = L("Outer wall");
@@ -2638,6 +2655,16 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("5");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt{0});
+
+    // Orca: already carried by the BBL/Qidi/Geeetech/Eryone machine profiles, which inherited it from
+    // the BambuStudio import; without a definition here it was parsed as an unknown key and dropped.
+    def = this->add("extruder_clearance_dist_to_rod", coFloat);
+    def->label = L("Distance to rod");
+    def->tooltip = L("Horizontal distance of the nozzle tip to the rod's farther edge. Used for collision avoidance in by-object printing.");
+    def->sidetext = L("mm");	// millimeters, CIS languages need translation
+    def->min = 0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(40));
 
     def = this->add("extruder_clearance_height_to_rod", coFloat);
     def->label = L("Height to rod");
@@ -2834,7 +2861,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0.0 });
 
-    def = this->add("line_width", coFloatOrPercent);
+    def = this->add("line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Default");
     def->category = L("Quality");
     def->tooltip = L("Default line width if other line widths are set to 0. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -2844,7 +2875,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0, false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0, false)});
 
     def = this->add("reduce_fan_stop_start_freq", coBools);
     def->label = L("Keep fan always on");
@@ -2863,7 +2894,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("fan_cooling_layer_time", coFloats);
     def->label = L("Layer time");
     def->tooltip = L("The part cooling fan will be enabled for layers where the estimated time is shorter than this value. Fan speed is interpolated between the minimum and maximum fan speeds according to layer printing time.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->max = 1000;
     def->mode = comSimple;
@@ -2893,7 +2924,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("filament_colour_mode", coInts);
     def->label = L("Filament color display mode");
-    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for gradient.");
+    def->tooltip = L("Filament color display mode: 0 for split colors, 1 for vertical gradient.");
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
     def->min = 0;
@@ -2999,6 +3030,39 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionInts{1});
 
+    // Snapmaker Orca: per extruder, the process preset it printed with at the last apply
+    // (PerHeadProcess::record_sources); empty for the selected preset, [] when none is derived.
+    // Project-level like filament_map; a load only compares it, never switches presets.
+    def = this->add("extruder_process_preset", coStrings);
+    def->label = L("Process preset per extruder");
+    def->tooltip = L("The process preset each extruder printed with when this project was last sliced. An extruder whose nozzle size "
+                     "differs from the printer preset prints with the speeds of a process preset made for its size.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per tool head, the process preset chosen on the Speed page
+    // (PerHeadProcess::choice_key); empty for a head that follows the rule, [] when none has a
+    // choice. Project-level; vendor caches (.opc) lacking the key are parsed from JSON once.
+    def = this->add("extruder_process_choice", coStrings);
+    def->label = L("Process preset chosen per extruder");
+    def->tooltip = L("The process preset an extruder takes its speeds, accelerations, jerk and line widths from, chosen in this project. Empty: "
+                     "the preset of the selected process preset's quality made for the extruder's nozzle size.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per tool head, the flow type whose speeds column it prints when not its nozzle's
+    // own ("Standard" on a High Flow nozzle, PerHeadProcess::flow_key); empty otherwise, [] when no
+    // head has one. Project-level and cached like extruder_process_choice.
+    def = this->add("extruder_process_flow", coStrings);
+    def->label = L("Speeds flow type chosen per extruder");
+    def->tooltip = L("The flow type whose speeds, accelerations and jerk an extruder prints with, chosen in this project when it is not the "
+                     "flow type of its nozzle: a High Flow nozzle set to the Standard speeds. Empty: the nozzle's own flow type.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings());
+    def->cli = ConfigOptionDef::nocli;
+
     def = this->add("filament_flush_temp", coInts);
     def->label = L("Flush temperature");
     def->tooltip = L("Temperature when flushing filament. 0 indicates the upper bound of the recommended nozzle temperature range.");
@@ -3044,7 +3108,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Filament load time");
     def->tooltip = L("Time to load new filament when switch filament. It's usually applicable for single-extruder multi-material machines. "
                      "For tool changers or multi-tool machines, it's typically 0. For statistics only.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
@@ -3053,7 +3117,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Filament unload time");
     def->tooltip = L("Time to unload old filament when switch filament. It's usually applicable for single-extruder multi-material machines. "
                      "For tool changers or multi-tool machines, it's typically 0. For statistics only.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
@@ -3062,7 +3126,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Tool change time");
     def->tooltip = L("Time taken to switch tools. It's usually applicable for tool changers or multi-tool machines. "
                      "For single-extruder multi-material machines, it's typically 0. For statistics only.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat { 0. });
@@ -3214,7 +3278,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Time to wait after the filament is unloaded. "
                    "May help to get reliable tool changes with flexible materials "
                    "that may need more time to shrink to original dimensions.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats { 0. });
@@ -3837,7 +3901,11 @@ void PrintConfigDef::init_fff_params()
     def->nullable = true;
     def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(100, true)});
 
-    def = this->add("initial_layer_line_width", coFloatOrPercent);
+    def = this->add("initial_layer_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("First layer");
     def->category = L("Quality");
     def->tooltip = L("Line width of the first layer. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -3847,7 +3915,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("initial_layer_print_height", coFloat);
     def->label = L("First layer height");
@@ -4339,7 +4407,7 @@ void PrintConfigDef::init_fff_params()
         "\nIt won't move fan commands from custom G-code (they act as a sort of 'barrier')."
         "\nIt won't move fan commands into the start G-code if the 'only custom start G-code' is activated."
         "\nUse 0 to deactivate.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
@@ -4355,7 +4423,7 @@ void PrintConfigDef::init_fff_params()
                     "\nThis is useful for fans where a low PWM/power may be insufficient to get the fan started spinning from a stop, or to "
                     "get the fan up to speed faster."
                     "\nSet to 0 to deactivate.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
@@ -4767,7 +4835,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
-    def = this->add("sparse_infill_line_width", coFloatOrPercent);
+    def = this->add("sparse_infill_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Sparse infill");
     def->category = L("Quality");
     def->tooltip = L("Line width of internal sparse infill. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -4777,7 +4849,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("infill_wall_overlap", coPercent);
     def->label = L("Infill/wall overlap");
@@ -4999,7 +5071,7 @@ void PrintConfigDef::init_fff_params()
     def->label    = L("Ironing expansion");
     def->category = L("Quality");
     def->tooltip  = L("Expand or contract the ironing area.");
-    def->sidetext = L("mm");
+    def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min      = -100;
     def->max      = 100;
     def->mode     = comExpert;
@@ -5036,7 +5108,7 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Quality");
     def->tooltip  = L("Minimum Z-layer height.\n"
                       "Also controls the slicing plane.");
-    def->sidetext = L("mm");
+    def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->min      = 0;
     def->max      = 100;
     def->mode     = comExpert;
@@ -5235,7 +5307,7 @@ void PrintConfigDef::init_fff_params()
     def->category   = L("Machine limits");
     def->readonly   = false;
     def->tooltip    = L("The allowed maximum output force of Y axis");
-    def->sidetext   = L("N");
+    def->sidetext   = L_CONTEXT("N", "Newton");	// Newtons, CIS languages need translation
     def->min        = 0;
     def->mode       = comDevelop;
     def->set_default_value(new ConfigOptionFloat(0));
@@ -5245,7 +5317,7 @@ void PrintConfigDef::init_fff_params()
     def->category   = L("Machine limits");
     def->readonly   = false;
     def->tooltip    = L("The machine bed mass load of Y axis");
-    def->sidetext   = L("g");
+    def->sidetext   = L_CONTEXT("g", "gram");	// grams, CIS languages need translation
     def->min        = 0;
     def->mode       = comDevelop;
     def->set_default_value(new ConfigOptionFloat(0));
@@ -5255,7 +5327,7 @@ void PrintConfigDef::init_fff_params()
     def->category   = L("Machine limits");
     def->readonly   = false;
     def->tooltip    = L("The allowed max printed mass on a plate");
-    def->sidetext   = L("g");
+    def->sidetext   = L_CONTEXT("g", "gram");	// grams, CIS languages need translation
     def->min        = 0;
     def->mode       = comDevelop;
     def->set_default_value(new ConfigOptionFloat(0));
@@ -5515,9 +5587,10 @@ void PrintConfigDef::init_fff_params()
                      "becomes the coarsest height all of them are whole multiples of, which can be very fine "
                      "(0.13 and 0.37 mm share only 0.01 mm). Extruders left at Default, supports, the first layers "
                      "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
-                     "printing can take much longer; the prime tower prints one slab per tool change instead, but "
-                     "those slabs can fall below the extruders' minimum layer height. Off: the preferred heights "
-                     "are rounded to the coarsest grid on which they land within 0.01 mm.");
+                     "printing can take much longer. The prime tower prints one slab per tool change on that grid in "
+                     "either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum "
+                     "layer height there, which slicing reports. Off: the preferred heights are rounded to the "
+                     "coarsest grid on which they land within 0.01 mm.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -5557,6 +5630,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("prusaconnect");
     def->enum_values.push_back("octoprint");
     def->enum_values.push_back("duet");
+    def->enum_values.push_back("ultimaker");
     def->enum_values.push_back("flashair");
     def->enum_values.push_back("astrobox");
     def->enum_values.push_back("repetier");
@@ -5573,6 +5647,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back("PrusaConnect");
     def->enum_labels.push_back("Octo/Klipper");
     def->enum_labels.push_back("Duet");
+    def->enum_labels.push_back("UltiMaker");
     def->enum_labels.push_back("FlashAir");
     def->enum_labels.push_back("AstroBox");
     def->enum_labels.push_back("Repetier");
@@ -5596,7 +5671,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->readonly = false;
     def->nullable = true;
-    def->set_default_value(new ConfigOptionFloatsNullable { {0.0} });
+    def->set_default_value(new ConfigOptionFloatsNullable { 0.0 });
 
     def = this->add("cooling_tube_retraction", coFloat);
     def->label = L("Cooling tube position");
@@ -5650,7 +5725,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("reduce_infill_retraction", coBool);
     def->label = L("Reduce infill retraction");
-    def->tooltip = L("Don\'t retract when the travel is entirely within an infill area. That means the oozing can\'t been seen. This can reduce times of retraction for complex model and save printing time, but make slicing and G-code generating slower. Note that z-hop is also not performed in areas where retraction is skipped.");
+    def->tooltip = L("Don\'t retract when the travel is entirely within an infill area. That means the oozing can\'t been seen. This can reduce times of retraction for complex model and save printing time, but make slicing and G-code generating slower. Note that Z-hop is also not performed in areas where retraction is skipped.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -5702,6 +5777,16 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("This detects the overhang percentage relative to line width and uses a different speed to print. For 100%% overhang, bridging speed is used.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("unsupported_wall_last", coBool);
+    def->label = L("Print unsupported walls last");
+    def->category = L("Quality");
+    def->tooltip = L("Wall loops that lie entirely in mid air are printed once something can hold them:\n"
+                     "they are extruded after the other walls of their island, innermost first, whatever the wall order is.\n"
+                     "A loop that only the bridges of this layer can anchor waits until those bridges are printed, while a loop running "
+                     "alongside a supported wall keeps its place before the infill, which needs it as an anchor.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("outer_wall_filament_id", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
@@ -5769,7 +5854,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<WallSplitDirection>(wsdDecrease));
 
-    def = this->add("inner_wall_line_width", coFloatOrPercent);
+    def = this->add("inner_wall_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Inner wall");
     def->category = L("Quality");
     def->tooltip = L("Line width of inner wall. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -5779,7 +5868,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("inner_wall_speed", coFloats);
     def->label = L("Inner wall");
@@ -6132,7 +6221,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("retract_after_wipe", coPercents);
     def->label = L("Retract amount after wipe");
     // xgettext:no-c-format, no-boost-format
-    def->tooltip = L("The length of fast retraction after wipe, relative to retraction length.\n"
+    def->tooltip = L("This is the length of fast retraction after wipe, relative to retraction length.\n"
                      "The value will be clamped by 100% minus the retract amount before the wipe value.");
     def->sidetext = "%";
     def->mode = comExpert;
@@ -6198,7 +6287,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("z_hop", coFloats);
     def->label = L("Z-hop height");
-    def->tooltip = L("Whenever there is a retraction, the nozzle is lifted a little to create clearance between the nozzle and the print. This prevents the nozzle from hitting the print when traveling more. Using spiral lines to lift z can prevent stringing.");
+    def->tooltip = L("Whenever there is a retraction, the nozzle is lifted a little to create clearance between the nozzle and the print. This prevents the nozzle from hitting the print when traveling more. Using spiral lines to lift Z can prevent stringing.");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
     def->mode = comSimple;
     def->min = 0;
@@ -6325,6 +6414,38 @@ void PrintConfigDef::init_fff_params()
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionEnumsGeneric{ NozzleVolumeType::nvtStandard });
 
+    // Snapmaker: keys of Snapmaker Orca 2.4 projects and user presets. They are defined so that a
+    // file which carries them can be read; normalize_snapmaker_flow_config() turns them into the
+    // variant columns of this application and removes them. No preset and no project keeps them.
+    for (const char* key : {"filament_flow_support", "process_flow_support", "printer_flow_support", "filament_volume_type"}) {
+        def = this->add(key, coStrings);
+        def->label = key;
+        def->mode = comDevelop;
+        def->cli = ConfigOptionDef::nocli;
+        def->set_default_value(new ConfigOptionStrings());
+    }
+    def = this->add("filament_flow_step_size", coInts);
+    def->label = "filament_flow_step_size";
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionInts());
+
+    def = this->add("filament_grouping_mode", coString);
+    def->label = "filament_grouping_mode";
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionString());
+
+    // Written into the project settings of a 3MF file by the exporter and read by
+    // ProjectSchemaRegistry; no part of a preset or of the slicing configuration.
+    def = this->add(ProjectSchemaRegistry::definition().config_key, coInt);
+    def->label = "Project schema version";
+    def->tooltip = "Version of the project configuration schema stored in the 3MF project.";
+    def->min = 1;
+    def->mode = comDevelop;
+    def->cli = ConfigOptionDef::nocli;
+    def->set_default_value(new ConfigOptionInt(ProjectSchemaRegistry::definition().legacy_version));
+
     def = this->add("extruder_variant_list", coStrings);
     // internal use only, don't need translation
     def->label = "Extruder variant list";
@@ -6421,6 +6542,15 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionStrings { "Direct Drive Standard" });
     def->cli = ConfigOptionDef::nocli;
 
+    // Snapmaker Orca: per process layout column, a comma list of the keys set for its tool head on
+    // the Speed page (PerHeadProcess); empty on a shared column (print_extruder_id 0). Preset and
+    // project key, never composed, not read by G-code writers. Internal use only, no translation.
+    def = this->add("print_extruder_override", coStrings);
+    def->label = "Process values set per extruder";
+    def->tooltip = "Process values set per extruder.";
+    def->set_default_value(new ConfigOptionStrings { "" });
+    def->cli = ConfigOptionDef::nocli;
+
     /*def = this->add("filament_extruder_id", coInts);
     def->label = "Filament extruder id";
     def->tooltip = "Filament extruder id.";
@@ -6439,6 +6569,30 @@ void PrintConfigDef::init_fff_params()
     def->label = "Filament self index";
     def->tooltip = "Filament self index.";
     def->set_default_value(new ConfigOptionInts { 1 });
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: per composed column (PerHeadProcess::compose), the selected preset's column that
+    // stands in for it; Print::apply maps object/part/layer-range overrides with it. Transient: never
+    // stored in a preset, project, CLI or G-code header. Internal use only, no translation.
+    def = this->add("print_extruder_source_column", coInts);
+    def->label = "Process source column per extruder";
+    def->tooltip = "Process source column per extruder.";
+    def->set_default_value(new ConfigOptionInts());
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: transient like the key above: per composed column, the position of the
+    // preset's column among its shared columns (-1: none), and the number of shared columns.
+    // Internal use only, no translation.
+    def = this->add("print_extruder_source_flow", coInts);
+    def->label = "Process source flow per extruder";
+    def->tooltip = "Process source flow per extruder.";
+    def->set_default_value(new ConfigOptionInts());
+    def->cli = ConfigOptionDef::nocli;
+
+    def = this->add("print_extruder_flow_count", coInt);
+    def->label = "Process shared column count";
+    def->tooltip = "Process shared column count.";
+    def->set_default_value(new ConfigOptionInt(0));
     def->cli = ConfigOptionDef::nocli;
 
     def = this->add("retract_restart_extra", coFloats);
@@ -6665,6 +6819,36 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("wipe_inward", coBool);
+    def->label = L("Wipe inward");
+    def->category = L("Quality");
+    def->tooltip = L("Applies only to external walls, including hole boundaries. Moves the hot nozzle toward printed "
+                     "inner walls during wiping to reduce reheating of freshly printed plastic and seam marks.\n\n"
+                     "Especially useful at layer heights below 0.1 mm, where wipe marks are more visible.\n\n"
+                     "Uses the regular wipe if no adjacent inner wall is already printed (single-wall areas or "
+                     "Outer/Inner wall order), or if no supported inward path can be found, for example at tight "
+                     "corners or seam gaps.");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("wipe_inward_distance", coFloatOrPercent);
+    def->label = L("Wipe inward distance");
+    def->category = L("Quality");
+    // xgettext:no-c-format, no-boost-format
+    def->tooltip = L("The distance the wipe path is shifted away from the external perimeter, specified in millimeters "
+                     "or as a percentage of the actual outer-wall extrusion width.\n\n"
+                     "For example, 50% shifts the path by half of the outer-wall width. The effective offset is limited "
+                     "by both the actual outer-wall width and the available spacing to the adjacent wall, so values "
+                     "above 100% or an equivalent absolute distance have no additional effect. "
+                     "Set to 0 to disable the offset.");
+    def->sidetext = L("mm or %");
+    def->ratio_over = "outer_wall_line_width";
+    def->min = 0;
+    def->max = 100;
+    def->max_literal = 2; // Orca: G-code generation also clamps literal values to the actual outer-wall width.
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionFloatOrPercent(50, true));
+
     def = this->add("wipe_before_external_loop", coBool);
     def->label = L("Wipe before external loop");
     def->category = L("Quality");
@@ -6781,7 +6965,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Layer time");
     def->tooltip = L("The printing speed in exported G-code will be slowed down when the estimated layer time is "
                      "shorter than this value in order to get better cooling for these layers.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->max = 1000;
     def->mode = comSimple;
@@ -6823,7 +7007,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(0));
 
-    def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
+    def = this->add("internal_solid_infill_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Internal solid infill");
     def->category = L("Quality");
     def->tooltip = L("Line width of internal solid infill. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -6833,7 +7021,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("internal_solid_infill_speed", coFloats);
     def->label = L("Internal solid infill");
@@ -6934,7 +7122,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Preheat time");
     def->tooltip = L("To reduce the waiting time after tool change, Orca can preheat the next tool while the current tool is still in use. "
                      "This setting specifies the time in seconds to preheat the next tool. Orca will insert a M104 command to preheat the tool in advance.");
-    def->sidetext = L("s");	// seconds, CIS languages need translation
+    def->sidetext = L_CONTEXT("s", "second");	// seconds, CIS languages need translation
     def->min = 0;
     def->max = 120;
     def->mode = comAdvanced;
@@ -6967,7 +7155,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("G-code written at the very top of the output file, before any other content. "
                      "Useful for adding metadata that printer firmware reads from the first lines of the file "
                      "(e.g. estimated print time, filament usage). "
-                     "Supports placeholders like {print_time_sec} and {used_filament_length}.");
+                     "Supports placeholders like {print_time_total_sec}, {print_time_day}, {print_time_hour}, {print_time_minute}, {print_time_sec} and {used_filament_length}.");
     def->multiline = true;
     def->full_width = true;
     def->height = 8;
@@ -7073,8 +7261,10 @@ void PrintConfigDef::init_fff_params()
     def = this->add("wipe_tower_no_sparse_layers", coBool);
     def->label = L("No sparse layers (beta)");
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no tool changes. "
-                    "On layers with a tool change, extruder will travel downward to print the wipe tower. "
-                    "User is responsible for ensuring there is no collision with the print.");
+                    "On layers with a tool change, extruder will travel downward to print the wipe tower, "
+                    "so the tower ends up below the model and the toolhead has to reach down to it. "
+                    "Layouts where that would collide with an already printed object are rejected. "
+                    "Has no effect with smooth timelapse or clumping detection, which need a tower on every layer.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -7100,6 +7290,34 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.emplace_back(L("Cyclic"));
     def->set_default_value(new ConfigOptionEnum<ToolChangeOrderingType>(ToolChangeOrderingType::Default));
 
+    def = this->add("toolchange_cyclic_order", coString);
+    def->label = L("Cyclic order");
+    def->category = L("Advanced");
+    def->tooltip = L(
+        "Custom filament sequence used by the cyclic toolchange ordering, as filament numbers separated by commas (e.g. \"3,2,1,4\").\n"
+        "Each layer prints its filaments following this sequence; filaments not listed are printed last, in ascending order.\n"
+        "Leave empty to cycle through the filaments in ascending order."
+    );
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("toolchange_cyclic_first_layer", coBool);
+    def->label = L("Apply cyclic order to first layer");
+    def->category = L("Advanced");
+    def->tooltip = L(
+        "Applies the cyclic toolchange order to the first layer as well.\n"
+        "By default this is disabled, because the first layer is instead ordered for the best bed "
+        "adhesion: filaments that print small, fragile first-layer features are printed last, so the "
+        "following tool changes and travel moves are less likely to knock those weakly anchored parts "
+        "loose. This first-layer order also honors a custom first layer filament sequence when one is set. "
+        "The cyclic order's benefit (extra tool changes give each layer more time to cool) does not apply "
+        "to the first layer, which is printed slowly and hot for adhesion.\n"
+        "Enable this only if you need the exact same tool sequence on every layer, including the first, at "
+        "the cost of that adhesion optimization."
+    );
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("slice_closing_radius", coFloat);
     def->label = L("Slice gap closing radius");
     def->category = L("Quality");
@@ -7112,7 +7330,7 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("slicing_mode", coEnum);
     def->label = L("Slicing Mode");
-    def->category = L("Other");
+    def->category = L("Others");
     def->tooltip = L("Use \"Even-odd\" for 3DLabPrint airplane models. Use \"Close holes\" to close all holes in the model.");
     def->enum_keys_map = &ConfigOptionEnum<SlicingMode>::get_enum_values();
     def->enum_values.push_back("regular");
@@ -7311,7 +7529,11 @@ void PrintConfigDef::init_fff_params()
         def->enum_values.emplace_back(material);
     def->set_default_value(new ConfigOptionString(""));
 
-    def = this->add("support_line_width", coFloatOrPercent);
+    def = this->add("support_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Support");
     def->category = L("Quality");
     def->tooltip = L("Line width of support. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -7321,7 +7543,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("support_interface_loop_pattern", coBool);
     def->label = L("Loop pattern interface");
@@ -7435,11 +7657,13 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("auto");
     def->enum_values.push_back("rectilinear");
     def->enum_values.push_back("concentric");
+	def->enum_values.push_back("spiralinset");
     def->enum_values.push_back("rectilinear_interlaced");
     def->enum_values.push_back("grid");
     def->enum_labels.push_back(L("Default"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Concentric"));
+	def->enum_labels.push_back(L("Spiral Inset"));
     def->enum_labels.push_back(L("Rectilinear Interlaced"));
     def->enum_labels.push_back(L("Grid"));
     def->mode = comAdvanced;
@@ -7869,7 +8093,11 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "" });
 
-    def = this->add("top_surface_line_width", coFloatOrPercent);
+    def = this->add("top_surface_line_width", coFloatsOrPercents);
+    // Snapmaker Orca: one column per tool head (print_options_with_variant), written as one value
+    // while every column is equal (scalar_when_uniform).
+    def->nullable = true;
+    def->scalar_when_uniform = true;
     def->label = L("Top surface");
     def->category = L("Quality");
     def->tooltip = L("Line width for top surfaces. If expressed as a %, it will be computed over the nozzle diameter.");
@@ -7879,7 +8107,7 @@ void PrintConfigDef::init_fff_params()
     def->max = 1000;
     def->max_literal = 10;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloatOrPercent(0., false));
+    def->set_default_value(new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
 
     def = this->add("top_surface_speed", coFloats);
     def->label = L("Top surface");
@@ -8576,7 +8804,7 @@ void PrintConfigDef::init_fff_params()
     def           = this->add("machine_hotend_change_time", coFloat);
     def->label    = L("Hotend change time");
     def->tooltip  = L("Time to change hotend.");
-    def->sidetext = L("s");
+    def->sidetext = L_CONTEXT("s", "second");
     def->min      = 0;
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
@@ -9631,6 +9859,13 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         || opt_key == "extruder_variant_list") {
         ReplaceString(value, "Normal", "Standard");
         ReplaceString(value, "Big Traffic", "High Flow");
+        // Snapmaker Orca 2.4 spells the two flow types of a tool head "standard" and "high_flow".
+        // The spelling is rewritten here and not given to the enum as a second name: the names of
+        // an enum are derived by inverting its map, a second name would change what is written.
+        if (opt_key == "nozzle_volume_type" || opt_key == "default_nozzle_volume_type") {
+            ReplaceString(value, "standard", "Standard");
+            ReplaceString(value, "high_flow", "High Flow");
+        }
     }
     else if (opt_key == "extruder_type") {
         ReplaceString(value, "DirectDrive", "Direct Drive");
@@ -9864,8 +10099,20 @@ std::set<std::string> print_options_with_variant = {
     "travel_jerk",
     "initial_layer_travel_jerk",
     "default_junction_deviation",
+    // Snapmaker Orca: the nine line widths of the Quality page, one column per tool head; the
+    // Locked Zag widths (skin_infill_line_width, skeleton_infill_line_width) stay scalar.
+    "line_width", //coFloatsOrPercents
+    "initial_layer_line_width",
+    "outer_wall_line_width",
+    "inner_wall_line_width",
+    "top_surface_line_width",
+    "sparse_infill_line_width",
+    "internal_solid_infill_line_width",
+    "support_line_width",
+    "bridge_line_width",
     "print_extruder_id", //coInts
-    "print_extruder_variant" //coStrings
+    "print_extruder_variant", //coStrings
+    "print_extruder_override" //coStrings, Snapmaker Orca: the marker of the values set per tool head
 };
 
 std::set<std::string> filament_options_with_variant = {
@@ -9921,8 +10168,145 @@ std::set<std::string> filament_options_with_variant = {
     "activate_air_filtration_during_print",
     "activate_air_filtration_on_completion",
     "during_print_exhaust_fan_speed",
-    "complete_print_exhaust_fan_speed"
+    "complete_print_exhaust_fan_speed",
+    // Snapmaker: tuned per nozzle flow type, so one value per filament_extruder_variant column (mainline:
+    // per filament); normalize_promoted_filament_keys() rebuilds per-filament project files.
+    "enable_pressure_advance",
+    "pressure_advance",
+    "fan_min_speed",
+    "fan_max_speed",
+    "additional_cooling_fan_speed",
+    "filament_multitool_ramming",
+    "filament_multitool_ramming_volume",
+    "filament_multitool_ramming_flow",
+    "filament_minimal_purge_on_wipe_tower"
 };
+
+const std::vector<std::string>& promoted_filament_variant_keys()
+{
+    static const std::vector<std::string> keys = {
+        "enable_pressure_advance",
+        "pressure_advance",
+        "fan_min_speed",
+        "fan_max_speed",
+        "additional_cooling_fan_speed",
+        "filament_multitool_ramming",
+        "filament_multitool_ramming_volume",
+        "filament_multitool_ramming_flow",
+        "filament_minimal_purge_on_wipe_tower"
+    };
+    return keys;
+}
+
+size_t first_filament_variant_column(const std::vector<int>& filament_self_index, size_t filament_id)
+{
+    for (size_t column = 0; column < filament_self_index.size(); ++column)
+        if (filament_self_index[column] == int(filament_id) + 1)
+            return column;
+    return filament_id;
+}
+
+const std::vector<std::string>& nozzle_size_extruder_options()
+{
+    static const std::vector<std::string> keys = {
+        "nozzle_type", "nozzle_volume",
+        "retraction_length", "retract_restart_extra", "retraction_minimum_travel", "retraction_speed", "deretraction_speed",
+        "retract_when_changing_layer", "wipe", "wipe_distance", "retract_before_wipe", "retract_after_wipe",
+        "z_hop", "z_hop_types", "travel_slope", "retract_lift_above", "retract_lift_below", "retract_lift_enforce",
+        "retract_length_toolchange", "retract_restart_extra_toolchange", "long_retractions_when_cut", "retraction_distances_when_cut"
+    };
+    return keys;
+}
+
+// Tool head (0-based) and variant name of column `column` of a per-extruder option with `size` columns.
+static std::pair<size_t, std::string> extruder_column_owner(const DynamicPrintConfig &config, size_t column, size_t size)
+{
+    const auto *ids      = config.option<ConfigOptionInts>("printer_extruder_id");
+    const auto *variants = config.option<ConfigOptionStrings>("printer_extruder_variant");
+    if (ids != nullptr && ids->values.size() == size && column < size && ids->values[column] > 0)
+        return { size_t(ids->values[column] - 1),
+                 variants != nullptr && variants->values.size() == size ? variants->values[column] : std::string() };
+    return { column, std::string() };
+}
+
+std::vector<size_t> extruder_option_columns(const DynamicPrintConfig &config, const std::string &key, size_t extruder)
+{
+    std::vector<size_t> columns;
+    const ConfigOption *opt = config.option(key);
+    if (opt == nullptr || ! opt->is_vector())
+        return columns;
+    const size_t size = static_cast<const ConfigOptionVectorBase*>(opt)->size();
+    for (size_t column = 0; column < size; ++ column)
+        if (extruder_column_owner(config, column, size).first == extruder)
+            columns.push_back(column);
+    return columns;
+}
+
+std::vector<std::string> adopt_extruder_values_from_size_preset(DynamicPrintConfig &config, const DynamicPrintConfig &size_preset,
+                                                                const DynamicPrintConfig *from_preset, size_t extruder,
+                                                                const std::vector<std::string> &keys)
+{
+    std::vector<std::string> changed;
+    const auto  *nozzles = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const size_t heads   = nozzles == nullptr ? 0 : nozzles->values.size();
+    if (extruder >= heads)
+        return changed;
+    // The column of `preset`'s option `opt` that stands for the tool head with variant `variant`.
+    auto source_column = [extruder](const DynamicPrintConfig &preset, const ConfigOptionVectorBase &opt, const std::string &variant) {
+        const size_t size  = opt.size();
+        size_t       first = size_t(-1);
+        for (size_t column = 0; column < size; ++ column) {
+            const std::pair<size_t, std::string> owner = extruder_column_owner(preset, column, size);
+            if (owner.first != extruder)
+                continue;
+            if (owner.second == variant)
+                return column;
+            if (first == size_t(-1))
+                first = column;
+        }
+        return first != size_t(-1) ? first : std::min(extruder, size - 1);
+    };
+    for (const std::string &key : keys) {
+        ConfigOption       *dst_opt  = config.option(key);
+        const ConfigOption *src_opt  = size_preset.option(key);
+        const ConfigOption *from_opt = from_preset == nullptr ? nullptr : from_preset->option(key);
+        if (dst_opt == nullptr || src_opt == nullptr || ! dst_opt->is_vector() || src_opt->type() != dst_opt->type())
+            continue;
+        if (from_opt != nullptr && from_opt->type() != dst_opt->type())
+            from_opt = nullptr;
+        auto       *dst  = static_cast<ConfigOptionVectorBase*>(dst_opt);
+        const auto *src  = static_cast<const ConfigOptionVectorBase*>(src_opt);
+        const auto *from = static_cast<const ConfigOptionVectorBase*>(from_opt);
+        if (dst->size() == 0 || src->size() == 0 || (from != nullptr && from->size() == 0))
+            continue;
+        if (dst->size() < heads) {
+            // Extend with the last value (resize() repeats the first).
+            std::unique_ptr<ConfigOption> last(dst->clone());
+            const size_t                  old_size = dst->size();
+            for (size_t column = old_size; column < heads; ++ column)
+                dst->set_at(last.get(), column, old_size - 1);
+        }
+        const std::vector<std::string> src_values  = src->vserialize();
+        const std::vector<std::string> from_values = from == nullptr ? std::vector<std::string>() : from->vserialize();
+        bool         key_changed = false;
+        const size_t dst_size    = dst->size();
+        for (size_t column = 0; column < dst_size; ++ column) {
+            const std::pair<size_t, std::string> owner = extruder_column_owner(config, column, dst_size);
+            if (owner.first != extruder)
+                continue;
+            const size_t      src_column = source_column(size_preset, *src, owner.second);
+            const std::string current    = dst->vserialize()[column];
+            const std::string before     = from == nullptr ? current : from_values[source_column(*from_preset, *from, owner.second)];
+            if (src_values[src_column] == before || src_values[src_column] == current)
+                continue;
+            dst->set_at(src, column, src_column);
+            key_changed = true;
+        }
+        if (key_changed)
+            changed.push_back(key);
+    }
+    return changed;
+}
 
 // Parameters that are the same as the number of extruders
 std::set<std::string> printer_extruder_options = {
@@ -10315,10 +10699,12 @@ static void extend_extruder_variant(DynamicPrintConfig& config, const unsigned i
     extruder_variant_opt->resize(num_extruders, extruder_variant_opt); // Use the first option as the default value, so all extruders have the same variant
 
     // 2. Update `printer_extruder_variant` and `printer_extruder_id` based on `extruder_variant_list`
-    auto printer_extruder_id_opt = dynamic_cast<ConfigOptionInts*>(config.option("printer_extruder_id"));
+    // Snapmaker Orca: created when missing; project settings without extruder variants
+    // (Snapmaker Orca 2.4 and older) carry neither key.
+    auto printer_extruder_id_opt = config.option<ConfigOptionInts>("printer_extruder_id", true);
     assert(printer_extruder_id_opt != nullptr);
     printer_extruder_id_opt->values.clear();
-    auto printer_extruder_variant_opt = dynamic_cast<ConfigOptionStrings*>(config.option("printer_extruder_variant"));
+    auto printer_extruder_variant_opt = config.option<ConfigOptionStrings>("printer_extruder_variant", true);
     assert(printer_extruder_variant_opt != nullptr);
     printer_extruder_variant_opt->values.clear();
     for (int i = 0; i < num_extruders; i++) {
@@ -10399,7 +10785,15 @@ std::string DynamicPrintConfig::get_filament_type(std::string &displayed_filamen
     auto* filament_type = dynamic_cast<const ConfigOptionStrings*>(this->option("filament_type"));
     auto* filament_is_support = dynamic_cast<const ConfigOptionBools*>(this->option("filament_is_support"));
 
-    if (!filament_type)
+    // get_at() on an empty vector option is undefined behavior (.front() of an empty vector),
+    // and e.g. filament_id is never populated on a CLI from-scratch slice - treat an empty
+    // option the same as a missing one.
+    if (filament_id && filament_id->values.empty())
+        filament_id = nullptr;
+    if (filament_is_support && filament_is_support->values.empty())
+        filament_is_support = nullptr;
+
+    if (!filament_type || filament_type->values.empty())
         return "";
 
     if (!filament_is_support) {
@@ -10564,6 +10958,25 @@ int DynamicPrintConfig::get_index_for_extruder(int extruder_or_filament_id, std:
 
             }
         }
+
+        // Snapmaker Orca: flow-only process columns (print_extruder_id [1,1], print_extruder_variant
+        // [Standard, High Flow]): every head reads the column of its flow type. Needs all ids equal and
+        // all variants distinct over several columns; the index stays in the preset's column space.
+        if (ret < 0 && id_name == "print_extruder_id" && has_complete_id_map && v_size > 1) {
+            bool flow_only = true;
+            for (int index = 1; index < v_size && flow_only; index++) {
+                flow_only = id_opt->get_at(index) == id_opt->get_at(0);
+                for (int other = 0; other < index && flow_only; other++)
+                    flow_only = variant_opt->get_at(index) != variant_opt->get_at(other);
+            }
+            if (flow_only) {
+                for (int index = 0; index < v_size; index++)
+                    if (extruder_variant == variant_opt->get_at(index)) {
+                        ret = index * stride;
+                        break;
+                    }
+            }
+        }
     }
     return ret;
 }
@@ -10624,6 +11037,10 @@ int DynamicPrintConfig::update_values_from_single_to_multi(DynamicPrintConfig& m
 
                     for (int index = 0; index < variant_count; index++)
                     {
+                        //variant_count is the variant column width, src_opt the value array;
+                        //they disagree when the source was authored at a different width
+                        if (index >= (int)src_opt->values.size())
+                            break;
                         if (opt->values[index] > src_opt->values[index])
                             opt->values[index] = src_opt->values[index];
                     }
@@ -10641,6 +11058,8 @@ int DynamicPrintConfig::update_values_from_single_to_multi(DynamicPrintConfig& m
 
                     for (int index = 0; index < variant_count; index++)
                     {
+                        if (index >= (int)src_opt->values.size())
+                            break;
                         if (opt->values[index].value > src_opt->values[index].value)
                             opt->values[index] = src_opt->values[index];
                     }
@@ -10835,6 +11254,10 @@ int DynamicPrintConfig::update_values_from_multi_to_multi(DynamicPrintConfig& ne
 
                     for(auto idx : variant_indices){
                         assert(idx < old_count);
+                        //the counts come from the variant columns, the arrays from the options;
+                        //they disagree when a config was authored at a different variant width
+                        if (idx >= old_count || new_variant_index >= (int)opt->values.size())
+                            continue;
                         if (old_values[idx] < opt->values[new_variant_index])
                             opt->values[new_variant_index] = old_values[idx];
                     }
@@ -10865,6 +11288,10 @@ int DynamicPrintConfig::update_values_from_multi_to_multi(DynamicPrintConfig& ne
 
                     for(auto idx : variant_indices){
                         assert(idx < old_count);
+                        //the counts come from the variant columns, the arrays from the options;
+                        //they disagree when a config was authored at a different variant width
+                        if (idx >= old_count || new_variant_index >= (int)opt->values.size())
+                            continue;
                         if (old_values[idx] < opt->values[new_variant_index])
                             opt->values[new_variant_index] = old_values[idx];
                     }
@@ -10895,6 +11322,8 @@ int DynamicPrintConfig::update_values_from_multi_to_multi(DynamicPrintConfig& ne
 
                     for(auto idx : variant_indices){
                         assert(idx < old_count);
+                        if (idx >= old_count || new_variant_index >= (int)opt->values.size())
+                            continue;
                         if (old_values[idx]) //enabled
                             opt->values[new_variant_index] = old_values[idx];
                     }
@@ -10935,6 +11364,15 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
         same_variant_indices.emplace_back(indices);
     }
 
+    //dst_values below is the destination PRINT preset's per-variant row, sized to its own
+    //print_extruder_variant; dst_extruder_variants is the PRINTER's list. They disagree until
+    //the print preset is re-selected, so size the row to the variant count before indexing it.
+    const size_t dst_variant_count = dst_extruder_variants.size();
+    if (dst_variant_count == 0) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: empty destination variant list")%__LINE__;
+        return -1;
+    }
+
     t_config_option_keys keys = this->keys();
     for(auto& key : keys){
         if(key_sets.find(key) == key_sets.end())
@@ -10950,7 +11388,13 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
             {
                 ConfigOptionFloatsNullable* opt = this->option<ConfigOptionFloatsNullable>(key);
                 auto src_values = opt->values;
-                auto dst_values = dst_config.option<ConfigOptionFloatsNullable>(key) ->values;
+                const auto* dst_opt = dst_config.option<ConfigOptionFloatsNullable>(key);
+                if(!dst_opt){
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: %2% missing from destination config")%__LINE__%key;
+                    break;
+                }
+                auto dst_values = dst_opt->values;
+                dst_values.resize(dst_variant_count, ConfigOptionFloatsNullable::nil_value());
                 for(size_t dst_idx =0; dst_idx < same_variant_indices.size(); ++dst_idx){
                     auto& indices = same_variant_indices[dst_idx];
                     if(indices.empty())
@@ -10958,7 +11402,7 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
                     bool has_value = false;
                     double target_value = std::numeric_limits<double>::max();
                     for(auto idx : indices){
-                        if(opt && idx < opt->values.size() && !opt->is_nil(idx)){
+                        if(idx < (int)opt->values.size() && !opt->is_nil(idx)){
                             has_value = true;
                             target_value = std::min(target_value, src_values[idx]);
                         }
@@ -10974,7 +11418,13 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
             {
                 ConfigOptionFloatsOrPercentsNullable* opt = this->option<ConfigOptionFloatsOrPercentsNullable>(key);
                 auto src_values = opt->values;
-                auto dst_values = dst_config.option<ConfigOptionFloatsOrPercentsNullable>(key) ->values;
+                const auto* dst_opt = dst_config.option<ConfigOptionFloatsOrPercentsNullable>(key);
+                if(!dst_opt){
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: %2% missing from destination config")%__LINE__%key;
+                    break;
+                }
+                auto dst_values = dst_opt->values;
+                dst_values.resize(dst_variant_count, ConfigOptionFloatsOrPercentsNullable::nil_value());
                 for(size_t dst_idx =0; dst_idx < same_variant_indices.size(); ++dst_idx){
                     auto& indices = same_variant_indices[dst_idx];
                     if(indices.empty())
@@ -10982,7 +11432,7 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
                     bool has_value = false;
                     FloatOrPercent target_value{9999.f, true};
                     for(auto idx : indices){
-                        if(opt && !opt->is_nil(idx)){
+                        if(idx < (int)opt->values.size() && !opt->is_nil(idx)){
                             has_value = true;
                             target_value = src_values[idx].value < target_value.value ? src_values[idx] : target_value;
                         }
@@ -10998,15 +11448,21 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
             {
                 ConfigOptionBoolsNullable* opt = this->option<ConfigOptionBoolsNullable>(key);
                 auto src_values = opt->values;
-                auto dst_values = dst_config.option<ConfigOptionBoolsNullable>(key) ->values;
+                const auto* dst_opt = dst_config.option<ConfigOptionBoolsNullable>(key);
+                if(!dst_opt){
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: %2% missing from destination config")%__LINE__%key;
+                    break;
+                }
+                auto dst_values = dst_opt->values;
+                dst_values.resize(dst_variant_count, ConfigOptionBoolsNullable::nil_value());
                 for(size_t dst_idx =0; dst_idx < same_variant_indices.size(); ++dst_idx){
                     auto indices = same_variant_indices[dst_idx];
                     if(indices.empty())
                         continue;
                     bool has_value = false;
-                    bool target_value;
+                    bool target_value = false;
                     for(auto idx : indices){
-                        if(opt && !opt->is_nil(idx)){
+                        if(idx < (int)opt->values.size() && !opt->is_nil(idx)){
                             has_value = true;
                             target_value = src_values[idx];
                             break;
@@ -11032,12 +11488,25 @@ int DynamicPrintConfig::update_values_from_multi_to_multi_2(const std::vector<st
 }
 
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
-                          const std::vector<int> &variant_index, int stride)
+                          const std::vector<int> &variant_index, int stride, const VariantOverrideRule &rule)
 {
     // A single-value object or region override applies to every nozzle variant.
     std::vector<int> indices = variant_index;
     if (source.size() == 1 && !source.is_nil(0))
         std::fill(indices.begin(), indices.end(), 0);
+    else if (rule.flow_count > 0 && rule.flow_index.size() == variant_index.size() && source.size() == size_t(rule.flow_count) &&
+             size_t(rule.flow_count) != variant_index.size())
+        // Snapmaker Orca: an override as wide as the preset's shared columns (the flow-only space the
+        // settings tabs write in, PerHeadProcess) is read per slot by the slot's flow type; a slot
+        // whose flow has no column keeps its value.
+        for (size_t slot = 0; slot < indices.size(); ++slot)
+            indices[slot] = rule.flow_index[slot];
+    else if (rule.composed && variant_index.size() > 1 && source.size() == variant_index.size())
+        // Snapmaker Orca: on a composed per-extruder table (PerHeadProcess) an override as wide as the
+        // slot table is already in the printer's column space (update_values_from_multi_to_multi_2),
+        // so it is read slot by slot instead of through the selected preset's columns.
+        for (size_t slot = 0; slot < indices.size(); ++slot)
+            indices[slot] = int(slot);
     target.set_to_index(&source, indices, stride);
 }
 
@@ -11212,10 +11681,26 @@ static void ensure_process_variant_columns(DynamicPrintConfig &config, const Dyn
     variant_opt->values = std::move(variants);
 }
 
+// Snapmaker Orca: writes the 1-based extruder of each resolved slot into the narrowed id option, so
+// later lookups (Print::apply, filament_map_2) match exactly even for flow-only presets whose ids are
+// all equal. A slot_extruders entry of 0 (lookup missed) keeps the narrowed id.
+static void rewrite_slot_ids(DynamicPrintConfig &config, const std::string &id_name, const std::vector<int> &slot_extruders)
+{
+    ConfigOptionInts *id_opt = id_name.empty() ? nullptr : config.option<ConfigOptionInts>(id_name);
+    if (id_opt == nullptr || id_opt->values.size() != slot_extruders.size())
+        return;
+    for (size_t slot = 0; slot < slot_extruders.size(); ++slot)
+        if (slot_extruders[slot] > 0)
+            id_opt->values[slot] = slot_extruders[slot];
+}
+
 std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicPrintConfig& printer_config, int extruder_count, int extruder_nozzle_volume_count, std::vector<std::vector<NozzleVolumeType>>& nv_types,
     std::set<std::string>& key_set, std::string id_name, std::string variant_name, unsigned int stride, unsigned int extruder_id, NozzleVolumeType filament_nvt)
 {
     std::vector<int> variant_index;
+    // Snapmaker Orca: 1-based extruder of every slot the multi-slot branch emits, 0 where the lookup
+    // missed (see rewrite_slot_ids).
+    std::vector<int> slot_extruders;
     int variant_count = extruder_count;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: extruder_count %2%, extruder_nozzle_volume_count %3%")%__LINE__ %extruder_count %extruder_nozzle_volume_count;
@@ -11246,8 +11731,16 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
         variant_index[0] = get_index_for_extruder(extruder_id, id_name, extruder_type, nozzle_volume_type, variant_name);
 
         if (variant_index[0] < 0) {
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, for filament")
-                % __LINE__ % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
+            // Snapmaker Orca: a filament preset with a single column on a head of another flow type
+            // is ordinary use (every preset without High Flow values); the first column is what the
+            // narrowing below falls back to. Only a multi-column preset that still misses is an error.
+            const auto *variant_opt = dynamic_cast<const ConfigOptionStrings*>(this->option(variant_name));
+            if (variant_opt != nullptr && variant_opt->size() == 1)
+                BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", Line %1%: single-column preset has no column for extruder_type %2%, nozzle_volume_type %3%, its only column is used")
+                    % __LINE__ % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
+            else
+                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, for filament")
+                    % __LINE__ % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
         }
 
         variant_count = 1;
@@ -11275,10 +11768,24 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                     nozzle_volume_type = nv_types[e_index][nvt_index];
                 //variant index
                 int slot_index = get_index_for_extruder(e_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
+                slot_extruders.push_back(slot_index < 0 ? 0 : e_index + 1);
                 if (slot_index < 0) {
-                    // Orca: This is expected during transient UI states (e.g. popup windows),
-                    // fall back to 0 silently.
-                    slot_index = 0;
+                    // Snapmaker Orca: a process table composed per tool head (PerHeadProcess) holds
+                    // one column per slot; a miss means a head reads another head's values.
+                    if (const auto *composed = this->option<ConfigOptionInts>("print_extruder_source_column");
+                        composed != nullptr && !composed->values.empty() && id_name == "print_extruder_id")
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the composed process table has no column for extruder %2%, extruder_type %3%, nozzle_volume_type %4%; its first column is used")
+                            % __LINE__ % (e_index + 1) % s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type];
+                    // Snapmaker Orca: a tool head a per-head layout (PerHeadProcess) has no column for
+                    // takes the shared column of its flow ("All extruders"), not head 1's value.
+                    if (id_name == "print_extruder_id" && PerHeadProcess::is_wide(*this)) {
+                        slot_index = PerHeadProcess::shared_column(*this, nozzle_volume_type);
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: the process layout has no column for extruder %2%, nozzle_volume_type %3%; its shared column %4% is used")
+                            % __LINE__ % (e_index + 1) % s_keys_names_NozzleVolumeType[nozzle_volume_type] % slot_index;
+                    } else
+                        // Orca: This is expected during transient UI states (e.g. popup windows),
+                        // fall back to 0 silently.
+                        slot_index = 0;
                 }
                 variant_index.push_back(slot_index);
             }
@@ -11410,7 +11917,34 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
         }
     }
 
+    // Only the multi-slot branch emits one slot per extruder; the single-slot branch narrows one
+    // filament preset and has no id table to keep aligned.
+    if (!slot_extruders.empty() && key_set.count(id_name) > 0)
+        rewrite_slot_ids(*this, id_name, slot_extruders);
+
     return variant_index;
+}
+
+// Regathers a vector option's values through per-slot source indices (one input index per
+// output slot). Out-of-range indices keep the first value, matching get_at's fallback.
+template<typename OptType, typename ValueType>
+static void gather_option_values(const char *caller, const std::string &key, OptType *opt, const std::vector<int> &slot_param_indices)
+{
+    if (!opt || opt->values.empty()) {
+        BOOST_LOG_TRIVIAL(warning) << caller << boost::format(", Line %1%: option %2% not found or empty, skipping")%__LINE__%key;
+        return;
+    }
+    std::vector<ValueType> new_values;
+    new_values.reserve(slot_param_indices.size());
+    for (int idx : slot_param_indices) {
+        if (idx < 0 || static_cast<size_t>(idx) >= opt->values.size()) {
+            BOOST_LOG_TRIVIAL(warning) << caller << boost::format(", Line %1%: option %2% slot index %3% out of range, keeping first value")%__LINE__%key%idx;
+            new_values.emplace_back(opt->values.front());
+        }
+        else
+            new_values.emplace_back(opt->values[idx]);
+    }
+    opt->values = std::move(new_values);
 }
 
 void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filaments(DynamicPrintConfig& printer_config, int extruder_count, int extruder_nozzle_volume_count, std::set<std::string>& key_set, std::string id_name, std::string variant_name)
@@ -11459,8 +11993,16 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
             //variant index
             variant_index[f_index] = get_index_for_extruder(f_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
             if (variant_index[f_index] < 0) {
-                BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, filament_index %4%, extruder index %5%")
-                    %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
+                // Snapmaker Orca: a filament that owns exactly one column (no High Flow values) on a
+                // head of another flow type is ordinary use and resolves to that column below; only
+                // a filament with several columns, or none, that still misses is an error.
+                const bool single_column = opt_ids != nullptr && std::count(opt_ids->values.begin(), opt_ids->values.end(), f_index + 1) == 1;
+                if (single_column)
+                    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", Line %1%: filament %4% has a single column, used for extruder_type %2%, nozzle_volume_type %3%, extruder index %5%")
+                        %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
+                else
+                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, filament_index %4%, extruder index %5%")
+                        %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
                 //for some updates happens in a invalid state(caused by popup window)
                 //we need to avoid crash (recovery below is the intended behavior; no debug abort)
                 variant_index[f_index] = 0;
@@ -11489,155 +12031,18 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: can not find opt define for %2%")%__LINE__%key;
                 continue;
             }
+            // An empty option has no first value to fall back on; give it one registered default per filament.
+            if (auto *vec = dynamic_cast<ConfigOptionVectorBase*>(this->option(key)); vec && vec->empty() && optdef->default_value)
+                vec->resize(filament_count, optdef->default_value.get());
 
             switch (optdef->type) {
-                case coStrings:
-                {
-                    ConfigOptionStrings * opt = this->option<ConfigOptionStrings>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<std::string> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coInts:
-                {
-                    ConfigOptionInts * opt = this->option<ConfigOptionInts>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<int> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coFloats:
-                {
-                    ConfigOptionFloats * opt = this->option<ConfigOptionFloats>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<double> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coPercents:
-                {
-                    ConfigOptionPercents * opt = this->option<ConfigOptionPercents>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<double> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coFloatsOrPercents:
-                {
-                    ConfigOptionFloatsOrPercents * opt = this->option<ConfigOptionFloatsOrPercents>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<FloatOrPercent> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coBools:
-                {
-                    ConfigOptionBools * opt = this->option<ConfigOptionBools>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<unsigned char> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
-                case coEnums:
-                {
-                    ConfigOptionEnumsGeneric * opt = this->option<ConfigOptionEnumsGeneric>(key);
-                    if (!opt) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found, skipping")%__LINE__%key;
-                        break;
-                    }
-                    std::vector<int> new_values;
-
-                    new_values.resize(filament_count);
-                    for (int f_index = 0; f_index < filament_count; f_index++)
-                    {
-                        if (variant_index[f_index] < 0 || static_cast<size_t>(variant_index[f_index]) >= opt->size()) {
-                            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% variant index %3% out of range, skipping")%__LINE__%key%variant_index[f_index];
-                            continue;
-                        }
-                        new_values[f_index] = opt->get_at(variant_index[f_index]);
-                    }
-                    opt->values = new_values;
-                    break;
-                }
+                case coStrings:          gather_option_values<ConfigOptionStrings, std::string>(__FUNCTION__, key, this->option<ConfigOptionStrings>(key), variant_index); break;
+                case coInts:             gather_option_values<ConfigOptionInts, int>(__FUNCTION__, key, this->option<ConfigOptionInts>(key), variant_index); break;
+                case coFloats:           gather_option_values<ConfigOptionFloats, double>(__FUNCTION__, key, this->option<ConfigOptionFloats>(key), variant_index); break;
+                case coPercents:         gather_option_values<ConfigOptionPercents, double>(__FUNCTION__, key, this->option<ConfigOptionPercents>(key), variant_index); break;
+                case coFloatsOrPercents: gather_option_values<ConfigOptionFloatsOrPercents, FloatOrPercent>(__FUNCTION__, key, this->option<ConfigOptionFloatsOrPercents>(key), variant_index); break;
+                case coBools:            gather_option_values<ConfigOptionBools, unsigned char>(__FUNCTION__, key, this->option<ConfigOptionBools>(key), variant_index); break;
+                case coEnums:            gather_option_values<ConfigOptionEnumsGeneric, int>(__FUNCTION__, key, this->option<ConfigOptionEnumsGeneric>(key), variant_index); break;
                 default:
                     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: unsupported option type for %2%")%__LINE__%key;
                     break;
@@ -11654,28 +12059,6 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
             const_cast<ConfigOptionInts*>(opt_ids)->values = new_values;
         }
     }
-}
-
-// Regathers a vector option's values through per-slot source indices (one input index per
-// output slot). Out-of-range indices keep the first value, matching get_at's fallback.
-template<typename OptType, typename ValueType>
-static void gather_option_values(const std::string &key, OptType *opt, const std::vector<int> &slot_param_indices)
-{
-    if (!opt || opt->values.empty()) {
-        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% not found or empty, skipping")%__LINE__%key;
-        return;
-    }
-    std::vector<ValueType> new_values;
-    new_values.reserve(slot_param_indices.size());
-    for (int idx : slot_param_indices) {
-        if (idx < 0 || static_cast<size_t>(idx) >= opt->values.size()) {
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: option %2% slot index %3% out of range, keeping first value")%__LINE__%key%idx;
-            new_values.emplace_back(opt->values.front());
-        }
-        else
-            new_values.emplace_back(opt->values[idx]);
-    }
-    opt->values = std::move(new_values);
 }
 
 void DynamicPrintConfig::update_filament_config_values_for_multiple_extruders(DynamicPrintConfig& printer_config,
@@ -11772,13 +12155,13 @@ void DynamicPrintConfig::update_filament_config_values_for_multiple_extruders(Dy
             continue;
         }
         switch (optdef->type) {
-            case coStrings:          gather_option_values<ConfigOptionStrings, std::string>(key, this->option<ConfigOptionStrings>(key), slot_param_indices); break;
-            case coInts:             gather_option_values<ConfigOptionInts, int>(key, this->option<ConfigOptionInts>(key), slot_param_indices); break;
-            case coFloats:           gather_option_values<ConfigOptionFloats, double>(key, this->option<ConfigOptionFloats>(key), slot_param_indices); break;
-            case coPercents:         gather_option_values<ConfigOptionPercents, double>(key, this->option<ConfigOptionPercents>(key), slot_param_indices); break;
-            case coFloatsOrPercents: gather_option_values<ConfigOptionFloatsOrPercents, FloatOrPercent>(key, this->option<ConfigOptionFloatsOrPercents>(key), slot_param_indices); break;
-            case coBools:            gather_option_values<ConfigOptionBools, unsigned char>(key, this->option<ConfigOptionBools>(key), slot_param_indices); break;
-            case coEnums:            gather_option_values<ConfigOptionEnumsGeneric, int>(key, this->option<ConfigOptionEnumsGeneric>(key), slot_param_indices); break;
+            case coStrings:          gather_option_values<ConfigOptionStrings, std::string>(__FUNCTION__, key, this->option<ConfigOptionStrings>(key), slot_param_indices); break;
+            case coInts:             gather_option_values<ConfigOptionInts, int>(__FUNCTION__, key, this->option<ConfigOptionInts>(key), slot_param_indices); break;
+            case coFloats:           gather_option_values<ConfigOptionFloats, double>(__FUNCTION__, key, this->option<ConfigOptionFloats>(key), slot_param_indices); break;
+            case coPercents:         gather_option_values<ConfigOptionPercents, double>(__FUNCTION__, key, this->option<ConfigOptionPercents>(key), slot_param_indices); break;
+            case coFloatsOrPercents: gather_option_values<ConfigOptionFloatsOrPercents, FloatOrPercent>(__FUNCTION__, key, this->option<ConfigOptionFloatsOrPercents>(key), slot_param_indices); break;
+            case coBools:            gather_option_values<ConfigOptionBools, unsigned char>(__FUNCTION__, key, this->option<ConfigOptionBools>(key), slot_param_indices); break;
+            case coEnums:            gather_option_values<ConfigOptionEnumsGeneric, int>(__FUNCTION__, key, this->option<ConfigOptionEnumsGeneric>(key), slot_param_indices); break;
             default:
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", Line %1%: unsupported option type for %2%")%__LINE__%key;
                 break;
@@ -11900,6 +12283,34 @@ void DynamicPrintConfig::update_non_diff_values_to_base_config(DynamicPrintConfi
                 }
             }
         }
+
+        // Snapmaker Orca: rule of update_diff_values_to_child_config() for a project with fewer printer
+        // columns than its system preset: each unmatched system column takes the project's only column
+        // of the same extruder, so edited values survive a flow type switch.
+        if (extruder_id_name == "printer_extruder_id" && !cur_extruder_ids.empty() && !target_extruder_ids.empty()
+            && cur_variant_count < target_variant_count) {
+            bool cur_variants_known = true;
+            for (const std::string &variant : cur_extruder_variants)
+                if (std::find(target_extruder_variants.begin(), target_extruder_variants.end(), variant) == target_extruder_variants.end()) {
+                    cur_variants_known = false;
+                    break;
+                }
+            if (cur_variants_known) {
+                for (int i = 0; i < target_variant_count; i++) {
+                    if (variant_index[i] != -1)
+                        continue;
+                    int cur_column = -1;
+                    int cur_columns_of_extruder = 0;
+                    for (int j = 0; j < cur_variant_count; j++)
+                        if (cur_extruder_ids[j] == target_extruder_ids[i]) {
+                            cur_column = j;
+                            ++cur_columns_of_extruder;
+                        }
+                    if (cur_columns_of_extruder == 1)
+                        variant_index[i] = cur_column;
+                }
+            }
+        }
     }
 
     for (auto& opt : keys) {
@@ -11997,6 +12408,18 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
     int cur_variant_count = cur_extruder_variants.size();
     int target_variant_count = target_extruder_variants.size();
 
+    // Snapmaker Orca: a user process preset with per-head values is wider than its parent and has
+    // shared columns (id 0, PerHeadProcess). The parent is relaid out like the child first, so the
+    // (variant, id) match below is exact per column; an unknown variant takes its flow's shared column.
+    if (extruder_id_name == "print_extruder_id" && target_variant_count > cur_variant_count && PerHeadProcess::is_wide(new_config)) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": a process preset with %1% columns and values set per extruder inherits a parent of %2%; the parent is laid out like the child")
+            % target_variant_count % cur_variant_count;
+        PerHeadProcess::relayout(*this, PerHeadProcess::layout_of(new_config));
+        cur_extruder_ids      = this->option<ConfigOptionInts>(extruder_id_name)->values;
+        cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
+        cur_variant_count     = cur_extruder_variants.size();
+    }
+
     if (cur_variant_count > 0)
         variant_index.resize(cur_variant_count, -1);
     else
@@ -12025,6 +12448,34 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
                 {
                     variant_index[i] = j;
                     break;
+                }
+            }
+        }
+
+        // Snapmaker Orca: a user printer preset with fewer columns than its parent and no unknown
+        // variant fills each unmatched parent column from its only column of the same extruder, so
+        // its values survive a flow type switch. Not for filament/process presets (tuned per column).
+        if (extruder_id_name == "printer_extruder_id" && !cur_extruder_ids.empty() && !target_extruder_ids.empty()
+            && target_variant_count < cur_variant_count) {
+            bool child_variants_known = true;
+            for (const std::string &variant : target_extruder_variants)
+                if (std::find(cur_extruder_variants.begin(), cur_extruder_variants.end(), variant) == cur_extruder_variants.end()) {
+                    child_variants_known = false;
+                    break;
+                }
+            if (child_variants_known) {
+                for (int i = 0; i < cur_variant_count; i++) {
+                    if (variant_index[i] != -1)
+                        continue;
+                    int child_column = -1;
+                    int child_columns_of_extruder = 0;
+                    for (int j = 0; j < target_variant_count; j++)
+                        if (target_extruder_ids[j] == cur_extruder_ids[i]) {
+                            child_column = j;
+                            ++child_columns_of_extruder;
+                        }
+                    if (child_columns_of_extruder == 1)
+                        variant_index[i] = child_column;
                 }
             }
         }
@@ -12104,7 +12555,7 @@ void compute_filament_override_value(const std::string& opt_key, const ConfigOpt
 }
 
 
-void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride)
+void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPrintConfig& dest_config, std::vector<int> variant_index, std::set<std::string>& key_set1, int stride, const VariantOverrideRule &rule)
 {
     if (variant_index.size() > 0) {
         const t_config_option_keys &keys = dest_config.keys();
@@ -12117,7 +12568,7 @@ void update_static_print_config_from_dynamic(ConfigBase& config, const DynamicPr
                 else {
                     ConfigOptionVectorBase* opt_vec_src = static_cast<ConfigOptionVectorBase*>(opt_src);
                     const ConfigOptionVectorBase* opt_vec_dest = static_cast<const ConfigOptionVectorBase*>(opt_dest);
-                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride);
+                    set_variant_override(*opt_vec_src, *opt_vec_dest, variant_index, stride, rule);
                 }
             }
         }
@@ -12298,22 +12749,45 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
             "initial_layer_line_width",
             "skin_infill_line_width",
             "skeleton_infill_line_width"};
+        // Snapmaker Orca: with per-head columns (print_extruder_id 1..N) each width is checked against
+        // its head's nozzle, otherwise against the largest / smallest nozzle. Locked Zag widths are scalar.
+        const std::vector<int> &column_ids = cfg.print_extruder_id.values;
+        std::set<int>           distinct_ids;
+        for (int id : column_ids)
+            if (id > 0)
+                distinct_ids.insert(id);
+        const bool per_head = distinct_ids.size() > 1;
         for (size_t i = 0; i < sizeof(widths) / sizeof(widths[i]); ++ i) {
             std::string key(widths[i]);
-            double abs_width = cfg.get_abs_value(key, max_nozzle_diameter);
-            // A percentage bridge width is relative to the nozzle it prints with, so it fits every
-            // nozzle of a multi-nozzle printer as long as it stays within 100 %; an absolute width
-            // has to fit the smallest nozzle.
-            const ConfigOptionFloatOrPercent *bridge_width_opt = key == "bridge_line_width" ? cfg.option<ConfigOptionFloatOrPercent>(key) : nullptr;
-            double allowed_max = (key == "bridge_line_width") ?
-                ((bridge_width_opt != nullptr && bridge_width_opt->percent) ? max_nozzle_diameter : min_nozzle_diameter) :
-                MAX_LINE_WIDTH_MULTIPLIER * max_nozzle_diameter;
-            if (abs_width > allowed_max) {
-                if (key == "bridge_line_width")
-                    error_message.emplace(key, L("Bridge line width must not exceed nozzle diameter: ") + std::to_string(abs_width));
-                else
-                    error_message.emplace(key, L("too large line width ") + std::to_string(abs_width));
-                //return std::string("Too Large line width: ") + key;
+            const ConfigOption *raw = cfg.option(key);
+            size_t columns = 1;
+            if (raw != nullptr && raw->type() == coFloatsOrPercents)
+                columns = std::max<size_t>(1, static_cast<const ConfigOptionVectorBase *>(raw)->size());
+            for (size_t column = 0; column < columns; ++column) {
+                double nozzle_max = max_nozzle_diameter, nozzle_min = min_nozzle_diameter;
+                if (per_head && raw != nullptr && raw->type() == coFloatsOrPercents && column < column_ids.size() && column_ids[column] >= 1 &&
+                    size_t(column_ids[column]) - 1 < cfg.nozzle_diameter.values.size())
+                    nozzle_max = nozzle_min = cfg.nozzle_diameter.values[size_t(column_ids[column]) - 1];
+                double abs_width = cfg.get_abs_value_at(key, column, nozzle_max);
+                // A percentage bridge width is relative to the nozzle it prints with, so it fits every
+                // nozzle of a multi-nozzle printer as long as it stays within 100 %; an absolute width
+                // has to fit the smallest nozzle.
+                bool percent = false;
+                if (raw != nullptr && raw->type() == coFloatsOrPercents)
+                    percent = Flow::width_at(*static_cast<const ConfigOptionVector<FloatOrPercent> *>(raw), column).percent;
+                else if (raw != nullptr && raw->type() == coFloatOrPercent)
+                    percent = static_cast<const ConfigOptionFloatOrPercent *>(raw)->percent;
+                double allowed_max = (key == "bridge_line_width") ?
+                    (percent ? nozzle_max : nozzle_min) :
+                    MAX_LINE_WIDTH_MULTIPLIER * nozzle_max;
+                if (abs_width > allowed_max) {
+                    if (key == "bridge_line_width")
+                        error_message.emplace(key, L("Bridge line width must not exceed nozzle diameter: ") + std::to_string(abs_width));
+                    else
+                        error_message.emplace(key, L("too large line width ") + std::to_string(abs_width));
+                    //return std::string("Too Large line width: ") + key;
+                    break;
+                }
             }
         }
     }
@@ -12338,6 +12812,14 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
         case coPercents:
             for (double v : static_cast<const ConfigOptionVector<double>*>(opt)->values)
                 if (!optdef->is_value_valid(v)) {
+                    out_of_range = true;
+                    break;
+                }
+            break;
+        case coFloatsOrPercents:
+            // Snapmaker Orca: the per tool head line widths; a nil column is no value.
+            for (const FloatOrPercent &v : static_cast<const ConfigOptionVector<FloatOrPercent>*>(opt)->values)
+                if (!std::isnan(v.value) && !optdef->is_value_valid(v.value)) {
                     out_of_range = true;
                     break;
                 }
@@ -12486,13 +12968,11 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def = this->add("load_defaultfila", coBool);
     def->label = L("Load default filaments");
     def->tooltip = L("Load first filament as default for those not loaded.");
-    def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("min_save", coBool);
     def->label = L("Minimum save");
     def->tooltip = L("Export 3MF with minimum size.");
-    def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("mtcpp", coInt);
@@ -12515,10 +12995,22 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def->tooltip = L("Do not run any validity checks, such as G-code path conflicts check.");
     def->set_default_value(new ConfigOptionBool(false));
 
+    // --strict turns the non-critical slicing warnings the CLI otherwise only logs into a
+    // failed run, and records strict_mode in result.json so consumers can tell the modes apart.
+    def = this->add("strict", coBool);
+    def->label = L("Strict mode");
+    def->tooltip = L("Exit non-zero when slicing raises a non-critical warning that is "
+                     "otherwise only logged, such as a model that needs support while "
+                     "support is disabled. Use this in CI or scripted pipelines that should "
+                     "never ship a subtly broken slice. Each such warning is also listed "
+                     "with a stable class in the `warnings` array of result.json, which is "
+                     "written on Linux only. Cannot be combined with --no-check, which skips "
+                     "the support check.");
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("normative_check", coBool);
     def->label = L("Normative check");
     def->tooltip = L("Check the normative items.");
-    def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(true));
 
     /*def = this->add("help_fff", coBool);
@@ -12536,9 +13028,29 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def->tooltip = L("This outputs the model\u2019s information.");
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("inspect_mesh", coBool);
+    def->label = L("Inspect mesh (JSON to stdout)");
+    def->tooltip = L("Print a JSON summary of each loaded object to stdout, then exit: its bounding boxes and the "
+                     "convex hull faces it can be laid on, with their normals, areas and centers. These are the faces "
+                     "the --ground-* options choose from. Machine-readable alternative to --info.");
+    def->set_default_value(new ConfigOptionBool(false));
+
+    // --inspect-paint \u2014 dump the per-facet enforcer/blocker/extruder/fuzzy
+    // paint state stored on the loaded model (supports, seam, MMU color,
+    // fuzzy-skin) as JSON. Read-only; lets CI / scripted / AI tooling
+    // reason about existing paint on a .3mf without loading the GUI.
+    def = this->add("inspect_paint", coBool);
+    def->label = L("Inspect paint (JSON to stdout)");
+    def->tooltip = L("Print a structured JSON summary of every painted layer "
+                     "(supports, seam, MMU color, fuzzy-skin) already stored on "
+                     "the loaded model \u2014 per-state facet count, surface area, "
+                     "and mesh-local bounding box \u2014 then exit. Machine-readable "
+                     "alternative to opening the paint gizmos in the GUI.");
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("export_settings", coString);
     def->label = L("Export Settings");
-    def->tooltip = L("This exports settings to a file.");
+    def->tooltip = L("This exports settings to a file. Use - to write them to stdout.");
     def->cli_params = "settings.json";
     def->set_default_value(new ConfigOptionString("output.json"));
 
@@ -12654,6 +13166,34 @@ CLITransformConfigDef::CLITransformConfigDef()
     def->tooltip = L("Rotation angle around the Y axis in degrees.");
     def->sidetext = u8"°";	// degrees, don't need translation
     def->set_default_value(new ConfigOptionFloat(0));
+
+    // The --ground-* options choose from the faces the "Lay on Face" gizmo offers. Like the other
+    // transforms they run in command-line order, so they see the rotations given before them.
+    def = this->add("ground_largest_face", coBool);
+    def->label = L("Ground largest face");
+    def->tooltip = L("Lay each object on the largest face of its convex hull and drop it onto the bed. Of equally large "
+                     "faces, the one already facing down is kept. Objects without a face large enough to rest on are left "
+                     "as they are. Transforms run in command-line order, so rotations given before this option are respected. "
+                     "--orient 1 runs after all transforms and replaces the orientation.");
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("ground_face_normal", coString);
+    def->label = L("Ground face by normal");
+    def->tooltip = L("Lay each object on the convex hull face whose outward normal is closest to the direction NX,NY,NZ "
+                     "and drop it onto the bed. The direction is in object coordinates, which include the rotations given "
+                     "before this option and match the plate axes unless the input file rotates the object. For example, "
+                     "1,0,0 stands the object on its +X side. --orient 1 runs after all transforms and replaces the orientation.");
+    def->cli_params = "NX,NY,NZ";
+    def->set_default_value(new ConfigOptionString(""));
+
+    def = this->add("ground_face_point", coString);
+    def->label = L("Ground face at point");
+    def->tooltip = L("Lay each object on the convex hull face that contains the point X,Y,Z and drop it onto the bed. "
+                     "The point is in object coordinates, which include the rotations given before this option; "
+                     "--inspect-mesh reports face centers in them. Objects without such a face are left as they are, and "
+                     "the run fails if no object has one. --orient 1 runs after all transforms and replaces the orientation.");
+    def->cli_params = "X,Y,Z";
+    def->set_default_value(new ConfigOptionString(""));
 
     def = this->add("scale", coFloat);
     def->label = L("Scale");
@@ -12785,7 +13325,7 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->cli_params = "level";
     def->set_default_value(new ConfigOptionInt(1));
 
-    def = this->add("logfile", coInt);
+    def = this->add("logfile", coString);
     def->label = L("Log file");
     def->tooltip = L("Redirects debug logging to file.\n");
     def->cli_params = "file";
@@ -12825,6 +13365,12 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def->tooltip = L("If enabled, Arrange will allow rotation when placing objects.");
     def->set_default_value(new ConfigOptionBool(true));
 
+    def = this->add("align_to_y_axis", coBool);
+    def->label = L("Align to Y axis when arranging");
+    def->tooltip = L("If enabled, Arrange will turn each object so its long side runs along the Y axis before placing it. "
+                     "When not given, it is on for i3 printers and off for the others, as in the GUI.");
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("avoid_extrusion_cali_region", coBool);
     def->label = L("Avoid extrusion calibrate region when arranging");
     def->tooltip = L("If enabled, Arrange will avoid extrusion calibrate region when placing objects.");
@@ -12833,7 +13379,6 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def = this->add("skip_modified_gcodes", coBool);
     def->label = L("Skip modified G-code in 3MF");
     def->tooltip = L("Skip the modified G-code in 3MF from printer or filament presets.");
-    def->cli_params = "option";
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("makerlab_name", coString);
@@ -12863,14 +13408,12 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     def = this->add("allow_newer_file", coBool);
     def->label = L("Allow 3MF with newer version to be sliced");
     def->tooltip = L("Allow 3MF with newer version to be sliced.");
-    def->cli_params = "option";
     def->set_default_value(new  ConfigOptionBool(false));
 
     def = this->add("allow_mix_temp", coBool);
     // internal use only, don't need translation
     def->label = "Allow filaments with high/low temperature to be printed together";
     def->tooltip = "Allow filaments with high/low temperature to be printed together.";
-    def->cli_params = "option";
     def->set_default_value(new  ConfigOptionBool(false));
 }
 
@@ -13040,9 +13583,25 @@ PrintStatisticsConfigDef::PrintStatisticsConfigDef()
     def->label = L("Used filament");
     def->tooltip = L("Total length of filament used in the print.");
 
-    def = this->add("print_time_sec", coString);
-    def->label = L("Print time (seconds)");
+    def = this->add("print_time_total_sec", coString);
+    def->label = L("Print time (total seconds)");
     def->tooltip = L("Total estimated print time in seconds. Replaced with actual value during post-processing.");
+
+    def = this->add("print_time_day", coString);
+    def->label = L("Print time (days component)");
+    def->tooltip = L("Estimated print time day component (normal mode). Replaced with actual value during post-processing.");
+
+    def = this->add("print_time_hour", coString);
+    def->label = L("Print time (hours component)");
+    def->tooltip = L("Estimated print time hour component (normal mode). Replaced with actual value during post-processing.");
+
+    def = this->add("print_time_minute", coString);
+    def->label = L("Print time (minutes component)");
+    def->tooltip = L("Estimated print time minute component (normal mode). Replaced with actual value during post-processing.");
+
+    def = this->add("print_time_sec", coString);
+    def->label = L("Print time (seconds component)");
+    def->tooltip = L("Estimated print time second component (normal mode). Replaced with actual value during post-processing.");
 
     def = this->add("used_filament_length", coString);
     def->label = L("Filament length (meters)");
@@ -13435,9 +13994,16 @@ float get_real_skirt_dist(const DynamicPrintConfig& cfg) {
         loops = 1;
     }
 
-    float width = cfg.opt_float("initial_layer_line_width");
+    // Snapmaker Orca: the line widths are columns per tool head; the arrange spacing reads the
+    // first column's number as the scalar read did (a percent value is read as a number here,
+    // the pre-existing quirk of this function).
+    auto raw_width = [&cfg](const char *key) -> float {
+        const auto *widths = cfg.opt<ConfigOptionFloatsOrPercentsNullable>(key);
+        return widths == nullptr || widths->empty() ? 0.f : float(Flow::width_at(*widths, 0).value);
+    };
+    float width = raw_width("initial_layer_line_width");
     if (width <= 0.f) {
-        width = cfg.opt_float("line_width");
+        width = raw_width("line_width");
     }
     if (width <= 0.f) {
         auto* nd = cfg.opt<ConfigOptionFloats>("nozzle_diameter");

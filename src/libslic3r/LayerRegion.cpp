@@ -116,19 +116,26 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, unsigned int filament
 Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_layer_width, unsigned int filament_id) const
 {
     const PrintConfig          &print_config = m_layer->object()->print()->config();
+    // The filament that actually prints (filament_id, when given), which may differ from the role's
+    // default filament mapping.
+    const unsigned int filament = filament_id > 0 ? filament_id : this->extruder(role);
+    // Snapmaker Orca: the line widths are columns per tool head, read at the column of the head
+    // whose nozzle resolves the width (Print::width_slot; column and nozzle name one head).
+    const size_t column = m_layer->object()->print()->width_slot(filament);
     ConfigOptionFloatOrPercent config_width;
-    if (use_initial_layer_width && print_config.initial_layer_line_width.value > 0) {
-        config_width = print_config.initial_layer_line_width;
+    const ConfigOptionFloatOrPercent initial_layer_width = Flow::width_at(print_config.initial_layer_line_width, column);
+    if (use_initial_layer_width && initial_layer_width.value > 0) {
+        config_width = initial_layer_width;
     } else if (role == frExternalPerimeter) {
-        config_width = m_region->config().outer_wall_line_width;
+        config_width = Flow::width_at(m_region->config().outer_wall_line_width, column);
     } else if (role == frPerimeter) {
-        config_width = m_region->config().inner_wall_line_width;
+        config_width = Flow::width_at(m_region->config().inner_wall_line_width, column);
     } else if (role == frInfill) {
-        config_width = m_region->config().sparse_infill_line_width;
+        config_width = Flow::width_at(m_region->config().sparse_infill_line_width, column);
     } else if (role == frSolidInfill) {
-        config_width = m_region->config().internal_solid_infill_line_width;
+        config_width = Flow::width_at(m_region->config().internal_solid_infill_line_width, column);
     } else if (role == frTopSolidInfill) {
-        config_width = m_region->config().top_surface_line_width;
+        config_width = Flow::width_at(m_region->config().top_surface_line_width, column);
     } else {
         BOOST_LOG_TRIVIAL(error) << "Unknown role in LayerRegion::flow: " << int(role);
         assert(false);
@@ -136,11 +143,11 @@ Flow LayerRegion::flow(FlowRole role, double layer_height, bool use_initial_laye
     }
 
     if (config_width.value == 0)
-        config_width = m_layer->object()->config().line_width;
+        config_width = Flow::width_at(m_layer->object()->config().line_width, column);
 
     // Width resolves against the nozzle of the filament that actually prints (filament_id, when given),
     // which may differ from the role's default filament mapping.
-    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
+    const auto nozzle_diameter = float(print_config.nozzle_diameter.get_at(filament - 1));
     return Flow::new_from_config_width(role, config_width, nozzle_diameter, float(layer_height));
 }
 
@@ -153,8 +160,11 @@ Flow LayerRegion::bridging_flow(FlowRole role, bool thick_bridge, unsigned int f
     // The nozzle resolves against the filament that actually prints (filament_id, when given), which may
     // differ from the role's default filament mapping.
     // Here this->extruder(role) - 1 may underflow to MAX_INT, but then the get_at() will fall back to zero'th element, so everything is all right.
-    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at((filament_id > 0 ? filament_id : this->extruder(role)) - 1));
-    const ConfigOptionFloatOrPercent& bridge_width_opt = region_config.bridge_line_width;
+    const unsigned int filament = filament_id > 0 ? filament_id : this->extruder(role);
+    auto nozzle_diameter = float(print_object.print()->config().nozzle_diameter.get_at(filament - 1));
+    // Snapmaker Orca: the bridge line width is a column per tool head (Print::width_slot).
+    const size_t column = print_object.print()->width_slot(filament);
+    const ConfigOptionFloatOrPercent  bridge_width_opt  = Flow::width_at(region_config.bridge_line_width, column);
     const double                      bridge_width      = bridge_width_opt.get_abs_value(nozzle_diameter);
     const bool                        has_bridge_width  = bridge_width > 0.;
     const double                      bridge_flow_ratio = region_config.bridge_flow;
@@ -278,11 +288,6 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
             no_overlap
         );
 
-        // Detect overhangs / bridges against the layer below the whole combined group or wall run
-        // (wall_combined_lower_layer() == lower_layer for regular regions).
-        if (lower_layer != nullptr)
-            // Cummulative sum of polygons over all the regions.
-            g.lower_slices = &lower_layer->lslices;
         if (this->layer()->upper_layer != NULL) {
             g.upper_slices             = &this->layer()->upper_layer->lslices;
             g.upper_slices_same_region = &this->layer()->upper_layer->get_region(region_id)->slices;
@@ -299,6 +304,16 @@ void LayerRegion::make_perimeters(const SurfaceCollection &slices, const LayerRe
         g.sparse_infill_flow    = this->flow(frInfill, height);
         // Gap fill dispatches to the outer wall filament (LayerTools::extruder()); resolve its width against its nozzle.
         g.gap_fill_flow         = this->flow(frSolidInfill, height, (unsigned int)std::max(0, perimeter_config.outer_wall_filament_id.value));
+
+        // Cumulative sum of polygons over all the regions, less what the lower layer could not print.
+        // ORCA: the overhang reference is the layer below the whole combined group or wall run
+        // (wall_combined_lower_layer() == lower_layer for regular regions). Declared after g so it
+        // outlives the process_*() calls below.
+        ExPolygons lower_slices;
+        if (lower_layer != nullptr) {
+            lower_slices   = g.printable_slices(lower_layer->lslices);
+            g.lower_slices = &lower_slices;
+        }
 
         if (this->layer()->object()->config().wall_generator.value == PerimeterGeneratorType::Arachne && !spiral_mode)
             g.process_arachne();

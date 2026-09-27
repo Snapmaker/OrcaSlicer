@@ -318,7 +318,7 @@ bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::v
     auto url = make_url("printer/objects/query");
     auto http = Http::post(std::move(url));
 
-    for (const auto pair : targets) {
+    for (const auto& pair : targets) {
         std::string value = "";
         for (size_t i = 0; i < pair.second.size(); ++i) {
             if (i != 0) {
@@ -362,7 +362,7 @@ bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& 
     
     bool res = true;
     std::string param = "?script=";
-    for (const auto code : codes) {
+    for (const auto& code : codes) {
         param += "\n";
         param += code;        
         wcp_loger.add_log("adding G-code: " + code, false, "", "Moonraker_Mqtt", "info");

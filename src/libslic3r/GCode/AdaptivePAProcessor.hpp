@@ -78,6 +78,9 @@ private:
     double m_current_feedrate; ///< Current, latest feedrate.
     int m_last_extruder_id; ///< Last used extruder ID.
 
+    size_t pressure_advance_column(int filament_id) const; ///< Column of the filament in the per-variant pressure advance arrays.
+    double default_pressure_advance(int filament_id) const; ///< Pressure advance of the filament preset, 0 when disabled.
+
     std::regex m_pa_change_pattern; ///< Regular expression to detect PA_CHANGE pattern.
     std::regex m_g1_f_pattern; ///< Regular expression to detect G1 F pattern.
     std::smatch m_match; ///< Match results for regular expressions.

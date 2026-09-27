@@ -115,6 +115,7 @@ class UdpSession
 {
 public:
 	UdpSession(Bonjour::ReplyFn rfn);
+	virtual ~UdpSession() = default;
 	virtual void handle_receive(const boost::system::error_code& error, size_t bytes) = 0;
 	std::vector<char>				buffer;
 	boost::asio::ip::udp::endpoint	remote_endpoint;
@@ -157,7 +158,7 @@ public:
 		, const boost::asio::ip::address& multicast_address
 		, std::shared_ptr< boost::asio::io_service > io_service);
 
-	~UdpSocket();
+	virtual ~UdpSocket();
 
 	void send();
 	void async_receive();

@@ -1143,27 +1143,64 @@ static void remove_multiple_edges_in_vertex(const VD::vertex_type &vertex) {
     }
 }
 
+// colour_multipliers: per painted colour, the layer height multiplier of the region printing it
+// (1 = every layer), indexed like the segmented regions; see the cut below.
 static void cut_segmented_layers(const std::vector<ExPolygons>        &input_expolygons,
                                  std::vector<std::vector<ExPolygons>> &segmented_regions,
                                  const float                           cut_width,
                                  const float                           interlocking_depth,
+                                 const std::vector<unsigned int>      &colour_multipliers,
                                  const std::function<void()>          &throw_on_cancel_callback)
 {
     BOOST_LOG_TRIVIAL(debug) << "Print object segmentation - cutting segmented layers in parallel - begin";
-    const float interlocking_cut_width = interlocking_depth > 0.f ? std::max(cut_width - interlocking_depth, 0.f) : 0.f;
+    // The interlocking depth alternates with the cut width per row. ORCA: a colour printing runs
+    // of N rows alternates per run on the run ladder (PrintObject::apply_extruder_layer_heights),
+    // so a run keeps one cut and the interlock survives; other colours keep the row parity.
+    auto colour_cut_width = [cut_width, interlocking_depth, &colour_multipliers](size_t layer_idx, size_t extruder_idx) -> float {
+        if (interlocking_depth == 0.f)
+            return cut_width;
+        size_t parity_idx = layer_idx;
+        if (const unsigned int n = extruder_idx < colour_multipliers.size() ? colour_multipliers[extruder_idx] : 1u; n > 1)
+            parity_idx = layer_idx >= PrintObject::first_combined_layer_idx ? (layer_idx - PrintObject::first_combined_layer_idx) / n : 0;
+        return parity_idx % 2 == 0 ? interlocking_depth : cut_width;
+    };
     tbb::parallel_for(tbb::blocked_range<size_t>(0, segmented_regions.size()),
-    [&segmented_regions, &input_expolygons, &cut_width, &interlocking_depth, &throw_on_cancel_callback](const tbb::blocked_range<size_t> &range) {
+    [&segmented_regions, &input_expolygons, &interlocking_depth, &colour_cut_width, &throw_on_cancel_callback](const tbb::blocked_range<size_t> &range) {
         for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++layer_idx) {
             throw_on_cancel_callback();
-            const float  region_cut_width       = ((layer_idx % 2 == 0) && (interlocking_depth != 0.f)) ? interlocking_depth : cut_width;
             const size_t num_extruders_plus_one = segmented_regions[layer_idx].size();
-            if (region_cut_width > 0.f) {
-                std::vector<ExPolygons> segmented_regions_cuts(num_extruders_plus_one); // Indexed by extruder_id
-                for (size_t extruder_idx = 0; extruder_idx < num_extruders_plus_one; ++extruder_idx)
-                    if (const ExPolygons &ex_polygons = segmented_regions[layer_idx][extruder_idx]; !ex_polygons.empty())
-                        segmented_regions_cuts[extruder_idx] = diff_ex(ex_polygons, offset_ex(input_expolygons[layer_idx], -region_cut_width));
-                segmented_regions[layer_idx] = std::move(segmented_regions_cuts);
+            // The slice inset by the depth and by the cut width, each computed once per row.
+            ExPolygons inset_depth, inset_other;
+            bool       have_depth = false, have_other = false;
+            auto inset_by = [&](float width) -> const ExPolygons & {
+                if (width == interlocking_depth) {
+                    if (! have_depth) {
+                        inset_depth = offset_ex(input_expolygons[layer_idx], -width);
+                        have_depth  = true;
+                    }
+                    return inset_depth;
+                }
+                if (! have_other) {
+                    inset_other = offset_ex(input_expolygons[layer_idx], -width);
+                    have_other  = true;
+                }
+                return inset_other;
+            };
+            std::vector<ExPolygons> segmented_regions_cuts(num_extruders_plus_one); // Indexed by extruder_id
+            bool                    any_cut = false;
+            for (size_t extruder_idx = 0; extruder_idx < num_extruders_plus_one; ++extruder_idx) {
+                const ExPolygons &ex_polygons      = segmented_regions[layer_idx][extruder_idx];
+                const float       region_cut_width = colour_cut_width(layer_idx, extruder_idx);
+                if (region_cut_width <= 0.f) {
+                    segmented_regions_cuts[extruder_idx] = ex_polygons; // this colour keeps the row uncut
+                    continue;
+                }
+                any_cut = true;
+                if (! ex_polygons.empty())
+                    segmented_regions_cuts[extruder_idx] = diff_ex(ex_polygons, inset_by(region_cut_width));
             }
+            if (any_cut)
+                segmented_regions[layer_idx] = std::move(segmented_regions_cuts);
         }
     }); // end of parallel_for
     BOOST_LOG_TRIVIAL(debug) << "Print object segmentation - cutting segmented layers in parallel - end";
@@ -1183,12 +1220,29 @@ double resolve_outer_wall_line_width(const PrintRegionConfig &region_config, con
 {
     // A filament id of 0 underflows, and get_at() then falls back to the first nozzle.
     const double               nozzle_diameter = print_config.nozzle_diameter.get_at(region_config.outer_wall_filament_id - 1);
-    ConfigOptionFloatOrPercent width           = region_config.outer_wall_line_width;
+    // Snapmaker Orca: the widths are columns per tool head, read at the column of the outer wall
+    // filament's head, whose nozzle resolves them.
+    const size_t               column          = Print::width_slot(print_config, region_config.outer_wall_filament_id);
+    ConfigOptionFloatOrPercent width           = Flow::width_at(region_config.outer_wall_line_width, column);
     if (width.value == 0)
-        width = object_config.line_width;
+        width = Flow::width_at(object_config.line_width, column);
     if (!width.percent && width.value <= 0.)
         return Flow::auto_extrusion_width(frExternalPerimeter, float(nozzle_diameter));
     return width.get_abs_value(nozzle_diameter);
+}
+
+// ORCA: per painted colour, the layer height multiplier of the PrintRegions printing its painted
+// areas (PrintObjectRegions::painted_regions), not the filament's own preference, which such a
+// region may not follow. The deepest pitch wins; index 0 (the base colour) is always 1.
+static std::vector<unsigned int> painted_colour_layer_height_multipliers(const PrintObject &print_object, const size_t num_facets_states)
+{
+    std::vector<unsigned int> multipliers(num_facets_states, 1);
+    if (const PrintObjectRegions *regions = print_object.shared_regions(); regions != nullptr)
+        for (const PrintObjectRegions::LayerRangeRegions &layer_range : regions->layer_ranges)
+            for (const PrintObjectRegions::PaintedRegion &painted : layer_range.painted_regions)
+                if (painted.region != nullptr && painted.extruder_id > 0 && size_t(painted.extruder_id) < num_facets_states)
+                    multipliers[painted.extruder_id] = std::max(multipliers[painted.extruder_id], print_object.region_layer_height_multiplier(*painted.region));
+    return multipliers;
 }
 
 // Returns segmentation of top and bottom layers based on painting in segmentation gizmos.
@@ -1204,14 +1258,17 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     const size_t num_layers    = input_expolygons.size();
     const ConstLayerPtrsAdaptor layers = print_object.layers();
 
-    // ORCA: per-extruder layer height. A painted colour whose extruder prints runs of N object
+    // ORCA: per-extruder layer height. A painted colour whose region prints runs of N object
     // layers needs its projected top / bottom shell at least 2N-1 layers deep: then, whatever the
     // run phase, a whole run lies inside the shell and prints it. A thinner shell over another
     // colour's core could never be printed as a run and would have to print layer by layer.
-    auto shell_depth_for_color = [&print_object](size_t color_idx, int shell_layers) {
+    // N is the pitch of the region printing the colour's painted areas (see
+    // painted_colour_layer_height_multipliers), 1 for the base colour.
+    const std::vector<unsigned int> colour_multipliers = painted_colour_layer_height_multipliers(print_object, num_facets_states);
+    auto shell_depth_for_color = [&colour_multipliers](size_t color_idx, int shell_layers) {
         if (color_idx == 0)
             return shell_layers;
-        const unsigned int n = print_object.layer_height_multiplier_for_filament(unsigned(color_idx));
+        const unsigned int n = colour_multipliers[color_idx];
         return n > 1 ? std::max(shell_layers, int(2 * n - 1)) : shell_layers;
     };
 
@@ -1253,7 +1310,10 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
             return union_ex(out);
         };
         ExPolygons row = intersection_ex(face, inset(offset));
-        for (float relaxed = offset * 0.5f; row.empty() && relaxed <= -0.5f * width; relaxed *= 0.5f)
+        // The relaxation halves the inset until half a wall width; it also stops at the scaled
+        // epsilon, since a zero inset (no outer wall of this colour on the layer) would otherwise
+        // never leave zero and spin forever once the face has nothing under it.
+        for (float relaxed = offset * 0.5f; row.empty() && relaxed <= -0.5f * width && relaxed < -float(SCALED_EPSILON); relaxed *= 0.5f)
             row = intersection_ex(face, inset(relaxed));
         if (row.empty())
             row = intersection_ex(face, trimmed);
@@ -1307,7 +1367,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                         its_write_obj(painted, debug_out_path("mm-painted-patch-%d-%d.obj", iRun ++, extruder_idx).c_str());
                     }
 #endif // MM_SEGMENTATION_DEBUG_TOP_BOTTOM
-                    if (! painted.indices.empty() && extruder_idx > 0 && print_object.layer_height_multiplier_for_filament(unsigned(extruder_idx)) > 1) {
+                    if (! painted.indices.empty() && extruder_idx > 0 && colour_multipliers[extruder_idx] > 1) {
                         std::vector<Polygons> &up = face_up[extruder_idx], &down = face_down[extruder_idx];
                         if (up.empty()) {
                             up.assign(num_layers, Polygons());
@@ -1486,7 +1546,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
         // ORCA: per-extruder layer height: the colour's extruder prints runs of several layers.
         bool    pitch_colour{ false };
     };
-    auto layer_color_stat = [&layers = std::as_const(layers), &print_object, &shell_depth_for_color](const size_t layer_idx, const size_t color_idx) -> LayerColorStat {
+    auto layer_color_stat = [&layers = std::as_const(layers), &print_object, &shell_depth_for_color, &colour_multipliers](const size_t layer_idx, const size_t color_idx) -> LayerColorStat {
         LayerColorStat out;
         const Layer &layer = *layers[layer_idx];
         for (const LayerRegion *region : layer.regions())
@@ -1508,10 +1568,18 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                 out.extrusion_spacing = Flow::rounded_rectangle_extrusion_spacing(float(outer_wall_line_width), float(layer.height));
                 ++ out.num_regions;
             }
-        assert(out.num_regions > 0);
+        // ORCA: a painted colour may have no region (see below); the base colour always has one.
+        assert(color_idx > 0 || out.num_regions > 0);
+        // ORCA: the run handling below insets from this colour's outer wall. A colour without one
+        // keeps the stock statistics; a zero inset would never end the relaxation in pitch_shell_row.
+        if (color_idx > 0 && (out.num_regions == 0 || out.extrusion_width <= 0.f)) {
+            out.extrusion_width   = scaled<float>(out.extrusion_width);
+            out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
+            return out;
+        }
         out.top_shell_layers    = shell_depth_for_color(color_idx, out.top_shell_layers);
         out.bottom_shell_layers = shell_depth_for_color(color_idx, out.bottom_shell_layers);
-        out.pitch_colour        = color_idx > 0 && print_object.layer_height_multiplier_for_filament(unsigned(color_idx)) > 1;
+        out.pitch_colour        = color_idx > 0 && colour_multipliers[color_idx] > 1;
         out.extrusion_width = scaled<float>(out.extrusion_width);
         out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
         return out;
@@ -1625,15 +1693,8 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     // that face.
     if (max_width > 0.f && ! segmented_regions.empty()) {
         const float reach = scaled<float>(max_width);
-        // Colours printing every layer (black frames on this printer): a ribbon projected from
-        // another row must not take their painted side region on this row - they never get a
-        // shell on a vertical painted face and could only lose (a frame would start rows late).
-        std::vector<size_t> single_layer_colours;
-        for (size_t color_idx = 1; color_idx < num_facets_states; ++ color_idx)
-            if (print_object.layer_height_multiplier_for_filament(unsigned(color_idx)) <= 1)
-                single_layer_colours.emplace_back(color_idx);
         for (size_t color_idx = 1; color_idx < num_facets_states; ++ color_idx) {
-            const unsigned int n = print_object.layer_height_multiplier_for_filament(unsigned(color_idx));
+            const unsigned int n = colour_multipliers[color_idx];
             // Only for a ribbon the colour's outer wall fits in: narrower ones cannot print the
             // colour whatever the rows hold, and the previous behaviour stays (see the merge).
             if (n <= 1 || double(max_width) + EPSILON < colour_outer_wall_width(color_idx))
@@ -1641,6 +1702,13 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
             const std::vector<Polygons> &top = top_raw[color_idx], &bottom = bottom_raw[color_idx];
             if (top.empty() && bottom.empty())
                 continue;
+            // A ribbon projected from another row must not take the painted side region of a colour
+            // of another pitch on this row: that colour would lose up to N-1 rows or its run's
+            // common shape. Colours of the same pitch share the run ladder and may overlap.
+            std::vector<size_t> other_pitch_colours;
+            for (size_t other = 1; other < num_facets_states; ++ other)
+                if (other != color_idx && colour_multipliers[other] != n)
+                    other_pitch_colours.emplace_back(other);
             tbb::parallel_for(tbb::blocked_range<size_t>(0, num_layers), [&](const tbb::blocked_range<size_t> &range) {
                 for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx) {
                     throw_on_cancel_callback();
@@ -1650,7 +1718,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                         if (faces.empty() || faces[t].empty() || segmented_regions[t].size() <= color_idx || segmented_regions[t][color_idx].empty())
                             return {};
                         ExPolygons under = intersection_ex(intersection_ex(segmented_regions[t][color_idx], offset_ex(union_ex(faces[t]), reach)), input_expolygons[layer_idx]);
-                        for (size_t other : single_layer_colours)
+                        for (size_t other : other_pitch_colours)
                             if (! under.empty() && segmented_regions[layer_idx].size() > other && ! segmented_regions[layer_idx][other].empty())
                                 under = diff_ex(under, segmented_regions[layer_idx][other]);
                         return under;
@@ -2422,7 +2490,11 @@ std::vector<std::vector<ExPolygons>> segmentation_by_painting(const PrintObject 
     throw_on_cancel_callback();
 
     if ((segmentation_max_width > 0.f || segmentation_interlocking_depth > 0.f) && !segmentation_interlocking_beam) {
-        cut_segmented_layers(input_expolygons, segmented_regions, float(scale_(segmentation_max_width)), float(scale_(segmentation_interlocking_depth)), throw_on_cancel_callback);
+        // ORCA: a colour printing in runs alternates the interlocking depth per run (see cut_segmented_layers).
+        const std::vector<unsigned int> colour_multipliers = segmentation_interlocking_depth > 0.f ?
+            painted_colour_layer_height_multipliers(print_object, num_facets_states) :
+            std::vector<unsigned int>(num_facets_states, 1u);
+        cut_segmented_layers(input_expolygons, segmented_regions, float(scale_(segmentation_max_width)), float(scale_(segmentation_interlocking_depth)), colour_multipliers, throw_on_cancel_callback);
         throw_on_cancel_callback();
     }
 

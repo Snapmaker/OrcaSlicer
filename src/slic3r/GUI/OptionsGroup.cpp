@@ -1,6 +1,7 @@
 #include "OptionsGroup.hpp"
 #include "ConfigExceptions.hpp"
 #include "Plater.hpp"
+#include "SettingsIndex.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "OG_CustomCtrl.hpp"
@@ -256,6 +257,25 @@ void OptionsGroup::set_name(const wxString& new_name) { stb->SetLabel(new_name);
 void OptionsGroup::append_line(const Line& line)
 {
     m_lines.emplace_back(line);
+
+    // Feed the searcher the row's wiki path (Line::label_path, for the Speed Dial's "open wiki"
+    // affordance) and the label the row actually draws, so a setting action is named like the page.
+    if (m_use_custom_ctrl) {
+        Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+        const Preset::Type      type  = static_cast<Preset::Type>(config_type());
+        const bool              multi = line.get_options().size() > 1;
+        for (const auto& opt : line.get_options()) {
+            if (!line.label_path.empty())
+                index.set_path(opt.opt_id, type, line.label_path);
+            // Mirror the sub-label OG_CustomCtrl draws for a multi-option row, so the palette
+            // names each field like the page does.
+            const std::string& leaf_src = opt.opt.label;
+            const wxString leaf = (leaf_src == L_CONTEXT("Top", "Layers") || leaf_src == L_CONTEXT("Bottom", "Layers")) ?
+                                      _L_CONTEXT(leaf_src, "Layers") :
+                                      _(leaf_src);
+            index.set_line_label(opt.opt_id, type, Search::compose_display_label(line.label, leaf, multi));
+        }
+    }
 
     if (line.full_width && (line.widget != nullptr || !line.get_extra_widgets().empty()))
         return;
@@ -665,7 +685,7 @@ Option ConfigOptionsGroup::get_option(const std::string& opt_key, int opt_index 
     m_opt_map.emplace(opt_id, pair);
 
     if (m_use_custom_ctrl) // fill group and category values just for options from Settings Tab
-        wxGetApp().sidebar().get_searcher().add_key(opt_id, static_cast<Preset::Type>(this->config_type()), title, this->config_category());
+        wxGetApp().sidebar().settings_index().add_key(opt_id, static_cast<Preset::Type>(this->config_type()), title, this->config_category(), this->icon);
 
     return Option(*m_config->def()->get(opt_key), opt_id);
 }
@@ -702,7 +722,17 @@ void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const b
         auto itOption              = it->second;
         const std::string& opt_key = itOption.first;
         int opt_index              = itOption.second;
-        this->change_opt_value(opt_key, value, opt_index == -1 ? 0 : opt_index);
+        int write_index            = opt_index == -1 ? 0 : opt_index;
+        if (m_before_change && !m_before_change(opt_key, write_index)) {
+            // Refused: the field shows the stored value again.
+            const auto option = m_options.find(opt_id);
+            if (option != m_options.end())
+                this->set_value(opt_id, config_value(opt_key, opt_index, option->second.opt.gui_flags == "serialized"));
+            return;
+        }
+        this->change_opt_value(opt_key, value, write_index);
+        if (m_after_change)
+            m_after_change(opt_key, write_index);
     }
 
     OptionsGroup::on_change_OG(opt_id, value);
@@ -713,10 +743,15 @@ std::string OptionsGroup::pick_plugin(const ConfigOptionDef& opt)
     Slic3r::PluginManager& manager = Slic3r::PluginManager::instance();
     const Slic3r::PluginCapabilityType plugin_type = Slic3r::plugin_capability_type_from_string(opt.plugin_type);
     if (plugin_type == Slic3r::PluginCapabilityType::Unknown) {
-        const std::string message = opt.plugin_type.empty()
-                                        ? "This setting does not specify a plugin capability type."
-                                        : "This setting specifies an unrecognized plugin capability type: '" + opt.plugin_type + "'.";
-        wxMessageBox(from_u8(message), _L("Plugin Selection"), wxOK | wxICON_WARNING, m_parent);
+        MessageDialog dlg(m_parent, 
+            opt.plugin_type.empty() ? _L("This setting does not specify a plugin capability type.")
+                                    : _L("This setting specifies an unrecognized plugin capability type: ") + "'" + opt.plugin_type + "'.", 
+            _L("Plugin Selection"), 
+            wxOK | wxICON_WARNING
+        );
+        dlg.CenterOnParent();
+        dlg.ShowModal();
+
         return {};
     }
 
@@ -729,7 +764,13 @@ std::string OptionsGroup::pick_plugin(const ConfigOptionDef& opt)
     });
 
     if (caps.empty()) {
-        wxMessageBox(_L("No plugins capabilities available for this type.\nEnable or install some to use."), _L("Plugin Selection"), wxOK | wxICON_INFORMATION, m_parent);
+        MessageDialog dlg(m_parent,
+            _L("No plugins capabilities available for this type.\nEnable or install some to use."),
+            _L("Plugin Selection"),
+            wxOK | wxICON_INFORMATION
+        );
+        dlg.CenterOnParent();
+        dlg.ShowModal();
         return {};
     }
 
@@ -765,6 +806,8 @@ void ConfigOptionsGroup::back_to_initial_value(const std::string& opt_key)
 {
     if (m_get_initial_config == nullptr)
         return;
+    if (m_before_revert && m_before_revert(opt_key, false))
+        return;
     back_to_config_value(m_get_initial_config(), opt_key);
 }
 
@@ -773,6 +816,8 @@ void ConfigOptionsGroup::back_to_sys_value(const std::string& opt_key)
     if (m_get_sys_config == nullptr)
         return;
     if (!have_sys_config())
+        return;
+    if (m_before_revert && m_before_revert(opt_key, true))
         return;
     back_to_config_value(m_get_sys_config(), opt_key);
 }
@@ -802,11 +847,9 @@ void ConfigOptionsGroup::back_to_config_value(const DynamicPrintConfig& config, 
 #endif
     else if (opt_key == "printer_agent")
     {
-        // why: printer_agent is a coString kept out of m_opt_map. The generic non-opt_map revert
-        // below restores the edited config from get_value(), but a deregistered/"(missing)" saved
-        // id has no selectable row, so the field yields no value and the edited config keeps the
-        // user's interim pick -> stuck dirty. Restore the SAVED id straight into the edited config
-        // (displayable or not; config is the saved or system baseline), then repaint and notify.
+        // A deregistered/"(missing)" saved id has no selectable row, so the field yields no
+        // value. Restore the saved id directly instead of letting the generic revert path read
+        // the field value back into the edited config.
         const std::string saved_id = config.opt_string("printer_agent");
         set_value(opt_key, saved_id);
         this->change_opt_value(opt_key, saved_id);
@@ -858,7 +901,16 @@ void ConfigOptionsGroup::reload_config()
         // index in the vector option, zero for scalars
         int opt_index                 = kvp.second.second;
         const ConfigOptionDef& option = m_options.at(opt_id).opt;
-        this->set_value(opt_id, config_value(opt_key, opt_index, option.gui_flags == "serialized"));
+        boost::any value = config_value(opt_key, opt_index, option.gui_flags == "serialized");
+        // Snapmaker Orca: a field may show the value the selected tool head prints with when its
+        // preset stores none of its own (the speed selector of the Process tab).
+        if (m_display_source) {
+            const DynamicPrintConfig *source = nullptr;
+            int                       index  = 0;
+            if (m_display_source(opt_key, opt_index, source, index) && source != nullptr)
+                value = get_config_value(*source, opt_key, index);
+        }
+        this->set_value(opt_id, value);
     }
 }
 
@@ -1742,8 +1794,9 @@ bool OptionsGroup::launch_browser(const std::string& path_end) { return wxLaunch
 // ogStaticText
 //-------------------------------------------------------------------------------------------
 
-ogStaticText::ogStaticText(wxWindow* parent, const wxString& text) : wxStaticText(parent, wxID_ANY, text, wxDefaultPosition, wxDefaultSize)
+ogStaticText::ogStaticText(wxWindow* parent, const wxString& text, long style) : wxStaticText(parent, wxID_ANY, text, wxDefaultPosition, wxDefaultSize, style)
 {
+    m_full_text = text;
     if (!text.IsEmpty()) {
         Wrap(60 * wxGetApp().em_unit());
         GetParent()->Layout();
@@ -1752,10 +1805,53 @@ ogStaticText::ogStaticText(wxWindow* parent, const wxString& text) : wxStaticTex
 
 void ogStaticText::SetText(const wxString& value, bool wrap /* = true*/)
 {
+    m_full_text = value;
     SetLabel(value);
-    if (wrap)
+    if (m_wrap_to_width) {
+        m_wrapped_width = -1;
+        wrap_to_current_width();
+    } else if (wrap)
         Wrap(60 * wxGetApp().em_unit());
     GetParent()->Layout();
+}
+
+void ogStaticText::WrapToWidth(std::function<void()> after_wrap)
+{
+    m_after_wrap = std::move(after_wrap);
+    if (m_wrap_to_width)
+        return;
+    m_wrap_to_width = true;
+    // The sizer reads the minimum size where one is set: the width may shrink below the longest
+    // line, the height follows the wrapped lines (the best size).
+    SetMinSize({FromDIP(40), -1});
+    Bind(wxEVT_SIZE, [this](wxSizeEvent &evt) {
+        evt.Skip();
+        const int width = evt.GetSize().x;
+        if (width <= 0 || width == m_wrapped_width)
+            return;
+        // Deferred: the layout that set this size is still running.
+        CallAfter([this]() {
+            if (!wrap_to_current_width())
+                return;
+            if (m_after_wrap)
+                m_after_wrap();
+            else if (GetParent() != nullptr)
+                GetParent()->Layout();
+        });
+    });
+    wrap_to_current_width();
+}
+
+bool ogStaticText::wrap_to_current_width()
+{
+    const int width = GetClientSize().x;
+    if (width <= 0 || width == m_wrapped_width)
+        return false;
+    m_wrapped_width = width;
+    SetLabel(m_full_text);
+    Wrap(width);
+    InvalidateBestSize();
+    return true;
 }
 
 void ogStaticText::SetPathEnd(const std::string& link)

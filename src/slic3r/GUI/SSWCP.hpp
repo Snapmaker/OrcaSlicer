@@ -13,6 +13,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include "nlohmann/json.hpp"
+#include "libslic3r/SSWCPProtocol.hpp"
 #include "slic3r/Utils/Bonjour.hpp"
 #include "slic3r/Utils/TimeoutMap.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
@@ -194,6 +195,8 @@ private:
 
     // Sentry
     void sw_UploadEvent();
+    // SnapLog
+    void sw_SnapLog();
 
     // Get software basic info
     void sw_GetSoftwareInfo();
@@ -243,6 +246,10 @@ public:
     {
         if (m_work_thread.joinable())
             m_work_thread.detach();
+        // The instance may die on the checker thread of SSWCP::m_instance_list, under its lock,
+        // when the printer never answered the pin code request; the client's destructor can wait
+        // seconds, so it is not run here.
+        MqttClient::dispose_async(std::move(m_pin_code_client));
     }
 
     void process() override;
@@ -258,6 +265,13 @@ private:
     void sw_connect_other_device();
 
     void sw_get_pin_code();
+    // Snapmaker Orca: the instance owns the MQTT client of sw_get_pin_code until the answer
+    // (release_pin_code_client, UI thread) or the timeout; its callback holds only a weak reference.
+    void release_pin_code_client() { MqttClient::dispose_async(std::move(m_pin_code_client)); }
+    std::shared_ptr<MqttClient> m_pin_code_client;
+
+    // Subscribe to foreground/background change events (event_id=205890)
+    void sw_SubscribeForegroundChange();
 
 };
 
@@ -289,6 +303,12 @@ public:
 
     static WebPresetDialog* m_dialog;
 
+    // Funnel-correlation id for the connection attempt on a given webview. Each
+    // sw_* call is a fresh instance object, so (like m_mqtt_engine_map) this id
+    // lives in static state keyed by the webview: assigned in sw_create_mqtt_client,
+    // read by connect/subscribe/set_engine/disconnect, cleared on disconnect.
+    static std::unordered_map<wxWebView*, std::string> m_connect_session_map;
+
 public:
     bool validate_id(const std::string& id);
     std::shared_ptr<MqttClient> get_current_engine() {
@@ -311,6 +331,29 @@ public:
         return flag;
     }
 
+    // Accessors for the per-webview connectSessionId (guarded by m_engine_map_mtx,
+    // the same lock that protects m_mqtt_engine_map). Empty when no connection is
+    // in progress on this webview.
+    std::string get_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        auto it = m_connect_session_map.find(m_webview);
+        return it != m_connect_session_map.end() ? it->second : std::string{};
+    }
+    void set_connect_session_id(const std::string& id) {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map[m_webview] = id;
+    }
+    void clear_connect_session_id() {
+        std::lock_guard<std::mutex> lk(m_engine_map_mtx);
+        m_connect_session_map.erase(m_webview);
+    }
+    // Snapmaker Orca: drops the subscriptions, funnel id and MQTT engine (released off the UI
+    // thread) of a web view being destroyed. Takes the view as an argument: on_webview_delete()
+    // has already nulled m_webview of every instance.
+    static void forget_webview(wxWebView* view);
+    // Snapmaker Orca: everything of every view, synchronously; for SSWCP::shutdown() at exit.
+    static void release_all_engines();
+
     void set_Instance_illegal() override;
 
 private:
@@ -325,6 +368,7 @@ private:
 
 private:
     void clean_current_engine();
+    static void release_view_state(wxWebView* view);
 
     static void mqtt_msg_cb(const std::string& topic, const std::string& payload, void* client);
 
@@ -342,8 +386,8 @@ public:
 
     void process() override;
 
-    bool is_stop() { return m_stop; }
-    void set_stop(bool stop);
+    bool is_stop() override { return m_stop; }
+    void set_stop(bool stop) override;
 
 private:
     // Machine discovery methods
@@ -418,6 +462,8 @@ private:
     void sw_GetFileFilamentMapping();
     void sw_SetFilamentMappingComplete();
     void sw_FinishFilamentMapping();
+    // params.event == 1 of sw_FinishFilamentMapping, run after the preprint webview closed.
+    void on_finish_filament_mapping_custom_flow_regroup();
 
     // new
     void sw_SetDeviceName();
@@ -502,6 +548,8 @@ private:
     void sw_SwitchModel();
 
     void sw_DeleteDevices();
+
+    void sw_UpdateDeviceInfo();
 };
 
 // Instance class for page state change subscription
@@ -541,6 +589,8 @@ public:
 private:
     void sw_UserLogin();
 
+    void sw_AskUserLogin();
+
     void sw_UserLogout();
 
     void sw_GetUserLoginState();
@@ -565,6 +615,10 @@ private:
     void sw_UnsubscribeDownloadState();
     void sw_GetFilesFromDir();
     void sw_NotifyUploadTimelaspe();
+
+public:
+    static bool                                            s_ask_dialog_showing;
+    static std::vector<std::weak_ptr<SSWCP_Instance>>      s_ask_waiters;
 
 public:
     // Passive subscription entry — sw_SubscribeDownloadState only registers,
@@ -637,6 +691,17 @@ public:
     // Delete instance
     static void delete_target(SSWCP_Instance* target);
 
+    // Extend a one-shot instance's timeout by the default timeout; used by
+    // long-running modal commands (e.g. sw_AskUserLogin) so their pending
+    // response is not dropped after the default 80 s.
+    static void renew_instance_timeout(SSWCP_Instance* instance);
+    // Snapmaker Orca: suspends the timeout of a one-shot instance while a modal dialog of its own
+    // is open (the user's time is not the printer's); renew_instance_timeout arms it again.
+    static void hold_instance_timeout(SSWCP_Instance* instance);
+    // Snapmaker Orca: asks for one GUI_App::load_current_presets() on the UI thread; requests
+    // made before it runs are folded into it. UI thread only.
+    static void request_preset_reload();
+
     // Stop machine discovery
     static void stop_machine_find();
 
@@ -645,9 +710,19 @@ public:
 
     // Handle webview deletion
     static void on_webview_delete(wxWebView* webview);
+    // Snapmaker Orca: releases the instance list and every MQTT engine at application exit
+    // (GUI_App::OnExit), before static destruction.
+    static void shutdown();
 
     // query the info of the machine
+    // A wrapper around resolve_machine_info() for callers that need the model, the nozzle sizes
+    // and the device name only. False when the printer did not identify itself in time.
     static bool query_machine_info(std::shared_ptr<PrintHost>& host, std::string& out_model, std::vector<std::string>& out_nozzle_diameters, std::string& device_name, int timeout_second = 5);
+
+    // Resolves machine identity and nozzle info (sizes, flow types) from system_info and
+    // printer.objects.query in parallel, merged by SSWCPProtocol::merge_machine_info(). Once system_info
+    // is in, the extruder objects get a short wait only, so firmware without them skips the full timeout.
+    static SSWCPProtocol::ResolveResult resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second = 8);
 
     // update the active file name
     static void update_active_filename(const std::string& filename);

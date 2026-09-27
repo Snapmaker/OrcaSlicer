@@ -625,11 +625,10 @@ MultiSwitchButton::MultiSwitchButton(wxWindow *parent, wxWindowID id, const wxPo
     SetCornerRadius(m_button_radius);
     SetBorderWidth(0);
 
-    sizer = new wxBoxSizer(wxHORIZONTAL);
-    auto *hsizer = new wxBoxSizer(wxVERTICAL);
-    hsizer->Add(sizer, 1, wxEXPAND);
-    SetSizer(hsizer);
-    SetMinSize(wxSize(-1, 20));
+    // The rows of buttons (rebuild_rows): one, unless a maximum row width is set.
+    sizer = new wxBoxSizer(wxVERTICAL);
+    SetSizer(sizer);
+    SetMinSize(wxSize(-1, m_row_height));
 
     Bind(wxEVT_COMMAND_BUTTON_CLICKED, &MultiSwitchButton::button_clicked, this);
     SetFont(Label::Body_12);
@@ -640,7 +639,7 @@ MultiSwitchButton::~MultiSwitchButton()
     DeleteAllOptions();
 }
 
-int MultiSwitchButton::AppendOption(const wxString &option, void *clientData)
+Button *MultiSwitchButton::make_button(const wxString &option, void *clientData)
 {
     Button *btn = new Button();
     btn->Create(this, option, "", wxBORDER_NONE);
@@ -650,13 +649,41 @@ int MultiSwitchButton::AppendOption(const wxString &option, void *clientData)
     btn->SetCornerRadius(m_button_radius);
     btn->SetPaddingSize(m_button_padding);
     btn->SetClientData(clientData);
-
     btns.push_back(btn);
-    sizer->Add(btn, 1, wxEXPAND | wxALIGN_CENTER_VERTICAL);
 
     wxSize text_size = btn->GetTextExtent(option);
     btn->SetMinSize(wxSize(text_size.x + m_button_padding.x * 2 + 6, -1));
+    return btn;
+}
 
+void MultiSwitchButton::rebuild_rows()
+{
+    // The row sizers go (a sizer item owns its sub-sizer), the buttons stay.
+    sizer->Clear(false);
+    wxBoxSizer *row       = nullptr;
+    int         row_width = 0;
+    int         rows      = 0;
+    for (Button *btn : btns) {
+        const int width = btn->GetMinSize().x;
+        if (row == nullptr || (m_max_row_width > 0 && row_width > 0 && row_width + width > m_max_row_width)) {
+            // Rows share the control's height by proportion: a button has a minimum width only
+            // (Button::messureSize keeps the -1 height), so a proportion-0 row would be one pixel high.
+            row = new wxBoxSizer(wxHORIZONTAL);
+            sizer->Add(row, 1, wxEXPAND);
+            row_width = 0;
+            ++rows;
+        }
+        row->Add(btn, 1, wxEXPAND);
+        row_width += width;
+    }
+    // The control is as high as its rows; the sizer that holds it reads this minimum height.
+    SetMinSize(wxSize(-1, m_row_height * std::max(1, rows)));
+}
+
+int MultiSwitchButton::AppendOption(const wxString &option, void *clientData)
+{
+    make_button(option, clientData);
+    rebuild_rows();
     return int(btns.size()) - 1;
 }
 
@@ -664,7 +691,8 @@ void MultiSwitchButton::SetOptions(const std::vector<wxString> &options)
 {
     DeleteAllOptions();
     for (const auto &option : options)
-        AppendOption(option);
+        make_button(option, nullptr);
+    rebuild_rows();
 
     Layout();
     Refresh();
@@ -679,7 +707,28 @@ void MultiSwitchButton::DeleteAllOptions()
     }
     btns.clear();
     if (sizer)
-        sizer->Clear();
+        sizer->Clear(false);
+}
+
+void MultiSwitchButton::SetMaxRowWidth(int width)
+{
+    if (width < 0)
+        width = 0;
+    if (width == m_max_row_width)
+        return;
+    m_max_row_width = width;
+    rebuild_rows();
+    Layout();
+    Refresh();
+}
+
+int MultiSwitchButton::MeasureOption(unsigned int index, const wxString &option) const
+{
+    int width = GetTextExtent(option).x + m_button_padding.x * 2 + 6;
+    // The dot and its gap, as Button::messureSize adds them.
+    if (index < btns.size() && btns[index]->HasIndicator())
+        width += FromDIP(6) + FromDIP(6);
+    return width;
 }
 
 unsigned int MultiSwitchButton::GetCount() const
@@ -718,6 +767,11 @@ void MultiSwitchButton::SetOptionText(unsigned int index, const wxString &text)
     if (index >= btns.size())
         return;
     btns[index]->SetLabel(text);
+    const wxSize text_size = btns[index]->GetTextExtent(text);
+    btns[index]->SetMinSize(wxSize(text_size.x + m_button_padding.x * 2 + 6, -1));
+    if (m_max_row_width > 0)
+        rebuild_rows();
+    Layout();
 }
 
 void *MultiSwitchButton::GetOptionData(unsigned int index) const

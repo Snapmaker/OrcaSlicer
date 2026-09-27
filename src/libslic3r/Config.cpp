@@ -5,8 +5,10 @@
 #include "Preset.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <assert.h>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <iomanip>
 #include <regex>
@@ -34,6 +36,7 @@ using namespace nlohmann;
 //FIXME for GCodeFlavor and gcfMarlin (for forward-compatibility conversion)
 // This is not nice, likely it would be better to pass the ConfigSubstitutionContext to handle_legacy().
 #include "PrintConfig.hpp"
+#include "SnapmakerFlowCompat.hpp"
 
 namespace Slic3r {
 
@@ -550,10 +553,37 @@ t_config_option_keys ConfigBase::equal(const ConfigBase &other) const
     return equal;
 }
 
+bool ConfigBase::uniform_scalar_option(const t_config_option_key &opt_key, const ConfigOption *opt) const
+{
+    if (opt == nullptr || opt->is_scalar())
+        return false;
+    const ConfigDef *def = this->def();
+    if (def == nullptr)
+        return false;
+    const ConfigOptionDef *opt_def = def->get(opt_key);
+    if (opt_def == nullptr || !opt_def->scalar_when_uniform)
+        return false;
+    const auto *vec = static_cast<const ConfigOptionVectorBase *>(opt);
+    if (vec->empty())
+        return false;
+    for (size_t i = 0; i < vec->size(); ++i)
+        if (vec->is_nil(i))
+            return false;
+    const std::vector<std::string> values = vec->vserialize();
+    for (size_t i = 1; i < values.size(); ++i)
+        if (values[i] != values.front())
+            return false;
+    return true;
+}
+
 std::string ConfigBase::opt_serialize(const t_config_option_key &opt_key) const
 {
     const ConfigOption* opt = this->option(opt_key);
     assert(opt != nullptr);
+    // Snapmaker Orca: a per tool head line width whose columns are all equal is written as the one
+    // value older readers know (ConfigOptionDef::scalar_when_uniform).
+    if (this->uniform_scalar_option(opt_key, opt))
+        return static_cast<const ConfigOptionVectorBase *>(opt)->vserialize().front();
     return opt->serialize();
 }
 
@@ -708,17 +738,53 @@ double ConfigBase::get_abs_value_at(const t_config_option_key &opt_key, size_t i
         const ConfigOptionDef *opt_def = def->get(opt_key);
         assert(opt_def != nullptr);
 
+        const auto *widths = static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt);
+        if (widths->empty())
+            return 0;
+        const FloatOrPercent value = widths->get_at(index);
+        // Snapmaker Orca: a role line width of 0 reads the default line width of the same column,
+        // as the scalar branch of get_abs_value() does for the scalar keys.
+        if (std::isnan(value.value))
+            return 0;
+        if (value.value == 0 && boost::ends_with(opt_key, "_line_width") && this->option("line_width") != nullptr)
+            return this->get_abs_value_at("line_width", index);
+        if (!value.percent)
+            return value.value;
         if (opt_def->ratio_over.empty()) {
             return 0;
         } else {
             const ConfigOption *ratio_opt = this->option(opt_def->ratio_over);
-            assert(ratio_opt->type() == coFloats);
-            const ConfigOptionFloats *ratio_values = static_cast<const ConfigOptionFloats *>(ratio_opt);
-            return static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt)->get_at(index).get_abs_value(ratio_values->get_at(index));
+            if (ratio_opt == nullptr)
+                throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_def->ratio_over + "\" is not defined");
+            // A percent line width resolves against the nozzle of its column: on a table narrowed
+            // to one column per tool head (Print::apply) the column is the head, on a wide GUI
+            // layout the caller passes the nozzle explicitly (the three-argument overload).
+            if (ratio_opt->type() == coFloats) {
+                const ConfigOptionFloats *ratio_values = static_cast<const ConfigOptionFloats *>(ratio_opt);
+                return value.get_abs_value(ratio_values->get_at(index));
+            }
+            return value.get_abs_value(this->get_abs_value(opt_def->ratio_over));
         }
     }
 
     throw ConfigurationError("ConfigBase::get_abs_value_at(): Not a valid option type for get_abs_value_at()");
+}
+
+double ConfigBase::get_abs_value_at(const t_config_option_key &opt_key, size_t index, double ratio_over) const
+{
+    const ConfigOption *raw_opt = this->option(opt_key);
+    if (raw_opt == nullptr)
+        throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_key + "\" is not defined");
+    if (raw_opt->type() == coFloatOrPercent)
+        return static_cast<const ConfigOptionFloatOrPercent *>(raw_opt)->get_abs_value(ratio_over);
+    if (raw_opt->type() == coFloatsOrPercents) {
+        const auto *widths = static_cast<const ConfigOptionFloatsOrPercents *>(raw_opt);
+        if (widths->empty())
+            return 0;
+        const FloatOrPercent value = widths->get_at(index);
+        return std::isnan(value.value) ? 0. : value.get_abs_value(ratio_over);
+    }
+    throw ConfigurationError("ConfigBase::get_abs_value_at(): \"" + opt_key + "\" is neither coFloatOrPercent nor coFloatsOrPercents");
 }
 
 // Return an absolute value of a possibly relative config variable.
@@ -740,6 +806,10 @@ double ConfigBase::get_abs_value(const t_config_option_key &opt_key) const
       return static_cast<const ConfigOptionInt *>(raw_opt)->value;
     if (raw_opt->type() == coBool)
       return static_cast<const ConfigOptionBool *>(raw_opt)->value ? 1 : 0;
+    // Snapmaker Orca: the line width keys are columns per tool head; without a column the value is
+    // the first column, the GUI's shared value (a ratio_over chain ending in a line width lands here).
+    if (raw_opt->type() == coFloatsOrPercents)
+        return this->get_abs_value_at(opt_key, 0);
 
     const ConfigOptionPercent *cast_opt = nullptr;
     if (raw_opt->type() == coFloatOrPercent) {
@@ -782,7 +852,9 @@ double ConfigBase::get_abs_value(const t_config_option_key &opt_key, double rati
 {
     // Get stored option value.
     const ConfigOption *raw_opt = this->option(opt_key);
-    assert(raw_opt != nullptr);
+    // Mirror the single-arg overload — assert() is a no-op under NDEBUG.
+    if (raw_opt == nullptr)
+        throw ConfigurationError("ConfigBase::get_abs_value(): \"" + opt_key + "\" is not defined");
     if (raw_opt->type() != coFloatOrPercent)
         throw ConfigurationError("ConfigBase::get_abs_value(): opt_key is not of coFloatOrPercent");
     // Compute absolute value.
@@ -1054,6 +1126,23 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                                 collapsed_to_scalar = true;
                                 BOOST_LOG_TRIVIAL(warning)
                                     << __FUNCTION__ << ": collapsing redundant json array for scalar option " << it.key() << " in " << file;
+                            } else if (is_snapmaker_flow_scalar_key(opt_key)) {
+                                // Snapmaker Orca 2.4 stores these options with one value per flow
+                                // type. The first value is the Standard one; the values that are
+                                // given up are reported with the other substitutions of the file.
+                                value_str           = first_value;
+                                collapsed_to_scalar = true;
+                                if (substitution_context.rule == ForwardCompatibilitySubstitutionRule::Enable ||
+                                    substitution_context.rule == ForwardCompatibilitySubstitutionRule::EnableSystemSilent) {
+                                    std::unique_ptr<ConfigOption> kept(optdef->create_empty_option());
+                                    if (kept->deserialize(first_value)) {
+                                        ConfigSubstitution substitution;
+                                        substitution.opt_def   = optdef;
+                                        substitution.old_value = boost::algorithm::join(array_values, ",");
+                                        substitution.new_value = ConfigOptionUniquePtr(kept.release());
+                                        substitution_context.substitutions.emplace_back(std::move(substitution));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1090,7 +1179,8 @@ int ConfigBase::load_from_json(const std::string &file, ConfigSubstitutionContex
                 std::vector<std::string>& different_settings = this->option<ConfigOptionStrings>("different_settings_to_system", true)->values;
                 size_t size = different_settings.size();
                 if (size == 0) {
-                    size = this->option<ConfigOptionStrings>("filament_settings_id")->values.size() + 2;
+                    const auto *filament_ids = this->option<ConfigOptionStrings>("filament_settings_id");
+                    size = (filament_ids ? filament_ids->values.size() : 0) + 2;
                     different_settings.resize(size);
                 }
 
@@ -1428,6 +1518,10 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
         std::string bambuslicer_gcode_header      = "; Snapmaker_Orca";
         std::string legacy_fs_gcode_header        = std::string("; generated by ") + SLIC3R_APP_NAME;
         std::string compat_snapmaker_gcode_header = "; generated by Snapmaker Orca";
+        // Must stay in sync with GCodeProcessor::Producers: upstream OrcaSlicer G-code
+        // shares our config block format, and rejecting its header here would abort
+        // the whole import even though the producer is already recognized there.
+        std::string upstream_orca_gcode_header    = "; generated by OrcaSlicer";
 
         std::string header;
         bool        header_found = false;
@@ -1440,7 +1534,8 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
             // BBS
             if (strncmp(bambuslicer_gcode_header.c_str(), line_c, strlen(bambuslicer_gcode_header.c_str())) == 0 ||
                 strncmp(legacy_fs_gcode_header.c_str(), line_c, strlen(legacy_fs_gcode_header.c_str())) == 0 ||
-                strncmp(compat_snapmaker_gcode_header.c_str(), line_c, strlen(compat_snapmaker_gcode_header.c_str())) == 0) {
+                strncmp(compat_snapmaker_gcode_header.c_str(), line_c, strlen(compat_snapmaker_gcode_header.c_str())) == 0 ||
+                strncmp(upstream_orca_gcode_header.c_str(), line_c, strlen(upstream_orca_gcode_header.c_str())) == 0) {
                 header_found = true;
                 break;
             }
@@ -1501,8 +1596,17 @@ ConfigSubstitutions ConfigBase::load_from_gcode_file(const std::string &file, Fo
                     }
                     thumb_content = base64_data;
 
-                    this->set_deserialize("thumb" + std::to_string(thumbnail_id++), thumb_content, substitutions_ctxt);
-                    
+                    // Only thumb0/thumb1 are defined; gcode from upstream OrcaSlicer may carry
+                    // more thumbnail blocks. Skip the undefined ones with a warning instead of
+                    // letting set_deserialize abort the whole import with an unknown-option error.
+                    const std::string thumb_key = "thumb" + std::to_string(thumbnail_id++);
+                    if (this->has(thumb_key)) {
+                        this->set_deserialize(thumb_key, thumb_content, substitutions_ctxt);
+                    } else {
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(
+                            ": no config option for thumbnail block %1% (%2%x%3%), skipping") % (thumbnail_id - 1) % width % height;
+                    }
+
                 }
 
                 // 读取到块结束标记
@@ -1611,6 +1715,19 @@ std::optional<PluginCapabilityRef> parse_capability_ref(const std::string& value
 //BBS: add json support
 void ConfigBase::save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version) const
 {
+    // Serialize first: if that throws (invalid UTF-8), the existing file stays untouched.
+    std::ostringstream ss;
+    this->save_to_json(ss, name, from, version);
+    boost::nowide::ofstream c;
+    c.open(file, std::ios::out | std::ios::trunc);
+    c << ss.str();
+    c.close();
+
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
+}
+
+void ConfigBase::save_to_json(std::ostream &os, const std::string &name, const std::string &from, const std::string &version, bool replace_invalid_utf8) const
+{
     json j;
     //record the headers
     j[BBL_JSON_KEY_VERSION] = version;
@@ -1627,6 +1744,11 @@ void ConfigBase::save_to_json(const std::string &file, const std::string &name, 
                 j[opt_key] = (dynamic_cast<const ConfigOptionString *>(opt))->value;
             else
                 j[opt_key] = opt->serialize();
+        }
+        else if (this->uniform_scalar_option(opt_key, opt)) {
+            // Snapmaker Orca: a per tool head line width whose columns are all equal is written as
+            // the one string older readers know (ConfigOptionDef::scalar_when_uniform).
+            j[opt_key] = static_cast<const ConfigOptionVectorBase *>(opt)->vserialize().front();
         }
         else {
             const ConfigOptionVectorBase* vec = static_cast<const ConfigOptionVectorBase*>(opt);
@@ -1656,12 +1778,7 @@ void ConfigBase::save_to_json(const std::string &file, const std::string &name, 
             j["plugins"] = unique_refs;
     }
 
-    boost::nowide::ofstream c;
-    c.open(file, std::ios::out | std::ios::trunc);
-    c << j.dump(1, '\t') << std::endl;
-    c.close();
-
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", saved config to %1%\n")%file;
+    os << j.dump(1, '\t', false, replace_invalid_utf8 ? json::error_handler_t::replace : json::error_handler_t::strict) << std::endl;
 }
 
 void ConfigBase::save(const std::string &file) const
@@ -1811,6 +1928,36 @@ const ConfigOption* DynamicConfig::optptr(const t_config_option_key &opt_key) co
     return (it == options.end()) ? nullptr : it->second.get();
 }
 
+// ConfigOptionBool(s)::deserialize only understands "1" and "0", but scripts commonly spell CLI
+// flags as --opt=true or --opt=no. Map the usual spellings onto what deserialize() accepts, per
+// comma-separated item so vector options keep working, and pass anything else through unchanged
+// so a genuine typo is still reported as invalid.
+static std::string normalize_cli_bool_value(const std::string &value)
+{
+    static const char* true_values[]  = { "1", "true",  "yes", "on",  "enabled"  };
+    static const char* false_values[] = { "0", "false", "no",  "off", "disabled" };
+
+    auto matches = [](const std::string &item, const char* const* candidates, size_t count) {
+        return std::any_of(candidates, candidates + count, [&item](const char* candidate) { return boost::iequals(item, candidate); });
+    };
+
+    std::string        normalized;
+    std::istringstream is(value);
+    std::string        item;
+    while (std::getline(is, item, ',')) {
+        boost::trim(item);
+        if (! normalized.empty())
+            normalized += ",";
+        if (matches(item, true_values, std::size(true_values)))
+            normalized += "1";
+        else if (matches(item, false_values, std::size(false_values)))
+            normalized += "0";
+        else
+            normalized += item;
+    }
+    return normalized;
+}
+
 bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option_keys* extra, t_config_option_keys* keys)
 {
     // cache the CLI option => opt_key mapping
@@ -1838,6 +1985,9 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
             parse_options = false;
             continue;
         }
+        // Handled only in GUI instance_check (InstanceCheck.cpp), not as PrintConfig keys.
+        if (token == "--single-instance" || token == "--no-single-instance")
+            continue;
         // Remove leading dashes (one or two).
         token.erase(token.begin(), token.begin() + (boost::starts_with(token, "--") ? 2 : 1));
         // Read value when supplied in the --key=value form.
@@ -1908,17 +2058,32 @@ bool DynamicConfig::read_cli(int argc, const char* const argv[], t_config_option
             // to the end of the value.
             if (opt_base->type() == coBools && value.empty())
                 static_cast<ConfigOptionBools*>(opt_base)->values.push_back(!no);
-            else
+            else {
                 // Deserialize any other vector value (ConfigOptionInts, Floats, Percents, Points) the same way
                 // they get deserialized from an .ini file. For ConfigOptionStrings, that means that the C-style unescape
                 // will be applied for values enclosed in quotes, while values non-enclosed in quotes are left to be
                 // unescaped by the calling shell.
-				opt_vector->deserialize(value, true);
+                const std::string vector_value = opt_base->type() == coBools ? normalize_cli_bool_value(value) : value;
+                bool deserialized = false;
+                try {
+                    deserialized = opt_vector->deserialize(vector_value, true);
+                } catch (const std::exception &ex) {
+                    // e.g. "nil" deserialized into a non-nullable vector option throws instead of
+                    // returning false - treat that the same as any other invalid value here.
+                    deserialized = false;
+                }
+                if (! deserialized) {
+                    boost::nowide::cerr << "Invalid value for option --" << token.c_str() << std::endl;
+                    return false;
+                }
+            }
         } else if (opt_base->type() == coBool) {
             if (value.empty())
                 static_cast<ConfigOptionBool*>(opt_base)->value = !no;
-            else
-                opt_base->deserialize(value);
+            else if (! opt_base->deserialize(normalize_cli_bool_value(value))) {
+                boost::nowide::cerr << "Invalid value for option --" << token.c_str() << std::endl;
+                return false;
+            }
         } else if (opt_base->type() == coString) {
             // Do not unescape single string values, the unescaping is left to the calling shell.
             static_cast<ConfigOptionString*>(opt_base)->value = value;

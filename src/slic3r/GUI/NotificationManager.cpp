@@ -1933,7 +1933,8 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 			[id = mo ? mo->id() : (mi ? mi->id() : 0),
              parent_id = mi ? mi->get_object()->id() : 0,
              is_inst = (mi != nullptr),
-             opt = error.opt_key](wxEvtHandler*) {
+             opt = error.opt_key,
+             head = error.tool_head](wxEvtHandler*) {
 			auto& objects = wxGetApp().model().objects;
 
             if (is_inst) {
@@ -1982,7 +1983,9 @@ void NotificationManager::push_validate_error_notification(StringObjectException
 				if (opt_type == Preset::TYPE_PRINT && ((!is_inst && id.id) || (is_inst && parent_id.id))) // if object found and it's a print preset option, switch to object first
 					wxGetApp().params_panel()->switch_to_object();
 
-				wxGetApp().sidebar().jump_to_option(opt, opt_type, L"");
+				// Snapmaker Orca: a value refused on one tool head (a line width, Print::validate)
+				// opens its field with that tool head selected (StringObjectException::tool_head).
+				wxGetApp().sidebar().jump_to_option(opt, opt_type, L"", head);
 			}
 			else {
 				wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
@@ -3102,7 +3105,7 @@ bool NotificationManager::push_notification_data(std::unique_ptr<NotificationMan
     }
 	bool retval = false;
 	if (this->activate_existing(notification.get())) {
-		if (m_initialized) { // ignore update action - it cant be initialized if canvas and imgui context is not ready
+		if (m_initialized && m_imgui_ready) {
 			if (notification->get_type() == NotificationType::SlicingWarning) {
 				m_pop_notifications.back()->append(notification->get_data().ori_text);
 			} else {
@@ -3148,6 +3151,10 @@ void NotificationManager::stop_delayed_notifications_of_type(const NotificationT
 
 void NotificationManager::render_notifications(GLCanvas3D &canvas, float overlay_width, float bottom_margin, float right_margin)
 {
+	// Notifications render inside an ImGui frame, so the font atlas is built from this point on
+	// and pushed notifications may safely measure their text.
+	m_imgui_ready = true;
+
 	sort_notifications();
 
 	float bottom_up_last_y = bottom_margin; // ORCA dont scale margins
@@ -3358,17 +3365,7 @@ size_t NotificationManager::get_notification_count() const
 void NotificationManager::bbl_show_plateinfo_notification(const std::string &text)
 {
     NotificationData data{NotificationType::BBLPlateInfo, NotificationLevel::PrintInfoNotificationLevel, BBL_NOTICE_MAX_INTERVAL, text};
-
-    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
-        if (notification->get_type() == NotificationType::BBLPlateInfo) {
-            notification->reinit();
-            notification->update(data);
-            return;
-        }
-    }
-
-    auto notification = std::make_unique<NotificationManager::PopNotification>(data, m_id_provider, m_evt_handler);
-    push_notification_data(std::move(notification), 0);
+    push_notification_data(data, 0);
 }
 
 void NotificationManager::bbl_close_3mf_warn_notification()
@@ -3379,20 +3376,10 @@ void NotificationManager::bbl_close_3mf_warn_notification()
         }
 }
 
-void NotificationManager::bbl_show_3mf_warn_notification(const std::string &text)
+void NotificationManager::bbl_show_3mf_warn_notification(const std::string &text, NotificationLevel level)
 {
-    NotificationData data{NotificationType::BBL3MFInfo, NotificationLevel::ErrorNotificationLevel, BBL_NOTICE_MAX_INTERVAL, text};
-
-    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
-        if (notification->get_type() == NotificationType::BBL3MFInfo) {
-            notification->reinit();
-            notification->update(data);
-            return;
-        }
-    }
-
-    auto notification = std::make_unique<NotificationManager::PopNotification>(data, m_id_provider, m_evt_handler);
-    push_notification_data(std::move(notification), 0);
+    NotificationData data{NotificationType::BBL3MFInfo, level, BBL_NOTICE_MAX_INTERVAL, text};
+    push_notification_data(data, 0);
 }
 
 void NotificationManager::bbl_close_plateinfo_notification()
@@ -3407,17 +3394,7 @@ void NotificationManager::bbl_close_plateinfo_notification()
 void NotificationManager::bbl_show_preview_only_notification(const std::string &text)
 {
     NotificationData data{NotificationType::BBLPreviewOnlyMode, NotificationLevel::WarningNotificationLevel, 0, text};
-
-    for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
-        if (notification->get_type() == NotificationType::BBLPreviewOnlyMode) {
-            notification->reinit();
-            notification->update(data);
-            return;
-        }
-    }
-
-    auto notification = std::make_unique<NotificationManager::PopNotification>(data, m_id_provider, m_evt_handler);
-    push_notification_data(std::move(notification), 0);
+    push_notification_data(data, 0);
 }
 
 void NotificationManager::bbl_close_preview_only_notification()

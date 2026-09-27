@@ -333,8 +333,7 @@ PrintObjectSupportMaterial::PrintObjectSupportMaterial(const PrintObject *object
     m_print_config          (&object->print()->config()),
     m_object_config         (&object->config()),
     m_slicing_params        (slicing_params),
-    m_support_params        (*object),
-	m_object                (object)
+    m_support_params        (*object)
 {
 }
 
@@ -1588,7 +1587,7 @@ static inline std::tuple<Polygons, Polygons, double> detect_contacts(
 
         // Cache support trimming polygons derived from lower layer polygons, possible merged with "on build plate only" trimming polygons.
         auto slices_margin_update =
-            [&slices_margin, &layer, &lower_layer, &lower_layer_polygons, buildplate_only, has_enforcer, &annotations, layer_id]
+            [&slices_margin, &lower_layer, &lower_layer_polygons, buildplate_only, has_enforcer, &annotations, layer_id]
         (float slices_margin_offset, float no_interface_offset) {
             if (slices_margin.offset != slices_margin_offset) {
                 slices_margin.offset = slices_margin_offset;
@@ -2150,7 +2149,10 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
 
     // check if the sharp tails should be extended higher
     bool detect_first_sharp_tail_only = false;
-    const coordf_t extrusion_width = m_object_config->line_width.get_abs_value(support_material_nozzle_diameter(&object, object.config().support_interface_filament));
+    // Snapmaker Orca: the width is a column per tool head, read at the interface head whose nozzle resolves it.
+    float        sharp_tail_nozzle = 0.f;
+    const size_t sharp_tail_head   = support_head(&object, object.config().support_interface_filament, true, &sharp_tail_nozzle);
+    const coordf_t extrusion_width = Flow::width_at(m_object_config->line_width, sharp_tail_head).get_abs_value(sharp_tail_nozzle);
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     if (is_auto(m_object_config->support_type.value) && g_config_support_sharp_tails && !detect_first_sharp_tail_only) {
         for (size_t layer_nr = layer_id_start; layer_nr < num_layers; layer_nr++) {

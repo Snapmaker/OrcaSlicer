@@ -1,4 +1,5 @@
 #include "DailyTips.hpp"
+#include "slic3r/GUI/Widgets/Label.hpp"
 
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
 #define IMGUI_DEFINE_MATH_OPERATORS
@@ -147,7 +148,10 @@ void DailyTipsDataRenderer::render_img(const ImVec2& start_pos, const ImVec2& si
 
 bool has_cjk(const std::string &text)
 {
-    for (size_t i = 0; i < text.size() - 2; ++i) {
+    // text.size() - 2 underflows for strings shorter than 3 bytes (an empty or one-line tip).
+    if (text.size() < 3)
+        return false;
+    for (size_t i = 0; i + 2 < text.size(); ++i) {
         unsigned char c1 = text[i];
         unsigned char c2 = text[i + 1];
         unsigned char c3 = text[i + 2];
@@ -248,7 +252,6 @@ DailyTipsPanel::DailyTipsPanel(bool can_expand, DailyTipsLayout layout)
     m_width(0),
     m_height(0),
     m_can_expand(can_expand),
-    m_layout(layout),
     m_uid(DailyTipsPanel::uid++),
     m_dailytips_renderer(std::make_unique<DailyTipsDataRenderer>(layout))
 {

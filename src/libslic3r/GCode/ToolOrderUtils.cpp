@@ -3,7 +3,9 @@
 #include <set>
 #include <map>
 #include <cmath>
+#include <algorithm>
 #include <boost/multiprecision/cpp_int.hpp>
+#include <boost/log/trivial.hpp>
 
 namespace Slic3r
 {
@@ -910,7 +912,7 @@ namespace Slic3r
 
         unsigned int iterations = (1 << all_extruders.size());
         unsigned int final_state = iterations - 1;
-        std::vector<std::vector<float>>cache(iterations, std::vector<float>(all_extruders.size(), 0x7fffffff));
+        std::vector<std::vector<float>>cache(iterations, std::vector<float>(all_extruders.size(), std::numeric_limits<float>::max()));
         std::vector<std::vector<int>>prev(iterations, std::vector<int>(all_extruders.size(), -1));
         cache[1][0] = 0.;
         for (unsigned int state = 0; state < iterations; ++state) {
@@ -982,6 +984,21 @@ namespace Slic3r
         float* cost)
     {
         if (curr_layer_extruders.empty()) {
+            if (cost)
+                *cost = 0;
+            return curr_layer_extruders;
+        }
+        // wipe_volumes (from flush_volumes_matrix) can be shorter than the filament ids of the layer
+        // tools, e.g. in a project saved with fewer filaments; an out-of-range id returns the
+        // unordered sequence instead of indexing out of bounds (upstream 236f0d350b).
+        const size_t n_fil = wipe_volumes.size();
+        auto id_out_of_range = [n_fil](const std::vector<unsigned int>& ids) {
+            return std::any_of(ids.begin(), ids.end(), [n_fil](unsigned int id) { return id >= n_fil; });
+        };
+        if (id_out_of_range(curr_layer_extruders) || id_out_of_range(next_layer_extruders) ||
+            (start_extruder_id && *start_extruder_id >= n_fil)) {
+            BOOST_LOG_TRIVIAL(error) << "get_extruders_order: filament id out of flush matrix range (" << n_fil
+                                     << "), skipping flush reorder";
             if (cost)
                 *cost = 0;
             return curr_layer_extruders;

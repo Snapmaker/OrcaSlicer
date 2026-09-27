@@ -1,6 +1,14 @@
 #include <catch2/catch_all.hpp>
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <map>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Print.hpp"
@@ -114,10 +122,11 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     return config;
 }
 
-// One object made of two 20x20 mm parts side by side; the second part prints with filament 2.
+// One object made of two 20x20 mm parts side by side; the second part prints with filament
+// `coarse_filament` (1-based, 2 by default), the first with `fine_filament` (0 = the object's).
 // The parts are z-scaled by z_scale (cubes are 10 mm tall by default).
 static void init_two_part_print(Print &print, Model &model, const DynamicPrintConfig &config, float z_scale = 0.5f,
-                                TestMesh coarse_shape = TestMesh::cube_20x20x20)
+                                TestMesh coarse_shape = TestMesh::cube_20x20x20, int fine_filament = 0, int coarse_filament = 2)
 {
     TriangleMesh fine_mesh = mesh(TestMesh::cube_20x20x20);
     fine_mesh.scale(Vec3f(1.f, 1.f, z_scale));
@@ -127,9 +136,11 @@ static void init_two_part_print(Print &print, Model &model, const DynamicPrintCo
 
     ModelObject *object = model.add_object();
     object->name = "two_part_cube";
-    object->add_volume(std::move(fine_mesh));
+    ModelVolume *fine_volume = object->add_volume(std::move(fine_mesh));
+    if (fine_filament > 0)
+        fine_volume->config.set("extruder", fine_filament);
     ModelVolume *coarse_volume = object->add_volume(std::move(coarse_mesh));
-    coarse_volume->config.set("extruder", 2);
+    coarse_volume->config.set("extruder", coarse_filament);
     object->add_instance();
 
     // This fork's arrangement engine rejects positions outside the (unset) plate even for an
@@ -756,7 +767,7 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         // pitch and the no-preference filaments follow it instead of vetoing it.
         config.set_key_value("outer_wall_filament_id", new ConfigOptionInt(2));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -817,7 +828,7 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         config.set_key_value("top_surface_filament_id",    new ConfigOptionInt(2));
         config.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(3));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",            new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",            new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -852,8 +863,8 @@ SCENARIO("Fill line width follows the filament that prints the surface", "[Multi
     GIVEN("Internal solid infill mapped to the 0.6 mm filament, bottom surfaces staying on the 0.4 mm filament") {
         DynamicPrintConfig config = two_extruder_config(0.);
         config.set_key_value("internal_solid_filament_id",       new ConfigOptionInt(2));
-        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatOrPercent(125., true));
-        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("initial_layer_line_width",         new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(125., true)});
+        config.set_key_value("internal_solid_infill_line_width", new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -964,7 +975,7 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("inner_wall_filament_id", new ConfigOptionInt(2));
         config.set_key_value("max_layer_height",       new ConfigOptionFloats({0.3, 0.45}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",             new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",             new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -1010,7 +1021,7 @@ SCENARIO("Combined infill is limited by the printing nozzle only", "[MultiNozzle
         config.set_key_value("internal_solid_filament_id", new ConfigOptionInt(2));
         config.set_key_value("min_layer_height",           new ConfigOptionFloats({0.07, 0.3}));
         // Keep the combined-region line width checks out of the way, this test targets heights.
-        config.set_key_value("line_width",                 new ConfigOptionFloatOrPercent(0.5, false));
+        config.set_key_value("line_width",                 new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0.5, false)});
         Print print;
         Model model;
         init_two_part_print(print, model, config);
@@ -1094,7 +1105,7 @@ SCENARIO("Support nozzle diameter restricts support printing", "[MultiNozzleLaye
         config.set_key_value("raft_layers",             new ConfigOptionInt(2));
         config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value = stNormalAuto;
         config.set_key_value("support_nozzle_diameter", new ConfigOptionFloat(support_nozzle_diameter));
-        config.set_key_value("support_line_width",      new ConfigOptionFloatOrPercent(105., true));
+        config.set_key_value("support_line_width",      new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(105., true)});
         return config;
     };
 
@@ -1212,6 +1223,8 @@ SCENARIO("A raft keeps the bottom surfaces of combined regions", "[MultiNozzleLa
     }
 }
 
+static DynamicPrintConfig four_nozzle_config();   // defined below, with the four-head scenarios
+
 SCENARIO("Per-extruder layer height validation rejects invalid configurations", "[MultiNozzleLayerHeight]") {
     auto expect_error = [](double second_extruder_layer_height) {
         DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
@@ -1222,8 +1235,8 @@ SCENARIO("Per-extruder layer height validation rejects invalid configurations", 
         REQUIRE(! err.string.empty());
         REQUIRE(err.opt_key == "extruder_layer_height");
     };
-    // The rejection names the coarsest object layer height every preferred height is a whole
-    // multiple of (capped by the smallest nozzle); that value must validate cleanly.
+    // The rejection names the object layer height the planner derives for the heads in use, as
+    // the sidebar derives it (plan_extruder_layer_heights); that value must validate cleanly.
     auto expect_error_with_remedy = [](double second_extruder_layer_height, const char *remedy, double remedy_value) {
         DynamicPrintConfig config = two_extruder_config(second_extruder_layer_height);
         {
@@ -1245,8 +1258,10 @@ SCENARIO("Per-extruder layer height validation rejects invalid configurations", 
         REQUIRE(err.string.empty());
     };
     GIVEN("An extruder layer height that is no integer multiple of the object layer height") {
-        // gcd(0.5) = 0.5 exceeds the 0.4 mm nozzle: the next divisor, 0.25, is recommended.
-        THEN("validation fails and its recommended object layer height validates") { expect_error_with_remedy(0.5, "0.25 mm", 0.25); }
+        // 0.5 exceeds the 0.4 mm nozzle and the Default head's 0.2 mm does not land on 0.25 (its
+        // tenth-of-base slack is 0.02): the scan reaches 0.1, on which both land exactly; the
+        // pre-planner recommendation was the divisor 0.25.
+        THEN("validation fails and its recommended object layer height validates") { expect_error_with_remedy(0.5, "to 0.1 mm", 0.1); }
     }
     GIVEN("An extruder layer height smaller than the object layer height") {
         THEN("validation fails and its recommended object layer height validates") { expect_error_with_remedy(0.1, "0.1 mm", 0.1); }
@@ -1270,6 +1285,34 @@ SCENARIO("Per-extruder layer height validation rejects invalid configurations", 
             REQUIRE(print.validate(&warnings).string.empty());
             REQUIRE(concat_warning_strings(warnings).find("maximum layer") != std::string::npos);
             REQUIRE(warnings_have_opt_key(warnings, "extruder_layer_height"));
+        }
+    }
+    GIVEN("Four heads of which two print, both preferring heights off the 0.2 mm object layer height") {
+        // Heads 0.2 / 0.4 / 0.6 / 0.8 mm; filaments 2 (0.3 mm) and 3 (0.45 mm) print, heads 1 and 4
+        // idle at Default. The remedy is planned over the used heads only (0.15 fits both); counting
+        // the idle heads would pull 0.2 mm into the scan and land on 0.05.
+        DynamicPrintConfig config = four_nozzle_config();
+        config.set_key_value("layer_height",               new ConfigOptionFloat(0.2));
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
+        config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({0., 0.3, 0.45, 0.}));
+        auto validate_two_of_four = [&config]() {
+            Print print;
+            Model model;
+            init_two_part_print(print, model, config, 0.5f, TestMesh::cube_20x20x20, 2, 3);
+            return print.validate();
+        };
+        THEN("the recommended object layer height is the used heads' 0.15 mm and validates") {
+            {
+                const StringObjectException err = validate_two_of_four();
+                REQUIRE(! err.string.empty());
+                REQUIRE(err.opt_key == "extruder_layer_height");
+                INFO(err.string);
+                REQUIRE(err.string.find("to 0.15 mm") != std::string::npos);
+            }
+            config.set_key_value("layer_height", new ConfigOptionFloat(0.15));
+            const StringObjectException err = validate_two_of_four();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
         }
     }
 }
@@ -2027,15 +2070,191 @@ SCENARIO("Preferred layer heights are planned onto a shared object layer grid", 
             CHECK(plan.heights[3] == Approx(0.6));
         }
     }
+    // While an extruder is at Default, its object layer height joins the scan (within a tenth of
+    // it), so one entered value does not move the others. Rows: find-layer-heights.md 3.1.
+    GIVEN("one extruder at 0.30 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.30, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the grid is 0.1 mm and the Default extruders keep 0.2 mm exactly") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.2));
+            CHECK(plan.heights[1] == Approx(0.3));
+            CHECK(plan.heights[2] == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.2));
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.25 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.25, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the grid lands the Default extruders within a tenth of 0.2 mm (0.065: 0.195), not at 0.26 mm") {
+            CHECK(plan.grid == Approx(0.065));
+            CHECK(plan.heights[0] == Approx(0.195));
+            CHECK(plan.heights[1] == Approx(0.26));
+            CHECK(plan.heights[2] == Approx(0.195));
+            CHECK(plan.heights[3] == Approx(0.195));
+            CHECK(plan.rounded == std::vector<size_t> { 1 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.30 on a 0.16 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.30, 0., 0. }, 0.16, nozzles, 0.2, false);
+        THEN("0.155 mm serves both within the tolerance") {
+            CHECK(plan.grid == Approx(0.155));
+            CHECK(plan.heights[0] == Approx(0.155));
+            CHECK(plan.heights[1] == Approx(0.31));
+            CHECK(plan.rounded == std::vector<size_t> { 1 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 2, 3 });
+        }
+    }
+    GIVEN("0.09 and 0.18 on a 0.2 mm object layer height, two extruders at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.09, 0.18, 0., 0. }, 0.2, nozzles, 0.2, false);
+        THEN("the base is soft: 0.18 mm is within a tenth of 0.2 mm, so the grid stays 0.09 mm") {
+            CHECK(plan.grid == Approx(0.09));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[2] == Approx(0.18));
+            CHECK(plan.heights[3] == Approx(0.18));
+            CHECK(plan.pinned == std::vector<size_t> { 2, 3 });
+        }
+    }
+    GIVEN("one extruder at 0.50 on a 0.2 mm object layer height, the others at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0., 0.50 }, 0.2, nozzles, 0.2, false);
+        THEN("the grid is 0.1 mm and the Default extruders keep 0.2 mm exactly") {
+            CHECK(plan.grid == Approx(0.1));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.heights[0] == Approx(0.2));
+            CHECK(plan.heights[2] == Approx(0.2));
+            CHECK(plan.heights[3] == Approx(0.5));
+            CHECK(plan.pinned == std::vector<size_t> { 0, 1, 2 });
+        }
+    }
+    // The fallback (no candidate within the tolerance) has a floor, half the smallest minimum layer
+    // height (0.02 mm for the 0.2 mm head), and a bounded rounding. Rows: find-layer-heights.md 3.2.
+    GIVEN("0.36 and 0.50 on a 0.12 mm object layer height, two extruders at Default") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0.36, 0.50 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("the grid is 0.03 mm (0.5 -> 0.51), no longer the 0.02 mm gcd") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.12));
+            CHECK(plan.heights[1] == Approx(0.12));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.51));
+            CHECK(plan.rounded == std::vector<size_t> { 3 });
+            CHECK(plan.pinned == std::vector<size_t> { 0, 1 });
+        }
+    }
+    GIVEN("0.13 / 0.20 / 0.30 / 0.40, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.13, 0.20, 0.30, 0.40 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("every value stays within 0.01 mm on the 0.03 mm grid, instead of 0.26 / 0.26 on the finest value") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.12));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.30));
+            CHECK(plan.heights[3] == Approx(0.39));
+            CHECK(plan.rounded == std::vector<size_t> { 0, 1, 3 });
+        }
+    }
+    GIVEN("0.16 / 0.20 / 0.25 / 0.22, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.16, 0.20, 0.25, 0.22 }, 0.12, nozzles, 0.2, false, 0.02);
+        THEN("every value stays within 0.01 mm on the 0.03 mm grid, instead of 0.16 / 0.16 / 0.32 / 0.16") {
+            CHECK(plan.grid == Approx(0.03));
+            CHECK(plan.heights[0] == Approx(0.15));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.24));
+            CHECK(plan.heights[3] == Approx(0.21));
+            CHECK(plan.rounded.size() == 4);
+        }
+    }
+    GIVEN("0.13 / 0.20 / 0.30 / 0.40 with a floor of 0.06 mm (heads whose minimum layer height is 0.12 mm)") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.13, 0.20, 0.30, 0.40 }, 0.12, nozzles, 0.2, false, 0.06);
+        THEN("nothing above the floor fits within 0.01 mm; the tolerance grows once and 0.07 mm rounds no value by more than 0.02 mm") {
+            CHECK(plan.grid == Approx(0.07));
+            CHECK(plan.heights[0] == Approx(0.14));
+            CHECK(plan.heights[1] == Approx(0.21));
+            CHECK(plan.heights[2] == Approx(0.28));
+            CHECK(plan.heights[3] == Approx(0.42));
+            CHECK(plan.rounded.size() == 4);
+        }
+    }
+    GIVEN("0.36 and 0.50 on a 0.12 mm object layer height with a floor of 0.06 mm") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0., 0.36, 0.50 }, 0.12, nozzles, 0.2, false, 0.06);
+        THEN("0.125 mm at the second tolerance step: the Default extruders follow it, 0.36 becomes 0.375") {
+            CHECK(plan.grid == Approx(0.125));
+            CHECK(plan.heights[2] == Approx(0.375));
+            CHECK(plan.heights[3] == Approx(0.5));
+            CHECK(plan.rounded == std::vector<size_t> { 2 });
+            CHECK(plan.pinned.empty());
+        }
+    }
+    GIVEN("a finest value below the floor") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.01, 0., 0., 0. }, 0.2, nozzles, 0.2, false, 0.02);
+        THEN("the floor never rises above the finest value: that value is the grid") {
+            CHECK(plan.grid == Approx(0.01));
+            CHECK(plan.rounded.empty());
+        }
+    }
+    GIVEN("the reference heads 0.09 / 0.18 / 0.36 / 0.54, every extruder explicit") {
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0.09, 0.18, 0.36, 0.54 }, 0.2, nozzles, 0.2, false);
+        THEN("the plan is the 0.09 mm grid with nothing rounded or pinned, whatever the object layer height was") {
+            CHECK(plan.grid == Approx(0.09));
+            CHECK(plan.rounded.empty());
+            CHECK(plan.pinned.empty());
+            REQUIRE(plan.heights.size() == 4);
+            CHECK(plan.heights[0] == Approx(0.09));
+            CHECK(plan.heights[1] == Approx(0.18));
+            CHECK(plan.heights[2] == Approx(0.36));
+            CHECK(plan.heights[3] == Approx(0.54));
+        }
+    }
     GIVEN("the experimental exact mode with 0.13 and 0.37") {
-        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.13, 0., 0.37 }, 0.2, nozzles, 0.2, true);
-        THEN("every value is kept and the grid is what both are whole multiples of") {
+        // The floor does not apply in exact mode: the grid stays the gcd.
+        const ExtruderLayerHeightPlan plan = plan_extruder_layer_heights({ 0., 0.13, 0., 0.37 }, 0.2, nozzles, 0.2, true, 0.06);
+        THEN("every value is kept and the grid is what both are whole multiples of, below the floor") {
             CHECK(plan.grid == Approx(0.01));
             CHECK(plan.rounded.empty());
             CHECK(plan.heights[1] == Approx(0.13));
             CHECK(plan.heights[3] == Approx(0.37));
         }
     }
+}
+
+// Row pitches of each purge block ("; CP TOOLCHANGE WIPE" to "; CP TOOLCHANGE END") per purging
+// tool (last T<n>): the sorted Y steps between its extruding G1 moves; rows run along X.
+static std::map<int, std::vector<double>> purge_row_pitches(const std::string &gcode)
+{
+    std::map<int, std::vector<double>> pitches;
+    std::istringstream                 in(gcode);
+    std::string                        line;
+    int                                tool    = -1;
+    bool                               in_wipe = false;
+    std::set<long>                     rows;   // Y in micrometres
+    auto flush = [&]() {
+        std::vector<long> ys(rows.begin(), rows.end());
+        for (size_t i = 1; i < ys.size(); ++ i)
+            pitches[tool].push_back(double(ys[i] - ys[i - 1]) / 1000.);
+        rows.clear();
+    };
+    while (std::getline(in, line)) {
+        if (line.size() > 1 && line[0] == 'T' && std::isdigit(static_cast<unsigned char>(line[1]))) {
+            tool = std::atoi(line.c_str() + 1);
+        } else if (line.rfind("; CP TOOLCHANGE WIPE", 0) == 0) {
+            in_wipe = true;
+        } else if (in_wipe && line.rfind("; CP TOOLCHANGE END", 0) == 0) {
+            in_wipe = false;
+            flush();
+        } else if (in_wipe && line.rfind("G1 ", 0) == 0) {
+            const size_t y = line.find(" Y"), e = line.find(" E");
+            if (y != std::string::npos && e != std::string::npos && std::atof(line.c_str() + e + 2) > 0.)
+                rows.insert(std::lround(std::atof(line.c_str() + y + 2) * 1000.));
+        }
+    }
+    return pitches;
+}
+
+static double median(std::vector<double> values)
+{
+    REQUIRE(! values.empty());
+    std::sort(values.begin(), values.end());
+    return values[values.size() / 2];
 }
 
 SCENARIO("The prime tower prints one slab per tool change with per-extruder layer heights", "[MultiNozzleLayerHeight][WipeTower]") {
@@ -2082,9 +2301,99 @@ SCENARIO("The prime tower prints one slab per tool change with per-extruder laye
             CHECK(skipped > 0);
             CHECK(slabs > 0);
         }
-        THEN("the G-code exports") {
+        THEN("the G-code exports and every tool purges on rows one of its own line widths apart") {
             const std::string gcode = Slic3r::Test::gcode(print);
             REQUIRE(! gcode.empty());
+            // 0.4 and 0.6 mm nozzles extrude 0.5 and 0.75 mm lines (1.25 x the nozzle); with extra
+            // spacing and flow at 100 % each tool's purge rows advance by its own width.
+            const std::map<int, std::vector<double>> pitches = purge_row_pitches(gcode);
+            REQUIRE(pitches.count(0) == 1);
+            REQUIRE(pitches.count(1) == 1);
+            CHECK(median(pitches.at(0)) == Catch::Approx(0.5).margin(0.02));
+            CHECK(median(pitches.at(1)) == Catch::Approx(0.75).margin(0.02));
+        }
+    }
+    GIVEN("the two-part object with a third, unused 0.2 mm head on the printer") {
+        // The 0.2 mm head's maximum layer height (0.14) is below two grid steps (0.2), yet no layer
+        // prints with it: the slabs are capped by the heads in use (0.3), not by every installed
+        // head, so the layers without a tool change still lose their slab.
+        DynamicPrintConfig config = tower_config(0.4);
+        config.set_key_value("nozzle_diameter",          new ConfigOptionFloats({0.4, 0.6, 0.2}));
+        config.set_key_value("extruder_layer_height",    new ConfigOptionFloats({0., 0.4, 0.}));
+        config.set_key_value("min_layer_height",         new ConfigOptionFloats({0.07, 0.07, 0.04}));
+        config.set_key_value("max_layer_height",         new ConfigOptionFloats({0.3, 0.45, 0.14}));
+        config.set_key_value("filament_diameter",        new ConfigOptionFloats({1.75, 1.75, 1.75}));
+        config.set_key_value("filament_colour",          new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+        config.set_key_value("filament_type",            new ConfigOptionStrings({"PLA", "PLA", "PLA"}));
+        config.set_key_value("default_filament_colour",  new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF"}));
+        config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210, 210}));
+        config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
+        config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
+        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(9, 0.)));
+        config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("the slabs are thinned as without the unused head") {
+            REQUIRE(print.has_wipe_tower());
+            size_t skipped = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (lt.has_wipe_tower) {
+                    INFO("tower slab at z=" << lt.print_z << " height=" << lt.wipe_tower_layer_height);
+                    CHECK(lt.wipe_tower_layer_height <= 0.3 + 1e-3);
+                } else if (lt.tower_optional)
+                    ++ skipped;
+            }
+            CHECK(skipped > 0);
+        }
+    }
+    GIVEN("the 0.4 mm head's minimum layer height above the thin slabs") {
+        // Slabs follow the object layer grid: 0.1 mm where the first extruder prints alone, 0.3 mm at
+        // run tops. The first head (minimum 0.15 mm) purges on the thin slabs, the 0.6 mm head only on
+        // 0.3 mm ones; slicing warns per head about thin slabs, validate() only about object layers.
+        DynamicPrintConfig config = tower_config(0.4);
+        config.set_key_value("min_layer_height", new ConfigOptionFloats({0.15, 0.07}));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        {
+            const StringObjectException err = print.validate();
+            INFO(err.string);
+            REQUIRE(err.string.empty());
+        }
+        print.process();
+        THEN("the tower step warns with the slab count of the plan and the thin slabs of that head only") {
+            size_t slabs = 0, thin_head_1 = 0;
+            for (const LayerTools &lt : print.get_tool_ordering().layer_tools()) {
+                if (! lt.has_wipe_tower)
+                    continue;
+                ++ slabs;
+                if (lt.wipe_tower_layer_height < 0.15 - EPSILON &&
+                    std::find(lt.extruders.begin(), lt.extruders.end(), 0u) != lt.extruders.end())
+                    ++ thin_head_1;
+            }
+            REQUIRE(thin_head_1 > 0);
+            std::string message;
+            for (const PrintStateBase::Warning &warning : print.step_state_with_warnings(psWipeTower).warnings)
+                if (warning.message.find("The prime tower prints ") != std::string::npos)
+                    message = warning.message;
+            INFO(message);
+            REQUIRE(! message.empty());
+            auto number_after = [&message](const std::string &prefix) {
+                const size_t pos = message.find(prefix);
+                REQUIRE(pos != std::string::npos);
+                return std::stoul(message.substr(pos + prefix.size()));
+            };
+            CHECK(number_after("The prime tower prints ") == slabs);
+            CHECK(number_after("extruder 1: ") == thin_head_1);
+            CHECK(message.find("minimum layer height 0.15 mm") != std::string::npos);
+            CHECK(message.find("extruder 2: ") == std::string::npos);
         }
     }
     GIVEN("the same object without per-extruder layer heights") {
@@ -2099,6 +2408,138 @@ SCENARIO("The prime tower prints one slab per tool change with per-extruder laye
                 if (! lt.extruders.empty() && ! lt.has_wipe_tower)
                     ++ without;
             CHECK(without == 0);
+        }
+    }
+}
+
+// A stored layer height profile stays fixed for the extruder_layer_height guard after the initial
+// layer height changes, as long as generate_object_layers() never samples its stale first segment;
+// a stale segment reaching above the new first layer changes the second layer and stays rejected.
+SCENARIO("A fixed layer height profile stored under another first layer height stays fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](const DynamicPrintConfig &config) {
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, 10., std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    auto fixed_profile = [&slicing_params](DynamicPrintConfig config, double initial_layer_height) {
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(initial_layer_height));
+        const SlicingParameters params = slicing_params(config);
+        REQUIRE(params.first_object_layer_height_fixed());
+        const std::vector<coordf_t> profile = layer_height_profile_from_ranges(params, t_layer_config_ranges{});
+        REQUIRE(check_object_layers_fixed(params, profile));
+        return profile;
+    };
+    auto layer_heights = [](const std::vector<coordf_t> &layers) {
+        std::vector<double> heights;
+        for (size_t i = 0; i + 1 < layers.size(); i += 2)
+            heights.emplace_back(layers[i + 1] - layers[i]);
+        return heights;
+    };
+
+    GIVEN("Fixed profiles with 0.2 mm layers stored under a 0.2 mm and a 0.25 mm first layer") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        const std::vector<coordf_t> profile_020 = fixed_profile(config, 0.2);
+        const std::vector<coordf_t> profile_025 = fixed_profile(config, 0.25);
+        REQUIRE(profile_020.size() == 4);
+        REQUIRE(profile_025.size() == 8);
+
+        WHEN("the initial layer height is now 0.4 mm") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("both profiles count as fixed and slice to a 0.4 mm first layer over 0.2 mm layers") {
+                for (const std::vector<coordf_t> *profile : { &profile_020, &profile_025 }) {
+                    CHECK(check_object_layers_fixed(params_now, *profile));
+                    const std::vector<double> heights = layer_heights(generate_object_layers(params_now, *profile, false));
+                    REQUIRE(heights.size() >= 3);
+                    CHECK(heights.front() == Catch::Approx(0.4).margin(1e-6));
+                    for (size_t i = 1; i < heights.size(); ++ i)
+                        CHECK(heights[i] == Catch::Approx(0.2).margin(1e-6));
+                }
+            }
+            THEN("genuinely variable profiles are still rejected") {
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 5., 0.2, 5., 0.3, 10., 0.3}));
+                CHECK(! check_object_layers_fixed(params_now, std::vector<coordf_t>{0., 0.2, 2., 0.2, 4., 0.3, 6., 0.2, 8., 0.3, 10., 0.2}));
+            }
+        }
+
+        WHEN("a profile stored under a 0.4 mm first layer meets a 0.25 mm first layer") {
+            const std::vector<coordf_t> profile_040 = fixed_profile(config, 0.4);
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+            const SlicingParameters params_now = slicing_params(config);
+            THEN("the stale first segment is sampled into the second layer, so the profile is not fixed") {
+                const std::vector<double> heights = layer_heights(generate_object_layers(params_now, profile_040, false));
+                REQUIRE(heights.size() >= 3);
+                CHECK(heights[0] == Catch::Approx(0.25).margin(1e-6));
+                CHECK(heights[1] == Catch::Approx(0.4).margin(1e-6));
+                CHECK(! check_object_layers_fixed(params_now, profile_040));
+            }
+        }
+    }
+
+    GIVEN("A two-part print with per-extruder layer heights and a stored fixed profile") {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.25));
+        Print print;
+        Model model;
+        init_two_part_print(print, model, config);
+        REQUIRE(print.validate().string.empty());
+        ModelObject &object = *model.objects.front();
+        object.layer_height_profile.set(fixed_profile(config, 0.25));
+        print.apply(model, config);
+        REQUIRE(print.validate().string.empty());
+
+        WHEN("the initial layer height grows to 0.4 mm afterwards") {
+            config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.4));
+            print.apply(model, config);
+            THEN("validation still accepts the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                CHECK(err.string.empty());
+            }
+        }
+
+        WHEN("the stored profile is variable") {
+            object.layer_height_profile.set(std::vector<coordf_t>{0., 0.3, 5., 0.3, 5., 0.2, 10., 0.2});
+            print.apply(model, config);
+            THEN("validation rejects the per-extruder layer heights") {
+                const StringObjectException err = print.validate();
+                REQUIRE(! err.string.empty());
+                CHECK(err.opt_key == "extruder_layer_height");
+            }
+        }
+    }
+}
+
+// An object barely taller than its first layer: generate_object_layers() still samples the stored
+// profile for the second layer, so a profile whose top segment is not the regular layer height is
+// not fixed, even though the second layer's centre lies above the object top.
+SCENARIO("A stale layer height profile on a very short object is not taken for fixed", "[MultiNozzleLayerHeight]") {
+    auto slicing_params = [](double first_layer_height, double object_height) {
+        DynamicPrintConfig config = two_extruder_config(0.4);
+        config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(first_layer_height));
+        PrintConfig print_config;
+        print_config.apply(config, true);
+        PrintObjectConfig object_config;
+        object_config.apply(config, true);
+        return SlicingParameters::create_from_config(print_config, object_config, object_height, std::vector<unsigned int>{0, 1}, Vec3d(1., 1., 1.));
+    };
+    GIVEN("a 0.28 mm tall object with 0.2 mm first and regular layers") {
+        const SlicingParameters params = slicing_params(0.2, 0.28);
+        REQUIRE(params.first_object_layer_height_fixed());
+        THEN("a profile holding 0.08 mm all the way is rejected, in its 4 and 8 value forms") {
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.08, 0.28, 0.08}));
+            CHECK(! check_object_layers_fixed(params, std::vector<coordf_t>{0., 0.15, 0.15, 0.15, 0.15, 0.08, 0.28, 0.08}));
+        }
+        THEN("the profile generated for the object itself stays fixed") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
+        }
+    }
+    GIVEN("an object no taller than its first layer") {
+        const SlicingParameters params = slicing_params(0.2, 0.2);
+        THEN("its generated profile is fixed: only the hard-coded first layer prints") {
+            CHECK(check_object_layers_fixed(params, layer_height_profile_from_ranges(params, t_layer_config_ranges{})));
         }
     }
 }

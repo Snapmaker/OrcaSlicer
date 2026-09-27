@@ -1,10 +1,13 @@
 #include "TroubleshootDialog.hpp"
 #include "I18N.hpp"
 
+#include "BuildCommit.hpp"
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 
+#include <wx/filename.h>
+#include <wx/stdpaths.h>
 #include <wx/display.h>
 #include <wx/wfstream.h>
 #include "wx/clipbrd.h"
@@ -71,7 +74,7 @@ wxFlexGridSizer* TroubleshootDialog::create_item_loaded_profiles()
     auto gen_stats = GetProfilesOverview();
     gen_stats      = ""; // clear mem. not needed after generating m_..._act, m_..._usr variables
    
-    auto add_sizer = [this, g_sizer, create_label](PresetCollection* col, wxString label, int in_use, int user) {
+    auto add_sizer = [g_sizer, create_label](PresetCollection* col, wxString label, int in_use, int user) {
         int sys = 0;
         for (auto it = col->begin(); it != col->end(); it++) {
             if (it->is_system)
@@ -127,19 +130,19 @@ TroubleshootDialog::TroubleshootDialog()
     // LEFT SIZER //////////////////////
 
     // HEADER
-    m_logo            = ScalableBitmap(this, is_dark ? "OrcaSlicer_horizontal_dark" : "OrcaSlicer_horizontal_light", 64);
+    m_logo            = ScalableBitmap(this, "Snapmaker_Orca_about", 64);
     m_header_logo     = new wxStaticBitmap(this, wxID_ANY, m_logo.bmp());
     auto logo_line    = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, FromDIP(2)));
     logo_line->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#009687")));
-    auto version      = new Label(this, wxString(SoftFever_VERSION), wxALIGN_CENTRE_HORIZONTAL);
+    auto version      = new Label(this, wxString(Snapmaker_VERSION), wxALIGN_CENTRE_HORIZONTAL);
     wxFont version_font = GetFont();
     version_font = version_font.Scaled(1.65f); // SetPointSize(18) not works on macOS because it uses a 72 PPI reference
     version->SetFont(version_font);
     version->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#363636")));
 
-    auto build = new Button(this, wxString(GIT_COMMIT_HASH));
+    auto build = new Button(this, wxString(build_commit_label));
     build->SetStyle(ButtonStyle::Regular, ButtonType::Window);
-    auto hash_url = "https://github.com/OrcaSlicer/OrcaSlicer/commit/" + wxString(GIT_COMMIT_HASH);
+    auto hash_url = "https://github.com/Snapmaker/OrcaSlicer/commit/" + wxString(build_commit_hash);
     build->SetToolTip(hash_url);
     build->Bind(wxEVT_BUTTON, [hash_url](wxCommandEvent &e) {
          wxLaunchDefaultBrowser(hash_url);
@@ -178,7 +181,7 @@ TroubleshootDialog::TroubleshootDialog()
         return wxTheClipboard->SetData(new wxTextDataObject(GetSysInfoAll()));
     });
 
-    sys_less_btn->Bind(wxEVT_BUTTON, [this, sys_panel, sys_less_btn, sys_info_lines, sys_copy_btn](wxCommandEvent &e) {
+    sys_less_btn->Bind(wxEVT_BUTTON, [this, sys_panel, sys_less_btn, sys_info_lines](wxCommandEvent &e) {
         m_sys_panel_mode = !m_sys_panel_mode;
         sys_panel->SetText(sys_info_lines(m_sys_panel_mode));
         sys_less_btn->SetLabel(m_sys_panel_mode ? _L("Hide") : _L("Show"));
@@ -226,7 +229,7 @@ TroubleshootDialog::TroubleshootDialog()
     };
 
     auto info_desc_1 = create_info_line(_L("We need information for diagnosing source of the issue. Check wiki page for detailed guide."));
-    auto info_desc_2 = create_info_line(_L("Pack button collects project file and logs of current session onto a zip file."));
+    auto info_desc_2 = create_info_line(_L("Pack button collects project file and logs of current session onto a ZIP archive."));
     auto info_desc_3 = create_info_line(_L("Any additional visual examples like images or screen recordings might be helpful while reporting the issue."));
     wxBoxSizer *info_desc_sizer = new wxBoxSizer(wxVERTICAL);
     info_desc_sizer->Add(info_desc_1, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
@@ -248,11 +251,11 @@ TroubleshootDialog::TroubleshootDialog()
             return out;
         };
 
-        wxString url = "https://github.com/OrcaSlicer/OrcaSlicer/issues/new?template=bug_report.yml";
+        wxString url = "https://github.com/Snapmaker/OrcaSlicer/issues/new?template=bug_report.yml";
         wxString os = GetOStype();
         if(!os.IsEmpty())
             url += "&os_type=%22" + os +"%22";
-        url += "&version="     + encodeStr(wxString(SoftFever_VERSION));
+        url += "&version="     + encodeStr(wxString(Snapmaker_VERSION));
         url += "&os_version="  + encodeStr(GetOSinfo());
         wxLaunchDefaultBrowser(url);
     });
@@ -292,11 +295,11 @@ TroubleshootDialog::TroubleshootDialog()
     auto log_level_szr = create_label(_L("Log level"), "");
     log_level_szr->Add(create_item_log_level_combo(), 0, wxALIGN_CENTER_VERTICAL);
 
-    auto log_pack_szr = create_label(_L("Stored logs"), _L("Packs all stored logs onto a zip file."));
+    auto log_pack_szr = create_label(_L("Stored logs"), _L("Packs all stored logs onto a ZIP archive."));
     auto log_pack_btn = create_btn(_L("Pack") + "...", "");
     log_pack_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
         auto data_dir   = boost::filesystem::path(Slic3r::data_dir());
-        ExportAsZip({wxString((data_dir / "log").string())}, "OrcaSlicer_Logs_" + GetTimestamp());
+        ExportAsZip({wxString((data_dir / "log").string())}, "Snapmaker_Orca_Logs_" + GetTimestamp());
     });
     log_pack_szr->Add(log_pack_btn, 0, wxALIGN_CENTER_VERTICAL);
 
@@ -370,8 +373,8 @@ wxString TroubleshootDialog::GetTimestamp()
 wxString TroubleshootDialog::GetSysInfoAll()
 {
     wxString info;
-    info += "Version   :  " + wxString(SoftFever_VERSION) + "\n"
-          + "Build     :  " + wxString(GIT_COMMIT_HASH)   + "\n"
+    info += "Version   :  " + wxString(Snapmaker_VERSION) + "\n"
+          + "Build     :  " + wxString(build_commit_label) + "\n"
           + "Package   :  " + GetPackageType() + "\n"
           + "Platform  :  " + GetOSinfo()      + "\n"
           + "Processor :  " + GetCPUinfo() + "\n"
@@ -730,7 +733,7 @@ wxString TroubleshootDialog::GetPackageType()
     if (path.Contains("/Cellar/") || wxGetEnv("HOMEBREW_PREFIX", nullptr))
         return "Homebrew";
 
-    if (path.StartsWith("/Volumes/OrcaSlicer")) // running from .dmg
+    if (path.StartsWith("/Volumes/Snapmaker_Orca")) // running from .dmg
         return "Temporary";
 
     if (path.StartsWith("/Applications"))
@@ -946,7 +949,7 @@ void TroubleshootDialog::PackAll()
         ).ShowModal();
     }
 
-    ExportAsZip(include_zip, "OrcaSlicer_PackedDebugInfo_" + GetTimestamp());
+    ExportAsZip(include_zip, "Snapmaker_Orca_PackedDebugInfo_" + GetTimestamp());
 }
 
 void TroubleshootDialog::RebuildSystemProfiles()

@@ -85,66 +85,66 @@ public:
     virtual bool check_sn_arrived() override { return false; }
 
     // system
-    virtual void async_machine_files_roots(std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_machine_files_roots(std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_machine_files_metadata(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_machine_files_metadata(const std::string& filename, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_machine_files_thumbnails(const std::string& filename, std::function<void(const nlohmann::json& response)>) override {}
     
-    virtual void async_server_client_manager_set_userinfo(const nlohmann::json& user, std::function<void(const nlohmann::json& response)>) {}
-    virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_server_client_manager_set_userinfo(const nlohmann::json& user, std::function<void(const nlohmann::json& response)>) override {}
+    virtual void async_machine_files_directory(const std::string& path, bool extend, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_camera_start(const std::string& domain, int interval, bool expect_pw, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_camera_start(const std::string& domain, int interval, bool expect_pw, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_canmera_stop(const std::string& domain, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_delete_machine_file(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_delete_machine_file(const std::string& path, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>){}
+    virtual void async_pull_cloud_file(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override {}
 
 
     // new  
 
-    virtual void async_set_device_name(const std::string& device_name, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_set_device_name(const std::string& device_name, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_control_led(const std::string& name, int white, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_led(const std::string& name, int white, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_control_print_speed(int percentage, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_print_speed(int percentage, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) {}
-    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) {}
+    virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) override {}
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) override {}
 
-    virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_control_generic_fan(const std::string& name, int speed, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_generic_fan(const std::string& name, int speed, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_control_bed_temp(int temp, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_bed_temp(int temp, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_control_extruder_temp(int temp, int index, int map, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_control_extruder_temp(int temp, int index, int map, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_files_thumbnails_base64(const std::string& path, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_exception_query(std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>){}
+    virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_upload_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_upload_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_get_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_get_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_defect_detaction_config(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_defect_detaction_config(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
-    virtual void async_get_userdata_space(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_get_userdata_space(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override {}
 
 protected:
     // Internal upload implementations

@@ -31,6 +31,24 @@ build-options:
     LDFLAGS: "-fuse-ld=lld"
     CMAKE_POLICY_VERSION_MINIMUM: "3.5"
 
+# orca_deps installs static libs and headers into /app for SLIC3R_STATIC linking, and
+# module "cleanup:" only removes files that module installed, so the build-only
+# artifacts go here (~140MB bundles vs ~600MB). The cleanup phase runs after every
+# module, including this manifest's test-commands, which reconfigure with
+# -DBUILD_TESTS=ON and still need the headers, static libs and wx-config.
+cleanup-commands:
+  - |
+    set -euo pipefail
+    rm -rf /app/include
+    find /app/lib /app/lib64 -name '*.a' -delete
+    find /app/lib /app/lib64 -name '*.la' -delete
+    rm -rf /app/lib/cmake /app/lib/pkgconfig
+    rm -rf /app/lib64/cmake /app/lib64/pkgconfig
+    rm -rf /app/share/doc /app/share/ECM /app/share/cmake /app/share/man /app/share/info
+    for _tool in vdb_print qconvex qdelaunay qhalf qhull qvoronoi rbox openssl c_rehash curl-config env.sh wx-config wxrc wxrc-3.1; do
+      rm -f "/app/bin/${_tool}"
+    done
+
 modules:
 
   # JPEG codec for the liveview
@@ -224,6 +242,14 @@ modules:
         dest: external-packages/OpenCSG
         sha256: 51afe0db79af8386e2027d56d685177135581e0ee82ade9d7f2caff8deab5ec5
 
+      # SolveSpace libslvs (sketch constraint solver, Design tab).
+      # SLIC3R_CAD defaults to ON for the deps and the application; the sandbox
+      # has no network, so the archive must be staged here.
+      - type: file
+        url: https://github.com/JacobStoren/SolveSpaceLib/archive/4d8704523e4bf212fadf5189f92484244f670fea.zip
+        dest: external-packages/SLVS
+        sha256: 1c4bdde9c3c6ef20ea4b50b73601de56769f2eb131b36927d7c6489f102e6c30
+
       # OpenCV
       - type: file
         url: https://github.com/opencv/opencv/archive/refs/tags/4.6.0.tar.gz
@@ -238,9 +264,9 @@ modules:
 
       # OpenSSL
       - type: file
-        url: https://github.com/openssl/openssl/archive/OpenSSL_1_1_1w.tar.gz
+        url: https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz
         dest: external-packages/OpenSSL
-        sha256: 2130e8c2fb3b79d1086186f78e59e8bc8d1a6aedf17ab3907f4cb9ae20918c41
+        sha256: a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
 
       # OpenVDB
       - type: file
@@ -340,7 +366,7 @@ modules:
         dest: external-packages/FREETYPE
         sha256: efe71fd4b8246f1b0b1b9bfca13cfff1c9ad85930340c27df469733bbb620938
 
-  - name: Snapmaker_Orca 
+  - name: Snapmaker_Orca
     buildsystem: simple
     build-commands:
       - |
@@ -368,24 +394,37 @@ modules:
         ./scripts/run_gettext.sh
         CXXFLAGS=-std=gnu++20 cmake --build build_flatpak --target install -j"${FLATPAK_BUILDER_N_JOBS:-4}"
 
+    # Built (not run) here when CI injects run-tests, then shipped to a separate
+    # test job. Only the test sources compile; nothing installs to /app.
+    test-commands:
+      # CXXFLAGS and CMAKE_POLICY_VERSION_MINIMUM match the build block above;
+      # this reconfigures the same build tree and must not contradict it.
+      - CXXFLAGS=-std=gnu++20 cmake . -B build_flatpak -DBUILD_TESTS=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+      # A suite missing from this list fails the leg loudly, since ctest registers a
+      # <target>_NOT_BUILT test for it. (tests/all is a Ninja subdirectory target and
+      # this build uses the default Makefile generator, so it is not available here.)
+      - CXXFLAGS=-std=gnu++20 cmake --build build_flatpak -j"${FLATPAK_BUILDER_N_JOBS:-$(nproc)}" --target
+          libslic3r_tests fff_print_tests sla_print_tests libnest2d_tests slic3rutils_tests
+          filament_group_tests
+
     cleanup:
       - /include
 
     post-install:
-      # orca_deps installs static libs and headers into /app for SLIC3R_STATIC linking.
-      # Module "cleanup:" only removes files installed by *this* module, so strip build-only
-      # artifacts here (matches ~140MB Flathub bundles vs ~600MB if left in place).
+      # Dependency debug info only: flatpak-builder splits this module's own out
+      # after post-install, so --with-debuginfo still ships the app's symbols.
       - |
         set -euo pipefail
-        rm -rf /app/include
-        find /app/lib /app/lib64 -name '*.a' -delete
-        find /app/lib /app/lib64 -name '*.la' -delete
-        rm -rf /app/lib/cmake /app/lib/pkgconfig /app/lib/debug
-        rm -rf /app/lib64/cmake /app/lib64/pkgconfig
-        rm -rf /app/share/doc /app/share/ECM /app/share/cmake /app/share/man /app/share/info
-        for _tool in vdb_print qconvex qdelaunay qhalf qhull qvoronoi rbox openssl c_rehash curl-config env.sh wx-config wxrc wxrc-3.1; do
-          rm -f "/app/bin/${_tool}"
-        done
+        rm -rf /app/lib/debug
+
+      - | # Keep the AppStream <release> entry in sync with version.inc (it went stale at 2.3.6 otherwise)
+        set -euo pipefail
+        _ver=$(sed -n 's/^set(Snapmaker_VERSION "\([^"]*\)").*/\1/p' version.inc)
+        test -n "${_ver}"
+        sed -e "s|<release version=\"[^\"]*\" date=\"[^\"]*\">|<release version=\"${_ver}\" date=\"$(date -u +%Y-%m-%d)\">|" \
+            -e "s|<p>Version [^ ]* release|<p>Version ${_ver} release|" ${FLATPAK_ID}.metainfo.xml > ${FLATPAK_ID}.metainfo.xml.tmp
+        mv ${FLATPAK_ID}.metainfo.xml.tmp ${FLATPAK_ID}.metainfo.xml
+        grep -q "<release version=\"${_ver}\" date=" ${FLATPAK_ID}.metainfo.xml
 
       - | # Desktop Integration files
         install -Dm644 -t /app/share/icons/hicolor/scalable/apps/ resources/images/Snapmaker_Orca.svg

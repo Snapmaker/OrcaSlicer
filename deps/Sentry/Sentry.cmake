@@ -35,7 +35,10 @@ elseif (APPLE)
     -DCMAKE_BUILD_TYPE:STRING=RelWithDebInfo
     -DOPENSSL_ROOT_DIR:PATH=${DESTDIR}
     -DOPENSSL_USE_STATIC_LIBS:BOOL=ON
-    -DCMAKE_SHARED_LINKER_FLAGS:STRING=-L${DESTDIR}/lib\ -lssl\ -lcrypto
+    # -hidden-l: the static OpenSSL members enter libsentry.dylib with hidden visibility, so the
+    # dylib does not export a second OpenSSL (957 SSL_/EVP_ symbols before) next to the one the
+    # application links. Which copy the app binds to is unaffected (two-level namespace).
+    -DCMAKE_SHARED_LINKER_FLAGS:STRING=-L${DESTDIR}/lib\ -Wl,-hidden-lssl\ -Wl,-hidden-lcrypto
   )
   set(_sentry_cmake_generator -G "Unix Makefiles")
   

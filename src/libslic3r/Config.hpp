@@ -1006,6 +1006,7 @@ public:
     int                     getInt() const override { return this->value; }
     void                    setInt(int val) override { this->value = val; }
     ConfigOption*           clone()  const override { return new ConfigOptionInt(*this); }
+    using ConfigOptionSingle<int>::operator==;
     bool                    operator==(const ConfigOptionInt &rhs) const throw() { return this->value == rhs.value; }
 
     std::string serialize() const override
@@ -1048,6 +1049,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionIntsTempl(*this); }
     ConfigOptionIntsTempl&  operator= (const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionVector<int>::operator==;
     bool                    operator==(const ConfigOptionIntsTempl &rhs) const throw() { return this->values == rhs.values; }
     bool                    operator< (const ConfigOptionIntsTempl &rhs) const throw() { return this->values <  rhs.values; }
     // Could a special "nil" value be stored inside the vector, indicating undefined value?
@@ -1137,6 +1139,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionString(*this); }
     ConfigOptionString&     operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionSingle<std::string>::operator==;
     bool                    operator==(const ConfigOptionString &rhs) const throw() { return this->value == rhs.value; }
     bool                    operator< (const ConfigOptionString &rhs) const throw() { return this->value <  rhs.value; }
     bool 					empty() const { return this->value.empty(); }
@@ -1171,6 +1174,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionStrings(*this); }
     ConfigOptionStrings&    operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionVector<std::string>::operator==;
     bool                    operator==(const ConfigOptionStrings &rhs) const throw() { return this->values == rhs.values; }
     bool                    operator< (const ConfigOptionStrings &rhs) const throw() { return this->values <  rhs.values; }
     bool					is_nil(size_t) const override { return false; }
@@ -1215,6 +1219,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionPercent(*this); }
     ConfigOptionPercent&    operator= (const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionFloat::operator==;
     bool                    operator==(const ConfigOptionPercent &rhs) const throw() { return this->value == rhs.value; }
     bool                    operator< (const ConfigOptionPercent &rhs) const throw() { return this->value <  rhs.value; }
 
@@ -1257,6 +1262,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionPercentsTempl(*this); }
     ConfigOptionPercentsTempl& operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionFloatsTempl<NULLABLE>::operator==;
     bool                    operator==(const ConfigOptionPercentsTempl &rhs) const throw() { return ConfigOptionFloatsTempl<NULLABLE>::vectors_equal(this->values, rhs.values); }
     bool                    operator< (const ConfigOptionPercentsTempl &rhs) const throw() { return ConfigOptionFloatsTempl<NULLABLE>::vectors_lower(this->values, rhs.values); }
 
@@ -1502,6 +1508,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionPoint(*this); }
     ConfigOptionPoint&      operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionSingle<Vec2d>::operator==;
     bool                    operator==(const ConfigOptionPoint &rhs) const throw() { return this->value == rhs.value; }
     bool                    operator< (const ConfigOptionPoint &rhs) const throw() { return this->value <  rhs.value; }
 
@@ -1539,6 +1546,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionPoints(*this); }
     ConfigOptionPoints&     operator= (const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionVector<Vec2d>::operator==;
     bool                    operator==(const ConfigOptionPoints &rhs) const throw() { return this->values == rhs.values; }
     bool                    operator< (const ConfigOptionPoints &rhs) const throw()
         { return std::lexicographical_compare(this->values.begin(), this->values.end(), rhs.values.begin(), rhs.values.end(), [](const auto &l, const auto &r){ return l < r; }); }
@@ -1617,6 +1625,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionPoint3(*this); }
     ConfigOptionPoint3&     operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionSingle<Vec3d>::operator==;
     bool                    operator==(const ConfigOptionPoint3 &rhs) const throw() { return this->value == rhs.value; }
     bool                    operator< (const ConfigOptionPoint3 &rhs) const throw()
         { return this->value.x() < rhs.value.x() || (this->value.x() == rhs.value.x() && (this->value.y() < rhs.value.y() || (this->value.y() == rhs.value.y() && this->value.z() < rhs.value.z()))); }
@@ -1860,6 +1869,7 @@ public:
     bool                    getBool()   const override { return this->value; }
     ConfigOption*           clone()     const override { return new ConfigOptionBool(*this); }
     ConfigOptionBool&       operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionSingle<bool>::operator==;
     bool                    operator==(const ConfigOptionBool &rhs) const throw() { return this->value == rhs.value; }
     bool                    operator< (const ConfigOptionBool &rhs) const throw() { return int(this->value) < int(rhs.value); }
 
@@ -1911,6 +1921,7 @@ public:
     ConfigOptionType        type()  const override { return static_type(); }
     ConfigOption*           clone() const override { return new ConfigOptionBoolsTempl(*this); }
     ConfigOptionBoolsTempl& operator=(const ConfigOption *opt) { this->set(opt); return *this; }
+    using ConfigOptionVector<unsigned char>::operator==;
     bool                    operator==(const ConfigOptionBoolsTempl &rhs) const throw() { return this->values == rhs.values; }
     bool                    operator< (const ConfigOptionBoolsTempl &rhs) const throw() { return this->values <  rhs.values; }
     // Could a special "nil" value be stored inside the vector, indicating undefined value?
@@ -2163,6 +2174,7 @@ public:
     ConfigOptionEnumsGenericTempl& operator= (const ConfigOption* opt) { this->set(opt); return *this; }
     bool                        operator< (const ConfigOptionInts& rhs) const throw() { return this->values < rhs.values; }
 
+    using ConfigOptionInts::operator==;
     bool                        operator==(const ConfigOptionInts& rhs) const
     {
         if (rhs.type() != this->type())
@@ -2286,6 +2298,9 @@ public:
     ConfigOptionType                    type            = coNone;
 	// If a type is nullable, then it accepts a "nil" value (scalar) or "nil" values (vector).
 	bool								nullable		= false;
+    // Snapmaker Orca: a vector option written as one value while all columns are equal (opt_serialize,
+    // save_to_json), keeping the scalar spelling older readers know; used by the line width keys.
+    bool                                scalar_when_uniform = false;
     // Default value of this option. The default value object is owned by ConfigDef, it is released in its destructor.
     Slic3r::clonable_ptr<const ConfigOption> default_value;
     void 								set_default_value(const ConfigOption* ptr) { this->default_value = Slic3r::clonable_ptr<const ConfigOption>(ptr); }
@@ -2796,8 +2811,14 @@ public:
         { ConfigSubstitutionContext ctxt{ ForwardCompatibilitySubstitutionRule::Disable }; this->set_deserialize(items, ctxt); }
 
     double get_abs_value_at(const t_config_option_key &opt_key, size_t index) const;
+    // Absolute value of column `index` of a coFloatsOrPercents option (a coFloatOrPercent scalar
+    // ignores the index), a percent resolved against `ratio_over`, e.g. the head's nozzle; nil reads 0.
+    double get_abs_value_at(const t_config_option_key &opt_key, size_t index, double ratio_over) const;
     double get_abs_value(const t_config_option_key &opt_key) const;
     double get_abs_value(const t_config_option_key &opt_key, double ratio_over) const;
+    // Snapmaker Orca: a vector option whose definition carries scalar_when_uniform, has no nil
+    // column and holds the same value in every column; such an option is serialised as one value.
+    bool uniform_scalar_option(const t_config_option_key &opt_key, const ConfigOption *opt) const;
     void setenv_() const;
     ConfigSubstitutions load(const std::string &file, ForwardCompatibilitySubstitutionRule compatibility_rule);
     //BBS support load from ini string
@@ -2817,6 +2838,9 @@ public:
 
     //BBS: add json support
     void save_to_json(const std::string &file, const std::string &name, const std::string &from, const std::string &version) const;
+    // Same document, written to a stream. Invalid UTF-8 in a string value throws nlohmann's type_error unless
+    // replace_invalid_utf8 is set, which writes U+FFFD instead (for callers such as stdout with no handler).
+    void save_to_json(std::ostream &os, const std::string &name, const std::string &from, const std::string &version, bool replace_invalid_utf8 = false) const;
 
     // Rebuild the in-memory "plugins" manifest (the "name;uuid;capability" references the plugin
     // dispatchers consume) from the plugin-backed options via the registered resolver. save_to_json()

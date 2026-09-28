@@ -862,16 +862,15 @@ void FilamentDropDown::autoPosition()
             if (size.x < 1) size.x = 1;
 #endif
             wxWindow::SetSize(size);
-            if (selection >= 0)
-            {
-                const size_t selected_row = static_cast<size_t>(selection);
-                const int    selected_top = multiply_to_int(rowSize.y, selected_row);
-                const int    selected_bottom = multiply_to_int(rowSize.y, selected_row + 1);
-                if (add_to_int(offset.y, selected_bottom) > size.y)
-                    offset.y = size.y - selected_bottom;
-                else if (add_to_int(offset.y, selected_top) < 0)
-                    offset.y = -selected_top;
-            }
+            // Scroll by the same rule as the group-switch path. Group folding and submenu filtering
+            // make the raw item index differ from the visible row index, so clamping against
+            // `selection` here could push every row above the viewport and paint an empty popup.
+            ensure_selection_at_top();
+            const int minimum_offset = size.y - multiply_to_int(rowSize.y, count);
+            if (offset.y < minimum_offset)
+                offset.y = minimum_offset;
+            if (offset.y > 0)
+                offset.y = 0;
         }
     }
 }

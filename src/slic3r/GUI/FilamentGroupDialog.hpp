@@ -23,7 +23,7 @@ namespace Slic3r { namespace GUI {
 class FilamentGroupDialog : public DPIDialog
 {
 public:
-    explicit FilamentGroupDialog(wxWindow *parent);
+    explicit FilamentGroupDialog(wxWindow *parent, bool default_all_high_flow = false);
 
     // One FLOW_MODE_* entry per filament (all filaments, in filament order --
     // entries of unused filaments are left untouched).

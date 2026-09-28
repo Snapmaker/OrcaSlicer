@@ -1,6 +1,8 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
 #include "libslic3r/EnumChoice.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 
@@ -789,4 +791,87 @@ TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row
                 CHECK(enum_choice_value_at_index(*def, enum_choice_index_of_value(*def, t)) == int(t));
         }
     }
+}
+
+TEST_CASE("fill_missing_project_keys copies absent printer and process keys from the system preset", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("wall_loops", new ConfigOptionInt(4));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    system.set_key_value("extruder_clearance_height_to_rod", new ConfigOptionFloat(27.5));
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+
+    std::vector<std::string> filled_keys;
+    const size_t             n = fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(n == 1);
+    REQUIRE(filled_keys == std::vector<std::string>{"sparse_infill_density"});
+    REQUIRE(project.opt_int("wall_loops") == 3);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+    REQUIRE(project.option("extruder_clearance_height_to_rod") == nullptr);
+
+    const size_t n_printer = fill_missing_project_keys(project, system, Preset::printer_options());
+    REQUIRE(n_printer == 1);
+    REQUIRE_THAT(project.opt_float("extruder_clearance_height_to_rod"), Catch::Matchers::WithinAbs(27.5, 1e-9));
+}
+
+TEST_CASE("fill_missing_project_keys never overwrites a key the project already has", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(42));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 0);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 42);
+}
+
+TEST_CASE("fill_missing_project_keys leaves mixed, flow-variant and mapping keys untouched", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("mixed_filament_definitions", new ConfigOptionString("0,1;1,0"));
+    system.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(FilamentVolumeType::fvtHighFlow)});
+    system.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{int(NozzleVolumeType::nvtHighFlow)});
+    system.set_key_value("filament_map", new ConfigOptionInts{1, 2});
+    system.set_key_value("filament_map_mode", new ConfigOptionEnum<FilamentMapMode>(FilamentMapMode::fmmManual));
+    system.set_key_value("printer_extruder_id", new ConfigOptionInts{0});
+    system.set_key_value("filament_mapping_protocol", new ConfigOptionString("snapmaker"));
+    system.set_key_value("inherits", new ConfigOptionString("parent"));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    std::vector<std::string> options = Preset::print_options();
+    options.insert(options.end(),
+                   {"mixed_filament_definitions", "filament_volume_type", "nozzle_volume_type", "filament_map",
+                    "filament_map_mode", "printer_extruder_id", "filament_mapping_protocol", "inherits"});
+
+    REQUIRE(fill_missing_project_keys(project, system, options) == 1);
+    REQUIRE(project.has("sparse_infill_density"));
+    REQUIRE_FALSE(project.has("mixed_filament_definitions"));
+    REQUIRE_FALSE(project.has("filament_volume_type"));
+    REQUIRE_FALSE(project.has("nozzle_volume_type"));
+    REQUIRE_FALSE(project.has("filament_map"));
+    REQUIRE_FALSE(project.has("filament_map_mode"));
+    REQUIRE_FALSE(project.has("printer_extruder_id"));
+    REQUIRE_FALSE(project.has("filament_mapping_protocol"));
+    REQUIRE_FALSE(project.has("inherits"));
+    REQUIRE(project_config_fill_skip_keys().count("mixed_filament_definitions") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_volume_type") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_mapping_protocol") == 1);
+}
+
+TEST_CASE("fill_missing_project_keys skips keys handle_legacy drops on load", "[Config][CLI]")
+{
+    REQUIRE(project_config_key_dropped_on_load("silent_mode"));
+    REQUIRE_FALSE(project_config_key_dropped_on_load("wall_loops"));
+
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("silent_mode", new ConfigOptionBool(true));
+    system.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::printer_options()) == 0);
+    REQUIRE_FALSE(project.has("silent_mode"));
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 1);
+    REQUIRE_THAT(project.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.2, 1e-9));
 }

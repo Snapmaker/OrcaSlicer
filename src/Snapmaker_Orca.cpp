@@ -89,6 +89,7 @@ using namespace nlohmann;
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/OpenGLManager.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1589,6 +1590,15 @@ int CLI::run(int argc, char **argv)
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
     std::vector<std::string> load_filaments_all(load_filaments.begin(), load_filaments.end());
+    // One NamedPresets for the whole run, shared by --printer-preset and the missing-key fill.
+    // Scans resources_dir()/profiles only (same as --printer-preset); user-installed
+    // data_dir()/system vendors are not consulted.
+    std::optional<NamedPresets> named_presets_store;
+    auto named_presets = [&named_presets_store]() -> NamedPresets & {
+        if (!named_presets_store)
+            named_presets_store.emplace();
+        return *named_presets_store;
+    };
     {
         const std::string printer_name = m_config.opt_string("printer_preset", true);
         const std::string process_name = m_config.opt_string("process_preset", true);
@@ -1596,7 +1606,7 @@ int CLI::run(int argc, char **argv)
         if (auto* opt = m_config.option<ConfigOptionStrings>("filament_presets"))
             filament_names = opt->values;
         if (!printer_name.empty() || !process_name.empty() || !filament_names.empty()) {
-            NamedPresets      presets;
+            NamedPresets &presets = named_presets();
             const std::string preset_dir = (boost::filesystem::path(temporary_dir()) / ("ultra_cli_presets_" + std::to_string(get_current_pid()))).string();
             auto resolve = [&](const std::string& name, Preset::Type t, int ordinal, std::vector<std::string>& into) -> bool {
                 if (name.empty()) return true;
@@ -3065,6 +3075,42 @@ int CLI::run(int argc, char **argv)
         }
         return 0;
     };
+
+    // A project saved before a printer or process option existed has no value for it. The GUI
+    // takes such keys from the project's system preset (load_external_preset refreshes every
+    // key the project did not override). Fill them from NamedPresets too instead of leaving
+    // them to the option default. Printer and process only — filament vector keys are a
+    // follow-up. Mixed/flow-variant/mapping keys stay on the skip list.
+    {
+        size_t filled = 0;
+        auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
+            if (system_name.empty())
+                return;
+            const Preset *sys = named_presets().find_system(system_name, type);
+            if (sys == nullptr) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
+                           % system_name;
+                return;
+            }
+            const std::vector<std::string> &options =
+                type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
+            std::vector<std::string> filled_keys;
+            const size_t n = fill_missing_project_keys(m_print_config, sys->config, options, &filled_keys);
+            filled += n;
+            for (const std::string &key : filled_keys) {
+                const ConfigOption *opt = m_print_config.option(key);
+                BOOST_LOG_TRIVIAL(info) << boost::format("CLI: %1% missing from the project, taken from '%2%': %3%")
+                    % key % system_name % (opt ? opt->serialize() : std::string());
+            }
+        };
+        if (new_printer_name.empty())
+            fill_from_system(current_printer_system_name, Preset::TYPE_PRINTER);
+        if (new_process_name.empty())
+            fill_from_system(current_process_system_name, Preset::TYPE_PRINT);
+        if (filled > 0)
+            BOOST_LOG_TRIVIAL(info) << "CLI: filled " << filled << " missing project keys from system presets";
+    }
 
     std::vector<std::string>& different_settings = m_print_config.option<ConfigOptionStrings>("different_settings_to_system", true)->values;
     std::vector<std::string>& inherits_group = m_print_config.option<ConfigOptionStrings>("inherits_group", true)->values;

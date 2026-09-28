@@ -814,45 +814,41 @@ TEST_CASE("filament group dirty flag is set only on valid-to-invalid slice resul
     CHECK_FALSE(filament_group_dirty_on_invalidation(true, true));
 }
 
-TEST_CASE("filament group dirty flag lifecycle for Preview plate-pick and reset", "[Config][FilamentGroup]")
+TEST_CASE("filament group slice decision covers prompt, remote skip, and sync", "[Config][FilamentGroup]")
 {
-    bool dirty = false;
+    using D = FilamentGroupSliceDecision;
 
-    // First slice of a never-sliced plate does not raise the flag (S4).
-    if (filament_group_dirty_on_invalidation(false, true))
-        dirty = true;
-    CHECK_FALSE(dirty);
-    CHECK_FALSE(filament_group_prompt_on_preview_tab_in(dirty));
+    // CUSTOM + mixed nozzles, person at the PC: show the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), true) == D::Prompt);
+    // N2: phone / agent / hidden instance must not open the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), false) == D::SkipAndProceed);
+    // STANDARD or a single flow type: sync, never prompt.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2), true) == D::Sync);
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1), true) == D::Sync);
+    CHECK(filament_group_slice_decision(false, false) == D::Sync);
+}
 
-    // Any invalidation of a previously valid slice raises it (S6: object move, process change).
-    if (filament_group_dirty_on_invalidation(true, false))
-        dirty = true;
-    CHECK(dirty);
-    CHECK(filament_group_prompt_on_preview_tab_in(dirty));
+TEST_CASE("filament group plate-pick continues only when grouping is accepted", "[Config][FilamentGroup]")
+{
+    const bool required = filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2);
+    REQUIRE(required);
 
-    // B1: Cancel on a still-sliced target does not block; dirty stays set.
-    CHECK_FALSE(filament_group_cancel_blocks_plate_switch(true));
-    CHECK(dirty);
+    // N1: dirty + interactive Cancel always aborts (no switch, no slice), even if
+    // a sibling plate still reports is_slice_result_valid().
+    CHECK_FALSE(filament_group_plate_pick_continues(true, required, true, false));
+    CHECK(filament_group_plate_pick_continues(true, required, true, true));
 
-    // B1: Cancel on an invalid target (needs slicing) blocks; dirty stays set.
-    CHECK(filament_group_cancel_blocks_plate_switch(false));
-    CHECK(dirty);
+    // N2: non-interactive (remote / hidden) proceeds without a confirmed dialog.
+    CHECK(filament_group_plate_pick_continues(true, required, false, false));
+    CHECK(filament_group_plate_pick_continues(true, required, false, true));
 
-    // Confirm (B1 / S7): clear dirty. Later invalidation can re-raise it.
-    dirty = false;
-    CHECK_FALSE(dirty);
-    if (filament_group_dirty_on_invalidation(true, false))
-        dirty = true;
-    CHECK(dirty);
+    // Clean pick: no grouping prompt, continue. Sync only when the dialog is not required.
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(false, required));
+    CHECK(filament_group_sync_on_clean_plate_pick(false, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true, false));
 
-    // S2: project load / New project / plate-list reset drops the flag.
-    dirty = false;
-    CHECK_FALSE(dirty);
-
-    // S1: clean plate-pick still syncs when the grouping dialog is not required.
-    CHECK(filament_group_sync_on_clean_plate_pick(false));
-    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true));
-    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2)));
-    CHECK(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2)));
-    CHECK(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1)));
+    // S4: a never-sliced plate is not dirty, so tab-in / pick does not prompt.
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
 }

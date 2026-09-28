@@ -180,6 +180,10 @@ static const ClassRule k_class_rules[] = {
     // colour import (OBJ / glTF): its OK handler is what fills the filament ids, so a returned OK
     // without a click imports without colour anyway; say so instead of pretending to agree
     { "ObjColorDialog",          wxID_CANCEL, false },
+    // Confirm's button id is wxID_APPLY but EndModal is wxID_OK. The hook returns
+    // ShowModal's result (it does not click the button), so wxID_OK is the
+    // apply-equivalent that lets confirm_grouping_before_slice proceed.
+    { "FilamentGroupDialog",     wxID_OK,     false },
 };
 
 static bool has_btn(wxDialog* d, int id) { return d->FindWindow(id) != nullptr; }
@@ -209,6 +213,9 @@ static long style_of(wxDialog* d)
     if (has_btn(d, wxID_YES))    s |= wxYES;
     if (has_btn(d, wxID_NO))     s |= wxNO;
     if (has_btn(d, wxID_CANCEL)) s |= wxCANCEL;
+    // DialogButtons "Confirm" is wxID_APPLY; treat it as the affirmative OK so a
+    // missed class rule in Request mode still returns wxID_OK, not Cancel.
+    if (has_btn(d, wxID_APPLY))  s |= wxOK;
     return s;
 }
 
@@ -232,10 +239,11 @@ static int default_answer(long s, bool affirmative)
 static const char* answer_name(int id)
 {
     switch (id) {
-    case wxID_YES: return "yes";
-    case wxID_NO:  return "no";
-    case wxID_OK:  return "ok";
-    default:       return "cancel";
+    case wxID_YES:   return "yes";
+    case wxID_NO:    return "no";
+    case wxID_OK:    return "ok";
+    case wxID_APPLY: return "ok";
+    default:         return "cancel";
     }
 }
 

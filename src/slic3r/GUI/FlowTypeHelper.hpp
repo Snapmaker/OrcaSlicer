@@ -73,8 +73,9 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 void sync_filament_volume_types_for_slice();
 
 // Edge Slice-button / Preview-reslice gate: show FilamentGroupDialog when
-// filament_group_dialog_required(), otherwise sync volume types. Returns true
-// if the user confirmed or no dialog was needed; false if the dialog was cancelled.
+// filament_group_dialog_required() and a person is at the PC; skip the dialog
+// (keep the current mapping) for phone / agent / hidden slices; otherwise sync
+// volume types. Returns true if slicing may proceed; false if the dialog was cancelled.
 bool confirm_grouping_before_slice(wxWindow* parent);
 
 }}} // namespace Slic3r::GUI::FlowType

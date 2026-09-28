@@ -479,18 +479,36 @@ inline bool filament_group_dirty_on_invalidation(bool was_slice_result_valid, bo
     return was_slice_result_valid && !now_valid;
 }
 
-// B1: Cancel on Preview plate-pick blocks the switch only when the target still
-// needs slicing. An already-sliced plate can be selected without grouping.
-inline bool filament_group_cancel_blocks_plate_switch(bool target_slice_result_valid) { return !target_slice_result_valid; }
+// What confirm_grouping_before_slice should do. Interactive is a person at the PC;
+// Request / Background (phone, hidden instance) must not open FilamentGroupDialog.
+enum class FilamentGroupSliceDecision {
+    Sync,          // dialog not required: normalize volume types
+    Prompt,        // show FilamentGroupDialog; Cancel aborts
+    SkipAndProceed // keep the current mapping and slice
+};
 
-// S1: a clean (not dirty) plate-pick still syncs volume types when the grouping
-// dialog is not required. CUSTOM + mixed nozzles keep the custom mapping.
-inline bool filament_group_sync_on_clean_plate_pick(bool dialog_required) { return !dialog_required; }
+inline FilamentGroupSliceDecision filament_group_slice_decision(bool dialog_required, bool interactive)
+{
+    if (!dialog_required)
+        return FilamentGroupSliceDecision::Sync;
+    return interactive ? FilamentGroupSliceDecision::Prompt : FilamentGroupSliceDecision::SkipAndProceed;
+}
 
-// S4: Preview tab-in prompts only when dirty (a previous valid slice was
-// invalidated). A never-sliced plate is not dirty, so the first tab-in skips
-// the dialog -- matching Snap #930 (re-slice after param change, not first slice).
-inline bool filament_group_prompt_on_preview_tab_in(bool dirty) { return dirty; }
+// Preview plate-pick after the grouping step. Dirty + Prompt + Cancel => abort
+// (N1: no switch, no slice -- Snapmaker always returns 0). Non-interactive always
+// continues (N2). A clean pick continues.
+inline bool filament_group_plate_pick_continues(bool dirty, bool dialog_required, bool interactive, bool dialog_confirmed)
+{
+    if (!dirty)
+        return true;
+    if (filament_group_slice_decision(dialog_required, interactive) != FilamentGroupSliceDecision::Prompt)
+        return true;
+    return dialog_confirmed;
+}
+
+// S1: a clean plate-pick still syncs volume types when the grouping dialog is not
+// required. CUSTOM + mixed nozzles keep the custom mapping.
+inline bool filament_group_sync_on_clean_plate_pick(bool dirty, bool dialog_required) { return !dirty && !dialog_required; }
 
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);

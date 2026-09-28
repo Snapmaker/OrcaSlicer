@@ -3,11 +3,13 @@
 #include "FilamentGroupDialog.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "RemoteAccess.hpp"
 
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/log/trivial.hpp>
 
 #include <algorithm>
 
@@ -201,11 +203,21 @@ void sync_filament_volume_types_for_slice()
 
 bool confirm_grouping_before_slice(wxWindow* parent)
 {
-    if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count())) {
+    const bool required    = filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count());
+    const bool interactive = RemoteAccess::dialog_mode() == RemoteAccess::Mode::Interactive;
+    const auto decision    = filament_group_slice_decision(required, interactive);
+    switch (decision) {
+    case FilamentGroupSliceDecision::Sync: sync_filament_volume_types_for_slice(); return true;
+    case FilamentGroupSliceDecision::SkipAndProceed:
+        // N2: phone / agent / hidden instance. Keep the current mapping and slice.
+        BOOST_LOG_TRIVIAL(warning) << "FilamentGroupDialog skipped (non-interactive slice); keeping current mapping";
+        RemoteAccess::get().note_attention("FilamentGroupDialog", "skipped");
+        return true;
+    case FilamentGroupSliceDecision::Prompt: {
         FilamentGroupDialog dlg(parent);
         return dlg.ShowModal() == wxID_OK;
     }
-    sync_filament_volume_types_for_slice();
+    }
     return true;
 }
 

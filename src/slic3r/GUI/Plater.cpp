@@ -15463,18 +15463,17 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 //BBS: add more judge for slicing
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
-                   this->m_slice_all = false;
-                   // Page-switch auto-slice must run the same pre-slice guard as
-                   // the slice button, or the by-object red error never shows.
-                   // Snap #930 Edge extension / S4: tab-in prompts only when dirty
-                   // (valid-to-invalid). A never-sliced plate skips the dialog.
-                   if (filament_group_prompt_on_preview_tab_in(this->partplate_list.is_filament_group_dirty()) &&
-                       !this->q->confirm_filament_grouping_before_slice())
-                       slice_cancelled = true;
-                   else if (this->q->guard_before_slice_plate())
-                       slice_cancelled = !(this->q->reslice());
-                   else
-                       slice_cancelled = true;
+                    this->m_slice_all = false;
+                    // Page-switch auto-slice must run the same pre-slice guard as
+                    // the slice button, or the by-object red error never shows.
+                    // Snap #930 / S4: tab-in prompts only when dirty (valid-to-invalid).
+                    // A never-sliced plate skips the dialog.
+                    if (this->partplate_list.is_filament_group_dirty() && !this->q->confirm_filament_grouping_before_slice())
+                        slice_cancelled = true;
+                    else if (this->q->guard_before_slice_plate())
+                        slice_cancelled = !(this->q->reslice());
+                    else
+                        slice_cancelled = true;
                }
                 else {
                     //reset current plate to the slicing plate
@@ -16598,13 +16597,18 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
 
-        if (!q->confirm_filament_grouping_before_slice())
+        if (!q->confirm_filament_grouping_before_slice()) {
+            if (m_is_publishing) {
+                m_is_publishing = false;
+                show_publish_dlg(false);
+            }
             return;
+        }
 
         if (!q->guard_before_slice_all())
             return;
 
-        m_slice_all = true;
+        m_slice_all                = true;
         m_slice_all_only_has_gcode = true;
         m_cur_slice_plate = q->find_next_sliceable_plate_for_slice_all(0);
         if (m_cur_slice_plate < 0)
@@ -25763,7 +25767,7 @@ int Plater::select_plate(int plate_index, bool need_slice)
     sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
 
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%") % __LINE__ % plate_index % ret;
     return ret;
 }
 
@@ -25773,28 +25777,29 @@ int Plater::select_sliced_plate(int plate_index)
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
 
     // Snap #930: Preview plate-pick after a param change. Edge uses CUSTOM +
-    // >= 2 flow types, not any_nozzle_high_flow(). B1: confirm success clears
-    // dirty so a still-sliced plate is not re-prompted; Cancel blocks only
-    // when the target still needs slicing.
-    auto& pl = p->partplate_list;
-    if (pl.is_filament_group_dirty()) {
-        if (!GUI::FlowType::confirm_grouping_before_slice(this)) {
-            const PartPlate* target       = pl.get_plate(plate_index);
-            const bool       target_valid = target != nullptr && target->is_slice_result_valid();
-            if (filament_group_cancel_blocks_plate_switch(target_valid))
-                return 0;
-        } else {
-            pl.set_filament_group_dirty(false);
-        }
-    } else if (filament_group_sync_on_clean_plate_pick(
-                   filament_group_dialog_required(GUI::FlowType::grouping_mode(), GUI::FlowType::distinct_nozzle_flow_type_count()))) {
+    // >= 2 flow types, not any_nozzle_high_flow(). N1: Cancel always aborts
+    // (no switch, no slice) -- a still-"valid" sibling plate would otherwise
+    // apply() + reslice() with no confirmation. Confirm success clears dirty
+    // so the re-prompt loop stops; select_plate/invalidation re-raises it.
+    auto&      pl              = p->partplate_list;
+    const bool dirty           = pl.is_filament_group_dirty();
+    const bool dialog_required = filament_group_dialog_required(GUI::FlowType::grouping_mode(),
+                                                                GUI::FlowType::distinct_nozzle_flow_type_count());
+    const bool interactive     = RemoteAccess::dialog_mode() == RemoteAccess::Mode::Interactive;
+    bool       confirmed       = true;
+    if (dirty)
+        confirmed = GUI::FlowType::confirm_grouping_before_slice(this);
+    else if (filament_group_sync_on_clean_plate_pick(dirty, dialog_required))
         GUI::FlowType::sync_filament_volume_types_for_slice();
-    }
+
+    if (!filament_group_plate_pick_continues(dirty, dialog_required, interactive, confirmed))
+        return 0;
+    if (dirty && confirmed)
+        pl.set_filament_group_dirty(false);
 
     Freeze();
     ret = select_plate(plate_index, true);
-    if (ret)
-    {
+    if (ret) {
         BOOST_LOG_TRIVIAL(error) << "select_plate error for plate_idx=" << plate_index;
         Thaw();
         return -1;

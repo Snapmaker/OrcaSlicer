@@ -12214,14 +12214,14 @@ msgstr "顶部壳体层数"
 msgid "Top paint penetration layers"
 msgstr "顶部涂色渗透层数"
 
-msgid "The number of layers painted with the top surface color into the top shell, including the top surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the top surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
-msgstr "顶部表面颜色渗入顶部壳体的层数，包含顶面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印顶面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+msgid "This is  the number of layers of top paint penetration."
+msgstr "顶部涂色渗透的层数"
 
 msgid "Bottom paint penetration layers"
 msgstr "底部涂色渗透层数"
 
-msgid "The number of layers painted with the bottom surface color into the bottom shell, including the bottom surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the bottom surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
-msgstr "底部表面颜色渗入底部壳体的层数，包含底面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印底面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+msgid "This is the number of layers of bottom paint penetration."
+msgstr "底部涂色渗透的层数。"
 
 msgid "Top paint penetration layers cannot exceed top shell layers.\nTop paint penetration layers will be reset to %d."
 msgstr "顶部涂色渗透层数不能超过顶部壳体层数。\n“顶部涂色渗透层数”将被重置为 %d。"

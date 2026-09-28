@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <iosfwd>
 #include <string>
 #include <utility>
@@ -30,6 +31,9 @@ public:
 
     /** @brief Parses a filament-order configuration stream and returns an empty order on invalid input. */
     static FilamentOrder from_stream(std::istream &stream);
+
+    /** @brief Reads a filament-order configuration file and returns an empty order when it cannot be read. */
+    static FilamentOrder from_file(const std::filesystem::path &path);
 
     /** @brief Returns the configured rank or the maximum value when no rank exists. */
     size_t rank(const std::string &vendor, const std::string &filament_product) const;
@@ -107,6 +111,14 @@ bool is_snapmaker_vendor(const std::string &vendor);
 
 /** @brief Normalizes the known system vendor names to their canonical spelling. */
 std::string canonical_vendor(const std::string &vendor);
+
+/** @brief Returns the product name a configured order matches: the preset name without vendor prefix or printer suffix. */
+std::string filament_product_key(const std::string &preset_name, const std::string &vendor);
+
+/** @brief Reads the deployed user copy of the allow-list when it exists, otherwise the shipped resource copy. */
+std::filesystem::path choose_allow_list_copy(const std::filesystem::path &user_copy,
+                                             const std::filesystem::path &shipped_copy,
+                                             bool user_copy_exists);
 
 } // namespace GUI
 } // namespace Slic3r

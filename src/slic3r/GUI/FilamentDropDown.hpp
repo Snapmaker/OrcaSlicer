@@ -17,7 +17,6 @@
 #include "Widgets/PopupWindow.hpp"
 #include "Widgets/DropDown.hpp"
 
-constexpr int DD_ITEM_STYLE_SPLIT_ITEM = 0x0001;
 constexpr int DD_ITEM_STYLE_DISABLED   = 0x0002;
 constexpr int DD_ITEM_STYLE_DIMMED     = 0x0004;
 
@@ -128,7 +127,7 @@ public:
         return -1;
     }
 
-    /** @brief Removes a redundant vendor/group prefix, matching only at a word boundary. */
+    /** @brief Removes a redundant vendor/group prefix, matching only at a word boundary and ignoring case. */
     static wxString strip_group_prefix(const wxString &text, const wxString &group)
     {
         // Project/User pseudo-groups carry a trailing space and keep their text unchanged.
@@ -138,7 +137,9 @@ public:
         const wxString candidates[2] = {group, group.BeforeFirst(' ')};
         for (const wxString &prefix : candidates)
         {
-            if (prefix.IsEmpty() || !text.StartsWith(prefix))
+            // Case-insensitive, like the product matching of the configured order: a casing drift between
+            // the vendor label and the preset name must not leave the prefix visible in the submenu.
+            if (prefix.IsEmpty() || text.length() < prefix.length() || text.Left(prefix.length()).CmpNoCase(prefix) != 0)
                 continue;
             // A genuine prefix ends the text or is followed by a space; otherwise it matched inside a word
             // (e.g. group "Prusa Polymers" against the text "Prusament PVB @CORE One").
@@ -192,7 +193,7 @@ private:
 
 public:
     /** @brief Creates an unparented popup that will be initialized by Create(). */
-    FilamentDropDown(std::vector<Item> &items);
+    FilamentDropDown(const std::vector<Item> &items);
 
     ~FilamentDropDown() override;
 

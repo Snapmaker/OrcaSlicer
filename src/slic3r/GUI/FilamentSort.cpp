@@ -2,6 +2,9 @@
 
 #include "nlohmann/json.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <fstream>
 #include <limits>
 #include <utility>
 
@@ -15,7 +18,36 @@ namespace
 
 constexpr const char *g_snapmaker_vendor = "Snapmaker";
 constexpr const char *g_generic_vendor   = "Generic";
+constexpr const char *g_undefined_vendor = "(Undefined)";
 constexpr int         g_allowlist_schema_version = 1;
+
+/** @brief Removes leading and trailing whitespace. */
+std::string trimmed(std::string value)
+{
+    const auto is_space = [](unsigned char character) { return std::isspace(character) != 0; };
+    const auto first    = std::find_if_not(value.begin(), value.end(), is_space);
+    const auto last     = std::find_if_not(value.rbegin(), value.rend(), is_space).base();
+    if (first >= last)
+        return std::string();
+
+    return std::string(first, last);
+}
+
+/** @brief Compares two strings case-insensitively over ASCII letters; every other byte must match exactly. */
+bool ascii_iequal(const std::string &left, const std::string &right)
+{
+    if (left.size() != right.size())
+        return false;
+
+    for (size_t index = 0; index < left.size(); ++index)
+    {
+        const unsigned char lhs = static_cast<unsigned char>(left[index]);
+        const unsigned char rhs = static_cast<unsigned char>(right[index]);
+        if (std::tolower(lhs) != std::tolower(rhs))
+            return false;
+    }
+    return true;
+}
 
 /** @brief Converts a vendor identifier into the label used by system sorting. */
 wxString vendor_label(const std::string &vendor)
@@ -80,6 +112,15 @@ FilamentOrder FilamentOrder::from_stream(std::istream &stream)
     if (orders.empty())
         return FilamentOrder{};
     return FilamentOrder(std::move(orders));
+}
+
+FilamentOrder FilamentOrder::from_file(const std::filesystem::path &path)
+{
+    std::ifstream stream(path);
+    if (!stream)
+        return FilamentOrder{};
+
+    return from_stream(stream);
 }
 
 FilamentOrder::FilamentOrder(Orders orders) : m_orders(std::move(orders))
@@ -166,6 +207,34 @@ std::string canonical_vendor(const std::string &vendor)
     if (label.CmpNoCase(wxString::FromUTF8(g_generic_vendor)) == 0)
         return g_generic_vendor;
     return vendor;
+}
+
+std::string filament_product_key(const std::string &preset_name, const std::string &vendor)
+{
+    std::string product = trimmed(preset_name);
+    std::string owner   = trimmed(vendor);
+
+    // An unset vendor, or the schema placeholder, groups the preset by its own leading word.
+    if (owner.empty() || owner == g_undefined_vendor)
+        owner = product.substr(0, product.find_first_of(" \t"));
+
+    if (!owner.empty() && product.size() > owner.size() && ascii_iequal(product.substr(0, owner.size()), owner) &&
+        product[owner.size()] == ' ')
+        product = product.substr(owner.size() + 1);
+
+    // Printer variants share one product name, e.g. "PLA Matte @BBL X1C" is the "PLA Matte" entry.
+    const size_t printer_suffix = product.find(" @");
+    if (printer_suffix != std::string::npos)
+        product = product.substr(0, printer_suffix);
+
+    return trimmed(product);
+}
+
+std::filesystem::path choose_allow_list_copy(const std::filesystem::path &user_copy,
+                                             const std::filesystem::path &shipped_copy,
+                                             bool                         user_copy_exists)
+{
+    return user_copy_exists ? user_copy : shipped_copy;
 }
 
 } // namespace GUI

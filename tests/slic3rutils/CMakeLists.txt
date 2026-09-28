@@ -15,6 +15,14 @@ find_package(PNG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(libnoise REQUIRED)
 find_package(Qhull 7.2 QUIET)
+
+if (SLIC3R_WX_STABLE)
+    find_package(wxWidgets 3.0 REQUIRED COMPONENTS base core adv html gl aui net media webview)
+else ()
+    find_package(wxWidgets 3.1 REQUIRED COMPONENTS base core adv html gl aui net media webview)
+endif ()
+include(${wxWidgets_USE_FILE})
+
 if(UNIX AND NOT APPLE)
     target_link_options(${_TEST_NAME}_tests PRIVATE "-Wl,--no-as-needed")
 endif()
@@ -40,13 +48,6 @@ endif()
 
 catch_discover_tests(${_TEST_NAME}_tests TEST_PREFIX "${_TEST_NAME}: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
 # add_test(${_TEST_NAME}_tests ${_TEST_NAME}_tests "${CATCH_EXTRA_ARGS} exclude:[NotWorking]")
-
-if (SLIC3R_WX_STABLE)
-    find_package(wxWidgets 3.0 REQUIRED COMPONENTS base core adv html gl aui net media webview)
-else ()
-    find_package(wxWidgets 3.1 REQUIRED COMPONENTS base core adv html gl aui net media webview)
-endif ()
-include(${wxWidgets_USE_FILE})
 
 set(_FILAMENT_TEST_NAME filament_dropdown_mapping)
 add_executable(${_FILAMENT_TEST_NAME}_tests FilamentDropDown_test.cpp)

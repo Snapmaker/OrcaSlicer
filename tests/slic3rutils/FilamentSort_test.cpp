@@ -2,6 +2,8 @@
 
 #include "slic3r/GUI/FilamentSort.hpp"
 
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <sstream>
 #include <vector>
@@ -66,10 +68,15 @@ TEST_CASE("FilamentOrder rejects invalid configurations and supports sort fallba
         "{",
         R"({"schema_version": 1, "order": {"Snapmaker": ["PLA Matte"]}})",
         R"({"schema_version": 2, "sections": {"filament_order": {"Snapmaker": ["PLA Matte"]}}})",
+        R"({"schema_version": 1.0, "sections": {"filament_order": {"Snapmaker": ["PLA Matte"]}}})",
         R"({"schema_version": 1, "sections": []})",
+        R"({"schema_version": 1, "sections": {}})",
         R"({"schema_version": 1, "sections": {"filament_order": []}})",
         R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": []}}})",
         R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": [3]}}})",
+        R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": [""]}}})",
+        R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": "PLA Matte"}}})",
+        R"({"schema_version": 1, "sections": {"filament_order": {"": ["PLA Matte"]}}})",
     };
 
     for (const char *json : invalid_configs)
@@ -130,4 +137,137 @@ TEST_CASE("SystemFilamentSorter applies configured order only to Snapmaker", "[G
     const FilamentSortItem generic_first = make_item("A Generic", "Generic", "PLA SnapSpeed", 3);
     const FilamentSortItem generic_second = make_item("B Generic", "Generic", "PLA Matte", 4);
     CHECK(sorter.less(generic_first, generic_second));
+}
+
+TEST_CASE("FilamentOrder keeps the first rank when a product name repeats", "[GUI][FilamentSort]")
+{
+    const FilamentOrder order = parse_order(R"({
+        "schema_version": 1,
+        "sections": {
+            "filament_order": {
+                "Snapmaker": ["PLA Matte", "PLA Matte", "PLA SnapSpeed"]
+            }
+        }
+    })");
+
+    REQUIRE_FALSE(order.empty());
+    CHECK(order.rank("Snapmaker", "PLA Matte") == 0);
+    CHECK(order.rank("Snapmaker", "PLA SnapSpeed") == 2);
+}
+
+TEST_CASE("FilamentOrder matches non-ASCII product names", "[GUI][FilamentSort]")
+{
+    const FilamentOrder order = parse_order(R"({
+        "schema_version": 1,
+        "sections": {
+            "filament_order": {
+                "Snapmaker": ["PLA 哑光", "TPU 95A"]
+            }
+        }
+    })");
+
+    REQUIRE_FALSE(order.empty());
+    CHECK(order.rank("Snapmaker", "PLA 哑光") == 0);
+    CHECK(order.rank("Snapmaker", "TPU 95A") == 1);
+    CHECK(order.rank("Snapmaker", "PLA 亮光") == std::numeric_limits<size_t>::max());
+}
+
+TEST_CASE("filament_product_key strips the vendor prefix and the printer suffix", "[GUI][FilamentSort]")
+{
+    CHECK(filament_product_key("Snapmaker PLA SnapSpeed", "Snapmaker") == "PLA SnapSpeed");
+
+    // The strip ignores case, like the configured order's product matching: a casing drift between the
+    // vendor label and the preset name must still map to the ordered entry.
+    CHECK(filament_product_key("snapmaker PLA Matte", "Snapmaker") == "PLA Matte");
+    CHECK(filament_product_key("SNAPMaker ABS", "Snapmaker") == "ABS");
+
+    // Printer variants share one product entry.
+    CHECK(filament_product_key("PLA Matte @BBL X1C", "Snapmaker") == "PLA Matte");
+
+    // A word-interior coincidence is not a prefix (vendor "Prusa Polymers" against "Prusament ...").
+    CHECK(filament_product_key("Prusament PVB @CORE One", "Prusa Polymers") == "Prusament PVB");
+
+    // An unset vendor, or the schema placeholder, falls back to the preset name's leading word.
+    CHECK(filament_product_key("Generic ABS", "") == "ABS");
+    CHECK(filament_product_key("Generic ABS", "(Undefined)") == "ABS");
+    CHECK(filament_product_key("SingleWord", "") == "SingleWord");
+}
+
+TEST_CASE("choose_allow_list_copy prefers the deployed user copy", "[GUI][FilamentSort]")
+{
+    const std::filesystem::path user_copy    = "system/Snapmaker/filament/filament_allow_list.json";
+    const std::filesystem::path shipped_copy = "resources/profiles/Snapmaker/filament/filament_allow_list.json";
+
+    CHECK(choose_allow_list_copy(user_copy, shipped_copy, true) == user_copy);
+    // A missing user copy falls back to the shipped one instead of leaving the order unconfigured.
+    CHECK(choose_allow_list_copy(user_copy, shipped_copy, false) == shipped_copy);
+}
+
+TEST_CASE("is_snapmaker_vendor matches the vendor label case-insensitively", "[GUI][FilamentSort]")
+{
+    // Preset files spell the vendor inconsistently, so the TopN gate must not depend on casing.
+    CHECK(is_snapmaker_vendor("Snapmaker"));
+    CHECK(is_snapmaker_vendor("SNAPMAKER"));
+    CHECK(is_snapmaker_vendor("sNaPmAkEr"));
+
+    // Only a whole-label match counts: neighbouring vendors must not take the Snapmaker path.
+    CHECK_FALSE(is_snapmaker_vendor("Generic"));
+    CHECK_FALSE(is_snapmaker_vendor("Snapmaker Lab"));
+    CHECK_FALSE(is_snapmaker_vendor("Bambu Lab"));
+    CHECK_FALSE(is_snapmaker_vendor(""));
+}
+
+TEST_CASE("canonical_vendor normalizes the known system vendors and passes others through", "[GUI][FilamentSort]")
+{
+    CHECK(canonical_vendor("snapmaker") == "Snapmaker");
+    CHECK(canonical_vendor("SNAPMAKER") == "Snapmaker");
+    CHECK(canonical_vendor("Snapmaker") == "Snapmaker");
+    CHECK(canonical_vendor("generic") == "Generic");
+    CHECK(canonical_vendor("GENERIC") == "Generic");
+
+    // Unknown vendors keep their spelling; the empty label stays empty rather than becoming a vendor.
+    CHECK(canonical_vendor("Bambu Lab") == "Bambu Lab");
+    CHECK(canonical_vendor("Snapmaker Lab") == "Snapmaker Lab");
+    CHECK(canonical_vendor("") == "");
+
+    // System rows are grouped by the canonical label, so the TopN gate must agree with it.
+    CHECK(is_snapmaker_vendor(canonical_vendor("snapmaker")));
+    CHECK_FALSE(is_snapmaker_vendor(canonical_vendor("generic")));
+}
+
+TEST_CASE("FilamentOrder::from_file reads a configuration file and reports unusable ones as empty",
+          "[GUI][FilamentSort]")
+{
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "filament_order_from_file_test.json";
+
+    SECTION("valid configuration")
+    {
+        std::ofstream stream(path);
+        REQUIRE(stream.good());
+        stream << R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": ["PLA Matte"]}}})";
+        // Close before reading back: the write is not on disk while the stream still buffers it.
+        stream.close();
+
+        const FilamentOrder order = FilamentOrder::from_file(path);
+        CHECK_FALSE(order.empty());
+        CHECK(order.rank("Snapmaker", "PLA Matte") == 0);
+    }
+
+    SECTION("missing file")
+    {
+        std::filesystem::remove(path);
+        CHECK(FilamentOrder::from_file(path).empty());
+    }
+
+    SECTION("malformed file")
+    {
+        std::ofstream stream(path);
+        REQUIRE(stream.good());
+        stream << "{";
+        stream.close();
+
+        CHECK(FilamentOrder::from_file(path).empty());
+    }
+
+    std::filesystem::remove(path);
 }

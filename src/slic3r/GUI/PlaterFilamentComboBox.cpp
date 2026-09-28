@@ -13,7 +13,6 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <string>
@@ -175,33 +174,30 @@ wxWindow *scroll_parent(wxWindow *window)
 
 std::filesystem::path filament_allow_list_path()
 {
-    std::filesystem::path system_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                         g_snapmaker_vendor / "filament" / g_allow_list_file_name;
+    const std::filesystem::path user_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
+                                            g_snapmaker_vendor / "filament" / g_allow_list_file_name;
+
     std::error_code filesystem_error;
-    if (std::filesystem::exists(system_path, filesystem_error))
-        return system_path;
+    const bool      user_copy_exists = std::filesystem::exists(user_path, filesystem_error);
     if (filesystem_error)
-        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder could not inspect " << system_path.u8string() << ": "
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder could not inspect " << user_path.u8string() << ": "
                                    << filesystem_error.message();
 
-    return std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" / g_snapmaker_vendor / "filament" /
-           g_allow_list_file_name;
+    const std::filesystem::path shipped_path = std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" /
+                                               g_snapmaker_vendor / "filament" / g_allow_list_file_name;
+    return choose_allow_list_copy(user_path, shipped_path, user_copy_exists);
 }
 
 /** @brief Loads the vendor filament order once from the user or resource allow-list path. */
 FilamentOrder load_filament_order()
 {
     const std::filesystem::path path = filament_allow_list_path();
-    std::ifstream               stream(path);
-    if (!stream)
-    {
-        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder failed to open " << path.u8string();
-        return FilamentOrder{};
-    }
 
-    FilamentOrder order = FilamentOrder::from_stream(stream);
+    // An unreadable file and an invalid configuration are reported alike: both leave the popup on the
+    // default ordering, and the logged path names the file either way.
+    const FilamentOrder order = FilamentOrder::from_file(path);
     if (order.empty())
-        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder has invalid or empty configuration: " << path.u8string();
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder has no usable configuration: " << path.u8string();
     else
         BOOST_LOG_TRIVIAL(info) << "FilamentOrder loaded: " << path.u8string();
     return order;
@@ -298,34 +294,6 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
         m_scroll_parent->Bind(wxEVT_MOVE, &PlaterFilamentComboBox::on_scroll_parent_move, this);
 }
 
-void PlaterFilamentComboBox::set_project_sorter(std::unique_ptr<FilamentSorter> sorter)
-{
-    m_project_sorter = std::move(sorter);
-    rebuild_popup_rows();
-}
-
-void PlaterFilamentComboBox::set_user_sorter(std::unique_ptr<FilamentSorter> sorter)
-{
-    m_user_sorter = std::move(sorter);
-    rebuild_popup_rows();
-}
-
-void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVendorSorter> sorter)
-{
-    if (sorter == nullptr)
-        sorter = std::make_unique<SystemFilamentVendorSorter>();
-    m_system_vendor_sorter = std::move(sorter);
-    rebuild_popup_rows();
-}
-
-void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
-{
-    if (sorter == nullptr)
-        sorter = std::make_unique<SystemFilamentSorter>(filament_order());
-    m_system_filament_sorter = std::move(sorter);
-    rebuild_popup_rows();
-}
-
 PlaterFilamentComboBox::~PlaterFilamentComboBox()
 {
     // Unbind the popup's handlers before closing it: close_popup() dismisses the popup, whose
@@ -418,27 +386,7 @@ std::string PlaterFilamentComboBox::preset_filament_product(const Preset *preset
     if (preset == nullptr)
         return {};
 
-    wxString product = from_u8(Preset::remove_suffix_modified(preset->name));
-    product.Trim(true).Trim(false);
-
-    wxString vendor = from_u8(preset_vendor(preset));
-    vendor.Trim(true).Trim(false);
-    if (vendor.empty() || vendor == wxString::FromUTF8("(Undefined)")) {
-        wxStringTokenizer words(product);
-        if (words.HasMoreTokens())
-            vendor = words.GetNextToken();
-    }
-
-    if (!vendor.empty() && product.length() > vendor.length() && product.Left(vendor.length()).CmpNoCase(vendor) == 0 &&
-        product[vendor.length()] == ' ')
-        product = product.Mid(vendor.length() + 1);
-
-    const int printer_suffix = product.Find(" @");
-    if (printer_suffix != wxNOT_FOUND)
-        product = product.Left(printer_suffix);
-
-    product.Trim(true).Trim(false);
-    return into_u8(product);
+    return filament_product_key(Preset::remove_suffix_modified(preset->name), preset_vendor(preset));
 }
 
 wxString PlaterFilamentComboBox::popup_group(Section section, const std::string &vendor) const

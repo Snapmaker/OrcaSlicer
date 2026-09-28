@@ -146,6 +146,13 @@ TEST_CASE("FilamentDropDown strips whole group prefixes only", "[GUI][FilamentDr
     // Word-interior coincidence must not be stripped (group "Prusa Polymers" vs "Prusament ...").
     CHECK(strip_prefix("Prusament PVB @CORE One", "Prusa Polymers") == wxString::FromUTF8("Prusament PVB @CORE One"));
 
+    // The prefix strip ignores case, like the configured order's product matching, so a casing drift
+    // between the vendor label and the preset name still hides the prefix in the submenu.
+    CHECK(strip_prefix("snapmaker PLA Matte", "Snapmaker") == wxString::FromUTF8("PLA Matte"));
+    CHECK(strip_prefix("SNAPMaker ABS", "Snapmaker") == wxString::FromUTF8("ABS"));
+    CHECK(strip_prefix("prusament PVB @CORE One", "Prusa Polymers") ==
+          wxString::FromUTF8("prusament PVB @CORE One"));
+
     // Preset names that do not start with the vendor name stay unchanged.
     CHECK(strip_prefix("Arena ABS @Arena X1C", "Orca Arena") == wxString::FromUTF8("Arena ABS @Arena X1C"));
 

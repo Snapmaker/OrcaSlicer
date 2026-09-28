@@ -12,7 +12,6 @@ namespace Slic3r
 namespace GUI
 {
 
-/** @brief Defines an overridable ordering for system filament vendors. */
 /** @brief Provides the filament-specific grouped presentation over the preset combo pipeline. */
 class PlaterFilamentComboBox : public PlaterPresetComboBox
 {
@@ -25,16 +24,6 @@ public:
     void update() override;
     /** @brief Invalidates popup geometry after a Windows DPI change. */
     void msw_rescale() override;
-
-    // Null sorters preserve base order (project/user) or restore the default (system).
-    /** @brief Replaces the project-section row sorter. */
-    void set_project_sorter(std::unique_ptr<FilamentSorter> sorter);
-    /** @brief Replaces the user-section row sorter. */
-    void set_user_sorter(std::unique_ptr<FilamentSorter> sorter);
-    /** @brief Replaces the system vendor sorter. */
-    void set_system_vendor_sorter(std::unique_ptr<FilamentVendorSorter> sorter);
-    /** @brief Replaces the system vendor-group row sorter. */
-    void set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter);
 
 private:
 #ifdef __WXOSX__

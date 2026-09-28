@@ -80,7 +80,7 @@ bool point_in_anchor_gap(const wxWindow *anchor, const wxWindow *popup, const wx
 
 } // namespace
 
-FilamentDropDown::FilamentDropDown(std::vector<Item> &items)
+FilamentDropDown::FilamentDropDown(const std::vector<Item> &items)
     : items(items)
     , state_handler(this)
     , text_color(0x363636)
@@ -463,68 +463,6 @@ static wxSize GetBmpSize(const wxBitmap &bmp)
 #endif
 }
 
-/** @brief Carries the state needed to draw a split row. */
-struct SplitItemRenderContext
-{
-    const wxWindow *window;
-    wxDC &          dc;
-    wxString        text;
-    wxPoint         start;
-    int             width;
-    int             height;
-};
-
-/** @brief Draws a split row separator and optional label. */
-static void draw_split_item(const SplitItemRenderContext &context)
-{
-    wxDC &dc = context.dc;
-    wxString split_text = context.text;
-
-    // save dc
-    auto pre_clr = dc.GetTextForeground();
-    auto pre_pen = dc.GetPen();
-    dc.SetTextForeground(StateColor::darkModeColorFor(wxColour(172, 172, 172)));
-    dc.SetPen(StateColor::darkModeColorFor(wxColour(166, 169, 170)));
-    // miner font
-    auto font = context.window->GetFont();
-    font.SetPointSize(font.GetPointSize() - 3);
-    dc.SetFont(font);
-
-    int spacing = context.window->FromDIP(8);
-
-    if (!split_text.empty()) // Paiting: text + spacing + line + spacing
-    {
-        int    max_content_width = context.width - context.start.x - 2 * spacing;
-        wxSize tSize             = dc.GetMultiLineTextExtent(split_text);
-        if (tSize.x > max_content_width)
-        {
-            split_text = wxControl::Ellipsize(split_text, dc, wxELLIPSIZE_END, max_content_width);
-            tSize      = dc.GetMultiLineTextExtent(split_text);
-        }
-
-        dc.SetFont(font);
-        dc.DrawText(split_text, context.start);
-
-        int line_width = context.width - context.start.x - tSize.x - 2 * spacing;
-        int line_y     = context.start.y + (tSize.GetHeight() / 2);
-        dc.DrawLine(context.start.x + tSize.x + spacing,
-                    line_y,
-                    context.start.x + tSize.x + line_width + spacing,
-                    line_y); // draw right line
-    }
-    else // Paiting: line + spacing
-    {
-        int line_y     = context.start.y + (context.height / 2);
-        int line_width = context.width - context.start.x - spacing;
-        dc.DrawLine(context.start.x, line_y, context.start.x + line_width, line_y); // draw line
-    }
-
-    // restore dc
-    dc.SetTextForeground(pre_clr);
-    dc.SetPen(pre_pen);
-    dc.SetFont(context.window->GetFont());
-}
-
 void FilamentDropDown::render(wxDC &dc)
 {
     if (items.empty())
@@ -583,7 +521,7 @@ void FilamentDropDown::render_selection(wxDC &dc, SelectionRenderContext &contex
     const wxSize &size = context.size;
     if (hover_item >= 0 && (context.states & StateColor::Hovered) &&
         (context.hover_index < 0 ||
-         !(items[context.hover_index].style & (DD_ITEM_STYLE_SPLIT_ITEM | DD_ITEM_STYLE_DISABLED))))
+         !(items[context.hover_index].style & DD_ITEM_STYLE_DISABLED)))
     {
         context.content.y = add_to_int(context.content.y, multiply_to_int(rowSize.y, static_cast<size_t>(hover_item)));
         if (context.content.GetBottom() > 0 && context.content.y < size.y)
@@ -649,14 +587,6 @@ void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wx
         }
         if (rcContent.y > size.y) break;
         wxPoint pt = rcContent.GetLeftTop();
-
-        if (item.style & DD_ITEM_STYLE_SPLIT_ITEM)
-        {
-            const SplitItemRenderContext context{this, dc, item.text, pt, rowSize.GetWidth(), rowSize.GetHeight()};
-            draw_split_item(context);
-            rcContent.y += rowSize.GetHeight();
-            continue;
-        }
 
         const bool is_top_level_group = visible_row.group_header;
         auto &     icon               = item.icon;

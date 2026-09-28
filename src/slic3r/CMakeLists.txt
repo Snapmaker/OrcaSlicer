@@ -378,6 +378,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/Preferences.hpp
     GUI/PresetComboBoxes.cpp
     GUI/PresetComboBoxes.hpp
+    GUI/FilamentDropDown.cpp
+    GUI/FilamentDropDown.hpp
+    GUI/FilamentSort.cpp
+    GUI/FilamentSort.hpp
+    GUI/PlaterFilamentComboBox.cpp
+    GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp
     GUI/PresetHints.hpp
     GUI/PrinterCloudAuthDialog.cpp

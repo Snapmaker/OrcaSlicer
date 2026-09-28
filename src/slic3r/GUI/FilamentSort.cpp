@@ -58,18 +58,23 @@ wxString vendor_label(const std::string &vendor)
 /** @brief Returns the fixed priority bucket for a system vendor. */
 int vendor_rank(const std::string &vendor)
 {
+    // Case-sensitive, like the vendor ordering below. Known vendors reach this point already spelled
+    // canonically (PlaterFilamentComboBox calls canonical_vendor() before sorting), so a profile that
+    // writes "snapmaker" is still ranked as Snapmaker; only unknown vendors keep their own spelling.
     const wxString label = vendor_label(vendor);
-    if (label.CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
+    if (label.Cmp(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
         return 0;
-    if (label.CmpNoCase(wxString::FromUTF8(g_generic_vendor)) == 0)
+    if (label.Cmp(wxString::FromUTF8(g_generic_vendor)) == 0)
         return 1;
     return 2;
 }
 
-/** @brief Compares display names and preserves the original order for ties. */
+/** @brief Compares display names by code point and preserves the original order for ties. */
 bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
 {
-    const int name_compare = left.display_name.CmpNoCase(right.display_name);
+    // Case-sensitive, like the upstream Bambu collation: names that differ only in case are ordered
+    // by code point instead of being treated as equal.
+    const int name_compare = left.display_name.Cmp(right.display_name);
     if (name_compare != 0)
         return name_compare < 0;
     return left.original_index < right.original_index;
@@ -171,7 +176,8 @@ bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSo
 
 bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
 {
-    return vendor_label(left).CmpNoCase(vendor_label(right)) < 0;
+    // Case-sensitive, like the upstream Bambu vendor table: the vendor axis orders by code point.
+    return vendor_label(left).Cmp(vendor_label(right)) < 0;
 }
 
 bool SystemFilamentVendorSorter::less(const std::string &left, const std::string &right) const
@@ -208,6 +214,8 @@ bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSort
 
 bool is_snapmaker_vendor(const std::string &vendor)
 {
+    // Deliberately case-insensitive, unlike the ordering above: this gate activates the configured order,
+    // and a spelling drift must not silently disable it.
     return wxString::FromUTF8(vendor.c_str()).CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0;
 }
 

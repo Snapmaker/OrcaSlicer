@@ -91,7 +91,7 @@ TEST_CASE("FilamentOrder rejects invalid configurations and supports sort fallba
     CHECK_FALSE(sorter.less(second, first));
 }
 
-TEST_CASE("FilamentSorter applies case-insensitive name order and stable index tie-break", "[GUI][FilamentSort]")
+TEST_CASE("FilamentSorter orders names by code point and keeps the original order for ties", "[GUI][FilamentSort]")
 {
     const FilamentSorter sorter;
     const FilamentSortItem alpha = make_item("alpha", "", "", 0);
@@ -99,10 +99,25 @@ TEST_CASE("FilamentSorter applies case-insensitive name order and stable index t
     const FilamentSortItem first = make_item("PLA", "", "", 1);
     const FilamentSortItem second = make_item("pla", "", "", 2);
 
-    CHECK(sorter.less(alpha, beta));
-    CHECK_FALSE(sorter.less(beta, alpha));
+    // Case-sensitive, like the upstream Bambu comparator: uppercase precedes lowercase, so this pair
+    // is ordered by code point rather than by the original index.
+    CHECK(sorter.less(beta, alpha));
+    CHECK_FALSE(sorter.less(alpha, beta));
     CHECK(sorter.less(first, second));
     CHECK_FALSE(sorter.less(second, first));
+
+    // The characters between 'Z' and 'a' sort after uppercase and before lowercase.
+    const FilamentSortItem underscore = make_item("_", "", "", 3);
+    const FilamentSortItem upper_a    = make_item("A", "", "", 4);
+    const FilamentSortItem lower_a    = make_item("a", "", "", 5);
+    CHECK(sorter.less(upper_a, underscore));
+    CHECK(sorter.less(underscore, lower_a));
+
+    // Identical names still keep the original order, since std::sort is not stable.
+    const FilamentSortItem same_first = make_item("PLA", "", "", 3);
+    const FilamentSortItem same_last  = make_item("PLA", "", "", 7);
+    CHECK(sorter.less(same_first, same_last));
+    CHECK_FALSE(sorter.less(same_last, same_first));
 }
 
 TEST_CASE("SystemFilamentVendorSorter prioritizes Snapmaker and Generic", "[GUI][FilamentSort]")
@@ -114,6 +129,12 @@ TEST_CASE("SystemFilamentVendorSorter prioritizes Snapmaker and Generic", "[GUI]
     CHECK(sorter.less("Another", "Other"));
     CHECK_FALSE(sorter.less("Other", "Generic"));
     CHECK_FALSE(sorter.less("SNAPMAKER", "Snapmaker"));
+
+    // Case-sensitive vendor ordering: only the exact spelling takes the Snapmaker bucket, and
+    // vendors in the same bucket order by code point (uppercase before lowercase).
+    CHECK(sorter.less("Snapmaker", "snapmaker"));
+    CHECK(sorter.less("Zebra", "apple"));
+    CHECK_FALSE(sorter.less("apple", "Zebra"));
 }
 
 TEST_CASE("SystemFilamentSorter applies configured order only to Snapmaker", "[GUI][FilamentSort]")

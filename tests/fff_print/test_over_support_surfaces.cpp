@@ -757,3 +757,17 @@ TEST_CASE("A wall is left whole where neither its speed nor its cooling changes"
 
     REQUIRE(points.size() == 3);
 }
+
+// Bridges, overhang perimeters, and enable_overhang_bridge_fan off leave fan_overlap_threshold at -1,
+// so an end that would otherwise cool (same geometry as the fan-only split case) must not fan-split
+// the wall. Speed is constant, and this fixture has no previous-layer edge crossing, so size stays 2.
+TEST_CASE("A wall is not fan-split when the overhang fan does not depend on overlap", "[ExtrusionProcessor]")
+{
+    const std::function<float(float)> distance_to_speed = [](float) { return 70.f; };
+    const float fan_overlap_threshold = -1.f;
+
+    const std::vector<ExtendedPoint> points = sampled_wall_along_edge(edge_wall_end_short, distance_to_speed, -1.f,
+                                                                      fan_overlap_threshold);
+
+    REQUIRE(points.size() == 2);
+}

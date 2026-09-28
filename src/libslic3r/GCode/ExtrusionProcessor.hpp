@@ -413,7 +413,9 @@ public:
                 t           = std::clamp(t, 0.0f, 1.0f);
                 final_speed = (1.0f - t) * speed_sections[section_idx].second + t * speed_sections[section_idx + 1].second;
             }
-            return round(final_speed);
+            // std::round(float) returns float. Bare round() is the C double overload on MSVC,
+            // which makes std::min(calculate_speed(d), original_speed) ambiguous (double vs float).
+            return std::round(final_speed);
         };
 
         // ORCA: The speed sections are built from ext_perimeter_speed, which can be above the speed this path prints at
@@ -421,7 +423,7 @@ public:
         // overhang distances whose speeds differ only above it print the same and must not count as a speed change when
         // the path is split.
         auto effective_speed = [&calculate_speed, original_speed](float distance) {
-            return std::min(calculate_speed(distance), original_speed);
+            return std::min<float>(calculate_speed(distance), original_speed);
         };
 
         std::vector<ExtendedPoint> extended_points = estimate_points_properties<true, true, true, true>

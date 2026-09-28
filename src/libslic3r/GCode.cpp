@@ -803,7 +803,13 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
 
     Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
-    if (!tcr.priming && tcr.is_finish_first) {
+
+    double current_z = gcodegen.writer().get_position().z();
+    if (z == -1.) // in case no specific z was provided, print at current_z pos
+        z = current_z;
+
+    const bool will_go_down = !is_approx(z, current_z);
+    if (!tcr.priming && (tcr.is_finish_first || will_go_down)) {
         // Move over the wipe tower.
         gcode += gcodegen.retract();
         gcodegen.m_avoid_crossing_perimeters.use_external_mp_once();
@@ -812,11 +818,6 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcode += gcodegen.unretract();
     }
 
-    double current_z = gcodegen.writer().get_position().z();
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
-
-    const bool will_go_down = !is_approx(z, current_z);
     if (will_go_down) {
         gcode += gcodegen.writer().retract();
         gcode += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");

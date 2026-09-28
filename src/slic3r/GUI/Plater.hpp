@@ -585,7 +585,7 @@ public:
     bool leave_gizmos_stack();
 
     void on_filaments_change(size_t extruders_count);
-    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1, const std::vector<unsigned char>& is_mixed_snapshot = {});
+    void on_filaments_delete(size_t extruders_count, size_t filament_id, int replace_filament_id = -1);
     bool confirm_auto_generated_gradients(size_t num_physical);
     void set_auto_generated_gradient_decision(size_t num_physical, bool create_auto_gradients);
     // BBS

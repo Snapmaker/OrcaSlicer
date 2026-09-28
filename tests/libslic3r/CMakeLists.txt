@@ -62,6 +62,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mixed_nozzle.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
+	test_trianglemesh_slicer.cpp
 	test_locked_zag_patterns.cpp
 	test_locked_zag_identity_probe.cpp
 	test_layer_time_speed_smoothing.cpp

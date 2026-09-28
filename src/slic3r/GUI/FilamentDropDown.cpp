@@ -95,6 +95,11 @@ FilamentDropDown::FilamentDropDown(const std::vector<Item> &items)
 FilamentDropDown::~FilamentDropDown()
 {
     submenu_motion_timer.Stop();
+
+    // The submenu is a sibling window under the same wx parent, and wx destroys children in creation
+    // order, so it is still alive here; drop its raw back-pointer before it can use it again.
+    if (subDropDown != nullptr)
+        subDropDown->mainDropDown = nullptr;
 }
 
 bool FilamentDropDown::Create(wxWindow *parent, long style)

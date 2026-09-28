@@ -5,6 +5,7 @@
 
 #include "PresetBundle.hpp"
 #include "PerHeadProcess.hpp"
+#include "FilamentFlowColumns.hpp"
 
 #include "FilamentColorLibrary.hpp"
 #include "PresetCacheFormat.hpp"
@@ -319,6 +320,15 @@ std::string PresetBundle::wizard_printer_variant(const std::string &bundle_name,
     return *ticked.begin();
 }
 
+// Snapmaker Orca: a filament copy whose per-column keys disagree with its variant list is repaired
+// before the filaments are joined, so one narrow value cannot shift the values of the next filament.
+static void repair_filament_copy(DynamicPrintConfig &config, const std::string &preset_name)
+{
+    if (filament_repair_columns(config))
+        BOOST_LOG_TRIVIAL(error) << "full config: the columns of filament preset " << preset_name
+                                 << " disagreed with filament_extruder_variant and were repaired";
+}
+
 DynamicPrintConfig PresetBundle::construct_full_config(
     Preset& in_printer_preset,
     Preset& in_print_preset,
@@ -404,6 +414,7 @@ DynamicPrintConfig PresetBundle::construct_full_config(
     if (num_filaments <= 1) {
         // BBS: update filament config related with variants
         DynamicPrintConfig filament_config = in_filament_presets[0].config;
+        repair_filament_copy(filament_config, in_filament_presets[0].name);
         if (apply_extruder && ((extruder_count > 1) || different_extruder))
             filament_config.update_values_to_printer_extruders(out, extruder_count, extruder_volume_type_count, nozzle_volume_types, filament_options_with_variant, "", "filament_extruder_variant", 1, filament_maps[0], (NozzleVolumeType)filament_volume_maps[0]);
         out.apply(filament_config);
@@ -428,6 +439,7 @@ DynamicPrintConfig PresetBundle::construct_full_config(
         filament_temp_configs.resize(num_filaments);
         for (size_t i = 0; i < num_filaments; ++i) {
             filament_temp_configs[i] = *(filament_configs[i]);
+            repair_filament_copy(filament_temp_configs[i], filament_presets[i]->name);
             if (apply_extruder && ((extruder_count > 1) || different_extruder))
                 filament_temp_configs[i].update_values_to_printer_extruders(out, extruder_count, extruder_volume_type_count, nozzle_volume_types, filament_options_with_variant, "", "filament_extruder_variant", 1, filament_maps[i], (NozzleVolumeType)filament_volume_maps[i]);
         }
@@ -5368,6 +5380,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
     if (num_filaments <= 1) {
         //BBS: update filament config related with variants
         DynamicPrintConfig filament_config = this->filaments.get_edited_preset().config;
+        repair_filament_copy(filament_config, this->filaments.get_edited_preset().name);
         if (apply_extruder && ((extruder_count > 1) || different_extruder))
             filament_config.update_values_to_printer_extruders(out, extruder_count, extruder_volume_type_count, nozzle_volume_types, filament_options_with_variant, "", "filament_extruder_variant", 1, filament_maps[0], (NozzleVolumeType)filament_volume_maps[0]);
         out.apply(filament_config);
@@ -5462,6 +5475,7 @@ DynamicPrintConfig PresetBundle::full_fff_config(bool apply_extruder, std::optio
         filament_temp_configs.resize(num_filaments);
         for (size_t i = 0; i < num_filaments; ++i) {
             filament_temp_configs[i] = *(filament_configs[i]);
+            repair_filament_copy(filament_temp_configs[i], filament_presets[i]->name);
             if (apply_extruder && ((extruder_count > 1) || different_extruder))
                 filament_temp_configs[i].update_values_to_printer_extruders(out, extruder_count, extruder_volume_type_count, nozzle_volume_types, filament_options_with_variant, "", "filament_extruder_variant", 1, filament_maps[i], (NozzleVolumeType)filament_volume_maps[i]);
         }

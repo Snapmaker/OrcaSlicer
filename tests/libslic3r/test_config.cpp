@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "libslic3r/Flow.hpp"
+#include "libslic3r/Preset.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PrintConfigConstants.hpp"
 #include "libslic3r/LocalesUtils.hpp"
@@ -413,6 +414,60 @@ TEST_CASE("A one-column user process or filament preset changes the Standard col
 
     filament_parent.update_diff_values_to_child_config(filament_child, "", "filament_extruder_variant", Slic3r::filament_options_with_variant, no_keys);
     REQUIRE(filament_parent.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed")->values == std::vector<double>({18., 40.}));
+}
+
+TEST_CASE("A user filament preset keeps a High Flow column its parent lacks", "[Config][Variant][FilamentFlow]")
+{
+    std::set<std::string> no_keys;
+    Slic3r::DynamicPrintConfig parent;
+    parent.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant", true)->values = {"Direct Drive Standard"};
+    parent.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed", true)->values = {12.};
+    parent.option<Slic3r::ConfigOptionInts>("nozzle_temperature", true)->values = {255};
+
+    // The user file writes the key it changed in full; the other keys are not written.
+    Slic3r::DynamicPrintConfig child;
+    child.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant", true)->values = {"Direct Drive Standard", "Direct Drive High Flow"};
+    child.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed", true)->values = {12., 22.};
+
+    parent.update_diff_values_to_child_config(child, "", "filament_extruder_variant", Slic3r::filament_options_with_variant, no_keys);
+    CHECK(parent.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant")->values ==
+          std::vector<std::string>({"Direct Drive Standard", "Direct Drive High Flow"}));
+    CHECK_THAT(parent.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed")->values, Catch::Matchers::Approx(std::vector<double>({12., 22.})));
+    // An unwritten key follows the parent's Standard value in both columns.
+    CHECK(parent.option<Slic3r::ConfigOptionInts>("nozzle_temperature")->values == std::vector<int>({255, 255}));
+}
+
+TEST_CASE("A parent that later gains a High Flow column fills the keys the user preset never wrote", "[Config][Variant][FilamentFlow]")
+{
+    std::set<std::string> no_keys;
+    // The vendor update: the parent now has High Flow values of its own.
+    Slic3r::DynamicPrintConfig parent;
+    parent.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant", true)->values = {"Direct Drive Standard", "Direct Drive High Flow"};
+    parent.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed", true)->values = {12., 30.};
+    parent.option<Slic3r::ConfigOptionFloats>("pressure_advance", true)->values = {0.04, 0.02};
+
+    Slic3r::DynamicPrintConfig child;
+    child.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant", true)->values = {"Direct Drive Standard", "Direct Drive High Flow"};
+    child.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed", true)->values = {12., 22.};
+
+    parent.update_diff_values_to_child_config(child, "", "filament_extruder_variant", Slic3r::filament_options_with_variant, no_keys);
+    // The value the user wrote wins, the value the user never wrote comes from the vendor.
+    CHECK_THAT(parent.option<Slic3r::ConfigOptionFloats>("filament_max_volumetric_speed")->values, Catch::Matchers::Approx(std::vector<double>({12., 22.})));
+    CHECK_THAT(parent.option<Slic3r::ConfigOptionFloats>("pressure_advance")->values, Catch::Matchers::Approx(std::vector<double>({0.04, 0.02})));
+}
+
+TEST_CASE("Preset normalization keeps one value per filament column", "[Config][Variant][FilamentFlow]")
+{
+    // A filament preset holds one filament; its per-column keys stay as wide as its column list.
+    Slic3r::DynamicPrintConfig config;
+    config.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats({1.75}));
+    config.set_key_value("filament_extruder_variant", new Slic3r::ConfigOptionStrings({"Direct Drive Standard", "Direct Drive High Flow"}));
+    config.set_key_value("filament_retract_length_nc", new Slic3r::ConfigOptionFloats({4., 6.}));
+    config.set_key_value("volumetric_speed_coefficients", new Slic3r::ConfigOptionStrings({"0 0 0 0 0 0", "1 1 1 1 1 1"}));
+    Slic3r::Preset::normalize(config);
+    CHECK(config.option<Slic3r::ConfigOptionStrings>("filament_extruder_variant")->values.size() == 2);
+    CHECK_THAT(config.option<Slic3r::ConfigOptionFloats>("filament_retract_length_nc")->values, Catch::Matchers::Approx(std::vector<double>({4., 6.})));
+    CHECK(config.option<Slic3r::ConfigOptionStrings>("volumetric_speed_coefficients")->values.size() == 2);
 }
 
 TEST_CASE("Nozzle volume types keep their canonical config spelling", "[Config][HighFlow]")
@@ -1467,4 +1522,16 @@ SCENARIO("Per tool head line widths in the config layer", "[Config][PerHeadWidth
             }
         }
     }
+}
+
+TEST_CASE("A column index past the loaded values keeps the base value", "[Config]")
+{
+    // A child config with one value where its variant list names two columns.
+    ConfigOptionFloats       base({12., 12.});
+    const ConfigOptionFloats child({22.});
+    std::vector<int>         diff_index{0, 1};
+    REQUIRE_NOTHROW(base.set_only_diff(&child, diff_index, 1));
+    REQUIRE(base.values.size() == 2);
+    CHECK_THAT(base.values[0], Catch::Matchers::WithinAbs(22., 1e-9));
+    CHECK_THAT(base.values[1], Catch::Matchers::WithinAbs(12., 1e-9));
 }

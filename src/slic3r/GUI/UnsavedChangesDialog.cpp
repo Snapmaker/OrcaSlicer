@@ -10,6 +10,7 @@
 
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Color.hpp"
 #include "format.hpp"
@@ -1554,8 +1555,11 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
         type = presets->type();
         // Snapmaker Orca: old values come from the saved preset laid out like the edited one
         // (PerHeadProcess::reference_in_layout_of), so a per-head column shows its value, not "Undefined".
+        // A filament with a column the saved preset lacks compares with the saved preset widened by it.
         DynamicPrintConfig        old_storage;
-        const DynamicPrintConfig& old_config = type == Preset::TYPE_PRINT ? PerHeadProcess::reference_in_layout_of(new_config, saved_config, old_storage) : saved_config;
+        const DynamicPrintConfig& old_config = type == Preset::TYPE_PRINT ? PerHeadProcess::reference_in_layout_of(new_config, saved_config, old_storage) :
+                                               type == Preset::TYPE_FILAMENT ? filament_reference_in_layout_of(new_config, saved_config, old_storage) :
+                                                                              saved_config;
 
         const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
 
@@ -1580,6 +1584,18 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
                 PresetItem pi = {type, "extruders_count", _L("General"), _L("Capabilities"), local_label, old_val, new_val};
                 m_presetitems.push_back(pi);
             }
+        }
+
+        // Snapmaker Orca: High Flow values added without a value change have no row of their own
+        // (filament_extruder_variant is on no page); one row names them.
+        if (type == Preset::TYPE_FILAMENT) {
+            const std::vector<std::string> saved_variants = filament_variants(saved_config);
+            for (const std::string &variant : filament_variants(new_config))
+                if (std::find(saved_variants.begin(), saved_variants.end(), variant) == saved_variants.end()) {
+                    PresetItem pi = {type, "filament_extruder_variant", _L("Filament"), wxEmptyString, _L("High Flow values"), _L("None"), _L("Added")};
+                    m_presetitems.push_back(pi);
+                    break;
+                }
         }
 
         auto variant_key      = Preset::get_iot_type_string(type) + "_extruder_variant";

@@ -1,5 +1,6 @@
 #include "PrintConfig.hpp"
 #include "PerHeadProcess.hpp"
+#include "FilamentFlowColumns.hpp"
 #include "ProjectSchemaVersion.hpp"
 #include "PrintConfigConstants.hpp"
 #include "ClipperUtils.hpp"
@@ -10179,7 +10180,26 @@ std::set<std::string> filament_options_with_variant = {
     "filament_multitool_ramming",
     "filament_multitool_ramming_volume",
     "filament_multitool_ramming_flow",
-    "filament_minimal_purge_on_wipe_tower"
+    "filament_minimal_purge_on_wipe_tower",
+    // Snapmaker: the bed temperatures of every plate and the chamber temperature, which a High Flow
+    // nozzle may need other values for; per filament in mainline, rebuilt like the keys above.
+    "supertack_plate_temp",
+    "supertack_plate_temp_initial_layer",
+    "cool_plate_temp",
+    "cool_plate_temp_initial_layer",
+    "textured_cool_plate_temp",
+    "textured_cool_plate_temp_initial_layer",
+    "eng_plate_temp",
+    "eng_plate_temp_initial_layer",
+    "hot_plate_temp",
+    "hot_plate_temp_initial_layer",
+    "textured_plate_temp",
+    "textured_plate_temp_initial_layer",
+    "graphic_effect_plate_temp",
+    "graphic_effect_plate_temp_initial_layer",
+    "activate_chamber_temp_control",
+    "chamber_temperature",
+    "chamber_minimal_temperature"
 };
 
 const std::vector<std::string>& promoted_filament_variant_keys()
@@ -10193,7 +10213,24 @@ const std::vector<std::string>& promoted_filament_variant_keys()
         "filament_multitool_ramming",
         "filament_multitool_ramming_volume",
         "filament_multitool_ramming_flow",
-        "filament_minimal_purge_on_wipe_tower"
+        "filament_minimal_purge_on_wipe_tower",
+        "supertack_plate_temp",
+        "supertack_plate_temp_initial_layer",
+        "cool_plate_temp",
+        "cool_plate_temp_initial_layer",
+        "textured_cool_plate_temp",
+        "textured_cool_plate_temp_initial_layer",
+        "eng_plate_temp",
+        "eng_plate_temp_initial_layer",
+        "hot_plate_temp",
+        "hot_plate_temp_initial_layer",
+        "textured_plate_temp",
+        "textured_plate_temp_initial_layer",
+        "graphic_effect_plate_temp",
+        "graphic_effect_plate_temp_initial_layer",
+        "activate_chamber_temp_control",
+        "chamber_temperature",
+        "chamber_minimal_temperature"
     };
     return keys;
 }
@@ -12440,6 +12477,26 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
         cur_extruder_ids      = this->option<ConfigOptionInts>(extruder_id_name)->values;
         cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
         cur_variant_count     = cur_extruder_variants.size();
+    }
+
+    // Snapmaker Orca: a user filament preset with a column its parent lacks (High Flow values added
+    // in the Filament tab). The parent gets that column as a copy of its column 0 first, so the match
+    // below maps every column of the child; a key the child does not write follows the parent.
+    if (extruder_variant_name == "filament_extruder_variant" && cur_variant_count > 0 && target_variant_count > 0) {
+        bool widened = false;
+        for (const std::string &variant : target_extruder_variants) {
+            if (std::find(cur_extruder_variants.begin(), cur_extruder_variants.end(), variant) != cur_extruder_variants.end())
+                continue;
+            if (!is_known_filament_variant(variant)) {
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament column \"%1%\" is no known variant and is left out") % variant;
+                continue;
+            }
+            widened = filament_add_variant_column(*this, variant) || widened;
+        }
+        if (widened) {
+            cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
+            cur_variant_count     = cur_extruder_variants.size();
+        }
     }
 
     if (cur_variant_count > 0)

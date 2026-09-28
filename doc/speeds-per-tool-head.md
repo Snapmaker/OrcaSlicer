@@ -252,3 +252,85 @@ the automatic preset and the load report says so.
 On a J1 plate printed in duplication or mirror mode the firmware replays extruder 1 on extruder 2
 (the mode is decided by the plate name at G-code time). A preset chosen for extruder 2 has no
 effect on such a plate; the record still names what the G-code carries.
+
+## High Flow values for any filament
+
+A filament preset holds its High Flow values as a second column of the same preset: its
+`filament_extruder_variant` list gains "Direct Drive High Flow" ("Bowden High Flow" for a Bowden
+column 0), and every key of `filament_options_with_variant` (nozzle, bed and chamber temperatures,
+flow ratio, max volumetric speed, pressure advance, fan speeds, retraction overrides and the like)
+holds one value per column. This is the layout of the Snapmaker presets that ship with High Flow values; no second
+preset is made.
+
+- **Where it starts.** When an extruder of the project is set to High Flow and may print the preset
+  (a preset pinned to 0.6 mm gets nothing from a 0.4 mm High Flow extruder), the Filament tab offers
+  a High Flow entry for a preset without a High Flow column; not for a material that cannot be
+  printed with a High Flow nozzle, such as TPU 85A, or a user preset made from one. Opening the preset
+  from a slot on a High Flow extruder selects that entry. The fields show the Standard values and the
+  preset stays unmodified; the first change to a field on a line with the extruder icon, or **Create
+  High Flow values**, adds the column as a copy of the Standard column. Until then the Standard view
+  names the High Flow extruder that prints the Standard values.
+- **Which column a change lands in.** A change under High Flow writes the High Flow column, a change
+  under Standard the Standard column. The bed temperature of every plate (first and other layers) and
+  the Print chamber temperature group (temperature control, target, minimal) are per column like the
+  nozzle temperature. Lines without the extruder icon (cooling layer times, overhang fan, adaptive
+  pressure advance, G-code, ...) have one value for both columns and are read-only under High Flow,
+  their undo arrow and lock included. When a Standard value changes while
+  its saved High Flow value was still a copy, the tab offers **Apply to High Flow too**; nothing is
+  carried over on its own. After the tab is closed the notice about Standard changes the High Flow
+  column does not follow names such a preset.
+- **Saving.** A system filament is saved as a new user preset holding both columns. When the system
+  preset restricts no printer, the new preset is pinned to the machine preset of the slot's extruder
+  (a 0.4 mm extruder under a 0.6 mm printer preset: "Snapmaker U1 (0.4 nozzle)"), else to the printer
+  preset. Only the slots whose extruder the new preset fits switch to it; a 0.6 mm slot keeps the
+  system preset. A user preset keeps its Standard values and gains the High Flow ones. In a slot on a
+  High Flow extruder a preset with High Flow values reads "HF" after its size.
+- **What is written.** A per-column key changed in either column is written with both values and
+  without "nil"; a key changed in neither column is not written, and both of its columns follow the
+  parent's Standard value. A Standard value written this way no longer follows vendor updates of the
+  parent. Compare, save and revert use the parent widened by the High Flow column, so a High Flow
+  value equal to the parent's Standard value shows the system lock; "Revert all to system" drops the
+  added column.
+- **Loading.** User, cloud and project presets keep a column their parent lacks: the parent is
+  widened by it before the columns are matched by name. A High Flow column saved before the bed and
+  chamber temperatures were per column loads with them as a copy of its Standard values; a project
+  that stores them once per filament is spread over each filament's columns. A vendor update that later gives the parent
+  a High Flow column fills the keys the user never wrote with the vendor's High Flow values; the
+  notice about Standard changes the High Flow column does not follow may then appear.
+- **Slicing.** A High Flow extruder prints the High Flow column of its filament, a Standard extruder
+  the Standard column. The first layer bed temperature (`M140` / `M190`, the "highest" rule or the
+  first filament), the bed temperature of the other layers and the chamber temperature (`M191`, the
+  highest of the printed filaments) take each filament's value from the column of the extruder that
+  prints it; so do the bed and chamber placeholders of custom G-code. An unsaved High Flow column
+  slices at once.
+
+Limits:
+
+- **"Vice versa" starts with the High Flow values.** A preset without a High Flow column prints its
+  Standard values on a High Flow extruder too, so a Standard change reaches both extruders until the
+  preset has High Flow values.
+- **An override switched off.** A retraction override switched off under High Flow only is written
+  as "nil", the only "off" such a key has, and "nil" means "follow the parent": after loading, the
+  override is on again when the parent has it on.
+
+Other readers:
+
+- Snapmaker Orca 2.4, user presets (same data folder): it reads the Standard column of every key and
+  never finds "nil" in `filament_flow_ratio`, so the file loads there. Saved again in 2.4, the file
+  loses `filament_extruder_variant` and this application reads the Standard values only; the High Flow
+  values are gone without a message. The other way round, a preset that 2.4 gave High Flow values
+  (`filament_flow_support`) is converted on load here; saved here, 2.4 no longer sees those values.
+- Snapmaker Orca 2.4, projects: it reads filament i at column i of every per-column key, while this
+  application lists a filament's High Flow column right after its Standard column, so from the first
+  filament with High Flow values on, 2.4 prints the next filament with the previous one's High Flow
+  values (a PLA at the 265 °C of a PETG, say, and its bed and chamber temperatures). The 15 Snapmaker
+  presets with High Flow values already do this. 2.4 shows its notice for projects of a newer schema and goes on loading.
+- Mainline OrcaSlicer: the same shift is expected for the keys this application keeps per column;
+  not verified.
+- The command line takes the columns of a filament file given to `--load-filaments`: a project
+  filament column the file lacks (its High Flow column, say) is dropped and named in a log warning;
+  the Standard values are kept. `--uptodate` refreshes the presets of any 3MF written by Snapmaker
+  Orca; with `--uptodate-filaments` the High Flow column of a project filament is kept, even when the
+  refreshing file has none (its High Flow values that the project did not change start as a copy of
+  the file's Standard values). Without `--uptodate-filaments` the filament files are looked up among
+  the Bambu Lab presets only. A user preset with a High Flow column is not verified on the command line.

@@ -425,6 +425,8 @@ set(lisbslic3r_sources
     ShortEdgeCollapse.hpp
     ShortestPath.cpp
     ShortestPath.hpp
+    FilamentFlowColumns.cpp
+    FilamentFlowColumns.hpp
     NozzleFilamentPresets.cpp
     NozzleFilamentPresets.hpp
     PerHeadProcess.cpp

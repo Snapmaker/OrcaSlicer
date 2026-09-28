@@ -1,4 +1,5 @@
 #include "PresetComboBoxes.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 
 #include <cstddef>
 #include <cctype>
@@ -1665,6 +1666,15 @@ void PlaterPresetComboBox::update()
     const bool            slot_rule = this->filament_slot_state(slot_state);
     if (slot_rule)
         wide_icons = selected_preset && !m_preset_bundle->filament_slot_fits(slot_state, *selected_preset, size_t(m_filament_idx));
+    // Snapmaker Orca: the extruder of this slot is set to High Flow (item tooltips below).
+    bool slot_high_flow = false;
+    if (m_type == Preset::TYPE_FILAMENT && m_filament_idx >= 0) {
+        size_t head = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(m_filament_idx));
+        if (head == NozzleFilament::no_head)
+            head = size_t(m_filament_idx);
+        const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+        slot_high_flow = volume_types != nullptr && head < volume_types->values.size() && volume_types->values[head] == int(nvtHighFlow);
+    }
 
     std::map<wxString, wxBitmap*> nonsys_presets;
     //BBS: add project embedded presets logic
@@ -1728,8 +1738,12 @@ void PlaterPresetComboBox::update()
         // Snapmaker Orca: the versions of a material share the alias; one that is made for another
         // size than the tool head of the slot, or than the printer preset, tells its size, in
         // front of the alias so that a narrow combo keeps it.
-        if (slot_rule)
-            preset_aliases[name] = NozzleFilament::size_marked_label(preset_aliases[name], this->nozzle_size_marker(slot_state, preset).utf8_string());
+        // In a slot on a High Flow extruder a preset with High Flow values is marked "HF" after its size.
+        if (slot_rule || slot_high_flow) {
+            const std::string size_text = slot_rule ? this->nozzle_size_marker(slot_state, preset).utf8_string() : std::string();
+            preset_aliases[name] = NozzleFilament::size_marked_label(
+                preset_aliases[name], NozzleFilament::high_flow_marker(size_text, slot_high_flow && filament_flow_column(preset.config, nvtHighFlow) >= 0));
+        }
 
         // Track bundle names for bundled presets
         if (preset.is_from_bundle()) {
@@ -1769,7 +1783,17 @@ void PlaterPresetComboBox::update()
         wxBitmap* bmp = get_bmp(preset);
         assert(bmp);
 
-        preset_descriptions.emplace(name, from_u8(preset.description));
+        {
+            // Snapmaker Orca: in the list of a slot on a High Flow extruder each preset says whether it
+            // has High Flow values or prints the Standard ones there.
+            wxString description = from_u8(preset.description);
+            if (slot_high_flow) {
+                if (!description.empty())
+                    description += "\n";
+                description += filament_flow_column(preset.config, nvtHighFlow) >= 0 ? _L("High Flow values") : _L("Standard values only");
+            }
+            preset_descriptions.emplace(name, description);
+        }
 
         const bool listed = slot_rule ? is_selected || m_preset_bundle->filament_slot_selectable(slot_state, preset, size_t(m_filament_idx)) :
                                         preset.is_compatible;
@@ -2083,6 +2107,10 @@ void PlaterPresetComboBox::update()
     }
 
     update_selection();
+    // Snapmaker Orca: the closed combo of a slot on a High Flow extruder tells it as the list does.
+    if (slot_high_flow && !tooltip.IsEmpty())
+        if (const Preset *held = m_collection->find_preset(m_preset_bundle->filament_presets[m_filament_idx], false); held != nullptr)
+            tooltip += "\n" + (filament_flow_column(held->config, nvtHighFlow) >= 0 ? _L("High Flow values") : _L("Standard values only"));
     if (m_type == Preset::TYPE_FILAMENT) {
         if (wxGetApp().plater()->is_same_printer_for_connected_and_selected(false)) {
             update_badge_according_flag();

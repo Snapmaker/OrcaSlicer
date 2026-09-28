@@ -1,5 +1,6 @@
 // #include "libslic3r/GCodeSender.hpp"
 #include "ConfigManipulation.hpp"
+#include <algorithm>
 #include <numeric>
 #include <limits>
 #include "I18N.hpp"
@@ -10,6 +11,7 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/MaterialType.hpp"
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -215,15 +217,19 @@ void ConfigManipulation::check_filament_max_volumetric_speed(DynamicPrintConfig 
     //if (is_msg_dlg_already_exist) return;
     //float max_volumetric_speed = config->opt_float("filament_max_volumetric_speed");
 
-    float max_volumetric_speed = config->has("filament_max_volumetric_speed") ? config->opt_float("filament_max_volumetric_speed", (float) 0.5) : 0.5;
     // BBS: limite the min max_volumetric_speed
-    if (max_volumetric_speed < 0.5) {
+    // Snapmaker Orca: per variant column; only a column below the limit is reset, the others keep their value.
+    const std::vector<size_t> too_small = filament_columns_below(*config, "filament_max_volumetric_speed", 0.5);
+    if (!too_small.empty()) {
         const wxString     msg_text = _(L("Too small max volumetric speed.\nValue was reset to 0.5"));
         MessageDialog      dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist    = true;
         dialog.ShowModal();
-        new_conf.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({0.5}));
+        const ConfigOptionFloat minimum(0.5);
+        if (auto *speeds = dynamic_cast<ConfigOptionVectorBase *>(new_conf.option("filament_max_volumetric_speed")); speeds != nullptr)
+            for (size_t column : too_small)
+                speeds->set_at(&minimum, column, 0);
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
@@ -237,7 +243,9 @@ void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
         std::string filament_type = config->option<ConfigOptionStrings>("filament_type")->get_at(0);
         int chamber_min_temp, chamber_max_temp;
     if (MaterialType::get_chamber_temperature_range(filament_type, chamber_min_temp, chamber_max_temp)) {
-            if (chamber_max_temp < config->option<ConfigOptionInts>("chamber_temperature")->get_at(0)) {
+            // One value per filament variant column (Standard, High Flow): the highest one is checked.
+            const std::vector<int> &targets = config->option<ConfigOptionInts>("chamber_temperature")->values;
+            if (!targets.empty() && chamber_max_temp < *std::max_element(targets.begin(), targets.end())) {
                 wxString msg_text = wxString::Format(_L("Current chamber temperature is higher than the material\'s safe temperature; this may result in material softening and nozzle clogs. The maximum safe temperature for the material is %d"), chamber_max_temp);
                 MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
                 is_msg_dlg_already_exist = true;
@@ -254,9 +262,15 @@ void ConfigManipulation::check_chamber_minimal_temperature(DynamicPrintConfig* c
     // print start macro. It must not exceed the target chamber temperature, otherwise the macro
     // could wait forever for a temperature the heater is never asked to reach.
     if (config->has("chamber_minimal_temperature") && config->has("chamber_temperature")) {
-        const int chamber_min_temp    = config->option<ConfigOptionInts>("chamber_minimal_temperature")->get_at(0);
-        const int chamber_target_temp = config->option<ConfigOptionInts>("chamber_temperature")->get_at(0);
-        if (chamber_min_temp > chamber_target_temp) {
+        // Both keys hold one value per filament variant column; each column is checked against its own target.
+        std::vector<int>        minimal = config->option<ConfigOptionInts>("chamber_minimal_temperature")->values;
+        const ConfigOptionInts *targets = config->option<ConfigOptionInts>("chamber_temperature");
+        size_t                  column  = 0;
+        while (column < minimal.size() && minimal[column] <= targets->get_at(column))
+            ++column;
+        if (column < minimal.size()) {
+            const int chamber_min_temp    = minimal[column];
+            const int chamber_target_temp = targets->get_at(column);
             wxString msg_text = wxString::Format(_L("The minimal chamber temperature (%d℃) is higher than the target chamber temperature (%d℃). "
                                                     "The minimal value is the threshold at which printing starts while the chamber keeps heating toward the target, "
                                                     "so it should not exceed it. It will be clamped to the target."),
@@ -265,7 +279,9 @@ void ConfigManipulation::check_chamber_minimal_temperature(DynamicPrintConfig* c
             DynamicPrintConfig new_conf = *config;
             is_msg_dlg_already_exist    = true;
             dialog.ShowModal();
-            new_conf.set_key_value("chamber_minimal_temperature", new ConfigOptionInts({chamber_target_temp}));
+            for (size_t i = column; i < minimal.size(); ++i)
+                minimal[i] = std::min(minimal[i], targets->get_at(i));
+            new_conf.set_key_value("chamber_minimal_temperature", new ConfigOptionInts(minimal));
             apply(config, &new_conf);
             is_msg_dlg_already_exist = false;
         }

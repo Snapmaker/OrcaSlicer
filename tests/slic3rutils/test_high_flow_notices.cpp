@@ -7,6 +7,7 @@
 #include "slic3r/GUI/HighFlowNotices.hpp"
 
 #include "libslic3r/AllowlistManager.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -1021,4 +1022,65 @@ TEST_CASE("The notice of a line width added to an object names the tool heads th
     const wxString one = HighFlowNotices::object_width_notice({2});
     CHECK(one.Contains("extruder 3 printed it with the line widths of its own nozzle size"));
     CHECK_FALSE(one.Contains("extruders"));
+}
+
+TEST_CASE("A filament given High Flow values is not reported as printing Standard values", "[HighFlow][Notices][FilamentFlow]")
+{
+    load_shipped_allow_list();
+    // Generic PETG with the High Flow column the Filament tab adds, not yet saved: the report is
+    // built from the edited config.
+    DynamicPrintConfig edited;
+    edited.set_key_value("filament_extruder_variant", new ConfigOptionStrings({ "Direct Drive Standard" }));
+    edited.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({ 12. }));
+    CHECK_FALSE(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant"));
+    REQUIRE(filament_add_flow_column(edited, nvtHighFlow));
+    CHECK(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant"));
+
+    auto report_for = [](bool has_column) {
+        const std::vector<HighFlowNotices::HeadFilament> loaded{
+            { "PLA", "Snapmaker PLA SnapSpeed @U1", true },
+            { "PETG", "Generic PETG", has_column },
+        };
+        const auto filaments = HighFlowNotices::group_by_head(loaded, HighFlowNotices::filament_heads(loaded.size(), 4, {}, false), 4);
+        return HighFlowNotices::evaluate({ 0, 1, 0, 0 }, filaments, true);
+    };
+    const auto without = report_for(false);
+    REQUIRE(without.standard_values_used.size() == 1);
+    CHECK(without.standard_values_used.front().head == 1);
+    CHECK(report_for(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant")).standard_values_used.empty());
+}
+
+TEST_CASE("High Flow values added over a parent without them are named when a Standard value leaves them behind", "[HighFlow][Notices][FilamentFlow]")
+{
+    const std::set<std::string> keys{ "filament_max_volumetric_speed", "nozzle_temperature" };
+    DynamicPrintConfig parent;
+    parent.set_key_value("filament_extruder_variant", new ConfigOptionStrings({ "Direct Drive Standard" }));
+    parent.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({ 12. }));
+    parent.set_key_value("nozzle_temperature", new ConfigOptionInts({ 255 }));
+    DynamicPrintConfig child = parent;
+    REQUIRE(filament_add_flow_column(child, nvtHighFlow));
+    // A High Flow speed of its own, and a Standard temperature changed after the copy: the High Flow
+    // temperature still holds the copied 255.
+    child.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = { 10., 22. };
+    child.option<ConfigOptionInts>("nozzle_temperature")->values = { 250, 255 };
+    // The notice compares with the parent widened by a copy of its Standard column.
+    DynamicPrintConfig storage;
+    CHECK(HighFlowNotices::standard_only_edits(child, filament_reference_in_layout_of(child, parent, storage), keys, "filament_extruder_variant") ==
+          std::vector<std::string>{ "nozzle_temperature" });
+    // The parent as it is has no High Flow column to compare with.
+    CHECK(HighFlowNotices::standard_only_edits(child, parent, keys, "filament_extruder_variant").empty());
+}
+
+TEST_CASE("A user preset made from a filament High Flow nozzles cannot print is rated by its system preset", "[HighFlow][Notices][FilamentFlow]")
+{
+    load_shipped_allow_list();
+    // "Flex 85" alone names no listed material.
+    CHECK(HighFlowCompat::check("TPU", "Flex 85").level == CompatibilityLevel::Compatible);
+    const auto result = HighFlowCompat::check("TPU", "Flex 85", "Snapmaker TPU 85A @U1 0.4 nozzle");
+    CHECK(result.level == CompatibilityLevel::Unsupported);
+    CHECK(result.material == "TPU 85A");
+    // Without another ancestor, or with a compatible one, the preset's own rating stands.
+    CHECK(HighFlowCompat::check("PLA", "Snapmaker PLA Wood @U1 0.4 nozzle", "").level == CompatibilityLevel::NotRecommended);
+    CHECK(HighFlowCompat::check("PLA", "Snapmaker PLA Wood @U1 0.4 nozzle", "Generic PLA").level == CompatibilityLevel::NotRecommended);
+    CHECK(HighFlowCompat::check("PETG", "My PETG", "Generic PETG").level == CompatibilityLevel::Compatible);
 }

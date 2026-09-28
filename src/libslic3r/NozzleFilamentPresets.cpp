@@ -71,6 +71,13 @@ std::string size_marked_label(const std::string &label, const std::string &size_
     return size_text + " \xC2\xB7 " + label;
 }
 
+std::string high_flow_marker(const std::string &size_text, bool has_high_flow_values)
+{
+    if (!has_high_flow_values)
+        return size_text;
+    return size_text.empty() ? std::string("HF") : size_text + " \xC2\xB7 HF";
+}
+
 double home_nozzle_size(const DynamicPrintConfig &printer_config)
 {
     const auto *variant = printer_config.option<ConfigOptionString>("printer_variant");
@@ -305,18 +312,9 @@ SlotTarget resolve_slot(const PresetBundle &bundle, const State &state, size_t s
     }
 
     // A user preset moves only to the one visible user preset made from the version for this size.
-    const Preset *counterpart  = nullptr;
-    size_t        counterparts = 0;
-    if (version != nullptr)
-        for (const Preset &candidate : filaments)
-            if (const Preset *ancestor = candidate.is_system || candidate.is_default || !candidate.is_visible || candidate.name == preset->name ?
-                                             nullptr : system_ancestor(filaments, candidate);
-                ancestor != nullptr && ancestor->name == version->name && fits(bundle, candidate, *machine)) {
-                counterpart = &candidate;
-                ++counterparts;
-            }
-    if (counterparts == 1) {
-        out.to     = counterpart->name;
+    const std::vector<const Preset*> counterparts = version != nullptr ? user_children(bundle, *version, *machine, preset->name) : std::vector<const Preset*>();
+    if (counterparts.size() == 1) {
+        out.to     = counterparts.front()->name;
         out.reason = Reason::Switched;
     } else {
         out.reason = Reason::UserPresetKept;
@@ -327,6 +325,62 @@ SlotTarget resolve_slot(const PresetBundle &bundle, const State &state, size_t s
 }
 
 } // namespace
+
+std::vector<const Preset*> user_children(const PresetBundle &bundle, const Preset &system, const Preset &machine, const std::string &exclude)
+{
+    std::vector<const Preset*> out;
+    for (const Preset &candidate : bundle.filaments)
+        if (const Preset *ancestor = candidate.is_system || candidate.is_default || !candidate.is_visible || candidate.name == exclude ?
+                                         nullptr : system_ancestor(bundle.filaments, candidate);
+            ancestor != nullptr && ancestor->name == system.name && fits(bundle, candidate, machine))
+            out.emplace_back(&candidate);
+    return out;
+}
+
+std::string printer_to_pin(const PresetBundle &bundle, int slot)
+{
+    if (slot >= 0) {
+        const State   heads   = head_state(bundle);
+        const Preset *machine = heads.machine_of(size_t(slot));
+        if (machine != nullptr && machine != &bundle.printers.get_edited_preset())
+            return machine->name;
+    }
+    return bundle.printers.get_selected_preset_base().name;
+}
+
+bool fits_high_flow_extruder(const PresetBundle &bundle, const Preset &filament)
+{
+    const auto *volume_types = bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    if (volume_types == nullptr)
+        return false;
+    const State heads = head_state(bundle);
+    for (size_t head = 0; head < volume_types->values.size(); ++head) {
+        if (volume_types->values[head] != int(nvtHighFlow))
+            continue;
+        const Preset *machine = head < heads.head_machine.size() ? heads.head_machine[head] : nullptr;
+        if (machine == nullptr)
+            machine = &bundle.printers.get_edited_preset();
+        if (fits(bundle, filament, *machine))
+            return true;
+    }
+    return false;
+}
+
+std::vector<size_t> slots_to_switch(const PresetBundle &bundle, const std::string &from, const Preset &to)
+{
+    std::vector<size_t> out;
+    const State         heads = head_state(bundle);
+    for (size_t slot = 0; slot < bundle.filament_presets.size(); ++slot) {
+        if (bundle.filament_presets[slot] != from)
+            continue;
+        const Preset *machine = heads.machine_of(slot);
+        if (machine == nullptr)
+            machine = &bundle.printers.get_edited_preset();
+        if (fits(bundle, to, *machine))
+            out.emplace_back(slot);
+    }
+    return out;
+}
 
 std::string family_key(const PresetCollection &filaments, const Preset &preset)
 {

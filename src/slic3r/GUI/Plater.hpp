@@ -178,7 +178,8 @@ public:
     void update_presets(Slic3r::Preset::Type preset_type);
     //BBS
     const std::vector<BedType>& get_cur_combox_bed_types() { return m_cur_combox_bed_types; }
-    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to);
+    // `slots`: only these filament slots (0-based) switch; nullptr: every slot holding `from`.
+    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to, const std::vector<size_t> *slots = nullptr);
     BedType get_cur_select_bed_type();
     std::string get_cur_select_bed_image();
     void set_bed_type_accord_combox(BedType bed_type);

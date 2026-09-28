@@ -117,6 +117,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/ProjectSchemaVersion.hpp"
 #include "libslic3r/PublishSettings.hpp"
@@ -5807,7 +5808,7 @@ void Sidebar::update_presets(Preset::Type preset_type)
 }
 
 //BBS
-void Sidebar::update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to)
+void Sidebar::update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to, const std::vector<size_t> *slots)
 {
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
 
@@ -5817,12 +5818,9 @@ void Sidebar::update_presets_from_to(Slic3r::Preset::Type preset_type, std::stri
     case Preset::TYPE_FILAMENT:
     {
         const size_t filament_cnt = p->combos_filament.size();
-        for (auto it = preset_bundle.filament_presets.begin(); it != preset_bundle.filament_presets.end(); it++)
-        {
-            if ((*it).compare(from) == 0) {
-                (*it) = to;
-            }
-        }
+        for (size_t slot = 0; slot < preset_bundle.filament_presets.size(); ++slot)
+            if (preset_bundle.filament_presets[slot] == from && (slots == nullptr || std::find(slots->begin(), slots->end(), slot) != slots->end()))
+                preset_bundle.filament_presets[slot] = to;
         for (size_t i = 0; i < filament_cnt; i++)
             p->combos_filament[i]->update();
         break;
@@ -32813,15 +32811,22 @@ bool Plater::check_high_flow_filaments()
                 filament.preset_name          = preset->name;
                 if (const auto *type = preset->config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
                     filament.filament_type = type->values.front();
-                filament.has_high_flow_column = HighFlowNotices::has_high_flow_column(preset->config, "filament_extruder_variant");
+                // The selected preset with unsaved changes counts with its edited columns (High Flow values
+                // added in the Filament tab slice at once).
+                const bool edited_here = filament_dirty && preset->name == bundle->filaments.get_selected_preset().name;
+                filament.has_high_flow_column = HighFlowNotices::has_high_flow_column(edited_here ? edited_filament.config : preset->config,
+                                                                                      "filament_extruder_variant");
                 // N7: a user or edited preset whose Standard column differs from its system parent
                 // while its High Flow column does not (for a system preset only unsaved changes count).
+                // A parent without a High Flow column is compared widened by a copy of its Standard
+                // column, the values the High Flow column started from.
                 if (const Preset *parent = NozzleFilament::system_ancestor(bundle->filaments, *preset); parent != nullptr) {
                     const bool                dirty  = filament_dirty && preset->name == bundle->filaments.get_selected_preset().name;
                     const DynamicPrintConfig &config = dirty ? edited_filament.config : preset->config;
                     if (dirty || parent != preset) {
-                        filament.standard_only_keys = HighFlowNotices::standard_only_edits(config, parent->config, filament_options_with_variant,
-                                                                                            "filament_extruder_variant");
+                        DynamicPrintConfig parent_storage;
+                        filament.standard_only_keys = HighFlowNotices::standard_only_edits(config, filament_reference_in_layout_of(config, parent->config, parent_storage),
+                                                                                            filament_options_with_variant, "filament_extruder_variant");
                         filament.parent_name        = parent->name;
                     }
                 }
@@ -32891,15 +32896,25 @@ bool Plater::check_high_flow_filaments()
     for (const auto &[size, entries] : HighFlowNotices::group_by_nozzle_size(report.not_recommended, printer_config))
         warnings.push_back(GUI::format(_u8L("%1%mm High Flow nozzles are not recommended for %2%"), size, materials(entries)));
     for (const HighFlowNotices::Report::Entry &entry : report.standard_values_used)
-        warnings.push_back(GUI::format(_u8L("%1% has no High Flow values; its Standard values are used on extruder %2%."), entry.material, entry.head + 1));
+        // TRN N3: %1% is a filament preset name, %2% an extruder number
+        warnings.push_back(GUI::format(_u8L("%1% has no High Flow values; its Standard values are used on extruder %2%. Open it from the filament slot of extruder %2% and change a High Flow value, or use Create High Flow values."),
+                                       entry.material, entry.head + 1));
     if (!report.standard_speeds_used.empty())
         warnings.push_back(GUI::format(_u8L("The process preset has no High Flow speeds; extruder %1% prints at Standard speeds."),
                                        tool_head_list(report.standard_speeds_used)));
     for (const HighFlowNotices::Report::Entry &entry : report.standard_only_edited) {
-        const bool dirty = filament_dirty && entry.material == bundle->filaments.get_selected_preset().name;
-        // TRN N7: %1% is a filament preset name, %2% a tool head number, %3% the name of the system preset %1% was made from
-        warnings.push_back(GUI::format(_u8L("%1% changes Standard values that its High Flow column does not follow; extruder %2% prints with the High Flow values of %3%."),
-                                       entry.material + (dirty ? Preset::suffix_modified() : std::string()), entry.head + 1, entry.parent));
+        const bool    dirty  = filament_dirty && entry.material == bundle->filaments.get_selected_preset().name;
+        const Preset *parent = bundle->filaments.find_preset(entry.parent, false, true);
+        const std::string material = entry.material + (dirty ? Preset::suffix_modified() : std::string());
+        if (parent != nullptr && HighFlowNotices::has_high_flow_column(parent->config, "filament_extruder_variant"))
+            // TRN N7: %1% is a filament preset name, %2% an extruder number, %3% the name of the system preset %1% was made from
+            warnings.push_back(GUI::format(_u8L("%1% changes Standard values that its High Flow column does not follow; extruder %2% prints with the High Flow values of %3%."),
+                                           material, entry.head + 1, entry.parent));
+        else
+            // The High Flow values were added to a preset whose system parent has none.
+            // TRN N7: %1% is a filament preset name, %2% an extruder number
+            warnings.push_back(GUI::format(_u8L("%1% changes Standard values that its High Flow column does not follow; extruder %2% prints the earlier High Flow values."),
+                                           material, entry.head + 1));
     }
     if (!report.process_standard_only.empty())
         // TRN N7: %1% is a list of tool head numbers, %2% the name of the system process preset

@@ -5,6 +5,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Utils.hpp"
@@ -40,6 +41,7 @@
 
 #include "GUI_App.hpp"
 #include "HighFlowNotices.hpp"
+#include "HighFlowCompat.hpp"
 #include "GUI_ObjectList.hpp"
 #include "slic3r/Utils/NetworkAgentFactory.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
@@ -659,6 +661,8 @@ void Tab::create_preset_tab()
         m_variant_combo = new MultiSwitchButton(panel);
         m_variant_combo->Bind(wxCUSTOMEVT_MULTISWITCH_SELECTION, [this](auto &evt) {
             evt.Skip();
+            if (m_flow_entries_updating)
+                return;
             switch_excluder(evt.GetInt());
             reload_config();
             update_changed_ui();
@@ -676,6 +680,25 @@ void Tab::create_preset_tab()
         m_variant_sizer  = new wxBoxSizer(wxVERTICAL);
         m_variant_sizer->Add(top_sizer, 0, wxLEFT, m_em_unit);
         m_main_sizer->Add(m_variant_sizer, 0, wxEXPAND | wxTOP, m_em_unit);
+
+        // Snapmaker Orca: the High Flow hint of the selected entry (TabFilament::update_flow_hint), shown also
+        // without the selector; wrapped to the width beside the button and again on every resize.
+        m_flow_hint_text   = new ogStaticText(panel, wxEmptyString, wxST_NO_AUTORESIZE);
+        m_flow_hint_text->WrapToWidth([this]() {
+            Layout();
+            m_parent->Layout();
+        });
+        m_flow_hint_button = new Button(panel, wxEmptyString);
+        m_flow_hint_button->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+        m_flow_hint_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) {
+            if (auto *filament = dynamic_cast<TabFilament *>(this); filament != nullptr)
+                filament->on_flow_hint_button();
+        });
+        m_flow_hint_sizer = new wxBoxSizer(wxHORIZONTAL);
+        m_flow_hint_sizer->Add(m_flow_hint_text, 1, wxALIGN_CENTER_VERTICAL);
+        m_flow_hint_sizer->Add(m_flow_hint_button, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, m_em_unit);
+        m_main_sizer->Add(m_flow_hint_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, m_em_unit);
+        m_main_sizer->Show(m_flow_hint_sizer, false);
     }
 
     this->SetSizer(m_main_sizer);
@@ -1278,7 +1301,12 @@ void Tab::update_extruder_switch_colors()
     auto options = generate_extruder_options();
     auto extruders = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnumsGeneric>("extruder_type");
 
-    for (size_t switch_index = 0; switch_index < options.size(); ++switch_index) {
+    // Snapmaker Orca: the High Flow entry without a column has no values to colour.
+    size_t colored = options.size();
+    if (m_variant_combo != nullptr && m_virtual_flow_entry)
+        if (const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant"); variants != nullptr)
+            colored = std::min(colored, variants->size());
+    for (size_t switch_index = 0; switch_index < colored; ++switch_index) {
         int selection = m_extruder_switch ? m_extruder_switch->GetSelection() : (m_variant_combo ? m_variant_combo->GetSelection() : 0);
         if (switch_index == selection) continue;
 
@@ -1548,7 +1576,12 @@ void Tab::update_undo_buttons()
     m_undo_btn->        SetBitmap_(m_presets->get_edited_preset().is_dirty ? m_bmp_value_revert: m_bmp_white_bullet);
     //m_undo_to_sys_btn-> SetBitmap_(m_is_nonsys_values   ? *m_bmp_non_system : m_bmp_value_lock);
 
-    m_undo_btn->SetToolTip(m_presets->get_edited_preset().is_dirty ? _L("Click to reset all settings to the last saved preset.") : m_ttg_white_bullet);
+    wxString undo_tooltip = m_presets->get_edited_preset().is_dirty ? _L("Click to reset all settings to the last saved preset.") : m_ttg_white_bullet;
+    // Snapmaker Orca: under a High Flow entry of the Filament tab the reset covers both columns and the shared values.
+    if (m_presets->get_edited_preset().is_dirty)
+        if (const auto *filament = dynamic_cast<const TabFilament *>(this); filament != nullptr && filament->high_flow_selected())
+            undo_tooltip += "\n" + _L("Reverts every value of the preset, Standard and High Flow.");
+    m_undo_btn->SetToolTip(undo_tooltip);
     //m_undo_to_sys_btn->SetToolTip(m_is_nonsys_values ? *m_ttg_non_system : m_ttg_value_lock);
 }
 
@@ -1577,6 +1610,11 @@ void Tab::on_roll_back_value(const bool to_sys /*= true*/)
         PerHeadProcess::narrow(*m_config);
         switch_excluder(-1, false);
     }
+    // Snapmaker Orca: a filament drops the columns its system preset lacks (High Flow values added here).
+    if (to_sys && m_type == Preset::TYPE_FILAMENT && m_config != nullptr)
+        if (const Preset *parent = m_presets->get_selected_preset_parent();
+            parent != nullptr && filament_drop_columns_not_in(*m_config, filament_variants(parent->config)))
+            update_extruder_variants(-1, false);
 
     // BBS: restore all preset
     for (auto page : m_pages)
@@ -2794,6 +2832,11 @@ void Tab::cache_config_diff(const std::vector<std::string>& selected_options, co
         std::vector<std::string> keys(print_options_with_variant.begin(), print_options_with_variant.end());
         m_cache_process_source.apply_only(source, keys, true);
     }
+    m_cache_filament_source.clear();
+    if (m_type == Preset::TYPE_FILAMENT) {
+        std::vector<std::string> keys(filament_options_with_variant.begin(), filament_options_with_variant.end());
+        m_cache_filament_source.apply_only(source, keys, true);
+    }
 }
 
 void Tab::apply_config_from_cache()
@@ -2821,10 +2864,34 @@ void Tab::apply_config_from_cache()
             PerHeadProcess::transfer_columns(edited, m_cache_process_source, indexed, m_preset_bundle->printers.get_edited_preset().config);
             m_cache_options = plain;
         }
+        // Snapmaker Orca: filament columns are matched by variant name; a column the target lacks
+        // is added first, so no value lands in a column without a variant name.
+        if (m_type == Preset::TYPE_FILAMENT && !m_cache_filament_source.empty()) {
+            std::vector<std::string> indexed, plain;
+            bool                     variant_list = false;
+            for (const std::string &option : m_cache_options) {
+                const size_t hash = option.find('#');
+                const std::string key = option.substr(0, hash);
+                if (key == "filament_extruder_variant")
+                    variant_list = true;
+                else if (hash != std::string::npos && filament_options_with_variant.count(key) > 0)
+                    indexed.emplace_back(option);
+                else
+                    plain.emplace_back(option);
+            }
+            // The row of a column added without a value change brings the column along.
+            if (variant_list)
+                for (const std::string &variant : filament_variants(m_cache_filament_source))
+                    if (is_known_filament_variant(variant))
+                        filament_add_variant_column(edited, variant);
+            filament_transfer_columns(edited, m_cache_filament_source, indexed);
+            m_cache_options = plain;
+        }
         edited.apply_only(m_cache_config, m_cache_options);
         m_cache_config.clear();
         m_cache_options.clear();
         m_cache_process_source.clear();
+        m_cache_filament_source.clear();
 
         was_applied = true;
     }
@@ -5536,6 +5603,9 @@ const std::string& TabFilament::get_custom_gcode(const t_config_option_key& opt_
 
 void TabFilament::set_custom_gcode(const t_config_option_key& opt_key, const std::string& value)
 {
+    // Snapmaker Orca: the filament G-code is shared by Standard and High Flow and read-only under High Flow.
+    if (high_flow_selected())
+        return;
     std::vector<std::string> gcodes = static_cast<const ConfigOptionStrings*>(m_config->option(opt_key))->values;
     gcodes[0] = value;
 
@@ -5639,6 +5709,11 @@ void TabFilament::add_filament_overrides_page()
                         const ConfigOption *process_option = process_config.option(process_opt_key);
                         const auto *process_vector = dynamic_cast<const ConfigOptionVectorBase*>(process_option);
                         const size_t target_index = opt_index < 0 ? 0 : static_cast<size_t>(opt_index);
+                        // The filament value lives in the column the tab shows, not in the column of the field id;
+                        // under the High Flow entry without a column that column is added first.
+                        if (filament_virtual_high_flow())
+                            create_high_flow_column();
+                        const size_t column = static_cast<size_t>(filament_column());
                         bool has_process_value = process_option != nullptr;
                         if (has_process_value) {
                             if (process_vector != nullptr) {
@@ -5658,7 +5733,7 @@ void TabFilament::add_filament_overrides_page()
                                         if (process_vector != nullptr)
                                             source_index = target_index;
 
-                                        filament_vector->set_at(process_clone.get(), target_index, source_index);
+                                        filament_vector->set_at(process_clone.get(), column, source_index);
 
                                         const boost::any filament_config_value = optgroup_sh->get_config_value(*m_config, opt_key, opt_index);
                                         field->set_value(filament_config_value, false);
@@ -5685,7 +5760,7 @@ void TabFilament::add_filament_overrides_page()
 
                             if (ConfigOption *filament_option = m_config->option(opt_key)) {
                                 if (auto filament_vector = dynamic_cast<ConfigOptionVectorBase*>(filament_option))
-                                    filament_vector->set_at_to_nil(target_index);
+                                    filament_vector->set_at_to_nil(column);
                             }
                         }
                     }
@@ -5752,7 +5827,7 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
                                             // "filament_seam_gap"
                                         };
 
-    const int selection = m_variant_combo ? m_variant_combo->GetSelection() : 0;
+    const int selection = filament_column();
     auto opt = dynamic_cast<ConfigOptionVectorBase *>(m_config->option("filament_retraction_length"));
     const int extruder_idx = selection < 0 || selection >= static_cast<int>(opt->size()) ? 0 : selection;
 
@@ -5909,14 +5984,15 @@ void TabFilament::build()
         };
         //
 
+        // The chamber and bed temperatures hold a value per variant column: index 0, re-pointed by switch_excluder.
         optgroup = page->new_optgroup(L("Print chamber temperature"), L"param_chamber_temp");
-        optgroup->append_single_option_line("activate_chamber_temp_control", "material_temperatures#print-chamber-temperature");
+        optgroup->append_single_option_line("activate_chamber_temp_control", "material_temperatures#print-chamber-temperature", 0);
         line = { L("Chamber temperature"), L("Target chamber temperature, and the minimal chamber temperature at which printing should start") };
         line.label_path = "material_temperatures#print-chamber-temperature";
-        Option chamber_temp_target_opt = optgroup->get_option("chamber_temperature");
+        Option chamber_temp_target_opt = optgroup->get_option("chamber_temperature", 0);
         chamber_temp_target_opt.opt.label = L("Target");
         line.append_option(chamber_temp_target_opt);
-        Option chamber_min_temp_opt = optgroup->get_option("chamber_minimal_temperature");
+        Option chamber_min_temp_opt = optgroup->get_option("chamber_minimal_temperature", 0);
         chamber_min_temp_opt.opt.label = L("Minimal");
         line.append_option(chamber_min_temp_opt);
         optgroup->append_line(line);
@@ -5924,11 +6000,12 @@ void TabFilament::build()
             DynamicPrintConfig& filament_config = m_preset_bundle->filaments.get_edited_preset().config;
 
             update_dirty();
-            if (opt_key == "chamber_temperature") {
+            const std::string key = opt_key.substr(0, opt_key.find('#'));
+            if (key == "chamber_temperature") {
                 m_config_manipulation.check_chamber_temperature(&filament_config);
                 m_config_manipulation.check_chamber_minimal_temperature(&filament_config);
             }
-            else if (opt_key == "chamber_minimal_temperature") {
+            else if (key == "chamber_minimal_temperature") {
                 m_config_manipulation.check_chamber_minimal_temperature(&filament_config);
             }
 
@@ -5956,49 +6033,49 @@ void TabFilament::build()
         line = { is_u1_at_build ? L("Cool Steel Plate") : L("Cool Plate (SuperTack)"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("supertack_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("supertack_plate_temp"));
+        line.append_option(optgroup->get_option("supertack_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("supertack_plate_temp", 0));
         optgroup->append_line(line);
 
         line = { L("Cool Plate"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("cool_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("cool_plate_temp"));
+        line.append_option(optgroup->get_option("cool_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("cool_plate_temp", 0));
         optgroup->append_line(line);
 
         line = { L("Textured Cool Plate"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("textured_cool_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("textured_cool_plate_temp"));
+        line.append_option(optgroup->get_option("textured_cool_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("textured_cool_plate_temp", 0));
         optgroup->append_line(line);
 
         line = { L("Engineering Plate"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("eng_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("eng_plate_temp"));
+        line.append_option(optgroup->get_option("eng_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("eng_plate_temp", 0));
         optgroup->append_line(line);
 
         line = { L("Smooth PEI Plate / High Temp Plate"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("hot_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("hot_plate_temp"));
+        line.append_option(optgroup->get_option("hot_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("hot_plate_temp", 0));
         optgroup->append_line(line);
 
         line = { L("Textured PEI Plate"),
                  L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.") };
         line.label_path = "material_temperatures#bed";
-        line.append_option(optgroup->get_option("textured_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("textured_plate_temp"));
+        line.append_option(optgroup->get_option("textured_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("textured_plate_temp", 0));
         optgroup->append_line(line);
 
         line = {L("Graphic Effect Plate"),
                 L("Bed temperature when this plate is installed. A value of 0 means the filament does not support printing on this plate.")};
-        line.append_option(optgroup->get_option("graphic_effect_plate_temp_initial_layer"));
-        line.append_option(optgroup->get_option("graphic_effect_plate_temp"));
+        line.append_option(optgroup->get_option("graphic_effect_plate_temp_initial_layer", 0));
+        line.append_option(optgroup->get_option("graphic_effect_plate_temp", 0));
         optgroup->append_line(line);
 
         optgroup->m_on_change = [this](t_config_option_key opt_key, boost::any value)
@@ -6082,18 +6159,19 @@ void TabFilament::build()
 
         optgroup = page->new_optgroup(L("Exhaust fan"),L"param_cooling_exhaust");
 
-        optgroup->append_single_option_line("activate_air_filtration", "material_cooling#activate-air-filtration");
+        // The exhaust keys hold a value per variant column: index 0, re-pointed by switch_excluder.
+        optgroup->append_single_option_line("activate_air_filtration", "material_cooling#activate-air-filtration", 0);
 
         line = {L("During print"), ""};
-        line.append_option(optgroup->get_option("activate_air_filtration_during_print"));
-        line.append_option(optgroup->get_option("during_print_exhaust_fan_speed"));
+        line.append_option(optgroup->get_option("activate_air_filtration_during_print", 0));
+        line.append_option(optgroup->get_option("during_print_exhaust_fan_speed", 0));
         line.label_path = "material_cooling#during-print";
         optgroup->append_line(line);
 
 
         line = {L("Complete print"), ""};
-        line.append_option(optgroup->get_option("activate_air_filtration_on_completion"));
-        line.append_option(optgroup->get_option("complete_print_exhaust_fan_speed"));
+        line.append_option(optgroup->get_option("activate_air_filtration_on_completion", 0));
+        line.append_option(optgroup->get_option("complete_print_exhaust_fan_speed", 0));
         line.label_path = "material_cooling#complete-print";
         optgroup->append_line(line);
         //BBS
@@ -6176,6 +6254,9 @@ void TabFilament::build()
             sizer->Add(btn);
 
             btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+                // Snapmaker Orca: the ramming parameters are shared by Standard and High Flow.
+                if (high_flow_selected())
+                    return;
                 RammingDialog dlg(this,(m_config->option<ConfigOptionStrings>("filament_ramming_parameters"))->get_at(0));
                 if (dlg.ShowModal() == wxID_OK) {
                     load_key_value("filament_ramming_parameters", dlg.get_parameters());
@@ -6218,6 +6299,18 @@ void TabFilament::build()
         optgroup->append_single_option_line(option);
 
         //build_preset_description_line(optgroup.get());
+
+    // Snapmaker Orca: every write goes through before_flow_change, which picks the column (and adds
+    // the High Flow column on the first write under its entry). Dependencies and Notes are no values.
+    // Under High Flow the undo arrow and the lock of a shared field do nothing: the field is read-only.
+    for (PageShp &flow_page : m_pages)
+        if (flow_page->title() != "Dependencies" && flow_page->title() != "Notes")
+            for (ConfigOptionsGroupShp &group : flow_page->m_optgroups) {
+                group->m_before_change = [this](const std::string &key, int &index) { return before_flow_change(key, index); };
+                group->m_before_revert = [this](const std::string &key, bool) {
+                    return filament_field_shared_under_high_flow(key.substr(0, key.find('#'))) && high_flow_selected();
+                };
+            }
 }
 
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
@@ -6260,6 +6353,7 @@ void TabFilament::toggle_options()
 {
     if (!m_active_page)
         return;
+    unlock_shared_lines();
     bool is_BBL_printer = false;
     if (m_preset_bundle) {
         is_BBL_printer = wxGetApp().preset_bundle->is_bbl_vendor();
@@ -6270,7 +6364,7 @@ void TabFilament::toggle_options()
     // Keys of filament_options_with_variant are shown for the column picked in the variant selector,
     // so their state is read from that column. Their lines are built with index 0 and keep the id
     // "key#0" whatever column is shown, hence the index 0 in the toggles below.
-    const unsigned int active_variant_column = (unsigned int) std::max(m_variant_combo ? m_variant_combo->GetSelection() : 0, 0);
+    const unsigned int active_variant_column = (unsigned int) filament_column();
 
     if (m_active_page->title() == L("Cooling")) {
         bool has_enable_overhang_bridge_fan = m_config->opt_bool("enable_overhang_bridge_fan", 0);
@@ -6308,14 +6402,14 @@ void TabFilament::toggle_options()
 
         bool support_air_filtration = printer_cfg.opt_bool("support_air_filtration");
         for (auto el : {"activate_air_filtration", "during_print_exhaust_fan_speed", "complete_print_exhaust_fan_speed"})
-            toggle_line(el, support_air_filtration);
+            toggle_line(el, support_air_filtration, 0);
 
         if (support_air_filtration) {
-            bool activate_air_filtration = m_config->opt_bool("activate_air_filtration", 0);
-            toggle_option("activate_air_filtration_during_print", activate_air_filtration);
-            toggle_option("during_print_exhaust_fan_speed", activate_air_filtration && m_config->opt_bool("activate_air_filtration_during_print", 0));
-            toggle_option("activate_air_filtration_on_completion", activate_air_filtration);
-            toggle_option("complete_print_exhaust_fan_speed", activate_air_filtration && m_config->opt_bool("activate_air_filtration_on_completion", 0));
+            bool activate_air_filtration = m_config->opt_bool("activate_air_filtration", active_variant_column);
+            toggle_option("activate_air_filtration_during_print", activate_air_filtration, 0);
+            toggle_option("during_print_exhaust_fan_speed", activate_air_filtration && m_config->opt_bool("activate_air_filtration_during_print", active_variant_column), 0);
+            toggle_option("activate_air_filtration_on_completion", activate_air_filtration, 0);
+            toggle_option("complete_print_exhaust_fan_speed", activate_air_filtration && m_config->opt_bool("activate_air_filtration_on_completion", active_variant_column), 0);
         }
     }
     if (m_active_page->title() == L("Filament"))
@@ -6332,14 +6426,14 @@ void TabFilament::toggle_options()
             std::string printer_model = printer_model_opt->value;
             is_snapmaker_u1 = is_snapmaker_u1 || (boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1"));
         }
-        if (Line* hot_plate_line = get_line("hot_plate_temp_initial_layer")) {
+        if (Line* hot_plate_line = m_active_page->get_line("hot_plate_temp_initial_layer", 0)) {
             hot_plate_line->label = is_snapmaker_u1
                 ? _L("Smooth PEI Plate")
                 : _L("Smooth PEI Plate / High Temp Plate");
         }
         // Supertack slot: U1 renames btSuperTack to "Cool Steel Plate"; keep the filament
         // temperature row in sync with the bed-type combobox so the names match.
-        if (Line* supertack_line = get_line("supertack_plate_temp_initial_layer")) {
+        if (Line* supertack_line = m_active_page->get_line("supertack_plate_temp_initial_layer", 0)) {
             supertack_line->label = is_snapmaker_u1
                 ? _L("Cool Steel Plate")
                 : _L("Cool Plate (SuperTack)");
@@ -6347,52 +6441,52 @@ void TabFilament::toggle_options()
         }
         if (is_snapmaker_u1 && !support_multi_bed_types) {
             // U1 default show 3 plates; Cool Steel Plate only appears with support_multi_bed_types
-            toggle_line("supertack_plate_temp_initial_layer", false);
-            toggle_line("supertack_plate_temp", false);
-            toggle_line("cool_plate_temp_initial_layer", false);
-            toggle_line("cool_plate_temp", false);
-            toggle_line("textured_cool_plate_temp_initial_layer", false);
-            toggle_line("textured_cool_plate_temp", false);
-            toggle_line("eng_plate_temp_initial_layer", false);
-            toggle_line("eng_plate_temp", false);
-            toggle_line("hot_plate_temp_initial_layer", true);
-            toggle_line("hot_plate_temp", true);
-            toggle_line("textured_plate_temp_initial_layer", true);
-            toggle_line("textured_plate_temp", true);
-            toggle_line("graphic_effect_plate_temp_initial_layer", true);
-            toggle_line("graphic_effect_plate_temp", true);
+            toggle_line("supertack_plate_temp_initial_layer", false, 0);
+            toggle_line("supertack_plate_temp", false, 0);
+            toggle_line("cool_plate_temp_initial_layer", false, 0);
+            toggle_line("cool_plate_temp", false, 0);
+            toggle_line("textured_cool_plate_temp_initial_layer", false, 0);
+            toggle_line("textured_cool_plate_temp", false, 0);
+            toggle_line("eng_plate_temp_initial_layer", false, 0);
+            toggle_line("eng_plate_temp", false, 0);
+            toggle_line("hot_plate_temp_initial_layer", true, 0);
+            toggle_line("hot_plate_temp", true, 0);
+            toggle_line("textured_plate_temp_initial_layer", true, 0);
+            toggle_line("textured_plate_temp", true, 0);
+            toggle_line("graphic_effect_plate_temp_initial_layer", true, 0);
+            toggle_line("graphic_effect_plate_temp", true, 0);
         } else if (support_multi_bed_types) {
             // u1 has 7 plates
-            toggle_line("supertack_plate_temp_initial_layer", true);
-            toggle_line("cool_plate_temp", true);
-            toggle_line("cool_plate_temp_initial_layer", true);
-            toggle_line("cool_plate_temp", true);
-            toggle_line("textured_cool_plate_temp_initial_layer", true);
-            toggle_line("textured_cool_plate_temp", true);
-            toggle_line("eng_plate_temp_initial_layer", true);
-            toggle_line("eng_plate_temp", true);
-            toggle_line("hot_plate_temp_initial_layer", true);
-            toggle_line("hot_plate_temp", true);
-            toggle_line("textured_plate_temp_initial_layer", true);
-            toggle_line("textured_plate_temp", true);
-            toggle_line("graphic_effect_plate_temp_initial_layer", is_snapmaker_u1);
-            toggle_line("graphic_effect_plate_temp", is_snapmaker_u1);
+            toggle_line("supertack_plate_temp_initial_layer", true, 0);
+            toggle_line("cool_plate_temp", true, 0);
+            toggle_line("cool_plate_temp_initial_layer", true, 0);
+            toggle_line("cool_plate_temp", true, 0);
+            toggle_line("textured_cool_plate_temp_initial_layer", true, 0);
+            toggle_line("textured_cool_plate_temp", true, 0);
+            toggle_line("eng_plate_temp_initial_layer", true, 0);
+            toggle_line("eng_plate_temp", true, 0);
+            toggle_line("hot_plate_temp_initial_layer", true, 0);
+            toggle_line("hot_plate_temp", true, 0);
+            toggle_line("textured_plate_temp_initial_layer", true, 0);
+            toggle_line("textured_plate_temp", true, 0);
+            toggle_line("graphic_effect_plate_temp_initial_layer", is_snapmaker_u1, 0);
+            toggle_line("graphic_effect_plate_temp", is_snapmaker_u1, 0);
         } else {
             BedType curr_bed_type = m_preset_bundle->printers.get_edited_preset().get_default_bed_type(m_preset_bundle);
-            toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack);
-            toggle_line("supertack_plate_temp", curr_bed_type == btSuperTack);
-            toggle_line("cool_plate_temp_initial_layer", curr_bed_type == btPC);
-            toggle_line("cool_plate_temp", curr_bed_type == btPC);
-            toggle_line("textured_cool_plate_temp_initial_layer", curr_bed_type == btPCT);
-            toggle_line("textured_cool_plate_temp", curr_bed_type == btPCT);
-            toggle_line("eng_plate_temp_initial_layer", curr_bed_type == btEP);
-            toggle_line("eng_plate_temp", curr_bed_type == btEP);
-            toggle_line("hot_plate_temp_initial_layer", curr_bed_type == btPEI);
-            toggle_line("hot_plate_temp", curr_bed_type == btPEI);
-            toggle_line("textured_plate_temp_initial_layer", curr_bed_type == btPTE);
-            toggle_line("textured_plate_temp", curr_bed_type == btPTE);
-            toggle_line("graphic_effect_plate_temp_initial_layer", curr_bed_type == btGESP);
-            toggle_line("graphic_effect_plate_temp", curr_bed_type == btGESP);
+            toggle_line("supertack_plate_temp_initial_layer", curr_bed_type == btSuperTack, 0);
+            toggle_line("supertack_plate_temp", curr_bed_type == btSuperTack, 0);
+            toggle_line("cool_plate_temp_initial_layer", curr_bed_type == btPC, 0);
+            toggle_line("cool_plate_temp", curr_bed_type == btPC, 0);
+            toggle_line("textured_cool_plate_temp_initial_layer", curr_bed_type == btPCT, 0);
+            toggle_line("textured_cool_plate_temp", curr_bed_type == btPCT, 0);
+            toggle_line("eng_plate_temp_initial_layer", curr_bed_type == btEP, 0);
+            toggle_line("eng_plate_temp", curr_bed_type == btEP, 0);
+            toggle_line("hot_plate_temp_initial_layer", curr_bed_type == btPEI, 0);
+            toggle_line("hot_plate_temp", curr_bed_type == btPEI, 0);
+            toggle_line("textured_plate_temp_initial_layer", curr_bed_type == btPTE, 0);
+            toggle_line("textured_plate_temp", curr_bed_type == btPTE, 0);
+            toggle_line("graphic_effect_plate_temp_initial_layer", curr_bed_type == btGESP, 0);
+            toggle_line("graphic_effect_plate_temp", curr_bed_type == btGESP, 0);
         }
 
 
@@ -6411,10 +6505,9 @@ void TabFilament::toggle_options()
         toggle_line("pellet_flow_coefficient", is_pellet_printer);
         toggle_line("filament_diameter", !is_pellet_printer);
 
-        toggle_line("activate_chamber_temp_control", printer_cfg.opt_bool("support_chamber_temp_control"));
+        toggle_line("activate_chamber_temp_control", printer_cfg.opt_bool("support_chamber_temp_control"), 0);
 
-        const int selection = m_variant_combo ? m_variant_combo->GetSelection() : 0;
-        const unsigned int variant_idx = (unsigned int) std::max(selection, 0);
+        const unsigned int variant_idx = (unsigned int) filament_column();
         std::string volumetric_speed_cos = m_config->opt_string("volumetric_speed_coefficients", variant_idx);
         bool enable_fit = volumetric_speed_cos != "0 0 0 0 0 0";
         toggle_option("filament_adaptive_volumetric_speed", enable_fit, 256 + variant_idx);
@@ -6441,11 +6534,14 @@ void TabFilament::toggle_options()
         toggle_option("filament_multitool_ramming_flow", multitool_ramming, 0);
 
         bool is_BBL_multi_extruder = is_BBL_printer && printer_cfg.option<ConfigOptionFloats>("nozzle_diameter")->size() > 1;
-        const int selection = m_variant_combo ? m_variant_combo->GetSelection() : 0;
-        const int extruder_idx = std::max(selection, 0);
+        const int extruder_idx = filament_column();
         toggle_line("long_retractions_when_ec", is_BBL_multi_extruder, 256 + extruder_idx);
         toggle_line("retraction_distances_when_ec", is_BBL_multi_extruder && m_config->opt_bool("long_retractions_when_ec", extruder_idx), 256 + extruder_idx);
     }
+
+    // Last, so that it overrides the rules above.
+    lock_shared_lines();
+    update_flow_hint();
 }
 
 void TabFilament::update()
@@ -6493,12 +6589,15 @@ void TabFilament::on_value_change(const std::string& opt_key, const boost::any& 
         std::string temp_str = opt_key;
         boost::erase_head(temp_str, pos + 1);
         int orig_opt_idx = static_cast<size_t>(atoi(temp_str.c_str()));
-        int opt_idx = orig_opt_idx >= 0 ? orig_opt_idx : 0;
+        // The field id keeps "#0" whatever column is shown; the printer fallback reads that index.
+        const int printer_idx = orig_opt_idx >= 0 ? orig_opt_idx : 0;
 
         std::string opt_key_pure = opt_key;
         boost::erase_tail(opt_key_pure, opt_key_pure.size() - pos);
 
         if (opt_key_pure == "filament_retract_after_wipe" || opt_key_pure == "filament_retract_before_wipe") {
+            // The filament values are read and written in the column the tab shows.
+            const int opt_idx = filament_column();
             double dvalue = boost::any_cast<double>(value);
             auto percent_value_clamp = [](double percent_value) { return std::clamp(percent_value, 0., 100.); };
             auto get_value_by_opt_key = [&](const std::string& opt_key) {
@@ -6512,7 +6611,7 @@ void TabFilament::on_value_change(const std::string& opt_key, const boost::any& 
                         // Return the value of the option value for opt_key from the printer setting if it was not overridden for the filament.
                         const auto& printer_config = m_preset_bundle->printers.get_edited_preset().config;
                         const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
-                        return percent_value_clamp(printer_config.option<ConfigOptionPercents>(printer_opt_key)->get_at(opt_idx));
+                        return percent_value_clamp(printer_config.option<ConfigOptionPercents>(printer_opt_key)->get_at(printer_idx));
                     }
 
                     return 0.;
@@ -6542,6 +6641,271 @@ void TabFilament::on_value_change(const std::string& opt_key, const boost::any& 
     }
 
     Tab::on_value_change(opt_key, value);
+}
+
+// Snapmaker Orca: High Flow values for any filament (FilamentFlowColumns.hpp). A preset without a
+// High Flow column is offered a High Flow entry; its first write adds the column as a copy of Standard.
+
+// HighFlowCompat::check of the edited filament preset, rated also by the name of its system ancestor
+// (a user preset made from Snapmaker TPU 85A is TPU 85A).
+static HighFlowCompat::CompatibilityResult edited_filament_high_flow_compat(const PresetCollection &filaments, const DynamicPrintConfig &config)
+{
+    const Preset     &edited   = filaments.get_edited_preset();
+    const auto       *types    = config.option<ConfigOptionStrings>("filament_type");
+    const std::string type     = types != nullptr && !types->values.empty() ? types->values.front() : std::string();
+    const Preset     *ancestor = NozzleFilament::system_ancestor(filaments, edited);
+    return HighFlowCompat::check(type, edited.name, ancestor != nullptr ? ancestor->name : std::string());
+}
+
+bool TabFilament::high_flow_selected() const
+{
+    if (filament_virtual_high_flow())
+        return true;
+    const std::vector<std::string> variants = filament_variants(*m_config);
+    const int                      column   = filament_column();
+    return column < int(variants.size()) && PerHeadProcess::variant_names_type(variants[size_t(column)], NozzleVolumeType::nvtHighFlow);
+}
+
+bool TabFilament::create_high_flow_column()
+{
+    if (m_variant_combo == nullptr || !filament_add_flow_column(*m_config, NozzleVolumeType::nvtHighFlow))
+        return false;
+    const int column = filament_flow_column(*m_config, NozzleVolumeType::nvtHighFlow);
+    // The entries now name the column; no reload, a field may be in the middle of its write.
+    m_flow_entries_updating = true;
+    update_extruder_variants(-1, false);
+    if (column >= 0 && column != m_variant_combo->GetSelection())
+        m_variant_combo->SetSelection(column);
+    m_flow_entries_updating = false;
+    switch_excluder(column, false);
+    update_dirty();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+        plater->check_high_flow_filaments();
+    return true;
+}
+
+bool TabFilament::before_flow_change(const std::string &key, int &index)
+{
+    // A field shared by both columns is read-only under High Flow (lock_shared_lines); this refuses
+    // a write that got past the disabled field.
+    if (filament_field_shared_under_high_flow(key))
+        return !high_flow_selected();
+    if (filament_virtual_high_flow())
+        create_high_flow_column();
+    index = filament_column();
+    return true;
+}
+
+bool TabFilament::slot_on_high_flow() const
+{
+    const int slot = m_presets_choice != nullptr ? m_presets_choice->get_filament_idx() : -1;
+    if (slot < 0)
+        return false;
+    size_t head = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(slot));
+    if (head == NozzleFilament::no_head)
+        head = size_t(slot);
+    const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+    return volume_types != nullptr && head < volume_types->values.size() && volume_types->values[head] == int(NozzleVolumeType::nvtHighFlow);
+}
+
+wxString TabFilament::flow_hint_label(const std::string &key) const
+{
+    // Per-column fields are built with index 0 ("key#0") on whatever page holds them.
+    const std::string id = key + "#0";
+    for (const PageShp &page : m_pages) {
+        const Line *line = page ? page->get_line(key, 0) : nullptr;
+        if (line == nullptr)
+            continue;
+        const std::vector<Option> &options = line->get_options();
+        if (options.size() < 2 || line->label.empty())
+            break;
+        for (const Option &option : options)
+            if (option.opt_id == id && !option.opt.label.empty())
+                return format_wxstr("%1% (%2%)", line->label, _(option.opt.label));
+        return line->label;
+    }
+    const ConfigOptionDef *def = print_config_def.get(key);
+    return def != nullptr && !def->label.empty() ? _(def->label) : from_u8(key);
+}
+
+void TabFilament::unlock_shared_lines()
+{
+    for (const auto &[group_wk, id] : m_locked_fields)
+        if (ConfigOptionsGroupShp group = group_wk.lock(); group != nullptr)
+            if (Field *field = group->get_field(id); field != nullptr) {
+                field->toggle(true);
+                if (wxWindow *window = field->getWindow(); window != nullptr)
+                    window->SetToolTip(field->get_tooltip_text(wxEmptyString));
+            }
+    m_locked_fields.clear();
+}
+
+void TabFilament::lock_shared_lines()
+{
+    if (m_active_page == nullptr || !high_flow_selected() || m_active_page->title() == "Dependencies" || m_active_page->title() == "Notes")
+        return;
+    for (ConfigOptionsGroupShp &group : m_active_page->m_optgroups)
+        for (const auto &[id, key_index] : group->opt_map()) {
+            if (!filament_field_shared_under_high_flow(key_index.first))
+                continue;
+            Field *field = group->get_field(id);
+            if (field == nullptr)
+                continue;
+            field->toggle(false);
+            if (wxWindow *window = field->getWindow(); window != nullptr)
+                window->SetToolTip(_L("Shared by Standard and High Flow. Switch to Standard to change it."));
+            m_locked_fields.emplace_back(group, id);
+        }
+}
+
+void TabFilament::update_flow_hint()
+{
+    if (m_flow_hint_sizer == nullptr || m_config == nullptr)
+        return;
+    wxString text, action;
+    m_flow_hint_action = FlowHintAction::None;
+    m_flow_hint_keys.clear();
+
+    const std::string name = m_presets->get_edited_preset().name;
+    const HighFlowCompat::CompatibilityResult compat = edited_filament_high_flow_compat(*m_presets, *m_config);
+    if (compat.level == HighFlowCompat::CompatibilityLevel::Unsupported && slot_on_high_flow()) {
+        // TRN %1% is a filament preset name
+        text = format_wxstr(_L("%1% cannot be printed with a High Flow nozzle."), name);
+    } else if (filament_virtual_high_flow()) {
+        // TRN %1% is a filament preset name
+        text = format_wxstr(_L("No High Flow values yet. The fields show the Standard values; your first change to a field on a line with the extruder icon gives %1% its own High Flow values, starting as a copy of Standard. Greyed fields are shared with Standard."), name);
+        if (compat.level == HighFlowCompat::CompatibilityLevel::NotRecommended)
+            // TRN %1% is a filament preset name
+            text += " " + format_wxstr(_L("%1% is not recommended for High Flow nozzles."), name);
+        action             = _L("Create High Flow values");
+        m_flow_hint_action = FlowHintAction::Create;
+    } else if (high_flow_selected()) {
+        text = _L("Only the fields on lines with the extruder icon have their own High Flow values; greyed fields are shared with Standard.");
+    } else if (filament_flow_column(*m_config, NozzleVolumeType::nvtHighFlow) >= 0) {
+        // Against the saved preset; an unsaved High Flow column compares with the saved preset widened
+        // by a copy of its Standard column.
+        DynamicPrintConfig saved_storage;
+        m_flow_hint_keys = filament_standard_edits_not_followed(
+            *m_config, filament_reference_in_layout_of(*m_config, m_presets->get_selected_preset().config, saved_storage));
+        if (!m_flow_hint_keys.empty()) {
+            wxString labels;
+            for (const std::string &key : m_flow_hint_keys) {
+                if (!labels.empty())
+                    labels += ", ";
+                labels += flow_hint_label(key);
+            }
+            // TRN %1% is a list of settings, such as "Nozzle, Max volumetric speed"
+            text               = format_wxstr(_L("Changed under Standard, High Flow keeps the earlier value: %1%."), labels);
+            action             = _L("Apply to High Flow too");
+            m_flow_hint_action = FlowHintAction::ApplyToHighFlow;
+        }
+    } else if (m_virtual_flow_entry) {
+        // Standard view of a preset without High Flow values that a slot on a High Flow extruder holds:
+        // that extruder prints these values.
+        const NozzleFilament::State heads        = NozzleFilament::head_state(*m_preset_bundle);
+        const auto                 *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+        const std::string          &held         = m_presets->get_selected_preset().name;
+        for (size_t slot = 0; volume_types != nullptr && slot < m_preset_bundle->filament_presets.size(); ++slot) {
+            size_t head = heads.head_of(slot);
+            if (head == NozzleFilament::no_head)
+                head = slot;
+            if (m_preset_bundle->filament_presets[slot] != held || head >= volume_types->values.size() ||
+                volume_types->values[head] != int(NozzleVolumeType::nvtHighFlow))
+                continue;
+            // TRN %1% is an extruder number, %2% a filament preset name
+            text               = format_wxstr(_L("Extruder %1% (High Flow) also prints these values until %2% has High Flow values."), head + 1, name);
+            action             = _L("Create High Flow values");
+            m_flow_hint_action = FlowHintAction::Create;
+            break;
+        }
+    }
+
+    const bool shown   = !text.empty();
+    bool       changed = m_main_sizer->IsShown(m_flow_hint_sizer) != shown;
+    m_main_sizer->Show(m_flow_hint_sizer, shown);
+    if (shown) {
+        changed = changed || m_flow_hint_button->GetLabel() != action || m_flow_hint_button->IsShown() == action.empty();
+        m_flow_hint_button->SetLabel(action);
+        m_flow_hint_button->Show(!action.empty());
+        if (text != m_flow_hint_text->GetUnwrappedText()) {
+            // Wraps to the current width; a width the layout below changes wraps again on the resize.
+            m_flow_hint_text->SetText(text);
+            changed = true;
+        }
+    }
+    Layout();
+    // A new row height changes the height of the tab: the panel lays out the page below it again.
+    if (changed)
+        m_parent->Layout();
+}
+
+void TabFilament::on_flow_hint_button()
+{
+    const FlowHintAction what = m_flow_hint_action;
+    if (what == FlowHintAction::Create) {
+        if (!create_high_flow_column())
+            return;
+    } else if (what == FlowHintAction::ApplyToHighFlow) {
+        if (!filament_copy_standard_to_high_flow(*m_config, m_flow_hint_keys))
+            return;
+        update_dirty();
+    } else
+        return;
+    switch_excluder(-1);
+    update();
+    if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+        plater->check_high_flow_filaments();
+}
+
+wxString TabFilament::high_flow_save_info() const
+{
+    const Preset             &saved     = m_presets->get_selected_preset();
+    const DynamicPrintConfig &edited    = *m_config;
+    const int                 high_flow = filament_flow_column(edited, NozzleVolumeType::nvtHighFlow);
+    if (high_flow < 0)
+        return {};
+    // A column the saved preset lacks, or a change in the High Flow column.
+    bool touched = filament_flow_column(saved.config, NozzleVolumeType::nvtHighFlow) < 0;
+    if (!touched) {
+        const std::string suffix = "#" + std::to_string(high_flow);
+        for (const std::string &option : m_presets->current_dirty_options(true))
+            if (boost::ends_with(option, suffix) && filament_options_with_variant.count(option.substr(0, option.size() - suffix.size())) > 0) {
+                touched = true;
+                break;
+            }
+    }
+    if (!touched)
+        return {};
+    wxString info;
+    if (saved.is_system) {
+        const int     slot    = m_presets_choice != nullptr ? m_presets_choice->get_filament_idx() : -1;
+        // The nozzle size of the machine preset the new preset is pinned to: only slots on extruders of
+        // that size switch to it (NozzleFilament::slots_to_switch).
+        std::string size_text;
+        if (const Preset *pinned = m_preset_bundle->printers.find_preset(NozzleFilament::printer_to_pin(*m_preset_bundle, slot), false); pinned != nullptr)
+            if (const auto *variant = pinned->config.option<ConfigOptionString>("printer_variant");
+                variant != nullptr && NozzleFilament::parse_nozzle_size(variant->value) > 0.)
+                size_text = variant->value;
+        const auto *compatible = saved.config.option<ConfigOptionStrings>("compatible_printers");
+        if (size_text.empty() || (compatible != nullptr && !compatible->values.empty()))
+            // TRN %1% is a system filament preset
+            info = format_wxstr(_L("%1% stays unchanged. The new preset holds its Standard values and your High Flow values. Slots that use %1% switch to the new preset."), saved.name);
+        else
+            // TRN %1% is a system filament preset, %2% a nozzle size such as 0.4
+            info = format_wxstr(_L("%1% stays unchanged. The new preset holds its Standard values and your High Flow values. Slots on %2% mm extruders that use %1% switch to it."),
+                                saved.name, size_text);
+        const Preset *machine = slot >= 0 ? NozzleFilament::head_state(*m_preset_bundle).machine_of(size_t(slot)) : nullptr;
+        if (machine == nullptr)
+            machine = &m_preset_bundle->printers.get_edited_preset();
+        const std::vector<const Preset *> children = NozzleFilament::user_children(*m_preset_bundle, saved, *machine);
+        if (children.size() == 1)
+            // TRN %1% is a system filament preset, %2% a user preset made from it
+            info += "\n" + format_wxstr(_L("%1% already has the user preset %2%. To keep one preset per material: Cancel, pick %2% in this slot and choose Transfer when asked about unsaved changes."),
+                                        saved.name, children.front()->name);
+    } else
+        // TRN %1% is a user filament preset
+        info = format_wxstr(_L("The Standard values of %1% stay as they are; the High Flow values are saved with it."), saved.name);
+    return info;
 }
 
 wxSizer* Tab::description_line_widget(wxWindow* parent, ogStaticText* *StaticText, wxString text /*= wxEmptyString*/)
@@ -9243,11 +9607,13 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
     // Orca: check if compatible_printers exists and is not empty, set it to the current printer if it is empty
     // Ensures that custom filaments based on system are not accidentally allowed for all printers
     // Can still be set for all after creation
+    // Snapmaker Orca: pinned to the machine preset of the slot's extruder when that carries another
+    // nozzle size than the printer preset (NozzleFilament::printer_to_pin).
     if (m_presets->type() == Preset::TYPE_FILAMENT && !exist_preset && edited_preset.is_system) {
-        Preset* _curr_printer = const_cast<Preset*>(&wxGetApp().preset_bundle->printers.get_selected_preset_base());
         ConfigOptionStrings* compatible_printers = m_config->option<ConfigOptionStrings>("compatible_printers");
-        if (nullptr != _curr_printer && compatible_printers && compatible_printers->values.empty())
-            compatible_printers->values.push_back(_curr_printer->name);
+        if (compatible_printers && compatible_printers->values.empty())
+            compatible_printers->values.push_back(
+                NozzleFilament::printer_to_pin(*m_preset_bundle, m_presets_choice != nullptr ? m_presets_choice->get_filament_idx() : -1));
     }
     // Save the preset into Slic3r::data_dir / presets / section_name / preset_name.json
     m_presets->save_current_preset(name, detach, save_to_project, nullptr);
@@ -9284,7 +9650,12 @@ void Tab::save_preset(std::string name /*= ""*/, bool detach, bool save_to_proje
 
     //BBS if create a new prset name, preset changed from preset name to new preset name
     if (!exist_preset) {
-        wxGetApp().plater()->sidebar().update_presets_from_to(m_type, curr_preset_name, new_preset->name);
+        // Snapmaker Orca: a new filament preset takes over the slots whose extruder it fits (a copy pinned
+        // to the 0.4 mm machine leaves the 0.6 mm slots alone); fitting none, every slot of the old preset.
+        std::vector<size_t> slots;
+        if (m_type == Preset::TYPE_FILAMENT)
+            slots = NozzleFilament::slots_to_switch(*m_preset_bundle, curr_preset_name, *new_preset);
+        wxGetApp().plater()->sidebar().update_presets_from_to(m_type, curr_preset_name, new_preset->name, slots.empty() ? nullptr : &slots);
     }
 
     // If current profile is saved, "delete preset" button have to be enabled
@@ -10143,17 +10514,36 @@ void Tab::update_extruder_variants(int extruder_id, bool reload)
         } // not the speed selector
         m_head_selection_by_program = false;
     } else if (m_variant_combo) {
-        if (extruder_id >= 0)
-            return;
-
         const int selection = m_variant_combo->GetSelection();
         auto      options   = generate_extruder_options();
+        m_virtual_flow_entry = flow_entry_offered();
         m_variant_combo->SetOptions(options);
 
+        int shown = selection < 0 || selection >= (int) options.size() ? 0 : selection;
+        // Snapmaker Orca: the High Flow entry without a column is selected by select_flow_column
+        // (and by a click) only; a rebuild that would land on it shows Standard.
+        const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
+        if (m_virtual_flow_entry && variants != nullptr && shown == int(variants->size()))
+            shown = 0;
         if (!options.empty())
-            m_variant_combo->SetSelection(selection < 0 || selection >= (int) options.size() ? 0 : selection);
+            m_variant_combo->SetSelection(shown);
 
         m_variant_combo->Enable(options.size() > 1);
+
+        // A flow change of the extruder that prints the slot the tab was opened from moves the
+        // selection to that extruder's flow type.
+        if (extruder_id >= 0) {
+            const int slot = m_presets_choice != nullptr ? m_presets_choice->get_filament_idx() : -1;
+            if (slot >= 0) {
+                size_t head = NozzleFilament::head_state(*m_preset_bundle).head_of(size_t(slot));
+                if (head == NozzleFilament::no_head)
+                    head = size_t(slot);
+                const auto *volume_types = m_preset_bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type");
+                if (int(head) == extruder_id && volume_types != nullptr && head < volume_types->values.size())
+                    select_flow_column(NozzleVolumeType(volume_types->values[head]));
+            }
+            extruder_id = -1;
+        }
     }
     switch_excluder(extruder_id, reload);
     if (m_type == Preset::TYPE_PRINT) {
@@ -10174,9 +10564,18 @@ void Tab::select_flow_column(NozzleVolumeType type)
         const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
         if (variants == nullptr)
             return;
-        const int column = HighFlowNotices::variant_column_for_type(variants->values, int(type));
-        if (column < 0 || column >= int(m_variant_combo->GetCount()) || column == m_variant_combo->GetSelection())
+        int column = HighFlowNotices::variant_column_for_type(variants->values, int(type));
+        // Snapmaker Orca: a High Flow extruder opens a preset without High Flow values on the
+        // High Flow entry without a column.
+        if (column < 0 && type == NozzleVolumeType::nvtHighFlow && m_virtual_flow_entry)
+            column = int(variants->size());
+        auto *filament = dynamic_cast<TabFilament *>(this);
+        if (column < 0 || column >= int(m_variant_combo->GetCount()) || column == m_variant_combo->GetSelection()) {
+            // The slot may have changed: the hint follows it.
+            if (filament != nullptr)
+                filament->update_flow_hint();
             return;
+        }
         m_variant_combo->SetSelection(column);
         // What the selection event of the combo does: switch_excluder reloads the page.
         switch_excluder(column);
@@ -10197,6 +10596,39 @@ void Tab::select_flow_column(NozzleVolumeType type)
     m_actual_nozzle_volumes[0] = m_flow_selector_types[selection];
     m_extruder_switch->SetSelection(selection);
     switch_excluder(0);
+}
+
+bool Tab::filament_virtual_high_flow() const
+{
+    if (m_variant_combo == nullptr || m_config == nullptr || !m_virtual_flow_entry)
+        return false;
+    const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
+    return variants != nullptr && m_variant_combo->GetSelection() == int(variants->size());
+}
+
+bool Tab::flow_entry_offered() const
+{
+    if (m_type != Preset::TYPE_FILAMENT || m_config == nullptr || m_preset_bundle == nullptr)
+        return false;
+    const std::vector<std::string> variants = filament_variants(*m_config);
+    if (variants.empty() || !PerHeadProcess::variant_names_type(variants.front(), NozzleVolumeType::nvtStandard) ||
+        filament_flow_column(*m_config, NozzleVolumeType::nvtHighFlow) >= 0)
+        return false;
+    // An extruder set to High Flow the preset may print on: a preset pinned to 0.6 mm is offered nothing
+    // by a 0.4 mm High Flow extruder.
+    if (!NozzleFilament::fits_high_flow_extruder(*m_preset_bundle, m_presets->get_edited_preset()))
+        return false;
+    return edited_filament_high_flow_compat(*m_presets, *m_config).level != HighFlowCompat::CompatibilityLevel::Unsupported;
+}
+
+int Tab::filament_column() const
+{
+    if (m_variant_combo == nullptr || m_config == nullptr)
+        return 0;
+    const auto *variants  = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
+    const int   columns   = variants != nullptr ? int(variants->size()) : 1;
+    const int   selection = m_variant_combo->GetSelection();
+    return selection < 0 || selection >= columns ? 0 : selection;
 }
 
 void Tab::select_tool_head(size_t head, NozzleVolumeType type)
@@ -10463,9 +10895,13 @@ std::vector<wxString> Tab::generate_extruder_options()
             return options;
 
         // Snapmaker Orca: the drive is left out when every column names the same one, so the two
-        // columns of a Snapmaker filament read "Standard" / "High Flow".
-        for (size_t column = 0; column < variants->values.size(); ++column) {
-            const HighFlowNotices::VariantName name = HighFlowNotices::variant_column_label(variants->values, column);
+        // columns of a Snapmaker filament read "Standard" / "High Flow". The High Flow entry
+        // without a column (flow_entry_offered) follows the columns.
+        std::vector<std::string> names = variants->values;
+        if (flow_entry_offered())
+            names.emplace_back(get_extruder_variant_string(boost::starts_with(names.front(), "Bowden") ? etBowden : etDirectDrive, nvtHighFlow));
+        for (size_t column = 0; column < names.size(); ++column) {
+            const HighFlowNotices::VariantName name = HighFlowNotices::variant_column_label(names, column);
             if (name.drive.empty() || name.volume_type.empty())
                 options.push_back(_L(name.drive.empty() ? name.volume_type : name.drive));
             else
@@ -10664,7 +11100,7 @@ void Tab::switch_excluder(int extruder_id, bool reload)
     };
     // Snapmaker Orca: a flow selector entry edits the shared column of its flow, which on a preset
     // with values set per tool head is not the column of tool head 1.
-    index = m_variant_combo ? extruder_id :
+    index = m_variant_combo ? filament_column() :
             !m_flow_selector_types.empty() ? PerHeadProcess::shared_column(*m_config, get_actual_nozzle_volume_type(0)) :
                                              get_index_for_extruder(extruder_id == -1 ? 0 : extruder_id);
     if (index < 0)

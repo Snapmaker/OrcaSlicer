@@ -179,6 +179,9 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping)
 
 void sync_filament_volume_types_for_slice()
 {
+    // Custom + mixed nozzles: the dialog mapping is the source of truth.
+    if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count()))
+        return;
     // Flow type every filament should use when the custom per-filament mapping does
     // not apply: follow the single nozzle type when the nozzles are not mixing types
     // (all standard -> standard, all high flow -> high flow); in standard mode with

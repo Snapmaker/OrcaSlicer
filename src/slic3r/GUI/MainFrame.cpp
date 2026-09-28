@@ -2056,8 +2056,6 @@ wxBoxSizer* MainFrame::create_side_tools()
         {
             if (m_slice_mode_popup)
                 m_slice_mode_popup->HidePopup();
-            if (!GUI::FlowType::confirm_grouping_before_slice(this))
-                return;
             start_slice();
         });
 
@@ -3778,8 +3776,11 @@ void MainFrame::update_menubar()
 
 void MainFrame::reslice_now()
 {
-    if (m_plater)
-        (void)m_plater->reslice();
+    if (!m_plater)
+        return;
+    if (!m_plater->confirm_filament_grouping_before_slice())
+        return;
+    (void) m_plater->reslice();
 }
 
 void MainFrame::start_slice()

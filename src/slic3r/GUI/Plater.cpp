@@ -15466,9 +15466,10 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                    this->m_slice_all = false;
                    // Page-switch auto-slice must run the same pre-slice guard as
                    // the slice button, or the by-object red error never shows.
-                   // Snap #930 Edge extension: Preview tab-in also re-confirms
-                   // grouping when a previously valid plate was invalidated.
-                   if (this->partplate_list.is_filament_group_dirty() && !GUI::FlowType::confirm_grouping_before_slice(this->q))
+                   // Snap #930 Edge extension / S4: tab-in prompts only when dirty
+                   // (valid-to-invalid). A never-sliced plate skips the dialog.
+                   if (filament_group_prompt_on_preview_tab_in(this->partplate_list.is_filament_group_dirty()) &&
+                       !this->q->confirm_filament_grouping_before_slice())
                        slice_cancelled = true;
                    else if (this->q->guard_before_slice_plate())
                        slice_cancelled = !(this->q->reslice());
@@ -16565,6 +16566,9 @@ void Plater::priv::on_action_slice_plate(SimpleEvent&)
         Model::setPrintSpeedTable(config, print_config);
         m_slice_all = false;
 
+        if (!q->confirm_filament_grouping_before_slice())
+            return;
+
         if (!q->guard_before_slice_plate())
             return;
 
@@ -16593,6 +16597,9 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
 
         Model::setExtruderParams(config, numExtruders);
         Model::setPrintSpeedTable(config, print_config);
+
+        if (!q->confirm_filament_grouping_before_slice())
+            return;
 
         if (!q->guard_before_slice_all())
             return;
@@ -22553,7 +22560,6 @@ void Plater::export_toolpaths_to_obj() const
 //BBS: add multiple plate reslice logic
 bool Plater::reslice()
 {
-    p->partplate_list.set_filament_group_dirty(false);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
@@ -22623,6 +22629,10 @@ bool Plater::reslice()
                                  << timeout_ms << " milliseconds timeout!";
         return true;
     }
+
+    // S3: grouping was confirmed by the caller. Do not clear on the early
+    // returns above (invalid data / gizmo / UI-job timeout).
+    p->partplate_list.set_filament_group_dirty(false);
 
     // Orca: regenerate CalibPressureAdvancePattern custom G-code to apply changes
     if (model().calib_pa_pattern) {
@@ -24631,6 +24641,14 @@ void Plater::check_seq_print_caution(bool all_plates)
     }
 }
 
+bool Plater::confirm_filament_grouping_before_slice()
+{
+    if (!GUI::FlowType::confirm_grouping_before_slice(this))
+        return false;
+    p->partplate_list.set_filament_group_dirty(false);
+    return true;
+}
+
 bool Plater::guard_before_slice_plate()
 {
     // Bambu two-extruder printers: confirm the filament arrangement first (no-op elsewhere).
@@ -25754,12 +25772,23 @@ int Plater::select_sliced_plate(int plate_index)
     int ret = 0;
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
 
-    // Snap #930: Preview plate-pick auto-reslice after a param change. Cancel
-    // leaves the current plate invalid and does not switch plates (same as
-    // Snapmaker). Edge uses CUSTOM + >= 2 flow types, not any_nozzle_high_flow().
-    if (p->partplate_list.is_filament_group_dirty()) {
-        if (!GUI::FlowType::confirm_grouping_before_slice(this))
-            return 0;
+    // Snap #930: Preview plate-pick after a param change. Edge uses CUSTOM +
+    // >= 2 flow types, not any_nozzle_high_flow(). B1: confirm success clears
+    // dirty so a still-sliced plate is not re-prompted; Cancel blocks only
+    // when the target still needs slicing.
+    auto& pl = p->partplate_list;
+    if (pl.is_filament_group_dirty()) {
+        if (!GUI::FlowType::confirm_grouping_before_slice(this)) {
+            const PartPlate* target       = pl.get_plate(plate_index);
+            const bool       target_valid = target != nullptr && target->is_slice_result_valid();
+            if (filament_group_cancel_blocks_plate_switch(target_valid))
+                return 0;
+        } else {
+            pl.set_filament_group_dirty(false);
+        }
+    } else if (filament_group_sync_on_clean_plate_pick(
+                   filament_group_dialog_required(GUI::FlowType::grouping_mode(), GUI::FlowType::distinct_nozzle_flow_type_count()))) {
+        GUI::FlowType::sync_filament_volume_types_for_slice();
     }
 
     Freeze();

@@ -813,3 +813,46 @@ TEST_CASE("filament group dirty flag is set only on valid-to-invalid slice resul
     CHECK_FALSE(filament_group_dirty_on_invalidation(false, true));
     CHECK_FALSE(filament_group_dirty_on_invalidation(true, true));
 }
+
+TEST_CASE("filament group dirty flag lifecycle for Preview plate-pick and reset", "[Config][FilamentGroup]")
+{
+    bool dirty = false;
+
+    // First slice of a never-sliced plate does not raise the flag (S4).
+    if (filament_group_dirty_on_invalidation(false, true))
+        dirty = true;
+    CHECK_FALSE(dirty);
+    CHECK_FALSE(filament_group_prompt_on_preview_tab_in(dirty));
+
+    // Any invalidation of a previously valid slice raises it (S6: object move, process change).
+    if (filament_group_dirty_on_invalidation(true, false))
+        dirty = true;
+    CHECK(dirty);
+    CHECK(filament_group_prompt_on_preview_tab_in(dirty));
+
+    // B1: Cancel on a still-sliced target does not block; dirty stays set.
+    CHECK_FALSE(filament_group_cancel_blocks_plate_switch(true));
+    CHECK(dirty);
+
+    // B1: Cancel on an invalid target (needs slicing) blocks; dirty stays set.
+    CHECK(filament_group_cancel_blocks_plate_switch(false));
+    CHECK(dirty);
+
+    // Confirm (B1 / S7): clear dirty. Later invalidation can re-raise it.
+    dirty = false;
+    CHECK_FALSE(dirty);
+    if (filament_group_dirty_on_invalidation(true, false))
+        dirty = true;
+    CHECK(dirty);
+
+    // S2: project load / New project / plate-list reset drops the flag.
+    dirty = false;
+    CHECK_FALSE(dirty);
+
+    // S1: clean plate-pick still syncs when the grouping dialog is not required.
+    CHECK(filament_group_sync_on_clean_plate_pick(false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2)));
+    CHECK(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2)));
+    CHECK(filament_group_sync_on_clean_plate_pick(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1)));
+}

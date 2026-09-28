@@ -3855,6 +3855,7 @@ void PartPlateList::clear(bool delete_plates, bool release_print_list, bool exce
 	}
 
 	unprintable_plate.clear();
+	m_filament_group_dirty = false;
 }
 
 //clear all the instances in the plate, and delete the plates, only keep the first default plate
@@ -3870,6 +3871,7 @@ void PartPlateList::reset(bool do_init)
 	}
 		init();
 
+	m_filament_group_dirty = false;
 	return;
 }
 

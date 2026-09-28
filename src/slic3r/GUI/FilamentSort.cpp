@@ -114,13 +114,20 @@ FilamentOrder FilamentOrder::from_stream(std::istream &stream)
     return FilamentOrder(std::move(orders));
 }
 
-FilamentOrder FilamentOrder::from_file(const std::filesystem::path &path)
+FilamentOrder FilamentOrder::from_file(const std::filesystem::path &path, std::string *error)
 {
     std::ifstream stream(path);
     if (!stream)
+    {
+        if (error != nullptr)
+            *error = "cannot be opened";
         return FilamentOrder{};
+    }
 
-    return from_stream(stream);
+    const FilamentOrder order = from_stream(stream);
+    if (order.empty() && error != nullptr)
+        *error = "has an invalid or empty configuration";
+    return order;
 }
 
 FilamentOrder::FilamentOrder(Orders orders) : m_orders(std::move(orders))
@@ -183,6 +190,11 @@ SystemFilamentSorter::SystemFilamentSorter(FilamentOrder filament_order)
 
 bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
 {
+    // Narrow contract: the caller orders rows by vendor first (PlaterFilamentComboBox::sort_system_rows
+    // compares vendors and only falls back to this sorter when they are equivalent), so both sides
+    // carry the same vendor here and the Snapmaker gate is symmetric. Passing two different vendors to
+    // one call would mix the configured rank with the name order and stop being a strict weak ordering,
+    // which std::stable_sort requires.
     if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor))
     {
         const size_t left_rank  = m_filament_order.rank(left.vendor, left.filament_product);

@@ -32,8 +32,9 @@ public:
     /** @brief Parses a filament-order configuration stream and returns an empty order on invalid input. */
     static FilamentOrder from_stream(std::istream &stream);
 
-    /** @brief Reads a filament-order configuration file and returns an empty order when it cannot be read. */
-    static FilamentOrder from_file(const std::filesystem::path &path);
+    /** @brief Reads a configuration file and returns an empty order when it cannot be used; @p error
+     *         receives the reason, when it is not null. */
+    static FilamentOrder from_file(const std::filesystem::path &path, std::string *error = nullptr);
 
     /** @brief Returns the configured rank or the maximum value when no rank exists. */
     size_t rank(const std::string &vendor, const std::string &filament_product) const;

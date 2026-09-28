@@ -256,7 +256,11 @@ TEST_CASE("FilamentOrder::from_file reads a configuration file and reports unusa
     SECTION("missing file")
     {
         std::filesystem::remove(path);
-        CHECK(FilamentOrder::from_file(path).empty());
+        std::string reason;
+        CHECK(FilamentOrder::from_file(path, &reason).empty());
+        // The loader logs this reason, so a file that is not there stays distinguishable from one
+        // that is there but rejected.
+        CHECK(reason == "cannot be opened");
     }
 
     SECTION("malformed file")
@@ -266,8 +270,25 @@ TEST_CASE("FilamentOrder::from_file reads a configuration file and reports unusa
         stream << "{";
         stream.close();
 
-        CHECK(FilamentOrder::from_file(path).empty());
+        std::string reason;
+        CHECK(FilamentOrder::from_file(path, &reason).empty());
+        CHECK(reason == "has an invalid or empty configuration");
     }
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("the shipped allow-list parses and orders the Snapmaker products", "[GUI][FilamentSort]")
+{
+    // The shipped file is a data contract with PresetUpdater, which deploys it to the user data
+    // directory. A typo in it (schema version, vendor key, syntax) would otherwise drop the whole
+    // vendor order at runtime without any visible error.
+    std::string         reason;
+    const FilamentOrder order = FilamentOrder::from_file(FILAMENT_ALLOW_LIST_FILE, &reason);
+    INFO("loader reason: " << reason);
+    REQUIRE_FALSE(order.empty());
+
+    // A shipped product proves the vendor key matched; an unknown one proves the name fallback.
+    CHECK(order.rank("Snapmaker", "PLA SnapSpeed") != std::numeric_limits<size_t>::max());
+    CHECK(order.rank("Snapmaker", "Not A Shipped Product") == std::numeric_limits<size_t>::max());
 }

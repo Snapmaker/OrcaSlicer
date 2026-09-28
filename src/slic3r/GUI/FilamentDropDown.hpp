@@ -1,6 +1,9 @@
 #pragma once
 
 // Fork of Widgets/DropDown (e700c93d81) + BambuStudio DropDown grouping (77b9dd94d); Widgets/* untouched.
+// Ported from upstream after that base: the macOS anchor-gap hit test of 5a7090fdf1, reworked here as
+// the free function point_in_anchor_gap. Resync by diffing Widgets/DropDown.{cpp,hpp} against this
+// file and re-porting each fix, not by re-applying the upstream commits.
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <wx/stattext.h>

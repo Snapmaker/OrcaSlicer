@@ -21,6 +21,8 @@ namespace Slic3r {
 // print-host keys match upstream #15953; the rest are Edge-only (flow-variant layout,
 // filament mapping, MixedFilamentManager, s_project_options). Filament vector keys are
 // out of scope. filament_mapping_protocol is a printer capability and is filled (S4).
+// process_flow_support / printer_flow_support are filled when missing so flow-variant
+// vectors keep a matching layout (S5a).
 inline const std::set<std::string> &project_config_fill_skip_keys()
 {
     static const std::set<std::string> skip = {
@@ -69,8 +71,6 @@ inline const std::set<std::string> &project_config_fill_skip_keys()
         "filament_volume_map",
         "filament_nozzle_map",
         "filament_flow_support",
-        "process_flow_support",
-        "printer_flow_support",
         // filament mapping (project-owned). filament_mapping_protocol is a printer capability: fill it.
         "filament_map",
         "filament_map_2",
@@ -137,13 +137,32 @@ inline std::string resolve_project_system_preset_name(const std::string         
     return slot.empty() ? current_name : slot;
 }
 
+// Snapshot of keys the 3MF actually carried. Must run before option(key, true) inserts defaults (S2).
+inline std::set<std::string> project_config_snapshot_loaded_keys(const DynamicPrintConfig &loaded)
+{
+    const auto keys = loaded.keys();
+    return std::set<std::string>(keys.begin(), keys.end());
+}
+
+// Truncate to at most max_len bytes without splitting a UTF-8 code point. MSVC-safe (no min/max macros).
+inline size_t project_config_utf8_prefix_bytes(const std::string &s, size_t max_len)
+{
+    if (s.size() <= max_len)
+        return s.size();
+    size_t i = max_len;
+    while (i > 0 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80)
+        --i;
+    return i;
+}
+
 inline std::string project_config_fill_log_value(const ConfigOption *opt, size_t max_len = 96)
 {
     if (opt == nullptr)
         return {};
     std::string s = opt->serialize();
-    if (s.size() > max_len)
-        s.replace(s.begin() + static_cast<std::ptrdiff_t>(max_len), s.end(), "...");
+    const size_t keep = project_config_utf8_prefix_bytes(s, max_len);
+    if (keep < s.size())
+        s.replace(s.begin() + static_cast<std::ptrdiff_t>(keep), s.end(), "...");
     return s;
 }
 
@@ -154,7 +173,7 @@ inline std::vector<std::string> missing_project_keys(const DynamicPrintConfig   
                                                      const std::vector<std::string>   &options,
                                                      const std::set<std::string>      *present_keys = nullptr)
 {
-    const auto             &skip = project_config_fill_skip_keys();
+    const auto              &skip = project_config_fill_skip_keys();
     std::vector<std::string> missing;
     missing.reserve(options.size());
     for (const std::string &key : options) {
@@ -195,11 +214,26 @@ inline bool project_config_flow_support_differs(const DynamicPrintConfig    &pro
     return p->serialize() != s->serialize();
 }
 
+// Per-extruder printer vectors that should track nozzle_diameter. default_filament_profile
+// is in extruder_option_keys but set_num_extruders deliberately does not resize it (empty
+// system defaults such as MyMarlin / BBL fdm_machine_common). Extra keys listed here are
+// sized per extruder but are not in extruder_option_keys (S5b).
+inline bool project_config_is_per_extruder_vector(const std::string &key)
+{
+    if (key == "default_filament_profile")
+        return false;
+    if (key == "extruder_printable_area" || key == "extruder_printable_height" || key == "extruder_type" ||
+        key == "extruder_nozzle_count")
+        return true;
+    const auto &ext = print_config_def.extruder_option_keys();
+    return std::find(ext.begin(), ext.end(), key) != ext.end();
+}
+
 // Copies keys listed in `options` that are absent from `project` out of `system`.
 // Never overwrites keys present in the 3MF (or, without a snapshot, keys already on `project`).
 // Skip-list keys, keys handle_legacy drops on load, and flow-variant vectors whose
 // process_flow_support / printer_flow_support differs from the project are not copied.
-// Per-extruder vectors are resized to the project's nozzle_diameter size (S5).
+// Per-extruder vectors are resized to the project's nozzle_diameter size when non-empty (S5, B2).
 // Returns the number of keys copied. Optionally records the copied keys.
 inline size_t fill_missing_project_keys(DynamicPrintConfig             &project,
                                         const DynamicPrintConfig       &system,
@@ -211,10 +245,11 @@ inline size_t fill_missing_project_keys(DynamicPrintConfig             &project,
     if (missing.empty())
         return 0;
 
-    const bool skip_process_flow = project_config_flow_support_differs(project, system, "process_flow_support", present_keys);
-    const bool skip_printer_flow = project_config_flow_support_differs(project, system, "printer_flow_support", present_keys);
-    const auto &extruder_keys    = print_config_def.extruder_option_keys();
-    size_t      n                = 0;
+    const bool skip_process_flow = project_config_flow_support_differs(project, system, "process_flow_support",
+                                                                      present_keys);
+    const bool skip_printer_flow = project_config_flow_support_differs(project, system, "printer_flow_support",
+                                                                      present_keys);
+    size_t     n                 = 0;
     for (const std::string &key : missing) {
         if ((skip_process_flow && is_process_flow_variant_option(key)) ||
             (skip_printer_flow && is_machine_flow_variant_option(key)))
@@ -223,24 +258,15 @@ inline size_t fill_missing_project_keys(DynamicPrintConfig             &project,
         if (opt == nullptr)
             continue;
         ConfigOption *cloned = opt->clone();
-        if (cloned->is_vector()) {
-            auto *vec = static_cast<ConfigOptionVectorBase *>(cloned);
-            if (is_process_flow_variant_option(key) && project_config_had_key(project, "process_flow_support", present_keys)) {
-                if (const auto *fs = project.option<ConfigOptionStrings>("process_flow_support"))
-                    if (!fs->values.empty() && vec->size() != fs->values.size())
-                        vec->resize(fs->values.size());
-            } else if (is_machine_flow_variant_option(key) &&
-                       project_config_had_key(project, "printer_flow_support", present_keys)) {
-                if (const auto *fs = project.option<ConfigOptionStrings>("printer_flow_support"))
-                    if (!fs->values.empty() && vec->size() != fs->values.size())
-                        vec->resize(fs->values.size());
-            } else if (std::find(extruder_keys.begin(), extruder_keys.end(), key) != extruder_keys.end()) {
-                size_t nozzles = project_config_nozzle_count(project);
-                if (nozzles == 0)
-                    nozzles = project_config_nozzle_count(system);
-                if (nozzles > 0 && vec->size() != nozzles)
-                    vec->resize(nozzles);
-            }
+        if (cloned->is_vector() && project_config_is_per_extruder_vector(key)) {
+            auto  *vec     = static_cast<ConfigOptionVectorBase *>(cloned);
+            size_t nozzles = project_config_nozzle_count(project);
+            if (nozzles == 0)
+                nozzles = project_config_nozzle_count(system);
+            // Empty system vectors (default_filament_profile on MyMarlin / fdm_machine_common)
+            // must not grow: ConfigOptionVector::resize throws without a default (B2).
+            if (!vec->empty() && nozzles > 0 && vec->size() != nozzles)
+                vec->resize(nozzles);
         }
         project.set_key_value(key, cloned);
         if (filled_keys)
@@ -248,6 +274,26 @@ inline size_t fill_missing_project_keys(DynamicPrintConfig             &project,
         ++n;
     }
     return n;
+}
+
+// CLI call-site helper: resolve missing keys first, then invoke find_system only if needed (S1).
+// find_system(name) returns the system config or nullptr. Tests pass a counter stub.
+template<typename FindSystem>
+inline size_t fill_cli_system_preset(DynamicPrintConfig             &project,
+                                     const std::string              &system_name,
+                                     const std::vector<std::string> &options,
+                                     FindSystem                    &&find_system,
+                                     std::vector<std::string>       *filled_keys  = nullptr,
+                                     const std::set<std::string>    *present_keys = nullptr)
+{
+    if (system_name.empty())
+        return 0;
+    if (missing_project_keys(project, options, present_keys).empty())
+        return 0;
+    const DynamicPrintConfig *sys = find_system(system_name);
+    if (sys == nullptr)
+        return 0;
+    return fill_missing_project_keys(project, *sys, options, filled_keys, present_keys);
 }
 
 } // namespace Slic3r

@@ -2060,10 +2060,8 @@ int CLI::run(int argc, char **argv)
                 model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
                 // Snapshot keys the file actually carried before create=true reads insert defaults
                 // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
-                if (project_file_keys.empty() && !config.empty()) {
-                    const auto keys = config.keys();
-                    project_file_keys.insert(keys.begin(), keys.end());
-                }
+                if (project_file_keys.empty() && !config.empty())
+                    project_file_keys = project_config_snapshot_loaded_keys(config);
                 // The importer flags any 3mf written by Bambu Studio / Orca / this fork as a project file,
                 // including geometry-only ones without Metadata/project_settings.config (the bundled handy
                 // models, for instance). Only a file that actually carried a config is a project: the GUI
@@ -2997,24 +2995,24 @@ int CLI::run(int argc, char **argv)
     // follow-up. Runs here so the embedded (auto) process preset below sees the filled keys.
     {
         size_t filled = 0;
+        const std::set<std::string> *present = project_file_keys.empty() ? nullptr : &project_file_keys;
         auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
-            if (system_name.empty())
-                return;
             const std::vector<std::string> &options =
                 type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
-            const std::set<std::string> *present = project_file_keys.empty() ? nullptr : &project_file_keys;
-            // S1: do not load vendor bundles when nothing is missing.
-            if (missing_project_keys(m_print_config, options, present).empty())
-                return;
-            const Preset *sys = named_presets().find_system(system_name, type);
-            if (sys == nullptr) {
-                BOOST_LOG_TRIVIAL(warning)
-                    << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
-                           % system_name;
-                return;
-            }
             std::vector<std::string> filled_keys;
-            const size_t n = fill_missing_project_keys(m_print_config, sys->config, options, &filled_keys, present);
+            const size_t n = fill_cli_system_preset(
+                m_print_config, system_name, options,
+                [&](const std::string &name) -> const DynamicPrintConfig * {
+                    const Preset *sys = named_presets().find_system(name, type);
+                    if (sys == nullptr) {
+                        BOOST_LOG_TRIVIAL(warning)
+                            << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
+                                   % name;
+                        return nullptr;
+                    }
+                    return &sys->config;
+                },
+                &filled_keys, present);
             filled += n;
             for (const std::string &key : filled_keys) {
                 const ConfigOption *opt = m_print_config.option(key);

@@ -1254,7 +1254,11 @@ void GCodeViewer::load_toolpaths_gpu(const GCodeProcessorResult& gcode_result, c
     m_extruders_count = gcode_result.extruders_count;
 
     // sequential view ids in sid space (seam moves skipped), as the legacy
-    // loader produces them
+    // loader produces them; reset() does not clear this table (legacy
+    // load_toolpaths clears it at its own fill site), so clear it here --
+    // without it a re-import in the same session appends to the previous
+    // file's ids and every sid resolves to a stale gcode line
+    m_sequential_view.gcode_ids.clear();
     for (const GCodeProcessorResult::MoveVertex& move : gcode_result.moves) {
         if (move.type != EMoveType::Seam)
             m_sequential_view.gcode_ids.push_back(move.gcode_id);
@@ -1903,11 +1907,10 @@ bool GCodeViewer::can_export_toolpaths() const
 void GCodeViewer::update_sequential_view_current(unsigned int first, unsigned int last)
 {
     // GPU path pipeline: the slider delivers sids directly; the playback
-    // window clips the top layer and dims the layers below (legacy keeps the
-    // window start at 0)
+    // window clips the top layer and dims the layers below
     if (gpu_path_pipeline_enabled() && _pathStack != nullptr) {
-        (void)first;
         last = std::min(last, static_cast<unsigned int>(m_sequential_view.endpoints.last));
+        first = std::min(first, static_cast<unsigned int>(m_sequential_view.endpoints.last));
 
         if (m_sequential_view.skip_invisible_moves) {
             // snap to the nearest sid whose move passes the current
@@ -1927,9 +1930,8 @@ void GCodeViewer::update_sequential_view_current(unsigned int first, unsigned in
                 last = (direction > 0) ? last + 1 : last - 1;
         }
 
-        // legacy keeps current.first at 0 (top_layer_only is always true in
-        // its refresh_render_paths); the gcode-window start line reads it
-        m_sequential_view.current.first = 0;
+        // legacy sets current.first to the delivered lower value here
+        m_sequential_view.current.first = first;
         m_sequential_view.current.last = last;
         m_sequential_view.last_current = m_sequential_view.current;
         _pathStack->SetMoveWindow(0, last);
@@ -3491,9 +3493,9 @@ void GCodeViewer::refresh_render_paths_gpu(bool keep_sequential_current_first, b
     SequentialView& sequentialView = const_cast<SequentialView&>(m_sequential_view);
     sequentialView.endpoints = { firstSid, lastSid };
 
-    // legacy semantics: with top_layer_only (always true there) the playback
-    // window start stays at 0 and only its end is kept when requested
-    sequentialView.current.first = 0;
+    // legacy semantics (refresh_render_paths, final assignment): the window
+    // start is global_endpoints.first and only its end is kept on request
+    sequentialView.current.first = sequentialView.endpoints.first;
     if (!keep_sequential_current_last)
         sequentialView.current.last = sequentialView.endpoints.last;
     sequentialView.current.last = std::min(sequentialView.current.last, sequentialView.endpoints.last);

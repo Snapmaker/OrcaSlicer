@@ -24,6 +24,19 @@ SCENARIO("Origin manipulation", "[GCode]") {
     }
 }
 
+// Some firmwares only scan the last N lines of the file for "estimated printing time", so it
+// must stay close to EOF regardless of the resolved-settings config block's size.
+TEST_CASE("Estimated printing time comment follows the config block", "[GCode]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    const std::string  gcode  = slice({TestMesh::cube_20x20x20}, config);
+    const size_t       config_block_end = gcode.find("; CONFIG_BLOCK_END");
+    const size_t       time_comment     = gcode.rfind("; estimated printing time");
+    REQUIRE(config_block_end != std::string::npos);
+    REQUIRE(time_comment != std::string::npos);
+    REQUIRE(time_comment > config_block_end);
+}
+
 // FanMover (active when fan_speedup_time or fan_kickstart != 0) can split a G1 to insert an
 // early fan command. GCode::set_extruder must bracket change_filament_gcode so those travels
 // stay intact. FanMover keys off a "; custom gcode" prefix and ignores comments shorter than

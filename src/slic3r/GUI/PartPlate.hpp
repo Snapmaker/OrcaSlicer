@@ -614,6 +614,7 @@ class PartPlateList : public ObjectBase
     bool render_cali_logo = true;
 
     bool m_is_dark = false;
+    bool m_icon_textures_dark = false;
 
     int m_filament_count = 1;
 
@@ -627,6 +628,8 @@ class PartPlateList : public ObjectBase
     //generate icon textures
     void generate_icon_textures();
     void release_icon_textures();
+    bool icon_textures_loaded() const { return m_del_texture.get_id() != 0 && m_icon_textures_dark == m_is_dark; }
+    void load_icon_textures();
 
     void set_default_wipe_tower_pos_for_plate(int plate_idx);
 

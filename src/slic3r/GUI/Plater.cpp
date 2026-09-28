@@ -8773,15 +8773,10 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
         if (auto* opt = pb.project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = pb.mixed_filaments.serialize_custom_entries();
     }
-    
-    // Save mixed snapshot
-    std::vector<unsigned char> is_mixed_snapshot;
-    if (auto* opt = pb.project_config.option<ConfigOptionBools>("filament_is_mixed"))
-        is_mixed_snapshot = opt->values;
-    
+
     // Update objects to use new filament IDs
     size_t total_after = pb.mixed_filaments.total_filaments(num_physical);
-    wxGetApp().plater()->on_filaments_delete(total_after, from_id, -1, is_mixed_snapshot);
+    wxGetApp().plater()->on_filaments_delete(total_after, from_id, -1);
     
     BOOST_LOG_TRIVIAL(info) << "Mixed filament merge completed. Total filaments after: " << total_after;
     
@@ -8865,10 +8860,6 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         }
     }
 
-    std::vector<unsigned char> is_mixed_snapshot;
-    if (auto* opt = preset_bundle->project_config.option<ConfigOptionBools>("filament_is_mixed"))
-        is_mixed_snapshot = opt->values;
-
     auto& pb = *preset_bundle;
     size_t old_num_physical = pb.filament_presets.size();
     size_t old_total_filaments = pb.mixed_filaments.total_filaments(old_num_physical);
@@ -8927,7 +8918,7 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
 
         // Pass the post-deletion mixed target so painted states and config-level
         // object/volume extruder assignments follow the same remap.
-        wxGetApp().plater()->on_filaments_delete(total_after_delete, filament_id, merged_target_id, is_mixed_snapshot);
+        wxGetApp().plater()->on_filaments_delete(total_after_delete, filament_id, merged_target_id);
 
         // Resynchronize filament_colour from the post-deletion project config;
         // GLCanvas3D reads this config when updating GLVolume colors.
@@ -8980,8 +8971,7 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
     }
 
     wxGetApp().plater()->on_filaments_delete(total_after_delete, filament_id,
-                                             final_replace_id,
-                                             is_mixed_snapshot);
+                                             final_replace_id);
 
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
@@ -23635,7 +23625,7 @@ bool Plater::search_string_getter(int idx, const char** label, const char** tool
     return false;
 }
 
-void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int replace_filament_id, const std::vector<unsigned char>& is_mixed_snapshot)
+void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int replace_filament_id)
 {
     // only update elements in plater
     update_filament_colors_in_full_config();

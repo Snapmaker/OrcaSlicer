@@ -5471,6 +5471,31 @@ TEST_CASE("Dual-color primary drops invalid tokens and falls back on empty", "[M
 // must be dropped on load/grow so add-filament cannot resurrect them.
 // ============================================================================
 
+TEST_CASE("Mixed slot identity comes from MixedFilamentManager, not filament_is_mixed",
+          "[MixedFilament][IncompleteMetadata]")
+{
+    MixedAutoGenerateGuard guard(true);
+    const FullPrintConfig &defaults = FullPrintConfig::defaults();
+    CHECK(defaults.option("filament_is_mixed") == nullptr);
+    REQUIRE(defaults.option("mixed_filament_definitions") != nullptr);
+
+    DynamicPrintConfig project;
+    project.apply(defaults);
+    CHECK(project.option("filament_is_mixed") == nullptr);
+
+    MixedFilamentManager mgr;
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+    mgr.auto_generate(colors);
+    const size_t num_physical = colors.size();
+    const size_t total        = mgr.total_filaments(num_physical);
+    REQUIRE(total > num_physical);
+
+    for (unsigned int id = 1; id <= unsigned(num_physical); ++id)
+        CHECK_FALSE(mgr.is_mixed(id, num_physical));
+    for (unsigned int id = unsigned(num_physical) + 1; id <= unsigned(total); ++id)
+        CHECK(mgr.is_mixed(id, num_physical));
+}
+
 static bool has_custom_mixed_pair(const MixedFilamentManager &mgr, unsigned int a, unsigned int b)
 {
     for (const MixedFilament &mf : mgr.mixed_filaments()) {

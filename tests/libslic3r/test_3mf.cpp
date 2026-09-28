@@ -11,10 +11,16 @@
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/Utils.hpp"
 
+#include "libslic3r/Zipper.hpp"
+#include "libslic3r/miniz_extension.hpp"
+
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
+#include <boost/system/error_code.hpp>
 
-#include "libslic3r/miniz_extension.hpp"
+#include <fstream>
+#include <functional>
 
 using namespace Slic3r;
 
@@ -888,4 +894,336 @@ TEST_CASE("Deft: write a single-filament P1S-shaped project 3MF as the slice-det
     REQUIRE(store_bbs_3mf(sp));
     WARN("Determinism control (single-filament P1S-shaped) project written to " << out);
     // Left on disk on purpose - the CLI slice-determinism gate reads it from there.
+}
+
+// Rewrites the archive at `path`, letting `edit` change the name or data of each entry; returns
+// whether `edit` reported a change for any of them. miniz cannot edit in place and
+// open_zip_writer truncates, so the entries are held across the switch.
+static bool rewrite_3mf_entries(const std::string &path, const std::function<bool(std::string &name, std::string &data)> &edit)
+{
+    std::vector<std::pair<std::string, std::string>> entries;
+    bool                                             changed = false;
+    {
+        mz_zip_archive zip;
+        mz_zip_zero_struct(&zip);
+        REQUIRE(open_zip_reader(&zip, path));
+        const mz_uint n = mz_zip_reader_get_num_files(&zip);
+        for (mz_uint i = 0; i < n; ++i) {
+            mz_zip_archive_file_stat st;
+            REQUIRE(mz_zip_reader_file_stat(&zip, i, &st));
+            std::string name = st.m_filename;
+            std::string data;
+            if (st.m_uncomp_size > 0) {
+                size_t size = 0;
+                void  *mem  = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+                REQUIRE(mem != nullptr);
+                data.assign(static_cast<const char *>(mem), size);
+                mz_free(mem);
+            }
+            changed |= edit(name, data);
+            entries.emplace_back(std::move(name), std::move(data));
+        }
+        close_zip_reader(&zip);
+    }
+
+    Zipper out(path);
+    for (const auto &e : entries)
+        out.add_entry(e.first, e.second.data(), e.second.size());
+    out.finalize();
+    return changed;
+}
+
+// Replaces the first occurrence of `from` in any entry whose name ends with `suffix`.
+static bool replace_in_3mf_entry(const std::string &path, const std::string &suffix, const std::string &from, const std::string &to)
+{
+    bool replaced = false;
+    rewrite_3mf_entries(path, [&](std::string &name, std::string &data) {
+        if (replaced || !boost::algorithm::ends_with(name, suffix))
+            return false;
+        if (const size_t pos = data.find(from); pos != std::string::npos) {
+            data.replace(pos, from.size(), to);
+            replaced = true;
+        }
+        return replaced;
+    });
+    return replaced;
+}
+
+static void prepare_3mf_temp_dir()
+{
+    const boost::filesystem::path tmp_root = boost::filesystem::temp_directory_path() / "snorca_tests";
+    boost::filesystem::create_directories(tmp_root);
+    Slic3r::set_temporary_dir(tmp_root.string());
+}
+
+// Stores a one-plate project holding a cube whose first two facets are painted Extruder2 and
+// Extruder3, which the exporter writes as paint_color="8" and paint_color="0C". Also paints
+// support / seam / fuzzy on those facets so a round-trip can check all four streams.
+static void store_painted_cube(const std::string &path, Model *out_model = nullptr)
+{
+    prepare_3mf_temp_dir();
+
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->name        = "paint_cube";
+    ModelVolume *volume = object->add_volume(make_cube(10., 10., 10.));
+    volume->name        = "cube";
+    object->add_instance();
+    object->ensure_on_bed();
+
+    {
+        TriangleSelector selector(volume->mesh());
+        selector.set_facet(0, EnforcerBlockerType::Extruder2);
+        selector.set_facet(1, EnforcerBlockerType::Extruder3);
+        REQUIRE(volume->mmu_segmentation_facets.set(selector));
+    }
+    {
+        TriangleSelector selector(volume->mesh());
+        selector.set_facet(0, EnforcerBlockerType::ENFORCER);
+        REQUIRE(volume->supported_facets.set(selector));
+    }
+    {
+        TriangleSelector selector(volume->mesh());
+        selector.set_facet(1, EnforcerBlockerType::ENFORCER);
+        REQUIRE(volume->seam_facets.set(selector));
+    }
+    {
+        TriangleSelector selector(volume->mesh());
+        selector.set_facet(0, EnforcerBlockerType::FUZZY_SKIN);
+        REQUIRE(volume->fuzzy_skin_facets.set(selector));
+    }
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          plate;
+    plate.plate_index = 0;
+    StoreParams        sp;
+    sp.path            = path.c_str();
+    sp.model           = &model;
+    sp.config          = &cfg;
+    sp.strategy        = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+    sp.plate_data_list.push_back(&plate);
+    REQUIRE(store_bbs_3mf(sp));
+    if (out_model != nullptr)
+        *out_model = std::move(model);
+}
+
+// Loads `path` through the BBS importer into `model`, releasing the plates it returns.
+static bool load_project(const std::string &path, Model &model)
+{
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset *>     project_presets;
+    bool                      is_bbl_3mf = false;
+    Semver                    file_version;
+    const bool loaded = load_bbs_3mf(path.c_str(), &config, &ctxt, &model, &plates, &project_presets, &is_bbl_3mf,
+                                     &file_version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::Silence);
+    release_PlateData_list(plates);
+    for (Preset *preset : project_presets)
+        delete preset;
+    return loaded;
+}
+
+static std::string make_temp_3mf_path(const std::string &name)
+{
+    prepare_3mf_temp_dir();
+    const boost::filesystem::path tmp_root = boost::filesystem::temp_directory_path() / "snorca_tests";
+    return (tmp_root / name).string();
+}
+
+static ScopeGuard remove_file_guard(const std::string &path)
+{
+    return ScopeGuard([path]() {
+        boost::system::error_code ec;
+        boost::filesystem::remove(path, ec);
+    });
+}
+
+TEST_CASE("A project with a plate id below 1 fails to load", "[3mf][Regression]")
+{
+    const int plate_id = GENERATE(0, -1);
+    INFO("plater_id " << plate_id);
+
+    const std::string path = make_temp_3mf_path("plate_id_" + std::to_string(plate_id) + ".3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    store_painted_cube(path);
+    {
+        Model model;
+        REQUIRE(load_project(path, model));
+    }
+
+    REQUIRE(replace_in_3mf_entry(path, "model_settings.config", "key=\"plater_id\" value=\"1\"",
+                                 "key=\"plater_id\" value=\"" + std::to_string(plate_id) + "\""));
+    Model model;
+    bool  loaded = true;
+    REQUIRE_NOTHROW(loaded = load_project(path, model));
+    REQUIRE_FALSE(loaded);
+}
+
+TEST_CASE("A gcode.3mf with a plate id below 1 fails to load from stream", "[3mf][Regression]")
+{
+    const int plate_id = GENERATE(0, -1);
+    INFO("plater_id " << plate_id);
+
+    const std::string path = make_temp_3mf_path("gcode_plate_id_" + std::to_string(plate_id) + ".3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    store_painted_cube(path);
+
+    auto load_gcode = [&](bool expect_ok) {
+        std::ifstream in(path, std::ios::binary);
+        REQUIRE(in);
+        Model              model;
+        DynamicPrintConfig config;
+        PlateDataPtrs      plates;
+        Semver             version;
+        ScopeGuard         release_plates([&plates]() { release_PlateData_list(plates); });
+        bool               loaded = true;
+        REQUIRE_NOTHROW(loaded = load_gcode_3mf_from_stream(in, &config, &model, &plates, &version));
+        if (expect_ok)
+            REQUIRE(loaded);
+        else
+            REQUIRE_FALSE(loaded);
+    };
+
+    load_gcode(true);
+    REQUIRE(replace_in_3mf_entry(path, "model_settings.config", "key=\"plater_id\" value=\"1\"",
+                                 "key=\"plater_id\" value=\"" + std::to_string(plate_id) + "\""));
+    load_gcode(false);
+}
+
+TEST_CASE("A project with malformed paint data loads without the damaged facet", "[3mf][Regression]")
+{
+    const std::string path = make_temp_3mf_path("malformed_paint.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    store_painted_cube(path);
+    // Split codes with no children behind them: the stream runs out mid-tree.
+    REQUIRE(replace_in_3mf_entry(path, ".model", "paint_color=\"8\"", "paint_color=\"FFFFFFFFFFFFFFFF3\""));
+
+    Model model;
+    REQUIRE(load_project(path, model));
+    REQUIRE(model.objects.size() == 1);
+    const ModelVolume &volume = *model.objects.front()->volumes.front();
+    const auto        &data   = volume.mmu_segmentation_facets.get_data();
+    REQUIRE_FALSE(data.used_states[size_t(EnforcerBlockerType::Extruder2)]);
+    REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder3)]);
+
+    TriangleSelector selector(volume.mesh());
+    REQUIRE_NOTHROW(selector.deserialize(data));
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder2) == 0);
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder3) == 1);
+}
+
+TEST_CASE("A non-hex paint string drops only that facet", "[3mf][Regression]")
+{
+    const std::string path = make_temp_3mf_path("nonhex_paint.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    store_painted_cube(path);
+    REQUIRE(replace_in_3mf_entry(path, ".model", "paint_color=\"8\"", "paint_color=\"zz\""));
+
+    Model model;
+    REQUIRE(load_project(path, model));
+    REQUIRE(model.objects.size() == 1);
+    const ModelVolume &volume = *model.objects.front()->volumes.front();
+    const auto        &data   = volume.mmu_segmentation_facets.get_data();
+    REQUIRE_FALSE(data.used_states[size_t(EnforcerBlockerType::Extruder2)]);
+    REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder3)]);
+
+    TriangleSelector selector(volume.mesh());
+    REQUIRE_NOTHROW(selector.deserialize(data));
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder2) == 0);
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder3) == 1);
+}
+
+TEST_CASE("Lowercase paint hex is accepted", "[3mf][Regression]")
+{
+    const std::string path = make_temp_3mf_path("lowercase_paint.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    store_painted_cube(path);
+    REQUIRE(replace_in_3mf_entry(path, ".model", "paint_color=\"0C\"", "paint_color=\"0c\""));
+
+    Model model;
+    REQUIRE(load_project(path, model));
+    REQUIRE(model.objects.size() == 1);
+    const ModelVolume &volume = *model.objects.front()->volumes.front();
+    const auto        &data   = volume.mmu_segmentation_facets.get_data();
+    REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder2)]);
+    REQUIRE(data.used_states[size_t(EnforcerBlockerType::Extruder3)]);
+
+    TriangleSelector selector(volume.mesh());
+    REQUIRE_NOTHROW(selector.deserialize(data));
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder2) == 1);
+    REQUIRE(selector.num_facets(EnforcerBlockerType::Extruder3) == 1);
+}
+
+TEST_CASE("A painted cube round-trips mmu, seam, support and fuzzy paint", "[3mf][MMUPaint]")
+{
+    const std::string path = make_temp_3mf_path("painted_cube_roundtrip.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    Model             src_model;
+    store_painted_cube(path, &src_model);
+
+    Model dst_model;
+    REQUIRE(load_project(path, dst_model));
+    REQUIRE(dst_model.objects.size() == 1);
+    const ModelVolume &src_vol = *src_model.objects.front()->volumes.front();
+    const ModelVolume &dst_vol = *dst_model.objects.front()->volumes.front();
+    REQUIRE(src_vol.mmu_segmentation_facets.equals(dst_vol.mmu_segmentation_facets));
+    REQUIRE(src_vol.supported_facets.equals(dst_vol.supported_facets));
+    REQUIRE(src_vol.seam_facets.equals(dst_vol.seam_facets));
+    REQUIRE(src_vol.fuzzy_skin_facets.equals(dst_vol.fuzzy_skin_facets));
+}
+
+TEST_CASE("Paint states 20, 200 and 255 round-trip through a 3MF byte-identically", "[3mf][MMUPaint][TriangleSelector]")
+{
+    const std::string path = make_temp_3mf_path("high_state_paint.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+    prepare_3mf_temp_dir();
+
+    Model        src_model;
+    ModelObject *object = src_model.add_object();
+    object->name        = "paint_cube";
+    ModelVolume *volume = object->add_volume(make_cube(10., 10., 10.));
+    volume->name        = "cube";
+    object->add_instance();
+    object->ensure_on_bed();
+
+    const int states[3] = {20, 200, 255};
+    {
+        TriangleSelector selector(volume->mesh());
+        for (int i = 0; i < 3; ++i)
+            selector.set_facet(i, static_cast<EnforcerBlockerType>(states[i]));
+        REQUIRE(volume->mmu_segmentation_facets.set(selector));
+    }
+
+    std::string hex[3];
+    for (int i = 0; i < 3; ++i)
+        hex[i] = volume->mmu_segmentation_facets.get_triangle_as_string(i);
+    const auto src_data = volume->mmu_segmentation_facets.get_data();
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    PlateData          plate;
+    plate.plate_index = 0;
+    StoreParams        sp;
+    sp.path            = path.c_str();
+    sp.model           = &src_model;
+    sp.config          = &cfg;
+    sp.strategy        = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+    sp.plate_data_list.push_back(&plate);
+    REQUIRE(store_bbs_3mf(sp));
+
+    Model dst_model;
+    REQUIRE(load_project(path, dst_model));
+    REQUIRE(dst_model.objects.size() == 1);
+    const ModelVolume &dst_vol = *dst_model.objects.front()->volumes.front();
+    REQUIRE(src_model.objects.front()->volumes.front()->mmu_segmentation_facets.equals(dst_vol.mmu_segmentation_facets));
+    REQUIRE(dst_vol.mmu_segmentation_facets.get_data() == src_data);
+    for (int i = 0; i < 3; ++i) {
+        REQUIRE(dst_vol.mmu_segmentation_facets.get_triangle_as_string(i) == hex[i]);
+        REQUIRE_FALSE(hex[i].empty());
+    }
+
+    TriangleSelector restored(dst_vol.mesh());
+    REQUIRE_NOTHROW(restored.deserialize(dst_vol.mmu_segmentation_facets.get_data()));
+    for (int i = 0; i < 3; ++i)
+        REQUIRE(restored.num_facets(static_cast<EnforcerBlockerType>(states[i])) == 1);
 }

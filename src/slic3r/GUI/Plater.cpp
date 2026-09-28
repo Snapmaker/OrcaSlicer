@@ -31302,11 +31302,10 @@ void Plater::show_object_info()
     int non_manifold_edges = 0;
     auto mesh_errors = p->sidebar->obj_list()->get_mesh_errors_info(&info_manifold, &non_manifold_edges);
 
-    #ifndef __WINDOWS__
+    // "Fix Model" repairs through CGAL (FixModelByCgal) and is offered on every platform.
     if (non_manifold_edges > 0) {
-        info_manifold += "\n" + _L("Tips:") + "\n" + _L("\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares.");
+        info_manifold += "\n" + _L("Tips:") + "\n" + _L("Use \"Fix Model\" to repair the mesh.");
     }
-    #endif //APPLE & LINUX
 
     info_manifold = "<Error>" + info_manifold + "</Error>";
     info_text += into_u8(info_manifold);

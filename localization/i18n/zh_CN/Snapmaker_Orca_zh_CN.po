@@ -9600,6 +9600,9 @@ msgstr "三角形：%1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "\"修复模型\"功能目前仅适用于Windows。请在Snapmaker Orca(windows)或CAD软件上修复模型。"
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "使用“修复模型”来修复网格。"
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "热床 %d：%s不建议被用于打印%s（%s）材料。如果你依然想打印，请设置耗材对应的热床温度为非零值。"
@@ -29807,9 +29810,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "在 OrcaCloud 上查找"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "使用“修复模型”来修复网格。"
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

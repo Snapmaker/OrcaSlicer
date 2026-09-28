@@ -9559,6 +9559,9 @@ msgstr "Triángulos: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "La característica \"Arreglar Modelo\" está actualmente disponible sólo en Windows. Por favor, repare el modelo en Snapmaker Orca (windows) o en un programa CAD."
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Utiliza «Reparar modelo» para arreglar la malla."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "Bandeja %d: %s no es recomendable ser usada para imprimir el filamento %s(%s). Si desea imprimir de todos modos, por favor, indique una temperatura de bandeja distinta a 0 en la configuración del filamento."
@@ -29250,9 +29253,6 @@ msgstr ""
 
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Buscar en OrcaCloud"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Utiliza «Reparar modelo» para arreglar la malla."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

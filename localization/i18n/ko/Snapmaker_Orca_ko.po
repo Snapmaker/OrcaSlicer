@@ -9835,6 +9835,10 @@ msgstr "삼각형: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "\"모델 수리\" 기능은 현재 Windows에만 있습니다. Snapmaker Orca(Wndows) 또는 CAD 소프트웨어 등에서 모델을 수정하세요."
 
+# AI Translated
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "\"모델 수정\"을 사용하여 메시를 복구하십시오."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "%d: %s플레이트는 %s(%s)필라멘트를 출력하는데 사용하지 않는 것이 좋습니다. 이 출력을 계속하려면 이 필라멘트의 베드 온도를 0이 아닌 값으로 설정하세요."
@@ -30527,10 +30531,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "OrcaCloud에서 찾기"
-
-# AI Translated
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "\"모델 수정\"을 사용하여 메시를 복구하십시오."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

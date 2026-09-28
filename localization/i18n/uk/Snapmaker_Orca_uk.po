@@ -9872,6 +9872,9 @@ msgstr ""
 "Функція \\Fix Model\\ доступна лише у Windows. Будь ласка, відремонтуйте модель \n"
 "на Snapmaker Orca (Windows) або у програмах САПР."
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Використовуйте \"Виправити модель\", щоб виправити сітку."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr ""
@@ -30527,9 +30530,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Знайти в OrcaCloud"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Використовуйте \"Виправити модель\", щоб виправити сітку."
 
 # AI Translated
 #, c-format, boost-format

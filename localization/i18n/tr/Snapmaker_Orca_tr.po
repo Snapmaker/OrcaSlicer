@@ -9870,6 +9870,10 @@ msgstr "Üçgenler: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "\"Modeli Onar\" özelliği şu anda yalnızca Windows'ta bulunmaktadır. Lütfen modeli Snapmaker Orca (windows) veya CAD yazılımlarında onarın."
 
+# AI Translated
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Mesh'i onarmak için \"Modeli Onar\" özelliğini kullanın."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "Plaka %d: %s'nin %s(%s) filamentinı yazdırmak için kullanılması önerilmez. Eğer yine de bu baskıyı yapmak istiyorsanız, lütfen bu filamentin plaka sıcaklığını sıfır olmayan bir değere ayarlayın."
@@ -30458,10 +30462,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "OrcaCloud'da bul"
-
-# AI Translated
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Mesh'i onarmak için \"Modeli Onar\" özelliğini kullanın."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

@@ -9787,6 +9787,9 @@ msgstr "Треугольников: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "Функция «Починить модель» в настоящее время доступна только в Windows. Пожалуйста, почините модель с помощью Bambu Studio (Windows) или в другой CAD программе."
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Используйте «Восстановить» для исправления сетки. "
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "Не рекомендуется использовать печатную пластину %d (%s) для печати прутком %s (%s). Если вы всё же хотите сделать это, то установите температуру стола для этого прутка на ненулевое значение."
@@ -30303,9 +30306,6 @@ msgstr ""
 
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Найти в OrcaCloud"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Используйте «Восстановить» для исправления сетки. "
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

@@ -9626,6 +9626,9 @@ msgstr "Triangeluak: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr ""
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Erabili \"Konpondu modeloa\" sarea konpontzeko."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "%d plaka: ez da gomendatzen %s erabiltzea %s (%s) filamentua inprimatzeko. Hala ere inprimatze-lan hau egin nahi baduzu, ezarri filamentuarentzako ohearen tenperatura zero ez den balio batera."
@@ -26608,9 +26611,6 @@ msgstr ""
 
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "OrcaCloud-en bilatu"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Erabili \"Konpondu modeloa\" sarea konpontzeko."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

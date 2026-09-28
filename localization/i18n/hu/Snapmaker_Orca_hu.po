@@ -9775,6 +9775,9 @@ msgstr "Háromszögek: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr ""
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "A háló javításához használd a „Modell rögzítése” lehetőséget."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr ""
@@ -29287,9 +29290,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Keresés az OrcaCloudon"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "A háló javításához használd a „Modell rögzítése” lehetőséget."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

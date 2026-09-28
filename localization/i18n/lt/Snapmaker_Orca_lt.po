@@ -9808,6 +9808,9 @@ msgstr "Trikampių: %1%\n"
 msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
 msgstr "Funkcija „Pataisyti modelį“ šiuo metu pasiekiama tik „Windows“. Pataisykite modelį „Snapmaker Orca“ („Windows“) arba CAD programinėje įrangoje."
 
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Naudokite funkciją „Sutaisyti modelį“, kad pataisytumėte dalį."
+
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
 msgstr "Plokštė %d: %s nesiūloma naudoti spausdinant gijomis %s(%s). Jei vis tiek norite spausdinti, nustatykite nenulinę pagrindo šiai gijai temperatūrą."
@@ -29829,9 +29832,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Rasti OrcaCloud"
-
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Naudokite funkciją „Sutaisyti modelį“, kad pataisytumėte dalį."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

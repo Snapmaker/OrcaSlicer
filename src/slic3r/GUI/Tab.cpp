@@ -6521,6 +6521,10 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     bool canceled      = false;
     bool no_transfer = false;
     bool technology_changed = false;
+    // Ultra: FFF -> FFF printer switch carries the process settings (PresetBundle::apply_print_settings_carry).
+    bool               carry_process = false;
+    PrintSettingsCarry print_settings_carry;
+    m_carry_notes.clear();
     m_dependent_tabs.clear();
     if ((m_presets->type() == Preset::TYPE_FILAMENT) && !preset_name.empty())
     {
@@ -6595,8 +6599,15 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                 { Preset::Type::TYPE_FILAMENT,      &m_preset_bundle->filaments,    ptFFF },
                 //{ Preset::Type::TYPE_SLA_MATERIAL,  &m_preset_bundle->sla_materials,ptSLA }
             };
+            // Ultra: on an FFF -> FFF switch the process settings (modifications included) are carried
+            // onto whatever process preset the new printer ends up with, so the process preset needs
+            // neither the transfer/discard dialog nor a discard here. Snapshot it before anything changes.
+            carry_process = old_printer_technology == ptFFF && new_printer_technology == ptFFF;
+            if (carry_process)
+                print_settings_carry = m_preset_bundle->capture_print_settings_carry();
             for (PresetUpdate &pu : updates) {
-                pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty();
+                pu.old_preset_dirty = (old_printer_technology == pu.technology) && pu.presets->current_is_dirty() &&
+                                      !(carry_process && pu.tab_type == Preset::Type::TYPE_PRINT);
                 pu.new_preset_compatible = (new_printer_technology == pu.technology) && is_compatible_with_printer(pu.presets->get_edited_preset_with_vendor_profile(), new_printer_preset_with_vendor_profile);
                 if (!canceled)
                     canceled = pu.old_preset_dirty && !force_select && !may_discard_current_dirty_preset(pu.presets, preset_name) && !pu.new_preset_compatible;
@@ -6798,6 +6809,26 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
                 wxGetApp().plater()->sidebar().on_filaments_change(m_preset_bundle->filament_presets.size());
             }
         }
+
+        // Ultra: carry the previous process settings onto the process preset the new printer ended
+        // up with (matched by update_compatible, or the remembered one from update_selections above,
+        // which is why this runs last). Carried values stay dirty, so each one can be reverted and
+        // "discard all" restores the matched profile exactly.
+        if (carry_process && m_type == Preset::TYPE_PRINTER) {
+            const std::vector<std::string> carried = m_preset_bundle->apply_print_settings_carry(print_settings_carry);
+            if (!carried.empty()) {
+                const auto *new_nozzles = dynamic_cast<const ConfigOptionFloats *>(
+                    m_preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+                const bool same_nozzle_size = new_nozzles != nullptr &&
+                                              print_carry_same_nozzle_size(print_settings_carry.nozzle_diameters, new_nozzles->values);
+                std::string note = carried.size() == 1 ?
+                    (boost::format(_u8L("Kept 1 process setting from \"%1%\" (revertable).")) % print_settings_carry.from_preset).str() :
+                    (boost::format(_u8L("Kept %1% process settings from \"%2%\" (revertable).")) % carried.size() % print_settings_carry.from_preset).str();
+                if (!same_nozzle_size)
+                    note += " " + _u8L("Line widths and layer heights follow the new nozzle size.");
+                m_carry_notes.insert(m_carry_notes.begin(), note);
+            }
+        }
         load_current_preset();
 
         // Ultra: switching to a printer re-pulls that printer's newest Bambu Studio user presets.
@@ -6840,6 +6871,12 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         on_presets_changed();
     }
 
+    // Ultra: one short notification per switch for everything that was carried over.
+    if (canceled)
+        m_carry_notes.clear();
+    else
+        show_carry_notification();
+
     if (technology_changed)
         wxGetApp().mainframe->technology_changed();
     if (!canceled && m_presets->type() == Preset::TYPE_FILAMENT)
@@ -6847,6 +6884,29 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
     BOOST_LOG_TRIVIAL(info) << boost::format("select preset, exit");
 
     return !canceled;
+}
+
+// Ultra: show what the current select_preset() carried over (printer-switch process carry and/or
+// auto-transferred modifications) as one short, fading notification.
+void Tab::show_carry_notification()
+{
+    if (m_carry_notes.empty())
+        return;
+    std::string text;
+    for (const std::string &note : m_carry_notes) {
+        if (!text.empty())
+            text += "\n";
+        text += note;
+    }
+    m_carry_notes.clear();
+    BOOST_LOG_TRIVIAL(info) << "Settings carried on preset switch: " << text;
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+    if (NotificationManager *nm = plater->get_notification_manager()) {
+        nm->close_notification_of_type(NotificationType::PresetSettingsCarried);
+        nm->push_notification(NotificationType::PresetSettingsCarried, NotificationManager::NotificationLevel::RegularNotificationLevel, text);
+    }
 }
 
 // If the current preset is dirty, the user is asked whether the changes may be discarded.
@@ -6914,6 +6974,26 @@ bool Tab::may_discard_current_dirty_preset(PresetCollection* presets /*= nullptr
         }
         else
             wxGetApp().get_tab(presets->type())->cache_config_diff(selected_options);
+
+        // Ultra: the transfer happens without asking (UnsavedChangesDialog::ShowModal), so say
+        // what was kept; select_preset() shows it once the switch is done.
+        std::set<std::string> kept_keys;
+        for (const std::string &opt : selected_options)
+            kept_keys.insert(opt.substr(0, opt.find('#')));
+        if (!kept_keys.empty()) {
+            const std::string from = presets->get_edited_preset().name;
+            const size_t      n    = kept_keys.size();
+            std::string       note;
+            if (presets->type() == Preset::TYPE_PRINT)
+                note = n == 1 ? (boost::format(_u8L("Kept 1 modified process setting from \"%1%\" (revertable).")) % from).str() :
+                                (boost::format(_u8L("Kept %1% modified process settings from \"%2%\" (revertable).")) % n % from).str();
+            else if (presets->type() == Preset::TYPE_FILAMENT)
+                note = n == 1 ? (boost::format(_u8L("Kept 1 modified filament setting from \"%1%\" (revertable).")) % from).str() :
+                                (boost::format(_u8L("Kept %1% modified filament settings from \"%2%\" (revertable).")) % n % from).str();
+            else
+                note = (boost::format(_u8L("Kept %1% modified settings from \"%2%\" (revertable).")) % n % from).str();
+            m_carry_notes.emplace_back(std::move(note));
+        }
     }
 
     return true;

@@ -45,6 +45,33 @@ struct ConnectMachineInfo
 
 namespace Slic3r {
 
+// Ultra: carrying process (print) settings across a printer switch.
+// See docs/superpowers/specs/2026-09-26-print-settings-transfer-design.md.
+//
+// On a printer switch the process preset is re-matched to the new printer; the previous process
+// settings are then applied on top of the matched profile as ordinary modifications, so each one
+// shows the orange revert arrow and "discard all" returns to the matched profile exactly.
+//   - printer-coupled keys (print_carry_is_printer_coupled) always keep the matched profile's value;
+//   - when the nozzle size changes, nozzle-scaled geometry keys (print_carry_is_nozzle_geometry)
+//     keep the matched profile's value as well;
+//   - vector values whose length differs between the two profiles keep the matched profile's value,
+//     except the per-flow-mode process options, which are matched up by flow mode name.
+struct PrintSettingsCarry
+{
+    std::string         from_preset;      // print preset name before the switch; empty = nothing to carry
+    DynamicPrintConfig  config;           // the edited (possibly modified) print config before the switch
+    std::vector<double> nozzle_diameters; // nozzle_diameter of the (edited) printer before the switch
+};
+
+// Key belongs to the machine / firmware / preset identity rather than to how the part is printed.
+bool print_carry_is_printer_coupled(const std::string &key);
+// Key scales with the nozzle diameter (line widths, layer heights, Z gaps).
+bool print_carry_is_nozzle_geometry(const std::string &key);
+// Every nozzle of both printers has the same diameter (within 1e-6). Empty lists never match.
+bool print_carry_same_nozzle_size(const std::vector<double> &old_nozzles, const std::vector<double> &new_nozzles);
+// Apply src onto dst following the rules above. Returns the keys whose value in dst changed.
+std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size);
+
 // Bundle of Print + Filament + Printer presets.
 class PresetBundle
 {
@@ -129,6 +156,13 @@ public:
     // consulted by update_compatible() when the active print preset turns incompatible.
     std::map<std::string, std::string> preferred_print_profiles_by_height;
     static std::string layer_height_key(double layer_height);
+
+    // Ultra: snapshot of the current process settings and printer nozzles, taken by the GUI right
+    // before it switches printers (Tab::select_preset). Not used by project load, CLI or startup.
+    PrintSettingsCarry capture_print_settings_carry() const;
+    // Apply a snapshot onto the edited print preset once the new printer and its matched process
+    // preset are selected. Returns the keys that changed (now dirty / revertable).
+    std::vector<std::string> apply_print_settings_carry(const PrintSettingsCarry &carry);
 
     bool backup_user_folder() const;
 

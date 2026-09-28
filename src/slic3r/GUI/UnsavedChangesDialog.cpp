@@ -838,8 +838,10 @@ inline int UnsavedChangesDialog::ShowModal()
     // dirty on the new preset and remain individually revertable via the orange markers,
     // and Save/Discard remain available in the UI. The modal dialog still appears when
     // transfer is impossible (no compatible target), where the choice is genuinely
-    // Save/Discard/Cancel.
-    if (m_buttons & ActionButtons::TRANSFER) {
+    // Save/Discard/Cancel. m_buttons keeps the TRANSFER bit even when build() decided not to
+    // offer the button (printer technology mismatch), so check that the button really exists.
+    // The caller (Tab) reports what was kept in a short notification.
+    if ((m_buttons & ActionButtons::TRANSFER) && m_transfer_btn != nullptr) {
         m_exit_action = Action::Transfer;
         BOOST_LOG_TRIVIAL(info) << "UnsavedChangesDialog: auto-transferred modified values to the new preset";
         return wxID_OK;

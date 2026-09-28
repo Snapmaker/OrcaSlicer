@@ -120,71 +120,25 @@ TEST_CASE("parse_device_sn uses the active device contract", "[gateway][protocol
     REQUIRE(parse_device_sn(json::array()).empty());
 }
 
-TEST_CASE("device object notifications build machine snapshots", "[gateway][protocol]")
+TEST_CASE("current device results use the compact device contract", "[gateway][protocol]")
 {
-    const nlohmann::json params{{"extruder", {{"nozzle_diameter", 0.4}}},
-                                {"extruder1", {{"nozzle_diameter", "0.6"}}},
-                                {"print_task_config",
-                                 {{"filament_vendor", json::array({"Snapmaker", "Polymaker"})},
-                                  {"filament_type", json::array({"PLA", "PETG"})},
-                                  {"filament_sub_type", json::array({"Matte", "NONE"})},
-                                  {"filament_official", json::array({true, false})},
-                                  {"filament_exist", json::array({true, false})},
-                                  {"filament_color", json::array({4281179737, 4294967295})},
-                                  {"filament_color_rgba", json::array({"2D9E59FF", "FFFFFFFF"})},
-                                  {"extruder_map_table", json::array({0, 1})},
-                                  {"filament_color_multi", json::array({json{{"mode", 2}, {"colors", json::array({"2D9E59", "FFFFFF"})}},
-                                                                        json{{"mode", 0}, {"colors", json::array({"FFFFFF"})}}})}}}};
+    const auto connected = parse_current_device(json{{"sn", "U1-001"}, {"connected", true}});
+    REQUIRE(connected.has_value());
+    REQUIRE(connected->valid);
+    REQUIRE(connected->serial_number == "U1-001");
+    REQUIRE(connected->connected);
 
-    const auto snapshot = build_machine_snapshot_from_device_objects(params, "U1-001");
-    REQUIRE(snapshot.has_value());
-    REQUIRE((*snapshot)["sn"] == "U1-001");
-    REQUIRE((*snapshot)["nozzle_diameters"] == json::array({"0.4", "0.6"}));
-    REQUIRE((*snapshot)["filaments"].size() == 2);
-    REQUIRE((*snapshot)["filaments"][0]["vendor"] == "Snapmaker");
-    REQUIRE((*snapshot)["filaments"][0]["type"] == "PLA");
-    REQUIRE((*snapshot)["filaments"][0]["sub_type"] == "Matte");
-    REQUIRE((*snapshot)["filaments"][0]["color"] == "2D9E59FF");
-    REQUIRE((*snapshot)["filaments"][0]["multi_colors"] == json::array({"2D9E59", "FFFFFF"}));
-    REQUIRE((*snapshot)["filaments"][0]["color_mode"] == 2);
-    REQUIRE((*snapshot)["filaments"][1]["vendor"] == "NONE");
-    REQUIRE((*snapshot)["filaments"][1]["type"] == "NONE");
+    const auto disconnected = parse_current_device(json{{"sn", ""}, {"connected", false}});
+    REQUIRE(disconnected.has_value());
+    REQUIRE(disconnected->valid);
+    REQUIRE(disconnected->serial_number.empty());
+    REQUIRE_FALSE(disconnected->connected);
 
-    nlohmann::json legacy_params = params;
-    legacy_params["print_task_config"].erase("filament_exist");
-    legacy_params["print_task_config"].erase("filament_color_rgba");
-    const auto legacy_snapshot = build_machine_snapshot_from_device_objects(legacy_params, "U1-001");
-    REQUIRE(legacy_snapshot.has_value());
-    REQUIRE((*legacy_snapshot)["filaments"][0]["vendor"] == "Snapmaker");
-    REQUIRE((*legacy_snapshot)["filaments"][0]["type"] == "PLA");
-    REQUIRE((*legacy_snapshot)["filaments"][0]["color"] == "2D9E59FF");
-    REQUIRE((*legacy_snapshot)["filaments"][1]["vendor"] == "Polymaker");
-    REQUIRE((*legacy_snapshot)["filaments"][1]["type"] == "PETG");
-
-    REQUIRE_FALSE(build_machine_snapshot_from_device_objects(json{{"print_task_config", json::object()}}, "U1-001").has_value());
-    REQUIRE_FALSE(build_machine_snapshot_from_device_objects(params, "").has_value());
-}
-
-TEST_CASE("device object deltas merge into the last complete objects", "[gateway][protocol]")
-{
-    nlohmann::json objects{{"extruder", {{"nozzle_diameter", 0.4}, {"temperature", 25.0}}},
-                           {"extruder1", {{"nozzle_diameter", "0.6"}, {"temperature", 26.0}}},
-                           {"print_task_config",
-                            {{"filament_vendor", json::array({"Snapmaker", "Polymaker"})},
-                             {"filament_type", json::array({"PLA", "PETG"})}}}};
-
-    const nlohmann::json delta{{"extruder1", nlohmann::json{{"nozzle_diameter", 0.2}}}};
-    merge_device_object_changes(objects, delta);
-
-    REQUIRE(objects["extruder"]["nozzle_diameter"] == 0.4);
-    REQUIRE(objects["extruder"]["temperature"] == 25.0);
-    REQUIRE(objects["extruder1"]["nozzle_diameter"] == 0.2);
-    REQUIRE(objects["extruder1"]["temperature"] == 26.0);
-    REQUIRE(objects["print_task_config"]["filament_vendor"] == json::array({"Snapmaker", "Polymaker"}));
-
-    const auto snapshot = build_machine_snapshot_from_device_objects(objects, "U1-001");
-    REQUIRE(snapshot.has_value());
-    REQUIRE((*snapshot)["nozzle_diameters"] == json::array({"0.4", "0.2"}));
+    const auto missing_connected = parse_current_device(json{{"sn", "U1-001"}});
+    REQUIRE(missing_connected.has_value());
+    REQUIRE_FALSE(missing_connected->connected);
+    REQUIRE_FALSE(parse_current_device(json{{"sn", ""}, {"connected", true}}).has_value());
+    REQUIRE_FALSE(parse_current_device(json::array()).has_value());
 }
 
 TEST_CASE("device object query results expose the complete object map", "[gateway][protocol]")

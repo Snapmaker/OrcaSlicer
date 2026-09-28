@@ -106,8 +106,6 @@ class HMSQuery;
 class ModelMallDialog;
 class PingCodeBindDialog;
 class NetworkErrorDialog;
-class GatewayMachineSnapshot;
-
 
 enum FileType
 {
@@ -370,19 +368,16 @@ private:
     DynamicPrintConfig              m_host_config;
     std::mutex                 m_host_cfg_mtx;
 
-    std::unique_ptr<GatewayMachineSnapshot> m_gateway_machine_snapshot;
-    nlohmann::json                          m_gateway_device_objects;
-    struct GatewayActiveDeviceState
+    struct GatewayDeviceState
     {
-        bool                     valid{false};
-        bool                     connected{false};
-        std::string              serial_number;
-        std::string              machine_type;
-        std::string              device_name;
-        std::string              preset_name;
-        std::vector<std::string> nozzle_diameters;
+        std::uint64_t generation{0};
+        std::string   serial_number;
+        bool          connected{false};
+        bool          objects_query_active{false};
+        bool          objects_refresh_pending{false};
+        std::string   watched_serial_number;
     };
-    GatewayActiveDeviceState m_gateway_active_device;
+    GatewayDeviceState m_gateway_device;
     std::string m_gateway_loaded_base_url;
 
   public:
@@ -627,6 +622,10 @@ private:
 
 private:
     void            register_gateway_notifications();
+    void            query_gateway_current_device();
+    void            query_gateway_device_objects();
+    void            clear_gateway_device();
+    void            refresh_gateway_machine_slots_ui();
 
 public:
     Tab*            get_tab(Preset::Type type);

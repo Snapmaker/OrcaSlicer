@@ -4173,7 +4173,7 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         wxGetApp().CallAfter([]() {
 
             wxGetApp().app_config->clear_filament_extruder_map();
-            wxGetApp().preset_bundle->machine_filaments.clear();
+            wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
             wxGetApp().load_current_presets();
         });
 

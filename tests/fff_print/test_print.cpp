@@ -263,11 +263,11 @@ TEST_CASE("Inner-outer-inner wall order starts with the second internal wall on 
 
 TEST_CASE("Arachne inner-outer-inner wall order holds on a narrow wall", "[PrintObject][IOI][Arachne]")
 {
-    // 1.2 mm strip at 0.4 mm line width is three beads wide. Arachne widens the odd centre line
-    // to fill the gap; the width-aware touching test has to count that centre line as touching
-    // or the outer wall prints first.
+    // A 1.8 mm strip at 0.4 mm line width is just wide enough for three Arachne beads; the odd
+    // centre line is widened to fill the remainder. The width-aware touching test has to count
+    // that centre line as touching or the outer wall prints first. (1.2 mm only fits two beads.)
     Slic3r::Print print;
-    Slic3r::Test::init_and_process_print({Slic3r::make_cube(1.2, 20., 1.2)}, print, {
+    Slic3r::Test::init_and_process_print({Slic3r::make_cube(1.8, 20., 1.2)}, print, {
         { "wall_generator",             "arachne" },
         { "wall_sequence",              "inner-outer-inner wall" },
         { "wall_loops",                 3 },

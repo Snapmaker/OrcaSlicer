@@ -1,6 +1,8 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/ProjectConfigFill.hpp"
 #include "libslic3r/EnumChoice.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 
@@ -789,4 +791,343 @@ TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row
                 CHECK(enum_choice_value_at_index(*def, enum_choice_index_of_value(*def, t)) == int(t));
         }
     }
+}
+
+TEST_CASE("fill_missing_project_keys copies absent printer and process keys from the system preset", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("wall_loops", new ConfigOptionInt(4));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    system.set_key_value("extruder_clearance_height_to_rod", new ConfigOptionFloat(27.5));
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+
+    std::vector<std::string> filled_keys;
+    const size_t             n = fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(n == 1);
+    REQUIRE(filled_keys == std::vector<std::string>{"sparse_infill_density"});
+    REQUIRE(project.opt_int("wall_loops") == 3);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+    REQUIRE(project.option("extruder_clearance_height_to_rod") == nullptr);
+
+    const size_t n_printer = fill_missing_project_keys(project, system, Preset::printer_options());
+    REQUIRE(n_printer == 1);
+    REQUIRE_THAT(project.opt_float("extruder_clearance_height_to_rod"), Catch::Matchers::WithinAbs(27.5, 1e-9));
+}
+
+TEST_CASE("fill_missing_project_keys never overwrites a key the project already has", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(42));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 0);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 42);
+}
+
+TEST_CASE("fill_missing_project_keys leaves mixed, flow-variant and mapping keys untouched", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("mixed_filament_definitions", new ConfigOptionString("0,1;1,0"));
+    system.set_key_value("filament_volume_type", new ConfigOptionEnumsGeneric{int(FilamentVolumeType::fvtHighFlow)});
+    system.set_key_value("nozzle_volume_type", new ConfigOptionEnumsGeneric{int(NozzleVolumeType::nvtHighFlow)});
+    system.set_key_value("filament_map", new ConfigOptionInts{1, 2});
+    system.set_key_value("filament_map_mode", new ConfigOptionEnum<FilamentMapMode>(FilamentMapMode::fmmManual));
+    system.set_key_value("printer_extruder_id", new ConfigOptionInts{0});
+    system.set_key_value("enable_filament_mapping", new ConfigOptionBool(true));
+    system.set_key_value("device_tool_count", new ConfigOptionInt(4));
+    system.set_key_value("device_changer", new ConfigOptionString("ams"));
+    system.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
+    system.set_key_value("wipe_tower_rotation_angle", new ConfigOptionFloat(45));
+    system.set_key_value("mixed_filament_pointillism_pixel_size", new ConfigOptionFloat(0.2));
+    system.set_key_value("inherits", new ConfigOptionString("parent"));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    std::vector<std::string> options = Preset::print_options();
+    options.insert(options.end(),
+                   {"mixed_filament_definitions", "filament_volume_type", "nozzle_volume_type", "filament_map",
+                    "filament_map_mode", "printer_extruder_id", "enable_filament_mapping", "device_tool_count",
+                    "device_changer", "dithering_local_z_mode", "wipe_tower_rotation_angle",
+                    "mixed_filament_pointillism_pixel_size", "inherits"});
+
+    REQUIRE(fill_missing_project_keys(project, system, options) == 1);
+    REQUIRE(project.has("sparse_infill_density"));
+    REQUIRE_FALSE(project.has("mixed_filament_definitions"));
+    REQUIRE_FALSE(project.has("filament_volume_type"));
+    REQUIRE_FALSE(project.has("nozzle_volume_type"));
+    REQUIRE_FALSE(project.has("filament_map"));
+    REQUIRE_FALSE(project.has("filament_map_mode"));
+    REQUIRE_FALSE(project.has("printer_extruder_id"));
+    REQUIRE_FALSE(project.has("enable_filament_mapping"));
+    REQUIRE_FALSE(project.has("device_tool_count"));
+    REQUIRE_FALSE(project.has("device_changer"));
+    REQUIRE_FALSE(project.has("dithering_local_z_mode"));
+    REQUIRE_FALSE(project.has("wipe_tower_rotation_angle"));
+    REQUIRE_FALSE(project.has("mixed_filament_pointillism_pixel_size"));
+    REQUIRE_FALSE(project.has("inherits"));
+    REQUIRE(project_config_fill_skip_keys().count("mixed_filament_definitions") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_volume_type") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("enable_filament_mapping") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("device_tool_count") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("device_changer") == 1);
+    REQUIRE(project_config_fill_skip_keys().count("filament_mapping_protocol") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("physical_filament_maps") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("thumbnails") == 0);
+    REQUIRE(project_config_fill_skip_keys().count("process_flow_support") == 0);
+}
+
+TEST_CASE("fill_missing_project_keys fills filament_mapping_protocol from the printer preset", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("filament_mapping_protocol", new ConfigOptionString("snapmaker"));
+    std::vector<std::string> options = {"filament_mapping_protocol"};
+    REQUIRE(fill_missing_project_keys(project, system, options) == 1);
+    REQUIRE(project.opt_string("filament_mapping_protocol") == "snapmaker");
+}
+
+TEST_CASE("fill_missing_project_keys skips keys handle_legacy drops on load", "[Config][CLI]")
+{
+    REQUIRE(project_config_key_dropped_on_load("silent_mode"));
+    REQUIRE_FALSE(project_config_key_dropped_on_load("wall_loops"));
+
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("silent_mode", new ConfigOptionBool(true));
+    system.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::printer_options()) == 0);
+    REQUIRE_FALSE(project.has("silent_mode"));
+    REQUIRE(fill_missing_project_keys(project, system, Preset::print_options()) == 1);
+    REQUIRE_THAT(project.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.2, 1e-9));
+}
+
+TEST_CASE("missing_project_keys is empty when the project already has every listed key", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    const auto missing = missing_project_keys(project, {"wall_loops", "sparse_infill_density"});
+    REQUIRE(missing.empty());
+    REQUIRE(fill_missing_project_keys(project, project, {"wall_loops", "sparse_infill_density"}) == 0);
+}
+
+TEST_CASE("fill_cli_system_preset does not call find_system when nothing is missing", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("wall_loops", new ConfigOptionInt(3));
+    project.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(99));
+    int find_calls = 0;
+    auto find = [&](const std::string &) -> const DynamicPrintConfig * {
+        ++find_calls;
+        return &system;
+    };
+    REQUIRE(fill_cli_system_preset(project, "Snapmaker U1 (0.4 nozzle)", {"wall_loops", "sparse_infill_density"}, find) == 0);
+    REQUIRE(find_calls == 0);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+}
+
+TEST_CASE("snapshot is taken before create=true reads hide missing keys", "[Config][CLI]")
+{
+    DynamicPrintConfig loaded;
+    loaded.set_key_value("wall_loops", new ConfigOptionInt(3));
+    const auto present = project_config_snapshot_loaded_keys(loaded);
+    REQUIRE(present.count("printer_model") == 0);
+    REQUIRE(present.count("printable_area") == 0);
+
+    loaded.option<ConfigOptionString>("printer_model", true);
+    loaded.option<ConfigOptionPoints>("printable_area", true);
+    REQUIRE(loaded.option("printer_model") != nullptr);
+    REQUIRE(loaded.option("printable_area") != nullptr);
+
+    DynamicPrintConfig system;
+    system.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+    system.set_key_value("printable_area", new ConfigOptionPoints{Vec2d(0, 0), Vec2d(250, 0), Vec2d(250, 250), Vec2d(0, 250)});
+    std::vector<std::string> options = {"printer_model", "printable_area"};
+    REQUIRE(missing_project_keys(loaded, options, &present) == options);
+    REQUIRE(fill_missing_project_keys(loaded, system, options, nullptr, &present) == 2);
+    REQUIRE(loaded.opt_string("printer_model") == "Snapmaker U1");
+    REQUIRE(loaded.option<ConfigOptionPoints>("printable_area")->values.size() == 4);
+}
+
+TEST_CASE("inherits_group resolution selects which system preset the CLI fill copies from", "[Config][CLI]")
+{
+    const std::string current_printer = "My U1 copy";
+    const std::string current_process = "My 0.20 copy";
+    const std::string system_printer  = "Snapmaker U1 (0.4 nozzle)";
+    const std::string system_process  = "0.20mm Standard @Snapmaker U1 (0.4 nozzle)";
+    const std::string other_process   = "0.20 Standard @Snapmaker J1 (0.4 nozzle)";
+
+    DynamicPrintConfig project;
+    project.set_key_value("printer_settings_id", new ConfigOptionString(current_printer));
+    project.set_key_value("print_settings_id", new ConfigOptionString(current_process));
+    DynamicPrintConfig u1_process;
+    u1_process.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    DynamicPrintConfig j1_process;
+    j1_process.set_key_value("sparse_infill_density", new ConfigOptionPercent(20));
+
+    int find_calls = 0;
+    std::string asked;
+    auto find = [&](const std::string &name) -> const DynamicPrintConfig * {
+        ++find_calls;
+        asked = name;
+        if (name == system_process)
+            return &u1_process;
+        if (name == other_process)
+            return &j1_process;
+        if (name == current_process)
+            return &j1_process;
+        return nullptr;
+    };
+
+    const std::vector<std::string> renamed{system_process, "Generic PLA", system_printer};
+    const std::string process_name = resolve_project_system_preset_name(current_process, &renamed, 1, false);
+    REQUIRE(process_name == system_process);
+    REQUIRE(fill_cli_system_preset(project, process_name, Preset::print_options(), find) == 1);
+    REQUIRE(find_calls == 1);
+    REQUIRE(asked == system_process);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+
+    REQUIRE(resolve_project_system_preset_name(current_printer, nullptr, 1, true) == current_printer);
+    const std::vector<std::string> empty_slots{"", "Generic PLA", ""};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &empty_slots, 1, true) == current_printer);
+    const std::vector<std::string> mis_sized{system_process};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &mis_sized, 1, true) == current_printer);
+    const std::vector<std::string> too_long{system_process, "a", "b", system_printer};
+    REQUIRE(resolve_project_system_preset_name(current_printer, &too_long, 1, true) == current_printer);
+}
+
+TEST_CASE("cli_fill_from_system_preset skips fill so --process-preset values win", "[Config][CLI]")
+{
+    REQUIRE(cli_fill_from_system_preset(""));
+    REQUIRE_FALSE(cli_fill_from_system_preset("Snapmaker U1 (0.4 nozzle)"));
+    REQUIRE_FALSE(cli_fill_from_system_preset("0.20mm Standard @Snapmaker U1 (0.4 nozzle)"));
+
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("wall_loops", new ConfigOptionInt(5));
+    system.set_key_value("wall_loops", new ConfigOptionInt(2));
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+    int find_calls = 0;
+    auto find = [&](const std::string &) -> const DynamicPrintConfig * {
+        ++find_calls;
+        return &system;
+    };
+
+    const std::string process_override = "0.20mm Standard @Snapmaker U1 (0.4 nozzle)";
+    if (cli_fill_from_system_preset(process_override))
+        fill_cli_system_preset(project, "ignored", Preset::print_options(), find);
+    REQUIRE(find_calls == 0);
+    REQUIRE(project.opt_int("wall_loops") == 5);
+    REQUIRE(project.option("sparse_infill_density") == nullptr);
+
+    REQUIRE(fill_cli_system_preset(project, "0.20mm Standard @Snapmaker U1 (0.4 nozzle)", Preset::print_options(), find) == 1);
+    REQUIRE(find_calls == 1);
+    REQUIRE(project.opt_int("wall_loops") == 5);
+    REQUIRE(project.option<ConfigOptionPercent>("sparse_infill_density")->value == 15);
+}
+
+TEST_CASE("fill_missing_project_keys resizes per-extruder vectors to the project's nozzle_diameter", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4});
+    system.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4, 0.4, 0.4, 0.4});
+    system.set_key_value("retraction_length", new ConfigOptionFloats{1.0, 2.0, 3.0, 4.0});
+    system.set_key_value("extruder_nozzle_count", new ConfigOptionInts{1, 1, 1, 1});
+    system.set_key_value("extruder_printable_height", new ConfigOptionFloats{250, 250, 250, 250});
+
+    REQUIRE(fill_missing_project_keys(project, system, Preset::printer_options()) >= 1);
+    const auto *retract = project.option<ConfigOptionFloats>("retraction_length");
+    REQUIRE(retract != nullptr);
+    REQUIRE(retract->values.size() == 1);
+    REQUIRE_THAT(retract->values.front(), Catch::Matchers::WithinAbs(1.0, 1e-9));
+    const auto *noz_count = project.option<ConfigOptionInts>("extruder_nozzle_count");
+    REQUIRE(noz_count != nullptr);
+    REQUIRE(noz_count->values.size() == 1);
+    REQUIRE(noz_count->values.front() == 1);
+    const auto *height = project.option<ConfigOptionFloats>("extruder_printable_height");
+    REQUIRE(height != nullptr);
+    REQUIRE(height->values.size() == 1);
+}
+
+TEST_CASE("fill_missing_project_keys copies an empty default_filament_profile without throwing", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4, 0.6});
+    system.set_key_value("nozzle_diameter", new ConfigOptionFloats{0.4});
+    system.set_key_value("default_filament_profile", new ConfigOptionStrings());
+    REQUIRE(system.option<ConfigOptionStrings>("default_filament_profile")->values.empty());
+
+    size_t n = 0;
+    REQUIRE_NOTHROW(n = fill_missing_project_keys(project, system, Preset::printer_options()));
+    REQUIRE(n >= 1);
+    const auto *dfp = project.option<ConfigOptionStrings>("default_filament_profile");
+    REQUIRE(dfp != nullptr);
+    REQUIRE(dfp->values.empty());
+}
+
+TEST_CASE("fill_missing_project_keys skips flow-variant vectors when process_flow_support differs", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    project.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard"});
+    system.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard", "High Flow"});
+    system.set_key_value("inner_wall_speed", new ConfigOptionFloats{300, 600});
+    system.set_key_value("sparse_infill_density", new ConfigOptionPercent(15));
+
+    std::vector<std::string> filled_keys;
+    fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "inner_wall_speed") == filled_keys.end());
+    REQUIRE_FALSE(project.has("inner_wall_speed"));
+    REQUIRE(project.has("sparse_infill_density"));
+}
+
+TEST_CASE("fill_missing_project_keys fills process_flow_support with matching flow-variant vectors", "[Config][CLI]")
+{
+    DynamicPrintConfig project;
+    DynamicPrintConfig system;
+    system.set_key_value("process_flow_support", new ConfigOptionStrings{"Standard", "High Flow"});
+    system.set_key_value("inner_wall_speed", new ConfigOptionFloats{300, 600});
+
+    std::vector<std::string> filled_keys;
+    fill_missing_project_keys(project, system, Preset::print_options(), &filled_keys);
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "process_flow_support") != filled_keys.end());
+    REQUIRE(std::find(filled_keys.begin(), filled_keys.end(), "inner_wall_speed") != filled_keys.end());
+    const auto *fs = project.option<ConfigOptionStrings>("process_flow_support");
+    REQUIRE(fs != nullptr);
+    REQUIRE(fs->values == std::vector<std::string>{"Standard", "High Flow"});
+    const auto *speed = project.option<ConfigOptionFloats>("inner_wall_speed");
+    REQUIRE(speed != nullptr);
+    REQUIRE(speed->values.size() == 2);
+    REQUIRE_THAT(speed->values[0], Catch::Matchers::WithinAbs(300, 1e-9));
+    REQUIRE_THAT(speed->values[1], Catch::Matchers::WithinAbs(600, 1e-9));
+}
+
+TEST_CASE("project_config_fill_log_value truncates long G-code strings without splitting UTF-8", "[Config][CLI]")
+{
+    ConfigOptionString gcode(std::string(200, 'G'));
+    const std::string  logged = project_config_fill_log_value(&gcode, 96);
+    REQUIRE(logged.size() == 99);
+    REQUIRE(logged.compare(96, 3, "...") == 0);
+
+    // U+4E2D CJK '中' is E4 B8 AD; place it so byte 96 lands inside a 3-byte sequence.
+    std::string wide = "x";
+    for (int i = 0; i < 40; ++i)
+        wide += "\xE4\xB8\xAD";
+    ConfigOptionString wide_opt(wide);
+    const std::string  cut = project_config_fill_log_value(&wide_opt, 96);
+    REQUIRE(cut.size() >= 3);
+    REQUIRE(cut.compare(cut.size() - 3, 3, "...") == 0);
+    const std::string prefix = cut.substr(0, cut.size() - 3);
+    REQUIRE(prefix.size() <= 96);
+    REQUIRE(prefix.size() < wide.size());
+    // Truncation landed on a code-point boundary: the next original byte is not a continuation.
+    REQUIRE((static_cast<unsigned char>(wide[prefix.size()]) & 0xC0) != 0x80);
+    REQUIRE(prefix.find('\xE4') != std::string::npos);
 }

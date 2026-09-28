@@ -33,71 +33,95 @@ namespace
 wxWeakRef<FilamentDropDown> s_active_popup;
 wxWeakRef<PlaterFilamentComboBox> s_active_owner;
 
+} // namespace
+
 #ifdef __WXOSX__
 // wxOSX reposts an outside click after dismissing a transient popup. The repost is a copied
-// wxMouseEvent, so it keeps the original timestamp and screen position but has a different object
-// address. Detect that copy at the filament combo boundary without modifying wxWidgets globally.
-class RepostedClickDetector : public wxEventFilter
+// wxMouseEvent, so it keeps the original timestamp and screen position. Detect and consume that
+// copy without retaining an event pointer beyond the event's lifetime.
+class PlaterFilamentComboBox::RepostedClickDetector : public wxEventFilter
 {
 public:
-    static void install()
+    /** @brief Installs the shared event filter for the first filament combo. */
+    static void acquire()
     {
+        wxASSERT(wxIsMainThread());
         if (s_detector == nullptr)
         {
-            // This observer intentionally lives until process termination because wx event filters
-            // may outlive individual combo boxes during application shutdown.
-            s_detector = new RepostedClickDetector();
-            wxEvtHandler::AddFilter(s_detector);
+            s_history = {};
+            s_next    = 0;
+            s_detector = std::make_unique<RepostedClickDetector>();
+            wxEvtHandler::AddFilter(s_detector.get());
         }
+        ++s_owner_count;
     }
 
-    static bool consume_repost(const wxEvent &event)
+    /** @brief Removes the shared event filter after the last filament combo is destroyed. */
+    static void release()
     {
-        for (const wxEvent *&pending : s_pending)
+        wxASSERT(wxIsMainThread());
+        wxASSERT(s_owner_count > 0);
+        if (s_owner_count == 0)
         {
-            if (pending != &event)
-                continue;
-            pending = nullptr;
-            return true;
+            return;
         }
-        return false;
+
+        --s_owner_count;
+        if (s_owner_count == 0 && s_detector != nullptr)
+        {
+            wxEvtHandler::RemoveFilter(s_detector.get());
+            s_detector.reset();
+        }
     }
 
+    /** @brief Consumes a copied outside click only when it targets a closed filament combo. */
     int FilterEvent(wxEvent &event) override
     {
         if (event.GetEventType() != wxEVT_LEFT_DOWN || event.GetTimestamp() <= 0)
+        {
             return Event_Skip;
+        }
 
-        const auto *mouse_event = dynamic_cast<const wxMouseEvent *>(&event);
-        auto       *window      = dynamic_cast<wxWindow *>(event.GetEventObject());
+        const wxMouseEvent *mouse_event = dynamic_cast<const wxMouseEvent *>(&event);
+        wxWindow           *window      = dynamic_cast<wxWindow *>(event.GetEventObject());
         if (mouse_event == nullptr || window == nullptr)
+        {
             return Event_Skip;
+        }
 
-        const wxPoint            screen_position = window->ClientToScreen(mouse_event->GetPosition());
-        const auto               now             = std::chrono::steady_clock::now();
-        const long               timestamp       = event.GetTimestamp();
-        constexpr auto           max_age          = std::chrono::seconds(2);
+        const wxPoint screen_position =
+            window->ClientToScreen(mouse_event->GetPosition());
+        const std::chrono::steady_clock::time_point now             = std::chrono::steady_clock::now();
+        const long                                  timestamp       = event.GetTimestamp();
+        constexpr std::chrono::seconds              max_age{2};
 
         for (ClickRecord &record : s_history)
         {
             if (!record.valid)
+            {
                 continue;
+            }
             if (now - record.observed_at > max_age)
             {
                 record.valid = false;
                 continue;
             }
-            if (record.timestamp != timestamp || record.event == &event ||
-                record.screen_position != screen_position)
-                continue;
-
-            for (const wxEvent *&pending : s_pending)
+            if (record.timestamp != timestamp || record.screen_position != screen_position)
             {
-                if (pending == nullptr)
-                {
-                    pending = &event;
-                    break;
-                }
+                continue;
+            }
+
+            // A repost is a one-shot copy. Retire the value record for every target so a repost to
+            // another control cannot leave state that affects a later filament-combo click.
+            record.valid = false;
+            // Deliberately target-agnostic: wxOSX reposts the dismissing click to whatever window
+            // sits under the pointer (wxFindWindowAtPoint in src/common/popupcmn.cpp), which may be
+            // a different filament combo than the dismissed one. Narrowing this to "the dismissed
+            // combo" would let such a repost click through and reopen a menu the user never clicked.
+            PlaterFilamentComboBox *combo = dynamic_cast<PlaterFilamentComboBox *>(window);
+            if (combo != nullptr && !combo->m_popup_visible)
+            {
+                return Event_Ignore;
             }
             return Event_Skip;
         }
@@ -106,7 +130,6 @@ public:
         record.valid          = true;
         record.timestamp      = timestamp;
         record.screen_position = screen_position;
-        record.event          = &event;
         record.observed_at    = now;
         s_next                = (s_next + 1) % s_history.size();
         return Event_Skip;
@@ -118,19 +141,20 @@ private:
         bool                                   valid;
         long                                   timestamp;
         wxPoint                                screen_position;
-        const wxEvent                         *event;
         std::chrono::steady_clock::time_point observed_at;
     };
 
     static constexpr size_t k_history = 16;
-    static constexpr size_t k_pending = 16;
 
-    inline static RepostedClickDetector             *s_detector = nullptr;
-    inline static std::array<ClickRecord, k_history> s_history{};
-    inline static std::array<const wxEvent *, k_pending> s_pending{};
-    inline static size_t                             s_next = 0;
+    inline static std::unique_ptr<RepostedClickDetector> s_detector;
+    inline static std::array<ClickRecord, k_history>     s_history{};
+    inline static size_t                                 s_next        = 0;
+    inline static size_t                                 s_owner_count = 0;
 };
 #endif
+
+namespace
+{
 
 constexpr const char *g_allow_list_file_name = "filament_allow_list.json";
 constexpr const char *g_snapmaker_vendor    = "Snapmaker";
@@ -229,7 +253,7 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     : PlaterPresetComboBox(parent, preset_type)
 {
 #ifdef __WXOSX__
-    RepostedClickDetector::install();
+    RepostedClickDetector::acquire();
 #endif
     Bind(wxEVT_LEFT_DOWN, &PlaterFilamentComboBox::on_mouse_down, this);
     Bind(wxEVT_LEFT_DCLICK, &PlaterFilamentComboBox::on_mouse_down, this);
@@ -325,6 +349,10 @@ PlaterFilamentComboBox::~PlaterFilamentComboBox()
 
     if (GetTextCtrl() != nullptr)
         GetTextCtrl()->Unbind(wxEVT_KEY_DOWN, &PlaterFilamentComboBox::on_key_down, this);
+
+#ifdef __WXOSX__
+    RepostedClickDetector::release();
+#endif
 }
 
 void PlaterFilamentComboBox::update()
@@ -699,17 +727,6 @@ void PlaterFilamentComboBox::on_popup_dismiss(wxCommandEvent &event)
 
 void PlaterFilamentComboBox::on_mouse_down(wxMouseEvent &event)
 {
-#ifdef __WXOSX__
-    const bool reposted_click = RepostedClickDetector::consume_repost(event);
-    if (reposted_click && !m_popup_visible)
-    {
-        // The popup already consumed the physical click. Do not reopen this combo when wxOSX
-        // delivers its geometry-based repost to the wrong control.
-        event.Skip(false);
-        event.StopPropagation();
-        return;
-    }
-#endif
     if (m_popup == nullptr) {
         // Let ComboBox's static event table open its existing flat popup.
         event.Skip();

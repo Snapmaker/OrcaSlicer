@@ -37,6 +37,11 @@ public:
     void set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter);
 
 private:
+#ifdef __WXOSX__
+    /** @brief Filters copied macOS outside-click events for filament combo boxes. */
+    class RepostedClickDetector;
+#endif
+
     enum class Section {
         Other,
         Project,

@@ -3494,6 +3494,7 @@ Vec2d PartPlateList::compute_shape_position(int index, int cols)
 //generate icon textures
 void PartPlateList::generate_icon_textures()
 {
+	m_icon_textures_dark = m_is_dark;
 	// use higher resolution images if graphic card and opengl version allow
 	GLint max_tex_size = OpenGLManager::get_gl_info().get_max_tex_size(), icon_size = max_tex_size / 8;
 	std::string path = resources_dir() + "/images/";
@@ -3665,6 +3666,12 @@ void PartPlateList::generate_icon_textures()
 			}
 		}
 	}
+}
+
+void PartPlateList::load_icon_textures()
+{
+	if (!icon_textures_loaded())
+		generate_icon_textures();
 }
 
 void PartPlateList::release_icon_textures()
@@ -5172,12 +5179,7 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
 		plate_hover_action = hover_id % PartPlate::GRABBER_COUNT;
 	}
 
-	static bool last_dark_mode_status = m_is_dark;
-	if (m_is_dark != last_dark_mode_status) {
-		last_dark_mode_status = m_is_dark;
-		generate_icon_textures();
-	} else if(m_del_texture.get_id() == 0)
-		generate_icon_textures();
+	load_icon_textures();
 	for (it = m_plate_list.begin(); it != m_plate_list.end(); it++) {
 		int current_index = (*it)->get_index();
 		// An explicit visible set wins over the plain "current plate only" rule: it is the same

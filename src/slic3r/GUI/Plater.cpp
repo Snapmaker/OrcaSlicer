@@ -21172,6 +21172,7 @@ void Plater::export_toolpaths_to_obj() const
 //BBS: add multiple plate reslice logic
 bool Plater::reslice()
 {
+    p->partplate_list.set_filament_group_dirty(false);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
@@ -23843,6 +23844,17 @@ int Plater::select_sliced_plate(int plate_index)
 {
     int ret = 0;
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
+
+    if (GUI::FlowType::any_nozzle_high_flow()) {
+        if (p->partplate_list.is_filament_group_dirty()) {
+            bool all_high_flow = GUI::FlowType::distinct_nozzle_flow_type_count() < 2;
+            GUI::FilamentGroupDialog dlg(this, all_high_flow);
+            if (dlg.ShowModal() != wxID_OK)
+                return 0;
+        }
+    } else {
+        GUI::FlowType::sync_filament_volume_types_for_slice();
+    }
 
     Freeze();
     ret = select_plate(plate_index, true);

@@ -849,7 +849,12 @@ std::string Http::tls_system_cert_store()
     std::string ret;
 
 #ifdef OPENSSL_CERT_OVERRIDE
-    ret = ::getenv(X509_get_default_cert_file_env());
+    // getenv() returns NULL when SSL_CERT_FILE is unset, and assigning NULL to a
+    // std::string is undefined (a strlen(NULL) crash at startup). CurlGlobalInit only
+    // sets the variable when OpenSSL's default cert file is missing; with the runtime's
+    // OpenSSL 3 that file exists, so the variable stays unset. Report an empty store then.
+    if (const char *cert_file = ::getenv(X509_get_default_cert_file_env()))
+        ret = cert_file;
 #endif
 
     return ret;

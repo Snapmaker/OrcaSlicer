@@ -65,7 +65,6 @@
 #include <ctime>
 
 #include "GUI_App.hpp"
-#include "FilamentGroupDialog.hpp"
 #include "DualNozzleState.hpp"
 #include "FlowTypeHelper.hpp"
 #include "SliceModePopup.hpp"
@@ -2057,13 +2056,8 @@ wxBoxSizer* MainFrame::create_side_tools()
         {
             if (m_slice_mode_popup)
                 m_slice_mode_popup->HidePopup();
-            if (GUI::FlowType::grouping_mode() == FILAMENT_GROUPING_CUSTOM && GUI::FlowType::distinct_nozzle_flow_type_count() >= 2) {
-                GUI::FilamentGroupDialog dlg(this);
-                if (dlg.ShowModal() != wxID_OK)
-                    return;
-            } else {
-                GUI::FlowType::sync_filament_volume_types_for_slice();
-            }
+            if (!GUI::FlowType::confirm_grouping_before_slice(this))
+                return;
             start_slice();
         });
 

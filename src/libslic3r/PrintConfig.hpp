@@ -463,6 +463,22 @@ enum FilamentVolumeType {
 constexpr const char* FILAMENT_GROUPING_STANDARD = "standard";
 constexpr const char* FILAMENT_GROUPING_CUSTOM   = "custom";
 
+// Edge's grouping-dialog gate (Slice button and Snap #930 Preview re-slice).
+// CUSTOM grouping AND at least two distinct nozzle flow types. Snapmaker's
+// any_nozzle_high_flow() / FilamentGroupDialog(parent, all_high_flow) gate is
+// intentionally not used here.
+inline bool filament_group_dialog_required(const std::string &grouping_mode, size_t distinct_nozzle_flow_type_count)
+{
+    return grouping_mode == FILAMENT_GROUPING_CUSTOM && distinct_nozzle_flow_type_count >= 2;
+}
+
+// Snap #930: a valid→invalid slice-result transition dirties grouping so Preview
+// re-slice can re-confirm. Other transitions do not set the flag.
+inline bool filament_group_dirty_on_invalidation(bool was_slice_result_valid, bool now_valid)
+{
+    return was_slice_result_valid && !now_valid;
+}
+
 // Bounds-checked: values outside the mapping render as FLOW_MODE_STANDARD.
 const char* to_string(FilamentVolumeType type);
 

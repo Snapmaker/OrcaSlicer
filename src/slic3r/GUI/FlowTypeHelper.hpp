@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+class wxWindow;
+
 namespace Slic3r { namespace GUI { namespace FlowType {
 
 // Snapmaker requirement 7.1: all functions read/write wxGetApp().preset_bundle state.
@@ -69,6 +71,11 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping);
 // standard mode with mixed nozzles everything falls back to standard. No-op when the
 // mapping already matches. Only meaningful outside the custom+mixed case.
 void sync_filament_volume_types_for_slice();
+
+// Edge Slice-button / Preview-reslice gate: show FilamentGroupDialog when
+// filament_group_dialog_required(), otherwise sync volume types. Returns true
+// if the user confirmed or no dialog was needed; false if the dialog was cancelled.
+bool confirm_grouping_before_slice(wxWindow *parent);
 
 }}} // namespace Slic3r::GUI::FlowType
 

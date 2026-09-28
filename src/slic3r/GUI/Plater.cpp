@@ -15466,7 +15466,12 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                    this->m_slice_all = false;
                     // Page-switch auto-slice must run the same pre-slice guard as
                     // the slice button, or the by-object red error never shows.
-                    if (this->q->guard_before_slice_plate())
+                    // Snap #930 Edge extension: Preview tab-in also re-confirms
+                    // grouping when a previously valid plate was invalidated.
+                    if (this->partplate_list.is_filament_group_dirty() &&
+                        !GUI::FlowType::confirm_grouping_before_slice(this->q))
+                        slice_cancelled = true;
+                    else if (this->q->guard_before_slice_plate())
                         slice_cancelled = !(this->q->reslice());
                     else
                         slice_cancelled = true;
@@ -22549,6 +22554,7 @@ void Plater::export_toolpaths_to_obj() const
 //BBS: add multiple plate reslice logic
 bool Plater::reslice()
 {
+    p->partplate_list.set_filament_group_dirty(false);
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: enter, process_completed_with_error=%2%")%__LINE__ %p->process_completed_with_error;
     // There is "invalid data" button instead "slice now"
     if (p->process_completed_with_error == p->partplate_list.get_curr_plate_index())
@@ -25748,6 +25754,14 @@ int Plater::select_sliced_plate(int plate_index)
 {
     int ret = 0;
     BOOST_LOG_TRIVIAL(info) << "select_sliced_plate plate_idx=" << plate_index;
+
+    // Snap #930: Preview plate-pick auto-reslice after a param change. Cancel
+    // leaves the current plate invalid and does not switch plates (same as
+    // Snapmaker). Edge uses CUSTOM + >= 2 flow types, not any_nozzle_high_flow().
+    if (p->partplate_list.is_filament_group_dirty()) {
+        if (!GUI::FlowType::confirm_grouping_before_slice(this))
+            return 0;
+    }
 
     Freeze();
     ret = select_plate(plate_index, true);

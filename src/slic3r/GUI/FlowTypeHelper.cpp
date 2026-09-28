@@ -1,5 +1,6 @@
 #include "FlowTypeHelper.hpp"
 
+#include "FilamentGroupDialog.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
 
@@ -193,6 +194,16 @@ void sync_filament_volume_types_for_slice()
         return; // already uniform at the target type
     const size_t n = wxGetApp().preset_bundle->filament_presets.size();
     apply_custom_mapping(std::vector<FilamentVolumeType>(std::max<size_t>(n, size_t(1)), type));
+}
+
+bool confirm_grouping_before_slice(wxWindow *parent)
+{
+    if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count())) {
+        FilamentGroupDialog dlg(parent);
+        return dlg.ShowModal() == wxID_OK;
+    }
+    sync_filament_volume_types_for_slice();
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::FlowType

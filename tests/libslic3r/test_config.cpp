@@ -790,3 +790,26 @@ TEST_CASE("Key-mapped enum choices round-trip between stored value and combo row
         }
     }
 }
+
+TEST_CASE("Edge grouping dialog gate is CUSTOM plus two distinct nozzle flow types", "[Config][FilamentGroup]")
+{
+    // Snapmaker's gate is any_nozzle_high_flow() plus FilamentGroupDialog(parent, all_high_flow).
+    // Edge must not follow that: dialog only when grouping is custom AND nozzles mix flow types.
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2));
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 3));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 0));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 1));
+    CHECK_FALSE(filament_group_dialog_required("unknown", 2));
+}
+
+TEST_CASE("filament group dirty flag is set only on valid-to-invalid slice result", "[Config][FilamentGroup]")
+{
+    // Snap #930: Preview re-slice should re-confirm grouping after a param change
+    // invalidates a previously sliced plate, not on first slice or re-validation.
+    CHECK(filament_group_dirty_on_invalidation(true, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, true));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(true, true));
+}

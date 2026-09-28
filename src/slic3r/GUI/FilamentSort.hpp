@@ -14,7 +14,7 @@ namespace Slic3r
 namespace GUI
 {
 
-/** @brief Holds the immutable values used to order a filament popup row. */
+/** @brief Holds the values a row is ordered by, fixed once the row has been built. */
 struct FilamentSortItem
 {
     wxString    display_name;
@@ -33,7 +33,7 @@ public:
     static FilamentOrder from_stream(std::istream &stream);
 
     /** @brief Reads a configuration file and returns an empty order when it cannot be used; @p error
-     *         receives the reason, when it is not null. */
+     *         receives a reason fragment, which the caller logs together with the component name. */
     static FilamentOrder from_file(const std::filesystem::path &path, std::string *error = nullptr);
 
     /** @brief Returns the configured rank or the maximum value when no rank exists. */

@@ -380,7 +380,7 @@ PlaterFilamentComboBox::PopupRow PlaterFilamentComboBox::make_header(const wxStr
 std::string PlaterFilamentComboBox::preset_vendor(const Preset *preset) const
 {
     std::string vendor = config_string(preset, "filament_vendor");
-    // Historical spelling: normalise it in a case-insensitive way, like every other vendor comparison here.
+    // Historical spelling: normalise it case-insensitively, like the allow-list key matching does.
     if (from_u8(vendor).CmpNoCase(wxString::FromUTF8(g_bambu_lab_vendor)) == 0)
         vendor = g_bambu_vendor;
     return vendor;

@@ -48,7 +48,7 @@ ZUserLogin::ZUserLogin() : wxDialog((wxWindow *) (wxGetApp().mainframe), wxID_AN
     // Url
     NetworkAgent* agent = wxGetApp().getAgent();
     if (!agent) {
-        std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+        std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
         SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
         SetBackgroundColour(*wxWHITE);

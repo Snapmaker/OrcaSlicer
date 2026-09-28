@@ -3820,13 +3820,12 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
     // A reprint replays the record's own mode: an upload stays an upload, a print stays a print.
     function rpCanSend(rec) {
         var k = rpPrinter(rec).kind;
-        return !!instSel && rec.exists !== false && (k === 'snapmaker' || k === 'printhost');
+        return !!instSel && rec.exists !== false && (k === 'snapmaker' || k === 'printhost' || k === 'bambu');
     }
     function rpWhyNot(rec) {
         if (rec.exists === false) return 'The stored file is gone - retention removed it, or the archive folder moved.';
         if (!instSel) return 'Sending a stored file again needs EdgeSlicer open on the PC. Open it there, and this button comes on.';
         var k = rpPrinter(rec).kind;
-        if (k === 'bambu') return 'Reprinting to a Bambu printer is not supported yet. Send that plate from the Prepare tab.';
         if (k === 'connect') return 'This one went out over the PC\u2019s own connection; send it from the Prepare tab.';
         return 'This record cannot be sent again.';
     }
@@ -4109,7 +4108,9 @@ html[data-embed] #conn, html[data-embed] #via, html[data-embed] .pushbox { displ
             acts.appendChild(del);
             body.appendChild(acts);
             body.appendChild(el('div', 'info' + (can ? '' : ' warn'), can
-                ? (uploadOnly
+                ? (p.kind === 'bambu'
+                    ? 'The stored file is uploaded to the printer again and started with its AMS slots matched the way the PC’s Print dialog matches them (type and colour, each filament on the nozzle it was sliced for). If a filament has no matching slot the PC says so and nothing is sent; the EdgeSlicer app lets you pick the slots. Nothing is re-sliced.'
+                    : uploadOnly
                     ? 'Uploaded without starting. Start print runs the file the printer already has when it is still there (else the stored copy goes back first), with the toolheads it was sent with. Nothing is re-sliced.'
                     : 'The file starts on that printer again, with the toolheads it used last time: the copy the printer still has when it is there, else the stored one, uploaded again. Nothing is re-sliced.')
                 : rpWhyNot(rec)));

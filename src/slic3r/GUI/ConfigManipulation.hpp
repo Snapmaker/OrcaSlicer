@@ -24,6 +24,9 @@ class ConfigManipulation
     bool                m_is_initialized_support_material_overhangs_queried{ false };
     bool                m_support_material_overhangs_queried{ false };
     bool                is_BBL_Printer{false};
+    // Ultra: the saved preset the edited config belongs to (process tab only; null elsewhere).
+    // See update_print_fff_config(): a value the preset itself stores is never "corrected".
+    const DynamicPrintConfig* m_reference_config{ nullptr };
 
     // function to loading of changed configuration 
     std::function<void()>                                       load_config = nullptr;
@@ -80,6 +83,7 @@ public:
     void    check_filament_max_volumetric_speed(DynamicPrintConfig *config);
     void    check_chamber_temperature(DynamicPrintConfig* config);
     void    set_is_BBL_Printer(bool is_bbl_printer) { is_BBL_Printer = is_bbl_printer; };
+    void    set_reference_config(const DynamicPrintConfig *reference) { m_reference_config = reference; }
     // SLA print
     void    update_print_sla_config(DynamicPrintConfig* config, const bool is_global_config = false);
     void    toggle_print_sla_options(DynamicPrintConfig* config);

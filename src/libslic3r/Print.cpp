@@ -4946,6 +4946,14 @@ static void chameleon_assign_support_interfaces(Print &print)
 }
 
 // Slicing process, running at a background thread.
+void Print::process_perimeters_only(PrintObject &object)
+{
+    assert(object.print() == this);
+    name_tbb_thread_pool_threads_set_locale();
+    object.clear_shared_object();
+    object.make_perimeters();
+}
+
 void Print::process(long long *time_cost_with_cache, bool use_cache)
 {
     long long start_time = 0, end_time = 0;

@@ -9,7 +9,18 @@
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/GUI.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
+#include "slic3r/GUI/Selection.hpp"
+#include "slic3r/GUI/Jobs/SeamAutoPaintJob.hpp"
+#include "slic3r/GUI/Jobs/Worker.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
+
+#include "libslic3r/PresetBundle.hpp"
+
+#include <boost/format.hpp>
+
+#include <algorithm>
+#include <array>
 
 #include <glad/gl.h>
 
@@ -278,6 +289,9 @@ void GLGizmoSeam::on_render_input_window(float x, float y, float bottom_limit)
     m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only);
 
     ImGui::Separator();
+    render_auto_paint_section(sliders_left_width, sliders_width, drag_left_width, 1.5f * slider_icon_width, max_tooltip_width);
+
+    ImGui::Separator();
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 10.0f));
     float get_cur_y = ImGui::GetContentRegionMax().y + ImGui::GetFrameHeight() + y;
@@ -374,6 +388,229 @@ void GLGizmoSeam::update_from_model_object(bool first_update)
 PainterGizmoType GLGizmoSeam::get_painter_type() const
 {
     return PainterGizmoType::SEAM;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Auto-paint seam
+
+namespace {
+struct AutoPaintMode
+{
+    SeamPosition mode;
+    const char  *label;
+};
+// The Aligned family, in the order of the seam position list.
+const std::array<AutoPaintMode, 5> &auto_paint_modes()
+{
+    static const std::array<AutoPaintMode, 5> modes = { { { spAligned, L("Aligned") },
+                                                           { spAlignedBack, L("Aligned back") },
+                                                           { spAlignedFront, L("Aligned front") },
+                                                           { spLeft, L("Aligned left") },
+                                                           { spRight, L("Aligned right") } } };
+    return modes;
+}
+} // namespace
+
+// The object's settings as the slicer sees them: its own value if it has one, else the print preset's.
+void GLGizmoSeam::load_auto_paint_defaults(const ModelObject &mo)
+{
+    const DynamicPrintConfig &preset  = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    const DynamicPrintConfig &printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    auto option = [&mo, &preset](const char *key) -> const ConfigOption * {
+        if (const ConfigOption *opt = mo.config.option(key))
+            return opt;
+        return preset.option(key);
+    };
+
+    m_autopaint_mode = 0;
+    if (const ConfigOption *opt = option("seam_position")) {
+        const auto &modes = auto_paint_modes();
+        for (size_t i = 0; i < modes.size(); ++i)
+            if (opt->getInt() == int(modes[i].mode))
+                m_autopaint_mode = int(i);
+    }
+    const ConfigOption *joints = option("seam_prefer_part_joints");
+    m_autopaint_joints         = joints == nullptr || joints->getBool();
+
+    // The outer wall line width, resolved like Flow does: a percentage is of the nozzle diameter, zero falls back to
+    // the general line width. Only for the labels: the painter uses each loop's real width.
+    double nozzle = 0.4;
+    if (const auto *nozzles = printer.option<ConfigOptionFloats>("nozzle_diameter"); nozzles != nullptr && !nozzles->values.empty())
+        nozzle = nozzles->get_at(0);
+    auto resolve = [nozzle](const ConfigOption *opt) {
+        const auto *fop = dynamic_cast<const ConfigOptionFloatOrPercent *>(opt);
+        return fop == nullptr ? 0. : fop->get_abs_value(nozzle);
+    };
+    double width = resolve(option("outer_wall_line_width"));
+    if (width <= 0.)
+        width = resolve(option("line_width"));
+    if (width <= 0.)
+        width = 1.125 * nozzle;
+    m_autopaint_line_width = float(width);
+    m_autopaint_width      = float(2. * width);
+}
+
+void GLGizmoSeam::render_auto_paint_section(float label_width, float control_width, float drag_left_width, float drag_width,
+                                            float max_tooltip_width)
+{
+    ModelObject *mo = m_c->selection_info()->model_object();
+    if (mo == nullptr)
+        return;
+    if (mo->id() != m_autopaint_defaults_of) {
+        load_auto_paint_defaults(*mo);
+        m_autopaint_defaults_of = mo->id();
+    }
+
+    ImGui::AlignTextToFramePadding();
+    m_imgui->text(_L("Auto-paint seam"));
+
+    const auto              &modes = auto_paint_modes();
+    std::vector<std::string> labels;
+    for (const AutoPaintMode &mode : modes)
+        labels.push_back(_u8L(mode.label));
+    ImGui::AlignTextToFramePadding();
+    ImGuiWrapper::push_combo_style(m_parent.get_scale());
+    m_imgui->combo(_L("Mode"), labels, m_autopaint_mode, 0, label_width, control_width);
+    ImGuiWrapper::pop_combo_style();
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Where the seam goes, as with the Aligned seam positions: Aligned hides it in the least "
+                            "visible place, the others prefer that side of the bed."),
+                         max_tooltip_width);
+
+    m_imgui->bbl_checkbox(_L("Prefer part joints"), m_autopaint_joints);
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Put the seam on the line where two parts of the object, or two touching objects, meet."),
+                         max_tooltip_width);
+
+    m_imgui->bbl_checkbox(_L("Automatic strip width"), m_autopaint_auto_width);
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(from_u8((boost::format(_u8L("Paint a strip twice as wide as the outer wall line (%1$.2f mm).")) %
+                                  (2.f * m_autopaint_line_width)).str()),
+                         max_tooltip_width);
+    if (!m_autopaint_auto_width) {
+        ImGui::AlignTextToFramePadding();
+        m_imgui->text(_L("Strip width"));
+        ImGui::SameLine(label_width);
+        ImGui::PushItemWidth(control_width);
+        m_imgui->bbl_slider_float_style("##autopaint_width", &m_autopaint_width, 0.2f, 5.f, "%.2f", 1.0f, true);
+        ImGui::PopItemWidth();
+        ImGui::SameLine(drag_left_width);
+        ImGui::PushItemWidth(drag_width);
+        ImGui::BBLDragFloat("##autopaint_width_input", &m_autopaint_width, 0.05f, 0.0f, 0.0f, "%.2f");
+        ImGui::PopItemWidth();
+        m_autopaint_width = std::clamp(m_autopaint_width, 0.2f, 5.f);
+    }
+
+    const std::string replace_label = _u8L("Replace existing paint");
+    const std::string add_label     = _u8L("Add to existing");
+    if (m_imgui->bbl_radio_button(replace_label.c_str(), m_autopaint_replace))
+        m_autopaint_replace = true;
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Erase all seam painting of the object (enforcers and blockers) first."), max_tooltip_width);
+    ImGui::SameLine();
+    if (m_imgui->bbl_radio_button(add_label.c_str(), !m_autopaint_replace))
+        m_autopaint_replace = false;
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Keep the existing painting; the seams are placed as the slicer would place them with it."),
+                         max_tooltip_width);
+
+    const bool idle = wxGetApp().plater()->get_ui_job_worker().is_idle();
+    if (m_imgui->button(_L("Auto-paint"), ImVec2(0.f, 0.f), idle))
+        start_auto_paint();
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Paint seam enforcers where the slicer would put the seam in this mode. The object's own seam "
+                            "settings are not changed. Uses the sliced plate when it is up to date, otherwise slices the "
+                            "object's walls in the background."),
+                         max_tooltip_width);
+}
+
+void GLGizmoSeam::start_auto_paint()
+{
+    Plater *plater = wxGetApp().plater();
+    Worker &worker = plater->get_ui_job_worker();
+    if (!worker.is_idle())
+        return;
+    ModelObject *mo = m_c->selection_info()->model_object();
+    if (mo == nullptr)
+        return;
+    const Selection &selection = m_parent.get_selection();
+    const int        obj_idx   = selection.get_object_idx();
+    int              inst_idx  = selection.get_instance_idx();
+    const Model     &model     = plater->model();
+    if (obj_idx < 0 || size_t(obj_idx) >= model.objects.size() || model.objects[size_t(obj_idx)] != mo)
+        return;
+    if (inst_idx < 0 || size_t(inst_idx) >= mo->instances.size())
+        inst_idx = 0;
+
+    const auto          &modes = auto_paint_modes();
+    SeamAutoPaintRequest request;
+    request.object_id          = mo->id();
+    request.instance_id        = mo->instances[size_t(inst_idx)]->id();
+    request.mode               = modes[size_t(std::clamp(m_autopaint_mode, 0, int(modes.size()) - 1))].mode;
+    request.prefer_part_joints = m_autopaint_joints;
+    request.replace            = m_autopaint_replace;
+    request.strip_width        = m_autopaint_auto_width ? 0.f : m_autopaint_width;
+    int idx = -1;
+    for (const ModelVolume *mv : mo->volumes) {
+        if (!mv->is_model_part())
+            continue;
+        ++idx;
+        if (size_t(idx) >= m_triangle_selectors.size())
+            return;
+        request.parts.push_back({ mv->id(), mv->mesh_ptr(), m_triangle_selectors[size_t(idx)]->serialize() });
+    }
+    if (request.parts.empty())
+        return;
+
+    SeamAutoPaintJob::Finish finish = [this](SeamAutoPaintResult &&result) { apply_auto_paint(std::move(result)); };
+    const Print *print = nullptr;
+    if (const PrintObject *po = SeamAutoPaintJob::sliced_print_object(plater, obj_idx, inst_idx, !request.replace, &print)) {
+        queue_job(worker, std::make_unique<SeamAutoPaintJob>(std::move(request), print, po, std::move(finish)));
+        return;
+    }
+    DynamicPrintConfig     config;
+    std::unique_ptr<Model> copy = SeamAutoPaintJob::private_model(plater, obj_idx, inst_idx, request.prefer_part_joints, config);
+    if (!copy)
+        return;
+    queue_job(worker, std::make_unique<SeamAutoPaintJob>(std::move(request), std::move(copy), std::move(config), std::move(finish)));
+}
+
+void GLGizmoSeam::apply_auto_paint(SeamAutoPaintResult &&result)
+{
+    NotificationManager       *notifications = wxGetApp().notification_manager();
+    ModelObject               *mo            = get_state() == On ? m_c->selection_info()->model_object() : nullptr;
+    std::vector<ModelVolume *> parts;
+    if (mo != nullptr && mo->id() == result.object_id)
+        for (ModelVolume *mv : mo->volumes)
+            if (mv->is_model_part())
+                parts.push_back(mv);
+    bool matches = !parts.empty() && parts.size() == result.volume_ids.size() && parts.size() == result.paint.size() &&
+                   parts.size() == m_triangle_selectors.size();
+    for (size_t i = 0; matches && i < parts.size(); ++i)
+        matches = parts[i]->id() == result.volume_ids[i];
+    if (!matches) {
+        notifications->push_plater_warning_notification(
+            _u8L("Auto-paint seam was discarded: the seam painting tool was closed or the object changed."));
+        return;
+    }
+
+    // One undo step for the whole result, like "Erase all painting".
+    Plater::TakeSnapshot snapshot(wxGetApp().plater(), _u8L("Auto-paint seam"), UndoRedo::SnapshotType::GizmoAction);
+    for (size_t i = 0; i < parts.size(); ++i) {
+        m_triangle_selectors[i]->deserialize(result.paint[i]);
+        m_triangle_selectors[i]->request_update_render_data(true);
+    }
+    update_model_object();
+    m_parent.set_as_dirty();
+
+    if (result.seams == 0) {
+        notifications->push_plater_warning_notification(_u8L("Auto-paint seam found no outer wall to paint a seam on."));
+    } else {
+        const std::string source = result.from_sliced_plate ? _u8L("from the sliced plate") : _u8L("from a background slice of the walls");
+        notifications->push_notification(NotificationType::CustomNotification,
+                                         NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                         (boost::format(_u8L("Auto-paint seam painted %1% seams (%2%).")) % result.seams % source).str());
+    }
 }
 
 wxString GLGizmoSeam::handle_snapshot_action_name(bool shift_down, GLGizmoPainterBase::Button button_down) const

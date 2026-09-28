@@ -19,6 +19,15 @@ on:
       build-deps-only:
         required: false
         type: boolean
+      # Nightly builds only (nightly.yml); passed through to build_orca.yml.
+      version-suffix:
+        required: false
+        type: string
+        default: ''
+      sentry-environment:
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build_deps:
@@ -148,6 +157,8 @@ jobs:
       cache-path: ${{ inputs.cache-path }}
       os: ${{ inputs.os }}
       arch: ${{ inputs.arch }}
+      version-suffix: ${{ inputs.version-suffix }}
+      sentry-environment: ${{ inputs.sentry-environment }}
     secrets: inherit
 
   # Debug symbols for opt-in crash reports (docs/privacy.md). Windows and macOS only: the Linux

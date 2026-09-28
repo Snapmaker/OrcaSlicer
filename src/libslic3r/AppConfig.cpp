@@ -295,6 +295,10 @@ void AppConfig::set_defaults()
     // works regardless. Preferences > General.
     if (get("check_for_updates_on_startup").empty())
         set_bool("check_for_updates_on_startup", true);
+    // Which builds that check offers: "stable" (releases) or "nightly" (the nightly pre-release,
+    // docs/nightly.md). Preferences > General > Update channel.
+    if (get("update_channel").empty())
+        set("update_channel", "stable");
 
     // Sign back in to the Snapmaker account at startup from the web view's saved session, without
     // showing anything (GUI_App::sm_start_silent_login). Preferences > General.

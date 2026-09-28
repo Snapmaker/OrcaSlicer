@@ -158,6 +158,9 @@ enum class NotificationType
     // EdgeSlicer: a Bambu two-extruder plate was not sliced because its filament arrangement is
     // not confirmed yet (DualNozzle::allow_slice_start); the hyperlink opens the confirmation.
     DualNozzleArrangementNeeded,
+    // EdgeSlicer: settings carried onto the new preset by a printer / preset switch (Tab::select_preset).
+    // One at a time: the next switch replaces it.
+    PresetSettingsCarried,
 };
 
 class NotificationManager

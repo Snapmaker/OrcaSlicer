@@ -539,3 +539,142 @@ TEST_CASE("Sparse plane-path anchors match the printed infill", "[Fill][Internal
     // would hide anchors that no longer coincide with printed lines.
     CHECK(unscale<double>(max_distance) <= config.opt_float("resolution"));
 }
+
+TEST_CASE("Locked Zag bands fall back for patterns that need per-object state", "[Fill][LockedZag]")
+{
+    // adaptivecubic, supportcubic and lightning are left out of the locked_sk*_infill_pattern menus
+    // because their fillers need an octree / generator that is only built when a region's own sparse
+    // pattern asks for one. A stored value can still carry them (a Bambu preset lists them; the GUI
+    // combo stored its row index as the value before the key mapping), so slicing must not
+    // dereference the missing state - the band keeps the Locked Zag filler's own pattern instead.
+    const std::string pattern = GENERATE("adaptivecubic", "supportcubic", "lightning");
+    const bool        in_skin = GENERATE(false, true);
+    CAPTURE(pattern, in_skin);
+
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"sparse_infill_pattern", "lockedzag"},
+                                   {"sparse_infill_density", "20%"},
+                                   {"locked_skin_infill_pattern", in_skin ? pattern : std::string("default")},
+                                   {"locked_skeleton_infill_pattern", in_skin ? std::string("default") : pattern},
+                                   {"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2}});
+    Print print;
+    Model model;
+    Slic3r::Test::init_print({make_cube(30, 30, 6)}, print, model, config, false);
+    print.process();
+
+    const Layer &layer = *print.objects().front()->get_layer(10);
+    Polylines printed;
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities)
+            if (entity->role() == erInternalInfill)
+                entity->collect_polylines(printed);
+    CHECK_FALSE(printed.empty());
+}
+
+// Slices a 30x30x6 mm cube at 0.2 mm layers (layers 0..29) with the given surface settings.
+static void process_surface_density_cube(Print &print, Model &model, std::initializer_list<ConfigBase::SetDeserializeItem> items)
+{
+    auto config = DynamicPrintConfig::full_print_config();
+    config.set_deserialize_strict({{"layer_height", 0.2},
+                                   {"initial_layer_print_height", 0.2},
+                                   {"top_shell_layers", 4},
+                                   {"bottom_shell_layers", 3},
+                                   {"sparse_infill_density", "15%"}});
+    config.set_deserialize_strict(items);
+    Slic3r::Test::init_print({make_cube(30, 30, 6)}, print, model, config, false);
+    print.process();
+}
+
+static Polylines fill_polylines(const Layer &layer, ExtrusionRole role)
+{
+    Polylines out;
+    for (const LayerRegion *region : layer.regions())
+        for (const ExtrusionEntity *entity : region->fills.flatten().entities)
+            if (entity->role() == role)
+                entity->collect_polylines(out);
+    return out;
+}
+
+static double fill_length_mm(const Polylines &polylines)
+{
+    return std::accumulate(polylines.begin(), polylines.end(), 0.,
+                           [](double acc, const Polyline &pl) { return acc + unscale<double>(pl.length()); });
+}
+
+TEST_CASE("Top and bottom surface density", "[Fill][SurfaceDensity]")
+{
+    Print print;
+    Model model;
+
+    SECTION("0% top surface density prints only the walls on the top layer") {
+        // Fillers divide their line spacing by the density, so a 0% top surface must be dropped
+        // before it reaches them rather than filled with an infinite spacing.
+        process_surface_density_cube(print, model, {{"top_surface_density", "0%"}});
+        const Layer &top = *print.objects().front()->get_layer(29);
+        CHECK(fill_polylines(top, erTopSolidInfill).empty());
+        CHECK_FALSE(top.regions().front()->perimeters.entities.empty());
+    }
+
+    SECTION("A lower top surface density spaces the top lines apart") {
+        process_surface_density_cube(print, model, {{"top_surface_density", "100%"}});
+        const double full = fill_length_mm(fill_polylines(*print.objects().front()->get_layer(29), erTopSolidInfill));
+        Print print_half;
+        Model model_half;
+        process_surface_density_cube(print_half, model_half, {{"top_surface_density", "50%"}});
+        const double half = fill_length_mm(fill_polylines(*print_half.objects().front()->get_layer(29), erTopSolidInfill));
+        CAPTURE(full, half);
+        REQUIRE(full > 0.);
+        CHECK(half > 0.3 * full);
+        CHECK(half < 0.75 * full);
+    }
+
+    SECTION("A lower bottom surface density spaces the bottom lines apart") {
+        process_surface_density_cube(print, model, {{"bottom_surface_density", "100%"}});
+        const double full = fill_length_mm(fill_polylines(*print.objects().front()->get_layer(0), erBottomSurface));
+        Print print_half;
+        Model model_half;
+        process_surface_density_cube(print_half, model_half, {{"bottom_surface_density", "50%"}});
+        const double half = fill_length_mm(fill_polylines(*print_half.objects().front()->get_layer(0), erBottomSurface));
+        CAPTURE(full, half);
+        REQUIRE(full > 0.);
+        CHECK(half > 0.3 * full);
+        CHECK(half < 0.75 * full);
+    }
+}
+
+TEST_CASE("Undertop surface pattern fills the solid layer under a sparse top", "[Fill][SurfaceDensity]")
+{
+    // Share of the printed length running parallel to the cube's X or Y edges. Concentric rings on a
+    // square are axis-aligned; the default monotonic solid infill runs at 45 degrees.
+    auto axis_aligned_share = [](const Polylines &polylines) {
+        double aligned = 0., total = 0.;
+        for (const Polyline &pl : polylines)
+            for (const Line &line : pl.lines()) {
+                const Vec2d  d   = (line.b - line.a).cast<double>();
+                const double len = d.norm();
+                total += len;
+                if (std::min(std::abs(d.x()), std::abs(d.y())) < 0.1 * len)
+                    aligned += len;
+            }
+        return total > 0. ? aligned / total : 0.;
+    };
+
+    const std::string undertop = GENERATE("default", "concentric");
+    const std::string density  = GENERATE("50%", "100%");
+    CAPTURE(undertop, density);
+
+    Print print;
+    Model model;
+    process_surface_density_cube(print, model, {{"top_surface_density", density}, {"undertop_surface_pattern", undertop}});
+    // Layer 28 is the solid layer directly under the top skin on layer 29.
+    const Polylines under_top = fill_polylines(*print.objects().front()->get_layer(28), erSolidInfill);
+    REQUIRE_FALSE(under_top.empty());
+    const double share = axis_aligned_share(under_top);
+    CAPTURE(share);
+    // The undertop pattern only takes over while the top surface is sparse enough to show it.
+    if (undertop == "concentric" && density == "50%")
+        CHECK(share > 0.8);
+    else
+        CHECK(share < 0.5);
+}

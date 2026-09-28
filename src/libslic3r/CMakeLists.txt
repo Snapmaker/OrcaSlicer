@@ -285,6 +285,8 @@ set(lisbslic3r_sources
     GCode/RetractWhenCrossingPerimeters.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
+    GCode/SeamAutoPaint.cpp
+    GCode/SeamAutoPaint.hpp
     #GCodeSender.cpp
     #GCodeSender.hpp
     GCode/SmallAreaInfillFlowCompensator.cpp

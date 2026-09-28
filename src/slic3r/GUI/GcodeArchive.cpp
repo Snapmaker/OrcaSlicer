@@ -538,6 +538,39 @@ bool set_mode(const std::string& id, const std::string& mode, const std::string&
     return set_mode_in(dir(), id, mode, remote_path);
 }
 
+bool note_reprint_in(const std::string& root_dir, const std::string& id, const nlohmann::json& entry)
+{
+    if (id.empty() || id.size() > 200 || id != sanitize(id, 200) || !entry.is_object()) return false;
+    try {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const fs::path root(root_dir);
+        const fs::path sidecar = sidecar_path_of(root, id);
+        boost::system::error_code ec;
+        if (!fs::is_regular_file(sidecar, ec)) return false;
+        boost::nowide::ifstream f(sidecar.string().c_str(), std::ios::binary);
+        if (!f) return false;
+        std::stringstream ss;
+        ss << f.rdbuf();
+        f.close();
+        json j = json::parse(ss.str());
+        if (!j.is_object() || j.value("id", std::string()) != id) return false;
+        json& list = j["reprints"];
+        if (!list.is_array()) list = json::array();
+        list.push_back(entry);
+        // The newest REPRINT_HISTORY_MAX: a job reprinted every day for years must not grow its
+        // sidecar without bound, and nobody reads that far back.
+        while (list.size() > REPRINT_HISTORY_MAX) list.erase(list.begin());
+        return write_atomic(sidecar, j.dump(2));
+    } catch (...) {
+        return false;
+    }
+}
+
+bool note_reprint(const std::string& id, const nlohmann::json& entry)
+{
+    return note_reprint_in(dir(), id, entry);
+}
+
 bool remove(const std::string& id)
 {
     const Record r = find(id);

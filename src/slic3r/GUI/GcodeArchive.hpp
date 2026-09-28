@@ -120,6 +120,14 @@ bool remove(const std::string& id);
 bool set_mode(const std::string& id, const std::string& mode, const std::string& remote_path = "");
 // The same on an explicit folder, with no app config involved (tests).
 bool set_mode_in(const std::string& root_dir, const std::string& id, const std::string& mode, const std::string& remote_path = "");
+// A send of a record again (a reprint), kept in the record's own sidecar as "reprints": [...] -
+// the job's history: when, to which printer, how (upload / print, uploaded again or started in
+// place) and from where. The newest REPRINT_HISTORY_MAX entries are kept. False when there is no
+// such record or its sidecar could not be rewritten; a reprint never fails because of it.
+constexpr size_t REPRINT_HISTORY_MAX = 50;
+bool note_reprint(const std::string& id, const nlohmann::json& entry);
+// The same on an explicit folder (tests).
+bool note_reprint_in(const std::string& root_dir, const std::string& id, const nlohmann::json& entry);
 
 // ---- which printer a record names, as the phone's Reprint list shows it ----
 //

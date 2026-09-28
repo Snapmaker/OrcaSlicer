@@ -281,6 +281,10 @@ protected:
 
 	DynamicPrintConfig 	m_cache_config;
     t_config_option_keys m_cache_config_keys;
+    // Ultra: one line per settings carry done during the current select_preset() (printer-switch
+    // process carry, auto-transferred modifications); shown as ONE notification when it finishes.
+    std::vector<std::string> m_carry_notes;
+    void                     show_carry_notification();
 
     struct FlowVariantView
     {

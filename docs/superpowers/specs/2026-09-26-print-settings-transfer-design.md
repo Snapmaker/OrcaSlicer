@@ -1,6 +1,6 @@
 # Design: Carry process settings across printer switches as revertable modifications
 
-Date: 2026-09-26, revised 2026-09-28 (review of PR #176)
+Date: 2026-09-26, revised 2026-09-28 (review of PR #176, then the owner's first hand test)
 Status: Approved (owner); filaments explicitly out of scope
 
 ## Problem
@@ -64,15 +64,50 @@ A single rule set, `carry_print_settings()` in `PresetBundle.cpp`:
    and -> U1 4x0.4 count as same; any mixed-size machine on either side does not).
    The old printer's diameters are the edited values at the moment of the switch.
 
-3. **Vectors**: values whose length differs between the two profiles keep the
-   matched profile's value (extruder-count-dependent). Exception: the per-flow-mode
-   process options (`process_flow_variant_options()`, e.g. `outer_wall_speed`) are
-   ordered by each profile's own `process_flow_support`; when the two mode lists
-   differ, entries are matched up by mode name ("standard" -> "standard"), and a
-   mode the previous profile did not have keeps the matched profile's value. This is
-   what lets speeds carry from a standard-only X1C profile onto an H2C profile with
-   standard + high-flow entries.
-4. Options whose type differs, or that are missing on either side, are skipped.
+3. **Per-variant vectors**. Bambu's H2-series process profiles store speeds,
+   accelerations etc. once per extruder variant: `print_extruder_id` /
+   `print_extruder_variant` (H2S: 3 entries of extruder 1 - Standard, High Flow,
+   E3D High Flow; H2C: 5; H2D: 7 over two extruders), while an X1C profile has one
+   entry. The first version only knew the flow-mode layout and skipped every such
+   key on a length mismatch - initial layer, top surface, overhang speeds and most
+   other speeds did not carry X1C -> H2S. Now each entry is labelled
+   "extruder|variant" (from the Bambu layout, or from `process_flow_support` for the
+   per-flow-mode options, "standard" = "Direct Drive Standard", "high_flow" =
+   "Direct Drive High Flow") and matched: same extruder + variant first, then the
+   same variant on any extruder. A one-variant printer therefore fills every
+   standard entry of the new printer; entries without a counterpart (High Flow,
+   E3D, TPU when the old printer had only a standard nozzle) keep the matched
+   profile's value. Vectors without any variant layout whose length differs keep the
+   matched value (extruder-count-dependent).
+4. Options whose type differs, or that are missing on either side, are skipped
+   (none do between the bundled X1C, H2S, H2D, H2C and U1 profiles, see the audit).
+
+5. **Settings conflicts**. The process page rewrites (or asks about) some
+   combinations every time it updates (`ConfigManipulation::update_print_fff_config`,
+   `toggle_print_fff_options`). A carry must never create one: a rewritten value is a
+   modification the user did not make, and a dialog would pop on a printer switch.
+   When a rule is broken after the carry but holds in the matched profile, carried
+   keys are put back to the matched value in order until it holds
+   (`print_carry_conflicts()` in PresetBundle.cpp):
+
+   | Rule | Restored first |
+   |---|---|
+   | support style valid for the support type (supports on) | `support_style`, `support_type` |
+   | spiral vase prerequisites (walls 1, no top shells/infill/support, traditional timelapse ...) | `spiral_mode` |
+   | alternate extra wall vs ensure vertical shell thickness = All | `alternate_extra_wall`, `ensure_vertical_shell_thickness` |
+   | scarf seam start height below the layer height | `seam_slope_start_height`, `seam_slope_type` |
+   | infill lock depth not above skin depth | `infill_lock_depth`, `skin_infill_depth` |
+   | offset layers prerequisites | `offset_layers` |
+   | Extrusion/Combined fuzzy skin needs Arachne | `fuzzy_skin_mode`, `wall_generator` |
+   | layer height not above the printer's `max_layer_height` | `layer_height` |
+   | multiline infill only with a multiline pattern | `fill_multiline`, `sparse_infill_pattern` |
+   | reverse internal overhangs only needs a 0% threshold | `overhang_reverse_threshold`, `overhang_reverse_internal_only` |
+   | extrusion rate smoothing turns arc fitting off (arc fitting is printer-coupled) | `max_volumetric_extrusion_rate_slope` |
+
+   A value dropped this way is remembered and offered again on the next switch (if
+   the user has not changed the value kept in its place), so A -> B -> A still
+   returns it. Tree-support keys, `ironing_type` and the Locked Zag sub-patterns are
+   only enabled/disabled by the page, never rewritten, so they need no rule.
 
 ## Where it runs
 
@@ -85,7 +120,10 @@ Only the GUI printer switch, `Tab::select_preset()` on the Printer tab, FFF -> F
 2. The printer is selected and `update_compatible()` re-matches the process preset
    exactly as before; with "Remember printer configuration" `update_selections()`
    may then pick the process last used on that printer.
-3. **Apply** last, onto whatever process preset was finally selected:
+3. **Pick the target**: `PresetBundle::select_print_carry_target()` prefers the
+   preset the carried values came from, then the process last used on the new
+   printer, when compatible (see Round trip).
+4. **Apply** last, onto that process preset:
    `PresetBundle::apply_print_settings_carry()`. The edited preset now differs from
    the selected one exactly in the carried keys, so the existing dirty machinery
    renders the orange arrows and "(modified)" suffix.
@@ -130,17 +168,42 @@ After a switch that kept at least one setting, one short, fading notification
 
 ## Round trip
 
-A (clean PA) -> B (matched PB + A's values as modifications) -> A again: the second
-switch carries B's edited config (A's values, except B's printer-coupled keys) back
-onto PA, leaving only the user's own earlier modifications dirty. Across a nozzle
-size change the geometry keys follow each printer's matched profile.
+The first version re-matched the process preset from scratch on the way back, so
+X1C -> H2S -> X1C landed on the X1C preset nearest to the H2S's, not the one the user
+started from. Now the carry records its origin: `capture_print_settings_carry()`
+sets `origin_preset` to the current process preset, or - while still on the preset
+a previous carry was applied onto - to that carry's origin. The bundle also records,
+per printer, the process preset last used on it (this session). Before applying,
+`select_print_carry_target()` selects the origin if it is compatible with the new
+printer, else the printer's last used process if compatible, else keeps the
+auto-matched (or, with "Remember printer configuration", the remembered) preset.
+So A -> B -> A and A -> B -> C -> A land on A's original preset with only the
+user's own edits dirty, with the remember option on or off. Picking another process
+preset by hand starts a new origin.
+
+## Presets that store an inconsistent support style
+
+Found in the owner's hand test: a user preset ("0.24mm @X1C - HexBase") stored
+`support_style = tree_hybrid` under the inherited `support_type = normal(auto)` with
+supports on. `update_print_fff_config` reset the style to Default on every page
+update, so the preset was dirty as soon as it was loaded and "revert" could never
+clear it (revert wrote tree_hybrid back, the update reset it again). The reset now
+skips a style the saved process preset itself stores (`TabPrint::update` passes the
+selected preset as reference). The slicer resolves such a style exactly like
+Default (a tree style under normal support prints grid, a normal style under tree
+support prints organic), and the combo box already shows Default for it.
 
 ## Testing
 
 - `tests/libslic3r/test_print_settings_carry.cpp`: key classification, the same
   nozzle size rule, same-nozzle full carry minus printer-coupled keys, nozzle-change
-  carry minus geometry keys, vector length skip, flow-mode matching, and a
-  `PresetBundle` switch with dirty state, single revert, discard-all and A -> B -> A.
+  carry minus geometry keys, vector length skip, flow-mode matching, per-variant
+  matching (X1C/H2S/H2D/U1 layouts), settings conflicts, a `PresetBundle` switch with
+  dirty state, single revert, discard-all, and round trips A -> B -> A and
+  A -> B -> C -> A (origin, last used, deferred conflict values, manual re-pick).
+- Audit (`[Audit]` case) with the bundled profiles: X1C 0.4 -> H2S, H2D, H2C and U1
+  0.4, listing every process key not (fully) carried with its reason and failing on
+  any reason outside the deliberate ones.
 - Manual GUI matrix (owner): X1C -> H2D and X1C -> U1 (same nozzle), X1C 0.4 ->
   0.2 (nozzle change), A -> B -> A, single revert, discard all, Print-tab preset
   switch notification.

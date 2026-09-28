@@ -3722,7 +3722,10 @@ void TabPrint::update()
         m_config_manipulation.initialize_support_material_overhangs_queried(is_user_and_saved_preset && support_material_overhangs_queried);
     }
 
+    // Ultra: values the saved process preset itself stores are never "corrected" (see ConfigManipulation).
+    m_config_manipulation.set_reference_config(m_type == Preset::TYPE_PRINT ? &m_presets->get_selected_preset().config : nullptr);
     m_config_manipulation.update_print_fff_config(m_config, m_type < Preset::TYPE_COUNT, m_type == Preset::TYPE_PLATE);
+    m_config_manipulation.set_reference_config(nullptr);
 
     update_description_lines();
     //BBS: GUI refactor
@@ -6811,10 +6814,12 @@ bool Tab::select_preset(std::string preset_name, bool delete_current /*=false*/,
         }
 
         // Ultra: carry the previous process settings onto the process preset the new printer ended
-        // up with (matched by update_compatible, or the remembered one from update_selections above,
-        // which is why this runs last). Carried values stay dirty, so each one can be reverted and
-        // "discard all" restores the matched profile exactly.
+        // up with. The preset the carried values came from (A in A -> B -> A), or the one last used
+        // on this printer, wins over the auto-match and the remembered one (update_selections above,
+        // which is why this runs last) when it is compatible. Carried values stay dirty, so each one
+        // can be reverted and "discard all" restores the selected profile exactly.
         if (carry_process && m_type == Preset::TYPE_PRINTER) {
+            m_preset_bundle->select_print_carry_target(print_settings_carry);
             const std::vector<std::string> carried = m_preset_bundle->apply_print_settings_carry(print_settings_carry);
             if (!carried.empty()) {
                 const auto *new_nozzles = dynamic_cast<const ConfigOptionFloats *>(

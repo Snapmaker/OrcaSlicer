@@ -4782,50 +4782,263 @@ bool print_carry_same_nozzle_size(const std::vector<double> &old_nozzles, const 
     return true;
 }
 
-static std::vector<std::string> print_carry_flow_modes(const DynamicPrintConfig &config)
+// Labels of the entries of a per-variant vector option, "<extruder id>|<variant name>", or an empty
+// list when the option's length does not follow any variant layout of the config. Two layouts exist:
+// Bambu's per-extruder-variant layout (print_extruder_id / print_extruder_variant, e.g. H2S: three
+// variants of extruder 1, H2D: seven entries over two extruders) and the per-flow-mode layout of the
+// process_flow_variant_options() (process_flow_support, e.g. U1: standard + high_flow). Flow modes are
+// named like the Bambu variant they correspond to, so the two layouts can be matched up.
+static std::vector<std::string> print_carry_variant_labels(const DynamicPrintConfig &config, const std::string &key, size_t size)
 {
-    std::vector<std::string> modes;
-    if (const auto *opt = dynamic_cast<const ConfigOptionStrings *>(config.option(flow_support_key(ConfigFlowDomain::Process))))
-        modes = opt->values;
-    if (modes.empty())
-        modes.emplace_back(FLOW_MODE_STANDARD);
-    return modes;
+    std::vector<std::string> labels;
+    const auto *variants = dynamic_cast<const ConfigOptionStrings *>(config.option("print_extruder_variant"));
+    const auto *ids      = dynamic_cast<const ConfigOptionInts *>(config.option("print_extruder_id"));
+    if (variants != nullptr && variants->values.size() == size && (size > 1 || !is_process_flow_variant_option(key))) {
+        for (size_t i = 0; i < size; ++i) {
+            const int id = ids != nullptr && i < ids->values.size() ? ids->values[i] : 1;
+            labels.emplace_back(std::to_string(id) + "|" + variants->values[i]);
+        }
+        return labels;
+    }
+    if (is_process_flow_variant_option(key)) {
+        std::vector<std::string> modes;
+        if (const auto *opt = dynamic_cast<const ConfigOptionStrings *>(config.option(flow_support_key(ConfigFlowDomain::Process))))
+            modes = opt->values;
+        if (modes.empty())
+            modes.emplace_back(FLOW_MODE_STANDARD);
+        if (modes.size() == size) {
+            for (const std::string &mode : modes)
+                labels.emplace_back(std::string("1|") + (mode == FLOW_MODE_HIGH_FLOW ? std::string("Direct Drive High Flow") :
+                                                         mode == FLOW_MODE_STANDARD  ? std::string("Direct Drive Standard") : mode));
+            return labels;
+        }
+    }
+    return labels;
 }
 
-std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size)
+static std::string print_carry_variant_name(const std::string &label)
 {
+    const size_t bar = label.find('|');
+    return bar == std::string::npos ? label : label.substr(bar + 1);
+}
+
+// Settings-page consistency rules (mirrors ConfigManipulation::update_print_fff_config() and
+// toggle_print_fff_options(), which rewrite - or ask about - these combinations whenever the process
+// page updates). A carry must never create one of them: the page would rewrite the value right away
+// (a modification the user did not make and may not be able to revert) or pop a dialog on a printer
+// switch. When a rule is broken after the carry but holds in the matched profile, the listed keys are
+// put back to the matched profile's value, in order, until the rule holds again.
+struct PrintCarryConflict
+{
+    const char                                                                   *name;
+    std::vector<const char *>                                                     restore;
+    std::function<bool(const DynamicPrintConfig &, const DynamicPrintConfig *)>   broken;
+};
+
+static bool print_carry_bool(const DynamicPrintConfig &c, const char *key)
+{
+    const ConfigOption *opt = c.option(key);
+    return opt != nullptr && opt->getBool();
+}
+static int print_carry_int(const DynamicPrintConfig &c, const char *key)
+{
+    const ConfigOption *opt = c.option(key);
+    return opt != nullptr ? opt->getInt() : 0;
+}
+static double print_carry_float(const DynamicPrintConfig &c, const char *key)
+{
+    const ConfigOption *opt = c.option(key);
+    if (opt == nullptr)
+        return 0.;
+    if (const auto *vec = dynamic_cast<const ConfigOptionFloats *>(opt))
+        return vec->values.empty() ? 0. : vec->values.front();
+    if (const auto *fp = dynamic_cast<const ConfigOptionFloatOrPercent *>(opt))
+        return fp->value;
+    if (const auto *pc = dynamic_cast<const ConfigOptionPercent *>(opt))
+        return pc->value;
+    return opt->getFloat();
+}
+
+static bool print_carry_multiline_pattern(InfillPattern p)
+{
+    return p == ipGyroid || p == ipGrid || p == ipRectilinear || p == ipTpmsD || p == ipTpmsFK || p == ipCrossHatch ||
+           p == ipHoneycomb || p == ipLateralLattice || p == ipLateralHoneycomb || p == ipCubic || p == ipStars ||
+           p == ipAlignedRectilinear || p == ipLightning || p == ip3DHoneycomb || p == ipAdaptiveCubic || p == ipSupportCubic;
+}
+
+static const std::vector<PrintCarryConflict> &print_carry_conflicts()
+{
+    static const std::vector<PrintCarryConflict> rules {
+        { "support style not valid for the support type", { "support_style", "support_type" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              if (!c.has("support_style") || !c.has("support_type") || !print_carry_bool(c, "enable_support"))
+                  return false;
+              const int  style = print_carry_int(c, "support_style");
+              const bool tree  = is_tree(SupportType(print_carry_int(c, "support_type")));
+              return tree ? !(style == smsDefault || style == smsTreeSlim || style == smsTreeStrong || style == smsTreeHybrid || style == smsTreeOrganic)
+                          : !(style == smsDefault || style == smsGrid || style == smsSnug);
+          } },
+        { "spiral vase prerequisites", { "spiral_mode" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              if (!print_carry_bool(c, "spiral_mode"))
+                  return false;
+              return !(print_carry_int(c, "wall_loops") == 1 && print_carry_int(c, "top_shell_layers") == 0 && print_carry_float(c, "sparse_infill_density") == 0 &&
+                       !print_carry_bool(c, "enable_support") && print_carry_int(c, "enforce_support_layers") == 0 && !print_carry_bool(c, "detect_thin_wall") &&
+                       !print_carry_bool(c, "overhang_reverse") && print_carry_int(c, "wall_direction") == int(WallDirection::Auto) &&
+                       print_carry_int(c, "timelapse_type") == int(TimelapseType::tlTraditional));
+          } },
+        { "alternate extra wall with vertical shell thickness All", { "alternate_extra_wall", "ensure_vertical_shell_thickness" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              return print_carry_bool(c, "alternate_extra_wall") && print_carry_int(c, "ensure_vertical_shell_thickness") == int(evstAll);
+          } },
+        { "scarf seam start height not below the layer height", { "seam_slope_start_height", "seam_slope_type" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              if (!c.has("seam_slope_type") || !c.has("seam_slope_start_height") || !c.has("layer_height") ||
+                  print_carry_int(c, "seam_slope_type") == int(SeamScarfType::None))
+                  return false;
+              return c.get_abs_value("seam_slope_start_height") >= c.opt_float("layer_height");
+          } },
+        { "infill lock depth above skin depth", { "infill_lock_depth", "skin_infill_depth" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              return c.has("infill_lock_depth") && c.has("skin_infill_depth") &&
+                     print_carry_float(c, "infill_lock_depth") > print_carry_float(c, "skin_infill_depth");
+          } },
+        { "offset layers prerequisites", { "offset_layers" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              if (!print_carry_bool(c, "offset_layers"))
+                  return false;
+              const ConfigOption *top = c.option("top_surface_line_width");
+              const ConfigOption *outer = c.option("outer_wall_line_width");
+              return std::abs(print_carry_float(c, "initial_layer_print_height") - print_carry_float(c, "layer_height")) > EPSILON ||
+                     (top != nullptr && outer != nullptr && !(*top == *outer)) || print_carry_bool(c, "spiral_mode");
+          } },
+        { "fuzzy skin mode needs the Arachne wall generator", { "fuzzy_skin_mode", "wall_generator" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              return c.has("fuzzy_skin_mode") && c.has("wall_generator") &&
+                     print_carry_int(c, "fuzzy_skin_mode") != int(FuzzySkinMode::Displacement) &&
+                     print_carry_int(c, "wall_generator") != int(PerimeterGeneratorType::Arachne);
+          } },
+        { "layer height above the printer's maximum", { "layer_height" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *printer) {
+              if (printer == nullptr || !c.has("layer_height"))
+                  return false;
+              const double max_lh = print_carry_float(*printer, "max_layer_height");
+              return max_lh > 0.2 && c.opt_float("layer_height") > max_lh + EPSILON;
+          } },
+        { "multiline infill with a pattern that has no multiline", { "fill_multiline", "sparse_infill_pattern" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              if (!c.has("fill_multiline") || !c.has("sparse_infill_pattern") || print_carry_int(c, "fill_multiline") == 1)
+                  return false;
+              return !print_carry_multiline_pattern(InfillPattern(print_carry_int(c, "sparse_infill_pattern")));
+          } },
+        { "reverse internal overhangs only needs a 0% threshold", { "overhang_reverse_threshold", "overhang_reverse_internal_only" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              const auto *t = dynamic_cast<const ConfigOptionFloatOrPercent *>(c.option("overhang_reverse_threshold"));
+              return print_carry_bool(c, "overhang_reverse_internal_only") && t != nullptr && !(t->value == 0 && t->percent);
+          } },
+        { "extrusion rate smoothing turns arc fitting off", { "max_volumetric_extrusion_rate_slope" },
+          [](const DynamicPrintConfig &c, const DynamicPrintConfig *) {
+              const auto *slope = dynamic_cast<const ConfigOptionFloats *>(c.option("max_volumetric_extrusion_rate_slope"));
+              if (slope == nullptr || !print_carry_bool(c, "enable_arc_fitting"))
+                  return false;
+              return std::any_of(slope->values.begin(), slope->values.end(), [](double v) { return v > 0; });
+          } },
+    };
+    return rules;
+}
+
+std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size,
+                                              const DynamicPrintConfig *printer, std::map<std::string, std::string> *kept)
+{
+    const DynamicPrintConfig matched = dst;
     std::vector<std::string> changed;
-    const std::vector<std::string> src_modes = print_carry_flow_modes(src);
-    const std::vector<std::string> dst_modes = print_carry_flow_modes(dst);
+    auto keep = [kept](const std::string &key, const std::string &why) {
+        if (kept != nullptr)
+            (*kept)[key] = why;
+    };
     for (const std::string &key : src.keys()) {
-        if (print_carry_is_printer_coupled(key) || (!same_nozzle_size && print_carry_is_nozzle_geometry(key)))
-            continue;
         const ConfigOption *src_opt = src.option(key);
         ConfigOption       *dst_opt = dst.option(key);
-        if (src_opt == nullptr || dst_opt == nullptr || src_opt->type() != dst_opt->type() || *dst_opt == *src_opt)
+        if (src_opt == nullptr || (dst_opt != nullptr && *dst_opt == *src_opt))
             continue;
+        if (print_carry_is_printer_coupled(key)) {
+            keep(key, "printer-coupled (denylist)");
+            continue;
+        }
+        if (!same_nozzle_size && print_carry_is_nozzle_geometry(key)) {
+            keep(key, "nozzle geometry, nozzle size changed");
+            continue;
+        }
+        if (dst_opt == nullptr) {
+            keep(key, "not in the matched profile");
+            continue;
+        }
+        if (src_opt->type() != dst_opt->type()) {
+            keep(key, "option type differs");
+            continue;
+        }
         const auto *src_vec = dynamic_cast<const ConfigOptionVectorBase *>(src_opt);
         auto       *dst_vec = dynamic_cast<ConfigOptionVectorBase *>(dst_opt);
-        if (src_vec != nullptr && dst_vec != nullptr && src_modes != dst_modes && is_process_flow_variant_option(key)) {
-            // One value per flow mode (standard / high flow), ordered by each profile's own
-            // process_flow_support: match the entries up by mode. A mode the previous profile did
-            // not have keeps the matched profile's value.
+        if (src_vec != nullptr && dst_vec != nullptr) {
+            const std::vector<std::string> src_labels = print_carry_variant_labels(src, key, src_vec->size());
+            const std::vector<std::string> dst_labels = print_carry_variant_labels(dst, key, dst_vec->size());
+            if (src_labels.empty() || dst_labels.empty() || src_labels == dst_labels) {
+                if (src_vec->size() != dst_vec->size()) {
+                    // Extruder-count-dependent value without a known variant layout: keep the matched profile's.
+                    keep(key, "vector length differs (" + std::to_string(src_vec->size()) + " vs " + std::to_string(dst_vec->size()) +
+                                  ") and no variant layout");
+                    continue;
+                }
+                dst_opt->set(src_opt);
+                changed.emplace_back(key);
+                continue;
+            }
+            // Per-variant values: entry by entry, same extruder + variant first, then the same variant
+            // on any extruder. Entries without a counterpart keep the matched profile's value.
             std::unique_ptr<ConfigOption> before(dst_opt->clone());
-            for (size_t j = 0; j < dst_vec->size() && j < dst_modes.size(); ++j) {
-                const auto it = std::find(src_modes.begin(), src_modes.end(), dst_modes[j]);
-                const size_t i = size_t(it - src_modes.begin());
-                if (it != src_modes.end() && i < src_vec->size())
-                    dst_vec->set_at(src_opt, j, i);
+            std::string unmatched;
+            for (size_t j = 0; j < dst_labels.size(); ++j) {
+                auto it = std::find(src_labels.begin(), src_labels.end(), dst_labels[j]);
+                if (it == src_labels.end()) {
+                    const std::string name = print_carry_variant_name(dst_labels[j]);
+                    it = std::find_if(src_labels.begin(), src_labels.end(),
+                                      [&name](const std::string &l) { return print_carry_variant_name(l) == name; });
+                }
+                if (it != src_labels.end())
+                    dst_vec->set_at(src_opt, j, size_t(it - src_labels.begin()));
+                else
+                    unmatched += (unmatched.empty() ? "" : ", ") + dst_labels[j];
             }
             if (!(*dst_opt == *before))
                 changed.emplace_back(key);
+            if (!unmatched.empty())
+                keep(key, "variant entries without a counterpart on the previous printer kept: " + unmatched);
             continue;
         }
-        if (src_vec != nullptr && dst_vec != nullptr && src_vec->size() != dst_vec->size())
-            // Extruder-count-dependent value from a different machine: keep the matched profile's.
-            continue;
         dst_opt->set(src_opt);
         changed.emplace_back(key);
+    }
+
+    // Never leave a combination the settings page would rewrite or ask about.
+    for (int pass = 0; pass < 3; ++pass) {
+        bool restored = false;
+        for (const PrintCarryConflict &rule : print_carry_conflicts()) {
+            if (!rule.broken(dst, printer) || rule.broken(matched, printer))
+                continue;
+            for (const char *key : rule.restore) {
+                auto it = std::find(changed.begin(), changed.end(), key);
+                if (it == changed.end() || matched.option(key) == nullptr)
+                    continue;
+                dst.set_key_value(key, matched.option(key)->clone());
+                changed.erase(it);
+                keep(key, std::string("conflict: ") + rule.name);
+                restored = true;
+                if (!rule.broken(dst, printer))
+                    break;
+            }
+        }
+        if (!restored)
+            break;
     }
     return changed;
 }
@@ -4843,23 +5056,77 @@ PrintSettingsCarry PresetBundle::capture_print_settings_carry() const
     const Preset &printer = this->printers.get_edited_preset();
     if (printer.printer_technology() != ptFFF || this->prints.get_selected_idx() == size_t(-1))
         return carry;
-    carry.from_preset      = this->prints.get_edited_preset().name;
+    carry.from_preset  = this->prints.get_edited_preset().name;
+    carry.from_printer = printer.name;
+    // Still on the preset a previous carry was applied onto: the values came from further back.
+    carry.origin_preset = !m_print_carry_origin.empty() && m_print_carry_applied_onto == carry.from_preset ? m_print_carry_origin :
+                                                                                                             carry.from_preset;
     carry.config           = this->prints.get_edited_preset().config;
     carry.nozzle_diameters = print_carry_nozzles(printer);
+    // Values the previous carry could not apply here because of a settings conflict travel on, as long
+    // as the user has not changed the value that was kept in their place.
+    if (m_print_carry_applied_onto == carry.from_preset)
+        for (const std::string &key : m_print_carry_deferred.keys()) {
+            const ConfigOption *placed = m_print_carry_deferred_placed.option(key);
+            const ConfigOption *now    = carry.config.option(key);
+            if (placed != nullptr && now != nullptr && *placed == *now)
+                carry.config.set_key_value(key, m_print_carry_deferred.option(key)->clone());
+        }
     return carry;
 }
 
-std::vector<std::string> PresetBundle::apply_print_settings_carry(const PrintSettingsCarry &carry)
+bool PresetBundle::select_print_carry_target(const PrintSettingsCarry &carry)
+{
+    if (carry.from_preset.empty() || this->printers.get_edited_preset().printer_technology() != ptFFF)
+        return false;
+    std::vector<std::string> candidates { carry.origin_preset };
+    if (auto it = m_print_carry_last_by_printer.find(this->printers.get_edited_preset().name); it != m_print_carry_last_by_printer.end())
+        candidates.emplace_back(it->second);
+    for (const std::string &name : candidates) {
+        const Preset *preset = name.empty() ? nullptr : this->prints.find_preset(name, false);
+        if (preset == nullptr || !preset->is_compatible || !preset->is_visible || preset->is_default)
+            continue;
+        if (this->prints.get_selected_idx() != size_t(-1) && this->prints.get_selected_preset_name() == name)
+            return false;
+        if (!this->prints.select_preset_by_name(name, true))
+            continue;
+        // The print preset changed: refresh the filament compatibility flags against it.
+        this->update_compatible(PresetSelectCompatibleType::Never);
+        BOOST_LOG_TRIVIAL(info) << "Print settings carry: selected \"" << name << "\" ("
+                                << (name == carry.origin_preset ? "origin of the carried values" : "last used on this printer") << ")";
+        return true;
+    }
+    return false;
+}
+
+std::vector<std::string> PresetBundle::apply_print_settings_carry(const PrintSettingsCarry &carry, std::map<std::string, std::string> *kept)
 {
     const Preset &printer = this->printers.get_edited_preset();
     if (carry.from_preset.empty() || printer.printer_technology() != ptFFF || this->prints.get_selected_idx() == size_t(-1))
         return {};
+    if (!carry.from_printer.empty())
+        m_print_carry_last_by_printer[carry.from_printer] = carry.from_preset;
     const bool same_nozzle_size = print_carry_same_nozzle_size(carry.nozzle_diameters, print_carry_nozzles(printer));
-    std::vector<std::string> changed = carry_print_settings(this->prints.get_edited_preset().config, carry.config, same_nozzle_size);
-    if (!changed.empty())
-        this->prints.update_dirty();
-    BOOST_LOG_TRIVIAL(info) << "Print settings carry: " << changed.size() << " setting(s) from \"" << carry.from_preset << "\" onto \""
-                            << this->prints.get_edited_preset().name << "\"" << (same_nozzle_size ? "" : " (nozzle size changed, geometry kept)");
+    std::map<std::string, std::string>  kept_local;
+    std::map<std::string, std::string> &why     = kept != nullptr ? *kept : kept_local;
+    std::vector<std::string>            changed = carry_print_settings(this->prints.get_edited_preset().config, carry.config, same_nozzle_size,
+                                                                       &printer.config, &why);
+    this->prints.update_dirty();
+    m_print_carry_origin       = carry.origin_preset;
+    m_print_carry_applied_onto = this->prints.get_edited_preset().name;
+    m_print_carry_deferred.clear();
+    m_print_carry_deferred_placed.clear();
+    for (const auto &[key, reason] : why)
+        if (boost::starts_with(reason, "conflict:") && carry.config.option(key) != nullptr &&
+            this->prints.get_edited_preset().config.option(key) != nullptr) {
+            m_print_carry_deferred.set_key_value(key, carry.config.option(key)->clone());
+            m_print_carry_deferred_placed.set_key_value(key, this->prints.get_edited_preset().config.option(key)->clone());
+        }
+    BOOST_LOG_TRIVIAL(info) << "Print settings carry: " << changed.size() << " setting(s) from \"" << carry.from_preset << "\" (origin \""
+                            << carry.origin_preset << "\") onto \"" << this->prints.get_edited_preset().name << "\""
+                            << (same_nozzle_size ? "" : " (nozzle size changed, geometry kept)");
+    for (const auto &[key, reason] : why)
+        BOOST_LOG_TRIVIAL(info) << "Print settings carry: kept the matched value of " << key << ": " << reason;
     return changed;
 }
 

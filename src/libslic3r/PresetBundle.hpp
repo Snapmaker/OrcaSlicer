@@ -54,11 +54,22 @@ namespace Slic3r {
 //   - printer-coupled keys (print_carry_is_printer_coupled) always keep the matched profile's value;
 //   - when the nozzle size changes, nozzle-scaled geometry keys (print_carry_is_nozzle_geometry)
 //     keep the matched profile's value as well;
-//   - vector values whose length differs between the two profiles keep the matched profile's value,
-//     except the per-flow-mode process options, which are matched up by flow mode name.
+//   - per-variant vectors (Bambu per-extruder-variant layout from print_extruder_id/_variant, or the
+//     per-flow-mode layout from process_flow_support) are matched entry by entry: same extruder and
+//     variant first, then the same variant on any extruder ("standard" = "Direct Drive Standard").
+//     Entries without a counterpart (e.g. High Flow when the old printer had only a standard nozzle)
+//     keep the matched profile's value; other vectors whose length differs keep the matched value;
+//   - a carried value that would leave the process in a state the settings page immediately rewrites
+//     (support style not valid for the support type, spiral vase prerequisites, ...) is dropped in
+//     favour of the matched profile's value (see s_print_carry_conflicts in PresetBundle.cpp).
+//
+// Round trip: the carry remembers where its values originally came from (origin_preset) and which
+// process preset was used on each printer, so A -> B -> A lands on A's original preset again.
 struct PrintSettingsCarry
 {
     std::string         from_preset;      // print preset name before the switch; empty = nothing to carry
+    std::string         from_printer;     // printer preset name before the switch
+    std::string         origin_preset;    // preset the carried values originally came from (A in A -> B -> C)
     DynamicPrintConfig  config;           // the edited (possibly modified) print config before the switch
     std::vector<double> nozzle_diameters; // nozzle_diameter of the (edited) printer before the switch
 };
@@ -70,7 +81,12 @@ bool print_carry_is_nozzle_geometry(const std::string &key);
 // Every nozzle of both printers has the same diameter (within 1e-6). Empty lists never match.
 bool print_carry_same_nozzle_size(const std::vector<double> &old_nozzles, const std::vector<double> &new_nozzles);
 // Apply src onto dst following the rules above. Returns the keys whose value in dst changed.
-std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size);
+// printer (optional) is the new printer's config, for printer limits (max_layer_height).
+// kept (optional) receives, for every key whose carried value differs but was NOT (fully) applied,
+// the reason why the matched profile's value was kept.
+std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size,
+                                              const DynamicPrintConfig *printer = nullptr,
+                                              std::map<std::string, std::string> *kept = nullptr);
 
 // Bundle of Print + Filament + Printer presets.
 class PresetBundle
@@ -160,9 +176,25 @@ public:
     // Ultra: snapshot of the current process settings and printer nozzles, taken by the GUI right
     // before it switches printers (Tab::select_preset). Not used by project load, CLI or startup.
     PrintSettingsCarry capture_print_settings_carry() const;
-    // Apply a snapshot onto the edited print preset once the new printer and its matched process
-    // preset are selected. Returns the keys that changed (now dirty / revertable).
-    std::vector<std::string> apply_print_settings_carry(const PrintSettingsCarry &carry);
+    // Before applying: if the preset the carried values came from (carry.origin_preset), or else
+    // the process preset last used on the new printer, is compatible with the new printer, select
+    // it instead of the auto-matched (or remembered) one. Returns true when the selection changed.
+    bool select_print_carry_target(const PrintSettingsCarry &carry);
+    // Apply a snapshot onto the edited print preset once the new printer and its process preset are
+    // selected. Returns the keys that changed (now dirty / revertable); see carry_print_settings().
+    std::vector<std::string> apply_print_settings_carry(const PrintSettingsCarry &carry,
+                                                        std::map<std::string, std::string> *kept = nullptr);
+
+private:
+    // Round-trip memory of the settings carry (this session only, see select_print_carry_target()).
+    std::map<std::string, std::string> m_print_carry_last_by_printer; // printer preset -> process preset used on it
+    std::string                        m_print_carry_origin;          // origin of the values currently carried ...
+    std::string                        m_print_carry_applied_onto;    // ... onto this process preset
+    // Carried values the last carry had to drop for a settings conflict on this printer (and the
+    // matched values it kept instead). The next switch offers them again, so a round trip returns them.
+    DynamicPrintConfig                 m_print_carry_deferred;
+    DynamicPrintConfig                 m_print_carry_deferred_placed;
+public:
 
     bool backup_user_folder() const;
 

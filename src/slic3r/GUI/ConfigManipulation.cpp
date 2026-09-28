@@ -476,7 +476,15 @@ void ConfigManipulation::update_print_fff_config(DynamicPrintConfig* config, con
         std::set<int> enum_set_normal = { smsDefault, smsGrid, smsSnug };
         std::set<int> enum_set_tree   = { smsDefault, smsTreeSlim, smsTreeStrong, smsTreeHybrid, smsTreeOrganic };
         auto &           set             = is_tree(support_type) ? enum_set_tree : enum_set_normal;
-        if (set.find(support_style) == set.end()) {
+        // Ultra: leave a style alone that the saved preset itself stores (e.g. a tree style under
+        // Normal support in an older user preset). Resetting it here made the preset dirty the moment
+        // it was loaded, and "revert" could never clear it: the revert wrote the stored value back and
+        // this reset it again. The slicer resolves such a style exactly like Default (SupportMaterial:
+        // a tree style under normal support prints grid; TreeSupport: a normal style under tree prints
+        // organic), and the combo box already shows Default for it.
+        const ConfigOption *reference_style = m_reference_config != nullptr ? m_reference_config->option("support_style") : nullptr;
+        const bool          preset_stores_it = reference_style != nullptr && reference_style->getInt() == int(support_style);
+        if (set.find(support_style) == set.end() && !preset_stores_it) {
             DynamicPrintConfig new_conf = *config;
             new_conf.set_key_value("support_style", new ConfigOptionEnum<SupportMaterialStyle>(smsDefault));
             apply(config, &new_conf);

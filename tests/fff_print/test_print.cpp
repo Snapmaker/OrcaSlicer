@@ -9,6 +9,8 @@
 
 #include "test_data.hpp"
 
+#include <sstream>
+#include <string>
 #include <vector>
 
 using namespace Slic3r;
@@ -173,15 +175,38 @@ namespace {
 
 std::vector<int> island_wall_insets(const ExtrusionEntity *island)
 {
-    std::vector<int>                     insets;
-    ExtrusionEntitiesPtr                 one{const_cast<ExtrusionEntity *>(island)};
-    const ExtrusionEntitiesPtr          &members = island->is_collection() ?
-        static_cast<const ExtrusionEntityCollection *>(island)->entities : one;
-    for (const ExtrusionEntity *entity : members) {
+    std::vector<int> insets;
+    auto take = [&](const ExtrusionEntity *entity) {
         if (entity->inset_idx >= 0)
             insets.push_back(entity->inset_idx);
+    };
+    if (island->is_collection()) {
+        for (const ExtrusionEntity *entity : static_cast<const ExtrusionEntityCollection *>(island)->entities)
+            take(entity);
+    } else {
+        take(island);
     }
     return insets;
+}
+
+std::string insets_to_string(const std::vector<int> &insets)
+{
+    std::ostringstream os;
+    for (size_t i = 0; i < insets.size(); ++i) {
+        if (i)
+            os << ',';
+        os << insets[i];
+    }
+    return os.str();
+}
+
+TriangleMesh thin_ring(double wall_mm, double height_mm = 1.2)
+{
+    // Square-section ring: a hole plus an outer contour, matching the upstream thin-ring case.
+    const double inner = 8.0;
+    const double outer = inner + wall_mm;
+    std::vector<Vec2d> profile{{inner, 0.}, {outer, 0.}, {outer, height_mm}, {inner, height_mm}};
+    return TriangleMesh(its_make_revolved(profile, 64));
 }
 
 std::vector<int> sandwich_core(const std::vector<int> &insets)
@@ -219,7 +244,7 @@ int count_ioi_sandwiches(const Print &print)
                 if (!has_insets_0_1_2(insets))
                     continue;
                 const std::vector<int> core = sandwich_core(insets);
-                CAPTURE(layer->id(), core);
+                CAPTURE(layer->id(), insets_to_string(insets), insets_to_string(core));
                 // Inner-outer-inner prints the second internal wall (inset 2) before the outer wall.
                 REQUIRE_FALSE(core.empty());
                 REQUIRE(core.front() == 2);
@@ -263,14 +288,21 @@ TEST_CASE("Inner-outer-inner wall order starts with the second internal wall on 
 
 TEST_CASE("Arachne inner-outer-inner wall order holds on a narrow wall", "[PrintObject][IOI][Arachne]")
 {
-    // A 1.8 mm strip at 0.4 mm line width is just wide enough for three Arachne beads; the odd
-    // centre line is widened to fill the remainder. The width-aware touching test has to count
-    // that centre line as touching or the outer wall prints first. (1.2 mm only fits two beads.)
+    // Upstream #15924 failed on a thin RING (outer contour + hole), not a solid strip. A solid
+    // strip is one island; sandwich reordering still fires even when the width-aware touching
+    // test misses the widened centre line. A ring has two outers, so grouping has to attach the
+    // odd centre line or one side prints outer-first.
+    //
+    // Discriminator (old centreline test vs this PR, 0.4 mm line, 5 walls):
+    //   1.6 mm  — fewer than three insets, sandwich never runs
+    //   1.8 mm  — sandwich still fires without the width-aware test
+    //   2.0 mm  — FAILS without the fix (first wall is inset 0), PASSES with it
+    const double wall_mm = 2.0;
     Slic3r::Print print;
-    Slic3r::Test::init_and_process_print({Slic3r::make_cube(1.8, 20., 1.2)}, print, {
+    Slic3r::Test::init_and_process_print({thin_ring(wall_mm)}, print, {
         { "wall_generator",             "arachne" },
         { "wall_sequence",              "inner-outer-inner wall" },
-        { "wall_loops",                 3 },
+        { "wall_loops",                 5 },
         { "layer_height",               0.2 },
         { "initial_layer_print_height", 0.2 },
         { "nozzle_diameter",            0.4 },

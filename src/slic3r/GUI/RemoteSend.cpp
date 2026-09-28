@@ -1682,6 +1682,10 @@ void list_hosts(json& printers, int plate)
             p["name"]         = d.display_name();
             p["model"]        = d.printer_model.empty() ? cfg.opt_string("printer_model") : d.printer_model;
             p["url"]          = d.address;
+            // Same address, reduced to a bare host: what the hub's camera join compares against
+            // (RemoteHub::summary_json), same as the "connect" card below. Never set for a device
+            // whose stored address is itself empty.
+            if (!d.address.empty()) p["ip"] = SnapmakerLan::host_of(d.address);
             p["host_type"]    = d.host_type;
             p["device_id"]    = d.id;
             p["model_key"]    = model_key;

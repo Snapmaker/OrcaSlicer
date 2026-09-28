@@ -1064,6 +1064,11 @@ RemoteAccess::ApiResponse RemoteAccess::api_printers(int plate)
             p["task"]         = m->subtask_name;
             p["bed_temp"]     = m->bed_temp;
             p["bed_target"]   = m->bed_temp_target;
+            // The LAN address, when this PC knows it - a LAN-mode printer always has it, and a
+            // cloud-bound one usually does too once discovery or a previous LAN session has seen it.
+            // This is what lets the hub join a Bambu printer to the camera streams.json added for
+            // its address (RemoteHub::summary_json); never invented when the printer object has none.
+            if (!m->dev_ip.empty()) p["ip"] = m->dev_ip;
             p["nozzles"]      = nlohmann::json::array();
             for (const Extder& e : m->m_extder_data.extders) {
                 nlohmann::json n;

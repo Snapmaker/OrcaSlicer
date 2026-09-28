@@ -1333,7 +1333,10 @@ std::vector<SurfaceFill> group_fills(const Layer &layer, LockRegionParam &lock_p
                             params.pattern = ipRectilinear;
                         params.density = 100.f;
                     }
-                } else if (params.density <= 0)
+                }
+                // A 0% top surface density means "walls only" on the top layer: drop the surface here,
+                // as the fillers divide their line spacing by the density.
+                if (params.density <= 0)
                     continue;
 
 				params.extrusion_role = erInternalInfill;

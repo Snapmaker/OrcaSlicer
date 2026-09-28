@@ -1930,6 +1930,33 @@ void PresetBundle::save_changes_for_preset(const std::string& new_name, Preset::
     }
 }
 
+std::vector<std::string> filaments_to_auto_enable(
+    const std::vector<FilamentVariantCandidate> &candidates,
+    const std::set<std::string>                 &already_enabled_names)
+{
+    // Which groups (vendor + alias) have at least one member already enabled? Only system
+    // members count, matching set_visible_from_appconfig / the guide, which only ever look at
+    // system presets here.
+    std::unordered_set<std::string> group_has_enabled_member;
+    group_has_enabled_member.reserve(candidates.size());
+    for (const FilamentVariantCandidate &c : candidates)
+        if (c.is_system && already_enabled_names.count(c.name))
+            group_has_enabled_member.insert(c.group_key);
+
+    std::vector<std::string> to_enable;
+    for (const FilamentVariantCandidate &c : candidates) {
+        if (!c.is_system)
+            continue;
+        if (already_enabled_names.count(c.name))
+            continue; // already enabled (or explicitly disabled by the user - either way, leave it)
+        if (!c.compatible_with_installed_printer)
+            continue;
+        if (group_has_enabled_member.count(c.group_key))
+            to_enable.push_back(c.name);
+    }
+    return to_enable;
+}
+
 void PresetBundle::load_installed_filaments(AppConfig &config)
 {
     //if (! config.has_section(AppConfig::SECTION_FILAMENTS)
@@ -1980,6 +2007,86 @@ void PresetBundle::load_installed_filaments(AppConfig &config)
         for (const auto &filament: compatible_filaments)
             config.set(AppConfig::SECTION_FILAMENTS, filament->name, "true");
     //}
+
+    // Auto-enable newly added printer variants of an already-ticked filament.
+    //
+    // The filament-selection guide (WebGuideDialog.cpp / resources/web/guide/22,23) groups
+    // filament presets by vendor + alias (base name, e.g. "Panchroma CoPE") and shows the group
+    // ticked in AppConfig's SECTION_FILAMENTS if ANY of its variant presets is enabled there.
+    // When a later vendor bundle update adds new printer-variant presets to an already-ticked
+    // group (e.g. 15 "... @BBL H2D" presets added after the user ticked the group for H2C/H2S),
+    // those new full preset names are never written to SECTION_FILAMENTS, so
+    // set_visible_from_appconfig below hides them even though the guide still shows the group as
+    // ticked - the group silently loses coverage of the new printer until the user unticks and
+    // re-ticks it. Close that gap here, once, before visibility is computed: for every system
+    // filament preset not yet recorded in SECTION_FILAMENTS, enable it if another system preset
+    // sharing its (vendor, alias) group is already enabled and it is itself compatible with at
+    // least one installed/visible FFF printer. A group the user fully unticked stays untouched,
+    // since none of its members are "already enabled" to seed the group.
+    {
+        const std::map<std::string, std::string> *installed_filaments =
+            config.has_section(AppConfig::SECTION_FILAMENTS) ? &config.get_section(AppConfig::SECTION_FILAMENTS) : nullptr;
+        std::set<std::string> already_enabled_names;
+        if (installed_filaments != nullptr)
+            for (const auto &kv : *installed_filaments)
+                if (!kv.second.empty())
+                    already_enabled_names.insert(kv.first);
+
+        // Installed/visible FFF printers, gathered once, to test compatibility against below.
+        std::vector<PresetWithVendorProfile> installed_fff_printers;
+        for (const Preset &printer : printers)
+            if (printer.is_visible && printer.printer_technology() == ptFFF)
+                installed_fff_printers.emplace_back(printer, printer.vendor);
+
+        // Group key: vendor id (so "Generic PLA" from different vendors never collide) plus
+        // the alias / base name the guide groups by. alias is derived from an explicit
+        // "alias" config key, or from the preset name up to " @" (see
+        // load_system_presets_from_json), and falls back to the full name when neither
+        // applies - matching Preset::alias exactly.
+        auto group_key_of = [](const Preset &filament) {
+            return (filament.vendor ? filament.vendor->id : std::string()) + "\x1f" + filament.alias;
+        };
+        // Groups with an enabled member, so the compatibility check below only runs for the few
+        // presets that could actually be enabled - not every system filament against every
+        // visible printer (user printer presets alone can number in the dozens).
+        std::unordered_set<std::string> seeded_groups;
+        for (const Preset &filament : filaments)
+            if (filament.is_system && already_enabled_names.count(filament.name))
+                seeded_groups.insert(group_key_of(filament));
+
+        std::vector<FilamentVariantCandidate> candidates;
+        candidates.reserve(filaments.size());
+        for (const Preset &filament : filaments) {
+            if (!filament.is_system)
+                continue; // never auto-enable or seed a group from a user preset
+            FilamentVariantCandidate c;
+            c.name = filament.name;
+            c.is_system = true;
+            c.group_key = group_key_of(filament);
+            if (already_enabled_names.count(c.name) || !seeded_groups.count(c.group_key)) {
+                candidates.push_back(std::move(c)); // can't be enabled here; skip the compatibility check
+                continue;
+            }
+            const PresetWithVendorProfile filament_wvp(filament, filament.vendor);
+            for (const PresetWithVendorProfile &printer_wvp : installed_fff_printers) {
+                if (is_compatible_with_printer(filament_wvp, printer_wvp)) {
+                    c.compatible_with_installed_printer = true;
+                    break;
+                }
+            }
+            candidates.push_back(std::move(c));
+        }
+
+        std::vector<std::string> newly_enabled = filaments_to_auto_enable(candidates, already_enabled_names);
+        for (const std::string &name : newly_enabled) {
+            config.set(AppConfig::SECTION_FILAMENTS, name, "true");
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": auto-enabled filament variant '" << name
+                                     << "' (another printer variant of the same filament is already enabled)";
+        }
+        if (!newly_enabled.empty())
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": auto-enabled " << newly_enabled.size()
+                                     << " filament preset(s) that are new printer variants of already-enabled filaments";
+    }
 
     for (auto &preset : filaments)
         preset.set_visible_from_appconfig(config);

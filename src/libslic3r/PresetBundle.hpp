@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <array>
 #include <vector>
+#include <set>
 #include <boost/filesystem/path.hpp>
 
 #define DEFAULT_USER_FOLDER_NAME "default"
@@ -87,6 +88,36 @@ bool print_carry_same_nozzle_size(const std::vector<double> &old_nozzles, const 
 std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const DynamicPrintConfig &src, bool same_nozzle_size,
                                               const DynamicPrintConfig *printer = nullptr,
                                               std::map<std::string, std::string> *kept = nullptr);
+
+// Auto-enable newly added printer variants of a filament the user already ticked on (see the
+// comment above PresetBundle::load_installed_filaments's use of this). Pulled out as a small pure
+// function so the decision can be unit tested without touching the GUI, AppConfig, or the on-disk
+// preset bundle.
+struct FilamentVariantCandidate
+{
+    // Full preset name, e.g. "Panchroma CoPE @BBL H2D".
+    std::string name;
+    // Grouping key the filament-selection guide (WebGuideDialog / resources/web/guide/22,23)
+    // uses to decide whether the whole group is shown as ticked: vendor id + the preset's alias
+    // (or its name up to " @" when no explicit alias was set - see PresetBundle::load_system_presets_from_json).
+    // Vendor id is included so same-named aliases from different vendors (e.g. two "Generic PLA")
+    // never collide.
+    std::string group_key;
+    // Only system presets are considered; user presets are never auto-enabled and never used to
+    // decide a group is "enabled".
+    bool        is_system = false;
+    // True if this preset is compatible with at least one currently installed/visible FFF printer preset.
+    bool        compatible_with_installed_printer = false;
+};
+
+// Returns the full names, from `candidates`, that should be newly added to AppConfig's
+// SECTION_FILAMENTS: for every system preset not already in `already_enabled_names`, enable it if
+// another system preset sharing its group_key is already enabled AND the preset itself is
+// compatible with at least one installed printer. A group the user fully unticked (no member
+// enabled) stays untouched. Order of the result is unspecified.
+std::vector<std::string> filaments_to_auto_enable(
+    const std::vector<FilamentVariantCandidate> &candidates,
+    const std::set<std::string>                 &already_enabled_names);
 
 // Bundle of Print + Filament + Printer presets.
 class PresetBundle

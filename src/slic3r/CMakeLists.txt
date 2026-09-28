@@ -203,8 +203,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLTexture.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
-    GUI/GatewayMachineSnapshot.cpp
-    GUI/GatewayMachineSnapshot.hpp
     GUI/GUI_App.cpp
     GUI/GUI_App.hpp
     GUI/GUI_AuxiliaryList.cpp
@@ -607,6 +605,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/Frustum.cpp
     Utils/Frustum.hpp
+    Utils/GatewayMachineSlots.cpp
+    Utils/GatewayMachineSlots.hpp
     Utils/GatewayProtocol.cpp
     Utils/GatewayProtocol.hpp
     Utils/GatewayDevice.cpp

@@ -35,13 +35,13 @@ add_executable(gateway_tests
     GatewayService_test.cpp
     GatewayDevice_test.cpp
     GatewayAccount_test.cpp
-    GatewayMachineSnapshot_test.cpp
+    GatewayMachineSlots_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/ConnectionProcessManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayProtocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayDevice.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayAccount.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/GUI/GatewayMachineSnapshot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayMachineSlots.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/Http.cpp
     )
 target_link_libraries(gateway_tests test_common libslic3r boost_libs libcurl OpenSSL::SSL OpenSSL::Crypto)

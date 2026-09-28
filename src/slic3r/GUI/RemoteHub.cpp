@@ -1142,6 +1142,30 @@ bool Testing::trusted_proxy_headers(bool peer_is_loopback, bool via_relay)
     return peer_is_loopback && !via_relay;
 }
 
+// summary_json's "camera" field: the camera's own id first (a camera someone added *as* this
+// printer, id == id), then a LAN camera that sits on the same address - by the camera's recorded
+// `ip`, or, failing that, by the host inside its own stream URL. Pure and address-only: it never
+// falls back to matching by name (the alias vs. the printer's display name), because that half of
+// the join is the app's own and happens on the phone once this has said "no camera by address".
+// An empty printer_ip (a row nothing above ever set an address on) or an empty candidate address
+// matches nothing, on either side - two blanks are not "the same address".
+std::string Testing::camera_for_printer(const std::string& printer_id, const std::string& printer_ip,
+                                        const std::vector<CameraCandidate>& cams)
+{
+    for (const CameraCandidate& c : cams)
+        if (!c.id.empty() && c.id == printer_id) return c.id;
+    if (printer_ip.empty()) return {};
+    for (const CameraCandidate& c : cams) {
+        // A camera keyed by address (its `id` is the LAN ip it was auto-added under, streams.json's
+        // "auto" kind) as well as one with a separately recorded `ip`, and, last, one only its own
+        // stream URL names an address for.
+        if (c.id == printer_ip) return c.id;
+        if (!c.ip.empty() && c.ip == printer_ip) return c.id;
+        if (!c.url_host.empty() && c.url_host == printer_ip) return c.id;
+    }
+    return {};
+}
+
 // The pairing document's origins and identity, pure so the shape can be tested without a hub.
 // Three named origins, one of them always empty today, and the public half of the hub identity.
 std::string Testing::pair_identity_json(const std::string& lan_url, const std::string& remote_url,
@@ -2930,11 +2954,19 @@ json HubServer::summary_json()
     }
     // The camera wall, so a printer row can name the camera that watches it. Joined by id and, for
     // a LAN printer, by the address the camera sits on - which is the join the app was doing by
-    // hand out of /state, and the one that is easy to get wrong.
+    // hand out of /state, and the one that is easy to get wrong. `url_host` is the fallback address:
+    // the host inside the camera's own stream URL (rurl for a browser source, rsrc for a go2rtc
+    // one), for the rare camera whose recorded `ip` is blank but whose URL still names an address.
     try {
         json j = json::parse(state);
-        for (const auto& h : j.value("hosts", json::array()))
-            cams.push_back(json{ { "id", h.value("id", "") }, { "alias", h.value("alias", "") }, { "ip", h.value("ip", "") } });
+        for (const auto& h : j.value("hosts", json::array())) {
+            std::string url_host = SnapmakerLan::host_of(h.value("rurl", ""));
+            if (url_host.empty()) url_host = SnapmakerLan::host_of(h.value("rsrc", ""));
+            cams.push_back(json{ { "id", h.value("id", "") },
+                                 { "alias", h.value("alias", "") },
+                                 { "ip", h.value("ip", "") },
+                                 { "url_host", url_host } });
+        }
     } catch (...) {}
 
     json out;
@@ -3009,13 +3041,13 @@ json HubServer::summary_json()
         p["age_s"]    = row.value("age_s", 0);
         p["instance"] = row.value("instance", 0);
         // The camera that watches this printer, if any: its own id first, then a LAN camera on the
-        // same address.
-        std::string cam;
-        const std::string ip = row.value("ip", std::string());
-        for (const json& c : cams) {
-            if (c.value("id", std::string()) == id) { cam = id; break; }
-            if (!ip.empty() && (c.value("id", std::string()) == ip || c.value("ip", std::string()) == ip)) cam = c.value("id", std::string());
-        }
+        // same address (Testing::camera_for_printer - see there for the fallback order).
+        std::vector<Testing::CameraCandidate> cam_candidates;
+        cam_candidates.reserve(cams.size());
+        for (const json& c : cams)
+            cam_candidates.push_back({ c.value("id", std::string()), c.value("alias", std::string()),
+                                       c.value("ip", std::string()), c.value("url_host", std::string()) });
+        const std::string cam = Testing::camera_for_printer(id, row.value("ip", std::string()), cam_candidates);
         if (!cam.empty()) p["camera"] = cam;
         // The thumbnail URL is offered whenever there is a picture to serve, so the app can draw
         // it without a probe that would 404 most of the time.

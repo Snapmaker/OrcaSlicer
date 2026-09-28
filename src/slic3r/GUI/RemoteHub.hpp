@@ -182,6 +182,30 @@ std::string pair_identity_json(const std::string& lan_url, const std::string& re
                                const std::string& relay_url, const std::string& hubid,
                                const std::string& public_key_hex);
 
+// ---- joining a camera to the printer it watches (summary_json's "camera" field) ----
+// One entry of the Stream tab's camera wall, reduced to what the join needs: its own id, the
+// alias a person gave it, the address a "LAN camera on this printer's address" match goes by
+// (streams.json's own `ip`), and the host pulled out of its stream URL (`rurl` for a browser
+// camera, `rsrc` for a go2rtc one) for a printer whose row never got an `ip` of its own recorded
+// under that exact string - a camera someone typed in by hostname, or a printer whose LAN address
+// changed since the camera was added.
+struct CameraCandidate
+{
+    std::string id;
+    std::string alias;
+    std::string ip;
+    std::string url_host; // host_of(rurl), or host_of(rsrc) when rurl is empty
+};
+
+// Which camera (its id, or "" for none) watches `printer_id`: the camera's own id first, then one
+// on the same address as `printer_ip` - by its recorded `ip`, or failing that by the host its own
+// stream URL names. Never guesses from the printer's *name*; that join is the app's own alias
+// fallback and happens on the phone, not here. Empty strings on either side are never a match, so
+// a printer or a camera missing an address does not accidentally pair with every other one that is
+// also missing it.
+std::string camera_for_printer(const std::string& printer_id, const std::string& printer_ip,
+                               const std::vector<CameraCandidate>& cams);
+
 } // namespace Testing
 
 // ---- signing with the hub identity (the push forwarder's X-Hub-Sig) ----

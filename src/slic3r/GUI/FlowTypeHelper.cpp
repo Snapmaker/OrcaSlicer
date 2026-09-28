@@ -196,7 +196,7 @@ void sync_filament_volume_types_for_slice()
     apply_custom_mapping(std::vector<FilamentVolumeType>(std::max<size_t>(n, size_t(1)), type));
 }
 
-bool confirm_grouping_before_slice(wxWindow *parent)
+bool confirm_grouping_before_slice(wxWindow* parent)
 {
     if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count())) {
         FilamentGroupDialog dlg(parent);

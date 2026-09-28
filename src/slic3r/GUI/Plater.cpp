@@ -15464,17 +15464,16 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
                    this->m_slice_all = false;
-                    // Page-switch auto-slice must run the same pre-slice guard as
-                    // the slice button, or the by-object red error never shows.
-                    // Snap #930 Edge extension: Preview tab-in also re-confirms
-                    // grouping when a previously valid plate was invalidated.
-                    if (this->partplate_list.is_filament_group_dirty() &&
-                        !GUI::FlowType::confirm_grouping_before_slice(this->q))
-                        slice_cancelled = true;
-                    else if (this->q->guard_before_slice_plate())
-                        slice_cancelled = !(this->q->reslice());
-                    else
-                        slice_cancelled = true;
+                   // Page-switch auto-slice must run the same pre-slice guard as
+                   // the slice button, or the by-object red error never shows.
+                   // Snap #930 Edge extension: Preview tab-in also re-confirms
+                   // grouping when a previously valid plate was invalidated.
+                   if (this->partplate_list.is_filament_group_dirty() && !GUI::FlowType::confirm_grouping_before_slice(this->q))
+                       slice_cancelled = true;
+                   else if (this->q->guard_before_slice_plate())
+                       slice_cancelled = !(this->q->reslice());
+                   else
+                       slice_cancelled = true;
                }
                 else {
                     //reset current plate to the slicing plate

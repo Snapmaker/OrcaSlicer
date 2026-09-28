@@ -467,7 +467,7 @@ constexpr const char* FILAMENT_GROUPING_CUSTOM   = "custom";
 // CUSTOM grouping AND at least two distinct nozzle flow types. Snapmaker's
 // any_nozzle_high_flow() / FilamentGroupDialog(parent, all_high_flow) gate is
 // intentionally not used here.
-inline bool filament_group_dialog_required(const std::string &grouping_mode, size_t distinct_nozzle_flow_type_count)
+inline bool filament_group_dialog_required(const std::string& grouping_mode, size_t distinct_nozzle_flow_type_count)
 {
     return grouping_mode == FILAMENT_GROUPING_CUSTOM && distinct_nozzle_flow_type_count >= 2;
 }

@@ -24,28 +24,34 @@ FilamentSortItem make_item(const char *display_name,
     return item;
 }
 
-FilamentTopNOrder parse_order(const char *json)
+FilamentOrder parse_order(const char *json)
 {
     std::istringstream stream(json);
-    return FilamentTopNOrder::from_stream(stream);
+    return FilamentOrder::from_stream(stream);
 }
 
 } // namespace
 
-TEST_CASE("FilamentTopNOrder parses valid configuration and matches vendor and product case-insensitively",
+TEST_CASE("FilamentOrder parses valid configuration and matches vendor and product case-insensitively",
           "[GUI][FilamentSort]")
 {
-    const FilamentTopNOrder order = parse_order(R"({
+    const FilamentOrder order = parse_order(R"({
         "schema_version": 1,
-        "order": {
-            "Snapmaker": ["PLA Matte", "PLA SnapSpeed"]
+        "sections": {
+            "high_flow": {
+                "not_recommended_filaments": ["PLA Wood"],
+                "unavailable_filaments": ["TPU 85A"]
+            },
+            "filament_order": {
+                "Snapmaker": ["PLA Matte", "PLA SnapSpeed"]
+            }
         }
     })");
 
     REQUIRE_FALSE(order.empty());
     CHECK(order.rank("Snapmaker", "PLA Matte") == 0);
     CHECK(order.rank("sNaPmAkEr", "PLA SnapSpeed") == 1);
-    // Product names are authored in both the preset files and filament_topn.json, so a casing drift
+    // Product names are authored in both the preset files and filament_allow_list.json, so a casing drift
     // must not drop the entry: they match case-insensitively, like the vendor key.
     CHECK(order.rank("Snapmaker", "pla matte") == 0);
     CHECK(order.rank("Snapmaker", "Pla sNApsPeed") == 1);
@@ -54,15 +60,16 @@ TEST_CASE("FilamentTopNOrder parses valid configuration and matches vendor and p
     CHECK(order.rank("Snapmaker", "Unknown") == std::numeric_limits<size_t>::max());
 }
 
-TEST_CASE("FilamentTopNOrder rejects invalid configurations and supports sort fallback", "[GUI][FilamentSort]")
+TEST_CASE("FilamentOrder rejects invalid configurations and supports sort fallback", "[GUI][FilamentSort]")
 {
     const std::vector<const char *> invalid_configs{
         "{",
-        R"({"order": {"Snapmaker": ["PLA Matte"]}})",
-        R"({"schema_version": 2, "order": {"Snapmaker": ["PLA Matte"]}})",
-        R"({"schema_version": 1, "order": []})",
-        R"({"schema_version": 1, "order": {"Snapmaker": []}})",
-        R"({"schema_version": 1, "order": {"Snapmaker": [3]}})",
+        R"({"schema_version": 1, "order": {"Snapmaker": ["PLA Matte"]}})",
+        R"({"schema_version": 2, "sections": {"filament_order": {"Snapmaker": ["PLA Matte"]}}})",
+        R"({"schema_version": 1, "sections": []})",
+        R"({"schema_version": 1, "sections": {"filament_order": []}})",
+        R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": []}}})",
+        R"({"schema_version": 1, "sections": {"filament_order": {"Snapmaker": [3]}}})",
     };
 
     for (const char *json : invalid_configs)
@@ -102,21 +109,23 @@ TEST_CASE("SystemFilamentVendorSorter prioritizes Snapmaker and Generic", "[GUI]
     CHECK_FALSE(sorter.less("SNAPMAKER", "Snapmaker"));
 }
 
-TEST_CASE("SystemFilamentSorter applies TopN only to Snapmaker", "[GUI][FilamentSort]")
+TEST_CASE("SystemFilamentSorter applies configured order only to Snapmaker", "[GUI][FilamentSort]")
 {
-    const FilamentTopNOrder order = parse_order(R"({
+    const FilamentOrder order = parse_order(R"({
         "schema_version": 1,
-        "order": {
-            "Snapmaker": ["PLA Matte", "PLA SnapSpeed"]
+        "sections": {
+            "filament_order": {
+                "Snapmaker": ["PLA Matte", "PLA SnapSpeed"]
+            }
         }
     })");
     const SystemFilamentSorter sorter(order);
 
-    const FilamentSortItem topn_first = make_item("Z First", "Snapmaker", "PLA Matte", 0);
-    const FilamentSortItem topn_second = make_item("A Second", "Snapmaker", "PLA SnapSpeed", 1);
+    const FilamentSortItem ordered_first = make_item("Z First", "Snapmaker", "PLA Matte", 0);
+    const FilamentSortItem ordered_second = make_item("A Second", "Snapmaker", "PLA SnapSpeed", 1);
     const FilamentSortItem unknown = make_item("B Unknown", "Snapmaker", "ABS", 2);
-    CHECK(sorter.less(topn_first, topn_second));
-    CHECK(sorter.less(topn_second, unknown));
+    CHECK(sorter.less(ordered_first, ordered_second));
+    CHECK(sorter.less(ordered_second, unknown));
 
     const FilamentSortItem generic_first = make_item("A Generic", "Generic", "PLA SnapSpeed", 3);
     const FilamentSortItem generic_second = make_item("B Generic", "Generic", "PLA Matte", 4);

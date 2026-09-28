@@ -132,7 +132,7 @@ private:
 };
 #endif
 
-constexpr const char *g_topn_file_name      = "filament_topn.json";
+constexpr const char *g_allow_list_file_name = "filament_allow_list.json";
 constexpr const char *g_snapmaker_vendor    = "Snapmaker";
 constexpr const char *g_bambu_vendor        = "Bambu";
 constexpr const char *g_bambu_lab_vendor    = "Bambu Lab";
@@ -149,51 +149,51 @@ wxWindow *scroll_parent(wxWindow *window)
     return nullptr;
 }
 
-std::filesystem::path filament_topn_path()
+std::filesystem::path filament_allow_list_path()
 {
     std::filesystem::path system_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                         g_snapmaker_vendor / "filament" / g_topn_file_name;
+                                         g_snapmaker_vendor / "filament" / g_allow_list_file_name;
     std::error_code filesystem_error;
     if (std::filesystem::exists(system_path, filesystem_error))
         return system_path;
     if (filesystem_error)
-        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder could not inspect " << system_path.u8string() << ": "
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder could not inspect " << system_path.u8string() << ": "
                                    << filesystem_error.message();
 
     return std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" / g_snapmaker_vendor / "filament" /
-           g_topn_file_name;
+           g_allow_list_file_name;
 }
 
-/** @brief Loads the TopN configuration once from the user or resource path. */
-FilamentTopNOrder load_filament_topn_order()
+/** @brief Loads the vendor filament order once from the user or resource allow-list path. */
+FilamentOrder load_filament_order()
 {
-    const std::filesystem::path path = filament_topn_path();
+    const std::filesystem::path path = filament_allow_list_path();
     std::ifstream               stream(path);
     if (!stream)
     {
-        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder failed to open " << path.u8string();
-        return FilamentTopNOrder{};
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder failed to open " << path.u8string();
+        return FilamentOrder{};
     }
 
-    FilamentTopNOrder order = FilamentTopNOrder::from_stream(stream);
+    FilamentOrder order = FilamentOrder::from_stream(stream);
     if (order.empty())
-        BOOST_LOG_TRIVIAL(warning) << "FilamentTopNOrder has invalid or empty configuration: " << path.u8string();
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder has invalid or empty configuration: " << path.u8string();
     else
-        BOOST_LOG_TRIVIAL(info) << "FilamentTopNOrder loaded: " << path.u8string();
+        BOOST_LOG_TRIVIAL(info) << "FilamentOrder loaded: " << path.u8string();
     return order;
 }
 
 /**
- * @brief Returns the process-wide immutable TopN configuration.
+ * @brief Returns the process-wide immutable filament ordering configuration.
  *
  * The one-time load is intentional: popup refreshes and preset updates in the
  * running process must not perform file I/O or change the active ordering. If
- * PresetUpdater replaces the deployed file, the new order takes effect after
- * the next application restart.
+ * PresetUpdater replaces the deployed allow-list file, the new order takes effect
+ * after the next application restart.
  */
-const FilamentTopNOrder &filament_topn_order()
+const FilamentOrder &filament_order()
 {
-    static const FilamentTopNOrder order = load_filament_topn_order();
+    static const FilamentOrder order = load_filament_order();
     return order;
 }
 
@@ -238,9 +238,9 @@ PlaterFilamentComboBox::PlaterFilamentComboBox(wxWindow *parent, Preset::Type pr
     if (preset_type != Preset::TYPE_FILAMENT)
         return;
 
-    // Load the TopN order once; popup refreshes never perform file I/O.
+    // Load the vendor filament order once; popup refreshes never perform file I/O.
     m_system_vendor_sorter   = std::make_unique<SystemFilamentVendorSorter>();
-    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>(filament_topn_order());
+    m_system_filament_sorter = std::make_unique<SystemFilamentSorter>(filament_order());
     m_project_sorter         = std::make_unique<FilamentSorter>();
     m_user_sorter            = std::make_unique<FilamentSorter>();
 
@@ -297,7 +297,7 @@ void PlaterFilamentComboBox::set_system_vendor_sorter(std::unique_ptr<FilamentVe
 void PlaterFilamentComboBox::set_system_filament_sorter(std::unique_ptr<FilamentSorter> sorter)
 {
     if (sorter == nullptr)
-        sorter = std::make_unique<SystemFilamentSorter>(filament_topn_order());
+        sorter = std::make_unique<SystemFilamentSorter>(filament_order());
     m_system_filament_sorter = std::move(sorter);
     rebuild_popup_rows();
 }

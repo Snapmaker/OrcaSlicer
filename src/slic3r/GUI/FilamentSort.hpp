@@ -22,14 +22,14 @@ struct FilamentSortItem
     size_t      original_index{0};
 };
 
-/** @brief Stores the optional vendor-specific TopN filament order. */
-class FilamentTopNOrder
+/** @brief Stores the optional vendor-specific filament order. */
+class FilamentOrder
 {
 public:
-    FilamentTopNOrder() = default;
+    FilamentOrder() = default;
 
-    /** @brief Parses a TopN configuration stream and returns an empty order on invalid input. */
-    static FilamentTopNOrder from_stream(std::istream &stream);
+    /** @brief Parses a filament-order configuration stream and returns an empty order on invalid input. */
+    static FilamentOrder from_stream(std::istream &stream);
 
     /** @brief Returns the configured rank or the maximum value when no rank exists. */
     size_t rank(const std::string &vendor, const std::string &filament_product) const;
@@ -41,7 +41,7 @@ private:
     using Order  = std::vector<std::string>;
     using Orders = std::vector<std::pair<std::string, Order>>;
 
-    explicit FilamentTopNOrder(Orders orders);
+    explicit FilamentOrder(Orders orders);
 
     Orders m_orders;
 };
@@ -89,17 +89,17 @@ public:
     bool less(const std::string &left, const std::string &right) const override;
 };
 
-/** @brief Applies Snapmaker TopN ordering before the default name ordering. */
+/** @brief Applies the configured Snapmaker order before the default name ordering. */
 class SystemFilamentSorter final : public FilamentSorter
 {
 public:
-    /** @brief Creates a sorter using the supplied immutable TopN order. */
-    explicit SystemFilamentSorter(FilamentTopNOrder topn_order);
+    /** @brief Creates a sorter using the supplied immutable filament order. */
+    explicit SystemFilamentSorter(FilamentOrder filament_order);
 
     bool less(const FilamentSortItem &left, const FilamentSortItem &right) const override;
 
 private:
-    FilamentTopNOrder m_topn_order;
+    FilamentOrder m_filament_order;
 };
 
 /** @brief Reports whether a vendor is Snapmaker, ignoring case. */

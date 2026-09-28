@@ -15,7 +15,7 @@ namespace
 
 constexpr const char *g_snapmaker_vendor = "Snapmaker";
 constexpr const char *g_generic_vendor   = "Generic";
-constexpr int         g_topn_schema_version = 1;
+constexpr int         g_allowlist_schema_version = 1;
 
 /** @brief Converts a vendor identifier into the label used by system sorting. */
 wxString vendor_label(const std::string &vendor)
@@ -45,44 +45,48 @@ bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &rig
 
 } // namespace
 
-FilamentTopNOrder FilamentTopNOrder::from_stream(std::istream &stream)
+FilamentOrder FilamentOrder::from_stream(std::istream &stream)
 {
     nlohmann::json root = nlohmann::json::parse(stream, nullptr, false);
     if (root.is_discarded() || !root.is_object())
-        return FilamentTopNOrder{};
+        return FilamentOrder{};
 
     const auto schema_version = root.find("schema_version");
-    const auto order_node     = root.find("order");
+    const auto sections_node  = root.find("sections");
     if (schema_version == root.end() || !schema_version->is_number_integer() ||
-        *schema_version != g_topn_schema_version || order_node == root.end() || !order_node->is_object())
-        return FilamentTopNOrder{};
+        *schema_version != g_allowlist_schema_version || sections_node == root.end() || !sections_node->is_object())
+        return FilamentOrder{};
+
+    const auto order_node = sections_node->find("filament_order");
+    if (order_node == sections_node->end() || !order_node->is_object())
+        return FilamentOrder{};
 
     Orders orders;
     for (const auto &vendor_order : order_node->items())
     {
         if (vendor_order.key().empty() || !vendor_order.value().is_array() || vendor_order.value().empty())
-            return FilamentTopNOrder{};
+            return FilamentOrder{};
 
         Order values;
         for (const auto &value : vendor_order.value())
         {
             if (!value.is_string() || value.get_ref<const std::string &>().empty())
-                return FilamentTopNOrder{};
+                return FilamentOrder{};
             values.emplace_back(value.get_ref<const std::string &>());
         }
         orders.emplace_back(vendor_order.key(), std::move(values));
     }
 
     if (orders.empty())
-        return FilamentTopNOrder{};
-    return FilamentTopNOrder(std::move(orders));
+        return FilamentOrder{};
+    return FilamentOrder(std::move(orders));
 }
 
-FilamentTopNOrder::FilamentTopNOrder(Orders orders) : m_orders(std::move(orders))
+FilamentOrder::FilamentOrder(Orders orders) : m_orders(std::move(orders))
 {
 }
 
-size_t FilamentTopNOrder::rank(const std::string &vendor, const std::string &filament_product) const
+size_t FilamentOrder::rank(const std::string &vendor, const std::string &filament_product) const
 {
     for (const auto &vendor_order : m_orders)
     {
@@ -91,7 +95,7 @@ size_t FilamentTopNOrder::rank(const std::string &vendor, const std::string &fil
 
         for (size_t index = 0; index < vendor_order.second.size(); ++index)
         {
-            // Product names are authored both in the preset files and in filament_topn.json, so they match
+            // Product names are authored both in the preset files and in filament_allow_list.json, so they match
             // case-insensitively like the vendor key above: a casing drift must not silently drop an entry.
             if (wxString::FromUTF8(vendor_order.second[index].c_str())
                     .CmpNoCase(wxString::FromUTF8(filament_product.c_str())) == 0)
@@ -102,7 +106,7 @@ size_t FilamentTopNOrder::rank(const std::string &vendor, const std::string &fil
     return std::numeric_limits<size_t>::max();
 }
 
-bool FilamentTopNOrder::empty() const
+bool FilamentOrder::empty() const
 {
     return m_orders.empty();
 }
@@ -131,8 +135,8 @@ bool SystemFilamentVendorSorter::less(const std::string &left, const std::string
     return FilamentVendorSorter::less(left, right);
 }
 
-SystemFilamentSorter::SystemFilamentSorter(FilamentTopNOrder topn_order)
-    : m_topn_order(std::move(topn_order))
+SystemFilamentSorter::SystemFilamentSorter(FilamentOrder filament_order)
+    : m_filament_order(std::move(filament_order))
 {
 }
 
@@ -140,8 +144,8 @@ bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSort
 {
     if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor))
     {
-        const size_t left_rank  = m_topn_order.rank(left.vendor, left.filament_product);
-        const size_t right_rank = m_topn_order.rank(right.vendor, right.filament_product);
+        const size_t left_rank  = m_filament_order.rank(left.vendor, left.filament_product);
+        const size_t right_rank = m_filament_order.rank(right.vendor, right.filament_product);
         if (left_rank != right_rank)
             return left_rank < right_rank;
     }

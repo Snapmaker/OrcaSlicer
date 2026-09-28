@@ -8975,6 +8975,20 @@ bool GCode::_needSAFC(const ExtrusionPath& path)
     });
 }
 
+// ORCA: Overlap at or below which the overhang fan switches on; negative when it does not depend on overlap
+// (Overhang_threshold_none cools every external perimeter).
+static float overhang_fan_overlap_threshold(int overhang_fan_threshold)
+{
+    switch (overhang_fan_threshold) {
+    case (int) Overhang_threshold_1_4: return 0.9f;
+    case (int) Overhang_threshold_2_4: return 0.75f;
+    case (int) Overhang_threshold_3_4: return 0.5f;
+    case (int) Overhang_threshold_4_4: return 0.25f;
+    case (int) Overhang_threshold_bridge: return 0.05f;
+    default: return -1.f;
+    }
+}
+
 std::string GCode::_extrude(const ExtrusionPath& path, std::string description, double speed)
 {
     std::string gcode;
@@ -9340,6 +9354,13 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
 
         ConfigOptionPercents overhang_overlap_levels({90, 75, 50, 25, 13, 0});
 
+        // ORCA: Lets the path be split where the overhang fan switches, not only where the speed changes.
+        // Bridges and overhang perimeters are cooled regardless of overlap.
+        float fan_overlap_threshold = -1.f;
+        if (EXTRUDER_CONFIG(enable_overhang_bridge_fan) && m_enable_cooling_markers && path.role() != erBridgeInfill &&
+            path.role() != erOverhangPerimeter)
+            fan_overlap_threshold = overhang_fan_overlap_threshold(EXTRUDER_CONFIG(overhang_fan_threshold));
+
         auto oh1_fop = this->process_flow_value(m_config.overhang_1_4_speed);
         auto oh2_fop = this->process_flow_value(m_config.overhang_2_4_speed);
         auto oh3_fop = this->process_flow_value(m_config.overhang_3_4_speed);
@@ -9360,8 +9381,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                  (oh4_abs < 0.5) ? FloatOrPercent{100, true} : FloatOrPercent{oh4_abs * 100 / ref_speed, true}});
 
             new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                                  ref_speed, speed,
-                                                                                  slowdown_curled);
+                                                                                  ref_speed, speed, slowdown_curled, fan_overlap_threshold);
         } else {
             ConfigOptionFloatsOrPercents dynamic_overhang_speeds(
                 {FloatOrPercent{100, true},
@@ -9372,8 +9392,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
                  FloatOrPercent{this->process_flow_value(m_config.bridge_speed) * 100 / ref_speed, true}});
 
             new_points = m_extrusion_quality_estimator.estimate_extrusion_quality(path, overhang_overlap_levels, dynamic_overhang_speeds,
-                                                                                  ref_speed, speed,
-                                                                                  slowdown_curled);
+                                                                                  ref_speed, speed, slowdown_curled, fan_overlap_threshold);
         }
         variable_speed = std::any_of(new_points.begin(), new_points.end(), [speed](const ProcessedPoint& p) {
             return fabs(double(p.speed) - speed) > 1;
@@ -9582,15 +9601,10 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
             role == erOverhangPerimeter) { // ORCA: Split out bridge infill to internal and external to apply separate fan settings
             return true;
         }
-        switch (overhang_fan_threshold) {
-        case (int) Overhang_threshold_1_4: return overlap <= 0.9f; break;
-        case (int) Overhang_threshold_2_4: return overlap <= 0.75f; break;
-        case (int) Overhang_threshold_3_4: return overlap <= 0.5f; break;
-        case (int) Overhang_threshold_4_4: return overlap <= 0.25f; break;
-        case (int) Overhang_threshold_bridge: return overlap <= 0.05f; break;
-        case (int) Overhang_threshold_none: return is_external_perimeter(role); break;
-        default: return false;
-        }
+        if (overhang_fan_threshold == Overhang_threshold_none)
+            return is_external_perimeter(role);
+        const float overlap_threshold = overhang_fan_overlap_threshold(overhang_fan_threshold);
+        return overlap_threshold >= 0.f && overlap <= overlap_threshold;
     };
 
     std::string comment;

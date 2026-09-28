@@ -23,7 +23,9 @@
 
 #include <boost/filesystem.hpp>
 
+#include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/GCode/ExtrusionProcessor.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
@@ -640,4 +642,118 @@ TEST_CASE("over_support: the keys are region members, so a part gets its own reg
         if (std::abs(object.printing_region(i).config().over_support_flow.value - 1.5) < 1e-9)
             found = true;
     CHECK(found);
+}
+
+// ------------------------------------------------------------------ Orca #15945: fan-aware overhang split
+// Adapted from OrcaSlicer tests/fff_print/test_extrusion_processor.cpp. Edge has the older
+// non-templated ExtrusionProcessor (no interior sampling); these cases exercise the split and
+// fan logic only.
+
+namespace {
+
+constexpr double caged_wall_width = 0.42; // mm, outer wall line width
+
+// A wall along a supported edge of the previous layer, ending past or just short of the edge's end.
+// Crossing the edge's end reads half a line width out.
+constexpr double edge_run_length = 64.;   // mm, wall start, measured from the end of the previous layer's edge
+constexpr double edge_step       = 0.384; // mm, how far this layer's contour extends past the previous layer's end
+constexpr double edge_wall_end_past  = edge_step - 0.5 * caged_wall_width;
+constexpr double edge_wall_end_short = 0.05; // mm short of the edge, reading 0.21 - 0.05 = 0.16mm out
+// Segmentation splits 1.5 line widths plus the end's reading from an end, so an end's slowdown and cooling stay within this.
+constexpr double edge_affected_length = 3. * caged_wall_width;
+
+std::vector<ExtendedPoint> sampled_wall_along_edge(double                              wall_end_x,
+                                                   const std::function<float(float)>  &distance_to_speed,
+                                                   float                               min_distance,
+                                                   float                               fan_overlap_threshold)
+{
+    const AABBTreeLines::LinesDistancer<Linef> prev_layer(std::vector<Linef>{
+        {{0., 0.}, {edge_run_length + 10., 0.}},
+        {{edge_run_length + 10., 0.}, {edge_run_length + 10., -10.}},
+        {{edge_run_length + 10., -10.}, {0., -10.}},
+        {{0., -10.}, {0., 0.}},
+    });
+    const double wall_y = -0.5 * caged_wall_width;
+    const Points wall{Point::new_scale(edge_run_length, wall_y), Point::new_scale(wall_end_x, wall_y)};
+
+    return estimate_points_properties<true, true, true, true>(wall, prev_layer, caged_wall_width, -1.f, min_distance,
+                                                              distance_to_speed, fan_overlap_threshold);
+}
+
+// How much of a path is printed below the speed a fully supported reading gives. A segment is printed
+// at the lower of the speeds its ends read.
+double slowed_length(const std::vector<ExtendedPoint> &points, const std::function<float(float)> &distance_to_speed)
+{
+    double length = 0.;
+    for (size_t i = 0; i + 1 < points.size(); ++i)
+        if (std::min(distance_to_speed(points[i].distance), distance_to_speed(points[i + 1].distance)) < distance_to_speed(0.f))
+            length += (points[i + 1].position - points[i].position).norm();
+    return length;
+}
+
+// Length printed with the overhang fan on: segments with either end's overlap at or below the threshold.
+double cooled_length(const std::vector<ExtendedPoint> &points, float fan_overlap_threshold)
+{
+    double length = 0.;
+    for (size_t i = 0; i + 1 < points.size(); ++i)
+        if (1.f - std::max(points[i].distance, points[i + 1].distance) / float(caged_wall_width) <= fan_overlap_threshold)
+            length += (points[i + 1].position - points[i].position).norm();
+    return length;
+}
+
+} // namespace
+
+// Regression: the line up to a step past the previous layer was not split, so the step's slowdown and cooling covered the
+// whole wall. The split required an end reading beyond where the slowdown begins, and an edge crossing reads exactly
+// there when the wall speed is held below the reference speed (e.g. resonance avoidance).
+TEST_CASE("A wall stepping past the previous layer is slowed and cooled only beside the step", "[ExtrusionProcessor][Regression]")
+{
+    const float crossing_reading = 0.5f * float(caged_wall_width);
+    const std::function<float(float)> distance_to_speed = [crossing_reading](float distance) {
+        return distance < crossing_reading ? 70.f : 15.f;
+    };
+    const float fan_overlap_threshold = 0.75f; // The fan switches on at a 25% overhang
+
+    const std::vector<ExtendedPoint> points = sampled_wall_along_edge(-edge_wall_end_past, distance_to_speed, crossing_reading,
+                                                                      fan_overlap_threshold);
+    const double slowed = slowed_length(points, distance_to_speed);
+    const double cooled = cooled_length(points, fan_overlap_threshold);
+
+    REQUIRE(slowed > 0.);
+    REQUIRE(cooled > 0.);
+    REQUIRE(slowed < edge_affected_length);
+    REQUIRE(cooled < edge_affected_length);
+}
+
+// Regression: the fan can switch on at a smaller overhang than the first slowdown. Splitting only on speed changes left
+// the whole wall cooled when its end read between the two.
+TEST_CASE("A wall is split where only the overhang fan changes", "[ExtrusionProcessor][Regression]")
+{
+    const float crossing_reading = 0.5f * float(caged_wall_width);
+    const std::function<float(float)> distance_to_speed = [crossing_reading](float distance) {
+        return distance < crossing_reading ? 70.f : 15.f;
+    };
+    // The end reads 0.16mm out (overlap 0.62): cooled at a 25% threshold, but not slowed.
+    const float fan_overlap_threshold = 0.75f;
+
+    const std::vector<ExtendedPoint> points = sampled_wall_along_edge(edge_wall_end_short, distance_to_speed, crossing_reading,
+                                                                      fan_overlap_threshold);
+    const double cooled = cooled_length(points, fan_overlap_threshold);
+
+    REQUIRE_THAT(slowed_length(points, distance_to_speed), WithinAbs(0., 1e-9));
+    REQUIRE(cooled > 0.);
+    REQUIRE(cooled < edge_affected_length);
+}
+
+// With one speed and a fan threshold no reading reaches, only the wall's ends and the edge crossing remain.
+TEST_CASE("A wall is left whole where neither its speed nor its cooling changes", "[ExtrusionProcessor]")
+{
+    const std::function<float(float)> distance_to_speed = [](float) { return 70.f; };
+    // 95% overhang; the step reads 0.384mm out (overlap 0.09).
+    const float fan_overlap_threshold = 0.05f;
+
+    const std::vector<ExtendedPoint> points = sampled_wall_along_edge(-edge_wall_end_past, distance_to_speed, -1.f,
+                                                                      fan_overlap_threshold);
+
+    REQUIRE(points.size() == 3);
 }

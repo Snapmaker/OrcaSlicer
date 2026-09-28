@@ -2038,6 +2038,22 @@ void PresetBundle::load_installed_filaments(AppConfig &config)
             if (printer.is_visible && printer.printer_technology() == ptFFF)
                 installed_fff_printers.emplace_back(printer, printer.vendor);
 
+        // Group key: vendor id (so "Generic PLA" from different vendors never collide) plus
+        // the alias / base name the guide groups by. alias is derived from an explicit
+        // "alias" config key, or from the preset name up to " @" (see
+        // load_system_presets_from_json), and falls back to the full name when neither
+        // applies - matching Preset::alias exactly.
+        auto group_key_of = [](const Preset &filament) {
+            return (filament.vendor ? filament.vendor->id : std::string()) + "\x1f" + filament.alias;
+        };
+        // Groups with an enabled member, so the compatibility check below only runs for the few
+        // presets that could actually be enabled - not every system filament against every
+        // visible printer (user printer presets alone can number in the dozens).
+        std::unordered_set<std::string> seeded_groups;
+        for (const Preset &filament : filaments)
+            if (filament.is_system && already_enabled_names.count(filament.name))
+                seeded_groups.insert(group_key_of(filament));
+
         std::vector<FilamentVariantCandidate> candidates;
         candidates.reserve(filaments.size());
         for (const Preset &filament : filaments) {
@@ -2046,12 +2062,11 @@ void PresetBundle::load_installed_filaments(AppConfig &config)
             FilamentVariantCandidate c;
             c.name = filament.name;
             c.is_system = true;
-            // Group key: vendor id (so "Generic PLA" from different vendors never collide) plus
-            // the alias / base name the guide groups by. alias is derived from an explicit
-            // "alias" config key, or from the preset name up to " @" (see
-            // load_system_presets_from_json), and falls back to the full name when neither
-            // applies - matching Preset::alias exactly.
-            c.group_key = (filament.vendor ? filament.vendor->id : std::string()) + "\x1f" + filament.alias;
+            c.group_key = group_key_of(filament);
+            if (already_enabled_names.count(c.name) || !seeded_groups.count(c.group_key)) {
+                candidates.push_back(std::move(c)); // can't be enabled here; skip the compatibility check
+                continue;
+            }
             const PresetWithVendorProfile filament_wvp(filament, filament.vendor);
             for (const PresetWithVendorProfile &printer_wvp : installed_fff_printers) {
                 if (is_compatible_with_printer(filament_wvp, printer_wvp)) {

@@ -996,19 +996,23 @@ bool PlaterPresetComboBox::switch_to_tab()
     const Preset* selected_filament_preset = nullptr;
     if (m_type == Preset::TYPE_FILAMENT)
     {
-        // Skip re-selecting only when the Tab editor already shows this slot: a "(modified)" label
-        // isn't proof of that, since every slot's combo reads the same shared PresetCollection.
-        TabPresetComboBox* tab_combo = tab->get_combo_box();
-        if (tab_combo == nullptr || tab_combo->get_filament_idx() != m_filament_idx)
+        PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+        if (m_filament_idx < 0 || size_t(m_filament_idx) >= preset_bundle->filament_presets.size())
+            return false;
+        // Compare the slot's actual assigned preset against what the Tab editor currently holds
+        // open - not the combo's own label (every slot's combo reads the same shared
+        // PresetCollection, so "(modified)" doesn't identify which slot is dirty) and not just the
+        // slot index (stale if this slot's preset changed from the sidebar without going through the Tab).
+        const std::string slot_preset_name = preset_bundle->filament_presets[m_filament_idx];
+        if (slot_preset_name != preset_bundle->filaments.get_selected_preset_name())
         {
-            const std::string& selected_preset = GetString(GetSelection()).ToUTF8().data();
-            const std::string& preset_name = wxGetApp().preset_bundle->filaments.get_preset_name_by_alias(selected_preset);
-            if (wxGetApp().get_tab(m_type)->select_preset(preset_name))
-                wxGetApp().get_tab(m_type)->get_combo_box()->set_filament_idx(m_filament_idx);
-            else {
+            if (!tab->select_preset(slot_preset_name))
                 return false;
-            }
         }
+        // Bind the editor to this slot regardless: a same-preset slot still needs Save/re-edit to
+        // target the slot that was actually clicked, not whichever slot last called select_preset().
+        if (TabPresetComboBox* tab_combo = tab->get_combo_box())
+            tab_combo->set_filament_idx(m_filament_idx);
     }
 
     /*

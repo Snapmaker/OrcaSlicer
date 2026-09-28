@@ -158,9 +158,9 @@ private:
     int                selection  = -1;
     int                hover_item = -1;
 
-    FilamentDropDown * subDropDown{nullptr};
-    FilamentDropDown * mainDropDown{nullptr};
-    wxWeakRef<FilamentDropDown> mainDropDownWeak;
+    FilamentDropDown * subDropDown{nullptr}; // non-owning: child window owned by its wx parent
+    FilamentDropDown * mainDropDown{nullptr}; // non-owning: root popup of this submenu; null when this instance is the root
+    wxWeakRef<FilamentDropDown> mainDropDownWeak; // liveness-checked accessor for the same root popup
     wxTimer                    submenu_motion_timer;
 
     double radius                  = 0;
@@ -193,7 +193,7 @@ private:
 
 public:
     /** @brief Creates an unparented popup that will be initialized by Create(). */
-    FilamentDropDown(const std::vector<Item> &items);
+    explicit FilamentDropDown(const std::vector<Item> &items);
 
     ~FilamentDropDown() override;
 

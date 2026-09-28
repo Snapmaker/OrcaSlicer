@@ -2868,6 +2868,8 @@ void PartPlate::update_states()
 void PartPlate::update_slice_result_valid_state(bool valid)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": plate %1% , update slice result from %2% to %3%") % m_plate_index %m_slice_result_valid %valid;
+    if (m_slice_result_valid && !valid && m_partplate_list)
+        m_partplate_list->set_filament_group_dirty(true);
     m_slice_result_valid = valid;
     if (valid)
         m_slice_percent = 100.0f;

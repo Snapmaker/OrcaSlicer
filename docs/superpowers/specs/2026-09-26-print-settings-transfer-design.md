@@ -79,6 +79,19 @@ A single rule set, `carry_print_settings()` in `PresetBundle.cpp`:
    E3D, TPU when the old printer had only a standard nozzle) keep the matched
    profile's value. Vectors without any variant layout whose length differs keep the
    matched value (extruder-count-dependent).
+
+   User presets break the layout routinely (third hand test): a user preset stores
+   only the keys it overrides, often as one value (`"top_surface_speed": ["150"]`) or
+   with its own `print_extruder_variant` list, on top of a parent with a different
+   number of variants, so one loaded config mixes lengths. The owner's
+   "0.24mm H2S - HexBase" declares 2 variants, overrides some speeds with 1 value and
+   inherits the rest from "0.24mm Standard @BBL H2S" with 3 - so `top_surface_speed`
+   and `overhang_1_4_speed` (inherited, 3 values) matched neither layout and were
+   skipped, while `inner_wall_speed` and `overhang_3_4/4_4_speed` (overridden, 1 value)
+   carried. For a per-flow-mode option whose length matches no layout, entry 0 is now
+   taken as the standard entry (the first value always belongs to the standard mode,
+   and every Bambu variant list starts with extruder 1 Standard); its other entries
+   keep the matched values. Two such vectors of equal length are copied as they are.
 4. Options whose type differs, or that are missing on either side, are skipped
    (none do between the bundled X1C, H2S, H2D, H2C and U1 profiles, see the audit).
 

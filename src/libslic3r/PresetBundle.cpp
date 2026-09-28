@@ -4788,8 +4788,17 @@ bool print_carry_same_nozzle_size(const std::vector<double> &old_nozzles, const 
 // variants of extruder 1, H2D: seven entries over two extruders) and the per-flow-mode layout of the
 // process_flow_variant_options() (process_flow_support, e.g. U1: standard + high_flow). Flow modes are
 // named like the Bambu variant they correspond to, so the two layouts can be matched up.
-static std::vector<std::string> print_carry_variant_labels(const DynamicPrintConfig &config, const std::string &key, size_t size)
+//
+// User presets break the layout routinely: a preset stores only the values it overrides, often as a
+// single value ("top_surface_speed": ["150"]) or with its own print_extruder_variant list, on top of
+// a parent with a different number of variants, so one loaded config mixes vector lengths (the
+// owner's "0.24mm H2S - HexBase": two variants declared, some speeds 1 value, inherited ones 3).
+// Such a per-flow-mode option still has its standard value first (process_flow_support: "the first
+// value belongs to the standard mode"; every Bambu variant list starts with extruder 1 Standard), so
+// entry 0 is labelled standard and the others "?|<index>", which never match anything (fallback).
+static std::vector<std::string> print_carry_variant_labels(const DynamicPrintConfig &config, const std::string &key, size_t size, bool &fallback)
 {
+    fallback = false;
     std::vector<std::string> labels;
     const auto *variants = dynamic_cast<const ConfigOptionStrings *>(config.option("print_extruder_variant"));
     const auto *ids      = dynamic_cast<const ConfigOptionInts *>(config.option("print_extruder_id"));
@@ -4811,6 +4820,12 @@ static std::vector<std::string> print_carry_variant_labels(const DynamicPrintCon
                 labels.emplace_back(std::string("1|") + (mode == FLOW_MODE_HIGH_FLOW ? std::string("Direct Drive High Flow") :
                                                          mode == FLOW_MODE_STANDARD  ? std::string("Direct Drive Standard") : mode));
             return labels;
+        }
+        if (size > 0) {
+            fallback = true;
+            labels.emplace_back("1|Direct Drive Standard");
+            for (size_t i = 1; i < size; ++i)
+                labels.emplace_back("?|" + std::to_string(i));
         }
     }
     return labels;
@@ -4980,9 +4995,11 @@ std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const Dyn
         const auto *src_vec = dynamic_cast<const ConfigOptionVectorBase *>(src_opt);
         auto       *dst_vec = dynamic_cast<ConfigOptionVectorBase *>(dst_opt);
         if (src_vec != nullptr && dst_vec != nullptr) {
-            const std::vector<std::string> src_labels = print_carry_variant_labels(src, key, src_vec->size());
-            const std::vector<std::string> dst_labels = print_carry_variant_labels(dst, key, dst_vec->size());
-            if (src_labels.empty() || dst_labels.empty() || src_labels == dst_labels) {
+            bool src_fallback = false, dst_fallback = false;
+            const std::vector<std::string> src_labels = print_carry_variant_labels(src, key, src_vec->size(), src_fallback);
+            const std::vector<std::string> dst_labels = print_carry_variant_labels(dst, key, dst_vec->size(), dst_fallback);
+            if (src_labels.empty() || dst_labels.empty() || src_labels == dst_labels ||
+                ((src_fallback || dst_fallback) && src_vec->size() == dst_vec->size())) {
                 if (src_vec->size() != dst_vec->size()) {
                     // Extruder-count-dependent value without a known variant layout: keep the matched profile's.
                     keep(key, "vector length differs (" + std::to_string(src_vec->size()) + " vs " + std::to_string(dst_vec->size()) +
@@ -4998,8 +5015,8 @@ std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const Dyn
             std::unique_ptr<ConfigOption> before(dst_opt->clone());
             std::string unmatched;
             for (size_t j = 0; j < dst_labels.size(); ++j) {
-                auto it = std::find(src_labels.begin(), src_labels.end(), dst_labels[j]);
-                if (it == src_labels.end()) {
+                auto it = dst_labels[j][0] == '?' ? src_labels.end() : std::find(src_labels.begin(), src_labels.end(), dst_labels[j]);
+                if (it == src_labels.end() && dst_labels[j][0] != '?') {
                     const std::string name = print_carry_variant_name(dst_labels[j]);
                     it = std::find_if(src_labels.begin(), src_labels.end(),
                                       [&name](const std::string &l) { return print_carry_variant_name(l) == name; });
@@ -5007,7 +5024,8 @@ std::vector<std::string> carry_print_settings(DynamicPrintConfig &dst, const Dyn
                 if (it != src_labels.end())
                     dst_vec->set_at(src_opt, j, size_t(it - src_labels.begin()));
                 else
-                    unmatched += (unmatched.empty() ? "" : ", ") + dst_labels[j];
+                    unmatched += (unmatched.empty() ? "" : ", ") +
+                                 (dst_labels[j][0] == '?' ? "entry " + std::to_string(j) + " (layout unknown)" : dst_labels[j]);
             }
             if (!(*dst_opt == *before))
                 changed.emplace_back(key);

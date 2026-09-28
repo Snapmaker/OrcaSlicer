@@ -7,6 +7,7 @@
 #include "libslic3r/Utils.hpp"
 
 #include <boost/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
 
 #include <algorithm>
 #include <iostream>
@@ -149,11 +150,19 @@ TEST_CASE("Print settings carry: config rules", "[Preset][PrintSettingsCarry]")
         CHECK(changed.size() == 3); // wall_loops, density, outer_wall_speed
     }
 
-    SECTION("vectors of a different length keep the matched profile's value") {
+    SECTION("vectors of a different length without a variant layout keep the matched profile's value") {
+        DynamicPrintConfig src = previous, dst = matched;
+        src.set_key_value("per_extruder_test_values", new ConfigOptionFloats({ 1. }));
+        dst.set_key_value("per_extruder_test_values", new ConfigOptionFloats({ 10., 20. }));
+        carry_print_settings(dst, src, true);
+        CHECK(dst.option<ConfigOptionFloats>("per_extruder_test_values")->values == std::vector<double>{ 10., 20. });
+    }
+
+    SECTION("a per-flow-mode vector whose length fits no layout still takes the standard (first) entry") {
         DynamicPrintConfig dst = matched;
         dst.set_key_value("outer_wall_speed", new ConfigOptionFloats({ 10., 20. }));
         carry_print_settings(dst, previous, true);
-        CHECK(dst.option<ConfigOptionFloats>("outer_wall_speed")->values == std::vector<double>{ 10., 20. });
+        CHECK(dst.option<ConfigOptionFloats>("outer_wall_speed")->values == std::vector<double>{ 200., 20. });
     }
 
     SECTION("per-flow-mode values are matched up by flow mode") {
@@ -594,5 +603,144 @@ TEST_CASE("Print settings carry: audit X1C 0.4 onto the bundled H2S, H2D, H2C an
         }
         // Re-select the target's matched preset for the next printer (the carry dirtied it).
         t.bundle->prints.discard_current_changes();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Realistic user presets (the owner's third hand test): a user preset stores only the keys it
+// overrides, as single values or with its own variant list, on top of a system parent. The target
+// "0.24mm H2S - HexBase" declares two variants, overrides some speeds with ONE value and inherits
+// the rest with THREE, so top_surface_speed / overhang_1_4_speed (inherited, 3 values, layout not
+// matching the declared 2 variants) were skipped while inner_wall_speed / overhang_3_4/4_4_speed
+// (overridden, 1 value) carried.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+const char *USER_X1C_DRAFT_CUSTOM = R"({
+    "from": "User", "inherits": "0.24mm Draft @BBL X1C", "name": "0.24mm Draft @BBL X1C - Custom",
+    "print_settings_id": "0.24mm Draft @BBL X1C - Custom", "version": "2.0.0.75", "is_custom_defined": "0",
+    "gap_infill_speed": ["200"], "initial_layer_infill_speed": ["50"], "initial_layer_print_height": "0.24",
+    "inner_wall_speed": ["200"], "internal_solid_infill_speed": ["200"], "outer_wall_acceleration": ["2000"],
+    "outer_wall_line_width": "0.5", "outer_wall_speed": ["60"], "overhang_1_4_speed": ["50"], "overhang_4_4_speed": ["20"],
+    "overhang_3_4_speed": ["30"], "slowdown_for_curled_perimeters": ["0"], "sparse_infill_density": "10%",
+    "sparse_infill_speed": ["200"], "top_surface_acceleration": ["200"], "top_surface_line_width": "0.5",
+    "top_surface_speed": ["150"], "wall_loops": "3"
+})";
+
+const char *USER_H2S_HEXBASE = R"({
+    "from": "User", "inherits": "0.24mm Standard @BBL H2S", "name": "0.24mm H2S - HexBase",
+    "print_settings_id": "0.24mm H2S - HexBase", "version": "2.5.0.7",
+    "gap_infill_speed": ["200"], "initial_layer_infill_speed": ["40"], "initial_layer_print_height": "0.24",
+    "initial_layer_speed": ["40", "50", "50"], "inner_wall_speed": ["160"], "internal_solid_infill_speed": ["200"],
+    "outer_wall_acceleration": ["2000"], "outer_wall_line_width": "0.5", "outer_wall_speed": ["60"],
+    "overhang_3_4_speed": ["50"], "overhang_4_4_speed": ["30"],
+    "print_extruder_id": ["1", "1"], "print_extruder_variant": ["Direct Drive Standard", "Direct Drive High Flow"],
+    "slowdown_for_curled_perimeters": ["0"], "sparse_infill_density": "10%", "sparse_infill_speed": ["200"],
+    "top_surface_acceleration": ["500"], "top_surface_line_width": "0.5", "wall_loops": "3"
+})";
+
+// The X1C HexBase preset as the owner has it: two declared variants on an X1C, mixed lengths.
+const char *USER_X1C_HEXBASE = R"({
+    "from": "User", "inherits": "0.20mm Standard @BBL X1C", "name": "0.24mm @X1C - HexBase",
+    "print_settings_id": "0.24mm @X1C - HexBase", "version": "2.4.0.7", "layer_height": "0.24",
+    "default_acceleration": ["5000", "5000"], "inner_wall_acceleration": ["1000"], "outer_wall_acceleration": ["2000", "1000"],
+    "outer_wall_speed": ["60"], "overhang_4_4_speed": ["20", "20"], "print_extruder_id": ["1", "1"],
+    "print_extruder_variant": ["Direct Drive Standard", "Direct Drive High Flow"], "sparse_infill_speed": ["350"],
+    "support_interface_speed": ["50", "30"], "top_surface_acceleration": ["1000", "500"], "wall_loops": "3"
+})";
+
+void load_user_processes(PresetBundle &bundle)
+{
+    const boost::filesystem::path dir = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("carry_user_%%%%-%%%%");
+    boost::filesystem::create_directories(dir / "process");
+    for (const auto &[name, json] : std::vector<std::pair<std::string, const char *>>{ { "0.24mm Draft @BBL X1C - Custom", USER_X1C_DRAFT_CUSTOM },
+                                                                                      { "0.24mm H2S - HexBase", USER_H2S_HEXBASE },
+                                                                                      { "0.24mm @X1C - HexBase", USER_X1C_HEXBASE } }) {
+        boost::nowide::ofstream out((dir / "process" / (name + ".json")).string());
+        out << json;
+    }
+    PresetsConfigSubstitutions substitutions;
+    bundle.prints.load_presets(dir.string(), "process", substitutions, ForwardCompatibilitySubstitutionRule::EnableSilent);
+}
+
+double first(const DynamicPrintConfig &cfg, const char *key)
+{
+    if (const auto *f = dynamic_cast<const ConfigOptionFloats *>(cfg.option(key)))
+        return f->values.front();
+    if (const auto *fp = dynamic_cast<const ConfigOptionFloatsOrPercents *>(cfg.option(key)))
+        return fp->values.front().value;
+    return -1.;
+}
+
+void audit(const char *what, const std::vector<std::string> &changed, const std::map<std::string, std::string> &kept)
+{
+    std::cout << "CARRY-AUDIT " << what << ": " << changed.size() << " carried, " << kept.size() << " not (fully) carried\n";
+    for (const auto &[key, reason] : kept) {
+        std::cout << "CARRY-AUDIT   " << key << ": " << reason << "\n";
+        INFO(key << ": " << reason);
+        CHECK(deliberate(reason));
+    }
+}
+
+} // namespace
+
+TEST_CASE("Print settings carry: the owner's user presets, X1C -> H2S / H2D", "[PrintSettingsCarry][Audit]")
+{
+    auto bbl = vendor_bundle("BBL");
+    load_user_processes(*bbl);
+    REQUIRE(bbl->prints.find_preset("0.24mm H2S - HexBase", false) != nullptr);
+
+    auto start_on = [&bbl](const char *process) {
+        REQUIRE(bbl->printers.select_preset_by_name("Bambu Lab X1 Carbon 0.4 nozzle", true));
+        bbl->update_compatible(PresetSelectCompatibleType::Always);
+        REQUIRE(bbl->prints.select_preset_by_name(process, true));
+        return bbl->capture_print_settings_carry();
+    };
+
+    SECTION("0.24mm Draft @BBL X1C - Custom -> 0.24mm H2S - HexBase") {
+        const PrintSettingsCarry carry = start_on("0.24mm Draft @BBL X1C - Custom");
+        CHECK(first(carry.config, "top_surface_speed") == Approx(150.));
+        CHECK(first(carry.config, "overhang_1_4_speed") == Approx(50.));
+        REQUIRE(bbl->printers.select_preset_by_name("Bambu Lab H2S 0.4 nozzle", true));
+        bbl->update_compatible(PresetSelectCompatibleType::Always);
+        REQUIRE(bbl->prints.select_preset_by_name("0.24mm H2S - HexBase", true));
+        // The shape that broke it: two declared variants, inherited speeds with three values.
+        const DynamicPrintConfig &before = bbl->prints.get_edited_preset().config;
+        CHECK(before.option<ConfigOptionStrings>("print_extruder_variant")->values.size() == 2);
+        CHECK(before.option<ConfigOptionFloats>("top_surface_speed")->values.size() == 3);
+        std::map<std::string, std::string> kept;
+        const auto changed = bbl->apply_print_settings_carry(carry, &kept);
+        audit("user X1C Draft Custom -> user H2S HexBase", changed, kept);
+        const DynamicPrintConfig &after = bbl->prints.get_edited_preset().config;
+        CHECK(first(after, "top_surface_speed") == Approx(150.));
+        CHECK(first(after, "overhang_1_4_speed") == Approx(50.));
+        CHECK(first(after, "inner_wall_speed") == Approx(200.));
+        CHECK(first(after, "overhang_3_4_speed") == Approx(30.));
+        CHECK(first(after, "overhang_4_4_speed") == Approx(20.));
+        const auto dirty = bbl->prints.current_dirty_options();
+        for (const char *key : { "top_surface_speed", "overhang_1_4_speed", "inner_wall_speed", "overhang_4_4_speed" }) {
+            INFO(key);
+            CHECK(contains(dirty, key));
+        }
+    }
+
+    SECTION("0.24mm @X1C - HexBase -> the H2D match") {
+        const PrintSettingsCarry carry = start_on("0.24mm @X1C - HexBase");
+        REQUIRE(bbl->printers.select_preset_by_name("Bambu Lab H2D 0.4 nozzle", true));
+        bbl->update_compatible(PresetSelectCompatibleType::Always);
+        std::map<std::string, std::string> kept;
+        const auto changed = bbl->apply_print_settings_carry(carry, &kept);
+        audit((std::string("user X1C HexBase -> ") + bbl->prints.get_edited_preset().name).c_str(), changed, kept);
+        const DynamicPrintConfig &after = bbl->prints.get_edited_preset().config;
+        const auto *outer = after.option<ConfigOptionFloats>("outer_wall_speed");
+        const auto &variants = after.option<ConfigOptionStrings>("print_extruder_variant")->values;
+        REQUIRE(outer->values.size() == variants.size());
+        for (size_t i = 0; i < variants.size(); ++i)
+            if (variants[i] == DDS) {
+                INFO("entry " << i);
+                CHECK(outer->values[i] == Approx(60.));
+            }
+        CHECK(first(after, "sparse_infill_speed") == Approx(350.));
     }
 }

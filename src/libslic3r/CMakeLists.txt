@@ -431,6 +431,8 @@ set(lisbslic3r_sources
     NozzleFilamentPresets.hpp
     PerHeadProcess.cpp
     PerHeadProcess.hpp
+    UsedFilaments.cpp
+    UsedFilaments.hpp
     SnapmakerFlowCompat.cpp
     SnapmakerFlowCompat.hpp
     SSWCPProtocol.cpp

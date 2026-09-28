@@ -1953,6 +1953,117 @@ SCENARIO("Fractional support layers keep the prime tower on whole object layers"
     }
 }
 
+// 0.6 / 0.4 / 0.4 / 0.2 mm nozzles preferring 0.32 / 0.16 / - / 0.08 mm on a 0.08 mm grid. The
+// object prints with filament 1 and its sparse infill with filament 2; its support takes the PETG
+// on the 0.2 mm nozzle (filament 4), selected only by the support nozzle and material restrictions.
+static DynamicPrintConfig restricted_support_tower_config()
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",               new ConfigOptionFloat(0.08));
+    config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.14));
+    config.set_key_value("nozzle_diameter",            new ConfigOptionFloats({0.6, 0.4, 0.4, 0.2}));
+    config.set_key_value("extruder_layer_height",      new ConfigOptionFloats({0.32, 0.16, 0., 0.08}));
+    config.set_key_value("min_layer_height",           new ConfigOptionFloats({0.12, 0.08, 0.08, 0.04}));
+    config.set_key_value("max_layer_height",           new ConfigOptionFloats({0.42, 0.32, 0.32, 0.14}));
+    config.set_key_value("filament_type",              new ConfigOptionStrings({"PLA", "PLA", "PLA", "PETG"}));
+    config.set_key_value("sparse_infill_filament_id",  new ConfigOptionInt(2));
+    config.set_key_value("sparse_infill_density",      new ConfigOptionPercent(30.));
+    config.set_key_value("enable_support",             new ConfigOptionBool(true));
+    config.set_key_value("support_filament",           new ConfigOptionInt(0));
+    config.set_key_value("support_interface_filament", new ConfigOptionInt(0));
+    config.set_key_value("support_nozzle_diameter",    new ConfigOptionFloat(0.2));
+    config.set_key_value("support_base_material",      new ConfigOptionString("PETG"));
+    config.set_key_value("support_interface_material", new ConfigOptionString("PETG"));
+    // Tree (auto) support in the hybrid style at a 40 degree threshold under the arm.
+    config.option<ConfigOptionEnum<SupportType>>("support_type", true)->value           = stTreeAuto;
+    config.option<ConfigOptionEnum<SupportMaterialStyle>>("support_style", true)->value = smsTreeHybrid;
+    config.set_key_value("support_threshold_angle",    new ConfigOptionInt(40));
+    // A rib-walled Type2 tower, 30 mm wide with a 5 mm brim, in the bed corner.
+    config.set_key_value("enable_prime_tower",             new ConfigOptionBool(true));
+    config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(false));
+    config.set_key_value("use_relative_e_distances",       new ConfigOptionBool(true));
+    config.set_key_value("layer_change_gcode",             new ConfigOptionString("G92 E0"));
+    config.set_deserialize_strict({ { "wipe_tower_type", "type2" }, { "wipe_tower_wall_type", "rib" },
+                                    { "printable_area", "0x0,270x0,270x270,0x270" } });
+    config.set_key_value("prime_tower_width",           new ConfigOptionFloat(30.));
+    config.set_key_value("prime_tower_brim_width",      new ConfigOptionFloat(5.));
+    config.set_key_value("prime_volume",                new ConfigOptionFloat(90.));
+    config.set_key_value("wipe_tower_extra_spacing",    new ConfigOptionPercent(120.));
+    config.set_key_value("wipe_tower_rib_width",        new ConfigOptionFloat(8.));
+    config.set_key_value("wipe_tower_extra_rib_length", new ConfigOptionFloat(8.));
+    config.set_key_value("wipe_tower_x",                new ConfigOptionFloats({10.}));
+    config.set_key_value("wipe_tower_y",                new ConfigOptionFloats({10.}));
+    return config;
+}
+
+// A 10 x 10 x 20 mm pillar carrying a 30 x 10 x 4 mm arm at its top: the arm overhangs 20 mm to
+// one side and needs support down to the bed.
+static void init_overhanging_arm_print(Print &print, Model &model, const DynamicPrintConfig &config)
+{
+    TriangleMesh pillar = make_cube(10., 10., 20.);
+    TriangleMesh arm    = make_cube(30., 10., 4.);
+    arm.translate(0.f, 0.f, 16.f);
+    ModelObject *object = model.add_object();
+    object->name = "overhanging_arm";
+    object->add_volume(std::move(pillar), ModelVolumeType::MODEL_PART, false);
+    object->add_volume(std::move(arm), ModelVolumeType::MODEL_PART, false);
+    object->add_instance();
+    object->center_around_origin();
+    object->translate(150., 150., 0.);
+    object->ensure_on_bed();
+    print.apply(model, config);
+    print.set_status_silent();
+}
+
+TEST_CASE("The prime tower reserved before slicing holds the tower of a restricted support filament", "[MultiNozzleLayerHeight][WipeTower][Support]")
+{
+    Print print;
+    Model model;
+    init_overhanging_arm_print(print, model, restricted_support_tower_config());
+    {
+        const StringObjectException err = print.validate();
+        INFO(err.string);
+        REQUIRE(err.string.empty());
+    }
+
+    // Before slicing: the plate counts the support filament, so the tower is sized for three.
+    const std::vector<unsigned int> used = print.extruders(true);
+    CHECK(used == std::vector<unsigned int>{0, 1, 3});
+    const WipeTowerData &estimate      = print.wipe_tower_data(used.size());
+    const double         reserved_side = std::max(estimate.width, estimate.depth) + 2. * estimate.brim_width;
+    REQUIRE(reserved_side > 0.);
+
+    print.process();
+    REQUIRE(print.has_wipe_tower());
+    REQUIRE(print.wipe_tower_data().wipe_tower_mesh_data.has_value());
+    // The support exists and prints with filament 4; without it the tower is sized for two filaments.
+    size_t support_layers = 0;
+    for (const SupportLayer *layer : print.objects().front()->support_layers())
+        if (! layer->support_fills.entities.empty())
+            ++ support_layers;
+    size_t layers_with_support = 0, support_layers_on_filament_4 = 0;
+    for (const LayerTools &lt : print.get_tool_ordering().layer_tools())
+        if (lt.has_support) {
+            ++ layers_with_support;
+            if (std::find(lt.extruders.begin(), lt.extruders.end(), 3u) != lt.extruders.end())
+                ++ support_layers_on_filament_4;
+        }
+    INFO("support layers with fills " << support_layers << ", tool layers with support " << layers_with_support
+         << ", of them on filament 4 " << support_layers_on_filament_4);
+    REQUIRE(support_layers > 0);
+    CHECK(support_layers_on_filament_4 > 0);
+
+    // The generated first layer, brim and ribs included, fits the reserved square and does not
+    // leave most of it unused.
+    const BoundingBox built  = get_extents(print.wipe_tower_data().wipe_tower_mesh_data->bottom);
+    const double      built_x = unscaled(built.size().x());
+    const double      built_y = unscaled(built.size().y());
+    INFO("reserved " << reserved_side << " mm, built " << built_x << " x " << built_y << " mm");
+    CHECK(built_x <= reserved_side + 0.5);
+    CHECK(built_y <= reserved_side + 0.5);
+    CHECK(std::max(built_x, built_y) >= 0.7 * reserved_side);
+}
+
 SCENARIO("A painted slope cut to a ribbon prints its colour in full runs", "[MultiNozzleLayerHeight][Segmentation]") {
     // A wedge whose +x face rises at 45 degrees (1 mm sideways per mm of height), that face
     // painted with the coarse extruder (here a 0.8 mm nozzle, 0.6 mm layer height = runs of

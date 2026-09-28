@@ -55,6 +55,7 @@ add_executable(${_TEST_NAME}_tests
     test_utils.cpp
     test_timeutils.cpp
     test_voronoi.cpp
+    test_used_filaments.cpp # Snapmaker Orca: the filaments a plate counts before slicing
     test_wipe_tower_estimate.cpp
     test_wipe_tower.cpp
     test_wipe_path.cpp

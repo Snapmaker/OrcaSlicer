@@ -959,7 +959,7 @@ static void prepare_3mf_temp_dir()
 // Stores a one-plate project holding a cube whose first two facets are painted Extruder2 and
 // Extruder3, which the exporter writes as paint_color="8" and paint_color="0C". Also paints
 // support / seam / fuzzy on those facets so a round-trip can check all four streams.
-static void store_painted_cube(const std::string &path)
+static void store_painted_cube(const std::string &path, Model *out_model = nullptr)
 {
     prepare_3mf_temp_dir();
 
@@ -1003,6 +1003,8 @@ static void store_painted_cube(const std::string &path)
     sp.strategy        = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
     sp.plate_data_list.push_back(&plate);
     REQUIRE(store_bbs_3mf(sp));
+    if (out_model != nullptr)
+        *out_model = std::move(model);
 }
 
 // Loads `path` through the BBS importer into `model`, releasing the plates it returns.
@@ -1157,29 +1159,18 @@ TEST_CASE("A painted cube round-trips mmu, seam, support and fuzzy paint", "[3mf
 {
     const std::string path = make_temp_3mf_path("painted_cube_roundtrip.3mf");
     const ScopeGuard  cleanup = remove_file_guard(path);
-    store_painted_cube(path);
+    Model             src_model;
+    store_painted_cube(path, &src_model);
 
     Model dst_model;
     REQUIRE(load_project(path, dst_model));
     REQUIRE(dst_model.objects.size() == 1);
+    const ModelVolume &src_vol = *src_model.objects.front()->volumes.front();
     const ModelVolume &dst_vol = *dst_model.objects.front()->volumes.front();
-
-    TriangleSelector mmu(dst_vol.mesh());
-    REQUIRE_NOTHROW(mmu.deserialize(dst_vol.mmu_segmentation_facets.get_data()));
-    REQUIRE(mmu.num_facets(EnforcerBlockerType::Extruder2) == 1);
-    REQUIRE(mmu.num_facets(EnforcerBlockerType::Extruder3) == 1);
-
-    TriangleSelector support(dst_vol.mesh());
-    REQUIRE_NOTHROW(support.deserialize(dst_vol.supported_facets.get_data()));
-    REQUIRE(support.num_facets(EnforcerBlockerType::ENFORCER) == 1);
-
-    TriangleSelector seam(dst_vol.mesh());
-    REQUIRE_NOTHROW(seam.deserialize(dst_vol.seam_facets.get_data()));
-    REQUIRE(seam.num_facets(EnforcerBlockerType::ENFORCER) == 1);
-
-    TriangleSelector fuzzy(dst_vol.mesh());
-    REQUIRE_NOTHROW(fuzzy.deserialize(dst_vol.fuzzy_skin_facets.get_data()));
-    REQUIRE(fuzzy.num_facets(EnforcerBlockerType::FUZZY_SKIN) == 1);
+    REQUIRE(src_vol.mmu_segmentation_facets.equals(dst_vol.mmu_segmentation_facets));
+    REQUIRE(src_vol.supported_facets.equals(dst_vol.supported_facets));
+    REQUIRE(src_vol.seam_facets.equals(dst_vol.seam_facets));
+    REQUIRE(src_vol.fuzzy_skin_facets.equals(dst_vol.fuzzy_skin_facets));
 }
 
 TEST_CASE("Paint states 20, 200 and 255 round-trip through a 3MF byte-identically", "[3mf][MMUPaint][TriangleSelector]")

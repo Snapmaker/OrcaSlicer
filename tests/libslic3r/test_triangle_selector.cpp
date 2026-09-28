@@ -190,6 +190,17 @@ TEST_CASE("Sixteen F extension nibbles plus C is state 255, plus D is 256 and re
         TriangleSelector restored(mesh);
         REQUIRE_NOTHROW(restored.deserialize(data));
         REQUIRE(restored.num_facets(EnforcerBlockerType::ExtruderMax) == 1);
+
+        // Direct call so the ExtruderMax range check in read_leaf_state is not only
+        // covered indirectly by update_used_states / deserialize.
+        TriangleSelector::TriangleSplittingData leaf;
+        std::vector<int> ext = nibbles;
+        ext.erase(ext.begin());
+        leaf.bitstream = pack_nibbles(ext);
+        int ibit = 0;
+        int s    = -1;
+        REQUIRE(leaf.read_leaf_state(0b1100, ibit, s));
+        REQUIRE(s == int(EnforcerBlockerType::ExtruderMax));
     }
 
     SECTION("16xF+D is rejected as state 256")
@@ -209,6 +220,17 @@ TEST_CASE("Sixteen F extension nibbles plus C is state 255, plus D is 256 and re
         TriangleSelector restored(mesh);
         REQUIRE_NOTHROW(restored.deserialize(data));
         REQUIRE(restored.serialize().triangles_to_split.empty());
+
+        // Pins TriangleSelector.cpp read_leaf_state's `state <= ExtruderMax` check:
+        // 16×F + D decodes as 256, and deleting that comparison makes this REQUIRE_FALSE fail.
+        TriangleSelector::TriangleSplittingData leaf;
+        std::vector<int> ext = nibbles;
+        ext.erase(ext.begin());
+        leaf.bitstream = pack_nibbles(ext);
+        int ibit = 0;
+        int s    = -1;
+        REQUIRE_FALSE(leaf.read_leaf_state(0b1100, ibit, s));
+        REQUIRE(s == 256);
     }
 }
 
@@ -244,6 +266,33 @@ TEST_CASE("A split tree deeper than 256 does not claim a colour no facet has", "
     data.reset_used_states();
     REQUIRE_FALSE(data.update_used_states(0));
     REQUIRE(std::none_of(data.used_states.begin(), data.used_states.end(), [](bool used) { return used; }));
+    REQUIRE_FALSE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder2));
+
+    const TriangleMesh mesh = make_cube(10., 10., 10.);
+    TriangleSelector   restored(mesh);
+    REQUIRE_NOTHROW(restored.deserialize(data));
+    REQUIRE(restored.num_facets(EnforcerBlockerType::Extruder2) == 0);
+}
+
+TEST_CASE("has_facets does not report an early match from a tree deeper than 256", "[TriangleSelector][Regression]")
+{
+    // Same skinny chain as the depth-cap test, but the shallow sibling leaves are Extruder2.
+    // deserialize drops the whole triangle once the 257th split is seen, so has_facets must
+    // not return true from those early matching leaves.
+    std::vector<int> nibbles;
+    for (int depth = 0; depth < 256; ++depth) {
+        nibbles.push_back(0b0001);
+        nibbles.push_back(0b1000);
+    }
+    nibbles.push_back(0b0001);
+    nibbles.push_back(0b0000);
+    nibbles.push_back(0b0000);
+
+    TriangleSelector::TriangleSplittingData data;
+    data.triangles_to_split.emplace_back(0, 0);
+    data.bitstream = pack_nibbles(nibbles);
+    data.reset_used_states();
+    REQUIRE_FALSE(data.update_used_states(0));
     REQUIRE_FALSE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder2));
 
     const TriangleMesh mesh = make_cube(10., 10., 10.);

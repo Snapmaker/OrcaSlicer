@@ -1798,6 +1798,7 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
     // Depth-first queue of a source mesh triangle and its childern.
     // kept outside of the loop to avoid re-allocating inside the loop.
     std::vector<ProcessingInfo> parents;
+    int dropped_over_max = 0;
 
     for (auto [triangle_id, ibit] : data.triangles_to_split) {
         assert(triangle_id < int(m_triangles.size()));
@@ -1840,9 +1841,7 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
             }
 
             if (state > max_ebt) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": paint state " << int(state)
-                                          << " exceeds max " << int(max_ebt)
-                                          << ", dropping facet of triangle " << triangle_id << " to NONE";
+                ++dropped_over_max;
                 state = EnforcerBlockerType::NONE;
             }
 
@@ -1911,6 +1910,10 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
             m_triangles[triangle_id].set_state(EnforcerBlockerType::NONE);
         }
     }
+
+    if (dropped_over_max > 0)
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": dropped " << dropped_over_max
+                                  << " facet(s) whose paint state exceeds max " << int(max_ebt);
 }
 
 bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bitstream_start_idx) {
@@ -2004,9 +2007,11 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
         if (truncated)
             continue;
         if (state < 0) {
-            // Root is split.
+            // Root is split. Walk the whole tree before reporting a match: deserialize
+            // drops the triangle if depth exceeds kMaxSplitDepth, even after an early hit.
             parents_children.clear();
             parents_children.emplace_back(- state);
+            bool found = false;
             do {
                 if (-- parents_children.back() >= 0) {
                     int state = num_children_or_state();
@@ -2020,11 +2025,12 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
                         // Child is split.
                         parents_children.emplace_back(- state);
                     } else if (state == int(test_state))
-                        // Child is not split and a face of test_state was found.
-                        return true;
+                        found = true;
                 } else
                     parents_children.pop_back();
             } while (! parents_children.empty());
+            if (!truncated && found)
+                return true;
         } else if (state == int(test_state))
             // Root is not split and a face of test_state was found.
             return true;

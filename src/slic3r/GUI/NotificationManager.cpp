@@ -944,6 +944,7 @@ void NotificationManager::PopNotification::update(const NotificationData& n)
 	m_hypertext      = n.hypertext;
     m_text2          = n.text2;
     const_cast<NotificationData&>(m_data).callback	 = n.callback;
+    const_cast<NotificationData&>(m_data).source_key = n.source_key;
 	init();
 }
 
@@ -1832,7 +1833,13 @@ void NotificationManager::push_validate_error_notification(StringObjectException
     auto link = (mo || !error.opt_key.empty()) ? _u8L("Jump to") : "";
     if (mo) link += std::string(" [") + mo->name + "]";
     if (!error.opt_key.empty()) link += std::string(" (") + error.opt_key + ")";
-    push_notification_data({NotificationType::ValidateError, NotificationLevel::ErrorNotificationLevel, 0, _u8L("Error:") + "\n" + error.string, link, callback}, 0);
+    NotificationData notification_data{NotificationType::ValidateError, NotificationLevel::ErrorNotificationLevel, 0,
+                                       _u8L("Error:") + "\n" + error.string, link, callback};
+    // Same-source errors (e.g. the same option edited 6 -> 7 -> 8) reuse one notification
+    // instead of stacking one per distinct text. Keyed by option only: validate() reports
+    // one error at a time, so per-object keys would just leave stale toasts behind.
+    notification_data.source_key = error.opt_key.empty() ? "type:" + std::to_string(int(error.type)) : error.opt_key;
+    push_notification_data(notification_data, 0);
 	set_slicing_progress_hidden();
 }
 
@@ -2670,7 +2677,11 @@ bool NotificationManager::activate_existing(const NotificationManager::PopNotifi
 			// multiple of one type allowed, but must have different text
 			if (std::find(m_multiple_types.begin(), m_multiple_types.end(), new_type) != m_multiple_types.end()) {
 				// If found same type and same text, return true - update will be performed on the old notif
-				if ((*it)->compare_text(new_text) == false) {
+				// ValidateErrors of the same source reuse the old notification even when the text changed.
+				const std::string &new_source = notification->get_data().source_key;
+				if (new_type == NotificationType::ValidateError && !new_source.empty() && (*it)->get_data().source_key == new_source) {
+					// fall through: same source, update in place
+				} else if ((*it)->compare_text(new_text) == false) {
 					continue;
 				}
 			// multiple of one type allowed, but must have different text nad ObjectID

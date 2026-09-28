@@ -103,7 +103,8 @@ bool PrinterWebView::is_u1_device_page()
     if (m_browser == nullptr)
         return false;
     auto url = m_browser->GetCurrentURL();
-    return url.find("flutter_web") != std::string::npos && url.find("path=2") != std::string::npos;
+    return url.find("flutter_web") != std::string::npos &&
+           (url.find("path=2") != std::string::npos || url.find("/device_control") != std::string::npos);
 }
 
 void PrinterWebView::sendMessage(const std::string& msg) {

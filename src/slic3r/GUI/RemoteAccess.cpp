@@ -1269,6 +1269,15 @@ RemoteAccess::ApiResponse RemoteAccess::api_archive_send(const std::string& id, 
     req.name    = get("name");
     req.mapping = get("mapping");
     req.unload_at_end = get("unload_at_end");
+    // A Bambu printer: the AMS slot per filament (the preview's "mapping", edited or not) and the
+    // print options; anything not given is what the desktop's send dialog would pick.
+    auto tri = [&](const char* k) { const std::string v = get(k); return v.empty() ? -1 : ((v == "1" || v == "true") ? 1 : 0); };
+    req.ams_mapping        = get("ams_mapping");
+    req.bed_leveling       = tri("bed_leveling");
+    req.flow_cali          = tri("flow_cali");
+    req.timelapse          = tri("timelapse");
+    req.use_ams            = tri("use_ams");
+    req.nozzle_offset_cali = tri("nozzle_offset_cali");
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_send_running) { r.status = 409; r.body = json_error("a send is already running; wait for it to finish"); return r; }
@@ -1322,6 +1331,57 @@ RemoteAccess::ApiResponse RemoteAccess::api_archive_send(const std::string& id, 
     j["mode"]    = p->mode;
     j["dry_run"] = p->dry_run;
     r.body       = j.dump();
+    return r;
+}
+
+// A Bambu reprint's mapping sheet, before anything is sent (RemoteSend::preview_record): the job
+// read back from the archived .gcode.3mf, matched against the target printer's AMS the way the
+// desktop's send dialog matches a plate. Form: [printer=<id>][&mode=print|upload][&ams_mapping=
+// 0:0-2,1:1-0][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=]. It selects the
+// printer on the PC (which connects it, as picking it in the send dialog does) and may take a few
+// seconds while the printer's status and, on an H2C, its nozzle-mapping answer arrive. Nothing is
+// uploaded or started; /api/archive/{id}/send does that with the same form plus confirm=1.
+RemoteAccess::ApiResponse RemoteAccess::api_archive_preview(const std::string& id, const std::string& form_body)
+{
+    ApiResponse r;
+    auto get = [&](const char* k) { return query_param(form_body, k); };
+    auto tri = [&](const char* k) { const std::string v = get(k); return v.empty() ? -1 : ((v == "1" || v == "true") ? 1 : 0); };
+    RemoteSend::Request req;
+    req.record             = id;
+    req.plate              = -1;
+    req.printer            = get("printer");
+    req.mode               = get("mode");
+    req.force              = get("force") == "1";
+    req.ams_mapping        = get("ams_mapping");
+    req.bed_leveling       = tri("bed_leveling");
+    req.flow_cali          = tri("flow_cali");
+    req.timelapse          = tri("timelapse");
+    req.use_ams            = tri("use_ams");
+    req.nozzle_offset_cali = tri("nozzle_offset_cali");
+    // One preview at a time, and never while a send is running: both select a printer on the PC.
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_send_running) { r.status = 409; r.body = json_error("a send is already running; wait for it to finish"); return r; }
+        m_send_running = true;
+    }
+    nlohmann::json              out;
+    std::pair<int, std::string> result(500, "not run");
+    take_error();
+    try {
+        result = RemoteSend::preview_record(req, out);
+    } catch (const std::exception& e) {
+        result = { 500, std::string("preparing the preview failed: ") + e.what() };
+    } catch (...) {
+        result = { 500, "preparing the preview failed" };
+    }
+    { std::lock_guard<std::mutex> lock(m_mutex); m_send_running = false; }
+    if (result.first != 200) {
+        const std::string shown = take_error();
+        r.status = result.first;
+        r.body   = json_error(result.second + (shown.empty() ? "" : ": " + shown));
+        return r;
+    }
+    r.body = out.dump();
     return r;
 }
 
@@ -2380,7 +2440,8 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
             { {"method", "GET"},  {"path", "/api/archive[?printer={id}]"}, {"description", "the G-code archive (Preferences > Ultra > Store G-Code Files): every file this PC has sent to a printer while it was on, newest first, as {enabled, max, records}. Each record is {id, time, file, sent_name, size, sha256, printer {id, kind bambu|snapmaker|printhost|connect, name, model}, plate, plate_name, project_title, filaments [{index, type, colour, grams}], estimated_time_s, estimated_weight_g, source desktop|phone, mode upload|print, has_thumbnail, exists (its file is still on disk), mapping (the toolhead mapping a Snapmaker send used, in the wire form /send takes) and spoolman_deduct (a Spoolman deduction was asked for)} - names and sizes only, never a path on the PC. `printer` filters by the printer id a send used"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}"},        {"description", "one record, the same fields a row of /api/archive carries plus `exists` (its file is still on disk)"} },
             { {"method", "GET"},  {"path", "/api/archive/{id}/thumbnail.png"}, {"description", "the plate preview stored with that record"} },
-            { {"method", "POST"}, {"path", "/api/archive/{id}/send"},     {"description", "form [printer={id}][&mode=upload|print]&confirm=1[&force=1][&dry_run=1][&name=][&mapping=0:1,1:2]: send that archived file to a printer again - the stored bytes are the payload, so nothing is re-sliced and no project has to be open. `printer` and every option not given fall back to the record; confirm=1 is always required. Returns the same job id and progress shape as /api/plates/{index}/send (kind send, followed through /api/jobs/{id}). 404 for an unknown record, 409 when its file is gone or the target printer is of another kind (a .gcode.3mf cannot go to a Moonraker host); reprinting to a bambu or connect printer is not supported yet. `printer` may name another printer of the same kind and model as the record's (a sliced file fits any printer of its model); a record with no known model may only go back to its own printer, and a file is started in place only on the very printer it was sent to"} },
+            { {"method", "POST"}, {"path", "/api/archive/{id}/send"},     {"description", "form [printer={id}][&mode=upload|print]&confirm=1[&force=1][&dry_run=1][&name=][&mapping=0:1,1:2][&ams_mapping=0:0-2,1:128-0][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=]: send that archived file to a printer again - the stored bytes are the payload, so nothing is re-sliced and no project has to be open. `printer` and every option not given fall back to the record; confirm=1 is always required. Returns the same job id and progress shape as /api/plates/{index}/send (kind send, followed through /api/jobs/{id}). 404 for an unknown record, 409 when its file is gone or the target printer is of another kind (a .gcode.3mf cannot go to a Moonraker host); reprinting over the PC's Snapmaker connection (\"connect\") is not supported. `printer` may name another printer of the same kind and model as the record's (a sliced file fits any printer of its model); a record with no known model may only go back to its own printer, and a file is started in place only on the very printer it was sent to. A Bambu printer gets the job read back from the .gcode.3mf and sent the way the desktop's send dialog sends a plate: `ams_mapping` is the AMS slot per filament (<filament>:<ams_id>-<slot_id>, what /preview proposes; empty = the automatic mapping), the options default to the dialog's remembered choices, and the send is refused with the reason when the printer is offline, busy, of another model or nozzle diameter, has no usable storage, or a filament has no slot of its type on the side it was sliced for. Every reprint is added to the record's `reprints` history"} },
+            { {"method", "POST"}, {"path", "/api/archive/{id}/preview"},  {"description", "form [printer={id}][&mode=print|upload][&ams_mapping=][&use_ams=&bed_leveling=&flow_cali=&timelapse=&nozzle_offset_cali=][&force=1]: a Bambu reprint's mapping sheet, nothing sent. Selects the printer on the PC (connecting it) and answers within ~25 s with {record, mode, file, printer {id, name, model, model_name, dual, has_ams, lan_mode, nozzle_rack}, job {plate, model, model_name, dual, nozzle_diameters, bed_type, estimated_time_s, estimated_weight_g}, filaments [{index, type, colour, grams, side L|R|\"\", tray \"<ams>-<slot>\"|null, auto, problems []}], trays [{id \"<ams>-<slot>\", ams_id, slot_id, name A1|HT-A, side, exists, ready, type, match_type, colour}], mapping (the ams_mapping to send back), problems [{filament, code unmapped|type|side, text}], options {bed_leveling|flow_cali|timelapse|use_ams|nozzle_offset_cali: {value, shown}}, warnings [], nozzle_mapping {applies, state accepted|refused|no_answer, reason?} (H2C, advisory), can_send}. 409 with the reason when the printer cannot take the job at all (offline, busy, another model or nozzle, no storage, no LAN access)"} },
             { {"method", "POST"}, {"path", "/api/archive/{id}/delete"},   {"description", "delete one stored file with its details and preview"} },
             { {"method", "DELETE"}, {"path", "/api/archive/{id}"},        {"description", "delete one stored file with its details and preview (the same as POST /api/archive/{id}/delete)"} }
         });
@@ -2513,6 +2574,8 @@ RemoteAccess::ApiResponse RemoteAccess::handle_api(const std::string& method, co
             return api_archive_delete(rest.substr(0, slash));
         if (what == "/send" && method == "POST")
             return api_archive_send(rest.substr(0, slash), body.empty() ? query : body);
+        if (what == "/preview" && method == "POST")
+            return api_archive_preview(rest.substr(0, slash), body.empty() ? query : body);
     }
     r.status = 404;
     r.body   = json_error("no such route; see /api");

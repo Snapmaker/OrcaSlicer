@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_overlap_carving.cpp
 	test_seam_position.cpp
 	test_seam_part_joints.cpp
+	test_seam_autopaint.cpp
 	test_slice_bake.cpp
 	test_modifier_effect.cpp
 	test_tree_support_determinism.cpp

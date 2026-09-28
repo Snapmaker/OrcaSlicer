@@ -13,12 +13,24 @@ on:
         arch:
           required: false
           type: string
+        # Nightly builds (nightly.yml): "-nightly.<YYYYMMDD>+<shortsha>", appended to the version the
+        # app shows and reports and to the package file names ('+' becomes '-' there). Empty for
+        # every other build.
+        version-suffix:
+          required: false
+          type: string
+          default: ''
+        # Overrides the Sentry environment compiled into the app ("nightly" for nightly builds).
+        sentry-environment:
+          required: false
+          type: string
+          default: ''
       outputs:
         release:
           description: "Release version/tag for the build"
           value: ${{ jobs.build_orca.outputs.release }}
         sentry_release:
-          description: "Sentry release name the app reports (edgeslicer@<Snapmaker_VERSION>)"
+          description: "Sentry release name the app reports (edgeslicer@<Snapmaker_VERSION><version-suffix>)"
           value: ${{ jobs.build_orca.outputs.sentry_release }}
 
 jobs:
@@ -35,7 +47,10 @@ jobs:
       # Opt-in crash reports (docs/privacy.md): the Sentry environment compiled into the app.
       # "release" for the refs shipped builds come from, "ci" for everything else; local
       # builds say "dev". The DSN itself is only handed to the two build steps below.
-      EDGESLICER_SENTRY_ENVIRONMENT: ${{ (startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/ci/') || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') && 'release' || 'ci' }}
+      # A caller may name it outright (nightly.yml says "nightly").
+      EDGESLICER_SENTRY_ENVIRONMENT: ${{ inputs.sentry-environment != '' && inputs.sentry-environment || ((startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/heads/ci/') || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') && 'release' || 'ci') }}
+      # CMake reads it (see the version-suffix block in CMakeLists.txt); empty = a release version.
+      EDGESLICER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
 
     steps:
       - name: Checkout
@@ -67,7 +82,13 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             ver="PR-${{ github.event.number }}"
           else
-            ver=V$ver_pure
+            # A nightly's suffix goes into the file names too, with '-' for '+'.
+            ver=V$ver_pure${EDGESLICER_VERSION_SUFFIX//+/-}
+          fi
+          if [ -n "$EDGESLICER_VERSION_SUFFIX" ]; then
+            # Also as a file, for any build step that does not pass the environment on.
+            printf '%s\n' "$EDGESLICER_VERSION_SUFFIX" > version_suffix.txt
+            echo "nightly version: $ver_pure$EDGESLICER_VERSION_SUFFIX (files: $ver)"
           fi
           echo "ver=$ver" >> $GITHUB_ENV
           echo "ver_pure=$ver_pure" >> $GITHUB_ENV
@@ -89,10 +110,16 @@ jobs:
           } else {
               throw "could not read Snapmaker_VERSION from src/common_func/common_func.hpp"
           }
+          $suffix = "$env:EDGESLICER_VERSION_SUFFIX"
           if ($eventName -eq 'pull_request') {
               $ver = "PR" + $prNumber
           } else {
-              $ver = "V$verPure"
+              # A nightly's suffix goes into the file names too, with '-' for '+'.
+              $ver = "V$verPure" + $suffix.Replace('+', '-')
+          }
+          if ($suffix) {
+              Set-Content -LiteralPath version_suffix.txt -Value $suffix -Encoding ascii
+              Write-Host "nightly version: $verPure$suffix (files: $ver)"
           }
 
           echo "ver=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
@@ -106,7 +133,7 @@ jobs:
         if: inputs.os != 'windows-2022'
         run: |
           echo "release=$ver" >> $GITHUB_OUTPUT
-          echo "sentry_release=edgeslicer@$ver_pure" >> $GITHUB_OUTPUT
+          echo "sentry_release=edgeslicer@$ver_pure$EDGESLICER_VERSION_SUFFIX" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Set release output (Windows)
@@ -115,19 +142,19 @@ jobs:
         run: |
           $release = $env:ver
           Write-Output ("release=$release") | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
-          Write-Output ("sentry_release=edgeslicer@$env:ver_pure") | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
+          Write-Output ("sentry_release=edgeslicer@$env:ver_pure$env:EDGESLICER_VERSION_SUFFIX") | Out-File -Append -FilePath $env:GITHUB_OUTPUT -Encoding utf8
         shell: pwsh
 
-#   UltraNet (macOS / Linux): EdgeSlicer's private clean-room Bambu network plug-in, aceRage/ultranet.
+#   UltraNet: EdgeSlicer's private clean-room Bambu network plug-in, aceRage/ultranet.
 #   It is fetched with a read-only deploy key (secret ULTRANET_DEPLOY_KEY), built here, and only the
-#   compiled .dylib/.so + marker travel on: the checkout is moved out of the workspace before
+#   compiled .dll/.dylib/.so + marker travel on: the checkout is moved out of the workspace before
 #   anything else runs and deleted after the build, the compiler output never reaches this log (see
-#   scripts/build_ultranet_posix.sh), and no step uploads it. Forks, fork PRs and a repository
-#   without the secret skip all of this and build exactly as before, with no plug-in.
-#   Windows keeps its own pipeline (the self-hosted runner ships the prebuilt DLLs).
+#   scripts/build_ultranet_posix.sh and scripts/build_ultranet_windows.ps1), and no step uploads it.
+#   Forks, fork PRs and a repository without the secret skip all of this and build exactly as
+#   before, with no plug-in. (Releases still ship Windows from the self-hosted VM, which stages its
+#   own copy; this hosted build is what the nightly ships.)
       - name: UltraNet - check for the deploy key
         id: ultranet
-        if: inputs.os != 'windows-2022'
         shell: bash
         env:
           ULTRANET_DEPLOY_KEY: ${{ secrets.ULTRANET_DEPLOY_KEY }}
@@ -141,7 +168,7 @@ jobs:
           fi
 
       - name: UltraNet - fetch (deploy key)
-        if: inputs.os != 'windows-2022' && steps.ultranet.outputs.enabled == 'true'
+        if: steps.ultranet.outputs.enabled == 'true'
         uses: actions/checkout@v5
         with:
           repository: aceRage/ultranet
@@ -161,7 +188,7 @@ jobs:
           # Out of the workspace before anything else can see it.
           mv "$GITHUB_WORKSPACE/.ultranet-src" "$SRC"
           trap 'rm -rf "$SRC" "$RUNNER_TEMP/ultranet-logs"' EXIT
-          EDGESLICER_VERSION="$ver_pure" ULTRANET_LOG_DIR="$RUNNER_TEMP/ultranet-logs" \
+          EDGESLICER_VERSION="$ver_pure$EDGESLICER_VERSION_SUFFIX" ULTRANET_LOG_DIR="$RUNNER_TEMP/ultranet-logs" \
             bash scripts/build_ultranet_posix.sh "$SRC" "$OUT"
           echo "ULTRANET_BIN_DIR=$OUT" >> "$GITHUB_ENV"
 
@@ -462,6 +489,32 @@ jobs:
           dir "C:/Program Files (x86)/Windows Kits/10/Include"
           choco install nsis
 
+      # The Windows counterpart of "UltraNet - build and stage the binaries" above: same rules (the
+      # checkout leaves the workspace first and is deleted afterwards, the compiler output stays in a
+      # log that is deleted too), built with this job's MSVC against this job's deps prefix.
+      - name: UltraNet - build and stage the binaries (Windows)
+        if: inputs.os == 'windows-2022' && steps.ultranet.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src  = Join-Path $env:RUNNER_TEMP 'ultranet-src'
+          $out  = Join-Path $env:RUNNER_TEMP 'ultranet-bin'
+          $logs = Join-Path $env:RUNNER_TEMP 'ultranet-logs'
+          foreach ($d in $src, $out, $logs) { if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force } }
+          # Out of the workspace before anything else can see it.
+          Move-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.ultranet-src') -Destination $src
+          try {
+            $env:EDGESLICER_VERSION   = "$env:ver_pure$env:EDGESLICER_VERSION_SUFFIX"
+            $env:ULTRANET_LOG_DIR     = $logs
+            $env:ULTRANET_DEPS_PREFIX = Join-Path $env:GITHUB_WORKSPACE 'deps/build/OrcaSlicer_dep/usr/local'
+            & pwsh -NoProfile -File scripts/build_ultranet_windows.ps1 $src $out
+            if ($LASTEXITCODE -ne 0) { throw "UltraNet build failed ($LASTEXITCODE)" }
+          } finally {
+            Remove-Item -LiteralPath $src, $logs -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          # Forward slashes: the value ends up inside a quoted -D on a cmd command line.
+          "ULTRANET_BIN_DIR=$($out -replace '\\', '/')" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+
       - name: Build slicer Win
         if: inputs.os == 'windows-2022'
         working-directory: ${{ github.workspace }}
@@ -471,6 +524,17 @@ jobs:
           # Compiled in for opt-in crash reports; empty without the secret (forks) = no uploads.
           EDGESLICER_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: .\build_release_vs2022.bat slicer
+
+      # A plug-in that was built must be in the package (the check the VM pipeline has).
+      - name: UltraNet - verify it is in the Windows package
+        if: inputs.os == 'windows-2022' && steps.ultranet.outputs.enabled == 'true'
+        shell: pwsh
+        run: |
+          $d = Join-Path "${{ github.workspace }}" 'build/Snapmaker_Orca/ultranet'
+          foreach ($f in 'bambu_networking.dll', 'BambuSource.dll', 'ultranet.txt') {
+            if (-not (Test-Path -LiteralPath (Join-Path $d $f))) { Write-Host "::error::UltraNet was built but $f is missing from $d"; exit 1 }
+          }
+          Write-Host "bundled: $((Get-Content -LiteralPath (Join-Path $d 'ultranet.txt'))[1])"
 
       - name: Create installer Win
         if: inputs.os == 'windows-2022'

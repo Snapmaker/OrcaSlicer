@@ -1,5 +1,6 @@
 #include "UnsavedChangesDialog.hpp"
 #include "RemoteAccess.hpp"
+#include "libslic3r/EnumChoice.hpp"
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
@@ -861,7 +862,7 @@ void UnsavedChangesDialog::build(Preset::Type type, PresetCollection *dependent_
 {
     SetBackgroundColour(*wxWHITE);
     // icon
-    std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
+    std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
 
     wxBoxSizer *m_sizer_main = new wxBoxSizer(wxVERTICAL);
@@ -1175,7 +1176,7 @@ bool UnsavedChangesDialog::save(PresetCollection* dependent_presets, bool show_s
     return true;
 }
 
-wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConfig& config, bool is_infill = false, int idx = -1)
+wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConfig& config, int idx = -1)
 {
     const ConfigOptionDef& def = config.def()->options.at(opt_key);
     const std::vector<std::string>& names = def.enum_labels;//ConfigOptionEnum<T>::get_enum_names();
@@ -1194,17 +1195,11 @@ wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConf
     else
         val = config.option(opt_key)->getInt();
 
-    // Each infill doesn't use all list of infill declared in PrintConfig.hpp.
-    // So we should "convert" val to the correct one
-    if (is_infill) {
-        for (auto key_val : *def.enum_keys_map)
-            if (int(key_val.second) == val) {
-                auto it = std::find(def.enum_values.begin(), def.enum_values.end(), key_val.first);
-                if (it == def.enum_values.end())
-                    return "";
-                return from_u8(_utf8(names[it - def.enum_values.begin()]));
-            }
-        return _L("Undef");
+    // Options whose list is not in value order (e.g. each infill menu lists a subset of
+    // InfillPattern) map the value to its list entry through the key.
+    if (enum_choice_maps_by_key(opt_key)) {
+        const int i = enum_choice_index_of_value(def, val);
+        return (i >= 0 && size_t(i) < names.size()) ? from_u8(_utf8(names[size_t(i)])) : _L("Undef");
     }
     // Unknown int values (older presets, stray entries) must not index out of enum_labels.
     return (val >= 0 && size_t(val) < names.size()) ? from_u8(_utf8(names[val])) : _L("Undef");
@@ -1373,30 +1368,10 @@ static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& 
         return _L("Undef");
     }
     case coEnum: {
-        return get_string_from_enum(opt_key, config,
-            opt_key == "top_surface_pattern" ||
-            opt_key == "undertop_surface_pattern" ||
-            opt_key == "bottom_surface_pattern" ||
-            opt_key == "internal_solid_infill_pattern" ||
-            opt_key == "sparse_infill_pattern" ||
-            opt_key == "ironing_pattern" ||
-            opt_key == "support_ironing_pattern" ||
-            opt_key == "support_pattern" ||
-            opt_key == "support_interface_pattern")
-            ;
+        return get_string_from_enum(opt_key, config);
     }
     case coEnums: {
-        return get_string_from_enum(opt_key, config,
-            opt_key == "top_surface_pattern" ||
-            opt_key == "undertop_surface_pattern" ||
-            opt_key == "bottom_surface_pattern" ||
-            opt_key == "internal_solid_infill_pattern" ||
-            opt_key == "sparse_infill_pattern" ||
-            opt_key == "ironing_pattern" ||
-            opt_key == "support_ironing_pattern" ||
-            opt_key == "support_pattern" ||
-            opt_key == "support_interface_pattern"
-            , opt_idx);
+        return get_string_from_enum(opt_key, config, opt_idx);
     }
     case coPoint: {
         Vec2d val = config.opt<ConfigOptionPoint>(opt_key)->value;

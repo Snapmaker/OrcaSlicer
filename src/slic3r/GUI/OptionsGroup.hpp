@@ -384,6 +384,8 @@ public:
 
 private:
 	bool		wrap_to_current_width();
+	// Sets the label to the full text wrapped to `width` pixels.
+	void		set_wrapped_label(int width);
 
 	wxString				m_full_text;
 	bool					m_wrap_to_width { false };

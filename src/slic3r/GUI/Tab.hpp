@@ -608,6 +608,8 @@ protected:
 	// ("" = automatic) and refreshes page, entries, sidebar hint and plate. Keys: arrows move the highlight only,
 	// Enter commits, Escape cancels.
 	void		update_speed_source_picker();
+	// The page is laid out again for the lines its wrapped description lines take, scroll range included.
+	void		fit_page_to_lines();
 	void		choose_speed_source(const std::string &name);
 	void		on_speed_source_key(wxKeyEvent &event);
 

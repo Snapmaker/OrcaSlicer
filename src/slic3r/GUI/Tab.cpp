@@ -3708,7 +3708,19 @@ void TabPrint::update_description_lines()
             if (wxSizer *sizer = m_per_head_clear_link->GetContainingSizer(); sizer != nullptr)
                 sizer->Layout();
         }
+        fit_page_to_lines();
     }
+}
+
+void TabPrint::fit_page_to_lines()
+{
+    if (m_page_view == nullptr)
+        return;
+    // FitInside sets the scroll range to the page's new minimum height and lays the page out in it
+    // (a plain Layout of the scrolled page keeps the old range and squeezes the lines below).
+    m_page_view->FitInside();
+    if (m_page_view->GetParent() != nullptr)
+        m_page_view->GetParent()->Layout();
 }
 
 // The alias of a preset ("0.20mm Standard"), its name when it has none.
@@ -4036,12 +4048,7 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     // (HighFlowNotices::picker_note); wrapped like the description line, shown with the picker.
     m_speed_source_note = new ogStaticText(parent, wxEmptyString, wxST_NO_AUTORESIZE);
     m_speed_source_note->SetFont(wxGetApp().normal_font());
-    m_speed_source_note->WrapToWidth([this]() {
-        if (m_speed_source_note != nullptr && m_speed_source_note->GetParent() != nullptr)
-            m_speed_source_note->GetParent()->Layout();
-        if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
-            m_page_view->GetParent()->Layout();
-    });
+    m_speed_source_note->WrapToWidth([this]() { fit_page_to_lines(); });
     m_speed_source_note->Hide();
     forget_on_destroy(m_speed_source_note);
     sizer->Add(m_speed_source_note, 0, wxEXPAND | wxBOTTOM, 2);
@@ -4050,12 +4057,7 @@ wxSizer* TabPrint::per_head_line_widget(wxWindow *parent, int label_em, bool sta
     // the page is laid out for the lines it takes.
     m_per_head_process_line = new ogStaticText(parent, wxEmptyString, wxST_NO_AUTORESIZE);
     m_per_head_process_line->SetFont(wxGetApp().normal_font());
-    m_per_head_process_line->WrapToWidth([this]() {
-        if (m_per_head_process_line != nullptr && m_per_head_process_line->GetParent() != nullptr)
-            m_per_head_process_line->GetParent()->Layout();
-        if (m_page_view != nullptr && m_page_view->GetParent() != nullptr)
-            m_page_view->GetParent()->Layout();
-    });
+    m_per_head_process_line->WrapToWidth([this]() { fit_page_to_lines(); });
     forget_on_destroy(m_per_head_process_line);
     sizer->Add(m_per_head_process_line, 0, wxEXPAND);
     m_per_head_clear_link = new HyperLink(parent, HighFlowNotices::clear_head_link_label(quality_page_active()));

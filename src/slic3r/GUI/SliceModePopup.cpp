@@ -63,7 +63,9 @@ SliceModePopup::SliceModePopup(wxWindow *parent)
     Bind(wxEVT_LEFT_UP, &SliceModePopup::on_left_up, this);
     Bind(wxEVT_TIMER, &SliceModePopup::on_timer, this);
 #ifdef __WXGTK__
-    wxGetTopLevelParent(parent)->Bind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
+    m_activate_source = wxGetTopLevelParent(parent);
+    if (m_activate_source)
+        m_activate_source->Bind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
 #endif
     update_metrics();
 }
@@ -71,7 +73,8 @@ SliceModePopup::SliceModePopup(wxWindow *parent)
 SliceModePopup::~SliceModePopup()
 {
 #ifdef __WXGTK__
-    wxGetTopLevelParent(GetParent())->Unbind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
+    if (m_activate_source)
+        m_activate_source->Unbind(wxEVT_ACTIVATE, &SliceModePopup::on_top_window_activate, this);
 #endif
 }
 

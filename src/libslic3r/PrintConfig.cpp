@@ -6187,6 +6187,14 @@ void PrintConfigDef::init_fff_params()
     def->mode    = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
 
+    def          = this->add("wipe_tower_stagger_toolchange_start", coBool);
+    def->label   = L("Stagger toolchange start");
+    def->tooltip = L("Vary the prime tower entry point for toolchange wiping between layers. "
+                     "This spreads startup ooze and ironing marks across several purge lines instead "
+                     "of stacking them at the same wall gap.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("wiping_volumes_extruders", coFloats);
     def->label = L("Purging volumes - load/unload volumes");
     def->tooltip = L("This vector saves required volumes to change from/to each tool used on the "

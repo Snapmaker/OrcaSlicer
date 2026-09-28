@@ -1,6 +1,7 @@
 // Orca: WipeTower2 for all non bbl printers, support all MMU device and toolchanger.
 #include "WipeTower2.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <vector>
@@ -44,6 +45,24 @@ inline float align_round(float value, float base) { return std::round(value / ba
 inline float align_ceil(float value, float base) { return std::ceil(value / base) * base; }
 
 inline float align_floor(float value, float base) { return std::floor((value) / base) * base; }
+
+constexpr size_t wipe_tower_stagger_slots = 17;
+
+size_t WipeTower2::toolchange_entry_stagger_slot(bool enabled, size_t layer_idx, size_t toolchange_idx)
+{
+    if (!enabled)
+        return 0;
+
+    return (layer_idx * 7 + toolchange_idx * 5) % wipe_tower_stagger_slots;
+}
+
+float WipeTower2::toolchange_entry_stagger_offset(bool enabled, size_t layer_idx, size_t toolchange_idx, float line_spacing)
+{
+    if (!enabled || line_spacing <= 0.f)
+        return 0.f;
+
+    return float(toolchange_entry_stagger_slot(enabled, layer_idx, toolchange_idx)) * line_spacing;
+}
 
 static bool is_valid_gcode(const std::string& gcode)
 {
@@ -1330,6 +1349,7 @@ WipeTower2::WipeTower2(const PrintConfig&                     config,
     , m_enable_arc_fitting(config.enable_arc_fitting)
     , m_used_fillet(config.wipe_tower_fillet_wall)
     , m_use_gap_wall(config.wipe_tower_wall_gap.value)
+    , m_stagger_toolchange_start(config.wipe_tower_stagger_toolchange_start.value)
     , m_rib_width(config.wipe_tower_rib_width)
     , m_extra_rib_length(config.wipe_tower_extra_rib_length)
     , m_wall_type((int) config.wipe_tower_wall_type)
@@ -2095,6 +2115,29 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
         m_left_to_right = !m_left_to_right;
     }
 
+    const float stagger_offset = std::min(toolchange_entry_stagger_offset_for(m_active_tool_change, dy),
+                                          std::max(0.f, cleaning_box.ru.y() - writer.y() - 4.f * line_width));
+    if (stagger_offset > WT_EPSILON)
+        writer.travel(writer.x(), writer.y() + stagger_offset);
+
+    auto staggered_ironing_center_x = [this, xl, xr](float center_x, float area) {
+        if (!m_stagger_toolchange_start || m_active_tool_change == nullptr || m_perimeter_width <= 0.f)
+            return center_x;
+
+        const size_t slot = toolchange_entry_stagger_slot(true, current_layer_index(), toolchange_entry_index(m_active_tool_change));
+        const float  x_step = 0.5f * m_perimeter_width;
+        const float  x_offset = float(int(slot % 9) - 4) * x_step;
+        const float  iron_radius = std::ceil(std::sqrt(std::max(0.f, area)) / m_perimeter_width / 2.f) * m_perimeter_width;
+        const float  margin = std::max(1.5f * m_perimeter_width, iron_radius + 0.5f * m_perimeter_width);
+        const float  min_x = xl + margin;
+        const float  max_x = xr - margin;
+
+        if (min_x > max_x)
+            return center_x;
+
+        return std::clamp(center_x + x_offset, min_x, max_x);
+    };
+
     float retract_length = m_filpar[m_current_tool].retract_length;
     float retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
 
@@ -2125,7 +2168,9 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
                     writer.retract(retract_length, retract_speed);
                     writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() + 0.5f * ironing_length, writer.y(), 240.);
-                    Vec2f pos{writer.x() + 1.f * ironing_length, writer.y()};
+                    const float ironing_center_x = staggered_ironing_center_x(writer.x(), m_filpar[m_current_tool].flat_iron_area);
+                    writer.travel(ironing_center_x, writer.y(), 240.);
+                    Vec2f pos{std::min(writer.x() + 1.f * ironing_length, xr - 0.5f * m_perimeter_width), writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), m_filpar[m_current_tool].flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
                     writer.retract(-retract_length, retract_speed);
@@ -2140,7 +2185,9 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
                     writer.retract(retract_length, retract_speed);
                     writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() - 0.5f * ironing_length, writer.y(), 240.);
-                    Vec2f pos{writer.x() - 1.0f * ironing_length, writer.y()};
+                    const float ironing_center_x = staggered_ironing_center_x(writer.x(), m_filpar[m_current_tool].flat_iron_area);
+                    writer.travel(ironing_center_x, writer.y(), 240.);
+                    Vec2f pos{std::max(writer.x() - 1.0f * ironing_length, xl + 0.5f * m_perimeter_width), writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), m_filpar[m_current_tool].flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
                     writer.retract(-retract_length, retract_speed);
@@ -2657,6 +2704,38 @@ float WipeTower2::cumulative_toolchange_depth_before(const WipeTowerInfo::ToolCh
     return depth;
 }
 
+size_t WipeTower2::current_layer_index()
+{
+    if (m_layer_info == m_plan.end())
+        return 0;
+    return size_t(std::distance(m_plan.begin(), m_layer_info));
+}
+
+size_t WipeTower2::toolchange_entry_index(const WipeTowerInfo::ToolChange *tool_change)
+{
+    if (tool_change == nullptr || m_layer_info == m_plan.end())
+        return 0;
+
+    size_t index = 0;
+    for (const WipeTowerInfo::ToolChange &entry : m_layer_info->local_z_tool_changes) {
+        if (&entry == tool_change)
+            return index;
+        ++index;
+    }
+    for (const WipeTowerInfo::ToolChange &entry : m_layer_info->tool_changes) {
+        if (&entry == tool_change)
+            return index;
+        ++index;
+    }
+
+    return 0;
+}
+
+float WipeTower2::toolchange_entry_stagger_offset_for(const WipeTowerInfo::ToolChange *tool_change, float line_spacing)
+{
+    return toolchange_entry_stagger_offset(m_stagger_toolchange_start, current_layer_index(), toolchange_entry_index(tool_change), line_spacing);
+}
+
 static WipeTower::ToolChangeResult merge_tcr(WipeTower::ToolChangeResult& first, WipeTower::ToolChangeResult& second)
 {
     assert(first.new_tool == second.initial_tool);
@@ -2693,6 +2772,7 @@ void WipeTower2::get_all_wall_skip_points()
             bool do_ramming = (m_semm && m_enable_filament_ramming) || m_filpar[tc.old_tool].multitool_ramming;
             float x = (predict_ramming_end_x((int) tc.old_tool, layer.height) < m_wipe_tower_width / 2.f) ? 0.f : m_wipe_tower_width;
             float y = process_depth + (do_ramming ? tc.ramming_depth : 0.f) + m_perimeter_width / 2.f;
+            y += toolchange_entry_stagger_offset(m_stagger_toolchange_start, layer_id, tc_idx, m_perimeter_width * m_extra_spacing_wipe);
             skip_points.emplace_back(x, y);
             process_depth += tc.required_depth;
         }

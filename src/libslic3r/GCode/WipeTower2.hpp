@@ -24,6 +24,8 @@ public:
     static const std::string never_skip_tag() { return "_GCODE_WIPE_TOWER_NEVER_SKIP_TAG"; }
 	static std::pair<double, double> get_wipe_tower_cone_base(double width, double height, double depth, double angle_deg);
 	static std::vector<std::vector<float>> extract_wipe_volumes(const PrintConfig& config);
+    static size_t toolchange_entry_stagger_slot(bool enabled, size_t layer_idx, size_t toolchange_idx);
+    static float toolchange_entry_stagger_offset(bool enabled, size_t layer_idx, size_t toolchange_idx, float line_spacing);
 
     
     // Construct ToolChangeResult from current state of WipeTower2 and WipeTowerWriter2.
@@ -219,6 +221,7 @@ private:
 	int m_wall_type;
     bool   m_used_fillet                  = true;
     bool   m_use_gap_wall                 = true;
+    bool   m_stagger_toolchange_start     = false;
     float  m_rib_width                    = 10;
     float  m_extra_rib_length             = 0;
     std::vector<std::vector<Vec2f>> m_wall_skip_points;
@@ -336,6 +339,9 @@ private:
             const std::vector<WipeTowerInfo::ToolChange>& tool_changes) const;
     bool layer_has_soluble_toolchange(const WipeTowerInfo &layer) const;
     float cumulative_toolchange_depth_before(const WipeTowerInfo::ToolChange *tool_change) const;
+    size_t current_layer_index();
+    size_t toolchange_entry_index(const WipeTowerInfo::ToolChange *tool_change);
+    float toolchange_entry_stagger_offset_for(const WipeTowerInfo::ToolChange *tool_change, float line_spacing);
     WipeTower::ToolChangeResult emit_planned_tool_change(const WipeTowerInfo::ToolChange *tool_change);
 
 	void toolchange_Unload(

@@ -3,7 +3,28 @@
 # Work-around https://gitlab.gnome.org/GNOME/gnome-build-meta/-/issues/754
 grep -q org.freedesktop.Platform.GL.nvidia /.flatpak-info && export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
-# Work-around https://github.com/bambulab/BambuStudio/issues/3440
-export LC_ALL=C.UTF-8
+# Work-around https://github.com/bambulab/BambuStudio/issues/3440: a locale that
+# does not exist inside the sandbox makes std::locale throw during startup
+# ("locale::facet::_S_create_c_locale name not valid"), so LC_ALL has to name one
+# that is actually present. It must not be C.UTF-8 unconditionally, though: that
+# locale yields the language tag "c", which flutter_web >= 2.3.38 rejects while
+# initialising its engine ("Invalid argument(s): invalid language tag"), leaving
+# every WebView page blank. Prefer the host locale when the sandbox has it, then
+# en_US.UTF-8, and keep C.UTF-8 only as the last resort.
+have_locale() {
+    [ -n "$1" ] || return 1
+    locale -a 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -d '-' \
+        | grep -qx "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+}
+
+_picked=""
+for _candidate in "${LC_ALL:-}" "${LANG:-}" en_US.UTF-8; do
+    if have_locale "${_candidate}"; then
+        _picked="${_candidate}"
+        break
+    fi
+done
+export LC_ALL="${_picked:-C.UTF-8}"
+unset _picked _candidate
 
 exec /app/bin/snapmaker-orca "$@"

@@ -1738,6 +1738,10 @@ static bool split_code_valid(int code)
     return (code & 0b11) == 3 || (code >> 2) != 3;
 }
 
+// Shared by deserialize, update_used_states and has_facets so a tree deeper than this
+// cannot leave used_states / has_facets claiming a colour no loaded facet has.
+static constexpr int kMaxSplitDepth = 256;
+
 bool TriangleSelector::TriangleSplittingData::read_leaf_state(int code, int &ibit, int &state) const
 {
     if ((code & 0b1100) != 0b1100) {
@@ -1794,7 +1798,6 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
     // Depth-first queue of a source mesh triangle and its childern.
     // kept outside of the loop to avoid re-allocating inside the loop.
     std::vector<ProcessingInfo> parents;
-    constexpr int kMaxSplitDepth = 256;
 
     for (auto [triangle_id, ibit] : data.triangles_to_split) {
         assert(triangle_id < int(m_triangles.size()));
@@ -1837,7 +1840,9 @@ void TriangleSelector::deserialize(const TriangleSplittingData& data,
             }
 
             if (state > max_ebt) {
-                assert(false);
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": paint state " << int(state)
+                                          << " exceeds max " << int(max_ebt)
+                                          << ", dropping facet of triangle " << triangle_id << " to NONE";
                 state = EnforcerBlockerType::NONE;
             }
 
@@ -1916,17 +1921,21 @@ bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bi
 
     int              ibit = static_cast<int>(bitstream_start_idx);
     std::bitset<256> states;
+    // Remaining children at each open split; size is the same depth deserialize tracks.
+    std::vector<int> remaining_children;
+    remaining_children.reserve(64);
     do {
-        // Walk one triangle's tree depth-first, counting the nodes still to be read; a split node adds its children.
-        for (int pending_nodes = 1; pending_nodes > 0; --pending_nodes) {
+        remaining_children.clear();
+        bool tree_done = false;
+        while (!tree_done) {
             int code;
             if (!this->read_nibble(ibit, code))
                 return false;
 
             if (const int num_of_split_sides = code & 0b11; num_of_split_sides != 0) {
-                if (!split_code_valid(code))
+                if (!split_code_valid(code) || int(remaining_children.size()) >= kMaxSplitDepth)
                     return false;
-                pending_nodes += num_of_split_sides + 1;
+                remaining_children.push_back(num_of_split_sides + 1);
                 continue;
             }
 
@@ -1936,6 +1945,18 @@ bool TriangleSelector::TriangleSplittingData::update_used_states(const size_t bi
             if (facet_state < 0 || static_cast<size_t>(facet_state) >= states.size())
                 return false;
             states.set(static_cast<size_t>(facet_state));
+
+            if (remaining_children.empty()) {
+                tree_done = true;
+                continue;
+            }
+            while (!remaining_children.empty()) {
+                if (--remaining_children.back() > 0)
+                    break;
+                remaining_children.pop_back();
+            }
+            if (remaining_children.empty())
+                tree_done = true;
         }
     } while (static_cast<size_t>(ibit) < this->bitstream.size());
 
@@ -1991,10 +2012,14 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Enfor
                     int state = num_children_or_state();
                     if (truncated)
                         break;
-                    if (state < 0)
+                    if (state < 0) {
+                        if (int(parents_children.size()) >= kMaxSplitDepth) {
+                            truncated = true;
+                            break;
+                        }
                         // Child is split.
                         parents_children.emplace_back(- state);
-                    else if (state == int(test_state))
+                    } else if (state == int(test_state))
                         // Child is not split and a face of test_state was found.
                         return true;
                 } else

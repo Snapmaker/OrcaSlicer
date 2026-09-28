@@ -168,3 +168,86 @@ TEST_CASE("update_used_states leaves used_states untouched on a truncated stream
             REQUIRE_FALSE(data.used_states[i]);
     }
 }
+
+TEST_CASE("Sixteen F extension nibbles plus C is state 255, plus D is 256 and rejected", "[TriangleSelector][MMUPaint][Regression]")
+{
+    const TriangleMesh mesh = make_cube(10., 10., 10.);
+
+    SECTION("16xF+C is accepted as ExtruderMax")
+    {
+        std::vector<int> nibbles = {0b1100};
+        nibbles.insert(nibbles.end(), 16, 0xF);
+        nibbles.push_back(0xC);
+
+        TriangleSelector::TriangleSplittingData data;
+        data.triangles_to_split.emplace_back(0, 0);
+        data.bitstream = pack_nibbles(nibbles);
+        data.reset_used_states();
+        REQUIRE(data.update_used_states(0));
+        REQUIRE(data.used_states[size_t(EnforcerBlockerType::ExtruderMax)]);
+        REQUIRE(TriangleSelector::has_facets(data, EnforcerBlockerType::ExtruderMax));
+
+        TriangleSelector restored(mesh);
+        REQUIRE_NOTHROW(restored.deserialize(data));
+        REQUIRE(restored.num_facets(EnforcerBlockerType::ExtruderMax) == 1);
+    }
+
+    SECTION("16xF+D is rejected as state 256")
+    {
+        std::vector<int> nibbles = {0b1100};
+        nibbles.insert(nibbles.end(), 16, 0xF);
+        nibbles.push_back(0xD);
+
+        TriangleSelector::TriangleSplittingData data;
+        data.triangles_to_split.emplace_back(0, 0);
+        data.bitstream = pack_nibbles(nibbles);
+        data.reset_used_states();
+        REQUIRE_FALSE(data.update_used_states(0));
+        REQUIRE(std::none_of(data.used_states.begin(), data.used_states.end(), [](bool used) { return used; }));
+        REQUIRE_FALSE(TriangleSelector::has_facets(data, EnforcerBlockerType::ExtruderMax));
+
+        TriangleSelector restored(mesh);
+        REQUIRE_NOTHROW(restored.deserialize(data));
+        REQUIRE(restored.serialize().triangles_to_split.empty());
+    }
+}
+
+TEST_CASE("A paint state above max_ebt is dropped to NONE without aborting", "[TriangleSelector][Regression]")
+{
+    const TriangleMesh mesh = make_cube(10., 10., 10.);
+    TriangleSelector   painted(mesh);
+    painted.set_facet(0, static_cast<EnforcerBlockerType>(20));
+
+    TriangleSelector restored(mesh);
+    REQUIRE_NOTHROW(restored.deserialize(painted.serialize(), true, EnforcerBlockerType::Extruder3));
+    REQUIRE(restored.num_facets(static_cast<EnforcerBlockerType>(20)) == 0);
+    REQUIRE(restored.num_facets(EnforcerBlockerType::NONE) >= 1);
+}
+
+TEST_CASE("A split tree deeper than 256 does not claim a colour no facet has", "[TriangleSelector][Regression]")
+{
+    // 256 nested one-side splits (special side 0), each with a NONE sibling leaf, then a 257th
+    // split whose children are Extruder2. deserialize / update_used_states / has_facets all stop
+    // at depth 256, so Extruder2 is never a loaded facet.
+    std::vector<int> nibbles;
+    for (int depth = 0; depth < 256; ++depth) {
+        nibbles.push_back(0b0001);
+        nibbles.push_back(0b0000);
+    }
+    nibbles.push_back(0b0001);
+    nibbles.push_back(0b1000);
+    nibbles.push_back(0b1000);
+
+    TriangleSelector::TriangleSplittingData data;
+    data.triangles_to_split.emplace_back(0, 0);
+    data.bitstream = pack_nibbles(nibbles);
+    data.reset_used_states();
+    REQUIRE_FALSE(data.update_used_states(0));
+    REQUIRE(std::none_of(data.used_states.begin(), data.used_states.end(), [](bool used) { return used; }));
+    REQUIRE_FALSE(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder2));
+
+    const TriangleMesh mesh = make_cube(10., 10., 10.);
+    TriangleSelector   restored(mesh);
+    REQUIRE_NOTHROW(restored.deserialize(data));
+    REQUIRE(restored.num_facets(EnforcerBlockerType::Extruder2) == 0);
+}

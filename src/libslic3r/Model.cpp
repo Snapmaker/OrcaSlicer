@@ -3954,6 +3954,10 @@ void FacetsAnnotation::set_triangle_from_string(int triangle_id, const std::stri
             dec = 10 + int(ch - 'A');
             return true;
         }
+        if (ch >= 'a' && ch <= 'f') {
+            dec = 10 + int(ch - 'a');
+            return true;
+        }
         return false;
     };
 
@@ -3971,12 +3975,9 @@ void FacetsAnnotation::set_triangle_from_string(int triangle_id, const std::stri
     const size_t bitstream_start_idx = m_data.bitstream.size();
     for (auto it = str.crbegin(); it != str.crend(); ++it) {
         int dec = 0;
-        if (!hex_nibble(*it, dec)) {
-            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": dropping malformed paint data of triangle " << triangle_id;
-            m_data.bitstream.resize(bitstream_start_idx);
-            m_data.triangles_to_split.pop_back();
-            return;
-        }
+        const bool decoded = hex_nibble(*it, dec);
+        assert(decoded);
+        (void) decoded;
 
         // Convert to binary and append into code.
         for (int i = 0; i < 4; ++i)

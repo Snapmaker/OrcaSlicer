@@ -47,6 +47,23 @@ double preset_nozzle_size(const DynamicPrintConfig &printer_config)
     return NozzleFilament::home_nozzle_size(printer_config);
 }
 
+// The nozzle size of tool head `head` when it differs from the size the preset was made for; 0 for
+// the preset's own size and when either size is unknown.
+double other_nozzle_size(const DynamicPrintConfig &printer_config, size_t head)
+{
+    const double preset_size = preset_nozzle_size(printer_config);
+    const auto  *diameters   = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (preset_size <= 0. || diameters == nullptr || head >= diameters->values.size())
+        return 0.;
+    const double head_size = diameters->values[head];
+    return head_size > 0. && std::abs(head_size - preset_size) >= EPSILON ? head_size : 0.;
+}
+
+bool contains_high_flow(const std::vector<int> &types)
+{
+    return std::find(types.begin(), types.end(), int(nvtHighFlow)) != types.end();
+}
+
 } // namespace
 
 std::vector<int> declared_volume_types(const DynamicPrintConfig &printer_config, size_t head)
@@ -67,8 +84,26 @@ std::vector<int> declared_volume_types(const DynamicPrintConfig &printer_config,
 
 bool head_declares_high_flow(const DynamicPrintConfig &printer_config, size_t head)
 {
-    const std::vector<int> declared = declared_volume_types(printer_config, head);
-    return std::find(declared.begin(), declared.end(), int(nvtHighFlow)) != declared.end();
+    return contains_high_flow(declared_volume_types(printer_config, head));
+}
+
+std::vector<int> offered_volume_types(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
+{
+    std::vector<int> offered = declared_volume_types(printer_config, head);
+    if (contains_high_flow(offered))
+        return offered;
+    // A head of another size than the preset's: the machine preset of its size decides.
+    const double size = other_nozzle_size(printer_config, head);
+    if (size > 0. && size_offers && size_offers(size, head)) {
+        offered.push_back(int(nvtHighFlow));
+        std::sort(offered.begin(), offered.end());
+    }
+    return offered;
+}
+
+bool head_offers_high_flow(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
+{
+    return contains_high_flow(offered_volume_types(printer_config, head, size_offers));
 }
 
 SizeOffersHighFlow size_offers_high_flow(const PresetBundle &bundle)
@@ -92,18 +127,12 @@ SizeOffersHighFlow size_offers_high_flow(const PresetBundle &bundle)
 
 bool head_can_use_high_flow(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
 {
-    if (!head_declares_high_flow(printer_config, head))
-        return false;
-    const double preset_size = preset_nozzle_size(printer_config);
-    const auto  *diameters   = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
-    // A preset that does not name its nozzle size gives no reason to refuse.
-    if (preset_size <= 0. || diameters == nullptr || head >= diameters->values.size())
-        return true;
-    const double head_size = diameters->values[head];
-    if (std::abs(head_size - preset_size) < EPSILON)
-        return true;
-    // Another size: the vendor data decides whether it has High Flow values.
-    return size_offers && size_offers(head_size, head);
+    // The preset's own size, or a preset that does not name its size: its declared columns decide.
+    const double size = other_nozzle_size(printer_config, head);
+    if (size <= 0.)
+        return head_declares_high_flow(printer_config, head);
+    // Another size: the machine preset of that size decides, whatever the printer preset declares.
+    return size_offers && size_offers(size, head);
 }
 
 std::vector<size_t> sanitize(const DynamicPrintConfig &printer_config, std::vector<int> &nozzle_volume_types, const SizeOffersHighFlow &size_offers)
@@ -355,12 +384,12 @@ int variant_column_for_type(const std::vector<std::string> &variants, int type)
 
 bool flow_choice_usable(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
 {
-    return !head_declares_high_flow(printer_config, head) || head_can_use_high_flow(printer_config, head, size_offers);
+    return !head_offers_high_flow(printer_config, head, size_offers) || head_can_use_high_flow(printer_config, head, size_offers);
 }
 
 FlowRowState flow_row_state(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers)
 {
-    if (declared_volume_types(printer_config, head).size() <= 1) {
+    if (offered_volume_types(printer_config, head, size_offers).size() <= 1) {
         // A head beyond the preset's diameters has no row; a Standard-only head of a model that
         // offers High Flow at another size shows the row, ruled out.
         const auto *diameters = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
@@ -372,12 +401,12 @@ FlowRowState flow_row_state(const DynamicPrintConfig &printer_config, size_t hea
 
 int shown_volume_type(const DynamicPrintConfig &printer_config, size_t head, int stored_type, const SizeOffersHighFlow &size_offers)
 {
-    const std::vector<int> declared = declared_volume_types(printer_config, head);   // never empty
-    const bool             usable   = flow_choice_usable(printer_config, head, size_offers);
-    for (int type : declared)
+    const std::vector<int> offered = offered_volume_types(printer_config, head, size_offers);   // never empty
+    const bool             usable  = flow_choice_usable(printer_config, head, size_offers);
+    for (int type : offered)
         if (type == stored_type && (usable || stored_type == int(nvtStandard)))
             return type;
-    return declared.front();
+    return offered.front();
 }
 
 std::string head_nozzle_size_label(const DynamicPrintConfig &printer_config, size_t head)
@@ -411,29 +440,29 @@ void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config
 {
     if (combo == nullptr)
         return;
-    const std::vector<int> declared = declared_volume_types(printer_config, head);
-    // A single declared type leaves nothing to choose (a Standard-only preset shown for a model
+    const std::vector<int> offered = offered_volume_types(printer_config, head, size_offers);
+    // A single offered type leaves nothing to choose (a Standard-only preset shown for a model
     // that offers High Flow at another size): the combo is disabled with the reason of the size.
-    const bool             usable   = declared.size() > 1 && flow_choice_usable(printer_config, head, size_offers);
+    const bool             usable  = offered.size() > 1 && flow_choice_usable(printer_config, head, size_offers);
 
-    bool same_items = combo->GetCount() == declared.size();
-    for (size_t item = 0; same_items && item < declared.size(); ++item)
-        same_items = intptr_t(combo->GetClientData(int(item))) == intptr_t(declared[item]);
+    bool same_items = combo->GetCount() == offered.size();
+    for (size_t item = 0; same_items && item < offered.size(); ++item)
+        same_items = intptr_t(combo->GetClientData(int(item))) == intptr_t(offered[item]);
     if (!same_items) {
         const ConfigOptionDef *def = print_config_def.get("nozzle_volume_type");
         combo->Clear();
-        for (int type : declared)
+        for (int type : offered)
             combo->Append(def != nullptr && size_t(type) < def->enum_labels.size() ? _L(def->enum_labels[size_t(type)]) :
                                                                                       from_u8(get_nozzle_volume_type_string(NozzleVolumeType(type))),
                           {}, (void*)intptr_t(type));
     }
 
-    // A head that cannot run High Flow shows its first declared type whatever is stored; the
+    // A head that cannot run High Flow shows its first offered type whatever is stored; the
     // sanitizer corrects the stored value.
     const int shown     = shown_volume_type(printer_config, head, current_type, size_offers);
     int       selection = 0;
-    for (size_t item = 0; item < declared.size(); ++item)
-        if (declared[item] == shown)
+    for (size_t item = 0; item < offered.size(); ++item)
+        if (offered[item] == shown)
             selection = int(item);
     if (combo->GetSelection() != selection)
         combo->SetSelection(selection);

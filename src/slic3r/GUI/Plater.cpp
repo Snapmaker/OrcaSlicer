@@ -11918,7 +11918,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
 
         // Flow row: the nozzle volume type of this tool head (project config "nozzle_volume_type").
         // Items, visibility and state come from update_nozzle_flow_values(): the row shows only
-        // on tool heads for which the printer declares more than one type.
+        // on tool heads offered more than one type (HighFlowNotices::flow_row_state).
         page.flow_label = make_text(_L_CONTEXT(L_CONTEXT("Flow", "Nozzle Flow"), "Nozzle Flow"), Label::Body_14, *wxBLACK);
         ComboBox* flow_combo = new ComboBox(nozzle_panel, wxID_ANY, wxEmptyString, wxDefaultPosition, {-1, FromDIP(30)}, 0,
                                             nullptr, wxCB_READONLY);
@@ -32757,10 +32757,11 @@ void Plater::show_tool_head_flow_types()
     const DynamicPrintConfig &printer_config = bundle->printers.get_edited_preset().config;
     const auto               *diameters      = printer_config.option<ConfigOptionFloats>("nozzle_diameter");
     const size_t              head_count     = diameters == nullptr ? 0 : diameters->values.size();
-    bool                      any_declared   = false;
-    for (size_t head = 0; head < head_count && !any_declared; ++head)
-        any_declared = HighFlowNotices::head_declares_high_flow(printer_config, head);
-    if (!any_declared)
+    const auto                size_offers    = HighFlowNotices::size_offers_high_flow(*bundle);
+    bool                      any_offered    = false;
+    for (size_t head = 0; head < head_count && !any_offered; ++head)
+        any_offered = HighFlowNotices::head_offers_high_flow(printer_config, head, size_offers);
+    if (!any_offered)
         return;
 
     // The tool head to look at first: the one whose flow type is not the one the printer reports.

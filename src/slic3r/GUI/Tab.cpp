@@ -9742,8 +9742,9 @@ wxSizer* TabPrinter::create_nozzle_flow_widget(wxWindow* parent, int extruder_id
     return sizer;
 }
 
-// The line shows on tool heads for which the printer declares more than one nozzle volume type,
-// and can be changed where the head carries a nozzle size the vendor data has High Flow values for.
+// The line shows on tool heads offered more than one nozzle volume type (the printer's own or, for a
+// head of another size, those of the machine preset of its size), and can be changed where the head
+// carries a nozzle size the vendor data has High Flow values for.
 void TabPrinter::update_nozzle_flow_lines(bool refresh_page)
 {
     if (m_config == nullptr || m_preset_bundle == nullptr)

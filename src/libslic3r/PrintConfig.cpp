@@ -10978,6 +10978,11 @@ int DynamicPrintConfig::get_index_for_extruder(int extruder_or_filament_id, std:
             }
         }
     }
+    // Snapmaker Orca: a printer table without a High Flow or TPU High Flow column for the extruder (a
+    // 0.4 mm High Flow head on the 0.6 mm U1 preset) reads the extruder's Standard column; for a head of
+    // another size that column holds the values of its size's machine preset (Sidebar::apply_nozzle_diameter).
+    if (ret < 0 && id_name == "printer_extruder_id" && nozzle_volume_type != nvtStandard)
+        ret = get_index_for_extruder(extruder_or_filament_id, id_name, extruder_type, nvtStandard, variant_name, stride);
     return ret;
 }
 
@@ -11701,6 +11706,9 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
     // Snapmaker Orca: 1-based extruder of every slot the multi-slot branch emits, 0 where the lookup
     // missed (see rewrite_slot_ids).
     std::vector<int> slot_extruders;
+    // Snapmaker Orca: the variant name each emitted slot takes over the one of its source column;
+    // empty keeps the source column's name.
+    std::vector<std::string> slot_variants;
     int variant_count = extruder_count;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: extruder_count %2%, extruder_nozzle_volume_count %3%")%__LINE__ %extruder_count %extruder_nozzle_volume_count;
@@ -11769,6 +11777,15 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                 //variant index
                 int slot_index = get_index_for_extruder(e_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
                 slot_extruders.push_back(slot_index < 0 ? 0 : e_index + 1);
+                // Snapmaker Orca: a printer slot resolved to the Standard column of a High Flow or TPU High
+                // Flow extruder (get_index_for_extruder) is named by the flow it prints, as a declared column would be.
+                std::string slot_variant;
+                if (id_name == "printer_extruder_id" && slot_index >= 0 && nozzle_volume_type != nvtHybrid)
+                    if (const auto *variants = dynamic_cast<const ConfigOptionStrings*>(this->option(variant_name));
+                        variants != nullptr && size_t(slot_index) < variants->values.size() &&
+                        variants->values[size_t(slot_index)] != get_extruder_variant_string(extruder_type, nozzle_volume_type))
+                        slot_variant = get_extruder_variant_string(extruder_type, nozzle_volume_type);
+                slot_variants.push_back(slot_variant);
                 if (slot_index < 0) {
                     // Snapmaker Orca: a process table composed per tool head (PerHeadProcess) holds
                     // one column per slot; a miss means a head reads another head's values.
@@ -11921,6 +11938,11 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
     // filament preset and has no id table to keep aligned.
     if (!slot_extruders.empty() && key_set.count(id_name) > 0)
         rewrite_slot_ids(*this, id_name, slot_extruders);
+    if (key_set.count(variant_name) > 0)
+        if (auto *variants = this->option<ConfigOptionStrings>(variant_name); variants != nullptr && variants->values.size() == slot_variants.size())
+            for (size_t slot = 0; slot < slot_variants.size(); ++slot)
+                if (!slot_variants[slot].empty())
+                    variants->values[slot] = slot_variants[slot];
 
     return variant_index;
 }

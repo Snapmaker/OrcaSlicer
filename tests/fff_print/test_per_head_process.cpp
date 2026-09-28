@@ -19,6 +19,7 @@
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -1362,6 +1363,189 @@ TEST_CASE("On a plate of four nozzle sizes the High Flow tool head prints at the
     CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(*standard_020, "outer_wall_speed", nvtHighFlow)});
     REQUIRE(rates.at(1).count("Sparse infill") == 1);
     CHECK(rates.at(1).at("Sparse infill") == std::set<int>{preset_feedrate(*standard_020, "sparse_infill_speed", nvtHighFlow)});
+}
+
+// ---- A 0.4 mm High Flow tool head on a printer preset of another size ---------------------------
+// Tool heads of 0.6, 0.4 (High Flow), 0.6 and 0.6 mm, cube i on tool head i, sliced once on the 0.6 mm
+// U1 preset (which declares no High Flow column) and once on the 0.4 mm one.
+
+namespace {
+
+const char *const MATTE_0_4 = "Snapmaker PLA Matte @U1";
+const char *const MATTE_0_6 = "Snapmaker PLA Matte @U1 0.6 nozzle";
+const std::vector<double> OFFSIZE_DIAMETERS{0.6, 0.4, 0.6, 0.6};
+
+std::unique_ptr<OwnerPlateSlice> offsize_plate_slice(const char *machine, const char *process)
+{
+    auto slice = std::make_unique<OwnerPlateSlice>();
+    PresetBundle &bundle = slice->bundle;
+    bundle.load_vendor_configs_from_json(PROFILES_DIR, "Snapmaker", PresetBundle::LoadSystem,
+                                         ForwardCompatibilitySubstitutionRule::EnableSilent, nullptr, /*allow_cache=*/false);
+    REQUIRE(bundle.printers.select_preset_by_name(machine, true));
+    // As the sidebar sets a size (Sidebar::apply_nozzle_diameter): the diameter, the layer height
+    // limits and the per-extruder machine values of the machine preset of that size.
+    DynamicPrintConfig &printer = bundle.printers.get_edited_preset().config;
+    const Preset       *home    = bundle.printers.find_preset(machine, false, true);
+    REQUIRE(home != nullptr);
+    const double home_size = NozzleFilament::home_nozzle_size(home->config);
+    printer.set_key_value("nozzle_diameter", new ConfigOptionFloats(OFFSIZE_DIAMETERS));
+    printer.set_key_value("extruder_layer_height", new ConfigOptionFloats(std::vector<double>(HEADS, 0.)));
+    for (size_t head = 0; head < HEADS; ++head) {
+        if (std::abs(OFFSIZE_DIAMETERS[head] - home_size) < EPSILON)
+            continue;
+        const Preset *size_preset = NozzleFilament::head_machine_preset(bundle.printers, printer.opt_string("printer_model"), OFFSIZE_DIAMETERS[head]);
+        REQUIRE(size_preset != nullptr);
+        for (const char *key : {"min_layer_height", "max_layer_height"}) {
+            std::vector<double> limits = printer.option<ConfigOptionFloats>(key)->values;
+            limits.resize(HEADS, limits.empty() ? 0. : limits.back());
+            limits[head] = size_preset->config.option<ConfigOptionFloats>(key)->get_at(head);
+            printer.set_key_value(key, new ConfigOptionFloats(limits));
+        }
+        adopt_extruder_values_from_size_preset(printer, size_preset->config, &home->config, head, nozzle_size_extruder_options());
+    }
+    REQUIRE(bundle.prints.select_preset_by_name(process, true));
+    bundle.filament_presets = {MATTE_0_6, MATTE_0_4, MATTE_0_6, MATTE_0_6};
+    REQUIRE(bundle.filaments.select_preset_by_name(bundle.filament_presets.front(), true));
+    bundle.project_config.option<ConfigOptionInts>("filament_map", true)->values = {1, 2, 3, 4};
+    bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard),
+                                                                                                  int(nvtStandard)};
+    bundle.process_follows_nozzle = true;
+
+    DynamicPrintConfig &config = slice->config;
+    config = bundle.full_config_for_print(false, std::nullopt, std::nullopt, &slice->sources);
+    config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("enable_support",       new ConfigOptionBool(false));
+    config.set_key_value("enable_prime_tower",   new ConfigOptionBool(false));
+    config.set_key_value("skirt_loops",          new ConfigOptionInt(0));
+    config.set_key_value("detect_narrow_internal_solid_infill", new ConfigOptionBool(false));
+    // The cooling slowdown and the volumetric ceiling would rewrite the feed rates under test.
+    {
+        auto *slowdown = config.option<ConfigOptionBools>("slow_down_for_layer_cooling");
+        REQUIRE(slowdown != nullptr);
+        slowdown->values.assign(slowdown->values.size(), 0);
+        auto *ceiling = dynamic_cast<ConfigOptionVectorBase *>(config.option("filament_max_volumetric_speed"));
+        REQUIRE(ceiling != nullptr);
+        std::string values;
+        for (size_t column = 0; column < ceiling->size(); ++column)
+            values += (values.empty() ? "" : ",") + std::string("200");
+        REQUIRE(ceiling->deserialize(values));
+    }
+
+    std::vector<TriangleMesh> meshes;
+    for (size_t head = 0; head < HEADS; ++head) {
+        TriangleMesh cube = mesh(TestMesh::cube_20x20x20);
+        cube.scale(Vec3f(1.f, 1.f, 0.25f)); // 5 mm
+        cube.translate(40.f + 40.f * float(head), 100.f, 0.f);
+        meshes.emplace_back(std::move(cube));
+    }
+    const std::vector<std::vector<ConfigBase::SetDeserializeItem>> overrides = {
+        {{"extruder", "1"}}, {{"extruder", "2"}}, {{"extruder", "3"}}, {{"extruder", "4"}}};
+    init_print(std::move(meshes), slice->print, slice->model, config, &overrides, /*arrange=*/false);
+    {
+        const StringObjectException err = slice->print.validate();
+        INFO(err.string << " (" << err.opt_key << ", tool head " << err.tool_head << ")");
+        REQUIRE(err.string.empty());
+    }
+    slice->gcode = Slic3r::Test::gcode(slice->print);
+    return slice;
+}
+
+// A value of the Standard or High Flow column of a shipped two-column filament preset.
+int filament_column_int(const PresetBundle &bundle, const std::string &preset_name, const std::string &key, NozzleVolumeType flow)
+{
+    const Preset *preset = bundle.filaments.find_preset(preset_name, false);
+    REQUIRE(preset != nullptr);
+    const auto *variants = preset->config.option<ConfigOptionStrings>("filament_extruder_variant");
+    const auto *option   = preset->config.option<ConfigOptionInts>(key);
+    REQUIRE(variants != nullptr);
+    REQUIRE(option != nullptr);
+    REQUIRE(variants->values == std::vector<std::string>{STANDARD, "Direct Drive High Flow"});
+    REQUIRE(option->values.size() == 2);
+    return option->values[flow == nvtHighFlow ? 1 : 0];
+}
+
+} // namespace
+
+TEST_CASE("A 0.4 mm High Flow tool head on the 0.6 mm printer preset prints the High Flow values of the 0.4 mm presets", "[PerHeadProcess][HighFlow][Profiles][hf_offsize_gcode]")
+{
+    const std::unique_ptr<OwnerPlateSlice> slice = offsize_plate_slice("Snapmaker U1 (0.6 nozzle)", "0.24mm Standard @Snapmaker U1 (0.6 nozzle)");
+    const Preset *standard_020 = slice->bundle.prints.find_preset("0.20mm Standard @Snapmaker U1 (0.4 nozzle)", false);
+    REQUIRE(standard_020 != nullptr);
+    // The printer preset declares no High Flow column; the machine preset of 0.4 mm does.
+    const auto *declared = slice->bundle.printers.get_edited_preset().config.option<ConfigOptionStrings>("extruder_variant_list");
+    REQUIRE(declared != nullptr);
+    for (const std::string &variants : declared->values)
+        REQUIRE(variants.find("High Flow") == std::string::npos);
+
+    // Process: the High Flow rule gives the 0.4 mm head the preset of its size with a High Flow column.
+    REQUIRE(slice->sources.size() == HEADS);
+    REQUIRE(slice->sources[1].preset != nullptr);
+    CHECK(slice->sources[1].preset->name == standard_020->name);
+    const auto rates = feature_feedrates(slice->gcode);
+    if (rates.count(1) != 1)
+        FAIL("no extrusion above the first layer for tool 1: " << gcode_digest(slice->gcode) << "; G-code kept at " << keep_gcode("hf_offsize_gcode", slice->gcode));
+    REQUIRE(rates.at(1).count("Outer wall") == 1);
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{500 * 60});
+    CHECK(rates.at(1).at("Outer wall") == std::set<int>{preset_feedrate(*standard_020, "outer_wall_speed", nvtHighFlow)});
+    REQUIRE(rates.at(1).count("Sparse infill") == 1);
+    CHECK(rates.at(1).at("Sparse infill") == std::set<int>{preset_feedrate(*standard_020, "sparse_infill_speed", nvtHighFlow)});
+
+    // Filament: the High Flow column of the 0.4 mm preset on tool head 2, the Standard column elsewhere.
+    const int high_flow_temperature = filament_column_int(slice->bundle, MATTE_0_4, "nozzle_temperature", nvtHighFlow);
+    REQUIRE(high_flow_temperature != filament_column_int(slice->bundle, MATTE_0_4, "nozzle_temperature", nvtStandard));
+    CHECK(slice->print.config().nozzle_temperature.get_at(1) == high_flow_temperature);
+
+    // Filament: the High Flow retraction length of the 0.4 mm filament overrides the machine value.
+    const Preset *matte_0_4 = slice->bundle.filaments.find_preset(MATTE_0_4, false);
+    REQUIRE(matte_0_4 != nullptr);
+    const auto *filament_retraction = matte_0_4->config.option<ConfigOptionFloatsNullable>("filament_retraction_length");
+    REQUIRE(filament_retraction != nullptr);
+    REQUIRE(filament_retraction->size() == 2);
+    REQUIRE(!filament_retraction->is_nil(1));
+    CHECK_THAT(slice->print.config().retraction_length.get_at(1), Catch::Matchers::WithinAbs(filament_retraction->get_at(1), 1e-9));
+
+    // Machine: the retraction minimum travel (no filament override) of the 0.4 mm preset (its High
+    // Flow column equals its Standard one), not the 0.6 mm preset's value of tool head 1.
+    const Preset *machine_0_4 = slice->bundle.printers.find_preset("Snapmaker U1 (0.4 nozzle)", false, true);
+    REQUIRE(machine_0_4 != nullptr);
+    const auto *filament_travel = matte_0_4->config.option<ConfigOptionFloatsNullable>("filament_retraction_minimum_travel");
+    REQUIRE(filament_travel != nullptr);
+    REQUIRE(filament_travel->size() == 2);
+    REQUIRE(filament_travel->is_nil(1));
+    const double travel_0_4 = machine_0_4->config.option<ConfigOptionFloats>("retraction_minimum_travel")->get_at(1);
+    REQUIRE(std::abs(travel_0_4 - slice->print.config().retraction_minimum_travel.get_at(0)) > 0.05);
+    CHECK_THAT(slice->print.config().retraction_minimum_travel.get_at(1), Catch::Matchers::WithinAbs(travel_0_4, 1e-9));
+    // The narrowed printer table names the flow the head prints.
+    CHECK(slice->print.config().printer_extruder_variant.values ==
+          std::vector<std::string>{STANDARD, "Direct Drive High Flow", STANDARD, STANDARD});
+}
+
+TEST_CASE("A 0.4 mm High Flow tool head prints the same feed rates on the 0.6 mm and on the 0.4 mm printer preset", "[PerHeadProcess][HighFlow][Profiles][hf_offsize_same]")
+{
+    const std::unique_ptr<OwnerPlateSlice> on_0_6 = offsize_plate_slice("Snapmaker U1 (0.6 nozzle)", "0.24mm Standard @Snapmaker U1 (0.6 nozzle)");
+    const std::unique_ptr<OwnerPlateSlice> on_0_4 = offsize_plate_slice("Snapmaker U1 (0.4 nozzle)", "0.20mm Standard @Snapmaker U1 (0.4 nozzle)");
+    const auto rates_0_6 = feature_feedrates(on_0_6->gcode);
+    const auto rates_0_4 = feature_feedrates(on_0_4->gcode);
+    REQUIRE(rates_0_6.count(1) == 1);
+    REQUIRE(rates_0_4.count(1) == 1);
+    for (const auto &[feature, rates] : rates_0_6.at(1))
+        UNSCOPED_INFO("0.6 mm preset, tool 1, " << feature << ": " << joined(rates));
+    for (const auto &[feature, rates] : rates_0_4.at(1))
+        UNSCOPED_INFO("0.4 mm preset, tool 1, " << feature << ": " << joined(rates));
+    // The features of the High Flow column; outer wall and sparse infill print on every cube.
+    REQUIRE(rates_0_6.at(1).count("Outer wall") == 1);
+    REQUIRE(rates_0_6.at(1).count("Sparse infill") == 1);
+    for (const char *feature : {"Outer wall", "Inner wall", "Sparse infill", "Internal solid infill"}) {
+        INFO(feature);
+        CHECK(rates_0_6.at(1).count(feature) == rates_0_4.at(1).count(feature));
+        if (rates_0_6.at(1).count(feature) == 1 && rates_0_4.at(1).count(feature) == 1)
+            CHECK(rates_0_6.at(1).at(feature) == rates_0_4.at(1).at(feature));
+    }
+    CHECK(on_0_6->print.config().nozzle_temperature.get_at(1) == on_0_4->print.config().nozzle_temperature.get_at(1));
+    CHECK_THAT(on_0_6->print.config().retraction_length.get_at(1), Catch::Matchers::WithinAbs(on_0_4->print.config().retraction_length.get_at(1), 1e-9));
+    CHECK(on_0_6->print.config().printer_extruder_variant.get_at(1) == on_0_4->print.config().printer_extruder_variant.get_at(1));
 }
 
 // A value set for one tool head on the Speed page beats the preset of its size on that head alone.

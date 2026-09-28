@@ -1590,15 +1590,10 @@ int CLI::run(int argc, char **argv)
     // --load-filaments lists, so everything downstream stays as it was.
     std::vector<std::string> load_configs_all(load_configs.begin(), load_configs.end());
     std::vector<std::string> load_filaments_all(load_filaments.begin(), load_filaments.end());
-    // One NamedPresets for the whole run, shared by --printer-preset and the missing-key fill.
-    // Scans resources_dir()/profiles only (same as --printer-preset); user-installed
-    // data_dir()/system vendors are not consulted.
-    std::optional<NamedPresets> named_presets_store;
-    auto named_presets = [&named_presets_store]() -> NamedPresets & {
-        if (!named_presets_store)
-            named_presets_store.emplace();
-        return *named_presets_store;
-    };
+    // NamedPresets for --printer-preset lives in this block so vendor bundles are gone
+    // before a GUI launch (S8). The CLI missing-key fill constructs its own store later.
+    // Scans resources_dir()/profiles only; user-installed data_dir()/system vendors are
+    // not consulted, same as --printer-preset today.
     {
         const std::string printer_name = m_config.opt_string("printer_preset", true);
         const std::string process_name = m_config.opt_string("process_preset", true);
@@ -1606,7 +1601,7 @@ int CLI::run(int argc, char **argv)
         if (auto* opt = m_config.option<ConfigOptionStrings>("filament_presets"))
             filament_names = opt->values;
         if (!printer_name.empty() || !process_name.empty() || !filament_names.empty()) {
-            NamedPresets &presets = named_presets();
+            NamedPresets presets;
             const std::string preset_dir = (boost::filesystem::path(temporary_dir()) / ("ultra_cli_presets_" + std::to_string(get_current_pid()))).string();
             auto resolve = [&](const std::string& name, Preset::Type t, int ordinal, std::vector<std::string>& into) -> bool {
                 if (name.empty()) return true;
@@ -1839,6 +1834,14 @@ int CLI::run(int argc, char **argv)
         }
     }
 
+    // CLI-only: vendor bundles for the missing-key fill. Not constructed on a GUI launch (S8).
+    std::optional<NamedPresets> named_presets_store;
+    auto named_presets = [&named_presets_store]() -> NamedPresets & {
+        if (!named_presets_store)
+            named_presets_store.emplace();
+        return *named_presets_store;
+    };
+
     global_begin_time = (long long)Slic3r::Utils::get_current_time_utc();
     BOOST_LOG_TRIVIAL(warning) << boost::format("cli mode, Current Snapmaker_Orca Version %1%")%SLIC3R_VERSION;
 
@@ -1854,6 +1857,8 @@ int CLI::run(int argc, char **argv)
     std::string new_printer_name, current_printer_name, new_process_name, current_process_name, current_printer_system_name, current_process_system_name, new_process_system_name, new_printer_system_name, printer_model_id, current_printer_model, printer_model;//, printer_inherits, print_inherits;
     std::vector<std::string> upward_compatible_printers, new_print_compatible_printers, current_print_compatible_printers, current_different_settings;
     std::vector<std::string> current_filaments_name, current_filaments_system_name, current_inherits_group;
+    // Keys present in the 3MF right after read_from_file, before create=true inserts defaults (S2).
+    std::set<std::string> project_file_keys;
     DynamicPrintConfig load_process_config, load_machine_config;
     bool new_process_config_is_system = true, new_printer_config_is_system = true;
     std::string pipe_name, makerlab_name, makerlab_version, different_process_setting;
@@ -2053,6 +2058,12 @@ int CLI::run(int argc, char **argv)
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
                 model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                // Snapshot keys the file actually carried before create=true reads insert defaults
+                // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
+                if (project_file_keys.empty() && !config.empty()) {
+                    const auto keys = config.keys();
+                    project_file_keys.insert(keys.begin(), keys.end());
+                }
                 // The importer flags any 3mf written by Bambu Studio / Orca / this fork as a project file,
                 // including geometry-only ones without Metadata/project_settings.config (the bundled handy
                 // models, for instance). Only a file that actually carried a config is a project: the GUI
@@ -2133,27 +2144,22 @@ int CLI::run(int argc, char **argv)
                     // its end; a shorter one leaves current_filaments_system_name smaller than
                     // filament_count for the --uptodate-filaments check that indexes it later.
                     // Treat any mis-sized vector the same as a missing one and fall back to the
-                    // current names.
-                    if (option_strings && option_strings->values.size() == current_filaments_name.size() + 2) {
+                    // current names. No renamed_from / alias lookup.
+                    const std::vector<std::string> *inherits_group_values = option_strings ? &option_strings->values : nullptr;
+                    const size_t filament_name_count = current_filaments_name.size();
+                    current_printer_system_name = resolve_project_system_preset_name(current_printer_name, inherits_group_values, filament_name_count, true);
+                    current_process_system_name = resolve_project_system_preset_name(current_process_name, inherits_group_values, filament_name_count, false);
+                    if (option_strings && option_strings->values.size() == filament_name_count + 2) {
                         current_inherits_group = option_strings->values;
                         size_t size = current_inherits_group.size();
-                        if (current_inherits_group[size-1].empty()) {
-                            current_printer_system_name = current_printer_name;
+                        if (current_inherits_group[size-1].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer is null, should be system preset");
-                        }
-                        else {
-                            current_printer_system_name = current_inherits_group[size-1];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of printer valid, current_printer_system_name is %1%") %current_printer_system_name;
-                        }
-
-                        if (current_inherits_group[0].empty()) {
-                            current_process_system_name = current_process_name;
+                        if (current_inherits_group[0].empty())
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process is null, should be system preset");
-                        }
-                        else {
-                            current_process_system_name = current_inherits_group[0];
+                        else
                             BOOST_LOG_TRIVIAL(info) << boost::format("inherits of process valid, current_process_system_name is %1%") %current_process_system_name;
-                        }
 
                         current_filaments_system_name.resize(size - 2);
                         for (int index = 1; index < (size - 1); index++) {
@@ -2166,8 +2172,6 @@ int CLI::run(int argc, char **argv)
                         }
                     }
                     else {
-                        current_printer_system_name = current_printer_name;
-                        current_process_system_name = current_process_name;
                         current_filaments_system_name = current_filaments_name;
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
@@ -2986,6 +2990,46 @@ int CLI::run(int argc, char **argv)
     }
     sliced_info.upward_machines = upward_compatible_printers;
 
+    // A project saved before a printer or process option existed has no value for it. The GUI
+    // takes such keys from the project's system preset (load_external_preset refreshes every
+    // key the project did not override). Fill them from NamedPresets too instead of leaving
+    // them to the option default. Printer and process only — filament vector keys are a
+    // follow-up. Runs here so the embedded (auto) process preset below sees the filled keys.
+    {
+        size_t filled = 0;
+        auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
+            if (system_name.empty())
+                return;
+            const std::vector<std::string> &options =
+                type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
+            const std::set<std::string> *present = project_file_keys.empty() ? nullptr : &project_file_keys;
+            // S1: do not load vendor bundles when nothing is missing.
+            if (missing_project_keys(m_print_config, options, present).empty())
+                return;
+            const Preset *sys = named_presets().find_system(system_name, type);
+            if (sys == nullptr) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
+                           % system_name;
+                return;
+            }
+            std::vector<std::string> filled_keys;
+            const size_t n = fill_missing_project_keys(m_print_config, sys->config, options, &filled_keys, present);
+            filled += n;
+            for (const std::string &key : filled_keys) {
+                const ConfigOption *opt = m_print_config.option(key);
+                BOOST_LOG_TRIVIAL(info) << boost::format("CLI: %1% missing from the project, taken from '%2%': %3%")
+                    % key % system_name % project_config_fill_log_value(opt);
+            }
+        };
+        if (cli_fill_from_system_preset(new_printer_name))
+            fill_from_system(current_printer_system_name, Preset::TYPE_PRINTER);
+        if (cli_fill_from_system_preset(new_process_name))
+            fill_from_system(current_process_system_name, Preset::TYPE_PRINT);
+        if (filled > 0)
+            BOOST_LOG_TRIVIAL(info) << "CLI: filled " << filled << " missing project keys from system presets";
+    }
+
     //create project embedded preset if needed
     Preset *new_preset = NULL;
     if (is_bbl_3mf && machine_switch) {
@@ -3075,42 +3119,6 @@ int CLI::run(int argc, char **argv)
         }
         return 0;
     };
-
-    // A project saved before a printer or process option existed has no value for it. The GUI
-    // takes such keys from the project's system preset (load_external_preset refreshes every
-    // key the project did not override). Fill them from NamedPresets too instead of leaving
-    // them to the option default. Printer and process only — filament vector keys are a
-    // follow-up. Mixed/flow-variant/mapping keys stay on the skip list.
-    {
-        size_t filled = 0;
-        auto fill_from_system = [&](const std::string &system_name, Preset::Type type) {
-            if (system_name.empty())
-                return;
-            const Preset *sys = named_presets().find_system(system_name, type);
-            if (sys == nullptr) {
-                BOOST_LOG_TRIVIAL(warning)
-                    << boost::format("CLI: system preset '%1%' not resolved; keys missing from the project keep their defaults")
-                           % system_name;
-                return;
-            }
-            const std::vector<std::string> &options =
-                type == Preset::TYPE_PRINTER ? Preset::printer_options() : Preset::print_options();
-            std::vector<std::string> filled_keys;
-            const size_t n = fill_missing_project_keys(m_print_config, sys->config, options, &filled_keys);
-            filled += n;
-            for (const std::string &key : filled_keys) {
-                const ConfigOption *opt = m_print_config.option(key);
-                BOOST_LOG_TRIVIAL(info) << boost::format("CLI: %1% missing from the project, taken from '%2%': %3%")
-                    % key % system_name % (opt ? opt->serialize() : std::string());
-            }
-        };
-        if (new_printer_name.empty())
-            fill_from_system(current_printer_system_name, Preset::TYPE_PRINTER);
-        if (new_process_name.empty())
-            fill_from_system(current_process_system_name, Preset::TYPE_PRINT);
-        if (filled > 0)
-            BOOST_LOG_TRIVIAL(info) << "CLI: filled " << filled << " missing project keys from system presets";
-    }
 
     std::vector<std::string>& different_settings = m_print_config.option<ConfigOptionStrings>("different_settings_to_system", true)->values;
     std::vector<std::string>& inherits_group = m_print_config.option<ConfigOptionStrings>("inherits_group", true)->values;

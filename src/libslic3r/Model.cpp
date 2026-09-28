@@ -3944,25 +3944,50 @@ void FacetsAnnotation::set_triangle_from_string(int triangle_id, const std::stri
 {
     assert(! str.empty());
     assert(m_data.triangles_to_split.empty() || m_data.triangles_to_split.back().triangle_idx < triangle_id);
+
+    auto hex_nibble = [](char ch, int &dec) -> bool {
+        if (ch >= '0' && ch <= '9') {
+            dec = int(ch - '0');
+            return true;
+        }
+        if (ch >= 'A' && ch <= 'F') {
+            dec = 10 + int(ch - 'A');
+            return true;
+        }
+        return false;
+    };
+
+    for (char ch : str) {
+        int dec = 0;
+        if (!hex_nibble(ch, dec)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": dropping paint data of triangle " << triangle_id
+                                      << " with non-hex character";
+            return;
+        }
+    }
+
     m_data.triangles_to_split.emplace_back(triangle_id, int(m_data.bitstream.size()));
 
     const size_t bitstream_start_idx = m_data.bitstream.size();
     for (auto it = str.crbegin(); it != str.crend(); ++it) {
-        const char ch = *it;
         int dec = 0;
-        if (ch >= '0' && ch<='9')
-            dec = int(ch - '0');
-        else if (ch >='A' && ch <= 'F')
-            dec = 10 + int(ch - 'A');
-        else
-            assert(false);
+        if (!hex_nibble(*it, dec)) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": dropping malformed paint data of triangle " << triangle_id;
+            m_data.bitstream.resize(bitstream_start_idx);
+            m_data.triangles_to_split.pop_back();
+            return;
+        }
 
         // Convert to binary and append into code.
         for (int i = 0; i < 4; ++i)
             m_data.bitstream.insert(m_data.bitstream.end(), bool(dec & (1 << i)));
     }
 
-    m_data.update_used_states(bitstream_start_idx);
+    if (!m_data.update_used_states(bitstream_start_idx)) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": dropping malformed paint data of triangle " << triangle_id;
+        m_data.bitstream.resize(bitstream_start_idx);
+        m_data.triangles_to_split.pop_back();
+    }
 }
 
 bool FacetsAnnotation::equals(const FacetsAnnotation &other) const

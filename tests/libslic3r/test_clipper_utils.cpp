@@ -300,3 +300,115 @@ TEST_CASE("Traversing Clipper PolyTree", "[ClipperUtils]") {
         REQUIRE(count_polys(output) == reference.size());
     }
 }
+
+SCENARIO("union_ is idempotent", "[ClipperUtils]") {
+    GIVEN("two overlapping squares") {
+        Polygons squares {
+            { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } },
+            { { 50, 50 }, { 150, 50 }, { 150, 150 }, { 50, 150 } },
+        };
+        WHEN("union_ is applied twice") {
+            Polygons once  = union_(squares);
+            Polygons twice = union_(once);
+            THEN("the result is one polygon and union is idempotent") {
+                REQUIRE(once.size() == 1);
+                REQUIRE(once == twice);
+            }
+        }
+    }
+    GIVEN("a single clean square") {
+        Polygons squares { { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } } };
+        THEN("union_ of a single polygon preserves its area") {
+            Polygons result = union_(squares);
+            REQUIRE(result.size() == 1);
+            REQUIRE_THAT(result.front().area(), WithinRel(10000.0, 0.001));
+        }
+    }
+}
+
+SCENARIO("closing∘opening round-trips a clean shape", "[ClipperUtils]") {
+    GIVEN("a clean square") {
+        Polygon square { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } };
+        WHEN("opening then closing with delta 5") {
+            Polygons result = closing(opening({ square }, 5.f), 5.f);
+            THEN("the area is conserved") {
+                REQUIRE(result.size() == 1);
+                REQUIRE_THAT(result.front().area(), WithinRel(square.area(), 0.001));
+            }
+        }
+    }
+    GIVEN("a square with a thin 4-wide bump") {
+        Polygon bumped { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 52, 100 }, { 52, 104 }, { 48, 104 }, { 48, 100 }, { 0, 100 } };
+        WHEN("opening with delta 5") {
+            Polygons result = opening({ bumped }, 5.f);
+            THEN("the thin bump is removed") {
+                REQUIRE(result.size() == 1);
+                REQUIRE_THAT(result.front().area(), WithinRel(10000.0, 0.001));
+            }
+        }
+    }
+    GIVEN("a square with a thin 4-wide notch") {
+        Polygon notched { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 52, 100 }, { 52, 96 }, { 48, 96 }, { 48, 100 }, { 0, 100 } };
+        WHEN("closing with delta 5") {
+            Polygons result = closing({ notched }, 5.f);
+            THEN("the thin notch is filled") {
+                REQUIRE(result.size() == 1);
+                REQUIRE_THAT(result.front().area(), WithinRel(10000.0, 0.001));
+            }
+        }
+    }
+}
+
+SCENARIO("top_level_islands extracts nested islands", "[ClipperUtils]") {
+    GIVEN("a nested outer square and inner island") {
+        Polygon outer { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } };
+        Polygon inner { { 40, 40 }, { 60, 40 }, { 60, 60 }, { 40, 60 } };
+        WHEN("top_level_islands is called") {
+            Polygons result = top_level_islands({ outer, inner });
+            THEN("only the outermost contour is returned") {
+                REQUIRE(result.size() == 1);
+                REQUIRE_THAT(result.front().area(), WithinRel(outer.area(), 0.001));
+            }
+        }
+    }
+    GIVEN("two disjoint islands") {
+        Polygon a { { 0, 0 }, { 10, 0 }, { 10, 10 }, { 0, 10 } };
+        Polygon b { { 20, 0 }, { 30, 0 }, { 30, 10 }, { 20, 10 } };
+        WHEN("top_level_islands is called") {
+            Polygons result = top_level_islands({ a, b });
+            THEN("both top-level islands are returned") {
+                REQUIRE(result.size() == 2);
+            }
+        }
+    }
+
+}
+
+SCENARIO("simplify_polygons conserves union area", "[ClipperUtils]") {
+    GIVEN("two overlapping squares") {
+        Polygons squares {
+            { { 0, 0 }, { 100, 0 }, { 100, 100 }, { 0, 100 } },
+            { { 50, 50 }, { 150, 50 }, { 150, 150 }, { 50, 150 } },
+        };
+        WHEN("simplify_polygons is called") {
+            Polygons result = simplify_polygons(squares);
+            THEN("the union area is conserved (overlap not double-counted)") {
+                REQUIRE(result.size() == 1);
+                REQUIRE_THAT(result.front().area(), WithinRel(union_(squares).front().area(), 0.001));
+            }
+        }
+    }
+}
+
+SCENARIO("empty input produces empty output", "[ClipperUtils]") {
+    GIVEN("an empty polygon set") {
+        Polygons empty;
+        THEN("all operations return empty without crashing") {
+            REQUIRE(union_(empty).empty());
+            REQUIRE(opening(empty, 5.f).empty());
+            REQUIRE(closing(empty, 5.f).empty());
+            REQUIRE(top_level_islands(empty).empty());
+            REQUIRE(simplify_polygons(empty).empty());
+        }
+    }
+}

@@ -7,8 +7,12 @@ StrCpy $R0 40
 SnapmakerConnectUninstall_wait:
   Delete "$INSTDIR\resources\snapmaker_connection_windows_x64.exe"
   Delete "$INSTDIR\resources\snapmaker_connection_windows_arm64.exe"
+  Delete "$INSTDIR\resources\snapmaker_control_windows_x64.exe"
+  Delete "$INSTDIR\resources\snapmaker_control_windows_arm64.exe"
   IfFileExists "$INSTDIR\resources\snapmaker_connection_windows_x64.exe" SnapmakerConnectUninstall_retry
   IfFileExists "$INSTDIR\resources\snapmaker_connection_windows_arm64.exe" SnapmakerConnectUninstall_retry
+  IfFileExists "$INSTDIR\resources\snapmaker_control_windows_x64.exe" SnapmakerConnectUninstall_retry
+  IfFileExists "$INSTDIR\resources\snapmaker_control_windows_arm64.exe" SnapmakerConnectUninstall_retry
   Goto SnapmakerConnectUninstall_done
 
 SnapmakerConnectUninstall_retry:

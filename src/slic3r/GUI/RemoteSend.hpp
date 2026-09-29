@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "BambuSendDiagnosis.hpp"
 #include "GcodeArchive.hpp"
 #include "SnapmakerLan.hpp"
 #include "slic3r/Utils/PrintHost.hpp"
@@ -66,6 +67,7 @@ struct Prepared
     std::string      call;                          // the NetworkAgent function the desktop would call
     bool             verify_access_code { false };  // PrintJob's tiny upload that proves IP + access code first
     bool             lan_fallback_to_cloud { false };
+    BambuLanSkip     lan_skip { BambuLanSkip::None }; // call is start_print because the LAN route could not run
     int              print_error_before { 0 };      // the printer's error code before the send
     // Print host (Moonraker / OctoPrint / … and the connected Snapmaker)
     std::shared_ptr<PrintHost> host;

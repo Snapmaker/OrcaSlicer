@@ -5,6 +5,7 @@
 #include "AmsDrying.hpp"
 #include "AmsDualLayout.hpp"
 #include "DeviceModelCode.hpp"
+#include "BambuSendDiagnosis.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
@@ -4811,6 +4812,16 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                         if (result == "FAIL") {
                             wxString text = _L("Failed to start print job");
                             GUI::wxGetApp().push_notification(text);
+                        }
+                        // Ultra: firmware with Authorization Control answers an unsigned command
+                        // with result "failed", reason "mqtt message verify failed". Count it so the
+                        // send job can say why the printer did not start (BambuSendDiagnosis).
+                        const std::string reason = jj.contains("reason") && jj["reason"].is_string() ? jj["reason"].get<std::string>() : std::string();
+                        if (GUI::bambu_reply_is_auth_refusal(result, reason)) {
+                            ++project_file_refusals;
+                            BOOST_LOG_TRIVIAL(warning) << "parse_json, " << dev_id << " refused project_file: result=" << result
+                                                       << ", reason=" << reason
+                                                       << ", err_code=" << (jj.contains("err_code") ? jj["err_code"].dump() : std::string("none"));
                         }
                     }
                 } else if (jj["command"].get<std::string>() == "ams_filament_setting" && !key_field_only) {

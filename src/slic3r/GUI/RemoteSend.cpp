@@ -310,6 +310,72 @@ static std::string result_text(int result)
     }
 }
 
+// BambuSendDiagnosis's words for a failed Bambu send, in English like the rest of the hub's messages.
+static std::string diagnosis_text(BambuSendFailure f)
+{
+    f.ultranet_log = wxGetApp().is_ultranet_plugin_installed();
+    f.log_dir      = bambu_log_dir_for_display();
+    f.log_prefix   = "RemoteSend:";
+    return bambu_send_failure_text(f, false).full();
+}
+
+// The print-mode route for a cloud-bound printer (SelectMachineDialog + PrintJob::process): LAN first
+// when it can run, the cloud when the plug-in has one. EdgeSlicer's plug-in has no cloud printing,
+// so where only the cloud is left the send is refused here, with the reason the LAN route could not
+// run, instead of failing later with a bare -3120. Returns an empty string, or that refusal.
+static std::string choose_cloud_bound_print_call(Prepared& p, bool lan_only, bool cloud_print_only, bool has_sdcard)
+{
+    const BBL::PrintParams& ps              = p.params;
+    const bool              cloud_supported = bambu_cloud_print_supported(wxGetApp().is_ultranet_plugin_installed());
+    if (lan_only) {
+        const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), false, has_sdcard, !ps.password.empty());
+        if (skip != BambuLanSkip::None) {
+            BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << " (lan_mode_only, no cloud)";
+            BambuSendFailure f;
+            f.cloud_bound  = false;
+            f.lan_skip     = skip;
+            f.skipped_code = BAMBU_NETWORK_ERR_FTP_UPLOAD_FAILED; // what PrintJob answers here
+            return diagnosis_text(f);
+        }
+        p.call = "start_local_print_with_record";
+        return "";
+    }
+    const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), cloud_print_only, has_sdcard, !ps.password.empty());
+    if (skip == BambuLanSkip::None) {
+        BOOST_LOG_TRIVIAL(info) << "RemoteSend: LAN first (start_local_print_with_record)"
+                                << (cloud_supported ? ", cloud fallback" : ", no cloud fallback: the network plug-in has no cloud printing");
+        p.call                  = "start_local_print_with_record";
+        p.lan_fallback_to_cloud = cloud_supported;
+        return "";
+    }
+    if (cloud_supported) {
+        BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << ", send with cloud";
+        p.call     = "start_print";
+        p.lan_skip = skip;
+        return "";
+    }
+    BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip)
+                            << ", no cloud fallback: the network plug-in has no cloud printing";
+    BambuSendFailure f;
+    f.lan_skip        = skip;
+    f.cloud_supported = false;
+    return diagnosis_text(f);
+}
+
+// Upload mode for a cloud-bound printer (SendJob::process): LAN only, so every precondition must hold.
+static std::string cloud_bound_upload_refusal(const BBL::PrintParams& ps, bool has_sdcard)
+{
+    const BambuLanSkip skip = bambu_lan_skip_reason(!ps.dev_ip.empty(), false, has_sdcard, !ps.password.empty());
+    if (skip == BambuLanSkip::None) return "";
+    BOOST_LOG_TRIVIAL(info) << "RemoteSend: skipped LAN: " << bambu_lan_skip_tag(skip) << ", nothing sent (no cloud route for uploads)";
+    BambuSendFailure f;
+    f.upload_only  = true;
+    f.cloud_bound  = false;
+    f.lan_skip     = skip;
+    f.skipped_code = -1; // SendJob's result when nothing ran
+    return diagnosis_text(f);
+}
+
 // ---------------------------------------------------------------- prepare ----
 
 static std::pair<int, std::string> prepare_bambu(const Request& req, PartPlate* plate, std::shared_ptr<Prepared> p, std::shared_ptr<Prepared>& out)
@@ -397,17 +463,9 @@ static std::pair<int, std::string> prepare_bambu(const Request& req, PartPlate* 
             p->call               = "start_local_print";
             p->verify_access_code = true;
         } else {
-            const bool lan_only  = wxGetApp().app_config->get("lan_mode_only") == "1";
-            const bool can_local = !ps.password.empty() && !ps.dev_ip.empty() && has_sdcard;
-            if (lan_only) {
-                if (!can_local) return { 409, "LAN-only mode is on but the printer has no IP address, access code or SD card" };
-                p->call = "start_local_print_with_record";
-            } else if (!obj->is_support_cloud_print_only && can_local) {
-                p->call                  = "start_local_print_with_record";
-                p->lan_fallback_to_cloud = true;
-            } else {
-                p->call = "start_print";
-            }
+            const bool        lan_only = wxGetApp().app_config->get("lan_mode_only") == "1";
+            const std::string refusal  = choose_cloud_bound_print_call(*p, lan_only, obj->is_support_cloud_print_only, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
     } else {
         // SendToPrinterDialog::on_ok_btn + SendJob::process: upload to the printer's storage only
@@ -416,8 +474,9 @@ static std::pair<int, std::string> prepare_bambu(const Request& req, PartPlate* 
         ps.task_use_ams = true;
         if (ps.connection_type == "lan") {
             if (!has_sdcard) return { 409, "An SD card needs to be inserted before sending to printer." };
-        } else if (ps.password.empty() || ps.dev_ip.empty() || !has_sdcard) {
-            return { 409, "uploading needs the printer's IP address, its access code and an SD card" };
+        } else {
+            const std::string refusal = cloud_bound_upload_refusal(ps, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
         p->call = "start_send_gcode_to_sdcard";
     }
@@ -988,16 +1047,8 @@ static std::pair<int, std::string> prepare_bambu_record(const Request& req, cons
             p->call               = "start_local_print";
             p->verify_access_code = true;
         } else {
-            const bool can_local = !ps.password.empty() && !ps.dev_ip.empty() && has_sdcard;
-            if (*lan_only) {
-                if (!can_local) return { 409, "LAN-only mode is on but the printer has no IP address, access code or SD card" };
-                p->call = "start_local_print_with_record";
-            } else if (!*cloud_only && can_local) {
-                p->call                  = "start_local_print_with_record";
-                p->lan_fallback_to_cloud = true;
-            } else {
-                p->call = "start_print";
-            }
+            const std::string refusal = choose_cloud_bound_print_call(*p, *lan_only, *cloud_only, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
     } else {
         // SendToPrinterDialog::on_ok_btn + SendJob::process: upload to the printer's storage only.
@@ -1006,8 +1057,9 @@ static std::pair<int, std::string> prepare_bambu_record(const Request& req, cons
         ps.task_use_ams = true;
         if (ps.connection_type == "lan") {
             if (!has_sdcard) return { 409, "An SD card needs to be inserted before sending to printer." };
-        } else if (ps.password.empty() || ps.dev_ip.empty() || !has_sdcard) {
-            return { 409, "uploading needs the printer's IP address, its access code and an SD card" };
+        } else {
+            const std::string refusal = cloud_bound_upload_refusal(ps, has_sdcard);
+            if (!refusal.empty()) return { 409, refusal };
         }
         p->call = "start_send_gcode_to_sdcard";
     }
@@ -1351,24 +1403,74 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
             return;
         }
     }
+    // The printer's "mqtt message verify failed" answers so far (MachineObject counts them), so a
+    // refusal of this send can be told apart from an earlier one.
+    auto refusals = [p]() {
+        auto n = std::make_shared<int>(0);
+        on_main([n, p]() {
+            DeviceManager* dm = wxGetApp().getDeviceManager();
+            if (MachineObject* obj = dm ? find_machine(dm, p->printer_id) : nullptr) *n = obj->project_file_refusals.load();
+        }, 3000);
+        return *n;
+    };
+    const int refusals_before = refusals();
+
+    // What BambuSendDiagnosis needs if this fails: the LAN attempt's own result, which the cloud
+    // fallback's answer would otherwise replace.
+    BambuSendFailure diag;
+    diag.upload_only     = upload_only;
+    diag.cloud_bound     = p->params.connection_type != "lan" && p->call != "start_send_gcode_to_sdcard";
+    diag.cloud_supported = bambu_cloud_print_supported(wxGetApp().is_ultranet_plugin_installed());
+    diag.lan_skip        = p->lan_skip;
+    bool use_diag        = false;
+    auto lan_failed      = [&](int lan_rc) {
+        diag.printer_refused = refusals() != refusals_before;
+        diag.lan_code        = lan_rc;
+        result["lan_result_code"] = lan_rc;
+        std::lock_guard<std::mutex> lock(m);
+        diag.lan_detail = last_error;
+    };
+
     sink.progress(10, p->params.connection_type == "lan" ? "Sending print job over LAN" : "Sending print job through cloud service");
     int rc = -1;
     if (p->call == "start_send_gcode_to_sdcard") {
         rc = agent->start_send_gcode_to_sdcard(p->params, update_fn, cancel_fn, nullptr);
+        if (rc < 0) { lan_failed(rc); use_diag = true; }
     } else if (p->call == "start_local_print") {
         rc = agent->start_local_print(p->params, update_fn, cancel_fn);
+        if (rc < 0) { lan_failed(rc); use_diag = true; }
     } else if (p->call == "start_local_print_with_record") {
         rc = agent->start_local_print_with_record(p->params, update_fn, cancel_fn, wait_fn);
-        if (rc < 0 && p->lan_fallback_to_cloud) {
-            result["fallback"] = "cloud";
-            sink.progress(10, "Sending print job through cloud service");
-            rc = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        if (rc < 0) {
+            lan_failed(rc);
+            use_diag = true;
+            if (p->lan_fallback_to_cloud) {
+                BOOST_LOG_TRIVIAL(warning) << "RemoteSend: LAN failed (" << rc << "), try to send with cloud";
+                result["fallback"] = "cloud";
+                sink.progress(10, "Sending print job through cloud service");
+                rc               = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+                diag.cloud_tried = true;
+                diag.cloud_code  = rc;
+                // -3120 is what a plug-in without cloud printing answers: the LAN error is the one that matters.
+                use_diag = rc == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
+            } else if (p->params.connection_type != "lan") {
+                BOOST_LOG_TRIVIAL(warning) << "RemoteSend: LAN failed (" << rc << "), no cloud fallback";
+            }
         }
     } else if (p->call == "start_print") {
-        rc = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        rc               = agent->start_print(p->params, update_fn, cancel_fn, wait_fn);
+        diag.cloud_tried = true;
+        diag.cloud_code  = rc;
+        use_diag         = p->lan_skip != BambuLanSkip::None && rc == BAMBU_NETWORK_ERR_PRINT_SP_POST_TASK_FAILED;
     }
     result["result_code"] = rc;
     if (rc < 0) {
+        if (use_diag && rc != BAMBU_NETWORK_ERR_CANCELED) {
+            const std::string text = diagnosis_text(diag);
+            BOOST_LOG_TRIVIAL(error) << "RemoteSend: " << text;
+            sink.done(false, text, result);
+            return;
+        }
         std::lock_guard<std::mutex> lock(m);
         sink.done(false, result_text(rc) + (last_error.empty() ? "" : ": " + last_error), result);
         return;
@@ -1380,18 +1482,21 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     // LAN-only mode with Developer Mode answers "command verification failed" on its own screen).
     // Watch what it reports for a few seconds so the phone learns about it.
     sink.progress(98, "waiting for the printer to start");
-    struct Watch { std::mutex m; std::string state { "unknown" }, err_text; int err { 0 }; };
+    struct Watch { std::mutex m; std::string state { "unknown" }, err_text; int err { 0 }; bool refused { false }; };
     auto w = std::make_shared<Watch>(); // shared: a timed-out GUI call may still run after this loop
     for (int i = 0; i < 12; ++i) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
-        on_main([w, p]() {
+        on_main([w, p, refusals_before]() {
             DeviceManager* dm = wxGetApp().getDeviceManager();
             if (!dm) return;
             MachineObject* obj = find_machine(dm, p->printer_id);
             if (!obj) return;
             std::lock_guard<std::mutex> lock(w->m);
             if (w->state != "unknown") return;
-            if (obj->print_error != 0 && obj->print_error != p->print_error_before) {
+            if (obj->project_file_refusals.load() != refusals_before) {
+                w->refused = true;
+                w->state   = "error";
+            } else if (obj->print_error != 0 && obj->print_error != p->print_error_before) {
                 w->err   = obj->print_error;
                 w->state = "error";
                 if (HMSQuery* q = wxGetApp().get_hms_query()) w->err_text = q->describe_print_error(obj->dev_id, w->err).ToUTF8().data();
@@ -1404,6 +1509,19 @@ static void run_bambu(std::shared_ptr<Prepared> p, Sink& sink)
     }
     std::lock_guard<std::mutex> lock(w->m);
     result["printer_state"] = w->state;
+    if (w->refused) {
+        // The printer answered the print command "mqtt message verify failed" (PrintJob's lan_started_fn).
+        BambuSendFailure f   = diag;
+        f.lan_skip           = BambuLanSkip::None;
+        f.lan_code           = BAMBU_NETWORK_ERR_PRINT_LP_PUBLISH_MSG_FAILED;
+        f.printer_refused    = true;
+        f.cloud_tried        = false;
+        result["printer_refused"] = true;
+        const std::string text = diagnosis_text(f);
+        BOOST_LOG_TRIVIAL(error) << "RemoteSend: " << text;
+        sink.done(false, text, result);
+        return;
+    }
     if (w->state == "error") {
         char code[16];
         std::snprintf(code, sizeof code, "%08X", (unsigned) w->err);

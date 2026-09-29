@@ -1,6 +1,7 @@
 #ifndef slic3r_DeviceManager_hpp_
 #define slic3r_DeviceManager_hpp_
 
+#include <atomic>
 #include <map>
 #include <mutex>
 #include <set>
@@ -996,6 +997,11 @@ public:
     std::string  subtask_id_;
     std::string  job_id_;
     std::string  last_subtask_id_;
+    // Ultra: how many times the printer has answered a "project_file" (start print) command with
+    // "mqtt message verify failed" - Bambu firmware refusing unsigned commands because LAN Only Mode
+    // and Developer Mode are not both on. Written on the GUI thread, read by the send jobs, which
+    // compare it before and after a send (BambuSendDiagnosis).
+    std::atomic<int> project_file_refusals { 0 };
     BBLSliceInfo* slice_info {nullptr};
     boost::thread* get_slice_info_thread { nullptr };
     boost::thread* get_model_task_thread { nullptr };

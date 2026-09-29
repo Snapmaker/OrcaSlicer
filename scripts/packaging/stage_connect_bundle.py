@@ -17,14 +17,22 @@ import zipfile
 from pathlib import Path
 
 
-RELEASE_REPOSITORY = "Snapmaker/snapmaker-flutter-web"
+RELEASE_REPOSITORY = "Snapmaker/snapmaker_control"
 ASSET_KEYS = {
-    "windows-x64": ("zip", "snapmaker_connection_windows_x64.exe"),
-    "windows-arm64": ("zip", "snapmaker_connection_windows_arm64.exe"),
-    "macos-x64": ("zip", "snapmaker_connection_macos_x64"),
-    "macos-arm64": ("zip", "snapmaker_connection_macos_arm64"),
-    "linux-x64": ("tar.gz", "snapmaker_connection_linux_x64"),
-    "linux-arm64": ("tar.gz", "snapmaker_connection_linux_arm64"),
+    "windows-x64": ("zip", "snapmaker_control_windows_x64.exe"),
+    "windows-arm64": ("zip", "snapmaker_control_windows_arm64.exe"),
+    "macos-x64": ("zip", "snapmaker_control_macos_x64"),
+    "macos-arm64": ("zip", "snapmaker_control_macos_arm64"),
+    "linux-x64": ("tar.gz", "snapmaker_control_linux_x64"),
+    "linux-arm64": ("tar.gz", "snapmaker_control_linux_arm64"),
+}
+LEGACY_CLI_FILES = {
+    "snapmaker_connection_windows_x64.exe",
+    "snapmaker_connection_windows_arm64.exe",
+    "snapmaker_connection_macos_x64",
+    "snapmaker_connection_macos_arm64",
+    "snapmaker_connection_linux_x64",
+    "snapmaker_connection_linux_arm64",
 }
 STAGE_PLATFORMS = {
     "windows-x64": ("windows-x64",),
@@ -87,7 +95,7 @@ def load_lock(path: Path, asset_keys: tuple[str, ...]) -> tuple[str, dict[str, s
 
 def asset_filename(tag: str, asset_key: str) -> str:
     archive_format, _ = ASSET_KEYS[asset_key]
-    return f"snapmaker_connection-{tag[1:]}-{asset_key}.{archive_format}"
+    return f"snapmaker_control-{tag[1:]}-{asset_key}.{archive_format}"
 
 
 def download_url(tag: str, filename: str) -> str:
@@ -172,8 +180,7 @@ def extract_archive(archive_path: Path, destination: Path, asset_key: str) -> No
 
 def remove_stale_cli_files(resources_dir: Path, selected_keys: tuple[str, ...]) -> None:
     expected = {ASSET_KEYS[key][1] for key in selected_keys}
-    for filename in set(ASSET_KEYS.values()):
-        cli_name = filename[1]
+    for cli_name in {filename for _, filename in ASSET_KEYS.values()} | LEGACY_CLI_FILES:
         if cli_name in expected:
             continue
         path = resources_dir / cli_name

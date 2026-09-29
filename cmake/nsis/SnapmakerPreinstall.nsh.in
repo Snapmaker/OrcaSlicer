@@ -142,8 +142,12 @@ SnapmakerOrcaPre_trim_slash_done:
 SnapmakerOrcaPre_connect_wait:
   Delete "$3\resources\snapmaker_connection_windows_x64.exe"
   Delete "$3\resources\snapmaker_connection_windows_arm64.exe"
+  Delete "$3\resources\snapmaker_control_windows_x64.exe"
+  Delete "$3\resources\snapmaker_control_windows_arm64.exe"
   IfFileExists "$3\resources\snapmaker_connection_windows_x64.exe" SnapmakerOrcaPre_connect_retry
   IfFileExists "$3\resources\snapmaker_connection_windows_arm64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_control_windows_x64.exe" SnapmakerOrcaPre_connect_retry
+  IfFileExists "$3\resources\snapmaker_control_windows_arm64.exe" SnapmakerOrcaPre_connect_retry
   Goto SnapmakerOrcaPre_connect_done
 SnapmakerOrcaPre_connect_retry:
   Sleep 1000

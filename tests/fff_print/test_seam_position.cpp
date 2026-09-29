@@ -638,7 +638,7 @@ TEST_CASE("Blocked and Enforced Precise Seam zones override painted seams", "[Se
     ModelObject *object = model.add_object();
     auto *part = object->add_volume(make_cube(20, 20, 20));
     paint_cube_face(*part, Vec3f(0.f, 1.f, 0.f));
-    auto *helper = object->add_volume(make_cube(8, 4, 20));
+    auto *helper = object->add_volume(make_cube(22, 4, 20));
     helper->set_type(blocked ? ModelVolumeType::PRECISE_SEAM_BLOCKED : ModelVolumeType::PRECISE_SEAM_ENFORCED);
     helper->set_offset(part->get_offset() + Vec3d(0, 10, 0));
     object->add_instance();
@@ -673,11 +673,12 @@ TEST_CASE("Overlapping weak Precise Seam helpers follow tree order", "[Seam][Pre
     Model model;
     ModelObject *object = model.add_object();
     auto *part = object->add_volume(make_cube(20, 20, 20));
-    // First weak is higher in the list; init_precise_seam_data applies it last (last-write-wins).
-    auto *high = object->add_volume(make_cube(8, 4, 20));
+    // Cover the whole +Y face so Blocked can actually evict the seam. First weak is higher in
+    // the list; init_precise_seam_data applies it last (last-write-wins).
+    auto *high = object->add_volume(make_cube(22, 4, 20));
     high->set_type(ModelVolumeType::PRECISE_SEAM_BLOCKED);
     high->set_offset(part->get_offset() + Vec3d(0, 10, 0));
-    auto *low = object->add_volume(make_cube(8, 4, 20));
+    auto *low = object->add_volume(make_cube(22, 4, 20));
     low->set_type(ModelVolumeType::PRECISE_SEAM_ENFORCED);
     low->set_offset(part->get_offset() + Vec3d(0, 10, 0));
     object->add_instance();

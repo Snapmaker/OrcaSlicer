@@ -371,6 +371,9 @@ private:
 		int                      sub_msg_id {-1};
 		std::string        ori_text;
         bool                use_warn_color { false };
+        // Identifies the origin of a ValidateError (option key, or exception type);
+        // notifications of the same source reuse and update each other instead of stacking.
+        std::string        source_key;
 	};
 
 	// Cache of IDs to identify and reuse ImGUI windows.

@@ -12265,26 +12265,32 @@ msgstr "顶部壳体层数"
 msgid "Top paint penetration layers"
 msgstr "顶部涂色渗透层数"
 
-msgid "The number of layers painted with the top surface color into the top shell, including the top surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the top surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
-msgstr "顶部表面颜色渗入顶部壳体的层数，包含顶面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印顶面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+msgid "This is  the number of layers of top paint penetration."
+msgstr "顶部涂色渗透的层数"
 
 msgid "Bottom paint penetration layers"
 msgstr "底部涂色渗透层数"
 
-msgid "The number of layers painted with the bottom surface color into the bottom shell, including the bottom surface layer itself. Each penetration layer shrinks inwards by one line width. Increase this value to reduce color bleeding at the bottom surface in multi-material printing. 0 behaves the same as 1 (only the surface layer is painted)."
-msgstr "底部表面颜色渗入底部壳体的层数，包含底面本身。每个渗透层向内收缩一条线宽。增大该值可减轻多色打印底面的渗色问题。0 与 1 行为相同（仅着色表面层）。"
+msgid "This is the number of layers of bottom paint penetration."
+msgstr "底部涂色渗透的层数。"
 
-msgid "Top paint penetration layers cannot exceed top shell layers.\nTop paint penetration layers will be reset to %d."
-msgstr "顶部涂色渗透层数不能超过顶部壳体层数。\n“顶部涂色渗透层数”将被重置为 %d。"
+msgid "Top paint penetration layers (current setting: %d layers) exceed the top shell layers (current setting: %d layers). Top paint penetration layers will be reset."
+msgstr "顶部涂色渗透层数（当前设置：%d层）已超过顶部壳体层数（当前设置：%d层）。顶部涂色渗透层数将被重置"
 
-msgid "Bottom paint penetration layers cannot exceed bottom shell layers.\nBottom paint penetration layers will be reset to %d."
-msgstr "底部涂色渗透层数不能超过底部壳体层数。\n“底部涂色渗透层数”将被重置为 %d。"
+msgid "Bottom paint penetration layers (current setting: %d layers) exceed the bottom shell layers (current setting: %d layers). Bottom paint penetration layers will be reset."
+msgstr "底部涂色渗透层数（当前设置：%d层）已超过底部壳体层数（当前设置：%d层）。底部涂色渗透层数将被重置"
 
-msgid "The top paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. Please reduce the top paint penetration layers."
-msgstr "对象 %2% 的顶部涂色渗透层数（%1%）超过了该对象的总层数（%3%）。请减小顶部涂色渗透层数。"
+msgid "Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the top paint penetration layers."
+msgstr "涂色渗透层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少顶部涂色渗透层数。"
 
-msgid "The bottom paint penetration layers (%1%) of object %2% exceed the total layer count (%3%) of this object. Please reduce the bottom paint penetration layers."
-msgstr "对象 %2% 的底部涂色渗透层数（%1%）超过了该对象的总层数（%3%）。请减小底部涂色渗透层数。"
+msgid "Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the bottom paint penetration layers."
+msgstr "涂色渗透层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少底部涂色渗透层数。"
+
+msgid "Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the top shell layers."
+msgstr "壳体层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少顶部壳体层数。"
+
+msgid "Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the bottom shell layers."
+msgstr "壳体层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少底部壳体层数。"
 
 msgid "This is the number of solid layers of top shell, including the top surface layer. When the thickness calculated by this value is thinner than top shell thickness, the top shell layers will be increased."
 msgstr "顶部壳体实心层层数，包括顶面。当由该层数计算的厚度小于顶部壳体厚度，切片时会增加顶部壳体的层数"

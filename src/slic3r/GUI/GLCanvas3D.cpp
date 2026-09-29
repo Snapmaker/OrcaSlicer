@@ -3235,9 +3235,10 @@ bool GLCanvas3D::ensure_gl_ready()
 {
     if (m_canvas == nullptr || m_context == nullptr)
         return false;
-    // wglMakeCurrent on this canvas' own DC: the HWND and its pixel format exist from construction,
-    // so a never-shown window is fine on MSW (wx says so itself in wxGLCanvasBase::SetCurrent).
-    if (!_set_current())
+    // Prefer the visible canvas's context: on GTK, SetCurrent on a hidden/unrealized canvas
+    // fails (blank 3MF / phone / U1 thumbnails). Canvases share one wxGLContext (OpenGLManager).
+    // Fall back to this canvas, which is fine on MSW even if never shown (wxGLCanvasBase::SetCurrent).
+    if (!_set_shown_canvas_current())
         return false;
     // glewInit + framebuffer-type detection + shader compilation; must follow the make-current and
     // precede ANY GLEW-dispatched call.
@@ -8614,6 +8615,21 @@ bool GLCanvas3D::_init_collapse_toolbar()
 bool GLCanvas3D::_set_current()
 {
     return m_context != nullptr && m_canvas->SetCurrent(*m_context);
+}
+
+bool GLCanvas3D::_set_shown_canvas_current()
+{
+    // Thumbnails also render outside render(), where another library's GL context (e.g. WebKitGTK's)
+    // can be current. Prefer the on-screen canvas so GTK hidden/unrealized SetCurrent does not fail,
+    // and so a frame already in render() does not switch drawables. Canvases share one wxGLContext.
+    // Fall back to this canvas (CLI / unit / shown-canvas SetCurrent failed).
+    Plater* plater = wxGetApp().plater();
+    if (plater != nullptr) {
+        GLCanvas3D* shown = plater->get_current_canvas3D();
+        if (shown != nullptr && shown != this && shown->_set_current())
+            return true;
+    }
+    return _set_current();
 }
 
 void GLCanvas3D::_resize(unsigned int w, unsigned int h)

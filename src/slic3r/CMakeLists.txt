@@ -621,8 +621,6 @@ set(SLIC3R_GUI_SOURCES
     Utils/FontConfigHelp.hpp
     Utils/Frustum.cpp
     Utils/Frustum.hpp
-    Utils/GatewayMachineSlots.cpp
-    Utils/GatewayMachineSlots.hpp
     Utils/GatewayProtocol.cpp
     Utils/GatewayProtocol.hpp
     Utils/GatewayDevice.cpp

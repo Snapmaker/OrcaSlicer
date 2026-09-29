@@ -4,8 +4,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <vector>
-
 using namespace Slic3r::Gateway;
 using nlohmann::json;
 
@@ -79,33 +77,6 @@ TEST_CASE("parse_health ignores device state when connection state is absent", "
     REQUIRE(!parse_health(body, health));
     REQUIRE_FALSE(health.has_device_state);
     REQUIRE(health.device_sn.empty());
-}
-
-TEST_CASE("parse_active_device accepts direct and nested payloads", "[gateway][protocol]")
-{
-    const auto parsed = parse_active_device(json{{"sn", "U1-001"},
-                                                 {"connected", true},
-                                                 {"machine_type", "Snapmaker U1"},
-                                                 {"device_name", "Studio U1"},
-                                                 {"preset_name", "Snapmaker U1 0.4"},
-                                                 {"nozzle_diameters", json::array({"0.4", "0.4"})}});
-    REQUIRE(parsed.has_value());
-    REQUIRE(parsed->valid);
-    REQUIRE(parsed->connected);
-    REQUIRE(parsed->serial_number == "U1-001");
-    REQUIRE(parsed->machine_type == "Snapmaker U1");
-    REQUIRE(parsed->device_name == "Studio U1");
-    REQUIRE(parsed->preset_name == "Snapmaker U1 0.4");
-    REQUIRE(parsed->nozzle_diameters == std::vector<std::string>{"0.4", "0.4"});
-
-    const auto nested = parse_active_device(json{{"device", {{"device_sn", "U1-002"}, {"connected", false}}}});
-    REQUIRE(nested.has_value());
-    REQUIRE(nested->valid);
-    REQUIRE_FALSE(nested->connected);
-    REQUIRE(nested->serial_number == "U1-002");
-
-    REQUIRE_FALSE(parse_active_device(json{{"connected", true}}).has_value());
-    REQUIRE_FALSE(parse_active_device(json{{"sn", "U1-001"}, {"connected", "online"}}).has_value());
 }
 
 TEST_CASE("parse_device_sn uses the active device contract", "[gateway][protocol]")

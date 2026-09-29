@@ -14,17 +14,6 @@ bool get_string(const nlohmann::json& object, const char* key, std::string& valu
     return true;
 }
 
-bool get_optional_string(const nlohmann::json& object, const char* key, std::string& value)
-{
-    const auto item = object.find(key);
-    if (item == object.end())
-        return true;
-    if (!item->is_string())
-        return false;
-    value = item->get<std::string>();
-    return true;
-}
-
 } // namespace
 
 nlohmann::json build_jsonrpc_request(std::int64_t id, std::string_view method, const nlohmann::json& params)
@@ -115,58 +104,12 @@ std::string parse_device_sn(const nlohmann::json& params)
     return {};
 }
 
-std::optional<ActiveDeviceSnapshot> parse_active_device(const nlohmann::json& params)
-{
-    if (!params.is_object())
-        return std::nullopt;
-
-    const nlohmann::json* source = &params;
-    const auto            device = params.find("device");
-    if (device != params.end()) {
-        if (!device->is_object())
-            return std::nullopt;
-        source = &*device;
-    }
-
-    ActiveDeviceSnapshot active_device;
-    active_device.serial_number = parse_device_sn(params);
-    if (active_device.serial_number.empty())
-        return std::nullopt;
-
-    const auto connected = source->find("connected");
-    if (connected == source->end() || !connected->is_boolean())
-        return std::nullopt;
-    active_device.connected = connected->get<bool>();
-
-    if (!get_optional_string(*source, "machine_type", active_device.machine_type) ||
-        !get_optional_string(*source, "device_name", active_device.device_name) ||
-        !get_optional_string(*source, "preset_name", active_device.preset_name))
-        return std::nullopt;
-
-    for (const char* key : {"nozzle_diameters", "nozzle_sizes"}) {
-        const auto diameters = source->find(key);
-        if (diameters == source->end())
-            continue;
-        if (!diameters->is_array())
-            return std::nullopt;
-        for (const auto& diameter : *diameters) {
-            if (!diameter.is_string())
-                return std::nullopt;
-            active_device.nozzle_diameters.push_back(diameter.get<std::string>());
-        }
-        break;
-    }
-
-    active_device.valid = true;
-    return active_device;
-}
-
-std::optional<ActiveDeviceSnapshot> parse_current_device(const nlohmann::json& result)
+std::optional<CurrentDevice> parse_current_device(const nlohmann::json& result)
 {
     if (!result.is_object())
         return std::nullopt;
 
-    ActiveDeviceSnapshot current_device;
+    CurrentDevice current_device;
     current_device.serial_number = parse_device_sn(result);
     const auto connected         = result.find("connected");
     current_device.connected     = connected != result.end() && connected->is_boolean() && connected->get<bool>();

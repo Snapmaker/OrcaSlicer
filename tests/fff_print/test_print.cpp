@@ -457,13 +457,15 @@ TEST_CASE("ByObject mixed virtual wall filament exports with physical toolchange
         init_print({TestMesh::cube_20x20x20}, print, model, two_filament_config(by_object, true));
         REQUIRE(print.mixed_filament_manager().is_mixed(3, 2));
 
-        const std::vector<unsigned int> used = print.extruders();
-        REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
-        REQUIRE(std::find(used.begin(), used.end(), 1u) != used.end());
-
+        // Export first: on main this SIGSEGVs in GCode::needs_retraction before any
+        // post-export check can run. Print::extruders() is asserted afterwards.
         std::string gcode;
         REQUIRE_NOTHROW(gcode = export_print_gcode(print));
         REQUIRE_FALSE(gcode.empty());
+
+        const std::vector<unsigned int> used = print.extruders();
+        REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
+        REQUIRE(std::find(used.begin(), used.end(), 1u) != used.end());
         if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
             boost::nowide::ofstream dump(std::string(dir) + (by_object ? "/mixed_byobject.gcode" : "/mixed_bylayer.gcode"));
             dump << strip_gcode_timestamps(gcode);

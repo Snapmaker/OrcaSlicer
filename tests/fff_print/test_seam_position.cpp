@@ -513,16 +513,21 @@ ModelObject *plain_cube_object(Model &model)
     return object;
 }
 
-ModelObject *cube_with_back_helper(Model &model, ModelVolumeType type, const Vec3d &extra_offset = Vec3d::Zero())
+ModelObject *cube_with_y_helper(Model &model, ModelVolumeType type, double y_dir, const Vec3d &extra_offset = Vec3d::Zero())
 {
     ModelObject *object = model.add_object();
     object->name        = "ps_cube";
     auto *part          = object->add_volume(make_cube(20, 20, 20));
     auto *helper        = object->add_volume(make_cube(8, 4, 20));
     helper->set_type(type);
-    helper->set_offset(part->get_offset() + Vec3d(0, 10, 0) + extra_offset);
+    helper->set_offset(part->get_offset() + Vec3d(0, 10.0 * y_dir, 0) + extra_offset);
     object->add_instance();
     return object;
+}
+
+ModelObject *cube_with_back_helper(Model &model, ModelVolumeType type, const Vec3d &extra_offset = Vec3d::Zero())
+{
+    return cube_with_y_helper(model, type, 1.0, extra_offset);
 }
 
 std::string strip_gcode_volatile(const std::string &full)
@@ -616,29 +621,26 @@ TEST_CASE("A CENTER/LEFT/RIGHT helper pins the outer-wall seam of a cube on ever
         ModelObject *baseline_object = plain_cube_object(baseline_model);
         SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "aligned");
         REQUIRE(baseline.points.size() >= 40);
-        // Aligned-only must not already satisfy the helper pin, or the helper case is not discriminating.
-        if (mode == ModelVolumeType::PRECISE_SEAM_CENTER) {
-            REQUIRE_FALSE((baseline.min_y() > 8.0 && std::abs(baseline.min_x()) < 2.0 && std::abs(baseline.max_x()) < 2.0));
-        } else if (mode == ModelVolumeType::PRECISE_SEAM_LEFT) {
-            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.min_x() > 1.0));
-        } else {
-            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.max_x() < -1.0));
-        }
+        // Aligned on a cube sits on a back corner. A helper on the front must move it; a back-face
+        // LEFT pin would already be true without Precise Seam.
+        REQUIRE(baseline.min_y() > 8.0);
+        REQUIRE_FALSE(baseline.max_y() < -8.0);
     }
     Model model;
-    ModelObject *object = cube_with_back_helper(model, mode);
+    ModelObject *object = cube_with_y_helper(model, mode, -1.0);
     SeamCloud cloud = seams_for_object(object, model, "aligned");
     REQUIRE(cloud.points.size() >= 40);
-    // Helper sits on the +Y face. LEFT/RIGHT are the CCW start/end of that clipped edge, not printer left/right.
-    REQUIRE(cloud.min_y() > 8.0);
-    REQUIRE(cloud.max_y() > 8.0);
+    // Helper sits on the -Y face. LEFT/RIGHT are the CCW start/end of that clipped edge:
+    // LEFT ≈ -X, RIGHT ≈ +X.
+    REQUIRE(cloud.max_y() < -8.0);
+    REQUIRE(cloud.min_y() < -8.0);
     if (mode == ModelVolumeType::PRECISE_SEAM_CENTER) {
         REQUIRE(std::abs(cloud.min_x()) < 2.0);
         REQUIRE(std::abs(cloud.max_x()) < 2.0);
     } else if (mode == ModelVolumeType::PRECISE_SEAM_LEFT) {
-        REQUIRE(cloud.min_x() > 1.0);
-    } else {
         REQUIRE(cloud.max_x() < -1.0);
+    } else {
+        REQUIRE(cloud.min_x() > 1.0);
     }
 }
 
@@ -683,27 +685,25 @@ TEST_CASE("Blocked and Enforced Precise Seam zones override painted seams", "[Se
         REQUIRE(cloud.points.size() >= 40);
         REQUIRE(cloud.max_y() < 8.0);
     } else {
-        // Painting the helper's +Y face would pass on #201 without Precise Seam, because paint
-        // alone already puts the seam there. Aligned-left puts the default seam on -X; ENFORCED
-        // on +Y must pull it to the back.
+        // Aligned on a cube already sits on the back, so an ENFORCED helper on the same +Y face
+        // would pass without Precise Seam. Put the helper on the front instead.
         {
             Model baseline_model;
             ModelObject *baseline_object = plain_cube_object(baseline_model);
-            SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "left");
+            SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "aligned");
             REQUIRE(baseline.points.size() >= 40);
-            REQUIRE(baseline.min_x() < -5.0);
-            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.max_y() > 8.0));
+            REQUIRE(baseline.min_y() > 8.0);
         }
         Model model;
         ModelObject *object = model.add_object();
         auto *part = object->add_volume(make_cube(20, 20, 20));
         auto *helper = object->add_volume(make_cube(22, 4, 20));
         helper->set_type(ModelVolumeType::PRECISE_SEAM_ENFORCED);
-        helper->set_offset(part->get_offset() + Vec3d(0, 10, 0));
+        helper->set_offset(part->get_offset() + Vec3d(0, -10, 0));
         object->add_instance();
-        SeamCloud cloud = seams_for_object(object, model, "left");
+        SeamCloud cloud = seams_for_object(object, model, "aligned");
         REQUIRE(cloud.points.size() >= 40);
-        REQUIRE(cloud.min_y() > 8.0);
+        REQUIRE(cloud.max_y() < -5.0);
     }
 }
 

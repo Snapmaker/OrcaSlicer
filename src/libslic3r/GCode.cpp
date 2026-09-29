@@ -6427,11 +6427,28 @@ LayerResult GCode::process_layer(const Print& print,
                 // it in lock-step with ToolOrdering.cpp's copy regardless.
                 bool          has_interface = support_role_needs_interface_extruder(role);
                 // Extruder ID of the support base. -1 if "don't care".
-                unsigned int support_extruder = object.config().support_filament.value - 1;
+                // Mixed virtual IDs (support_filament=3 on a 2-physical plate) must be resolved to
+                // a physical tool here, the same way ToolOrdering::collect_extruders does — otherwise
+                // object_by_extruder buckets the virtual 0-based id and set_extruder throws.
+                auto resolve_mixed_filament_0based = [&](int filament_1based) -> unsigned int {
+                    if (filament_1based <= 0)
+                        return (unsigned int) -1;
+                    unsigned int id1 = unsigned(filament_1based);
+                    if (layer_tools.mixed_mgr != nullptr && layer_tools.num_physical > 0)
+                        id1 = layer_tools.mixed_mgr->resolve(id1,
+                                                            layer_tools.num_physical,
+                                                            layer_tools.layer_index,
+                                                            float(layer.print_z),
+                                                            float(layer_tools.layer_height),
+                                                            false,
+                                                            &object);
+                    return id1 >= 1 ? id1 - 1 : (unsigned int) -1;
+                };
+                unsigned int support_extruder = resolve_mixed_filament_0based(object.config().support_filament.value);
                 // Shall the support be printed with the active extruder, preferably with non-soluble, to avoid tool changes?
                 bool support_dontcare = object.config().support_filament.value == 0;
                 // Extruder ID of the support interface. -1 if "don't care".
-                unsigned int interface_extruder = object.config().support_interface_filament.value - 1;
+                unsigned int interface_extruder = resolve_mixed_filament_0based(object.config().support_interface_filament.value);
                 // Shall the support interface be printed with the active extruder, preferably with non-soluble, to avoid tool changes?
                 bool interface_dontcare = object.config().support_interface_filament.value == 0;
 

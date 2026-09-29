@@ -6438,8 +6438,8 @@ LayerResult GCode::process_layer(const Print& print,
                         id1 = layer_tools.mixed_mgr->resolve(id1,
                                                             layer_tools.num_physical,
                                                             layer_tools.layer_index,
-                                                            float(layer.print_z),
-                                                            float(layer_tools.layer_height),
+                                                            float(support_layer.print_z),
+                                                            float(support_layer.height),
                                                             false,
                                                             &object);
                     return id1 >= 1 ? id1 - 1 : (unsigned int) -1;

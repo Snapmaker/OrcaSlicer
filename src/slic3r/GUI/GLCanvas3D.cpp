@@ -110,7 +110,7 @@ namespace {
 constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
-constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
+constexpr float SELECTION_GLOW_BLUR_RADIUS = 0.0f;
 constexpr int GAUSSIAN_LOGICAL_TAP_COUNT = 4;
 constexpr float GAUSSIAN_MAX_RADIUS = 4.0f; // Larger radii use the original nine-fetch kernel.
 constexpr float GAUSSIAN_EPSILON = 1.0e-6f;

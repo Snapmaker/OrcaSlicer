@@ -27,6 +27,7 @@
 #include "slic3r/GUI/PrintErrorCommands.hpp"
 
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -444,5 +445,178 @@ TEST_CASE("The captured blob builds the payloads the buttons send", "[HmsActions
         REQUIRE_FALSE(why.empty());
         REQUIRE_FALSE(build_dont_remind_next_time(no_blob, "91", out, why));
         REQUIRE_FALSE(why.empty());
+    }
+}
+
+TEST_CASE("Only a reply to a command this slicer sent and is waiting on counts as a refusal", "[HmsActions]")
+{
+    // The false dialog these cover: opening the Device page on a P1S that still held 0502 4007
+    // ("filament loading/unloading not completed") from an earlier task popped "the printer refused a
+    // command" with Stop / Resume Printing, about a second after connecting, without anything having
+    // been sent but pushall and get_version. The sequence-id range cannot tell our commands from
+    // Bambu Studio's or OrcaSlicer's (they use the same range), and the push_status answering our
+    // pushall echoes the pushall's sequence id together with the printer's standing error.
+    using Clock = SentCommandTracker::Clock;
+    const Clock::time_point t0 = Clock::time_point() + std::chrono::hours(1);
+
+    SentCommandTracker tracker;
+    int                err = 0;
+    json               blob;
+    std::string        command;
+
+    SECTION("the push_status answering our own pushall is never a refusal")
+    {
+        tracker.note_sent_payload(json::parse(R"({"pushing":{"sequence_id":"20000","command":"pushall",
+                                                               "version":1,"push_target":1}})"), t0);
+        tracker.note_sent_payload(json::parse(R"({"info":{"sequence_id":"20001","command":"get_version"}})"), t0);
+        // Status and info requests are not even recorded.
+        REQUIRE(tracker.pending_count(t0) == 0);
+
+        const json status = json::parse(R"({"command":"push_status","msg":0,"sequence_id":"20000",
+                                            "err_code":84033543,"print_error":84033543})");
+        REQUIRE_FALSE(accept_command_refusal(status, tracker, t0 + std::chrono::seconds(1), err, blob, command));
+        REQUIRE(err == 0);
+        REQUIRE(blob.is_null());
+
+        // Even had push_status somehow been recorded under that id, it would not count.
+        SentCommandTracker odd;
+        odd.note_sent("20000", "project_file", t0);
+        REQUIRE_FALSE(accept_command_refusal(status, odd, t0, err, blob, command));
+    }
+
+    SECTION("a refusal of a project_file we sent opens the dialog")
+    {
+        tracker.note_sent_payload(json::parse(R"({"print":{"sequence_id":"20005","command":"project_file",
+                                                             "param":"Metadata/plate_1.gcode"}})"), t0);
+        const json reply = json::parse(R"({"command":"project_file","sequence_id":"20005",
+                                           "result":"FAIL","err_code":84033543})");
+        REQUIRE(accept_command_refusal(reply, tracker, t0 + std::chrono::seconds(2), err, blob, command));
+        REQUIRE(err == 84033543);
+        REQUIRE(command == "project_file");
+        REQUIRE(is_print_action_command(command));
+        REQUIRE(blob.is_null());
+
+        // One refusal, one window: the same reply again is no longer awaited.
+        REQUIRE_FALSE(accept_command_refusal(reply, tracker, t0 + std::chrono::seconds(3), err, blob, command));
+    }
+
+    SECTION("a sequence id in the shared range that we never used is somebody else's")
+    {
+        tracker.note_sent("20005", "project_file", t0);
+        const json reply = json::parse(R"({"command":"project_file","sequence_id":"20017","err_code":84033543,
+                                           "err_index":3})");
+        REQUIRE_FALSE(accept_command_refusal(reply, tracker, t0, err, blob, command));
+        REQUIRE(err == 0);
+        REQUIRE(blob.is_null());
+        // Reported back so the caller can log what it ignored.
+        REQUIRE(command == "project_file");
+    }
+
+    SECTION("our sequence id with a different command is not an answer to it")
+    {
+        tracker.note_sent("20005", "ledctrl", t0);
+        REQUIRE_FALSE(accept_command_refusal(
+            json::parse(R"({"command":"stop","sequence_id":"20005","err_code":84033543})"), tracker, t0, err, blob, command));
+    }
+
+    SECTION("an answer that comes after the expiry is not ours any more")
+    {
+        tracker.note_sent("20005", "resume", t0);
+        const json reply = json::parse(R"({"command":"resume","sequence_id":"20005","err_code":83935248})");
+        REQUIRE_FALSE(accept_command_refusal(reply, tracker, t0 + SentCommandTracker::DEFAULT_TTL + std::chrono::seconds(1),
+                                             err, blob, command));
+        REQUIRE(tracker.pending_count(t0 + SentCommandTracker::DEFAULT_TTL + std::chrono::seconds(1)) == 0);
+    }
+
+    SECTION("a success answer leaves the command awaited, a numeric sequence id still matches")
+    {
+        tracker.note_sent("20009", "ams_filament_setting", t0);
+        REQUIRE_FALSE(accept_command_refusal(
+            json::parse(R"({"command":"ams_filament_setting","sequence_id":"20009","err_code":0})"), tracker, t0, err, blob, command));
+        REQUIRE(tracker.pending_count(t0) == 1);
+
+        const json reply = json::parse(R"({"command":"ams_filament_setting","sequence_id":20009,"err_code":83935248,
+                                           "err_index":2})");
+        REQUIRE(accept_command_refusal(reply, tracker, t0, err, blob, command));
+        REQUIRE(command == "ams_filament_setting");
+        REQUIRE_FALSE(is_print_action_command(command));
+        // The blob is still the whole reply when it carried an err_index.
+        REQUIRE(blob == reply);
+    }
+
+    SECTION("a project_file the network plug-in sent for us is matched by name, once")
+    {
+        // The plug-in publishes project_file under a sequence id it never hands back.
+        tracker.note_sent_by_agent("project_file", t0);
+        tracker.note_sent("20003", "ledctrl", t0);
+
+        // Never under an id we used for something else...
+        REQUIRE_FALSE(accept_command_refusal(
+            json::parse(R"({"command":"project_file","sequence_id":"20003","err_code":84033543})"), tracker, t0, err, blob, command));
+
+        // ...but under any other id, minutes later (the upload comes first), and only once.
+        const json reply = json::parse(R"({"command":"project_file","sequence_id":"0","err_code":84033543})");
+        REQUIRE(accept_command_refusal(reply, tracker, t0 + std::chrono::minutes(3), err, blob, command));
+        REQUIRE(command == "project_file");
+        REQUIRE_FALSE(accept_command_refusal(reply, tracker, t0 + std::chrono::minutes(3), err, blob, command));
+
+        // And never after the agent window has closed.
+        tracker.note_sent_by_agent("project_file", t0);
+        REQUIRE_FALSE(accept_command_refusal(reply, tracker, t0 + SentCommandTracker::AGENT_TTL + std::chrono::seconds(1),
+                                             err, blob, command));
+    }
+
+    SECTION("status and info commands are recognised as such")
+    {
+        REQUIRE(is_status_or_info_command("push_status"));
+        REQUIRE(is_status_or_info_command("pushall"));
+        REQUIRE(is_status_or_info_command("get_version"));
+        REQUIRE(is_status_or_info_command("get_access_code"));
+        REQUIRE(is_status_or_info_command("extrusion_cali_get"));
+        REQUIRE_FALSE(is_status_or_info_command("project_file"));
+        REQUIRE_FALSE(is_status_or_info_command("ams_filament_setting"));
+    }
+}
+
+TEST_CASE("A refused command offers Stop / Resume Printing only when it was a print action", "[HmsActions]")
+{
+    bool used_fallback = false;
+
+    SECTION("a refusal with no table entry and no print behind it is OK alone")
+    {
+        REQUIRE(resolve_command_error_actions({}, false, used_fallback) == std::vector<int>{PrintErrorAction::OK_BUTTON});
+        REQUIRE(used_fallback);
+    }
+
+    SECTION("a refused print action keeps the generic set")
+    {
+        REQUIRE(resolve_command_error_actions({}, true, used_fallback) == generic_print_error_actions());
+        REQUIRE(used_fallback);
+    }
+
+    SECTION("the table's print-control ids are dropped for a non-print refusal, the rest kept")
+    {
+        REQUIRE(resolve_command_error_actions({PrintErrorAction::RESUME_PRINTING, PrintErrorAction::STOP_PRINTING,
+                                               PrintErrorAction::OK_BUTTON},
+                                              false, used_fallback) == std::vector<int>{PrintErrorAction::OK_BUTTON});
+        REQUIRE_FALSE(used_fallback);
+
+        REQUIRE(resolve_command_error_actions({PrintErrorAction::IGNORE_RESUME, PrintErrorAction::STOP_PRINTING,
+                                               PrintErrorAction::REFRESH_NOZZLE},
+                                              false, used_fallback) == std::vector<int>{PrintErrorAction::REFRESH_NOZZLE});
+
+        // Nothing but print controls: OK, and a REMOVE_CLOSE_BTN the table asked for is still honoured.
+        REQUIRE(resolve_command_error_actions({PrintErrorAction::STOP_PRINTING, PrintErrorAction::REMOVE_CLOSE_BTN},
+                                              false, used_fallback) ==
+                std::vector<int>{PrintErrorAction::OK_BUTTON, PrintErrorAction::REMOVE_CLOSE_BTN});
+        REQUIRE(used_fallback);
+    }
+
+    SECTION("a refused print action gets the table's set unchanged")
+    {
+        REQUIRE(resolve_command_error_actions({PrintErrorAction::RESUME_PRINTING, PrintErrorAction::STOP_PRINTING},
+                                              true, used_fallback) ==
+                std::vector<int>{PrintErrorAction::RESUME_PRINTING, PrintErrorAction::STOP_PRINTING});
+        REQUIRE_FALSE(used_fallback);
     }
 }

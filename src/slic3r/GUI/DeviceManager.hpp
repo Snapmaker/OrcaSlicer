@@ -18,6 +18,7 @@
 #include "CameraPopup.hpp"
 #include "LanReconnectLadder.hpp"
 #include "AmsDrying.hpp"
+#include "PrintErrorCommands.hpp"
 #include "libslic3r/calib.hpp"
 #include "libslic3r/Utils.hpp"
 #define USE_LOCAL_SOCKET_BIND 0
@@ -784,7 +785,18 @@ public:
     // The printer refused a command with `command_err`. Shows the error dialog for it (on the GUI
     // thread, guarded by the object's weak token) and keeps `action_json` for the Proceed /
     // Don't-remind buttons on every surface. Mirrors Bambu Studio's method of the same name.
-    void add_command_error_code_dlg(int command_err, const nlohmann::json& action_json = nlohmann::json());
+    // `command` is the refused command's name: only a refused print action (project_file, pause,
+    // resume, stop, ...) is offered Stop / Resume Printing; anything else gets OK.
+    void add_command_error_code_dlg(int command_err, const nlohmann::json& action_json = nlohmann::json(),
+                                    const std::string& command = std::string());
+
+    // What this slicer has published to the printer and is still waiting on an answer for,
+    // sequence id -> command name. A reply only counts as a refusal when it answers one of these;
+    // see accept_command_refusal. Filled by publish_json.
+    GUI::SentCommandTracker          m_sent_commands;
+    // A command the network plug-in publishes on our behalf (project_file), whose sequence id we
+    // never see. PrintJob calls this just before handing the job over.
+    void note_agent_command_sent(const std::string& command);
 
     // The window this printer's refused commands are shown in.
     //
@@ -1252,6 +1264,9 @@ public:
     void update_filament_list();
     void update_printer_preset_name();
     void check_ams_filament_valid();
+    // check_ams_filament_valid runs once per status push; the "external spool reported under a
+    // nozzle this printer does not have" note is logged the first time only.
+    bool m_vt_tray_unmapped_logged { false };
 
 };
 

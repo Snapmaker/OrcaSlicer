@@ -455,6 +455,10 @@ void PrintJob::process(Ctl &ctl)
     // send gets "confirmed" against a machine that was never sent anything.
     MachineObject* obj = dev->get_my_machine(m_dev_id);
     if (!obj) obj = dev->get_selected_machine();
+    // The plug-in publishes project_file itself, under a sequence id it never hands back. Tell the
+    // printer's object one is on its way, so a refusal of this job is still recognised as ours
+    // while refusals of anybody else's commands are not.
+    if (obj) obj->note_agent_command_sent("project_file");
 
     auto wait_fn = [this, curr_percent, &obj](int state, std::string job_info) {
             BOOST_LOG_TRIVIAL(info) << "print_job: get_job_info = " << job_info;

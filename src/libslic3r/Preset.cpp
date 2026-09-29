@@ -383,6 +383,12 @@ std::string Preset::remove_suffix_modified(const std::string &name)
 // Update new extruder fields at the printer profile.
 void Preset::normalize(DynamicPrintConfig &config)
 {
+    // Print by object is not supported anymore; silently coerce legacy
+    // preset/project values back to by layer.
+    auto *print_seq_opt = config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+    if (print_seq_opt != nullptr && print_seq_opt->value == PrintSequence::ByObject)
+        print_seq_opt->value = PrintSequence::ByLayer;
+
     size_t n = 1;
     if (config.option("single_extruder_multi_material") == nullptr || config.opt_bool("single_extruder_multi_material")) {
         // BBS

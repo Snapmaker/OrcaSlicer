@@ -5927,6 +5927,12 @@ msgstr "请确认这些预设中的G-codes是否安全，以防止对机器造�
 msgid "Customized Preset"
 msgstr "自定义的预设"
 
+msgid "The 3mf file contains print by object, which is not supported in the current version. It will be automatically converted to print by layer!"
+msgstr "该3mf文件包含逐件打印，当前版本已不支持逐件打印，将自动转换为逐层打印！"
+
+msgid "Print by object"
+msgstr "逐件打印"
+
 msgid "Name of components inside step file is not UTF8 format!"
 msgstr "step 文件中的部件名称包含非UTF8格式的字符！"
 

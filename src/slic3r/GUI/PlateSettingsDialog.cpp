@@ -406,9 +406,7 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
     // Print Sequence
     m_print_seq_choice = new ComboBox( this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(240),-1), 0, NULL, wxCB_READONLY );
     m_print_seq_choice->Append(_L("Same as Global Print Sequence"));
-    for (auto i = PrintSequence::ByLayer; i < PrintSequence::ByDefault; i = PrintSequence(int(i) + 1)) {
-        m_print_seq_choice->Append(to_print_sequence_name(i));
-    }
+    m_print_seq_choice->Append(to_print_sequence_name(PrintSequence::ByLayer));
     wxStaticText* m_print_seq_txt = new wxStaticText(this, wxID_ANY, _L("Print sequence"));
     m_print_seq_txt->SetFont(Label::Body_14);
     top_sizer->Add(m_print_seq_txt, 0, wxALIGN_CENTER_VERTICAL | wxALIGN_LEFT | wxTOP | wxBOTTOM, FromDIP(5));

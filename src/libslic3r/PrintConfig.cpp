@@ -1470,9 +1470,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Print sequence, layer by layer or object by object.");
     def->enum_keys_map = &ConfigOptionEnum<PrintSequence>::get_enum_values();
     def->enum_values.push_back("by layer");
-    def->enum_values.push_back("by object");
     def->enum_labels.push_back(L("By layer"));
-    def->enum_labels.push_back(L("By object"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<PrintSequence>(PrintSequence::ByLayer));
 

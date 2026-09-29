@@ -11504,6 +11504,40 @@ void read_binary_stl(const std::string& filename, std::string& model_id, std::st
     return;
 }
 
+// Print by object is no longer supported. Convert legacy per-plate values
+// coming from a 3mf back to by layer. Returns true when any plate was converted.
+static bool normalize_plate_print_sequence(const std::vector<PlateData*>& plate_data_list)
+{
+    bool converted = false;
+    for (PlateData* plate_data : plate_data_list) {
+        if (plate_data == nullptr)
+            continue;
+        auto* print_seq_opt = plate_data->config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+        if (print_seq_opt != nullptr && print_seq_opt->value == PrintSequence::ByObject) {
+            print_seq_opt->value = PrintSequence::ByLayer;
+            converted = true;
+        }
+    }
+    return converted;
+}
+
+// Warn during 3mf loading that print by object was converted to by layer.
+// Styled after the modified/customized G-code warnings of the same loader.
+static void warn_print_by_object_converted(wxWindow* parent)
+{
+    auto warn_choice = wxGetApp().app_config->get("no_warn_when_print_by_object");
+    if (warn_choice == "true")
+        return;
+
+    MessageDialog dlg(parent,
+        _L("The 3mf file contains print by object, which is not supported in the current version. It will be automatically converted to print by layer!"),
+        _L("Print by object"));
+    dlg.show_dsa_button();
+    dlg.ShowModal();
+    if (dlg.get_checkbox_state())
+        wxGetApp().app_config->set("no_warn_when_print_by_object", "true");
+}
+
 // BBS: backup & restore
 std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_files, LoadStrategy strategy, bool ask_multi)
 {
@@ -11887,6 +11921,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     }
 
                     // plate data
+                    bool by_object_converted = false;
                     if (plate_data.size() > 0) {
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", import 3mf UPDATE_GCODE_RESULT \n");
                         wxString msg = wxString::Format(_L("Loading file: %s"), from_path(real_filename));
@@ -11907,6 +11942,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 //set the size back
                                 partplate_list.reset_size(current_width + Bed3D::Axes::DefaultTipRadius, current_depth + Bed3D::Axes::DefaultTipRadius, current_height, false);
                             }
+                            by_object_converted = normalize_plate_print_sequence(plate_data);
                             partplate_list.load_from_3mf_structure(plate_data);
                             partplate_list.update_slice_context_to_current_plate(background_process);
                             this->preview->update_gcode_result(partplate_list.get_current_slice_result());
@@ -11945,6 +11981,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         config.apply(static_cast<const ConfigBase &>(FullPrintConfig::defaults()));
                         // and place the loaded config over the base.
                         config += std::move(config_loaded);
+                        auto* print_seq_opt = config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+                        if (print_seq_opt != nullptr && print_seq_opt->value == PrintSequence::ByObject) {
+                            print_seq_opt->value = PrintSequence::ByLayer;
+                            by_object_converted = true;
+                        }
                         std::map<std::string, std::string> validity = config.validate();
                         if (!validity.empty()) {
                             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format("Param values in 3mf error: ");
@@ -11982,6 +12023,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             }
                         }
                     }
+                    if (by_object_converted)
+                        warn_print_by_object_converted(q);
+
                     if (!config_substitutions.empty()) show_substitutions_info(config_substitutions.substitutions, filename.string());
 
                     // BBS
@@ -12241,6 +12285,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 }
 
                 if (plate_data.size() > 0) {
+                    if (normalize_plate_print_sequence(plate_data))
+                        warn_print_by_object_converted(q);
                     partplate_list.load_from_3mf_structure(plate_data);
                     partplate_list.update_slice_context_to_current_plate(background_process);
                     this->preview->update_gcode_result(partplate_list.get_current_slice_result());
@@ -14479,13 +14525,6 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     if (std::find(panels.begin(), panels.end(), panel) == panels.end())
         return;
 
-    // Prepare and preview both render the by-object yellow warning; re-evaluate
-    // it against the current plate on every page switch. Skip the initial call
-    // from the priv constructor: Plater::p is not assigned until that ctor
-    // returns, and the sync dereferences it.
-    if (current_panel != nullptr)
-        q->sync_print_seq_warning_notification();
-
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current_panel %1%, new_panel %2%")%current_panel%panel;
 #ifdef __WXMAC__
     bool force_render = (current_panel != nullptr);
@@ -14539,7 +14578,6 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                     //reset current plate to the slicing plate
                     int plate_index = this->background_process.get_current_plate()->get_index();
                     this->partplate_list.select_plate(plate_index);
-                    this->q->sync_print_seq_warning_notification();
                 }
             }
             else if (only_has_gcode_need_preview)
@@ -15503,7 +15541,6 @@ void Plater::priv::on_action_add_plate(SimpleEvent&)
         this->partplate_list.create_plate();
         int new_plate = this->partplate_list.get_plate_count() - 1;
         this->partplate_list.select_plate(new_plate);
-        q->sync_print_seq_warning_notification();
         update();
 
         // BBS set default view
@@ -15827,7 +15864,6 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
-    q->sync_print_seq_warning_notification();
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)
@@ -22858,34 +22894,6 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
-void Plater::sync_print_seq_warning_notification()
-{
-    NotificationManager* notify_manager = get_notification_manager();
-    if (notify_manager == nullptr)
-        return;
-
-    // Suppress during startup / preset loading, before the 3D view is live.
-    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
-    if (view3d_canvas == nullptr || !view3d_canvas->is_initialized() || !view3d_canvas->is_rendering_enabled()) {
-        notify_manager->bbl_close_seqprintinfo_notification();
-        return;
-    }
-
-    // Effective sequence: an explicit per-plate value overrides the global
-    // one (PartPlate::get_real_print_seq falls back to global on ByDefault).
-    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
-    const bool by_object = curr_plate != nullptr &&
-        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
-
-    if (by_object) {
-        std::string info_text = _u8L("Warning:") + "\n" +
-            _u8L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-        notify_manager->bbl_show_seqprintinfo_notification(info_text);
-    } else {
-        notify_manager->bbl_close_seqprintinfo_notification();
-    }
-}
-
 bool Plater::guard_before_slice_plate()
 {
     sync_filament_temp_mixing_notification();
@@ -22986,7 +22994,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
 {
     bool update_scheduled = false;
     bool bed_shape_changed = false;
-    bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
     for (auto opt_key : diff_keys) {
         if (opt_key == "filament_colour") {
@@ -23043,7 +23050,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         else if (opt_key == "print_sequence") {
             update_scheduled = true;
-            print_sequence_changed = true;
         }
         else if (opt_key == "printer_model") {
             p->reset_gcode_toolpaths();
@@ -23068,11 +23074,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         this->p->schedule_background_process();
         update_title_dirty_status();
     }
-
-    // Gate on the diff so unrelated option edits never resurrect the yellow
-    // by-object warning once the slice guard has retired it.
-    if (print_sequence_changed)
-        sync_print_seq_warning_notification();
 
     notify_filament_usage_changed();
 }
@@ -23992,8 +23993,6 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         else
             curr_plate->set_print_seq(PrintSequence::ByDefault);
 
-        sync_print_seq_warning_notification();
-
         int spiral_sel = dlg.get_spiral_mode_choice();
         if (spiral_sel == 1) {
             curr_plate->set_spiral_vase_mode(true, false);
@@ -24202,7 +24201,6 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         p->partplate_list.update_plates();
         update();
         p->partplate_list.select_plate(0);
-        sync_print_seq_warning_notification();
     }
 
     else
@@ -24243,10 +24241,6 @@ int Plater::delete_plate(int plate_index)
     p->background_process.set_fff_print(nullptr);
 
     ret = p->partplate_list.delete_plate(index);
-    // Deleting can reselect another plate (PartPlateList::delete_plate),
-    // so re-evaluate the by-object warning against the new current plate.
-    if (!ret)
-        sync_print_seq_warning_notification();
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);

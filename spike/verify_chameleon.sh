@@ -40,7 +40,7 @@
 # `bash verify_chameleon.sh` / `./verify_chameleon.sh`, not `sh verify_chameleon.sh`.
 
 set -u
-cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 # ---------------------------------------------------------------------------
 # Harness fixtures (per spike/FINDINGS.md harness notes)

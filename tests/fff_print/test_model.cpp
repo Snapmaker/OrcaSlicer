@@ -90,6 +90,38 @@ TEST_CASE("Precise Seam volume types round-trip through type_to/from_string", "[
     CHECK(ModelVolume::type_from_string("unknown_future_seam") == ModelVolumeType::MODEL_PART);
 }
 
+TEST_CASE("Change Type dialog index mapping is bounds-safe for Precise Seam subtypes", "[Model][PreciseSeam]")
+{
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::INVALID) == -1);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::MODEL_PART) == 0);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::NEGATIVE_VOLUME) == 1);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::PARAMETER_MODIFIER) == 2);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::SUPPORT_BLOCKER) == 3);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::SUPPORT_ENFORCER) == 4);
+
+    const ModelVolumeType ps_types[] = {
+        ModelVolumeType::PRECISE_SEAM_CENTER, ModelVolumeType::PRECISE_SEAM_LEFT,
+        ModelVolumeType::PRECISE_SEAM_RIGHT,  ModelVolumeType::PRECISE_SEAM_ENFORCED,
+        ModelVolumeType::PRECISE_SEAM_BLOCKED, ModelVolumeType::PRECISE_SEAM_NEUTRAL
+    };
+    for (ModelVolumeType t : ps_types) {
+        CAPTURE(int(t));
+        CHECK(model_volume_type_to_choice_index(t) == int(ModelVolumeType::PRECISE_SEAM_CENTER));
+        CHECK(model_volume_type_to_choice_index(t) == 5);
+    }
+
+    CHECK(model_volume_type_from_choice_index(-1) == ModelVolumeType::INVALID);
+    CHECK(model_volume_type_from_choice_index(0) == ModelVolumeType::MODEL_PART);
+    CHECK(model_volume_type_from_choice_index(4) == ModelVolumeType::SUPPORT_ENFORCER);
+    CHECK(model_volume_type_from_choice_index(5) == ModelVolumeType::PRECISE_SEAM_CENTER);
+    CHECK(model_volume_type_from_choice_index(6) == ModelVolumeType::INVALID);
+    CHECK(model_volume_type_from_choice_index(10) == ModelVolumeType::INVALID);
+
+    // SVG/text hide helper entries, leaving only indices 0..2. Mapping 5 must not
+    // be treated as a valid selection into that shortened list by the caller.
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::PRECISE_SEAM_LEFT) >= 3);
+}
+
 TEST_CASE("sort_volumes keeps strong Precise Seam helpers above weak ones", "[Model][PreciseSeam]")
 {
     Model        model;

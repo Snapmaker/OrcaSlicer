@@ -414,13 +414,30 @@ wxBitmap SettingsFactory::get_category_bitmap(const std::string& category_name, 
 //-------------------------------------
 
 // Note: id accords to type of the sub-object (adding volume), so sequence of the menu items is important
-static const constexpr std::array<std::pair<const char *, const char *>, 5> ADD_VOLUME_MENU_ITEMS = {{
+static const constexpr std::array<std::pair<const char *, const char *>, 11> ADD_VOLUME_MENU_ITEMS = {{
     //       menu_item Name              menu_item bitmap name
         {L("Add part"),              "menu_add_part" },           // ~ModelVolumeType::MODEL_PART
         {L("Add negative part"),     "menu_add_negative" },       // ~ModelVolumeType::NEGATIVE_VOLUME
         {L("Add modifier"),          "menu_add_modifier"},         // ~ModelVolumeType::PARAMETER_MODIFIER
         {L("Add support blocker"),   "menu_support_blocker"},     // ~ModelVolumeType::SUPPORT_BLOCKER
         {L("Add support enforcer"),  "menu_support_enforcer"},     // ~ModelVolumeType::SUPPORT_ENFORCER
+        // Precise Seam modifiers (all 6 subtypes - tree icons; add menu uses a nested submenu)
+        {L("Add precise seam"),      "menu_precise_seam_center"},     // ~ModelVolumeType::PRECISE_SEAM_CENTER
+        {L("Add precise seam"),      "menu_precise_seam_left"},       // ~ModelVolumeType::PRECISE_SEAM_LEFT
+        {L("Add precise seam"),      "menu_precise_seam_right"},      // ~ModelVolumeType::PRECISE_SEAM_RIGHT
+        {L("Add precise seam"),      "menu_precise_seam_enforced"},   // ~ModelVolumeType::PRECISE_SEAM_ENFORCED
+        {L("Add precise seam"),      "menu_precise_seam_blocked"},    // ~ModelVolumeType::PRECISE_SEAM_BLOCKED
+        {L("Add precise seam"),      "menu_precise_seam_neutral"},    // ~ModelVolumeType::PRECISE_SEAM_NEUTRAL
+}};
+
+// "Seam ..." prefix disambiguates from other i18n contexts (extruder Left/Right, "Center on bed", etc.)
+static const std::array<std::pair<const char*, ModelVolumeType>, 6> PRECISE_SEAM_MENU_TYPES = {{
+    {L("Seam Center"),   ModelVolumeType::PRECISE_SEAM_CENTER},
+    {L("Seam Left"),     ModelVolumeType::PRECISE_SEAM_LEFT},
+    {L("Seam Right"),    ModelVolumeType::PRECISE_SEAM_RIGHT},
+    {L("Seam Enforced"), ModelVolumeType::PRECISE_SEAM_ENFORCED},
+    {L("Seam Blocked"),  ModelVolumeType::PRECISE_SEAM_BLOCKED},
+    {L("Seam Neutral"),  ModelVolumeType::PRECISE_SEAM_NEUTRAL},
 }};
 
 // Note: id accords to type of the sub-object (adding volume), so sequence of the menu items is important
@@ -813,7 +830,26 @@ void MenuFactory::append_menu_items_add_volume(wxMenu* menu)
 
     for (size_t type = 0; type < ADD_VOLUME_MENU_ITEMS.size(); type++)
     {
+        // Skip Precise Seam subtypes except CENTER — they only supply tree icons.
+        // CENTER is expanded into a nested "Add precise seam" submenu of the six types.
+        if (type >= size_t(int(ModelVolumeType::PRECISE_SEAM_LEFT)) &&
+            type <= size_t(int(ModelVolumeType::PRECISE_SEAM_NEUTRAL)))
+            continue;
+
         auto& item = ADD_VOLUME_MENU_ITEMS[type];
+
+        if (type == size_t(int(ModelVolumeType::PRECISE_SEAM_CENTER))) {
+            wxMenu* ps_root = new wxMenu;
+            for (const auto& ps_type : PRECISE_SEAM_MENU_TYPES) {
+                wxMenu* sub_menu = append_submenu_add_generic(ps_root, ps_type.second);
+                append_submenu(ps_root, sub_menu, wxID_ANY, _(ps_type.first), "",
+                    ADD_VOLUME_MENU_ITEMS[int(ps_type.second)].second,
+                    []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+            }
+            append_submenu(menu, ps_root, wxID_ANY, _(item.first), "", "menu_precise_seam_add",
+                []() { return obj_list()->is_instance_or_object_selected(); }, m_parent);
+            continue;
+        }
 
         wxMenu* sub_menu = append_submenu_add_generic(menu, ModelVolumeType(type));
         append_submenu(menu, sub_menu, wxID_ANY, _(item.first), "", item.second,
@@ -906,6 +942,69 @@ wxMenuItem* MenuFactory::append_menu_item_change_type(wxMenu* menu)
             wxDataViewItem item = obj_list()->GetSelection();
             return item.IsOk() || obj_list()->GetModel()->GetItemType(item) == itVolume;
         }, m_parent);
+}
+
+void MenuFactory::append_menu_item_precise_seam_submenu(wxMenu* menu)
+{
+    wxString submenu_name = _L("Precise Seam Type");
+
+    // Remove existing submenu if present (menu is rebuilt on every right-click)
+    const int menu_item_id = menu->FindItem(submenu_name);
+    if (menu_item_id != wxNOT_FOUND)
+        menu->Destroy(menu_item_id);
+
+    // --- Precondition: ALL selected volumes must be Precise Seam ---
+    // Mixed selections (PS + non-PS) are ambiguous for subtype switching: applying a subtype
+    // would implicitly convert the non-PS volumes to PS, which is not what the user expects
+    // from a subtype picker. For mixed selections the user should first use
+    // "Change type" → "Precise Seam" to unify them, then come back to this submenu.
+    wxDataViewItemArray sels;
+    obj_list()->GetSelections(sels);
+    if (sels.IsEmpty())
+        return;
+
+    std::vector<ModelVolumeType> selected_ps_types;
+    selected_ps_types.reserve(sels.size());
+
+    auto* model = obj_list()->GetModel();
+    for (const auto& sel_item : sels) {
+        wxDataViewItem vol_item  = sel_item;
+        const ItemType type_mask = model->GetItemType(sel_item);
+        if (!(type_mask & itVolume)) {
+            if ((type_mask & itSettings) && (model->GetItemType(model->GetParent(sel_item)) & itVolume))
+                vol_item = model->GetParent(sel_item);
+            else
+                return;
+        }
+        const ModelVolumeType vol_type = model->GetVolumeType(vol_item);
+        if (!is_precise_seam(vol_type))
+            return;
+        selected_ps_types.push_back(vol_type);
+    }
+
+    wxMenu* ps_menu = new wxMenu();
+
+    for (const auto& ps_type : PRECISE_SEAM_MENU_TYPES) {
+        wxString label = _(ps_type.first);
+
+        wxMenuItem* item = append_menu_check_item(ps_menu, wxID_ANY, label, "",
+            [ps_type](wxCommandEvent&) {
+                obj_list()->set_volume_type(ps_type.second, /*preserve_ps_subtype=*/false);
+            },
+            ps_menu);
+
+        const bool is_present = std::find(selected_ps_types.begin(), selected_ps_types.end(),
+                                          ps_type.second) != selected_ps_types.end();
+        if (is_present && item)
+            item->Check(true);
+    }
+
+    append_submenu(menu, ps_menu, wxID_ANY,
+                   submenu_name,
+                   _L("Choose precise seam subtype"),
+                   "menu_precise_seam_type",
+                   []() { return true; },
+                   m_parent);
 }
 
 wxMenuItem* MenuFactory::append_menu_item_instance_to_object(wxMenu* menu)
@@ -2485,6 +2584,7 @@ wxMenu* MenuFactory::part_menu()
     // Ultra (support groups): rebuilt per open, like Change Filament above it.
     append_menu_items_support_group(&m_part_menu);
     append_menu_item_per_object_settings(&m_part_menu);
+    append_menu_item_precise_seam_submenu(&m_part_menu);
     return &m_part_menu;
 }
 
@@ -2592,6 +2692,8 @@ wxMenu* MenuFactory::multi_selection_menu()
         }
         menu->AppendSeparator();
         append_menu_item_change_filament(menu);
+        append_menu_item_change_type(menu);
+        append_menu_item_precise_seam_submenu(menu);
     }
     return menu;
 }

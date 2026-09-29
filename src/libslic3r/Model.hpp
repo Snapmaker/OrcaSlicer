@@ -375,6 +375,34 @@ inline bool is_precise_seam(ModelVolumeType t)        { return t >= ModelVolumeT
 inline bool is_precise_seam_strong(ModelVolumeType t) { return t >= ModelVolumeType::PRECISE_SEAM_CENTER && t <= ModelVolumeType::PRECISE_SEAM_RIGHT; }
 inline bool is_precise_seam_weak(ModelVolumeType t)   { return t >= ModelVolumeType::PRECISE_SEAM_ENFORCED && t <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
 
+// Compact Change Type dialog index. Layout when helpers are listed:
+//   0 Part, 1 Negative, 2 Modifier, 3 Support Blocker, 4 Support Enforcer, 5 Precise Seam.
+// All six Precise Seam subtypes share index 5 (PRECISE_SEAM_CENTER). Out-of-range
+// types map to -1 / INVALID so the dialog and enum conversion stay bounds-safe
+// even if the list is shortened (SVG/text hide helper entries).
+inline int model_volume_type_to_choice_index(ModelVolumeType t)
+{
+    const int v = int(t);
+    if (v < int(ModelVolumeType::MODEL_PART))
+        return -1;
+    if (v <= int(ModelVolumeType::SUPPORT_ENFORCER))
+        return v;
+    if (is_precise_seam(t))
+        return int(ModelVolumeType::PRECISE_SEAM_CENTER);
+    return -1;
+}
+
+inline ModelVolumeType model_volume_type_from_choice_index(int index)
+{
+    if (index < int(ModelVolumeType::MODEL_PART))
+        return ModelVolumeType::INVALID;
+    if (index <= int(ModelVolumeType::SUPPORT_ENFORCER))
+        return ModelVolumeType(index);
+    if (index == int(ModelVolumeType::PRECISE_SEAM_CENTER))
+        return ModelVolumeType::PRECISE_SEAM_CENTER;
+    return ModelVolumeType::INVALID;
+}
+
 // A printable object, possibly having multiple print volumes (each with its own set of parameters and materials),
 // and possibly having multiple modifier volumes, each modifier volume with its set of parameters and materials.
 // Each ModelObject may be instantiated mutliple times, each instance having different placement on the print bed,

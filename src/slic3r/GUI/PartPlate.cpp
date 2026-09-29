@@ -1491,7 +1491,7 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
             if (!instance->printable)
                 continue;
 
-			append_object_plate_filament_ids(*object, full_config, plate_extruders);
+            append_object_plate_filament_ids(*object, full_config, plate_extruders);
         }
     }
 

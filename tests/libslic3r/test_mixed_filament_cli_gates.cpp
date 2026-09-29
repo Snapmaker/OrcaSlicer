@@ -424,14 +424,13 @@ TEST_CASE("append_object_plate_filament_ids matches PartPlate get_extruders path
     modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
     modifier->config.set("wall_filament", 4);
 
-    object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("extruder", 2);
+    // Feature-only range: do not set `extruder` here (that zeroes outer_wall and would hide 3).
     object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("sparse_infill_filament", 4);
 
     std::vector<int> plate_ids;
     append_object_plate_filament_ids(*object, cfg, plate_ids);
     plate_ids = unique_positive(plate_ids);
     CHECK(contains_id(plate_ids, 1));
-    CHECK(contains_id(plate_ids, 2));
     CHECK(contains_id(plate_ids, 3));
     CHECK(contains_id(plate_ids, 4));
 
@@ -541,7 +540,6 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with a real Model yields two plat
     ModelVolume *modifier = object->add_volume(make_cube(4., 4., 4.));
     modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
     modifier->config.set("wall_filament", 1);
-    object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("extruder", 1);
 
     std::vector<int> plate_ids;
     append_object_plate_filament_ids(*object, cfg, plate_ids);
@@ -568,4 +566,158 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with a real Model yields two plat
     const std::string gcode = Slic3r::Test::gcode(print);
     REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
     REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
+}
+
+TEST_CASE("object extruder 2 is the plate set without a phantom 1", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionBool>("enable_support")->value = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value     = 0;
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    object->config.set("extruder", 2);
+
+    std::vector<int> ids;
+    append_object_plate_filament_ids(*object, cfg, ids);
+    REQUIRE(unique_positive(ids) == std::vector<int>{2});
+}
+
+TEST_CASE("part extruder 3 does not inject filament 1", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionBool>("enable_support")->value = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value     = 0;
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    object->volumes.front()->config.set("extruder", 3);
+
+    std::vector<int> ids;
+    append_object_plate_filament_ids(*object, cfg, ids);
+    ids = unique_positive(ids);
+    CHECK_FALSE(contains_id(ids, 1));
+    CHECK(contains_id(ids, 3));
+}
+
+TEST_CASE("height range extruder 2 does not inject filament 1", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionBool>("enable_support")->value = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value     = 0;
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    object->layer_config_ranges[t_layer_height_range{0.0, 10.0}].set("extruder", 2);
+
+    std::vector<int> ids;
+    append_object_plate_filament_ids(*object, cfg, ids);
+    ids = unique_positive(ids);
+    CHECK_FALSE(contains_id(ids, 1));
+    CHECK(contains_id(ids, 2));
+}
+
+TEST_CASE("object sparse_infill_filament 0 keeps the global sparse filament", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionBool>("enable_support")->value        = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value            = 0;
+    cfg.option<ConfigOptionInt>("sparse_infill_filament")->value = 2;
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    object->config.set("sparse_infill_filament", 0);
+
+    std::vector<int> ids;
+    append_object_plate_filament_ids(*object, cfg, ids);
+    CHECK(contains_id(unique_positive(ids), 2));
+}
+
+TEST_CASE("U1 CLI smoke: support plus independent_support_layer_height still keeps the tower", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_num_extruders(4);
+    cfg.set_num_filaments(4);
+    cfg.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4, 0.4, 0.4};
+    cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    cfg.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    cfg.option<ConfigOptionBool>("enable_support")->value       = true;
+    cfg.option<ConfigOptionBool>("independent_support_layer_height")->value = true;
+    cfg.option<ConfigOptionBool>("single_extruder_multi_material")->value   = false;
+    cfg.option<ConfigOptionBool>("purge_in_prime_tower")->value             = false;
+    if (auto *wrapping = cfg.option<ConfigOptionBool>("enable_wrapping_detection"))
+        wrapping->value = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value           = 0;
+    cfg.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
+    cfg.option<ConfigOptionInt>("wall_filament")->value         = 1;
+    cfg.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
+    cfg.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+    cfg.option<ConfigOptionFloats>("wipe_tower_x")->values       = {15.};
+    cfg.option<ConfigOptionFloats>("wipe_tower_y")->values       = {15.};
+    cfg.option<ConfigOptionFloat>("prime_tower_width")->value    = 35.;
+    cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    plate_ids = unique_positive(plate_ids);
+    REQUIRE(contains_id(plate_ids, 1));
+    REQUIRE(contains_id(plate_ids, 2));
+
+    Print              print;
+    Model              slice_model;
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, slice_model, cfg);
+    REQUIRE(print.has_wipe_tower());
+    REQUIRE_FALSE(print.config().independent_support_layer_height.value);
+    const std::string gcode = Slic3r::Test::gcode(print);
+    REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
+}
+
+TEST_CASE("U1 CLI smoke: object on filament 2 has plate set {2} and no tower", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_num_extruders(4);
+    cfg.set_num_filaments(4);
+    cfg.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4, 0.4, 0.4};
+    cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    cfg.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+    cfg.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    cfg.option<ConfigOptionBool>("purge_in_prime_tower")->value           = false;
+    if (auto *wrapping = cfg.option<ConfigOptionBool>("enable_wrapping_detection"))
+        wrapping->value = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value         = 0;
+    cfg.option<ConfigOptionFloats>("wipe_tower_x")->values     = {15.};
+    cfg.option<ConfigOptionFloats>("wipe_tower_y")->values     = {15.};
+    cfg.option<ConfigOptionFloat>("prime_tower_width")->value  = 35.;
+    cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    auto check_single_filament = [&](int filament_1based) {
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        object->config.set("extruder", filament_1based);
+        std::vector<int> plate_ids;
+        append_object_plate_filament_ids(*object, cfg, plate_ids);
+        REQUIRE(unique_positive(plate_ids) == std::vector<int>{filament_1based});
+
+        Print print;
+        print.apply(model, cfg);
+        print.set_status_silent();
+        REQUIRE(print.extruders() == std::vector<unsigned int>{unsigned(filament_1based - 1)});
+        REQUIRE_FALSE(print.has_wipe_tower());
+        REQUIRE_FALSE(print.config().enable_prime_tower.value);
+        const std::string gcode = Slic3r::Test::gcode(print);
+        CHECK(gcode.find("WIPE_TOWER_START") == std::string::npos);
+    };
+
+    SECTION("filament 2") { check_single_filament(2); }
+    SECTION("filament 3") { check_single_filament(3); }
 }

@@ -2186,15 +2186,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             }
     }
 
-    // Update SlicingParameters for each object where the SlicingParameters is not valid.
-    // If it is not valid, then it is ensured that PrintObject.m_slicing_params is not in use
-    // (posSlicing and posSupportMaterial was invalidated).
-    for (PrintObject *object : m_objects)
-    {
-        object->update_slicing_parameters();
-        m_support_used |= object->config().enable_support;
-    }
-
     // The pre-region normalize_fdm_2 (around the object-status pass) counts used filaments
     // while a fresh PrintObject still has an empty all_regions(). A 2nd filament that only
     // appears as outer_wall_filament then looks like a 1-filament plate and
@@ -2202,7 +2193,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // single apply (CLI / GUI Slice all on a never-viewed plate) keeps the tower. Only
     // apply/invalidate keys whose live values actually changed. Do not touch new_full_config:
     // it may already have been moved into m_full_print_config above.
-    if (!m_objects.empty()) {
+    // Run this before update_slicing_parameters: turning the tower on also clears
+    // independent_support_layer_height, and SlicingParameters::create_from_config reads that
+    // flag. Invalidate first, then write, matching the print_diff apply at ~1521.
+    if (requested_enable_prime_tower && !m_objects.empty()) {
         const int          used_after_regions = int(this->extruders(true).size());
         DynamicPrintConfig after              = m_full_print_config;
         if (auto *ept = after.option<ConfigOptionBool>("enable_prime_tower"))
@@ -2217,12 +2211,21 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             keys.push_back("enable_prime_tower");
         keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const t_config_option_key &key) { return !differs(key); }), keys.end());
         if (!keys.empty()) {
+            update_apply_status(this->invalidate_state_by_config_options(after, keys));
             m_config.apply_only(after, keys, true);
             m_default_object_config.apply_only(after, keys, true);
             m_default_region_config.apply_only(after, keys, true);
             m_full_print_config.apply_only(after, keys, true);
-            update_apply_status(this->invalidate_state_by_config_options(m_config, keys));
         }
+    }
+
+    // Update SlicingParameters for each object where the SlicingParameters is not valid.
+    // If it is not valid, then it is ensured that PrintObject.m_slicing_params is not in use
+    // (posSlicing and posSupportMaterial was invalidated).
+    for (PrintObject *object : m_objects)
+    {
+        object->update_slicing_parameters();
+        m_support_used |= object->config().enable_support;
     }
 
 #ifdef _DEBUG

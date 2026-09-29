@@ -79,8 +79,10 @@ void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &
 bool volume_contributes_feature_filaments(const ModelVolume &volume);
 
 // Shared by PartPlate::get_extruders, get_extruders_under_cli, and collect_cli_filament_ids.
-// Volume extruder ids, gated per-feature overrides on contributing volumes and height
-// ranges, object-level feature filaments, and support filaments only when support/raft is on.
+// Builds each MODEL_PART region the way slicing does (region_config_from_model_volume per
+// existing layer range, modifiers on the parent part) and then the unclamped four-gate check.
+// Support filaments are included only when support/raft is on. Objects with no MODEL_PART
+// volumes fall back to object-level feature keys (slot-gate tests, empty shells).
 void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids);
 
 // 1-based filament printing the outer wall of an object whose own config is `object_config`
@@ -90,10 +92,10 @@ void append_object_plate_filament_ids(const ModelObject &object, const DynamicPr
 // wins over a global outer filament (explicit "follow walls").
 int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config);
 
-// Same as append_config_filament_ids, but scans every model's object-level config,
-// each volume's get_extruders() plus contributing per-feature keys, and each
-// layer-height-range's "extruder" option plus per-feature keys too - i.e. every place a
-// CLI-loaded 3mf can pin a filament id, mixed slots included.
+// Same as append_config_filament_ids, then append_object_plate_filament_ids for every
+// object in the loaded models - i.e. every place a CLI-loaded 3mf can pin a filament id,
+// mixed slots included. `extruder` is applied the same way slicing does (overrides
+// wall/sparse/solid, zeroes outer wall, ignores feature values of 0).
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids);
 
 // Resolves a MixedFilament's components (manual pattern tokens, or component_a/b

@@ -10,6 +10,13 @@
 
 namespace Slic3r {
 
+// Defined in PrintObject.cpp; slicing and this helper must share the same region builder so
+// object/part/range `extruder` assignments match Print::extruders().
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config,
+                                                  const DynamicPrintConfig *layer_range_config,
+                                                  const ModelVolume        &volume,
+                                                  size_t                    num_extruders);
+
 std::string cli_mixed_filament_definitions(const DynamicPrintConfig &print_config, const DynamicPrintConfig *extra_config)
 {
     if (extra_config) {
@@ -246,23 +253,67 @@ void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> 
 void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids)
 {
     const bool has_brim = object_has_brim(object, global_config);
-    append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), nullptr), has_brim, ids);
 
+    PrintRegionConfig default_region;
+    default_region.apply(global_config, true);
+
+    size_t num_physical = 0;
+    if (const auto *opt = global_config.option<ConfigOptionFloats>("filament_diameter"))
+        num_physical = opt->values.size();
+    else if (const auto *opt = global_config.option<ConfigOptionStrings>("filament_colour"))
+        num_physical = opt->values.size();
+    std::vector<std::string> colors;
+    if (const auto *opt = global_config.option<ConfigOptionStrings>("filament_colour"))
+        colors = opt->values;
+    MixedFilamentManager mgr;
+    populate_cli_mixed_filament_manager(mgr, global_config, nullptr, colors, num_physical);
+    const size_t num_total = std::max(std::max(mgr.total_filaments(num_physical), num_physical), size_t(1));
+
+    std::vector<const ModelVolume *> parts;
+    std::vector<const ModelVolume *> modifiers;
     for (const ModelVolume *mv : object.volumes) {
         if (mv == nullptr)
             continue;
-        const std::vector<int> volume_extruders = mv->get_extruders();
-        ids.insert(ids.end(), volume_extruders.begin(), volume_extruders.end());
-        if (volume_contributes_feature_filaments(*mv))
-            append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), &mv->config.get()), has_brim, ids);
+        if (mv->is_model_part())
+            parts.push_back(mv);
+        else if (mv->is_modifier())
+            modifiers.push_back(mv);
     }
 
-    for (const auto &layer_range : object.layer_config_ranges) {
-        if (layer_range.second.has("extruder")) {
-            if (const int id = layer_range.second.option("extruder")->getInt(); id > 0)
+    if (parts.empty()) {
+        // Slot-gate objects often have no volumes; keep object-level feature keys and extruder.
+        append_feature_filament_overrides(object.config.get(), ids);
+        if (object.config.has("extruder")) {
+            if (const int id = object.config.option("extruder")->getInt(); id > 0)
                 ids.push_back(id);
         }
-        append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), &layer_range.second.get()), has_brim, ids);
+        if (object_prints_support(object, global_config))
+            append_support_filament_ids(object, global_config, ids);
+        return;
+    }
+
+    // Per MODEL_PART per existing layer_config_ranges entry (do not synthesize LayerRanges
+    // gaps: a nullptr-config gap would push the default filament 1). `extruder` is applied
+    // inside region_config_from_model_volume the same way slicing does.
+    std::vector<PrintRegionConfig> parent_regions;
+    parent_regions.reserve(parts.size() * std::max(object.layer_config_ranges.size(), size_t(1)));
+    for (const ModelVolume *part : parts) {
+        if (object.layer_config_ranges.empty()) {
+            parent_regions.push_back(region_config_from_model_volume(default_region, nullptr, *part, num_total));
+        } else {
+            for (const auto &layer_range : object.layer_config_ranges)
+                parent_regions.push_back(
+                    region_config_from_model_volume(default_region, &layer_range.second.get(), *part, num_total));
+        }
+    }
+    for (const PrintRegionConfig &region : parent_regions)
+        append_gated_feature_filament_ids(region, has_brim, ids);
+
+    for (const ModelVolume *modifier : modifiers) {
+        for (const PrintRegionConfig &parent : parent_regions) {
+            append_gated_feature_filament_ids(region_config_from_model_volume(parent, nullptr, *modifier, num_total),
+                                              has_brim, ids);
+        }
     }
 
     if (object_prints_support(object, global_config))

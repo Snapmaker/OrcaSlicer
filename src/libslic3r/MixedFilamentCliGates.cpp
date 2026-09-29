@@ -119,17 +119,154 @@ bool config_int_if_present(const ConfigBase *cfg, const char *key, int &out)
     return false;
 }
 
+int config_int_or(const ConfigBase &cfg, const char *key, int fallback)
+{
+    if (const ConfigOption *opt = cfg.option(key))
+        return opt->getInt();
+    return fallback;
+}
+
+double config_float_or(const ConfigBase &cfg, const char *key, double fallback)
+{
+    if (const ConfigOption *opt = cfg.option(key))
+        return opt->getFloat();
+    return fallback;
+}
+
+bool config_bool_or(const ConfigBase &cfg, const char *key, bool fallback)
+{
+    if (const ConfigOption *opt = cfg.option(key))
+        return opt->getBool();
+    return fallback;
+}
+
+// Same four feature-enable gates as PrintRegion::collect_object_printing_extruders
+// (PrintRegion.cpp:128-137), but 1-based project ids are pushed without clamping to
+// filament_diameter.size(). That clamp would map mixed virtual ids onto filament 1.
+void append_gated_feature_filament_ids(const PrintRegionConfig &region, bool has_brim, std::vector<int> &ids)
+{
+    if (region.wall_loops.value > 0 || has_brim) {
+        if (region.wall_filament.value > 0)
+            ids.push_back(region.wall_filament.value);
+        if (region.wall_loops.value > 0 && region.outer_wall_filament.value > 0)
+            ids.push_back(region.outer_wall_filament.value);
+    }
+    if (region.sparse_infill_density.value > 0 && region.sparse_infill_filament.value > 0)
+        ids.push_back(region.sparse_infill_filament.value);
+    if ((region.top_shell_layers.value > 0 || region.bottom_shell_layers.value > 0) && region.solid_infill_filament.value > 0)
+        ids.push_back(region.solid_infill_filament.value);
+}
+
+PrintRegionConfig effective_region(const ConfigBase &global, const ConfigBase *object_cfg, const ConfigBase *overlay)
+{
+    PrintRegionConfig region;
+    region.apply(global, true);
+    if (object_cfg != nullptr)
+        region.apply(*object_cfg, true);
+    if (overlay != nullptr)
+        region.apply(*overlay, true);
+    return region;
+}
+
+bool object_has_brim(const ModelObject &object, const DynamicPrintConfig &global)
+{
+    const int raft = object.config.has("raft_layers") ? object.config.option("raft_layers")->getInt() :
+                                                       config_int_or(global, "raft_layers", 0);
+    if (raft > 0)
+        return false;
+    const int type = object.config.has("brim_type") ? object.config.option("brim_type")->getInt() :
+                                                      config_int_or(global, "brim_type", int(btNoBrim));
+    const double width = object.config.has("brim_width") ? object.config.option("brim_width")->getFloat() :
+                                                           config_float_or(global, "brim_width", 0.);
+    return (type != int(btNoBrim) && width > 0.) || type == int(btAutoBrim) || type == int(btPainted);
+}
+
+bool object_prints_support(const ModelObject &object, const DynamicPrintConfig &global)
+{
+    const ConfigOption *obj_support = object.config.option("enable_support");
+    const ConfigOption *obj_raft    = object.config.option("raft_layers");
+    if (obj_support != nullptr || obj_raft != nullptr) {
+        bool support = obj_support != nullptr && obj_support->getBool();
+        if (obj_raft != nullptr)
+            support |= obj_raft->getInt() > 0;
+        return support;
+    }
+    return config_bool_or(global, "enable_support", false) || config_int_or(global, "raft_layers", 0) > 0;
+}
+
+void append_support_filament_ids(const ModelObject &object, const DynamicPrintConfig &global, std::vector<int> &ids)
+{
+    const int glb_support_intf = config_int_or(global, "support_interface_filament", 0);
+    const int glb_support      = config_int_or(global, "support_filament", 0);
+    int       obj_support_intf = object.config.has("support_interface_filament") ?
+                               object.config.option("support_interface_filament")->getInt() : 0;
+    int       obj_support      = object.config.has("support_filament") ?
+                          object.config.option("support_filament")->getInt() : 0;
+    if (obj_support_intf != 0)
+        ids.push_back(obj_support_intf);
+    else if (glb_support_intf != 0)
+        ids.push_back(glb_support_intf);
+    if (obj_support != 0)
+        ids.push_back(obj_support);
+    else if (glb_support != 0)
+        ids.push_back(glb_support);
+}
+
 } // namespace
+
+bool volume_contributes_feature_filaments(const ModelVolume &volume)
+{
+    return volume.is_modifier() || volume.is_model_part();
+}
 
 void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids)
 {
-    append_positive_int_keys(cfg, {"wall_filament", "outer_wall_filament", "sparse_infill_filament", "solid_infill_filament"}, ids);
+    // Defaults fill in the enable flags (wall_loops, density, shells) when the overlay
+    // only names a filament key. Only keys actually present on `cfg` are pushed, so a
+    // modifier that sets wall_filament=2 does not also inherit the global sparse id.
+    const PrintRegionConfig region = effective_region(cfg, nullptr, nullptr);
+    if (cfg.option("wall_filament") && (region.wall_loops.value > 0) && region.wall_filament.value > 0)
+        ids.push_back(region.wall_filament.value);
+    if (cfg.option("outer_wall_filament") && region.wall_loops.value > 0 && region.outer_wall_filament.value > 0)
+        ids.push_back(region.outer_wall_filament.value);
+    if (cfg.option("sparse_infill_filament") && region.sparse_infill_density.value > 0 && region.sparse_infill_filament.value > 0)
+        ids.push_back(region.sparse_infill_filament.value);
+    if (cfg.option("solid_infill_filament") &&
+        (region.top_shell_layers.value > 0 || region.bottom_shell_layers.value > 0) && region.solid_infill_filament.value > 0)
+        ids.push_back(region.solid_infill_filament.value);
 }
 
 void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids)
 {
     append_feature_filament_overrides(cfg, ids);
-    append_positive_int_keys(cfg, {"support_filament", "support_interface_filament"}, ids);
+    if (config_bool_or(cfg, "enable_support", false) || config_int_or(cfg, "raft_layers", 0) > 0)
+        append_positive_int_keys(cfg, {"support_filament", "support_interface_filament"}, ids);
+}
+
+void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids)
+{
+    const bool has_brim = object_has_brim(object, global_config);
+    append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), nullptr), has_brim, ids);
+
+    for (const ModelVolume *mv : object.volumes) {
+        if (mv == nullptr)
+            continue;
+        const std::vector<int> volume_extruders = mv->get_extruders();
+        ids.insert(ids.end(), volume_extruders.begin(), volume_extruders.end());
+        if (volume_contributes_feature_filaments(*mv))
+            append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), &mv->config.get()), has_brim, ids);
+    }
+
+    for (const auto &layer_range : object.layer_config_ranges) {
+        if (layer_range.second.has("extruder")) {
+            if (const int id = layer_range.second.option("extruder")->getInt(); id > 0)
+                ids.push_back(id);
+        }
+        append_gated_feature_filament_ids(effective_region(global_config, &object.config.get(), &layer_range.second.get()), has_brim, ids);
+    }
+
+    if (object_prints_support(object, global_config))
+        append_support_filament_ids(object, global_config, ids);
 }
 
 int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config)
@@ -152,22 +289,7 @@ void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPri
         for (const ModelObject *obj : model.objects) {
             if (obj == nullptr)
                 continue;
-            append_config_filament_ids(obj->config.get(), ids);
-            for (const ModelVolume *mv : obj->volumes) {
-                if (mv == nullptr)
-                    continue;
-                const std::vector<int> volume_extruders = mv->get_extruders();
-                ids.insert(ids.end(), volume_extruders.begin(), volume_extruders.end());
-                if (mv->is_modifier())
-                    append_feature_filament_overrides(mv->config.get(), ids);
-            }
-            for (const auto &layer_range : obj->layer_config_ranges) {
-                if (layer_range.second.has("extruder")) {
-                    if (const int id = layer_range.second.option("extruder")->getInt(); id > 0)
-                        ids.push_back(id);
-                }
-                append_feature_filament_overrides(layer_range.second.get(), ids);
-            }
+            append_object_plate_filament_ids(*obj, print_config, ids);
         }
     }
 }

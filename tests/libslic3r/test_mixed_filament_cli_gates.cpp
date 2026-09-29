@@ -3,8 +3,13 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/MixedFilamentCliGates.hpp"
+#include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Slicing.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/GCode/WipeTowerEstimate.hpp"
+
+#include "../fff_print/test_data.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -31,6 +36,27 @@ DynamicPrintConfig four_physical_filament_config()
 }
 
 const std::vector<std::string> four_colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+
+std::vector<int> unique_positive(std::vector<int> ids)
+{
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+    ids.erase(std::remove(ids.begin(), ids.end(), 0), ids.end());
+    return ids;
+}
+
+bool contains_id(const std::vector<int> &ids, int id)
+{
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+ModelObject *add_cube_object(Model &model)
+{
+    ModelObject *object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    return object;
+}
 
 } // namespace
 
@@ -361,7 +387,127 @@ TEST_CASE("CLI mixed filament slot gate refuses outer_wall_filament beyond the m
     }
 }
 
-TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with no support yields two plate filaments and a tower", "[MixedFilamentCli]")
+TEST_CASE("volume_contributes_feature_filaments is MODEL_PART or PARAMETER_MODIFIER", "[MixedFilamentCli]")
+{
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    REQUIRE(volume_contributes_feature_filaments(*object->volumes.front()));
+
+    ModelVolume *modifier = object->add_volume(make_cube(5., 5., 5.));
+    modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    REQUIRE(volume_contributes_feature_filaments(*modifier));
+
+    ModelVolume *negative = object->add_volume(make_cube(2., 2., 2.));
+    negative->set_type(ModelVolumeType::NEGATIVE_VOLUME);
+    REQUIRE_FALSE(volume_contributes_feature_filaments(*negative));
+
+    ModelVolume *blocker = object->add_volume(make_cube(2., 2., 2.));
+    blocker->set_type(ModelVolumeType::SUPPORT_BLOCKER);
+    REQUIRE_FALSE(volume_contributes_feature_filaments(*blocker));
+}
+
+TEST_CASE("append_object_plate_filament_ids matches PartPlate get_extruders paths on a real Model", "[MixedFilamentCli]")
+{
+    // PartPlate::get_extruders / get_extruders_under_cli both call this helper; libslic3r_tests
+    // cannot construct a wx PartPlate, so the shared body is what those methods run.
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionInt>("outer_wall_filament")->value = 2;
+    cfg.option<ConfigOptionBool>("enable_support")->value     = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value         = 0;
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    object->volumes.front()->config.set("outer_wall_filament", 3);
+
+    ModelVolume *modifier = object->add_volume(make_cube(5., 5., 5.));
+    modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    modifier->config.set("wall_filament", 4);
+
+    object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("extruder", 2);
+    object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("sparse_infill_filament", 4);
+
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    plate_ids = unique_positive(plate_ids);
+    CHECK(contains_id(plate_ids, 1));
+    CHECK(contains_id(plate_ids, 2));
+    CHECK(contains_id(plate_ids, 3));
+    CHECK(contains_id(plate_ids, 4));
+
+    std::vector<int> cli_ids;
+    std::vector<Model> models;
+    models.push_back(std::move(model));
+    collect_cli_filament_ids(models, cfg, cli_ids);
+    cli_ids = unique_positive(cli_ids);
+    CHECK(contains_id(cli_ids, 3));
+    CHECK(contains_id(cli_ids, 4));
+}
+
+TEST_CASE("disabled features are not counted as plate filaments", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+    cfg.option<ConfigOptionInt>("raft_layers")->value = 0;
+
+    SECTION("wall_loops 0 skips outer_wall_filament") {
+        cfg.option<ConfigOptionInt>("wall_loops")->value           = 0;
+        cfg.option<ConfigOptionInt>("outer_wall_filament")->value  = 2;
+        cfg.option<ConfigOptionBool>("enable_support")->value      = false;
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        std::vector<int> ids;
+        append_object_plate_filament_ids(*object, cfg, ids);
+        CHECK_FALSE(contains_id(unique_positive(ids), 2));
+    }
+    SECTION("sparse density 0 skips sparse_infill_filament") {
+        cfg.option<ConfigOptionPercent>("sparse_infill_density")->value = 0;
+        cfg.option<ConfigOptionInt>("sparse_infill_filament")->value    = 2;
+        cfg.option<ConfigOptionBool>("enable_support")->value           = false;
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        std::vector<int> ids;
+        append_object_plate_filament_ids(*object, cfg, ids);
+        CHECK_FALSE(contains_id(unique_positive(ids), 2));
+    }
+    SECTION("zero shells skip solid_infill_filament") {
+        cfg.option<ConfigOptionInt>("top_shell_layers")->value    = 0;
+        cfg.option<ConfigOptionInt>("bottom_shell_layers")->value = 0;
+        cfg.option<ConfigOptionInt>("solid_infill_filament")->value = 2;
+        cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        std::vector<int> ids;
+        append_object_plate_filament_ids(*object, cfg, ids);
+        CHECK_FALSE(contains_id(unique_positive(ids), 2));
+    }
+    SECTION("support off skips support_filament") {
+        cfg.option<ConfigOptionBool>("enable_support")->value  = false;
+        cfg.option<ConfigOptionInt>("support_filament")->value = 2;
+        cfg.option<ConfigOptionInt>("support_interface_filament")->value = 3;
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        std::vector<int> ids;
+        append_object_plate_filament_ids(*object, cfg, ids);
+        ids = unique_positive(ids);
+        CHECK_FALSE(contains_id(ids, 2));
+        CHECK_FALSE(contains_id(ids, 3));
+    }
+    SECTION("a negative volume does not contribute per-feature filaments") {
+        cfg.option<ConfigOptionInt>("outer_wall_filament")->value = 1;
+        cfg.option<ConfigOptionBool>("enable_support")->value     = false;
+        Model        model;
+        ModelObject *object = add_cube_object(model);
+        ModelVolume *negative = object->add_volume(make_cube(2., 2., 2.));
+        negative->set_type(ModelVolumeType::NEGATIVE_VOLUME);
+        negative->config.set("outer_wall_filament", 2);
+        std::vector<int> ids;
+        append_object_plate_filament_ids(*object, cfg, ids);
+        CHECK_FALSE(contains_id(unique_positive(ids), 2));
+    }
+}
+
+TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with a real Model yields two plate filaments, a tower, and G-code markers", "[MixedFilamentCli]")
 {
     // Snapmaker U1: four nozzles, not dual-nozzle (size==2). One filament still yields depth 0;
     // two project filament ids (volume 1 + outer wall 2) must produce a tower. This is the CLI
@@ -387,22 +533,22 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with no support yields two plate 
     cfg.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
     cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
 
-    Model              model;
-    std::vector<Model> models;
-    models.push_back(std::move(model));
+    Model        model;
+    ModelObject *object = add_cube_object(model);
+    ModelVolume *modifier = object->add_volume(make_cube(4., 4., 4.));
+    modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    modifier->config.set("wall_filament", 1);
+    object->layer_config_ranges[t_layer_height_range{0.0, 5.0}].set("extruder", 1);
 
     std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    std::vector<Model> models;
+    models.push_back(std::move(model));
     collect_cli_filament_ids(models, cfg, plate_ids);
-    const int ow = resolve_outer_wall_filament(nullptr, cfg);
-    REQUIRE(ow == 2);
-    plate_ids.push_back(ow);
-    plate_ids.push_back(1); // ModelVolume::get_extruders() volume id
-    std::sort(plate_ids.begin(), plate_ids.end());
-    plate_ids.erase(std::unique(plate_ids.begin(), plate_ids.end()), plate_ids.end());
-    plate_ids.erase(std::remove(plate_ids.begin(), plate_ids.end(), 0), plate_ids.end());
+    plate_ids = unique_positive(plate_ids);
+    REQUIRE(contains_id(plate_ids, 1));
+    REQUIRE(contains_id(plate_ids, 2));
     REQUIRE(plate_ids.size() == 2);
-    REQUIRE(plate_ids[0] == 1);
-    REQUIRE(plate_ids[1] == 2);
 
     std::vector<unsigned int> filament_ids;
     for (int id : plate_ids)
@@ -411,4 +557,12 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with no support yields two plate 
     const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(one.depth == 0.);
     CHECK(two.depth > 0.);
+
+    Print              print;
+    Model              slice_model;
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, slice_model, cfg);
+    REQUIRE(print.has_wipe_tower());
+    const std::string gcode = Slic3r::Test::gcode(print);
+    REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
+    REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
 }

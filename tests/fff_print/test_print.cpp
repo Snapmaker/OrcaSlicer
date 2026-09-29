@@ -330,20 +330,24 @@ TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare pla
     // Prepare's plate set used to miss outer_wall_filament, so the estimate had depth 0 while
     // Print::extruders() still listed both filaments and built a real tower. Lock them together:
     // volume extruder 1 plus resolve_outer_wall_filament must equal print.extruders() as 1-based
-    // project ids.
+    // project ids. A SINGLE apply (the CLI / GUI Slice-all path) must keep the tower: Print::apply
+    // re-checks enable_prime_tower after regions exist.
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
-    config.set_num_extruders(2);
-    config.set_num_filaments(2);
-    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
-    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
-    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+    config.set_num_extruders(4);
+    config.set_num_filaments(4);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4, 0.4, 0.4};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
     config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
     config.option<ConfigOptionBool>("enable_support")->value       = false;
     config.option<ConfigOptionBool>("spiral_mode")->value          = false;
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    config.option<ConfigOptionBool>("purge_in_prime_tower")->value           = false;
     config.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
     config.option<ConfigOptionInt>("wall_filament")->value         = 1;
     config.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
     config.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+    config.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
 
     Print print;
     Model model;
@@ -351,25 +355,39 @@ TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare pla
 
     REQUIRE(print.default_region_config().outer_wall_filament.value == 2);
     REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
-
-    // Print::apply counts used filaments before the new PrintObject's regions exist, so a first
-    // apply of a cube whose 2nd filament is only outer_wall_filament sees 1 filament and
-    // normalize_fdm_2 clears enable_prime_tower. Re-apply now that regions are in place so the
-    // used-filament count matches Print::extruders() and the tower stays on.
-    print.apply(model, config);
-    INFO("enable_prime_tower=" << print.config().enable_prime_tower.value
-                               << " filament_diameter=" << print.config().filament_diameter.values.size());
     REQUIRE(print.has_wipe_tower());
-    REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
+    REQUIRE(print.config().enable_prime_tower.value);
 
-    std::vector<int> prepare_ids{1};
-    if (int ow = resolve_outer_wall_filament(&model.objects.front()->config.get(), config); ow > 0)
-        prepare_ids.push_back(ow);
+    std::vector<int> prepare_ids;
+    append_object_plate_filament_ids(*model.objects.front(), config, prepare_ids);
     std::sort(prepare_ids.begin(), prepare_ids.end());
     prepare_ids.erase(std::unique(prepare_ids.begin(), prepare_ids.end()), prepare_ids.end());
+    prepare_ids.erase(std::remove(prepare_ids.begin(), prepare_ids.end(), 0), prepare_ids.end());
 
     std::vector<int> slice_ids;
     for (unsigned int e : print.extruders())
         slice_ids.push_back(int(e) + 1);
     REQUIRE(prepare_ids == slice_ids);
+
+    const std::string gcode = Test::gcode(print);
+    REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
+    REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
+}
+
+TEST_CASE("a single-filament plate still has no wipe tower after one apply", "[Print][WipeTower]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(1);
+    config.set_num_filaments(1);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionInt>("outer_wall_filament")->value   = 1;
+
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+    REQUIRE(print.extruders().size() == 1);
+    REQUIRE_FALSE(print.config().enable_prime_tower.value);
 }

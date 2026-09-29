@@ -17,6 +17,8 @@
 namespace Slic3r {
 
 class Model;
+class ModelObject;
+class ModelVolume;
 
 // Verdict returned by the CLI mixed-filament gates below. `ok == true` means the
 // slice may proceed; otherwise `message` explains why (already formatted for
@@ -64,10 +66,22 @@ bool mixed_definitions_have_slot_without_filament(const std::string &serialized,
 // to `ids`. IDs <= 0 (meaning "use default" / "follow walls") are skipped.
 void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids);
 
-// Per-feature filament ids (>0) set directly on a modifier volume or a height-range
+// Per-feature filament ids (>0) set directly on a modifier / model-part / height-range
 // config: wall_filament, outer_wall_filament, sparse_infill_filament, solid_infill_filament.
-// Support keys are object-level and are not collected here.
+// Disabled features are skipped (same gates as PrintRegion::collect_object_printing_extruders):
+// walls when wall_loops==0 (unless brim), sparse when density==0, solid when both shell counts
+// are 0. Support keys are object-level and are not collected here.
 void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids);
+
+// True for volumes whose own config can pin a per-feature filament (MODEL_PART and
+// PARAMETER_MODIFIER). Precise Seam / negative / support volumes are excluded here so
+// that work can add a clause in one place.
+bool volume_contributes_feature_filaments(const ModelVolume &volume);
+
+// Shared by PartPlate::get_extruders, get_extruders_under_cli, and collect_cli_filament_ids.
+// Volume extruder ids, gated per-feature overrides on contributing volumes and height
+// ranges, object-level feature filaments, and support filaments only when support/raft is on.
+void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids);
 
 // 1-based filament printing the outer wall of an object whose own config is `object_config`
 // (may be null) over `global_config`, or 0 when it follows wall_filament (already counted)
@@ -77,7 +91,7 @@ void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &
 int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config);
 
 // Same as append_config_filament_ids, but scans every model's object-level config,
-// each volume's get_extruders() plus modifier per-feature keys, and each
+// each volume's get_extruders() plus contributing per-feature keys, and each
 // layer-height-range's "extruder" option plus per-feature keys too - i.e. every place a
 // CLI-loaded 3mf can pin a filament id, mixed slots included.
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids);

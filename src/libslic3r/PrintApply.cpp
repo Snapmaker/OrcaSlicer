@@ -1420,6 +1420,9 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_default_object_config.option("mixed_filament_definitions", true);
     // BBS
     int used_filaments = this->extruders(true).size();
+    const bool requested_enable_prime_tower =
+        new_full_config.option<ConfigOptionBool>("enable_prime_tower") != nullptr &&
+        new_full_config.option<ConfigOptionBool>("enable_prime_tower")->value;
 
     //new_full_config.normalize_fdm(used_filaments);
     new_full_config.normalize_fdm_1();
@@ -2190,6 +2193,36 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     {
         object->update_slicing_parameters();
         m_support_used |= object->config().enable_support;
+    }
+
+    // The pre-region normalize_fdm_2 (around the object-status pass) counts used filaments
+    // while a fresh PrintObject still has an empty all_regions(). A 2nd filament that only
+    // appears as outer_wall_filament then looks like a 1-filament plate and
+    // enable_prime_tower is cleared. Re-run that same normalize now that regions exist, so a
+    // single apply (CLI / GUI Slice all on a never-viewed plate) keeps the tower. Only
+    // apply/invalidate keys whose live values actually changed. Do not touch new_full_config:
+    // it may already have been moved into m_full_print_config above.
+    if (!m_objects.empty()) {
+        const int          used_after_regions = int(this->extruders(true).size());
+        DynamicPrintConfig after              = m_full_print_config;
+        if (auto *ept = after.option<ConfigOptionBool>("enable_prime_tower"))
+            ept->value = requested_enable_prime_tower;
+        t_config_option_keys keys = after.normalize_fdm_2(int(m_objects.size()), used_after_regions);
+        auto                 differs = [&](const t_config_option_key &key) {
+            const ConfigOption *live = m_config.option(key);
+            const ConfigOption *want = after.option(key);
+            return live != nullptr && want != nullptr && !(*live == *want);
+        };
+        if (std::find(keys.begin(), keys.end(), "enable_prime_tower") == keys.end() && differs("enable_prime_tower"))
+            keys.push_back("enable_prime_tower");
+        keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const t_config_option_key &key) { return !differs(key); }), keys.end());
+        if (!keys.empty()) {
+            m_config.apply_only(after, keys, true);
+            m_default_object_config.apply_only(after, keys, true);
+            m_default_region_config.apply_only(after, keys, true);
+            m_full_print_config.apply_only(after, keys, true);
+            update_apply_status(this->invalidate_state_by_config_options(m_config, keys));
+        }
     }
 
 #ifdef _DEBUG

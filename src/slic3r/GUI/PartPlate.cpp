@@ -82,17 +82,6 @@ namespace GUI {
 
 class Bed3D;
 
-namespace {
-
-template <typename ConfigLike>
-int resolve_sparse_infill_filament(const ConfigLike &config, int inherited_sparse_infill_filament)
-{
-    const ConfigOption *sparse_opt = config.option("sparse_infill_filament");
-    return sparse_opt != nullptr && sparse_opt->getInt() > 0 ? sparse_opt->getInt() : inherited_sparse_infill_filament;
-}
-
-} // namespace
-
 ColorRGBA PartPlate::SELECT_COLOR		= { 0.2666f, 0.2784f, 0.2784f, 1.0f }; //{ 0.4196f, 0.4235f, 0.4235f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_COLOR		= { 0.82f, 0.82f, 0.82f, 1.0f };
 ColorRGBA PartPlate::UNSELECT_DARK_COLOR		= { 0.384f, 0.384f, 0.412f, 1.0f };
@@ -1424,92 +1413,13 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 		return plate_extruders;
 	}
 
-	int glb_support_intf_extr = glb_config.opt_int("support_interface_filament");
-	int glb_support_extr = glb_config.opt_int("support_filament");
-	int glb_wall_extr = glb_config.opt_int("wall_filament");
-	int glb_sparse_infill_extr = glb_config.opt_int("sparse_infill_filament");
-	int glb_solid_infill_extr = glb_config.opt_int("solid_infill_filament");
-	bool glb_support = glb_config.opt_bool("enable_support");
-    glb_support |= glb_config.opt_int("raft_layers") > 0;
-
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		// Any instance on the plate counts, as PrintApply does: after an arrange, instance 0
 		// can sit on a different plate.
 		if (!contain_any_instance_totally(obj_idx))
 			continue;
 
-		ModelObject* mo = m_model->objects[obj_idx];
-		for (ModelVolume* mv : mo->volumes) {
-			std::vector<int> volume_extruders = mv->get_extruders();
-			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
-			if (mv->is_modifier())
-				append_feature_filament_overrides(mv->config.get(), plate_extruders);
-		}
-
-		// layer range
-        for (auto layer_range : mo->layer_config_ranges) {
-            if (layer_range.second.has("extruder")) {
-                if (auto id = layer_range.second.option("extruder")->getInt(); id > 0)
-					plate_extruders.push_back(id);
-			}
-			append_feature_filament_overrides(layer_range.second.get(), plate_extruders);
-		}
-
-		bool obj_support = false;
-		const ConfigOption* obj_support_opt = mo->config.option("enable_support");
-        const ConfigOption *obj_raft_opt    = mo->config.option("raft_layers");
-		if (obj_support_opt != nullptr || obj_raft_opt != nullptr) {
-            if (obj_support_opt != nullptr)
-				obj_support = obj_support_opt->getBool();
-            if (obj_raft_opt != nullptr)
-				obj_support |= obj_raft_opt->getInt() > 0;
-        }
-		else
-			obj_support = glb_support;
-
-        if (obj_support) {
-            int                 obj_support_intf_extr = 0;
-            const ConfigOption* support_intf_extr_opt = mo->config.option("support_interface_filament");
-            if (support_intf_extr_opt != nullptr)
-                obj_support_intf_extr = support_intf_extr_opt->getInt();
-            if (obj_support_intf_extr != 0)
-                plate_extruders.push_back(obj_support_intf_extr);
-            else if (glb_support_intf_extr != 0)
-                plate_extruders.push_back(glb_support_intf_extr);
-
-            int                 obj_support_extr = 0;
-            const ConfigOption* support_extr_opt = mo->config.option("support_filament");
-            if (support_extr_opt != nullptr)
-                obj_support_extr = support_extr_opt->getInt();
-            if (obj_support_extr != 0)
-                plate_extruders.push_back(obj_support_extr);
-            else if (glb_support_extr != 0)
-                plate_extruders.push_back(glb_support_extr);
-        }
-
-        int obj_wall_extr = glb_wall_extr;
-		const ConfigOption* wall_opt = mo->config.option("wall_filament");
-		if (wall_opt != nullptr)
-			obj_wall_extr = wall_opt->getInt();
-		if (obj_wall_extr != 1)
-			plate_extruders.push_back(obj_wall_extr);
-
-		if (int ow = resolve_outer_wall_filament(&mo->config.get(), glb_config); ow > 0)
-			plate_extruders.push_back(ow);
-
-		const int object_sparse_infill_extr = resolve_sparse_infill_filament(mo->config, glb_sparse_infill_extr);
-		if (object_sparse_infill_extr != 1)
-			plate_extruders.push_back(object_sparse_infill_extr);
-
-		int obj_solid_infill_extr = 1;
-		const ConfigOption* solid_infill_opt = mo->config.option("solid_infill_filament");
-		if (solid_infill_opt != nullptr)
-			obj_solid_infill_extr = solid_infill_opt->getInt();
-		if (obj_solid_infill_extr != 1)
-			plate_extruders.push_back(obj_solid_infill_extr);
-		else if (glb_solid_infill_extr != 1)
-			plate_extruders.push_back(glb_solid_infill_extr);
-
+		append_object_plate_filament_ids(*m_model->objects[obj_idx], glb_config, plate_extruders);
 	}
 
 	if (conside_custom_gcode) {
@@ -1548,15 +1458,6 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
                              << " consider_custom_gcode=" << conside_custom_gcode;
 
     // if 3mf file
-    int glb_support_intf_extr = full_config.opt_int("support_interface_filament");
-	int glb_support_extr = full_config.opt_int("support_filament");
-	int glb_wall_extr = full_config.opt_int("wall_filament");
-	int glb_sparse_infill_extr = full_config.opt_int("sparse_infill_filament");
-	int glb_solid_infill_extr = full_config.opt_int("solid_infill_filament");
-
-    bool glb_support = full_config.opt_bool("enable_support");
-    glb_support |= full_config.opt_int("raft_layers") > 0;
-
     for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
     {
         int obj_id = it->first;
@@ -1590,76 +1491,7 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
             if (!instance->printable)
                 continue;
 
-            for (ModelVolume* mv : object->volumes) {
-                std::vector<int> volume_extruders = mv->get_extruders();
-                plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
-                if (mv->is_modifier())
-                    append_feature_filament_overrides(mv->config.get(), plate_extruders);
-            }
-
-            // layer range
-            for (auto layer_range : object->layer_config_ranges) {
-                if (layer_range.second.has("extruder")) {
-                    if (auto id = layer_range.second.option("extruder")->getInt(); id > 0)
-                        plate_extruders.push_back(id);
-                }
-                append_feature_filament_overrides(layer_range.second.get(), plate_extruders);
-            }
-
-            bool obj_support = false;
-            const ConfigOption* obj_support_opt = object->config.option("enable_support");
-            const ConfigOption *obj_raft_opt    = object->config.option("raft_layers");
-            if (obj_support_opt != nullptr || obj_raft_opt != nullptr) {
-                if (obj_support_opt != nullptr)
-                    obj_support = obj_support_opt->getBool();
-                if (obj_raft_opt != nullptr)
-                    obj_support |= obj_raft_opt->getInt() > 0;
-            }
-            else
-                obj_support = glb_support;
-
-            if (obj_support) {
-                int obj_support_intf_extr = 0;
-                const ConfigOption* support_intf_extr_opt = object->config.option("support_interface_filament");
-                if (support_intf_extr_opt != nullptr)
-                    obj_support_intf_extr = support_intf_extr_opt->getInt();
-                if (obj_support_intf_extr != 0)
-                    plate_extruders.push_back(obj_support_intf_extr);
-                else if (glb_support_intf_extr != 0)
-                    plate_extruders.push_back(glb_support_intf_extr);
-
-                int obj_support_extr = 0;
-                const ConfigOption* support_extr_opt = object->config.option("support_filament");
-                if (support_extr_opt != nullptr)
-                    obj_support_extr = support_extr_opt->getInt();
-                if (obj_support_extr != 0)
-                    plate_extruders.push_back(obj_support_extr);
-                else if (glb_support_extr != 0)
-                    plate_extruders.push_back(glb_support_extr);
-            }
-
-            int obj_wall_extr = glb_wall_extr;
-            const ConfigOption* wall_opt = object->config.option("wall_filament");
-            if (wall_opt != nullptr)
-                obj_wall_extr = wall_opt->getInt();
-            if (obj_wall_extr != 1)
-                plate_extruders.push_back(obj_wall_extr);
-
-            if (int ow = resolve_outer_wall_filament(&object->config.get(), full_config); ow > 0)
-                plate_extruders.push_back(ow);
-
-            const int object_sparse_infill_extr = resolve_sparse_infill_filament(object->config, glb_sparse_infill_extr);
-            if (object_sparse_infill_extr != 1)
-                plate_extruders.push_back(object_sparse_infill_extr);
-
-            int obj_solid_infill_extr = 1;
-            const ConfigOption* solid_infill_opt = object->config.option("solid_infill_filament");
-            if (solid_infill_opt != nullptr)
-                obj_solid_infill_extr = solid_infill_opt->getInt();
-            if (obj_solid_infill_extr != 1)
-                plate_extruders.push_back(obj_solid_infill_extr);
-            else if (glb_solid_infill_extr != 1)
-                plate_extruders.push_back(glb_solid_infill_extr);
+			append_object_plate_filament_ids(*object, full_config, plate_extruders);
         }
     }
 

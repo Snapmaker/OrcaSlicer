@@ -73,10 +73,16 @@ set_property(TARGET ${_FILAMENT_TEST_NAME}_tests PROPERTY FOLDER "tests")
 catch_discover_tests(${_FILAMENT_TEST_NAME}_tests TEST_PREFIX "${_FILAMENT_TEST_NAME}: " EXTRA_ARGS ${CATCH_EXTRA_ARGS})
 
 set(_FILAMENT_SORT_TEST_NAME filament_sort)
+# The shipped allow-list is a data contract with PresetUpdater (which deploys it) and with the
+# loader under test, so the suite reads the real file instead of a copy that could drift from it.
+set(_FILAMENT_ALLOW_LIST_FILE ${PROJECT_SOURCE_DIR}/resources/profiles/Snapmaker/filament/filament_allow_list.json)
+file(TO_CMAKE_PATH "${_FILAMENT_ALLOW_LIST_FILE}" _FILAMENT_ALLOW_LIST_FILE)
 add_executable(${_FILAMENT_SORT_TEST_NAME}_tests
     FilamentSort_test.cpp
     ${PROJECT_SOURCE_DIR}/src/slic3r/GUI/FilamentSort.cpp)
-target_compile_definitions(${_FILAMENT_SORT_TEST_NAME}_tests PRIVATE wxDEBUG_LEVEL=0)
+target_compile_definitions(${_FILAMENT_SORT_TEST_NAME}_tests PRIVATE
+    wxDEBUG_LEVEL=0
+    "FILAMENT_ALLOW_LIST_FILE=R\"(${_FILAMENT_ALLOW_LIST_FILE})\"")
 target_include_directories(${_FILAMENT_SORT_TEST_NAME}_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/libslic3r

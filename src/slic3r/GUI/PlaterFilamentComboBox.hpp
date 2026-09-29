@@ -56,7 +56,8 @@ private:
     void sort_system_rows();
     /** @brief Opens the two-level popup, dismissing any flat popup the base class left open. */
     void show_popup();
-    /** @brief Hides the popup, releasing the active-popup bookkeeping; @p notify reports the selection. */
+    /** @brief Hides the popup and releases the active-popup bookkeeping; @p notify emits the closeup
+     *         event when the popup was actually visible. */
     void close_popup(bool notify);
     /** @brief Applies the selected popup row to the preset pipeline. */
     void on_popup_selection(wxCommandEvent &event);
@@ -64,26 +65,26 @@ private:
     void on_popup_dismiss(wxCommandEvent &event);
     /** @brief Opens the popup for a click on this control. */
     void on_mouse_down(wxMouseEvent &event);
-    /** @brief Forwards text-control key events to the popup. */
+    /** @brief Handles the keys that open or close the popup, leaving other keys to the base class. */
     void on_key_down(wxKeyEvent &event);
-    /** @brief Repositions or dismisses the popup when the sidebar's scrolled panel moves. */
+    /** @brief Dismisses the popup when the sidebar's scrolled panel moves. */
     void on_scroll_parent_move(wxMoveEvent &event);
-    /** @brief Repositions or dismisses the popup when the top-level window moves. */
+    /** @brief Dismisses the popup when the top-level window moves. */
     void on_top_level_move(wxMoveEvent &event);
-    /** @brief Repositions or dismisses the popup when the top-level window is resized. */
+    /** @brief Dismisses the popup when the top-level window is resized. */
     void on_top_level_size(wxSizeEvent &event);
 
     /** @brief Maps a popup section header label back to its section. */
     Section section_from_header(const wxString &text) const;
     /** @brief Builds a header row for @p section with the given label. */
     PopupRow make_header(const wxString &text, Section section) const;
-    /** @brief Returns the vendor recorded by @p preset, or an empty string. */
+    /** @brief Returns the vendor recorded by @p preset, mapping the historical Bambu Lab spelling to Bambu. */
     std::string preset_vendor(const Preset *preset) const;
     /** @brief Returns the product key that the configured order matches for @p preset. */
     std::string preset_filament_product(const Preset *preset) const;
     /** @brief Returns the group label that @p vendor belongs to within @p section. */
     wxString popup_group(Section section, const std::string &vendor) const;
-    /** @brief Reports whether @p row is a selectable system row. */
+    /** @brief Reports whether @p row is a real system preset row rather than a header or an auxiliary row. */
     bool is_system_row(const PopupRow &row) const;
 
     wxWindow *m_top_level{nullptr}; // non-owning wx parent

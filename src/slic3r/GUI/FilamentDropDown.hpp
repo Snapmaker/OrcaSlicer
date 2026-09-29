@@ -1,6 +1,9 @@
 #pragma once
 
 // Fork of Widgets/DropDown (e700c93d81) + BambuStudio DropDown grouping (77b9dd94d); Widgets/* untouched.
+// Ported from upstream after that base: the macOS anchor-gap hit test of 5a7090fdf1, reworked here as
+// the free function point_in_anchor_gap. Resync by diffing Widgets/DropDown.{cpp,hpp} against this
+// file and re-porting each fix, not by re-applying the upstream commits.
 
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <wx/stattext.h>
@@ -159,13 +162,17 @@ private:
     int                hover_item = -1;
 
     FilamentDropDown * subDropDown{nullptr}; // non-owning: child window owned by its wx parent
-    FilamentDropDown * mainDropDown{nullptr}; // non-owning: root popup of this submenu; null when this instance is the root
+    FilamentDropDown * mainDropDown{nullptr}; // non-owning root; null when this is the root, cleared by the root's destructor
     wxWeakRef<FilamentDropDown> mainDropDownWeak; // liveness-checked accessor for the same root popup
     wxTimer                    submenu_motion_timer;
 
     double radius                  = 0;
     bool   use_content_width       = false;
     bool   limit_max_content_width = false;
+    // Pins the popup width in DIP, scaled by the parent's display, so a submenu does not resize with its
+    // contents; 0 keeps the content/parent-width logic in messureSize(). Written on the submenu only: the
+    // messureSize width override and the +6 padding branch read it as "the width is fixed".
+    int    fixed_width_dip         = 0;
     bool   align_icon              = false;
     bool   text_off                = false;
     bool   use_flat_fallback       = false;
@@ -264,7 +271,11 @@ private:
     int selectedItem();
     int group_row_of(const wxString &target) const;
 
+    /** @brief Applies the popup size; a set fixed_width_dip outranks the content and parent-width caps. */
     void messureSize();
+    /** @brief Places a submenu flush against its parent without horizontal overlap. */
+    void position_submenu();
+    /** @brief Places the root popup at its anchor or the submenu at its parent row. */
     void autoPosition();
     void ensure_row_visible(int row);
     void ensure_selection_at_top();

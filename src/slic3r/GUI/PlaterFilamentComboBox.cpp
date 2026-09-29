@@ -193,11 +193,12 @@ FilamentOrder load_filament_order()
 {
     const std::filesystem::path path = filament_allow_list_path();
 
-    // An unreadable file and an invalid configuration are reported alike: both leave the popup on the
-    // default ordering, and the logged path names the file either way.
-    const FilamentOrder order = FilamentOrder::from_file(path);
+    // The reason is logged together with the path so a missing file and a rejected file stay
+    // distinguishable in the log.
+    std::string         failure;
+    const FilamentOrder order = FilamentOrder::from_file(path, &failure);
     if (order.empty())
-        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder has no usable configuration: " << path.u8string();
+        BOOST_LOG_TRIVIAL(warning) << "FilamentOrder " << failure << ": " << path.u8string();
     else
         BOOST_LOG_TRIVIAL(info) << "FilamentOrder loaded: " << path.u8string();
     return order;
@@ -352,6 +353,10 @@ void PlaterFilamentComboBox::msw_rescale()
 
 PlaterFilamentComboBox::Section PlaterFilamentComboBox::section_from_header(const wxString &text) const
 {
+    // Contract with the base class: these three English labels must stay identical to the ones the
+    // combo builds its headers with (PresetComboBoxes.cpp, via PresetComboBox::separator). Renaming
+    // any of them there collapses every section into Section::Other without a compile error. The
+    // separator formats and translates the label itself, so the untranslated literals are correct here.
     if (text == separator("Project-inside presets"))
         return Section::Project;
     if (text == separator("User presets"))
@@ -375,7 +380,7 @@ PlaterFilamentComboBox::PopupRow PlaterFilamentComboBox::make_header(const wxStr
 std::string PlaterFilamentComboBox::preset_vendor(const Preset *preset) const
 {
     std::string vendor = config_string(preset, "filament_vendor");
-    // Historical spelling: normalise it in a case-insensitive way, like every other vendor comparison here.
+    // Historical spelling: normalise it case-insensitively, like the allow-list key matching does.
     if (from_u8(vendor).CmpNoCase(wxString::FromUTF8(g_bambu_lab_vendor)) == 0)
         vendor = g_bambu_vendor;
     return vendor;

@@ -58,18 +58,23 @@ wxString vendor_label(const std::string &vendor)
 /** @brief Returns the fixed priority bucket for a system vendor. */
 int vendor_rank(const std::string &vendor)
 {
+    // Case-sensitive, like the vendor ordering below. Known vendors reach this point already spelled
+    // canonically (PlaterFilamentComboBox calls canonical_vendor() before sorting), so a profile that
+    // writes "snapmaker" is still ranked as Snapmaker; only unknown vendors keep their own spelling.
     const wxString label = vendor_label(vendor);
-    if (label.CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
+    if (label.Cmp(wxString::FromUTF8(g_snapmaker_vendor)) == 0)
         return 0;
-    if (label.CmpNoCase(wxString::FromUTF8(g_generic_vendor)) == 0)
+    if (label.Cmp(wxString::FromUTF8(g_generic_vendor)) == 0)
         return 1;
     return 2;
 }
 
-/** @brief Compares display names and preserves the original order for ties. */
+/** @brief Compares display names by code point and preserves the original order for ties. */
 bool default_name_less(const FilamentSortItem &left, const FilamentSortItem &right)
 {
-    const int name_compare = left.display_name.CmpNoCase(right.display_name);
+    // Case-sensitive, like the upstream Bambu collation: names that differ only in case are ordered
+    // by code point instead of being treated as equal.
+    const int name_compare = left.display_name.Cmp(right.display_name);
     if (name_compare != 0)
         return name_compare < 0;
     return left.original_index < right.original_index;
@@ -114,13 +119,20 @@ FilamentOrder FilamentOrder::from_stream(std::istream &stream)
     return FilamentOrder(std::move(orders));
 }
 
-FilamentOrder FilamentOrder::from_file(const std::filesystem::path &path)
+FilamentOrder FilamentOrder::from_file(const std::filesystem::path &path, std::string *error)
 {
     std::ifstream stream(path);
     if (!stream)
+    {
+        if (error != nullptr)
+            *error = "cannot be opened";
         return FilamentOrder{};
+    }
 
-    return from_stream(stream);
+    const FilamentOrder order = from_stream(stream);
+    if (order.empty() && error != nullptr)
+        *error = "has an invalid or empty configuration";
+    return order;
 }
 
 FilamentOrder::FilamentOrder(Orders orders) : m_orders(std::move(orders))
@@ -164,7 +176,8 @@ bool FilamentSorter::less_by_name(const FilamentSortItem &left, const FilamentSo
 
 bool FilamentVendorSorter::less(const std::string &left, const std::string &right) const
 {
-    return vendor_label(left).CmpNoCase(vendor_label(right)) < 0;
+    // Case-sensitive, like the upstream Bambu vendor table: the vendor axis orders by code point.
+    return vendor_label(left).Cmp(vendor_label(right)) < 0;
 }
 
 bool SystemFilamentVendorSorter::less(const std::string &left, const std::string &right) const
@@ -183,6 +196,11 @@ SystemFilamentSorter::SystemFilamentSorter(FilamentOrder filament_order)
 
 bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSortItem &right) const
 {
+    // Narrow contract: the caller orders rows by vendor first (PlaterFilamentComboBox::sort_system_rows
+    // compares vendors and only falls back to this sorter when they are equivalent), so both sides
+    // carry the same vendor here and the Snapmaker gate is symmetric. Passing two different vendors to
+    // one call would mix the configured rank with the name order and stop being a strict weak ordering,
+    // which std::stable_sort requires.
     if (is_snapmaker_vendor(left.vendor) && is_snapmaker_vendor(right.vendor))
     {
         const size_t left_rank  = m_filament_order.rank(left.vendor, left.filament_product);
@@ -196,6 +214,8 @@ bool SystemFilamentSorter::less(const FilamentSortItem &left, const FilamentSort
 
 bool is_snapmaker_vendor(const std::string &vendor)
 {
+    // Deliberately case-insensitive, unlike the ordering above: this gate activates the configured order,
+    // and a spelling drift must not silently disable it.
     return wxString::FromUTF8(vendor.c_str()).CmpNoCase(wxString::FromUTF8(g_snapmaker_vendor)) == 0;
 }
 

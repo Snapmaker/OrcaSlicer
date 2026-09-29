@@ -1,21 +1,18 @@
 #include "MixedFilamentCliGates.hpp"
 
 #include "Model.hpp"
+#include "Print.hpp"
 
 #include <algorithm>
 #include <boost/format.hpp>
+#include <cfloat>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <sstream>
+#include <utility>
 
 namespace Slic3r {
-
-// Defined in PrintObject.cpp; slicing and this helper must share the same region builder so
-// object/part/range `extruder` assignments match Print::extruders().
-PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config,
-                                                  const DynamicPrintConfig *layer_range_config,
-                                                  const ModelVolume        &volume,
-                                                  size_t                    num_extruders);
 
 std::string cli_mixed_filament_definitions(const DynamicPrintConfig &print_config, const DynamicPrintConfig *extra_config)
 {
@@ -219,7 +216,82 @@ void append_support_filament_ids(const ModelObject &object, const DynamicPrintCo
         ids.push_back(glb_support);
 }
 
+// Same conversion as LayerRanges::assign (PrintApply.cpp): input ranges become a continuous
+// non-overlapping sequence, with nullptr-config gaps (including a trailing range to DBL_MAX).
+struct PlateLayerRange
+{
+    t_layer_height_range      layer_height_range;
+    const DynamicPrintConfig *config { nullptr };
+};
+
+std::vector<PlateLayerRange> plate_layer_ranges(const t_layer_config_ranges &in)
+{
+    std::vector<PlateLayerRange> ranges;
+    ranges.reserve(in.size() + 2);
+    coordf_t last_z = 0;
+    for (const std::pair<const t_layer_height_range, ModelConfig> &range : in)
+        if (range.first.second > last_z) {
+            coordf_t min_z = std::max(range.first.first, 0.);
+            if (min_z > last_z + EPSILON) {
+                ranges.push_back({ t_layer_height_range(last_z, min_z) });
+                last_z = min_z;
+            }
+            if (range.first.second > last_z + EPSILON) {
+                ranges.push_back({ t_layer_height_range(last_z, range.first.second), &range.second.get() });
+                last_z = range.first.second;
+            }
+        }
+    if (ranges.empty())
+        ranges.push_back({ t_layer_height_range(0, DBL_MAX) });
+    else if (ranges.back().config == nullptr)
+        ranges.back().layer_height_range.second = DBL_MAX;
+    else
+        ranges.push_back({ t_layer_height_range(ranges.back().layer_height_range.second, DBL_MAX) });
+    return ranges;
+}
+
+BoundingBoxf3 volume_world_bbox(const ModelVolume &mv)
+{
+    Transform3d m = mv.get_matrix();
+    if (const ModelObject *obj = mv.get_object(); obj != nullptr && !obj->instances.empty())
+        m = obj->instances.front()->get_matrix() * m;
+    return mv.mesh().transformed_bounding_box(m);
+}
+
+bool bbox_overlaps_z_range(const BoundingBoxf3 &bb, const t_layer_height_range &range)
+{
+    return bb.min.z() < range.second - EPSILON && bb.max.z() > range.first + EPSILON;
+}
+
 } // namespace
+
+PrintRegionConfig default_region_config(const DynamicPrintConfig &global)
+{
+    PrintRegionConfig region;
+    region.apply(global, true);
+    return region;
+}
+
+size_t plate_filament_bound(const DynamicPrintConfig &cfg_with_filaments, const MixedFilamentManager *mixed)
+{
+    size_t num_physical = 0;
+    if (const auto *diameter_opt = cfg_with_filaments.option<ConfigOptionFloats>("filament_diameter"))
+        num_physical = diameter_opt->values.size();
+    else if (const auto *colour_opt = cfg_with_filaments.option<ConfigOptionStrings>("filament_colour"))
+        num_physical = colour_opt->values.size();
+    if (num_physical == 0)
+        return size_t(std::numeric_limits<int>::max());
+
+    if (mixed != nullptr)
+        return std::max(mixed->total_filaments(num_physical), num_physical);
+
+    std::vector<std::string> colors;
+    if (const auto *colour_opt = cfg_with_filaments.option<ConfigOptionStrings>("filament_colour"))
+        colors = colour_opt->values;
+    MixedFilamentManager mgr;
+    populate_cli_mixed_filament_manager(mgr, cfg_with_filaments, nullptr, colors, num_physical);
+    return std::max(mgr.total_filaments(num_physical), num_physical);
+}
 
 bool volume_contributes_feature_filaments(const ModelVolume &volume)
 {
@@ -250,33 +322,22 @@ void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> 
         append_positive_int_keys(cfg, {"support_filament", "support_interface_filament"}, ids);
 }
 
-void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids)
+void append_object_plate_filament_ids(const ModelObject        &object,
+                                      const DynamicPrintConfig &global_config,
+                                      std::vector<int>         &ids,
+                                      const PrintRegionConfig  &default_region,
+                                      size_t                    num_total)
 {
     const bool has_brim = object_has_brim(object, global_config);
-
-    PrintRegionConfig default_region;
-    default_region.apply(global_config, true);
-
-    size_t num_physical = 0;
-    if (const auto *opt = global_config.option<ConfigOptionFloats>("filament_diameter"))
-        num_physical = opt->values.size();
-    else if (const auto *opt = global_config.option<ConfigOptionStrings>("filament_colour"))
-        num_physical = opt->values.size();
-    std::vector<std::string> colors;
-    if (const auto *opt = global_config.option<ConfigOptionStrings>("filament_colour"))
-        colors = opt->values;
-    MixedFilamentManager mgr;
-    populate_cli_mixed_filament_manager(mgr, global_config, nullptr, colors, num_physical);
-    const size_t num_total = std::max(std::max(mgr.total_filaments(num_physical), num_physical), size_t(1));
 
     std::vector<const ModelVolume *> parts;
     std::vector<const ModelVolume *> modifiers;
     for (const ModelVolume *mv : object.volumes) {
-        if (mv == nullptr)
+        if (mv == nullptr || !volume_contributes_feature_filaments(*mv))
             continue;
         if (mv->is_model_part())
             parts.push_back(mv);
-        else if (mv->is_modifier())
+        else
             modifiers.push_back(mv);
     }
 
@@ -292,32 +353,54 @@ void append_object_plate_filament_ids(const ModelObject &object, const DynamicPr
         return;
     }
 
-    // Per MODEL_PART per existing layer_config_ranges entry (do not synthesize LayerRanges
-    // gaps: a nullptr-config gap would push the default filament 1). `extruder` is applied
-    // inside region_config_from_model_volume the same way slicing does.
-    std::vector<PrintRegionConfig> parent_regions;
-    parent_regions.reserve(parts.size() * std::max(object.layer_config_ranges.size(), size_t(1)));
+    const double                     object_max_z = object.instances.empty() ? 0. : object.max_z();
+    const std::vector<PlateLayerRange> layer_ranges = plate_layer_ranges(object.layer_config_ranges);
+
+    struct ParentRegion
+    {
+        PrintRegionConfig     config;
+        const ModelVolume    *part { nullptr };
+        t_layer_height_range  z_range { 0., 0. };
+    };
+    std::vector<ParentRegion> parent_regions;
+    parent_regions.reserve(parts.size() * layer_ranges.size());
+
     for (const ModelVolume *part : parts) {
-        if (object.layer_config_ranges.empty()) {
-            parent_regions.push_back(region_config_from_model_volume(default_region, nullptr, *part, num_total));
-        } else {
-            for (const auto &layer_range : object.layer_config_ranges)
-                parent_regions.push_back(
-                    region_config_from_model_volume(default_region, &layer_range.second.get(), *part, num_total));
+        for (const PlateLayerRange &lr : layer_ranges) {
+            if (lr.config == nullptr && !(lr.layer_height_range.first < object_max_z))
+                continue;
+            ParentRegion parent;
+            parent.config  = region_config_from_model_volume(default_region, lr.config, *part, num_total);
+            parent.part    = part;
+            parent.z_range = lr.layer_height_range;
+            append_gated_feature_filament_ids(parent.config, has_brim, ids);
+            parent_regions.push_back(std::move(parent));
         }
+        for (size_t painted : part->get_extruders_from_multi_material_painting())
+            ids.push_back(int(painted) + 1);
     }
-    for (const PrintRegionConfig &region : parent_regions)
-        append_gated_feature_filament_ids(region, has_brim, ids);
 
     for (const ModelVolume *modifier : modifiers) {
-        for (const PrintRegionConfig &parent : parent_regions) {
-            append_gated_feature_filament_ids(region_config_from_model_volume(parent, nullptr, *modifier, num_total),
+        const BoundingBoxf3 mod_bb = volume_world_bbox(*modifier);
+        for (const ParentRegion &parent : parent_regions) {
+            const BoundingBoxf3 part_bb = volume_world_bbox(*parent.part);
+            if (!mod_bb.intersects(part_bb))
+                continue;
+            if (!bbox_overlaps_z_range(mod_bb, parent.z_range))
+                continue;
+            append_gated_feature_filament_ids(region_config_from_model_volume(parent.config, nullptr, *modifier, num_total),
                                               has_brim, ids);
         }
     }
 
     if (object_prints_support(object, global_config))
         append_support_filament_ids(object, global_config, ids);
+}
+
+void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids)
+{
+    append_object_plate_filament_ids(object, global_config, ids, default_region_config(global_config),
+                                     plate_filament_bound(global_config));
 }
 
 int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config)
@@ -336,11 +419,13 @@ int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBas
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids)
 {
     append_config_filament_ids(print_config, ids);
+    const PrintRegionConfig default_region = default_region_config(print_config);
+    const size_t            num_total      = plate_filament_bound(print_config);
     for (const Model &model : models) {
         for (const ModelObject *obj : model.objects) {
             if (obj == nullptr)
                 continue;
-            append_object_plate_filament_ids(*obj, print_config, ids);
+            append_object_plate_filament_ids(*obj, print_config, ids, default_region, num_total);
         }
     }
 }

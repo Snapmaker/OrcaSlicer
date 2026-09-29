@@ -1413,13 +1413,17 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 		return plate_extruders;
 	}
 
+	const PrintRegionConfig default_region = default_region_config(glb_config);
+	const MixedFilamentManager *mixed = (wxApp::GetInstance() != nullptr) ? &wxGetApp().preset_bundle->mixed_filaments : nullptr;
+	const size_t num_total = plate_filament_bound(project_config, mixed);
+
 	for (int obj_idx = 0; obj_idx < m_model->objects.size(); obj_idx++) {
 		// Any instance on the plate counts, as PrintApply does: after an arrange, instance 0
 		// can sit on a different plate.
 		if (!contain_any_instance_totally(obj_idx))
 			continue;
 
-		append_object_plate_filament_ids(*m_model->objects[obj_idx], glb_config, plate_extruders);
+		append_object_plate_filament_ids(*m_model->objects[obj_idx], glb_config, plate_extruders, default_region, num_total);
 	}
 
 	if (conside_custom_gcode) {
@@ -1457,6 +1461,9 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
                              << " obj_to_instance_count=" << obj_to_instance_set.size()
                              << " consider_custom_gcode=" << conside_custom_gcode;
 
+    const PrintRegionConfig default_region = default_region_config(full_config);
+    const size_t            num_total      = plate_filament_bound(full_config);
+
     // if 3mf file
     for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
     {
@@ -1491,7 +1498,7 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
             if (!instance->printable)
                 continue;
 
-            append_object_plate_filament_ids(*object, full_config, plate_extruders);
+            append_object_plate_filament_ids(*object, full_config, plate_extruders, default_region, num_total);
         }
     }
 

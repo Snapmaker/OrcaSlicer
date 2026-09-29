@@ -36,6 +36,7 @@ namespace Slic3r {
 class GCode;
 class Layer;
 class ModelObject;
+class ModelVolume;
 class Print;
 class PrintObject;
 class SupportLayer;
@@ -207,6 +208,13 @@ private:
 
 inline bool operator==(const PrintRegion &lhs, const PrintRegion &rhs) { return lhs.config_hash() == rhs.config_hash() && lhs.config() == rhs.config(); }
 inline bool operator!=(const PrintRegion &lhs, const PrintRegion &rhs) { return ! (lhs == rhs); }
+
+// Shared by PrintApply region building and the plate filament helper. A non-zero volume/object
+// `extruder` overrides wall/sparse/solid, zeroes the outer wall, and ignores feature values of 0.
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config,
+                                                  const DynamicPrintConfig *layer_range_config,
+                                                  const ModelVolume        &volume,
+                                                  size_t                    num_extruders);
 
 template<typename T>
 class ConstVectorOfPtrsAdaptor {

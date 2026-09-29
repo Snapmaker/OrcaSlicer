@@ -78,11 +78,26 @@ void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &
 // that work can add a clause in one place.
 bool volume_contributes_feature_filaments(const ModelVolume &volume);
 
+// Bound passed to region_config_from_model_volume. Print-options presets have no
+// filament_diameter / filament_colour; INT_MAX means "do not clamp" so object/part
+// extruder ids and outer_wall_filament survive on the GUI path.
+size_t plate_filament_bound(const DynamicPrintConfig &cfg_with_filaments, const MixedFilamentManager *mixed = nullptr);
+
+PrintRegionConfig default_region_config(const DynamicPrintConfig &global);
+
 // Shared by PartPlate::get_extruders, get_extruders_under_cli, and collect_cli_filament_ids.
 // Builds each MODEL_PART region the way slicing does (region_config_from_model_volume per
-// existing layer range, modifiers on the parent part) and then the unclamped four-gate check.
-// Support filaments are included only when support/raft is on. Objects with no MODEL_PART
-// volumes fall back to object-level feature keys (slot-gate tests, empty shells).
+// LayerRanges interval, including default-config gaps below ModelObject::max_z()), applies
+// modifiers that intersect the parent part/range, then the unclamped four-gate check.
+// Painted MMU states are appended as 1-based ids. Support filaments only when support/raft is on.
+// Objects with no contributing volumes fall back to object-level feature keys (slot-gate tests).
+// Callers that already know the plate's default region and filament bound (once per plate)
+// should pass them; the 3-argument overload derives both from global_config.
+void append_object_plate_filament_ids(const ModelObject        &object,
+                                      const DynamicPrintConfig &global_config,
+                                      std::vector<int>         &ids,
+                                      const PrintRegionConfig  &default_region,
+                                      size_t                    num_total);
 void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids);
 
 // 1-based filament printing the outer wall of an object whose own config is `object_config`

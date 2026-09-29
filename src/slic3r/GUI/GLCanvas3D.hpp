@@ -666,6 +666,20 @@ private:
     bool m_picking_enabled;
     // Invalidated by viewport, camera, pickable Volume, clipping, or active LOD changes.
     bool m_pickingBufferDirty;
+    // Frames to wait after an invalidation before the picking buffer may render
+    // again; keeps the first visible frame after a scene change free of picking
+    // work so large models show up immediately.
+    int m_pickingDeferFrames{ 0 };
+    // Consecutive RenderPickingBuffer() failures; picking falls back to CPU
+    // raycasting after too many.
+    int m_pickingFailureCount{ 0 };
+    // Once set, the picking buffer stops rendering until the next invalidation.
+    bool m_pickingBufferDisabled{ false };
+    // Deadline after which picking renders even while background LODs are pending.
+    std::chrono::steady_clock::time_point m_pickingLodWaitDeadline{};
+    // Set by render() to obtain one more (overlay-only) frame from on_idle for
+    // deferred picking / selection-highlight work.
+    bool m_overlayFollowUpRequested{ false };
     bool m_moving_enabled;
     bool m_dynamic_background_enabled;
     bool m_multisample_allowed;
@@ -1406,6 +1420,9 @@ private:
     /** @brief Draws the selection box after scene presentation with explicit depth and blend state. */
     void RenderSelectionBoxWithExplicitState();
     bool RenderPickingBuffer(const Camera& camera);
+    /** @brief True while any pickable volume's active LOD model is still being built
+     *  by a background simplification thread (picking would render full resolution). */
+    bool AnyPickableVolumeWaitingForLod() const;
     VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera, int toleranceRadiusPx);
     PickingPassResult QueryHybridPickingHit(const Vec2d& screenPosition, const Camera& camera, const ClippingPlane& clippingPlane,
                                             int volumeToleranceRadiusPx);

@@ -3003,10 +3003,22 @@ bool GLCanvas3D::make_current_for_postinit() {
     return _set_current();
 }
 
+namespace {
+// Frames to wait after each picking invalidation before the picking buffer may
+// render again; keeps the first visible frame after a scene change fast.
+constexpr int PICKING_DEFER_FRAMES = 2;
+// Consecutive RenderPickingBuffer() failures before falling back to raycast picking.
+constexpr int PICKING_MAX_CONSECUTIVE_FAILURES = 8;
+// Render the picking buffer with whatever geometry is available once the
+// background LOD simplification has had this long to finish.
+constexpr std::chrono::seconds PICKING_LOD_WAIT_TIMEOUT{ 3 };
+} // namespace
+
 void GLCanvas3D::render(bool only_init, bool overlayOnly)
 {
     if (m_in_render) {
         // if called recursively, return
+        BOOST_LOG_TRIVIAL(error) << "[DBG] render: re-entrant call, defer";
         m_dirty = true;
         return;
     }
@@ -3016,18 +3028,18 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     (void)in_render_guard;
 
     if (m_canvas == nullptr)
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] render: null canvas"; return; }
 
     //BBS: add enable_render
     if (!m_enable_render)
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] render: render disabled"; return; }
 
     // ensures this canvas is current and initialized
     if (!_is_shown_on_screen() || !_set_current() || !wxGetApp().init_opengl())
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] render: early return shown=" << _is_shown_on_screen() << " setcurrent=" << _set_current(); return; }
 
     if (!is_initialized() && !init())
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] render: init failed"; return; }
     if (m_canvas_type == ECanvasType::CanvasView3D  && m_gizmos.get_current_type() == GLGizmosManager::Undefined) {
         enable_return_toolbar(false);
     }
@@ -3036,12 +3048,20 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     if (! m_bed.build_volume().valid()) {
         // this happens at startup when no data is still saved under <>\AppData\Roaming\Slic3rPE
+        BOOST_LOG_TRIVIAL(error) << "[DBG] render: bed volume invalid";
         post_event(SimpleEvent(EVT_GLCANVAS_UPDATE_BED_SHAPE));
         return;
     }
 
     if (only_init)
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] render: only_init"; return; }
+
+    BOOST_LOG_TRIVIAL(error) << "[DBG] render: type=" << static_cast<int>(m_canvas_type) << " overlayOnly=" << overlayOnly
+                             << " m_dirty=" << m_dirty << " m_overlayDirty=" << m_overlayDirty
+                             << " pickingDirty=" << m_pickingBufferDirty << " defer=" << m_pickingDeferFrames
+                             << " disabled=" << m_pickingBufferDisabled
+                             << " sceneCacheValid=" << m_sceneCacheValid
+                             << " volumes=" << m_volumes.volumes.size();
 
     bool fullSceneRefresh = !overlayOnly || m_dirty;
     GLint targetDrawFramebuffer = 0;
@@ -3098,14 +3118,51 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
     const bool shouldRenderPickingBuffer = m_picking_enabled && (isRectanglePicking || isGpuPointPicking);
     const bool pickingBufferSizeChanged = !m_pickingBuffer.IsReady() || m_pickingBuffer.GetWidth() != camera.get_viewport()[2] ||
                                           m_pickingBuffer.GetHeight() != camera.get_viewport()[3];
-    const bool shouldUpdatePickingBuffer = shouldRenderPickingBuffer && (m_pickingBufferDirty || pickingBufferSizeChanged);
 
-    if (shouldUpdatePickingBuffer)
-    {
-        const bool rendered = RenderPickingBuffer(camera);
-        if (!rendered && m_pickingBuffer.IsReady())
-            m_pickingBuffer.Reset();
-        m_pickingBufferDirty = !rendered;
+    // Heavy picking work is deferred off the first frames after a scene change
+    // (import, camera settle) and while background LODs are still building, so
+    // the first visible frame only pays for the main scene. Hover queries made
+    // in the meantime fall back to CPU raycasting (see QueryHybridPickingHit).
+    // Rectangle selection needs the buffer every drag frame and bypasses this.
+    if (!m_pickingBufferDisabled && shouldRenderPickingBuffer && (m_pickingBufferDirty || pickingBufferSizeChanged)) {
+        bool deferByGrace = false;
+        bool deferByLod = false;
+        if (!isRectanglePicking) {
+            if (m_pickingDeferFrames > 0) {
+                --m_pickingDeferFrames;
+                deferByGrace = true;
+            } else if (AnyPickableVolumeWaitingForLod()) {
+                if (m_pickingLodWaitDeadline.time_since_epoch().count() == 0)
+                    m_pickingLodWaitDeadline = std::chrono::steady_clock::now() + PICKING_LOD_WAIT_TIMEOUT;
+                deferByLod = std::chrono::steady_clock::now() < m_pickingLodWaitDeadline;
+            }
+        }
+
+        if (deferByGrace) {
+            // Revisit the picking buffer on the next (cheap, cache-presented) frame.
+            m_overlayFollowUpRequested = true;
+        } else if (deferByLod) {
+            // No follow-up loop here: LOD promotion itself schedules full renders,
+            // and the LOD wait deadline bounds the delay once they stop arriving.
+        } else {
+            m_pickingLodWaitDeadline = {};
+            const bool rendered = RenderPickingBuffer(camera);
+            if (!rendered && m_pickingBuffer.IsReady())
+                m_pickingBuffer.Reset();
+            m_pickingBufferDirty = !rendered;
+            if (rendered) {
+                m_pickingFailureCount = 0;
+            } else if (++m_pickingFailureCount >= PICKING_MAX_CONSECUTIVE_FAILURES) {
+                // Repeated failures (e.g. unsupported buffer size) would otherwise
+                // retry every frame; stay on CPU raycast picking until the next
+                // invalidation instead.
+                m_pickingBufferDisabled = true;
+                m_pickingBufferDirty = false;
+                m_pickingFailureCount = 0;
+                BOOST_LOG_TRIVIAL(warning) << "Picking buffer render failed " << PICKING_MAX_CONSECUTIVE_FAILURES
+                                           << " times in a row, falling back to raycast picking";
+            }
+        }
     }
 
     wxGetApp().imgui()->new_frame();
@@ -3167,9 +3224,12 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     /* view3D render*/
     if (m_canvas_type == ECanvasType::CanvasView3D) {
+        BOOST_LOG_TRIVIAL(error) << "[DBG] render: view3d fullSceneRefresh=" << fullSceneRefresh
+                                 << " sceneCacheEligible=" << sceneCacheEligible;
         bool sceneReady = false;
         if (!fullSceneRefresh) {
             sceneReady = PresentSceneCache();
+            BOOST_LOG_TRIVIAL(error) << "[DBG] render: present scene cache ok=" << sceneReady;
             if (!sceneReady) {
                 InvalidateSceneCache();
                 fullSceneRefresh = true;
@@ -3179,9 +3239,17 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         if (!sceneReady) {
             m_selectionHighlightValid = false;
             RenderMainSceneContent(camera, sceneParams);
+            {
+                GLubyte px[4] = {0, 0, 0, 0};
+                glsafe(::glReadBuffer(GL_BACK));
+                glsafe(::glReadPixels(std::max(1, viewport[2] / 2), std::max(1, viewport[3] / 2), 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px));
+                BOOST_LOG_TRIVIAL(error) << "[DBG] pixel after main scene: " << (int) px[0] << "," << (int) px[1] << ","
+                                         << (int) px[2] << "," << (int) px[3];
+            }
             InvalidateSceneCache();
             const bool sceneIsActivelyChanging = m_mouse.dragging || m_gizmos.is_dragging() || m_sceneCacheCaptureDeferred;
             m_sceneCacheCaptureDeferred = false;
+            BOOST_LOG_TRIVIAL(error) << "[DBG] render: full scene rendered, capturing=" << !sceneIsActivelyChanging;
             if (!sceneIsActivelyChanging && sceneCacheEligible && EnsureSceneCacheResources(sceneCacheSize, sceneCacheSamples) &&
                 CaptureSceneCache()) {
                 m_sceneCacheValid = true;
@@ -3227,11 +3295,18 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         m_selectionHighlightValid = false;
 
     const ESelectionHighlightMode highlightMode = ResolveSelectionHighlightMode();
+    // The selection-highlight mask rebuild is another full-geometry pass. Keep it
+    // off the first frames after a scene change (they already paid a full scene
+    // render) and rebuild it on the follow-up overlay frame instead. During
+    // active drags the highlight stays on the old schedule (rebuilt same frame).
+    const bool deferHighlightUpdate = m_pickingDeferFrames > 0 && !m_mouse.dragging && !m_gizmos.is_dragging();
     if (highlightMode == ESelectionHighlightMode::UnifiedFramebuffer) {
-        if (!m_selectionHighlightValid && UpdateSelectionHighlightCache()) {
+        if (!m_selectionHighlightValid && !deferHighlightUpdate && UpdateSelectionHighlightCache()) {
             m_selectionHighlightVolumeIndices = m_selection.get_volume_idxs();
             m_selectionHighlightValid = true;
         }
+        if (!m_selectionHighlightValid && deferHighlightUpdate)
+            m_overlayFollowUpRequested = true;
 
         const bool highlightRendered = m_selectionHighlightValid && CompositeSelectionHighlight();
         if (!highlightRendered && m_stencilFallbackAvailable)
@@ -3374,9 +3449,19 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
 
     wxGetApp().imgui()->render();
 
+    {
+        GLubyte px[4] = {0, 0, 0, 0};
+        glsafe(::glReadBuffer(GL_BACK));
+        glsafe(::glReadPixels(std::max(1, cnv_size.get_width() / 2), std::max(1, cnv_size.get_height() / 2), 1, 1,
+                              GL_RGBA, GL_UNSIGNED_BYTE, px));
+        BOOST_LOG_TRIVIAL(error) << "[DBG] pixel before swap: " << (int) px[0] << "," << (int) px[1] << "," << (int) px[2]
+                                 << "," << (int) px[3];
+    }
+
     m_canvas->SwapBuffers();
     m_render_stats.increment_fps_counter();
     m_overlayDirty = false;
+    BOOST_LOG_TRIVIAL(error) << "[DBG] render: end (swap ok)";
 }
 
 void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
@@ -4417,7 +4502,7 @@ void GLCanvas3D::on_size(wxSizeEvent& evt)
 void GLCanvas3D::on_idle(wxIdleEvent& evt)
 {
     if (!m_initialized)
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] idle: not initialized"; return; }
 
     m_overlayDirty |= m_main_toolbar.update_items_state();
     //BBS: GUI refactor: GLToolbar
@@ -4445,7 +4530,11 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
 #endif // ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
 
     if (!m_dirty && !m_overlayDirty)
-        return;
+        { BOOST_LOG_TRIVIAL(error) << "[DBG] idle: skip type=" << static_cast<int>(m_canvas_type); return; }
+
+    BOOST_LOG_TRIVIAL(error) << "[DBG] idle: will render type=" << static_cast<int>(m_canvas_type)
+                             << " m_dirty=" << m_dirty << " m_overlayDirty=" << m_overlayDirty
+                             << " shown=" << _is_shown_on_screen();
 
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
     // this needs to be done here.
@@ -4454,6 +4543,17 @@ void GLCanvas3D::on_idle(wxIdleEvent& evt)
 #endif // ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
 
     _refresh_if_shown_on_screen(!m_dirty);
+
+    // Deferred picking / highlight work asked render() for one more frame. That
+    // frame presents the cached scene (overlay-only) so the deferred work does
+    // not add to an already heavy full render.
+    if (m_overlayFollowUpRequested) {
+        m_overlayFollowUpRequested = false;
+        if (!m_dirty) {
+            m_overlayDirty = true;
+            evt.RequestMore();
+        }
+    }
 
 #if ENABLE_ENHANCED_IMGUI_SLIDER_FLOAT
     if (m_extra_frame_requested || mouse3d_controller_applied || imgui_requires_extra_frame || wxGetApp().imgui()->requires_extra_frame()) {
@@ -5369,6 +5469,8 @@ void GLCanvas3D::on_gesture(wxGestureEvent &evt)
 
 void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 {
+    BOOST_LOG_TRIVIAL(error) << "[DBG] mouse: type=" << static_cast<int>(m_canvas_type)
+                             << " moving=" << evt.Moving() << " initialized=" << m_initialized;
     if (!m_initialized || !_set_current())
         return;
 
@@ -6016,6 +6118,7 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 
 void GLCanvas3D::on_paint(wxPaintEvent& evt)
 {
+    BOOST_LOG_TRIVIAL(error) << "[DBG] paint: type=" << static_cast<int>(m_canvas_type) << " hwnd-visible=" << (m_canvas ? 1 : 0);
     if (m_initialized)
         m_dirty = true;
     else
@@ -8387,6 +8490,12 @@ void GLCanvas3D::_refresh_if_shown_on_screen(bool overlayOnly)
 void GLCanvas3D::InvalidatePickingBuffer()
 {
     m_pickingBufferDirty = true;
+    // Give the first frames after this change to the visible scene; the picking
+    // buffer catches up on a later overlay frame (see render()).
+    m_pickingDeferFrames = PICKING_DEFER_FRAMES;
+    m_pickingFailureCount = 0;
+    m_pickingBufferDisabled = false;
+    m_pickingLodWaitDeadline = {};
 }
 
 void GLCanvas3D::InvalidateSceneCache()
@@ -8679,6 +8788,22 @@ bool GLCanvas3D::UpdateVolumeClippingState()
     if (changed)
         InvalidatePickingBuffer();
     return changed;
+}
+
+bool GLCanvas3D::AnyPickableVolumeWaitingForLod() const
+{
+    for (const GLVolume* volume : m_volumes.volumes) {
+        if (volume == nullptr || !ShouldRenderVolumeForPicking(*volume))
+            continue;
+        // The picking pass renders the same LOD level as the visible scene; while
+        // that model is still render-disabled it would fall back to the
+        // full-resolution mesh, which is exactly what we want to avoid here.
+        if (volume->m_curLodLevel == LODLevel::Middle && volume->m_modelMiddle && volume->m_modelMiddle->is_render_disabled())
+            return true;
+        if (volume->m_curLodLevel == LODLevel::Small && volume->m_modelSmall && volume->m_modelSmall->is_render_disabled())
+            return true;
+    }
+    return false;
 }
 
 bool GLCanvas3D::RenderPickingBuffer(const Camera& camera)

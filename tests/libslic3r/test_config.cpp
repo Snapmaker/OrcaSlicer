@@ -1131,3 +1131,65 @@ TEST_CASE("project_config_fill_log_value truncates long G-code strings without s
     REQUIRE((static_cast<unsigned char>(wide[prefix.size()]) & 0xC0) != 0x80);
     REQUIRE(prefix.find('\xE4') != std::string::npos);
 }
+
+TEST_CASE("Edge grouping dialog gate is CUSTOM plus two distinct nozzle flow types", "[Config][FilamentGroup]")
+{
+    // Snapmaker's gate is any_nozzle_high_flow() plus FilamentGroupDialog(parent, all_high_flow).
+    // Edge must not follow that: dialog only when grouping is custom AND nozzles mix flow types.
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2));
+    CHECK(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 3));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 0));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2));
+    CHECK_FALSE(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 1));
+    CHECK_FALSE(filament_group_dialog_required("unknown", 2));
+}
+
+TEST_CASE("filament group dirty flag is set only on valid-to-invalid slice result", "[Config][FilamentGroup]")
+{
+    // Snap #930: Preview re-slice should re-confirm grouping after a param change
+    // invalidates a previously sliced plate, not on first slice or re-validation.
+    CHECK(filament_group_dirty_on_invalidation(true, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, true));
+    CHECK_FALSE(filament_group_dirty_on_invalidation(true, true));
+}
+
+TEST_CASE("filament group slice decision covers prompt, remote skip, and sync", "[Config][FilamentGroup]")
+{
+    using D = FilamentGroupSliceDecision;
+
+    // CUSTOM + mixed nozzles, person at the PC: show the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), true) == D::Prompt);
+    // N2: phone / agent / hidden instance must not open the dialog.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2), false) == D::SkipAndProceed);
+    // STANDARD or a single flow type: sync, never prompt.
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_STANDARD, 2), true) == D::Sync);
+    CHECK(filament_group_slice_decision(filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 1), true) == D::Sync);
+    CHECK(filament_group_slice_decision(false, false) == D::Sync);
+}
+
+TEST_CASE("filament group plate-pick continues only when grouping is accepted", "[Config][FilamentGroup]")
+{
+    const bool required = filament_group_dialog_required(FILAMENT_GROUPING_CUSTOM, 2);
+    REQUIRE(required);
+
+    // N1: dirty + interactive Cancel always aborts (no switch, no slice), even if
+    // a sibling plate still reports is_slice_result_valid().
+    CHECK_FALSE(filament_group_plate_pick_continues(true, required, true, false));
+    CHECK(filament_group_plate_pick_continues(true, required, true, true));
+
+    // N2: non-interactive (remote / hidden) proceeds without a confirmed dialog.
+    CHECK(filament_group_plate_pick_continues(true, required, false, false));
+    CHECK(filament_group_plate_pick_continues(true, required, false, true));
+
+    // Clean pick: no grouping prompt, continue. Sync only when the dialog is not required.
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(false, required));
+    CHECK(filament_group_sync_on_clean_plate_pick(false, false));
+    CHECK_FALSE(filament_group_sync_on_clean_plate_pick(true, false));
+
+    // S4: a never-sliced plate is not dirty, so tab-in / pick does not prompt.
+    CHECK_FALSE(filament_group_dirty_on_invalidation(false, false));
+    CHECK(filament_group_plate_pick_continues(false, required, true, false));
+}

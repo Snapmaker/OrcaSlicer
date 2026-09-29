@@ -618,6 +618,10 @@ class PartPlateList : public ObjectBase
 
     int m_filament_count = 1;
 
+    // Snap #930: set when any plate's slice result goes valid→invalid so Preview
+    // re-slice can re-show the filament grouping dialog. Cleared at reslice().
+    bool m_filament_group_dirty = false;
+
     void init();
     //compute the origin for printable plate with index i
     Vec3d compute_origin(int index, int column_count);
@@ -749,6 +753,9 @@ public:
     int get_curr_plate_index() const { return m_current_plate; }
     PartPlate* get_curr_plate() { return m_plate_list[m_current_plate]; }
     const PartPlate* get_curr_plate() const { return m_plate_list[m_current_plate]; }
+
+    bool is_filament_group_dirty() const { return m_filament_group_dirty; }
+    void set_filament_group_dirty(bool dirty) { m_filament_group_dirty = dirty; }
 
     std::vector<PartPlate*>& get_plate_list() { return m_plate_list; };
 

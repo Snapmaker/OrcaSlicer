@@ -82,7 +82,7 @@ class TaskManager;
 
 namespace Gateway {
 class GatewayService;
-struct ActiveDeviceSnapshot;
+struct CurrentDevice;
 struct PreprintStoreResult;
 }
 
@@ -364,7 +364,7 @@ private:
     boost::thread    m_check_network_thread;
 
     std::shared_ptr<PrintHost> m_connected_host = nullptr;
-    std::mutex                 m_cnt_hst_mtx;
+    mutable std::mutex         m_cnt_hst_mtx;
     DynamicPrintConfig              m_host_config;
     std::mutex                 m_host_cfg_mtx;
 
@@ -400,6 +400,7 @@ private:
     }
     void      get_connect_host(std::shared_ptr<PrintHost>& output);
     void                       set_connect_host(const std::shared_ptr<PrintHost>& intput);
+    bool                       physical_printer_connected() const;
     wxDialog* get_web_device_dialog() { return web_device_dialog; }
     void                       set_web_preprint_dialog(WebPreprintDialog* obj) { web_preprint_dialog = obj; }
     wxDialog*                  get_web_preprint_dialog() { return web_preprint_dialog; }
@@ -625,6 +626,8 @@ private:
     void            query_gateway_current_device();
     void            query_gateway_device_objects();
     void            clear_gateway_device();
+    void            apply_gateway_machine_slots(std::vector<ConnectMachineInfo> slots);
+    void            clear_gateway_machine_slots();
     void            refresh_gateway_machine_slots_ui();
 
 public:

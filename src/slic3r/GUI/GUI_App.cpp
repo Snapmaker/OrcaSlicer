@@ -97,7 +97,7 @@
 #include "../Utils/Process.hpp"
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/GatewayService.hpp"
-#include "../Utils/GatewayMachineSlots.hpp"
+#include "../Utils/GatewayDevice.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
@@ -2313,6 +2313,12 @@ void GUI_App::set_connect_host(const std::shared_ptr<PrintHost>& input) {
     m_cnt_hst_mtx.lock();
     m_connected_host = input;
     m_cnt_hst_mtx.unlock();
+}
+
+bool GUI_App::physical_printer_connected() const
+{
+    std::lock_guard<std::mutex> lock(m_cnt_hst_mtx);
+    return m_connected_host != nullptr;
 }
 
 void GUI_App::on_start_subscribe_again(std::string dev_id)
@@ -5679,7 +5685,7 @@ bool GUI_App::start_gateway_service(bool restart)
         m_gateway_service = std::make_shared<Gateway::GatewayService>(Gateway::GatewayService::Config{}, std::move(dependencies));
         m_gateway_device  = GatewayDeviceState{};
         if (preset_bundle != nullptr)
-            preset_bundle->m_connect_machine_info_list.clear();
+            clear_gateway_machine_slots();
         m_gateway_loaded_base_url.clear();
         register_gateway_notifications();
         const std::string locale = gateway_locale();
@@ -5805,7 +5811,7 @@ void GUI_App::query_gateway_device_objects()
                                    }
 
                                    std::vector<ConnectMachineInfo> slots;
-                                   if (!Gateway::parse_gateway_machine_slots(result, slots)) {
+                                   if (!Gateway::GatewayDevice::parse_machine_slots(result, slots)) {
                                        BOOST_LOG_TRIVIAL(warning) << "[gateway][device-status] device objects cannot build machine slots";
                                        if (refresh_again)
                                            query_gateway_device_objects();
@@ -5818,8 +5824,8 @@ void GUI_App::query_gateway_device_objects()
                                            << "[gateway][device-status] cannot apply machine slots before preset bundle is ready";
                                        return;
                                    }
-                                   if (!Gateway::gateway_machine_slots_equal(bundle->m_connect_machine_info_list, slots)) {
-                                       bundle->m_connect_machine_info_list = std::move(slots);
+                                   if (!Gateway::GatewayDevice::machine_slots_equal(bundle->m_connect_machine_info_list, slots)) {
+                                       apply_gateway_machine_slots(std::move(slots));
                                        refresh_gateway_machine_slots_ui();
                                    }
                                    if (refresh_again)
@@ -5834,9 +5840,23 @@ void GUI_App::clear_gateway_device()
     m_gateway_device               = GatewayDeviceState{};
     m_gateway_device.generation    = generation;
     if (preset_bundle != nullptr)
-        preset_bundle->m_connect_machine_info_list.clear();
+        clear_gateway_machine_slots();
     if (had_slots)
         refresh_gateway_machine_slots_ui();
+}
+
+void GUI_App::apply_gateway_machine_slots(std::vector<ConnectMachineInfo> slots)
+{
+    if (preset_bundle == nullptr)
+        return;
+    preset_bundle->m_connect_machine_info_list = std::move(slots);
+}
+
+void GUI_App::clear_gateway_machine_slots()
+{
+    if (preset_bundle == nullptr)
+        return;
+    preset_bundle->m_connect_machine_info_list.clear();
 }
 
 void GUI_App::refresh_gateway_machine_slots_ui()
@@ -5869,7 +5889,7 @@ void GUI_App::register_gateway_notifications()
     m_gateway_service->set_notification_handler("notify.device.current_changed",
                                                 [this](const nlohmann::json&) { query_gateway_current_device(); });
     m_gateway_service->set_notification_handler("notify.device.object.changed", [this](const nlohmann::json& params) {
-        if (!m_gateway_device.connected || !Gateway::gateway_delta_affects_machine_slots(params))
+        if (!m_gateway_device.connected || !Gateway::GatewayDevice::delta_affects_machine_slots(params))
             return;
         query_gateway_device_objects();
     });
@@ -7735,15 +7755,8 @@ bool GUI_App::sm_disconnect_current_machine(bool need_reload_printerview)
 
     if (true) {
         wxGetApp().CallAfter([this, need_reload_printerview](){
-            wxGetApp().app_config->set("use_new_connect", "false");
-            /*auto p_config = &(wxGetApp().preset_bundle->printers.get_edited_preset().config);
-            p_config->set("print_host", "");*/
-
-            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(need_reload_printerview);
             wxGetApp().set_connect_host(nullptr);
-
-            wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
-            // wxGetApp().load_current_presets();
+            wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes(need_reload_printerview);
 
         });
 

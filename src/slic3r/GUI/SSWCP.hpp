@@ -319,14 +319,6 @@ private:
     // Machine option methods
     void sw_SendGCodes();
     void sw_FileGetStatus();
-    void sw_SystemGetDeviceInfo();
-    void sw_GetMachineState();
-    void sw_GetPrintInfo();
-    void sw_SubscribeMachineState();
-    void sw_UnSubscribeMachineState();
-    void sw_GetMachineObjects();
-    void sw_SetMachineSubscribeFilter();
-    void sw_GetSystemInfo();
     void sw_MachinePrintStart();
     void sw_MachinePrintPause();
     void sw_MachinePrintResume();
@@ -534,22 +526,8 @@ public:
     // Stop machine discovery
     static void stop_machine_find();
 
-    // Stop machine subscription
-    static void stop_subscribe_machine();
-
     // Handle webview deletion
     static void on_webview_delete(wxWebView* webview);
-
-    // query the info of the machine
-    static bool query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second = 5);
-
-    // Resolve machine info via parallel system_info + objects.query, then merge by field priority.
-    // model/device_name from system_info (real-time, authoritative), normalized.
-    // nozzle from objects.query (real-time, preferred) or system_info fallback.
-    // Status: NoResponse / GotIdentity / Complete.
-    // Must be called from a thread that is NOT the UI thread if timeout_second is large,
-    // or from UI thread if cache hit is expected to short-circuit quickly.
-    static SSWCPProtocol::ResolveResult resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second = 8);
 
     // update the active file name
     static void update_active_filename(const std::string& filename);

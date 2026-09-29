@@ -42,17 +42,17 @@ add_executable(gateway_tests
     GatewayProtocol_test.cpp
     GatewayService_test.cpp
     GatewayDevice_test.cpp
+    GatewayFlutterResources_test.cpp
     GatewayAccount_test.cpp
-    GatewayMachineSlots_test.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/ConnectionProcessManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayProtocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayDevice.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayAccount.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/GatewayMachineSlots.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/slic3r/Utils/Http.cpp
     )
 target_link_libraries(gateway_tests test_common libslic3r boost_libs libcurl OpenSSL::SSL OpenSSL::Crypto)
+target_compile_definitions(gateway_tests PRIVATE GATEWAY_FLUTTER_BUNDLE="${CMAKE_CURRENT_SOURCE_DIR}/../../resources/web/flutter_web/main.dart.js")
 if (MSVC)
     target_compile_definitions(gateway_tests PRIVATE _WIN32_WINNT=0x0601 NOMINMAX)
 endif ()

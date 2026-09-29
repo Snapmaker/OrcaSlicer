@@ -311,50 +311,6 @@ bool Moonraker::test_with_resolved_ip(wxString& msg) const
 }
 #endif // WIN32
 
-bool Moonraker::get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, json& response) {
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    
-    bool res = true;
-    auto url = make_url("printer/objects/query");
-    auto http = Http::post(std::move(url));
-
-    for (const auto pair : targets) {
-        std::string value = "";
-        for (size_t i = 0; i < pair.second.size(); ++i) {
-            if (i != 0) {
-                value += ",";
-            }
-            value += pair.second[i];
-        }
-        http.form_add(pair.first, value);        
-        wcp_loger.add_log("adding query parameter: " + pair.first + " = " + value, false, "", "Moonraker_Mqtt", "info");
-    }
-
-    http.on_error([&](std::string body, std::string error, unsigned status) {
-
-            BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to get machine info, error: " << error << ", HTTP status: " << status;
-            wcp_loger.add_log("failed to get machine info, error: " + error + ", HTTP status: " + std::to_string(status), false, "", "Moonraker_Mqtt", "error");
-            res = false;
-            try{
-                response = json::parse(body);
-            } catch (std::exception& e) {
-                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis error: " << e.what();
-            }
-        })
-        .on_complete([&](std::string body, unsigned) {
-        
-            wcp_loger.add_log("got machine info successfully", false, "", "Moonraker_Mqtt", "info");
-            try {
-                response = json::parse(body);
-            } catch (std::exception& e) {
-                BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] analysis machine response: " << e.what();
-            }
-        })
-        .perform_sync();
-
-    return res;
-}
-
 bool Moonraker::send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo)
 {
     auto& wcp_loger = GUI::WCP_Logger::getInstance();    
@@ -1651,29 +1607,6 @@ void Moonraker_Mqtt::async_cancel_print_job(std::function<void(const nlohmann::j
     }
 }
 
-// Get printer info
-void Moonraker_Mqtt::async_get_printer_info(std::function<void(const nlohmann::json& response)> callback) {
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting get printer info";
-    wcp_loger.add_log("Starting get printer info", false, "", "Moonraker_Mqtt", "info");
-    std::string method = "printer.info";
-    json        params = json::object();
-
-    if (!send_to_request(method, params, true, callback,
-                         [callback, &wcp_loger]() {
-                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] get printer info timed out";
-                             wcp_loger.add_log("get printer info timed out", false, "", "Moonraker_Mqtt", "warning");
-                             json res;
-                             res["error"] = "timeout";
-                             callback(res);
-                         }) &&
-        callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send get printer info request";
-        wcp_loger.add_log("failed to send get printer info request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
-}
-
 // Send G-code commands to printer
 void Moonraker_Mqtt::async_send_gcodes(const std::vector<std::string>& scripts, std::function<void(const nlohmann::json&)> callback)
 {
@@ -1756,49 +1689,6 @@ void Moonraker_Mqtt::async_unsubscribe_machine_info(const std::string& hash, std
 
 
     
-}
-
-// Set filters for printer status subscription
-void Moonraker_Mqtt::async_set_machine_subscribe_filter(
-    const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
-    std::function<void(const nlohmann::json& response)> callback)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting machine subscribe filter setup, target count: " << targets.size();
-    wcp_loger.add_log("Starting machine subscribe filter setup, target count: " + std::to_string(targets.size()), false, "", "Moonraker_Mqtt", "info");
-    std::string method = "printer.objects.subscribe";
-
-    json params;
-    params["objects"] = json::object();
-
-    for (size_t i = 0; i < targets.size(); ++i) {
-        if (targets[i].second.size() == 0) {
-            params["objects"][targets[i].first] = json::value_t::null;
-            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] added filter (all): " << targets[i].first;
-            wcp_loger.add_log("added filter (all): " + targets[i].first, false, "", "Moonraker_Mqtt", "info");
-        } else {
-            params["objects"][targets[i].first] = json::array();
-
-            for (const auto& key : targets[i].second) {
-                params["objects"][targets[i].first].push_back(key);
-            }
-            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] added filter: " << targets[i].first 
-                                    << ", field count: " << targets[i].second.size();
-            wcp_loger.add_log("added filter: " + targets[i].first + ", field count: " + std::to_string(targets[i].second.size()), false, "", "Moonraker_Mqtt", "info");
-        }
-    }
-
-    if (!send_to_request(method, params, true, callback, [callback, &wcp_loger](){
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] set subscribe filter timed out";
-        wcp_loger.add_log("set subscribe filter timed out", false, "", "Moonraker_Mqtt", "warning");
-        json res;
-        res["error"] = "timeout";
-        callback(res);
-    }) && callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send set subscribe filter request";
-        wcp_loger.add_log("failed to send set subscribe filter request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
 }
 
 void Moonraker_Mqtt::async_machine_files_roots(std::function<void(const nlohmann::json& response)> callback) {
@@ -2617,75 +2507,6 @@ void Moonraker_Mqtt::async_cancel_pull_cloud_file(std::function<void(const nlohm
     }
 }
 
-// Query device information (firmware version)
-// Query printer information
-void Moonraker_Mqtt::async_get_device_info(std::function<void(const nlohmann::json& response)> callback)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting query firmware info";
-    wcp_loger.add_log("Starting query firmware info", false, "", "Moonraker_Mqtt", "info");
-    std::string method = "system.get_device_info";
-
-    json params;
-
-    if (!send_to_request(method, params, true, callback,
-                         [callback, &wcp_loger]() {
-                             BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] query firmware info timed out";
-                             wcp_loger.add_log("query firmware info timed out", false, "", "Moonraker_Mqtt", "warning");
-                             json res;
-                             res["error"] = "timeout";
-                             callback(res);
-                         }) &&
-        callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send query firmware info request";
-        wcp_loger.add_log("failed to send query firmware info request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
-}
-
-// Query printer information
-void Moonraker_Mqtt::async_get_machine_info(
-    const std::vector<std::pair<std::string, std::vector<std::string>>>& targets,
-    std::function<void(const nlohmann::json& response)> callback)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting query printer info, target count: " << targets.size();
-    wcp_loger.add_log("Starting query printer info, target count: " + std::to_string(targets.size()), false, "", "Moonraker_Mqtt", "info");
-    std::string method = "printer.objects.query";
-
-    json params;
-    params["objects"] = json::object();
-
-    for (size_t i = 0; i < targets.size(); ++i) {
-        if (targets[i].second.size() == 0) {
-            params["objects"][targets[i].first] = json::value_t::null;
-            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] query object (all properties): " << targets[i].first;
-            wcp_loger.add_log("query object (all properties): " + targets[i].first, false, "", "Moonraker_Mqtt", "info");
-        } else {
-            params["objects"][targets[i].first] = json::array();
-
-            for (const auto& key : targets[i].second) {
-                params["objects"][targets[i].first].push_back(key);
-            }
-            BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] query object: " << targets[i].first 
-                                    << ", property count: " << targets[i].second.size();
-            wcp_loger.add_log("query object: " + targets[i].first + ", property count: " + std::to_string(targets[i].second.size()), false, "", "Moonraker_Mqtt", "info");
-        }
-    }
-
-    if (!send_to_request(method, params, true, callback, [callback, &wcp_loger](){
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] query printer info timed out";
-        wcp_loger.add_log("query printer info timed out", false, "", "Moonraker_Mqtt", "warning");
-        json res;
-        res["error"] = "timeout";
-        callback(res);
-    }) && callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send query printer info request";
-        wcp_loger.add_log("failed to send query printer info request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
-}
-
 // Get File state
 void Moonraker_Mqtt::async_server_files_get_status(std::function<void(const nlohmann::json& response)> callback)
 {
@@ -2706,50 +2527,6 @@ void Moonraker_Mqtt::async_server_files_get_status(std::function<void(const nloh
         callback) {
         BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send get system file status request";
         wcp_loger.add_log("failed to send get system file status request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
-}
-
-// Get system info of the machine
-void Moonraker_Mqtt::async_get_system_info(std::function<void(const nlohmann::json& response)> callback)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting get system info";
-    wcp_loger.add_log("Starting get system info", false, "", "Moonraker_Mqtt", "info");
-    std::string method = "machine.system_info";
-    json params = json::object();
-
-    if (!send_to_request(method, params, true, callback, [callback, &wcp_loger](){
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] get system info timed out";
-        wcp_loger.add_log("get system info timed out", false, "", "Moonraker_Mqtt", "warning");
-        json res;
-        res["error"] = "timeout";
-        callback(res);
-    }) && callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send get system info request";
-        wcp_loger.add_log("failed to send get system info request", false, "", "Moonraker_Mqtt", "error");
-        callback(json::value_t::null);
-    }
-}
-
-// Get list of available printer objects
-void Moonraker_Mqtt::async_get_machine_objects(std::function<void(const nlohmann::json& response)> callback)
-{
-    auto& wcp_loger = GUI::WCP_Logger::getInstance();
-    BOOST_LOG_TRIVIAL(info) << "[Moonraker_Mqtt] Starting get available printer object list";
-    wcp_loger.add_log("Starting get available printer object list", false, "", "Moonraker_Mqtt", "info");
-    std::string method = "printer.objects.list";
-    json params = json::object();
-
-    if (!send_to_request(method, params, true, callback, [callback, &wcp_loger](){
-        BOOST_LOG_TRIVIAL(warning) << "[Moonraker_Mqtt] get printer object list timed out";
-        wcp_loger.add_log("get printer object list timed out", false, "", "Moonraker_Mqtt", "warning");
-        json res;
-        res["error"] = "timeout";
-        callback(res);
-    }) && callback) {
-        BOOST_LOG_TRIVIAL(error) << "[Moonraker_Mqtt] failed to send get printer object list request";
-        wcp_loger.add_log("failed to send get printer object list request", false, "", "Moonraker_Mqtt", "error");
         callback(json::value_t::null);
     }
 }

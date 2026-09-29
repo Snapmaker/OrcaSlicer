@@ -12,7 +12,9 @@
 
 #include <algorithm>
 #include <boost/filesystem/path.hpp>
+#include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <cstdlib>
 #include <iterator>
 #include <sstream>
 #include <string>
@@ -452,6 +454,10 @@ TEST_CASE("ByObject mixed virtual wall filament exports with physical toolchange
         REQUIRE(count_toolchange(gcode, 0) + count_toolchange(gcode, 1) >= 2);
         REQUIRE(count_toolchange(gcode, 0) >= 1);
         REQUIRE(count_toolchange(gcode, 1) >= 1);
+        if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
+            boost::nowide::ofstream dump(std::string(dir) + (by_object ? "/mixed_byobject.gcode" : "/mixed_bylayer.gcode"));
+            dump << strip_gcode_timestamps(gcode);
+        }
     }
 }
 
@@ -471,5 +477,9 @@ TEST_CASE("Non-mixed two-filament G-code is unchanged by mixed-id expansion", "[
         REQUIRE_FALSE(gcode.empty());
         REQUIRE(count_toolchange(gcode, 1) == 0);
         REQUIRE_FALSE(strip_gcode_timestamps(gcode).empty());
+        if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
+            boost::nowide::ofstream dump(std::string(dir) + (by_object ? "/nonmixed_byobject.gcode" : "/nonmixed_bylayer.gcode"));
+            dump << strip_gcode_timestamps(gcode);
+        }
     }
 }

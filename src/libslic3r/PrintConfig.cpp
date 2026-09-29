@@ -7256,6 +7256,21 @@ const ConfigOptionEnumsGeneric* enums_option(const ConfigBase& config, const cha
     return static_cast<const ConfigOptionEnumsGeneric*>(opt);
 }
 
+bool any_filament_uses_spiral_lift(const ConfigBase& config)
+{
+    // "Auto Lift" is resolved to a spiral lift in GCode.cpp, so treat it as one.
+    for (const char* key : {"z_hop_types", "filament_z_hop_types"}) {
+        const ConfigOptionEnumsGeneric* opt = enums_option(config, key);
+        if (opt == nullptr)
+            continue;
+        for (int value : opt->values)
+            if (value == zhtSpiral || value == zhtAuto)
+                return true;
+    }
+
+    return false;
+}
+
 const char* to_string(FilamentVolumeType type)
 {
     const t_config_enum_names &names = ConfigOptionEnum<FilamentVolumeType>::get_enum_names();

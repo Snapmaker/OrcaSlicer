@@ -120,6 +120,11 @@ struct ArrangeParams {
 
     bool allow_rotations = false;
 
+    // Also try every angle turned by 180 degrees. Only pays off for outlines that are not
+    // centrally symmetric - it is what lets them nest into each other - and doubles the
+    // number of placements the packer has to score.
+    bool allow_half_turns = false;
+
     bool do_final_align = true;
 
     //BBS: add specific arrange params

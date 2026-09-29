@@ -236,8 +236,8 @@ void FilamentDropDown::prepare_submenu()
     new_sub_drop_down->use_content_width       = true;
     new_sub_drop_down->limit_max_content_width = true;
     // One width for every group: switching groups must not resize the popup under the pointer. This value
-    // wins over the two switches above and is read as "the width is fixed" by the +6 padding branch and
-    // the on-screen clamp, so set it here only.
+    // wins over the two switches above and is read as "the width is fixed" by the messureSize width
+    // override and the +6 padding branch, so set it here only.
     new_sub_drop_down->fixed_width_dip         = g_filament_submenu_width_dip;
     new_sub_drop_down->max_visible_rows        = 8;
     if (!new_sub_drop_down->Create(GetParent()))
@@ -739,6 +739,14 @@ void FilamentDropDown::messureSize()
         rowSize.x   = GetParent()->FromDIP(fixed_width_dip);
         szContent.x = rowSize.x;
     }
+    if (mainDropDown != nullptr)
+    {
+        // The root row is the shared vertical rhythm for both popup levels. Measure it first so
+        // rescaling and font changes cannot leave the child with a stale row height.
+        mainDropDown->messureSize();
+        rowSize.y   = mainDropDown->rowSize.y;
+        szContent.y = rowSize.y;
+    }
     const size_t visible_rows = std::min(max_rows, std::max(count, size_t{1}));
     szContent.y                = multiply_to_int(szContent.y, visible_rows);
     if (items.size() > max_rows)
@@ -756,23 +764,55 @@ void FilamentDropDown::messureSize()
     need_sync = false;
 }
 
+void FilamentDropDown::position_submenu()
+{
+    if (mainDropDown == nullptr || GetParent() == nullptr)
+        return;
+
+    const wxRect parent_rect  = mainDropDown->GetScreenRect();
+    const wxRect display_rect = wxDisplay(GetParent()).GetGeometry();
+    const int    parent_left  = parent_rect.GetLeft();
+    const int    parent_right = parent_left + parent_rect.GetWidth();
+    const int    popup_width  = GetSize().x;
+    const int    popup_height = GetSize().y;
+    const int    row_index    = std::max(mainDropDown->hover_item, 0);
+    const int    row_top      = add_to_int(parent_rect.GetTop(),
+                                            add_to_int(multiply_to_int(mainDropDown->rowSize.y,
+                                                                        static_cast<size_t>(row_index)),
+                                                       mainDropDown->offset.y));
+    const int right_x         = parent_right;
+    const int left_x          = parent_left - popup_width;
+    const int right_space     = display_rect.GetRight() + 1 - right_x;
+    const int left_space      = parent_left - display_rect.GetLeft();
+    int       popup_x         = right_x;
+    if (right_space < popup_width && left_space >= popup_width)
+        popup_x = left_x;
+    else if (right_space < popup_width && left_space < popup_width && left_space > right_space)
+        popup_x = left_x;
+
+    int popup_y = row_top;
+    const int display_bottom = display_rect.GetBottom() + 1;
+    if (popup_y + popup_height > display_bottom)
+        popup_y = std::max(display_rect.GetTop(), display_bottom - popup_height);
+
+    const wxPoint popup_position(popup_x, popup_y);
+    if (popup_position != GetPosition())
+        SetPosition(popup_position);
+}
+
 void FilamentDropDown::autoPosition()
 {
     messureSize();
     const size_t max_rows = max_visible_row_count(max_visible_rows);
     wxPoint pos;
     wxSize  off;
-    if (mainDropDown)
+    if (mainDropDown != nullptr)
     {
         pos = mainDropDown->ClientToScreen(wxPoint(0, 0));
-        off = mainDropDown->GetSize();
-        pos.x += 6;
         pos.y = add_to_int(pos.y,
                            add_to_int(multiply_to_int(mainDropDown->rowSize.y,
                                                       static_cast<size_t>(std::max(mainDropDown->hover_item, 0))),
-                                    mainDropDown->offset.y));
-        off.x -= 12;
-        off.y = 0;
+                                     mainDropDown->offset.y));
     }
     else
     {
@@ -783,7 +823,10 @@ void FilamentDropDown::autoPosition()
     }
     wxPoint old  = GetPosition();
     wxSize  size = GetSize();
-    Position(pos, off);
+    if (mainDropDown != nullptr)
+        position_submenu();
+    else
+        Position(pos, off);
     if (old != GetPosition())
     {
         size              = rowSize;
@@ -798,7 +841,10 @@ void FilamentDropDown::autoPosition()
         {
             wxWindow::SetSize(size);
             offset = wxPoint();
-            Position(pos, off);
+            if (mainDropDown != nullptr)
+                position_submenu();
+            else
+                Position(pos, off);
         }
     }
     if (GetPosition().y > pos.y)
@@ -829,21 +875,6 @@ void FilamentDropDown::autoPosition()
         }
     }
 
-    if (fixed_width_dip > 0)
-    {
-        const wxRect display_rect   = wxDisplay(GetParent()).GetGeometry();
-        const int    display_left   = display_rect.GetLeft();
-        const int    display_right  = display_left + display_rect.GetWidth();
-        const int    popup_width    = GetSize().x;
-        wxPoint      popup_position = GetPosition();
-
-        if (popup_position.x + popup_width > display_right)
-            popup_position.x = display_right - popup_width;
-        if (popup_position.x < display_left)
-            popup_position.x = display_left;
-        if (popup_position != GetPosition())
-            SetPosition(popup_position);
-    }
 }
 
 void FilamentDropDown::setGroup(const wxString &value)
@@ -952,6 +983,9 @@ void FilamentDropDown::mouseMove(wxMouseEvent &event)
         {
             offset     = pt2;
             hover_item = -1; // moved
+            // DismissAll, not Dismiss: the child's pointer guard would veto while the pointer is over the popup tree.
+            if (subDropDown != nullptr && subDropDown->IsShown())
+                subDropDown->DismissAll();
         }
         else
         {
@@ -1010,6 +1044,9 @@ void FilamentDropDown::mouseWheelMoved(wxMouseEvent &event)
     if (pt2.y != offset.y)
     {
         offset = pt2;
+        // DismissAll, not Dismiss: the child's pointer guard would veto while the pointer is over the popup tree.
+        if (subDropDown != nullptr && subDropDown->IsShown())
+            subDropDown->DismissAll();
     }
     else
     {

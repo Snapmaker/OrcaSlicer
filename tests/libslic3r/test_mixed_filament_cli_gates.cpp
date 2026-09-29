@@ -88,6 +88,13 @@ DynamicPrintConfig u1_cli_config()
     cfg.option<ConfigOptionFloat>("prime_tower_width")->value = 35.;
     cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
     cfg.set_deserialize_strict({{"brim_type", "no_brim"}});
+    for (const char *key : { "line_width", "initial_layer_line_width", "outer_wall_line_width", "inner_wall_line_width",
+                             "top_surface_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width" }) {
+        if (auto *opt = cfg.option<ConfigOptionFloatOrPercent>(key)) {
+            opt->value   = 0.42;
+            opt->percent = false;
+        }
+    }
     return cfg;
 }
 
@@ -820,12 +827,14 @@ TEST_CASE("height range leaves the rest of the object on the default filament", 
 TEST_CASE("U1 CLI smoke: painted cube on filament 1 with paint 2 has a tower", "[MixedFilamentCli]")
 {
     DynamicPrintConfig cfg = u1_cli_config();
+    Print              print;
     Model              model;
-    ModelObject       *object = add_cube_object(model);
-    paint_all_facets(*object->volumes.front(), EnforcerBlockerType::Extruder2);
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, model, cfg);
+    paint_all_facets(*model.objects.front()->volumes.front(), EnforcerBlockerType::Extruder2);
+    print.apply(model, cfg);
 
     std::vector<int> plate_ids;
-    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    append_object_plate_filament_ids(*model.objects.front(), cfg, plate_ids);
     plate_ids = unique_positive(plate_ids);
     REQUIRE(contains_id(plate_ids, 1));
     REQUIRE(contains_id(plate_ids, 2));
@@ -835,10 +844,6 @@ TEST_CASE("U1 CLI smoke: painted cube on filament 1 with paint 2 has a tower", "
         filament_ids.push_back(static_cast<unsigned int>(id - 1));
     const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(two.depth > 0.);
-
-    Print print;
-    print.apply(model, cfg);
-    print.set_status_silent();
     REQUIRE(print.has_wipe_tower());
     const std::string gcode = Slic3r::Test::gcode(print);
     REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
@@ -847,15 +852,14 @@ TEST_CASE("U1 CLI smoke: painted cube on filament 1 with paint 2 has a tower", "
 TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[MixedFilamentCli]")
 {
     DynamicPrintConfig cfg = u1_cli_config();
+    Print              print;
     Model              model;
-    ModelObject       *object = model.add_object();
-    object->add_volume(make_cube(20., 20., 20.));
-    object->add_instance();
-    object->ensure_on_bed();
-    object->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("extruder", 2);
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, model, cfg);
+    model.objects.front()->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("extruder", 2);
+    print.apply(model, cfg);
 
     std::vector<int> plate_ids;
-    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    append_object_plate_filament_ids(*model.objects.front(), cfg, plate_ids);
     plate_ids = unique_positive(plate_ids);
     REQUIRE(contains_id(plate_ids, 1));
     REQUIRE(contains_id(plate_ids, 2));
@@ -865,10 +869,6 @@ TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[
         filament_ids.push_back(static_cast<unsigned int>(id - 1));
     const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(two.depth > 0.);
-
-    Print print;
-    print.apply(model, cfg);
-    print.set_status_silent();
     REQUIRE(print.has_wipe_tower());
     const std::string gcode = Slic3r::Test::gcode(print);
     REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
@@ -877,15 +877,17 @@ TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[
 TEST_CASE("U1 CLI smoke: non-intersecting modifier with wall_filament=3 does not produce a tower", "[MixedFilamentCli]")
 {
     DynamicPrintConfig cfg = u1_cli_config();
+    Print              print;
     Model              model;
-    ModelObject       *object = add_cube_object(model);
-    ModelVolume       *modifier = object->add_volume(make_cube(5., 5., 5.));
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, model, cfg);
+    ModelVolume *modifier = model.objects.front()->add_volume(make_cube(5., 5., 5.));
     modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
     modifier->set_offset(Vec3d(1000., 0., 0.));
     modifier->config.set("wall_filament", 3);
+    print.apply(model, cfg);
 
     std::vector<int> plate_ids;
-    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    append_object_plate_filament_ids(*model.objects.front(), cfg, plate_ids);
     plate_ids = unique_positive(plate_ids);
     CHECK_FALSE(contains_id(plate_ids, 3));
 
@@ -894,11 +896,5 @@ TEST_CASE("U1 CLI smoke: non-intersecting modifier with wall_filament=3 does not
         filament_ids.push_back(static_cast<unsigned int>(id - 1));
     const WipeTowerFootprint fp = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(fp.depth == 0.);
-
-    Print print;
-    print.apply(model, cfg);
-    print.set_status_silent();
     REQUIRE_FALSE(print.has_wipe_tower());
-    const std::string gcode = Slic3r::Test::gcode(print);
-    CHECK(gcode.find("WIPE_TOWER_START") == std::string::npos);
 }

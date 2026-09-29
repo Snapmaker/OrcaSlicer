@@ -3162,7 +3162,11 @@ ModelVolumeType type_from_string(const std::string &s)
 
                             // stores volume's config data
                             for (const std::string& key : volume->config.keys()) {
-                                stream << "   <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << VOLUME_TYPE << "\" " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
+                                const std::string value = volume->config.opt_serialize(key);
+                                // Config serialization is C-style, not XML: escape values too, including tabs.
+                                stream << "   <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << VOLUME_TYPE << "\" "
+                                       << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\""
+                                       << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                             }
 
                             // stores mesh's statistics

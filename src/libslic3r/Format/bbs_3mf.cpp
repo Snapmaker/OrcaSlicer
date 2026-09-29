@@ -8607,7 +8607,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                     stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << kv.first << "\" " << VALUE_ATTR << "=\"" << xml_escape(BambuExport::serialize(kv.second)) << "\"/>\n";
                             } else
                             for (const std::string& key : volume->config.keys()) {
-                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
+                                const std::string value = volume->config.opt_serialize(key);
+                                // Config serialization is C-style, not XML: escape values too, including tabs.
+                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\""
+                                       << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                             }
 
                             if (const std::optional<EmbossShape> &es = volume->emboss_shape;

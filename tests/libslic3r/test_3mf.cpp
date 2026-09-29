@@ -1227,3 +1227,71 @@ TEST_CASE("Paint states 20, 200 and 255 round-trip through a 3MF byte-identicall
     for (int i = 0; i < 3; ++i)
         REQUIRE(restored.num_facets(static_cast<EnforcerBlockerType>(states[i])) == 1);
 }
+
+// Volume config is written as a double-quoted XML attribute. ConfigOptionString serializes
+// C-style (so '"' becomes '\"' and a tab stays a tab); the 3MF writers must then XML-escape
+// that serialized text. Unescaped quotes break the attribute; an unescaped tab is collapsed
+// to a space by XML attribute-value normalization (https://www.w3.org/TR/REC-xml/#AVNormalize).
+// Placed at EOF so it does not collide with draft PR #117, which inserts above the paint cases.
+TEST_CASE("Volume config values with XML special characters survive a 3MF round trip", "[3mf][Regression]")
+{
+    const bool bbs_format = GENERATE(false, true);
+    INFO((bbs_format ? "bbs" : "prusa"));
+
+    const std::string special = "quoted \"value\" & <tag>\tcolumn";
+    // Hard-coded independently of xml_escape_double_quotes_attribute_value so a double-escape
+    // (turning &quot; into &amp;quot;) cannot hide behind the same helper.
+    const std::string encoded = R"(quoted \&quot;value\&quot; &amp; &lt;tag>&#x9;column)";
+
+    Model        src_model;
+    ModelObject *src_object = src_model.add_object();
+    src_object->name        = "xml_escape_vol";
+    src_object->add_volume(make_cube(10., 10., 10.))->name = "part";
+    ModelVolume *modifier = src_object->add_volume(make_cube(5., 5., 5.));
+    modifier->name        = "mod";
+    modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    modifier->config.set_key_value("notes", new ConfigOptionString(special));
+    src_object->add_instance();
+    src_object->ensure_on_bed();
+
+    const std::string path    = make_temp_3mf_path(bbs_format ? "vol_cfg_escape_bbs.3mf" : "vol_cfg_escape_prusa.3mf");
+    const ScopeGuard  cleanup = remove_file_guard(path);
+
+    DynamicPrintConfig store_config = DynamicPrintConfig::full_print_config();
+    if (bbs_format) {
+        StoreParams store_params;
+        store_params.path     = path.c_str();
+        store_params.model    = &src_model;
+        store_params.config   = &store_config;
+        store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+        REQUIRE(store_bbs_3mf(store_params));
+    } else {
+        REQUIRE(store_3mf(path.c_str(), &src_model, &store_config, false));
+    }
+
+    const std::string xml_entry = bbs_format ? "Metadata/model_settings.config" : "Metadata/Slic3r_PE_model.config";
+    const std::string xml       = extract_zip_entry(path, xml_entry);
+    REQUIRE_FALSE(xml.empty());
+    REQUIRE(xml.find("key=\"notes\" value=\"" + encoded + "\"") != std::string::npos);
+    REQUIRE(xml.find("&amp;quot;") == std::string::npos);
+
+    Model dst_model;
+    if (bbs_format) {
+        REQUIRE(load_project(path, dst_model));
+    } else {
+        DynamicPrintConfig        dst_config;
+        ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+        REQUIRE(load_3mf(path.c_str(), dst_config, ctxt, &dst_model, false));
+    }
+
+    REQUIRE(dst_model.objects.size() == 1);
+    REQUIRE(dst_model.objects.front()->volumes.size() == 2);
+    const ModelVolume *dst_mod = nullptr;
+    for (const ModelVolume *volume : dst_model.objects.front()->volumes)
+        if (volume->name == "mod")
+            dst_mod = volume;
+    REQUIRE(dst_mod != nullptr);
+    REQUIRE(dst_mod->is_modifier());
+    REQUIRE(dst_mod->config.has("notes"));
+    REQUIRE(dst_mod->config.get().opt_string("notes") == special);
+}

@@ -60,13 +60,26 @@ void zero_mixed_flush_rows_and_cols(std::vector<double>        &flush_vol_matrix
 bool mixed_definitions_have_slot_without_filament(const std::string &serialized, size_t num_physical);
 
 // Appends every filament id (1-based) referenced by print_config's per-feature
-// filament options (wall/sparse-infill/solid-infill/support/support-interface) to
-// `ids`. IDs <= 0 (meaning "use default") are skipped.
+// filament options (wall/outer-wall/sparse-infill/solid-infill/support/support-interface)
+// to `ids`. IDs <= 0 (meaning "use default" / "follow walls") are skipped.
 void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids);
 
+// Per-feature filament ids (>0) set directly on a modifier volume or a height-range
+// config: wall_filament, outer_wall_filament, sparse_infill_filament, solid_infill_filament.
+// Support keys are object-level and are not collected here.
+void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids);
+
+// 1-based filament printing the outer wall of an object whose own config is `object_config`
+// (may be null) over `global_config`, or 0 when it follows wall_filament (already counted)
+// or no walls are printed. Mirrors PrintRegion::extruder(frExternalPerimeter) and the
+// wall_loops gate in PrintRegion::collect_object_printing_extruders. An object key of 0
+// wins over a global outer filament (explicit "follow walls").
+int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config);
+
 // Same as append_config_filament_ids, but scans every model's object-level config,
-// each volume's get_extruders(), and each layer-height-range's "extruder" option too
-// - i.e. every place a CLI-loaded 3mf can pin a filament id, mixed slots included.
+// each volume's get_extruders() plus modifier per-feature keys, and each
+// layer-height-range's "extruder" option plus per-feature keys too - i.e. every place a
+// CLI-loaded 3mf can pin a filament id, mixed slots included.
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids);
 
 // Resolves a MixedFilament's components (manual pattern tokens, or component_a/b

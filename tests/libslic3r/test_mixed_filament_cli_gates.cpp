@@ -4,7 +4,9 @@
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/MixedFilamentCliGates.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/GCode/WipeTowerEstimate.hpp"
 
+#include <algorithm>
 #include <vector>
 
 using namespace Slic3r;
@@ -262,4 +264,145 @@ TEST_CASE("mixed_components_differ_in_filament_type reports no difference for a 
     cfg.option<ConfigOptionStrings>("filament_type")->values = {"PLA", "PETG", "ABS", "TPU"};
 
     CHECK_FALSE(mixed_components_differ_in_filament_type(mf, cfg, 4));
+}
+
+// ============================================================================
+// Per-feature filament helpers used by PartPlate's plate set and the CLI mixed gate
+// ============================================================================
+
+TEST_CASE("resolve_outer_wall_filament follows object, then global, and requires walls", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig global = four_physical_filament_config();
+    global.option<ConfigOptionInt>("outer_wall_filament")->value = 2;
+    REQUIRE(global.option<ConfigOptionInt>("wall_loops")->value > 0);
+
+    SECTION("global outer_wall_filament=2 gives 2") {
+        CHECK(resolve_outer_wall_filament(nullptr, global) == 2);
+    }
+    SECTION("object key 0 over global 2 gives 0 (explicit follow-walls)") {
+        DynamicPrintConfig object_cfg;
+        object_cfg.set_key_value("outer_wall_filament", new ConfigOptionInt(0));
+        CHECK(resolve_outer_wall_filament(&object_cfg, global) == 0);
+    }
+    SECTION("object key 3 gives 3") {
+        DynamicPrintConfig object_cfg;
+        object_cfg.set_key_value("outer_wall_filament", new ConfigOptionInt(3));
+        CHECK(resolve_outer_wall_filament(&object_cfg, global) == 3);
+    }
+    SECTION("wall_loops=0 gives 0") {
+        global.option<ConfigOptionInt>("wall_loops")->value = 0;
+        CHECK(resolve_outer_wall_filament(nullptr, global) == 0);
+        DynamicPrintConfig object_cfg;
+        object_cfg.set_key_value("wall_loops", new ConfigOptionInt(0));
+        global.option<ConfigOptionInt>("wall_loops")->value = 2;
+        CHECK(resolve_outer_wall_filament(&object_cfg, global) == 0);
+    }
+    SECTION("null object config uses the global value") {
+        CHECK(resolve_outer_wall_filament(nullptr, global) == 2);
+    }
+}
+
+TEST_CASE("append_feature_filament_overrides collects wall and solid ids and skips zeros", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg;
+    cfg.set_key_value("wall_filament", new ConfigOptionInt(2));
+    cfg.set_key_value("solid_infill_filament", new ConfigOptionInt(3));
+    cfg.set_key_value("outer_wall_filament", new ConfigOptionInt(0));
+
+    std::vector<int> ids;
+    append_feature_filament_overrides(cfg, ids);
+    REQUIRE(ids == std::vector<int>{2, 3});
+}
+
+TEST_CASE("append_config_filament_ids includes outer_wall_filament", "[MixedFilamentCli]")
+{
+    DynamicPrintConfig cfg = four_physical_filament_config();
+    cfg.option<ConfigOptionInt>("outer_wall_filament")->value = 2;
+    // Defaults: wall/sparse/solid = 1, support = 0. Only positive ids are pushed.
+    std::vector<int> ids;
+    append_config_filament_ids(cfg, ids);
+    REQUIRE(std::find(ids.begin(), ids.end(), 2) != ids.end());
+}
+
+TEST_CASE("CLI mixed filament slot gate refuses outer_wall_filament beyond the mixed slots", "[MixedFilamentCli]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, four_colors);
+    REQUIRE(mgr.enabled_count() == 1);
+    REQUIRE(mgr.is_mixed(5, 4));
+    REQUIRE_FALSE(mgr.is_mixed(6, 4));
+    const std::string mixed_defs = mgr.serialize_custom_entries();
+    DynamicPrintConfig print_config = four_physical_filament_config();
+
+    SECTION("outer_wall_filament=6 is not a mixed slot and is refused") {
+        Model        model;
+        ModelObject *object = model.add_object();
+        object->config.set("outer_wall_filament", 6);
+        std::vector<Model> models;
+        models.push_back(std::move(model));
+
+        const CliMixedFilamentVerdict verdict =
+            cli_check_mixed_filament_slots_have_filament(mgr, mixed_defs, /*num_physical=*/4, models, print_config,
+                                                           /*filament_count=*/4);
+        CHECK_FALSE(verdict.ok);
+        CHECK(verdict.message.find("mixed filament slot 6 has no filament of its own") != std::string::npos);
+    }
+    SECTION("outer_wall_filament=5 (the mixed slot) passes") {
+        Model        model;
+        ModelObject *object = model.add_object();
+        object->config.set("outer_wall_filament", 5);
+        std::vector<Model> models;
+        models.push_back(std::move(model));
+
+        const CliMixedFilamentVerdict verdict =
+            cli_check_mixed_filament_slots_have_filament(mgr, mixed_defs, /*num_physical=*/4, models, print_config,
+                                                           /*filament_count=*/4);
+        CHECK(verdict.ok);
+    }
+}
+
+TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with no support yields two plate filaments and a tower", "[MixedFilamentCli]")
+{
+    // Snapmaker U1: four nozzles, not dual-nozzle (size==2). One filament still yields depth 0;
+    // two project filament ids (volume 1 + outer wall 2) must produce a tower. This is the CLI
+    // plate-set collection get_extruders_under_cli uses, including objects without support.
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_num_extruders(4);
+    cfg.set_num_filaments(4);
+    cfg.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4, 0.4, 0.4};
+    cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    cfg.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value           = 0;
+    cfg.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
+    cfg.option<ConfigOptionInt>("wall_filament")->value         = 1;
+    cfg.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
+    cfg.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+    cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+
+    Model              model;
+    std::vector<Model> models;
+    models.push_back(std::move(model));
+
+    std::vector<int> plate_ids;
+    collect_cli_filament_ids(models, cfg, plate_ids);
+    const int ow = resolve_outer_wall_filament(nullptr, cfg);
+    REQUIRE(ow == 2);
+    plate_ids.push_back(ow);
+    plate_ids.push_back(1); // ModelVolume::get_extruders() volume id
+    std::sort(plate_ids.begin(), plate_ids.end());
+    plate_ids.erase(std::unique(plate_ids.begin(), plate_ids.end()), plate_ids.end());
+    plate_ids.erase(std::remove(plate_ids.begin(), plate_ids.end(), 0), plate_ids.end());
+    REQUIRE(plate_ids.size() == 2);
+    REQUIRE(plate_ids[0] == 1);
+    REQUIRE(plate_ids[1] == 2);
+
+    std::vector<unsigned int> filament_ids;
+    for (int id : plate_ids)
+        filament_ids.push_back(static_cast<unsigned int>(id - 1));
+    const WipeTowerFootprint one = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, {0}, 0.2, 20.);
+    const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
+    CHECK(one.depth == 0.);
+    CHECK(two.depth > 0.);
 }

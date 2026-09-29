@@ -4,11 +4,14 @@
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/MixedFilamentCliGates.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
 #include "test_data.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -320,4 +323,41 @@ TEST_CASE("Arachne inner-outer-inner wall order holds on a narrow wall", "[Print
     });
 
     REQUIRE(count_ioi_sandwiches(print) > 0);
+}
+
+TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare plate helper", "[Print][WipeTower]")
+{
+    // Prepare's plate set used to miss outer_wall_filament, so the estimate had depth 0 while
+    // Print::extruders() still listed both filaments and built a real tower. Lock them together:
+    // volume extruder 1 plus resolve_outer_wall_filament must equal print.extruders() as 1-based
+    // project ids.
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
+    config.option<ConfigOptionInt>("wall_filament")->value         = 1;
+    config.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
+    config.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+
+    REQUIRE(print.has_wipe_tower());
+    REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
+
+    std::vector<int> prepare_ids{1};
+    if (int ow = resolve_outer_wall_filament(&model.objects.front()->config.get(), config); ow > 0)
+        prepare_ids.push_back(ow);
+    std::sort(prepare_ids.begin(), prepare_ids.end());
+    prepare_ids.erase(std::unique(prepare_ids.begin(), prepare_ids.end()), prepare_ids.end());
+
+    std::vector<int> slice_ids;
+    for (unsigned int e : print.extruders())
+        slice_ids.push_back(int(e) + 1);
+    REQUIRE(prepare_ids == slice_ids);
 }

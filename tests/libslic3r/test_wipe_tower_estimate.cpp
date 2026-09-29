@@ -305,3 +305,15 @@ TEST_CASE("A config missing a tower key falls back to that key's default", "[Wip
                             print_config_def.get("wipe_tower_extra_spacing")->default_value->clone());
     CHECK_THAT(estimate(partial, 3, 0.2, 5.).depth, WithinAbs(estimate(defaulted, 3, 0.2, 5.).depth, 1e-9));
 }
+
+TEST_CASE("A one-filament plate estimate has depth 0, so the plate set must include per-feature filaments", "[WipeTowerEstimate]")
+{
+    // PartPlate::estimate_wipe_tower_footprint sizes the Prepare tower from the plate's extruder
+    // set. If that set misses outer_wall_filament (or a modifier/height-range feature filament),
+    // filaments_cnt is 1, purge_count is 0, and GLCanvas3D skips drawing and clamping the tower
+    // (footprint.depth <= 0). Two 0-based ids is the Prepare/CLI floor for a real tower.
+    DynamicPrintConfig config = make_config();
+    REQUIRE(config.option<ConfigOptionFloats>("nozzle_diameter")->values.size() == 1);
+    CHECK_THAT(estimate_wipe_tower_footprint(config, WipeTowerType::Type2, {0}, 0.2, 20.).depth, WithinAbs(0., 1e-9));
+    CHECK(estimate_wipe_tower_footprint(config, WipeTowerType::Type2, {0, 1}, 0.2, 20.).depth > 0.);
+}

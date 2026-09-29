@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <boost/format.hpp>
 #include <cstdlib>
+#include <initializer_list>
 #include <sstream>
 
 namespace Slic3r {
@@ -95,16 +96,53 @@ bool mixed_definitions_have_slot_without_filament(const std::string &serialized,
     return false;
 }
 
-void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids)
+namespace {
+
+void append_positive_int_keys(const ConfigBase &cfg, std::initializer_list<const char *> keys, std::vector<int> &ids)
 {
-    static const char *keys[] = {"wall_filament", "sparse_infill_filament", "solid_infill_filament",
-                                  "support_filament", "support_interface_filament"};
     for (const char *key : keys) {
         if (const ConfigOptionInt *opt = cfg.option<ConfigOptionInt>(key)) {
             if (opt->value > 0)
                 ids.push_back(opt->value);
         }
     }
+}
+
+bool config_int_if_present(const ConfigBase *cfg, const char *key, int &out)
+{
+    if (cfg == nullptr)
+        return false;
+    if (const ConfigOption *opt = cfg->option(key)) {
+        out = opt->getInt();
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids)
+{
+    append_positive_int_keys(cfg, {"wall_filament", "outer_wall_filament", "sparse_infill_filament", "solid_infill_filament"}, ids);
+}
+
+void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids)
+{
+    append_feature_filament_overrides(cfg, ids);
+    append_positive_int_keys(cfg, {"support_filament", "support_interface_filament"}, ids);
+}
+
+int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config)
+{
+    int value = 0;
+    if (!config_int_if_present(object_config, "outer_wall_filament", value))
+        config_int_if_present(&global_config, "outer_wall_filament", value);
+
+    int loops = 0;
+    if (!config_int_if_present(object_config, "wall_loops", loops))
+        config_int_if_present(&global_config, "wall_loops", loops);
+
+    return (loops > 0 && value > 0) ? value : 0;
 }
 
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids)
@@ -120,12 +158,15 @@ void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPri
                     continue;
                 const std::vector<int> volume_extruders = mv->get_extruders();
                 ids.insert(ids.end(), volume_extruders.begin(), volume_extruders.end());
+                if (mv->is_modifier())
+                    append_feature_filament_overrides(mv->config.get(), ids);
             }
             for (const auto &layer_range : obj->layer_config_ranges) {
                 if (layer_range.second.has("extruder")) {
                     if (const int id = layer_range.second.option("extruder")->getInt(); id > 0)
                         ids.push_back(id);
                 }
+                append_feature_filament_overrides(layer_range.second.get(), ids);
             }
         }
     }

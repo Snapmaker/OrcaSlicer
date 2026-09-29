@@ -12,6 +12,8 @@
 #include "test_data.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -347,6 +349,9 @@ TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare pla
     config.option<ConfigOptionInt>("wall_filament")->value         = 1;
     config.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
     config.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+    config.option<ConfigOptionFloats>("wipe_tower_x")->values       = {15.};
+    config.option<ConfigOptionFloats>("wipe_tower_y")->values       = {15.};
+    config.option<ConfigOptionFloat>("prime_tower_width")->value    = 35.;
     config.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
 
     Print print;
@@ -390,4 +395,52 @@ TEST_CASE("a single-filament plate still has no wipe tower after one apply", "[P
     init_print({TestMesh::cube_20x20x20}, print, model, config);
     REQUIRE(print.extruders().size() == 1);
     REQUIRE_FALSE(print.config().enable_prime_tower.value);
+}
+
+TEST_CASE("BBL two-volume filament slice still has a tower after one apply", "[Print][WipeTower][BBLIdentity]")
+{
+    // Volume extruders are visible as soon as objects exist, so a single apply of a 2-volume
+    // BBL plate must match main: the post-region normalize is a no-op when used_filaments>1.
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(2);
+    config.set_num_filaments(2);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionBool>("spiral_mode")->value          = false;
+    config.option<ConfigOptionFloats>("wipe_tower_x")->values      = {15.};
+    config.option<ConfigOptionFloats>("wipe_tower_y")->values      = {15.};
+    config.option<ConfigOptionFloat>("prime_tower_width")->value   = 35.;
+    config.set_deserialize_strict({{"brim_type", "no_brim"}, {"skirt_loops", "0"}, {"wipe_tower_wall_type", "rectangle"}});
+
+    Print print;
+    Model model;
+    ModelObject *first = model.add_object();
+    first->name        = "cube-a.stl";
+    first->add_volume(mesh(TestMesh::cube_20x20x20));
+    first->add_instance()->set_offset(Vec3d(80., 40., 0.));
+    first->ensure_on_bed();
+    ModelObject *second = model.add_object();
+    second->name        = "cube-b.stl";
+    second->add_volume(mesh(TestMesh::cube_20x20x20));
+    second->add_instance()->set_offset(Vec3d(120., 40., 0.));
+    second->ensure_on_bed();
+    second->volumes.front()->config.set("extruder", 2);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = true;
+    print.set_status_silent();
+
+    REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
+    REQUIRE(print.has_wipe_tower());
+    REQUIRE(print.config().enable_prime_tower.value);
+
+    const std::string gcode = Test::gcode(print);
+    REQUIRE(gcode.find("CP TOOLCHANGE") != std::string::npos);
+    if (const char *path = std::getenv("BBL_GCODE_OUT")) {
+        std::ofstream out(path, std::ios::binary);
+        out << gcode;
+    }
 }

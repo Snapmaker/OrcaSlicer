@@ -531,6 +531,9 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with a real Model yields two plat
     cfg.option<ConfigOptionInt>("wall_filament")->value         = 1;
     cfg.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
     cfg.option<ConfigOptionInt>("solid_infill_filament")->value  = 1;
+    cfg.option<ConfigOptionFloats>("wipe_tower_x")->values       = {15.};
+    cfg.option<ConfigOptionFloats>("wipe_tower_y")->values       = {15.};
+    cfg.option<ConfigOptionFloat>("prime_tower_width")->value    = 35.;
     cfg.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
 
     Model        model;

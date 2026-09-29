@@ -8588,10 +8588,13 @@ void Sidebar::on_filaments_delete(size_t filament_id)
 }
 
 void Sidebar::edit_filament() {
+    const int previous_editing_filament = p->editing_filament;
     p->editing_filament = -1;
     if (p->m_menu_filament_id >= 0 && p->m_menu_filament_id < p->combos_filament.size() &&
         p->combos_filament[p->m_menu_filament_id]->switch_to_tab())
         p->editing_filament = p->m_menu_filament_id; // sync with TabPresetComboxBox's m_filament_idx
+    else
+        p->editing_filament = previous_editing_filament; // canceled: the Tab still edits the previous slot
 }
 
 // Helper function: Check if target mixed filament depends on source physical filament

@@ -80,6 +80,8 @@ private:
     wxSpinCtrlDouble *m_module_size  = nullptr;
     wxSpinCtrlDouble *m_bar_height   = nullptr;
     wxSpinCtrl       *m_quiet_zone   = nullptr;
+    wxChoice         *m_surround     = nullptr;
+    wxCheckBox       *m_decorate     = nullptr;
     wxSpinCtrlDouble *m_dark_depth   = nullptr;
     wxCheckBox       *m_light_part   = nullptr;
     wxSpinCtrlDouble *m_light_depth  = nullptr;

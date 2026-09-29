@@ -31,6 +31,9 @@ enum class CodePartRole : int { Dark = 0, Light, Logo };
 // Shape of the area cleared of dark modules around the logo
 enum class CodeLogoClear : int { Outline = 0, Square, Circle };
 
+// Outline of the light part (quiet zone around the code)
+enum class CodeSurround : int { Square = 0, Rounded, Circle };
+
 struct CodeEmbossParams
 {
     Barcode::Symbology symbology = Barcode::Symbology::QR;
@@ -43,6 +46,12 @@ struct CodeEmbossParams
     double bar_height = 15.;
     // Border around code [in modules], it is part of the light part
     int quiet_zone = 4;
+    // Outline of the code with its quiet zone,
+    // circle is circumscribed to the rectangle of the code with its quiet zone
+    CodeSurround surround = CodeSurround::Square;
+    // Only QR with circle surround: fill the space between the quiet zone and
+    // the circle by random modules, scanners ignore them (circular QR code look)
+    bool decorate = false;
 
     // Create part with the background (light modules)
     bool   light_part  = true;

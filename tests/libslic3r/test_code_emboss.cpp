@@ -209,3 +209,69 @@ TEST_CASE("Code metadata survives special characters", "[CodeEmboss]")
     CHECK(!read_code_emboss_meta("<svg><metadata id=\"edgeslicer-code\"></metadata></svg>").has_value());
     CHECK(!read_code_emboss_meta("<svg/>").has_value());
 }
+
+TEST_CASE("Code surround shapes keep parts aligned", "[CodeEmboss]")
+{
+    CodeEmbossParams params;
+    params.text        = "Hello circle QR 123";
+    params.module_size = 0.8;
+    params.quiet_zone  = 2;
+    params.group_id    = "surround";
+
+    for (CodeSurround surround : {CodeSurround::Square, CodeSurround::Rounded, CodeSurround::Circle}) {
+        for (bool decorate : {false, true}) {
+            DYNAMIC_SECTION("surround " << int(surround) << " decorate " << decorate)
+            {
+                params.surround         = surround;
+                params.decorate         = decorate;
+                CodeEmbossResult result = create_code_emboss(params);
+                REQUIRE(result.is_valid());
+                REQUIRE(result.parts.size() == 2);
+
+                const CodeEmbossPart *dark  = result.part(CodePartRole::Dark);
+                const CodeEmbossPart *light = result.part(CodePartRole::Light);
+                REQUIRE(dark != nullptr);
+                REQUIRE(light != nullptr);
+                for (const CodeEmbossPart *part : {dark, light}) {
+                    Vec2d c = unscaled(get_extents(part->shape).center());
+                    CHECK_THAT(c.x(), WithinAbs(result.width / 2., 1e-3));
+                    CHECK_THAT(c.y(), WithinAbs(result.height / 2., 1e-3));
+                }
+
+                // the pattern is made only for circle
+                bool is_decorated = decorate && surround == CodeSurround::Circle;
+                std::optional<CodeEmbossMeta> meta = read_code_emboss_meta(dark->svg);
+                REQUIRE(meta.has_value());
+                CHECK(meta->params.surround == surround);
+                CHECK(meta->params.decorate == is_decorated);
+
+                double code_area = total_area(dark->shape) + total_area(light->shape);
+                if (surround == CodeSurround::Circle) {
+                    CHECK_THAT(result.width, WithinAbs(result.height, 1e-9));
+                    // circle polygon is inscribed to the circle
+                    double r = result.width / 2.;
+                    CHECK(code_area < PI * r * r);
+                    CHECK(code_area > 0.99 * PI * r * r);
+                } else if (surround == CodeSurround::Rounded) {
+                    CHECK(code_area < result.width * result.height);
+                } else {
+                    CHECK_THAT(code_area, WithinRel(result.width * result.height, 1e-6));
+                }
+            }
+        }
+    }
+
+    SECTION("pattern adds dark modules and is stable")
+    {
+        params.surround            = CodeSurround::Circle;
+        params.decorate            = false;
+        CodeEmbossResult plain     = create_code_emboss(params);
+        params.decorate            = true;
+        CodeEmbossResult decorated = create_code_emboss(params);
+        CodeEmbossResult again     = create_code_emboss(params);
+        REQUIRE(plain.is_valid());
+        REQUIRE(decorated.is_valid());
+        CHECK(total_area(decorated.part(CodePartRole::Dark)->shape) > total_area(plain.part(CodePartRole::Dark)->shape));
+        CHECK(decorated.part(CodePartRole::Dark)->svg == again.part(CodePartRole::Dark)->svg);
+    }
+}

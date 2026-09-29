@@ -21,6 +21,14 @@ A code is created as up to three embossed SVG volumes that share one transformat
 - **Surface projection:** "Project onto surface" wraps every part onto the curved object surface.
   Parts of one code are never projected onto each other.
 
+## Surround shape
+
+The light part can be a **Square**, **Rounded corners** (radius = quiet zone) or a **Circle** through the
+corners of the quiet zone. For QR codes with a circle, **Circular QR pattern** fills the space between the
+quiet zone and the circle with random modules (seeded by the content, so it is stable), which gives the
+round QR look. Scanners ignore the pattern as long as the quiet zone keeps it apart from the code;
+at least 2 modules are recommended.
+
 ## Editing
 
 Selecting any part opens the SVG gizmo. Moving, rotating, scaling, mirroring and toggling

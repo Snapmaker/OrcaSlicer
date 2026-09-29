@@ -116,6 +116,56 @@ std::string to_svg(const ExPolygons &shape, coord_t width, coord_t height, const
     return ss.str();
 }
 
+const char *to_string(CodeSurround surround)
+{
+    switch (surround) {
+    case CodeSurround::Square: return "square";
+    case CodeSurround::Rounded: return "rounded";
+    case CodeSurround::Circle: return "circle";
+    }
+    return "square";
+}
+
+// Rectangle with rounded corners, symmetric around its center
+Slic3r::Polygon rounded_rectangle(coord_t x0, coord_t y0, coord_t x1, coord_t y1, coord_t radius, size_t segments_per_corner = 16)
+{
+    radius = std::min({radius, (x1 - x0) / 2, (y1 - y0) / 2});
+    if (radius <= 0)
+        return rectangle(x0, y0, x1, y1);
+    Slic3r::Polygon result;
+    const std::array<std::pair<Point, double>, 4> corners = {{{{x1 - radius, y0 + radius}, -PI / 2.},
+                                                              {{x1 - radius, y1 - radius}, 0.},
+                                                              {{x0 + radius, y1 - radius}, PI / 2.},
+                                                              {{x0 + radius, y0 + radius}, PI}}};
+    for (const auto &[center, start] : corners)
+        for (size_t i = 0; i <= segments_per_corner; ++i) {
+            double a = start + (PI / 2.) * double(i) / double(segments_per_corner);
+            result.points.emplace_back(center.x() + coord_t(std::llround(radius * std::cos(a))),
+                                       center.y() + coord_t(std::llround(radius * std::sin(a))));
+        }
+    return result;
+}
+
+// FNV-1a, stable between platforms, so edit of the code on other computer keeps the pattern
+uint64_t stable_hash(const std::string &text)
+{
+    uint64_t h = 14695981039346656037ull;
+    for (unsigned char c : text) {
+        h ^= c;
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+bool random_bit(uint64_t seed, int64_t x, int64_t y)
+{
+    uint64_t h = seed ^ (uint64_t(x) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(y) * 0xC2B2AE3D27D4EB4Full);
+    h ^= h >> 33;
+    h *= 0xFF51AFD7ED558CCDull;
+    h ^= h >> 33;
+    return (h & 1) != 0;
+}
+
 const char *to_string(CodeLogoClear clear)
 {
     switch (clear) {
@@ -187,7 +237,7 @@ bool is_inside(const ExPolygons &zone, const BoundingBox &zone_bb, const Point &
 bool CodeEmbossParams::operator==(const CodeEmbossParams &o) const
 {
     return symbology == o.symbology && text == o.text && ecc == o.ecc && module_size == o.module_size && bar_height == o.bar_height &&
-           quiet_zone == o.quiet_zone && light_part == o.light_part && dark_depth == o.dark_depth && light_depth == o.light_depth &&
+           quiet_zone == o.quiet_zone && surround == o.surround && decorate == o.decorate && light_part == o.light_part && dark_depth == o.dark_depth && light_depth == o.light_depth &&
            logo_depth == o.logo_depth && has_logo == o.has_logo && logo_size == o.logo_size && logo_margin == o.logo_margin &&
            logo_clear == o.logo_clear && group_id == o.group_id;
 }
@@ -215,8 +265,9 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
     const Barcode::Matrix &matrix = result.code.matrix;
     const bool             is_2d  = matrix.is_2d();
 
-    // module size is rounded to micrometers, so SVG coordinates are exact integers
-    double module_mm = std::max(0.01, std::round(params.module_size * 1000.) / 1000.);
+    // module size is rounded to even micrometers, so SVG coordinates (in micrometers)
+    // are exact integers also for the center of the code
+    double module_mm = std::max(0.01, std::round(params.module_size * 500.) / 500.);
     coord_t ms       = mm_to_coord(module_mm);
 
     int quiet = std::max(0, params.quiet_zone);
@@ -228,13 +279,25 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
     // Linear codes do not need tall vertical quiet zone
     int     quiet_y  = is_2d ? quiet : std::min(quiet, 3);
     coord_t code_w   = coord_t(matrix.width) * ms;
-    coord_t code_h   = is_2d ? coord_t(matrix.height) * ms : mm_to_coord(std::max(module_mm, params.bar_height));
+    coord_t code_h   = is_2d ? coord_t(matrix.height) * ms : mm_to_coord(std::round(std::max(module_mm, params.bar_height) * 500.) / 500.);
     coord_t offset_x = coord_t(quiet) * ms;
     coord_t offset_y = coord_t(quiet_y) * ms;
     coord_t width    = code_w + 2 * offset_x;
     coord_t height   = code_h + 2 * offset_y;
-    result.width     = unscale<double>(width);
-    result.height    = unscale<double>(height);
+    // Radius of circle surround, circumscribed to the code with its quiet zone
+    coord_t radius = 0;
+    if (params.surround == CodeSurround::Circle) {
+        coord_t um   = mm_to_coord(0.001);
+        double  r    = 0.5 * std::hypot(double(width), double(height));
+        radius       = coord_t(std::ceil(r / double(um))) * um;
+        offset_x     = radius - code_w / 2;
+        offset_y     = radius - code_h / 2;
+        width        = 2 * radius;
+        height       = 2 * radius;
+    }
+    const Point center(width / 2, height / 2);
+    result.width  = unscale<double>(width);
+    result.height = unscale<double>(height);
 
     std::vector<uint8_t> dark = matrix.dark;
 
@@ -253,7 +316,6 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
                 result.warnings.push_back("Logo was made smaller to not cover the position patterns of QR code.");
             result.logo_size = 2. * half / n;
 
-            Point   center(offset_x + code_w / 2, offset_y + code_h / 2);
             coord_t half_size = coord_t(std::llround(half * ms));
             logo_shape        = place_logo(*logo, center, half_size);
 
@@ -335,6 +397,58 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
             x = end;
         }
     }
+
+    // Circular QR code: random modules between the quiet zone and the circle
+    bool decorate = is_2d && params.decorate && params.surround == CodeSurround::Circle;
+    if (decorate) {
+        // quiet zone rectangle must stay light
+        coord_t qx0 = offset_x - coord_t(quiet) * ms, qx1 = offset_x + code_w + coord_t(quiet) * ms;
+        coord_t qy0 = offset_y - coord_t(quiet) * ms, qy1 = offset_y + code_h + coord_t(quiet) * ms;
+        // one module of light rim along the circle
+        double  limit    = double(radius - ms);
+        double  limit_sq = limit * limit;
+        int64_t cells    = int64_t(offset_x / ms) + 1;
+        struct Cell { int64_t x, y; };
+        std::vector<Cell> eligible;
+        for (int64_t y = -cells; y < matrix.height + cells; ++y)
+            for (int64_t x = -cells; x < matrix.width + cells; ++x) {
+                coord_t x0 = offset_x + coord_t(x) * ms, y0 = offset_y + coord_t(y) * ms;
+                coord_t x1 = x0 + ms, y1 = y0 + ms;
+                if (x1 > qx0 && x0 < qx1 && y1 > qy0 && y0 < qy1)
+                    continue; // touch the code or its quiet zone
+                bool inside = true;
+                for (const Point &p : {Point(x0, y0), Point(x1, y0), Point(x0, y1), Point(x1, y1)}) {
+                    double dx = double(p.x() - center.x()), dy = double(p.y() - center.y());
+                    if (dx * dx + dy * dy > limit_sq)
+                        inside = false;
+                }
+                if (inside)
+                    eligible.push_back({x, y});
+            }
+        if (!eligible.empty()) {
+            // Cells on the extremes are always dark, so the pattern keeps the center of the code
+            // (parts are aligned by the center of their bounding box)
+            int64_t min_x = eligible.front().x, max_x = min_x, min_y = eligible.front().y, max_y = min_y;
+            for (const Cell &c : eligible) {
+                min_x = std::min(min_x, c.x);
+                max_x = std::max(max_x, c.x);
+                min_y = std::min(min_y, c.y);
+                max_y = std::max(max_y, c.y);
+            }
+            uint64_t seed = stable_hash(params.text);
+            for (const Cell &c : eligible) {
+                bool extreme = c.x == min_x || c.x == max_x || c.y == min_y || c.y == max_y;
+                if (!extreme && !random_bit(seed, c.x, c.y))
+                    continue;
+                coord_t x0 = offset_x + coord_t(c.x) * ms, y0 = offset_y + coord_t(c.y) * ms;
+                rectangles.push_back(rectangle(x0, y0, x0 + ms, y0 + ms));
+            }
+        }
+        if (quiet < 2)
+            result.warnings.push_back("Keep at least 2 modules of quiet zone between the QR code and the circular pattern, "
+                                      "otherwise scanners may not find the code.");
+    }
+
     ExPolygons dark_shape = union_ex(rectangles);
     if (dark_shape.empty()) {
         result.error = "Code does not contain any dark module.";
@@ -349,6 +463,7 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
     meta.params.module_size = module_mm;
     if (!is_2d)
         meta.params.has_logo = false;
+    meta.params.decorate = decorate;
 
     auto add_part = [&](CodePartRole role, ExPolygons &&shape, double depth, const char *fill) {
         meta.role = role;
@@ -364,7 +479,13 @@ CodeEmbossResult create_code_emboss(const CodeEmbossParams &params, const ExPoly
     if (params.light_part) {
         Polygons clip = to_polygons(dark_shape);
         polygons_append(clip, to_polygons(logo_shape));
-        light_shape = diff_ex(Polygons{rectangle(0, 0, width, height)}, clip);
+        Slic3r::Polygon outline;
+        switch (params.surround) {
+        case CodeSurround::Square: outline = rectangle(0, 0, width, height); break;
+        case CodeSurround::Rounded: outline = rounded_rectangle(0, 0, width, height, std::min(offset_x, offset_y)); break;
+        case CodeSurround::Circle: outline = circle(center, double(radius), 128); break;
+        }
+        light_shape = diff_ex(Polygons{outline}, clip);
     }
 
     add_part(CodePartRole::Dark, std::move(dark_shape), params.dark_depth, "#000000");
@@ -407,6 +528,8 @@ std::string write_code_emboss_meta(const CodeEmbossMeta &meta)
     j["module"]      = p.module_size;
     j["bar_height"]  = p.bar_height;
     j["quiet"]       = p.quiet_zone;
+    j["surround"]    = to_string(p.surround);
+    j["decorate"]    = p.decorate;
     j["light"]       = p.light_part;
     j["dark_depth"]  = p.dark_depth;
     j["light_depth"] = p.light_depth;
@@ -451,6 +574,9 @@ std::optional<CodeEmbossMeta> read_code_emboss_meta(const std::string &svg_data)
         p.module_size = j.value("module", p.module_size);
         p.bar_height  = j.value("bar_height", p.bar_height);
         p.quiet_zone  = j.value("quiet", p.quiet_zone);
+        p.surround    = from_string(j.value("surround", std::string()),
+                                    std::array{CodeSurround::Square, CodeSurround::Rounded, CodeSurround::Circle}, CodeSurround::Square);
+        p.decorate    = j.value("decorate", p.decorate);
         p.light_part  = j.value("light", p.light_part);
         p.dark_depth  = j.value("dark_depth", p.dark_depth);
         p.light_depth = j.value("light_depth", p.light_depth);

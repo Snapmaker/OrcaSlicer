@@ -102,13 +102,15 @@ CodeEmbossParams CodeEmbossDialog::load_from_config()
             out = std::clamp(std::stoi(cfg->get(CFG_SECTION, key)), min, max);
         } catch (...) {}
     };
-    int symbology = int(p.symbology), ecc = int(p.ecc), clear = int(p.logo_clear);
+    int symbology = int(p.symbology), ecc = int(p.ecc), clear = int(p.logo_clear), surround = int(p.surround);
     read_int("symbology", symbology, 0, int(SYMBOLOGIES.size()) - 1);
     read_int("ecc", ecc, 0, 3);
     read_int("logo_clear", clear, 0, 2);
+    read_int("surround", surround, 0, 2);
     p.symbology  = Barcode::Symbology(symbology);
     p.ecc        = Barcode::QrEcc(ecc);
     p.logo_clear = CodeLogoClear(clear);
+    p.surround   = CodeSurround(surround);
     read_double("module_size", p.module_size, 0.1, 20.);
     read_double("bar_height", p.bar_height, 1., 200.);
     read_int("quiet_zone", p.quiet_zone, 0, 20);
@@ -117,6 +119,8 @@ CodeEmbossParams CodeEmbossDialog::load_from_config()
     read_double("logo_depth", p.logo_depth, 0.05, 50.);
     read_int("logo_margin", p.logo_margin, 0, 5);
     read_double("logo_size", p.logo_size, 0.05, 0.4);
+    if (cfg->has(CFG_SECTION, "decorate"))
+        p.decorate = cfg->get(CFG_SECTION, "decorate") == "1";
     if (cfg->has(CFG_SECTION, "light_part"))
         p.light_part = cfg->get(CFG_SECTION, "light_part") == "1";
     return p;
@@ -134,6 +138,8 @@ void CodeEmbossDialog::save_to_config() const
     cfg->set(CFG_SECTION, "module_size", float_to_string_decimal_point(p.module_size));
     cfg->set(CFG_SECTION, "bar_height", float_to_string_decimal_point(p.bar_height));
     cfg->set(CFG_SECTION, "quiet_zone", std::to_string(p.quiet_zone));
+    cfg->set(CFG_SECTION, "surround", std::to_string(int(p.surround)));
+    cfg->set(CFG_SECTION, "decorate", p.decorate ? "1" : "0");
     cfg->set(CFG_SECTION, "dark_depth", float_to_string_decimal_point(p.dark_depth));
     cfg->set(CFG_SECTION, "light_depth", float_to_string_decimal_point(p.light_depth));
     cfg->set(CFG_SECTION, "logo_depth", float_to_string_decimal_point(p.logo_depth));
@@ -236,6 +242,23 @@ CodeEmbossDialog::CodeEmbossDialog(wxWindow                      *parent,
     m_quiet_zone->SetToolTip(_L("Light border around the code in modules. Scanners need it to find the code, "
                                 "4 modules for QR code and 10 for barcodes are recommended."));
     row(_L("Quiet zone") + ":", m_quiet_zone);
+
+    wxArrayString surrounds;
+    surrounds.Add(_L("Square"));
+    surrounds.Add(_L("Rounded corners"));
+    surrounds.Add(_L("Circle"));
+    m_surround = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, surrounds);
+    m_surround->SetSelection(int(m_params.surround));
+    m_surround->SetToolTip(_L("Outline of the light part around the code. The circle goes through the corners of the quiet zone."));
+    row(_L("Surround shape") + ":", m_surround);
+
+    m_decorate = new wxCheckBox(this, wxID_ANY, _L("Circular QR pattern"));
+    m_decorate->SetValue(m_params.decorate);
+    m_decorate->SetToolTip(_L("Fill the circle around the QR code with a random pattern of modules, so the whole code looks round. "
+                              "Scanners ignore the pattern, the quiet zone keeps it apart from the code "
+                              "(at least 2 modules are recommended)."));
+    grid->Add(new wxStaticText(this, wxID_ANY, wxEmptyString));
+    grid->Add(m_decorate, 0, wxALIGN_CENTER_VERTICAL);
 
     // ---- parts -------------------------------------------------------------------------------
     m_dark_depth = spin_double(m_params.dark_depth, 0.05, 50., 0.1);
@@ -355,6 +378,8 @@ CodeEmbossDialog::CodeEmbossDialog(wxWindow                      *parent,
     m_text->Bind(wxEVT_TEXT, changed);
     m_ecc->Bind(wxEVT_CHOICE, changed);
     m_logo_clear->Bind(wxEVT_CHOICE, changed);
+    m_surround->Bind(wxEVT_CHOICE, changed);
+    m_decorate->Bind(wxEVT_CHECKBOX, changed);
     for (wxChoice *c : {m_dark_filament, m_light_filament, m_logo_filament})
         if (c != nullptr)
             c->Bind(wxEVT_CHOICE, changed);
@@ -419,6 +444,8 @@ CodeEmbossParams CodeEmbossDialog::collect() const
     p.module_size      = m_module_size->GetValue();
     p.bar_height       = m_bar_height->GetValue();
     p.quiet_zone       = m_quiet_zone->GetValue();
+    p.surround         = CodeSurround(std::max(0, m_surround->GetSelection()));
+    p.decorate         = p.symbology == Barcode::Symbology::QR && p.surround == CodeSurround::Circle && m_decorate->GetValue();
     p.dark_depth       = m_dark_depth->GetValue();
     p.light_part       = m_options.allow_light_part && m_light_part->GetValue();
     p.light_depth      = m_light_depth->GetValue();
@@ -437,6 +464,7 @@ void CodeEmbossDialog::update_enabled()
         w->Show(is_qr);
     for (wxWindow *w : m_linear_only)
         w->Show(!is_qr);
+    m_decorate->Show(is_qr && m_surround->GetSelection() == int(CodeSurround::Circle));
     bool logo = is_qr && m_has_logo->GetValue();
     for (wxWindow *w : m_logo_controls)
         w->Show(logo);

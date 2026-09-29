@@ -23,6 +23,8 @@
 namespace
 {
 
+constexpr int g_filament_submenu_width_dip = 200;
+
 size_t max_visible_row_count(int max_visible_rows)
 {
     return max_visible_rows > 0 ? static_cast<size_t>(max_visible_rows) : size_t{1};
@@ -233,11 +235,16 @@ void FilamentDropDown::prepare_submenu()
     new_sub_drop_down->text_off                = text_off;
     new_sub_drop_down->use_content_width       = true;
     new_sub_drop_down->limit_max_content_width = true;
+    // One width for every group: switching groups must not resize the popup under the pointer. This value
+    // wins over the two switches above and is read as "the width is fixed" by the +6 padding branch and
+    // the on-screen clamp, so set it here only.
+    new_sub_drop_down->fixed_width_dip         = g_filament_submenu_width_dip;
     new_sub_drop_down->max_visible_rows        = 8;
     if (!new_sub_drop_down->Create(GetParent()))
     {
         BOOST_LOG_TRIVIAL(warning)
-            << "Could not create the filament submenu; falling back to a flat filament list.";
+            << "Could not create the filament submenu; falling back to a flat filament list without the "
+               "fixed submenu width.";
         apply_flat_fallback();
         return;
     }
@@ -619,6 +626,10 @@ void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wx
                                                     : strip_group_prefix(item.text, group);
         if (!text_off && !text.IsEmpty() && !icon_fills_row)
         {
+            // The popup paints through a buffered DC, which arrives without the popup font while the row is
+            // drawn with it: measuring first tests the overflow against a narrower font and clips the row
+            // instead of eliding it.
+            dc.SetFont(GetFont());
             wxSize tSize = dc.GetMultiLineTextExtent(text);
             if (pt.x + tSize.x > rcContent.GetRight())
             {
@@ -627,7 +638,6 @@ void FilamentDropDown::render_items(wxDC &dc, const wxSize &size, int states, wx
                 text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, rcContent.GetRight() - pt.x);
             }
             pt.y += (rcContent.height - textSize.y) / 2;
-            dc.SetFont(GetFont());
             dc.SetTextForeground(is_dimmed ? wxColour(0xCE, 0xCE, 0xCE) : text_color.colorForStates(states2));
             dc.DrawText(text, pt);
             if (group.IsEmpty() && !item.group.IsEmpty())
@@ -721,6 +731,14 @@ void FilamentDropDown::messureSize()
             szContent = rowSize;
         }
     }
+    if (fixed_width_dip > 0)
+    {
+        // A fixed width outranks the content extent, the parent-width cap above and the scroll-bar padding
+        // for `count > max_rows`. Scale it with the anchor's display: the popup still sits at its creation
+        // position here, so its own DPI can belong to another monitor.
+        rowSize.x   = GetParent()->FromDIP(fixed_width_dip);
+        szContent.x = rowSize.x;
+    }
     const size_t visible_rows = std::min(max_rows, std::max(count, size_t{1}));
     szContent.y                = multiply_to_int(szContent.y, visible_rows);
     if (items.size() > max_rows)
@@ -789,7 +807,9 @@ void FilamentDropDown::autoPosition()
         auto drect = wxDisplay(GetParent()).GetGeometry();
         if (GetPosition().y + size.y + 10 > drect.GetBottom())
         {
-            if (use_content_width && count <= max_rows)
+            // Mirror of the scroll-bar padding in messureSize(): +6 here while the list does not scroll, +6
+            // there while it does. A fixed width must survive both.
+            if (use_content_width && fixed_width_dip == 0 && count <= max_rows)
                 size.x = add_to_int(size.x, 6);
             size.y = drect.GetBottom() - GetPosition().y - 10;
 #ifdef __WXGTK__
@@ -807,6 +827,22 @@ void FilamentDropDown::autoPosition()
             if (offset.y > 0)
                 offset.y = 0;
         }
+    }
+
+    if (fixed_width_dip > 0)
+    {
+        const wxRect display_rect   = wxDisplay(GetParent()).GetGeometry();
+        const int    display_left   = display_rect.GetLeft();
+        const int    display_right  = display_left + display_rect.GetWidth();
+        const int    popup_width    = GetSize().x;
+        wxPoint      popup_position = GetPosition();
+
+        if (popup_position.x + popup_width > display_right)
+            popup_position.x = display_right - popup_width;
+        if (popup_position.x < display_left)
+            popup_position.x = display_left;
+        if (popup_position != GetPosition())
+            SetPosition(popup_position);
     }
 }
 

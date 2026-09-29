@@ -169,6 +169,10 @@ private:
     double radius                  = 0;
     bool   use_content_width       = false;
     bool   limit_max_content_width = false;
+    // Pins the popup width in DIP, scaled by the parent's display, so a submenu does not resize with its
+    // contents; 0 keeps the content/parent-width logic in messureSize(). Written on the submenu only: the
+    // +6 padding branch and the on-screen clamp read it as "the width is fixed".
+    int    fixed_width_dip         = 0;
     bool   align_icon              = false;
     bool   text_off                = false;
     bool   use_flat_fallback       = false;
@@ -267,7 +271,9 @@ private:
     int selectedItem();
     int group_row_of(const wxString &target) const;
 
+    /** @brief Applies the popup size; a set fixed_width_dip outranks the content and parent-width caps. */
     void messureSize();
+    /** @brief Places the popup at its anchor and keeps a fixed-width popup inside the display. */
     void autoPosition();
     void ensure_row_visible(int row);
     void ensure_selection_at_top();

@@ -12223,23 +12223,23 @@ msgstr "底部涂色渗透层数"
 msgid "This is the number of layers of bottom paint penetration."
 msgstr "底部涂色渗透的层数。"
 
-msgid "Top paint penetration layers (current setting: %d layers) exceed the top shell layers (current setting: %d layers). Top paint penetration layers will be reset."
-msgstr "顶部涂色渗透层数（当前设置：%d层）已超过顶部壳体层数（当前设置：%d层）。顶部涂色渗透层数将被重置"
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The top paint penetration layers will be reset automatically."
+msgstr "涂色渗透层数（当前：%d 层）已超过壳体层数（当前：%d 层），顶部涂色渗透层数将自动重置。"
 
-msgid "Bottom paint penetration layers (current setting: %d layers) exceed the bottom shell layers (current setting: %d layers). Bottom paint penetration layers will be reset."
-msgstr "底部涂色渗透层数（当前设置：%d层）已超过底部壳体层数（当前设置：%d层）。底部涂色渗透层数将被重置"
+msgid "The paint penetration layers (current: %d) exceed the shell layers (current: %d). The bottom paint penetration layers will be reset automatically."
+msgstr "涂色渗透层数（当前：%d 层）已超过壳体层数（当前：%d 层），底部涂色渗透层数将自动重置。"
 
-msgid "Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the top paint penetration layers."
-msgstr "涂色渗透层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少顶部涂色渗透层数。"
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top paint penetration layers."
+msgstr "涂色渗透层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少顶部涂色渗透层数。"
 
-msgid "Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the bottom paint penetration layers."
-msgstr "涂色渗透层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少底部涂色渗透层数。"
+msgid "The paint penetration layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom paint penetration layers."
+msgstr "涂色渗透层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少底部涂色渗透层数。"
 
-msgid "Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the top shell layers."
-msgstr "壳体层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少顶部壳体层数。"
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the top shell layers."
+msgstr "壳体层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少顶部壳体层数。"
 
-msgid "Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). Please reduce the bottom shell layers."
-msgstr "壳体层数（当前设置：%1%层）已超过模型总切片层数（当前设置：%2%层）。请减少底部壳体层数。"
+msgid "The shell layers (current: %1%) exceed the model layers (total: %2%). Please reduce the bottom shell layers."
+msgstr "壳体层数（当前：%1% 层）超过模型总层数（共计：%2% 层）。请减少底部壳体层数。"
 
 msgid "This is the number of solid layers of top shell, including the top surface layer. When the thickness calculated by this value is thinner than top shell thickness, the top shell layers will be increased."
 msgstr "顶部壳体实心层层数，包括顶面。当由该层数计算的厚度小于顶部壳体厚度，切片时会增加顶部壳体的层数"

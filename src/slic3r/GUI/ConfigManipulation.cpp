@@ -208,10 +208,10 @@ void ConfigManipulation::validate_paint_penetration_layers(DynamicPrintConfig* c
         return;
 
     const wxString msg_text = is_top ?
-        wxString::Format(_L("Top paint penetration layers (current setting: %d layers) exceed the top shell layers (current setting: %d layers). "
-                           "Top paint penetration layers will be reset."), cur_pen, cur_shell) :
-        wxString::Format(_L("Bottom paint penetration layers (current setting: %d layers) exceed the bottom shell layers (current setting: %d layers). "
-                           "Bottom paint penetration layers will be reset."), cur_pen, cur_shell);
+        wxString::Format(_L("The paint penetration layers (current: %d) exceed the shell layers (current: %d). "
+                           "The top paint penetration layers will be reset automatically."), cur_pen, cur_shell) :
+        wxString::Format(_L("The paint penetration layers (current: %d) exceed the shell layers (current: %d). "
+                           "The bottom paint penetration layers will be reset automatically."), cur_pen, cur_shell);
     // No wxICON_* flag: use the brand logo like the filament-sync confirm dialogs, not the legacy exclamation icon.
     MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxOK);
     // Centre on the screen, not on the (left-anchored) parent panel, so the dialog never covers the edited fields.

@@ -180,7 +180,7 @@ inline bool is_auto(SupportType stype)
 enum SeamPosition {
     // New values must be appended at the end: project files and presets store the key string,
     // but the numeric order is what old code and serialised binaries rely on.
-    spNearest, spAligned, spAlignedBack, spRear, spRandom, spLeft, spRight
+    spNearest, spAligned, spAlignedBack, spRear, spRandom, spLeft, spRight, spAlignedFront
 };
 
 // Orca

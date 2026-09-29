@@ -3915,13 +3915,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         print.m_print_statistics));
     print.m_print_statistics.initial_tool = initial_extruder_id;
     if (!is_bbl_printers) {
-        file.write_format("; total filament used [g] = %.2lf\n", print.m_print_statistics.total_weight);
-        file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
-        if (print.m_print_statistics.total_toolchanges > 0)
-            file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
-        file.write_format("; total layers count = %i\n", m_layer_count);
-        file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
-        file.write("\n");
+        // CONFIG_BLOCK first, time estimate after: some firmwares only scan the last N lines for
+        // "estimated printing time", and a large config could push an estimate written before it
+        // out of that window.
         file.write("; CONFIG_BLOCK_START\n");
         std::string full_config;
         append_full_config(print, full_config);
@@ -3939,6 +3935,14 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         //      file.write_format("; variable_layer_height = %d\n", print.ad.adaptive_layer_height ? 1 : 0);
 
         file.write("; CONFIG_BLOCK_END\n\n");
+
+        file.write_format("; total filament used [g] = %.2lf\n", print.m_print_statistics.total_weight);
+        file.write_format("; total filament cost = %.2lf\n", print.m_print_statistics.total_cost);
+        if (print.m_print_statistics.total_toolchanges > 0)
+            file.write_format("; total filament change = %i\n", print.m_print_statistics.total_toolchanges);
+        file.write_format("; total layers count = %i\n", m_layer_count);
+        file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
+        file.write("\n");
     }
     file.write("\n");
 
@@ -10748,7 +10752,17 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         set_ec_retraction_placeholders(this->placeholder_parser(), m_config, size_t(extruder_id));
         toolchange_gcode_parsed = placeholder_parser_process("change_filament_gcode", change_filament_gcode, extruder_id, &dyn_config);
         check_add_eol(toolchange_gcode_parsed);
-        gcode += toolchange_gcode_parsed;
+        // FanMover skips spans bracketed by "; custom gcode" ... "; custom gcode end" (prefix match,
+        // and it ignores comments shorter than 17 chars). "; custom gcode start" satisfies both.
+        // Without these markers a fan-speedup/kickstart pass can split a G1 inside the user's
+        // change_filament_gcode and splice a phantom waypoint into a hand-routed toolchange.
+        if (!toolchange_gcode_parsed.empty()) {
+            gcode += "; custom gcode start\n";
+            gcode += toolchange_gcode_parsed;
+            if (gcode.back() != '\n')
+                gcode += '\n';
+            gcode += "; custom gcode end\n";
+        }
 
         // BBS
         {

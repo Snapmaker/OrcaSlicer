@@ -62,6 +62,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mixed_nozzle.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
+	test_trianglemesh_slicer.cpp
 	test_locked_zag_patterns.cpp
 	test_locked_zag_identity_probe.cpp
 	test_layer_time_speed_smoothing.cpp
@@ -69,6 +70,8 @@ add_executable(${_TEST_NAME}_tests
 	test_placeholder_parser.cpp
 	test_polygon.cpp
 	test_preset_diff.cpp
+	test_print_settings_carry.cpp
+	test_filament_variant_autoenable.cpp
 	test_preset_load_determinism.cpp
 	test_profile_load_util.cpp
 	test_project_preset_switch.cpp

@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <functional>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -150,7 +151,33 @@ public:
   void init(const Print &print, std::function<void(void)> throw_if_canceled_func);
 
   void place_seam(const Layer *layer, ExtrusionLoop &loop, const Point &last_pos, float& overhang) const;
+
+  // The seam the slicer picks for one outer wall loop (Auto-paint seam, see plan_object_seams()).
+  struct PlannedSeam
+  {
+    // Print object's centred coordinates (PrintObject::trafo_centered()), on the loop; z is the layer's slice_z.
+    Vec3f  position   = Vec3f::Zero();
+    // The outer wall line width of the loop.
+    float  flow_width = 0.f;
+    // The loop is the outline of a hole, not the outer outline of an island.
+    bool   is_hole    = false;
+  };
+
+  // Where the slicer would put the seam of every outer wall loop of `po` (one vector per entry of po.layers()),
+  // computed for `seam_position` and `prefer_part_joints` instead of the object's own seam_position and
+  // seam_prefer_part_joints, which are left untouched. The positions are those init() stores for the aligned,
+  // back and random modes (place_seam() then splits the outer loop there); spNearest, which depends on the
+  // nozzle position, gets the best point of each loop by the same comparator. With use_painted_seams false,
+  // painted seam enforcers and blockers are ignored, as if the object had none.
+  // `po` must have its perimeters (posPerimeters done); `print` is the Print that owns it (other objects of it
+  // are only looked at for joints with touching objects, and need no slices).
+  static std::vector<std::vector<PlannedSeam>> plan_object_seams(const Print &print, const PrintObject &po,
+                                                                  SeamPosition seam_position, bool prefer_part_joints,
+                                                                  bool use_painted_seams,
+                                                                  const std::function<void(void)> &throw_if_canceled_func);
 private:
+  void init_object(const Print &print, const PrintObject *po, SeamPosition seam_position, bool prefer_part_joints,
+                   bool use_painted_seams, const std::function<void(void)> &throw_if_canceled_func);
   void gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info);
   void calculate_candidates_visibility(const PrintObject *po,
                                        const SeamPlacerImpl::GlobalModelInfo &global_model_info);

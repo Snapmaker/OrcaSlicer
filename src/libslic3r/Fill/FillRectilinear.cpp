@@ -3515,6 +3515,13 @@ std::unique_ptr<Fill> FillLockedZag::make_band_filler(InfillPattern pattern) con
     // existing Locked Zag profile slice exactly as it did before the per-band patterns existed.
     if (pattern == ipCount || pattern == ipLockedZag)
         return nullptr;
+    // Not in the band menus because their fillers need state built elsewhere (the adaptive octree,
+    // the lightning generator), which is null here. A stored value can still carry them: a Bambu
+    // preset (its list has them), or a pick made while the GUI combo stored the row index as the
+    // value ("3D Honeycomb" -> adaptivecubic, "Lateral Lattice" -> supportcubic, "Cross Hatch" ->
+    // lightning). Keep this filler's own pattern rather than dereference the null state.
+    if (pattern == ipAdaptiveCubic || pattern == ipSupportCubic || pattern == ipLightning)
+        return nullptr;
     std::unique_ptr<Fill> filler(Fill::new_from_type(pattern));
     if (filler)
         filler->copy_fill_data(static_cast<const Fill *>(this));

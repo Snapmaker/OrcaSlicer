@@ -311,6 +311,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ColorSplitJob.hpp
     GUI/Jobs/SliceBakeJob.cpp
     GUI/Jobs/SliceBakeJob.hpp
+    GUI/Jobs/SeamAutoPaintJob.cpp
+    GUI/Jobs/SeamAutoPaintJob.hpp
     GUI/Jobs/QuadRemeshJob.cpp
     GUI/Jobs/QuadRemeshJob.hpp
     GUI/Jobs/CreateFontNameImageJob.cpp
@@ -469,6 +471,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteEvents.hpp
     GUI/RemoteSend.cpp
     GUI/RemoteSend.hpp
+    GUI/BambuSendMapping.cpp
+    GUI/BambuSendMapping.hpp
+    GUI/BambuReprint.cpp
+    GUI/BambuReprint.hpp
     GUI/GcodeArchive.cpp
     GUI/GcodeArchive.hpp
     GUI/RemoteSnapmaker.cpp
@@ -480,6 +486,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/WizardNetworking.cpp
     GUI/PluginGuard.hpp
     GUI/PluginGuard.cpp
+    GUI/BambuSendDiagnosis.hpp
+    GUI/BambuSendDiagnosis.cpp
     GUI/DeviceModelCode.hpp
     GUI/DeviceModelCode.cpp
     GUI/NozzleTempRows.hpp

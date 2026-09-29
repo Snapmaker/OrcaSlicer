@@ -3,7 +3,12 @@
 
 #include "GLGizmoPainterBase.hpp"
 
+#include "libslic3r/ObjectID.hpp"
+#include "libslic3r/PrintConfig.hpp"
+
 namespace Slic3r::GUI {
+
+struct SeamAutoPaintResult;
 
 class GLGizmoSeam : public GLGizmoPainterBase
 {
@@ -47,6 +52,21 @@ private:
 
     void on_opening() override {}
     void on_shutdown() override;
+
+    // Auto-paint seam: paint enforcers where the slicer would put an Aligned seam (Jobs/SeamAutoPaintJob.hpp).
+    void render_auto_paint_section(float label_width, float control_width, float drag_left_width, float drag_width,
+                                   float max_tooltip_width);
+    void load_auto_paint_defaults(const ModelObject &mo);
+    void start_auto_paint();
+    void apply_auto_paint(SeamAutoPaintResult &&result);
+
+    int      m_autopaint_mode       = 0;     // index into the mode list (Aligned, Aligned back, front, left, right)
+    bool     m_autopaint_joints     = true;
+    bool     m_autopaint_auto_width = true;  // strip twice the outer wall line width
+    float    m_autopaint_width      = 0.8f;  // mm, when not automatic
+    float    m_autopaint_line_width = 0.42f; // the object's outer wall line width, for the labels
+    bool     m_autopaint_replace    = true;
+    ObjectID m_autopaint_defaults_of;        // the object the settings above were initialised from
 
     // This map holds all translated description texts, so they can be easily referenced during layout calculations
     // etc. When language changes, GUI is recreated and this class constructed again, so the change takes effect.

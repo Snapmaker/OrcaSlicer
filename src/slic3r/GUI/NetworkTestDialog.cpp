@@ -16,6 +16,9 @@
 #include <vector>
 #include <cstdio>
 #include <memory>
+#include <atomic>
+#include <functional>
+#include <mutex>
 #ifndef _WIN32
 #include <sys/wait.h>
 #endif
@@ -29,15 +32,128 @@ static wxString NA_STR = _L("N/A");
 // Searchable tag for network test log entries in file logs.
 #define NETWORK_TEST_LOG_TAG "[NetworkTest]"
 
+// Upper bound for the TCP connect step. Without it a connect to an unreachable host blocks
+// for the OS timeout (about 21 s on Windows) and cannot be interrupted.
+static constexpr auto TCP_CONNECT_TIMEOUT = std::chrono::seconds(10);
+
+// Lifetime model (Sentry EDGESLICER-2):
+// The test worker threads used to run NetworkTestDialog member functions while holding a
+// weak_ptr to a second, non-owning control block, so nothing kept the dialog alive. On close
+// the threads were detached after a 1 s join timeout and the dialog was freed underneath a
+// still-running test (e.g. a LAN TCP connect to an offline printer), which then crashed in
+// update_status.
+//
+// Now every worker thread holds a shared_ptr to this runner and touches only the runner.
+// The dialog is owned by wx / its creator as usual and is only ever dereferenced here on
+// the main thread, after checking it has not been detached. close() (main thread, called
+// from on_close and the dialog destructor) detaches the dialog under m_post_mutex, so no
+// status can be posted afterwards and every running test winds down at its next check
+// (HTTP and TCP connect are cancelled promptly). The runner has no wx windows, so it is
+// fine for the last reference to be dropped on a worker thread. Closing never waits for a
+// worker thread.
+class NetworkTestRunner : public std::enable_shared_from_this<NetworkTestRunner>
+{
+public:
+	explicit NetworkTestRunner(NetworkTestDialog* dialog) : m_dialog(dialog)
+	{
+		for (auto& flag : m_in_testing)
+			flag.store(false);
+	}
+
+	// Main thread only. Idempotent.
+	void close()
+	{
+		std::lock_guard<std::mutex> lock(m_post_mutex);
+		m_closing.store(true);
+		m_dialog = nullptr;
+	}
+
+	bool closing() const { return m_closing.load(); }
+
+	bool is_testing(TestJob job) const { return m_in_testing[job].load(); }
+	// Claims a job slot; false when that job is already running.
+	bool begin(TestJob job) { return !m_in_testing[job].exchange(true); }
+	void end(TestJob job) { m_in_testing[job].store(false); }
+
+	// Guards against starting a second sequence run while one is in progress.
+	std::atomic<bool> sequence_running{false};
+
+	// Any thread. Silent no-op once closed.
+	void update_status(int job_id, const wxString& info)
+	{
+		if (wxThread::IsMain()) {
+			deliver(job_id, info);
+			return;
+		}
+		// Hold the mutex across the post so close() cannot complete in between the
+		// closing check and the post: once close() returns nothing new is queued.
+		std::lock_guard<std::mutex> lock(m_post_mutex);
+		if (m_closing.load())
+			return;
+		wxGetApp().CallAfter([self = shared_from_this(), job_id, info]() { self->deliver(job_id, info); });
+	}
+
+	void log_section_header(const wxString& title)
+	{
+		static const wxString sep("========================================");
+		update_status(-1, wxEmptyString);
+		update_status(-1, sep);
+		update_status(-1, title);
+		update_status(-1, sep);
+		update_status(-1, wxEmptyString);
+	}
+
+	// Runs fn on a new thread that keeps this runner (never the dialog) alive. The thread
+	// is not joined: it only touches the runner, so it may safely outlive the dialog.
+	// Returns false if the thread could not be started.
+	bool run_async(std::function<void(NetworkTestRunner&)> fn)
+	{
+		if (closing())
+			return false;
+		try {
+			boost::thread worker([self = shared_from_this(), fn]() {
+				try {
+					fn(*self);
+				} catch (const std::exception& e) {
+					BOOST_LOG_TRIVIAL(error) << NETWORK_TEST_LOG_TAG << " test thread failed: " << e.what();
+				} catch (...) {
+					BOOST_LOG_TRIVIAL(error) << NETWORK_TEST_LOG_TAG << " test thread failed: unknown exception";
+				}
+			});
+			worker.detach();
+			return true;
+		} catch (const std::exception& e) {
+			BOOST_LOG_TRIVIAL(error) << NETWORK_TEST_LOG_TAG << " could not start test thread: " << e.what();
+			return false;
+		}
+	}
+
+	// Test bodies. They run on worker threads (never touch the dialog directly).
+	void test_url(TestJob job, wxString name, wxString url);
+	void test_telnet(TestJob job, wxString name, wxString server, int port);
+	void test_ping(wxString server);
+
+private:
+	// Main thread only.
+	void deliver(int job_id, const wxString& info)
+	{
+		if (m_closing.load() || m_dialog == nullptr)
+			return;
+		m_dialog->apply_status(job_id, info);
+	}
+
+	NetworkTestDialog* m_dialog; // main thread only; nulled by close()
+	std::mutex         m_post_mutex;
+	std::atomic<bool>  m_closing{false};
+	std::atomic<bool>  m_in_testing[TEST_JOB_MAX];
+};
+
 NetworkTestDialog::NetworkTestDialog(wxWindow* parent, wxWindowID id, const wxString& title, const wxPoint& pos, const wxSize& size, long style)
     : DPIDialog(parent,wxID_ANY,from_u8((boost::format(_utf8(L("Network Test")))).str()),wxDefaultPosition,
             wxSize(1000, 700),
             /*wxCAPTION*/wxDEFAULT_DIALOG_STYLE|wxMAXIMIZE_BOX|wxMINIMIZE_BOX|wxRESIZE_BORDER)
 {
-	// Create a self-managing shared_ptr for weak_ptr support
-	// Note: This creates a self-reference, so we need to break it in destructor
-	self_ptr = std::shared_ptr<NetworkTestDialog>(this, [](NetworkTestDialog*) { /* custom deleter - do nothing, object is stack-allocated */ });
-	weak_this = self_ptr;
+	m_runner = std::make_shared<NetworkTestRunner>(this);
     this->SetBackgroundColour(wxColour(255, 255, 255));
 
 	this->SetSizeHints(wxDefaultSize, wxDefaultSize);
@@ -91,22 +207,12 @@ wxBoxSizer* NetworkTestDialog::create_top_sizer(wxWindow* parent)
     btn_clear_log->SetStyle(ButtonStyle::Regular, ButtonType::Window);
 	line_sizer->Add(btn_clear_log, 0, wxALL, 5);
 
-	btn_start->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
-			if (auto self = weak_this.lock()) {
-				self->start_all_job();
-			}
-		});
-	btn_start_sequence->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
-			if (auto self = weak_this.lock()) {
-				self->start_all_job_sequence();
-			}
-		});
-	btn_clear_log->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent &evt) {
-		if (auto self = weak_this.lock()) {
-			if (self->txt_log) {
-				self->txt_log->Clear();
-			}
-		}
+	// Button handlers run on the main thread while the dialog (their parent) is alive.
+	btn_start->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) { start_all_job(); });
+	btn_start_sequence->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) { start_all_job_sequence(); });
+	btn_clear_log->Bind(wxEVT_BUTTON, [this](wxCommandEvent &evt) {
+		if (txt_log)
+			txt_log->Clear();
 	});
 	sizer->Add(line_sizer, 0, wxEXPAND, 5);
 	return sizer;
@@ -245,41 +351,12 @@ wxBoxSizer* NetworkTestDialog::create_content_sizer(wxWindow* parent)
 
 	sizer->Add(grid_sizer, 1, wxEXPAND, 5);
 
-	btn_link->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_github_thread();
-		}
-	});
-
-	btn_bing->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_bing_thread();
-		}
-	});
-
-	btn_lan_mqtt->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_lan_mqtt_thread();
-		}
-	});
-
-	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_cloud_mqtt_thread();
-		}
-	});
-
-	btn_login_api->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_login_api_thread();
-		}
-	});
-
-	btn_upload_api->Bind(wxEVT_BUTTON, [weak_this = weak_this](wxCommandEvent& evt) {
-		if (auto self = weak_this.lock()) {
-			self->start_test_upload_api_thread();
-		}
-	});
+	btn_link->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_github_thread(); });
+	btn_bing->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_bing_thread(); });
+	btn_lan_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_lan_mqtt_thread(); });
+	btn_cloud_mqtt->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_cloud_mqtt_thread(); });
+	btn_login_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_login_api_thread(); });
+	btn_upload_api->Bind(wxEVT_BUTTON, [this](wxCommandEvent& evt) { start_test_upload_api_thread(); });
 
 	return sizer;
 }
@@ -297,16 +374,9 @@ wxBoxSizer* NetworkTestDialog::create_result_sizer(wxWindow* parent)
 
 NetworkTestDialog::~NetworkTestDialog()
 {
-	m_closing.store(true);
-	m_download_cancel = true;
-	cleanup_threads();
-
-	// Small delay to allow any in-flight update_status calls to complete
-	// before destroying the shared_ptr control block
-	boost::this_thread::sleep_for(boost::chrono::milliseconds(50));
-
-	// Break the self-reference to avoid issues
-	self_ptr.reset();
+	// Detach from the runner: running tests keep only the runner alive and wind down on
+	// their own; their status updates become no-ops. Never blocks.
+	m_runner->close();
 }
 
 void NetworkTestDialog::init_bind()
@@ -343,7 +413,7 @@ void NetworkTestDialog::start_all_job()
 
 void NetworkTestDialog::start_all_job_sequence()
 {
-	if (m_sequence_job != nullptr) {
+	if (m_runner->sequence_running.exchange(true)) {
 		update_status(-1, "Sequence test already running, please wait...");
 		return;
 	}
@@ -360,52 +430,61 @@ void NetworkTestDialog::start_all_job_sequence()
 		device_ip = dlg.GetValue().Trim();
 	}
 
-	m_sequence_job = new boost::thread([weak_this = weak_this, device_ip] {
-		auto self = weak_this.lock();
-		if (!self) return;
-		self->log_section_header("Start sequence test (single-thread mode)");
+	// Read everything that needs the app (config, region) here on the main thread; the
+	// worker only touches the runner.
+	const wxString cloud_server = get_cloud_server_address();
+	const std::string region = wxGetApp().app_config->get("region");
+	const bool china = (region == "Chinese Mainland" || region == "China");
+	const wxString login_api_url = china ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+	const wxString upload_api_url = china ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
 
-        self->start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
-        if (self->m_closing.load()) return;
+	const bool started = m_runner->run_async([device_ip, cloud_server, login_api_url, upload_api_url](NetworkTestRunner& r) {
+		// Always release the sequence slot, whichever way the run ends.
+		struct SequenceGuard {
+			NetworkTestRunner& r;
+			~SequenceGuard() { r.sequence_running.store(false); }
+		} guard{r};
 
-		self->update_status(-1, "");
-		self->start_test_url(TEST_ORCA_JOB, "EdgeSlicer(GitHub)", "https://github.com/aceRage/EdgeSlicer");
-		if (self->m_closing.load()) return;
+		r.log_section_header("Start sequence test (single-thread mode)");
+
+		r.test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
+		if (r.closing()) return;
+
+		r.update_status(-1, "");
+		r.test_url(TEST_ORCA_JOB, "EdgeSlicer(GitHub)", "https://github.com/aceRage/EdgeSlicer");
+		if (r.closing()) return;
 
 		// 如果用户输入了局域网设备IP，则进行测试
 		if (!device_ip.IsEmpty()) {
-			self->update_status(-1, "");
-			self->start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
-			if (self->m_closing.load()) return;
+			r.update_status(-1, "");
+			r.test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+			if (r.closing()) return;
 		}
 
 		// 测试云服务器
-		wxString cloud_server = self->get_cloud_server_address();
 		if (!cloud_server.IsEmpty()) {
-			self->update_status(-1, "");
-			self->start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
+			r.update_status(-1, "");
+			r.test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
 		}
-		if (self->m_closing.load()) return;
+		if (r.closing()) return;
 
 		// 测试登录API
-		self->update_status(-1, "");
-		auto app_config = wxGetApp().app_config;
-		std::string region = app_config->get("region");
-		wxString login_api_url = (region == "Chinese Mainland" || region == "China") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
-		self->start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
-		if (self->m_closing.load()) return;
+		r.update_status(-1, "");
+		r.test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+		if (r.closing()) return;
 
 		// 测试上传API
-		self->update_status(-1, "");
-		wxString upload_api_url = (region == "Chinese Mainland" || region == "China") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
-		self->start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
-		if (self->m_closing.load()) return;
+		r.update_status(-1, "");
+		r.test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+		if (r.closing()) return;
 
-		self->log_section_header("Sequence test completed");
+		r.log_section_header("Sequence test completed");
 	});
+	if (!started)
+		m_runner->sequence_running.store(false);
 }
 
-void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
+void NetworkTestRunner::test_url(TestJob job, wxString name, wxString url)
 {
 	m_in_testing[job].store(true);
 
@@ -420,11 +499,16 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 	update_status(-1, "");
 
     int result = -1;
-	auto weak_self = weak_this;
+	// The callbacks run synchronously on this worker thread inside perform_sync(), which
+	// keeps the runner alive, so capturing `this` is safe.
 	http.timeout_max(10)
-		.on_complete([weak_self, &result, job](std::string body, unsigned status) {
-			auto self = weak_self.lock();
-			if (!self || self->m_closing.load()) return;
+		.on_progress([this](Http::Progress, bool& cancel) {
+			// Abort promptly when the dialog closes instead of running to the timeout.
+			if (closing())
+				cancel = true;
+		})
+		.on_complete([this, &result, job](std::string body, unsigned status) {
+			if (closing()) return;
 			try {
 				if (status == 200) {
 					result = 0;
@@ -438,23 +522,21 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 				;
 			}
 		})
-		.on_ip_resolve([weak_self, name, job](std::string ip) {
-			auto self = weak_self.lock();
-			if (!self || self->m_closing.load()) return;
+		.on_ip_resolve([this, name, job](std::string ip) {
+			if (closing()) return;
 			wxString ip_report = "test " + name + " ip resolved = " + wxString::FromUTF8(ip);
-			self->update_status(job, ip_report);
+			update_status(job, ip_report);
 		})
-		.on_error([weak_self, name, job](std::string body, std::string error, unsigned int status) {
-		auto self = weak_self.lock();
-		if (!self || self->m_closing.load()) return;
+		.on_error([this, name, job](std::string body, std::string error, unsigned int status) {
+		if (closing()) return;
 		// Upload API: 403 is OK (HTTPS resource with permission check)
 		if (job == TEST_UPLOAD_API_JOB && status == 403) {
-			self->update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
+			update_status(job, "test " + name + " ok (403 - access restricted, but server reachable)");
 			return;
 		}
 		wxString info = wxString::Format("status=%u, body=", status) + wxString::FromUTF8(body) + ", error=" + wxString::FromUTF8(error);
-        self->update_status(job, "test " + name + " failed");
-        self->update_status(-1, info);
+        update_status(job, "test " + name + " failed");
+        update_status(-1, info);
 	}).perform_sync();
 
 	if (result == 0) {
@@ -466,18 +548,7 @@ void NetworkTestDialog::start_test_url(TestJob job, wxString name, wxString url)
 	m_in_testing[job].store(false);
 }
 
-void NetworkTestDialog::start_test_ping_thread()
-{
-	test_job[TEST_PING_JOB] = new boost::thread([weak_this = weak_this] {
-		auto self = weak_this.lock();
-		if (!self) return;
-		self->m_in_testing[TEST_PING_JOB].store(true);
-
-		self->m_in_testing[TEST_PING_JOB].store(false);
-	});
-}
-
-void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
+void NetworkTestRunner::test_ping(wxString server)
 {
 	update_status(-1, "");
 	update_status(-1, "Starting ping test to " + server + "...");
@@ -792,7 +863,7 @@ void NetworkTestDialog::start_test_ping(wxString server, TestJob job)
 	}
 }
 
-void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString server, int port)
+void NetworkTestRunner::test_telnet(TestJob job, wxString name, wxString server, int port)
 {
 	m_in_testing[job].store(true);
 
@@ -812,7 +883,13 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 		// 第一步: Ping测试 - 测量网络层RTT
 		// ============================================
 		update_status(-1, "--- Step 1: Network Layer Test (ICMP Ping) ---");
-		start_test_ping(server, job);
+		test_ping(server);
+
+		// The ping can take several seconds; skip the TCP step if the dialog closed meanwhile.
+		if (closing()) {
+			m_in_testing[job].store(false);
+			return;
+		}
 
 		// 添加步骤间空行
 		update_status(-1, "");
@@ -854,22 +931,50 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 			long long connect_time = 0;
 
 			// 尝试连接到所有解析出的endpoint
-			bool connected = false;
-			for (auto& endpoint : endpoints) {
-				if (m_closing.load()) break;
-
-				socket.close(ec);
-				socket.connect(endpoint, ec);
-
-				if (!ec) {
-					connected = true;
-					auto connect_end = std::chrono::high_resolution_clock::now();
-					connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
-
-					update_status(job, "test " + name + " connected");
-					update_status(-1, wxString::Format("[OK] TCP connection established in %lld ms", connect_time));
+			// Asynchronous connect (tries each resolved endpoint in turn) driven in short
+			// slices, so it is bounded by TCP_CONNECT_TIMEOUT and cancelled as soon as the
+			// dialog closes, instead of blocking for the OS connect timeout.
+			bool connect_done = false;
+			boost::asio::async_connect(socket, endpoints,
+				[&connect_done, &ec](const boost::system::error_code& result, const boost::asio::ip::tcp::endpoint&) {
+					ec = result;
+					connect_done = true;
+				});
+			const auto connect_deadline = std::chrono::steady_clock::now() + TCP_CONNECT_TIMEOUT;
+			bool timed_out = false;
+			bool aborted = false;
+			while (!connect_done) {
+				io_context.run_for(std::chrono::milliseconds(100));
+				if (connect_done)
+					break;
+				if (io_context.stopped()) {
+					// No pending work but the handler has not run: should not happen.
+					ec = boost::asio::error::operation_aborted;
 					break;
 				}
+				if (!aborted && (closing() || std::chrono::steady_clock::now() >= connect_deadline)) {
+					// Closing the socket makes the pending connect complete with operation_aborted.
+					timed_out = !closing();
+					aborted = true;
+					boost::system::error_code ignored;
+					socket.close(ignored);
+				}
+			}
+			if (timed_out)
+				ec = boost::asio::error::timed_out;
+
+			if (closing()) {
+				m_in_testing[job].store(false);
+				return;
+			}
+
+			bool connected = !ec;
+			if (connected) {
+				auto connect_end = std::chrono::high_resolution_clock::now();
+				connect_time = std::chrono::duration_cast<std::chrono::milliseconds>(connect_end - connect_start).count();
+
+				update_status(job, "test " + name + " connected");
+				update_status(-1, wxString::Format("[OK] TCP connection established in %lld ms", connect_time));
 			}
 
 			if (!connected) {
@@ -945,9 +1050,28 @@ void NetworkTestDialog::start_test_telnet(TestJob job, wxString name, wxString s
 	m_in_testing[job].store(false);
 }
 
+// Main thread. Claims the job slot and runs fn on a worker thread that holds only the
+// runner. The slot is released when fn returns (or throws), or right away if the thread
+// could not be started.
+static void launch_job(const std::shared_ptr<NetworkTestRunner>& runner, TestJob job, std::function<void(NetworkTestRunner&)> fn)
+{
+	if (!runner->begin(job))
+		return; // already running
+	const bool started = runner->run_async([job, fn](NetworkTestRunner& r) {
+		struct JobGuard {
+			NetworkTestRunner& r;
+			TestJob job;
+			~JobGuard() { r.end(job); }
+		} guard{r, job};
+		fn(r);
+	});
+	if (!started)
+		runner->end(job);
+}
+
 void NetworkTestDialog::start_test_lan_mqtt_thread()
 {
-	if (m_in_testing[TEST_LAN_MQTT_JOB].load()) {
+	if (m_runner->is_testing(TEST_LAN_MQTT_JOB)) {
 		return;
 	}
 
@@ -968,17 +1092,9 @@ void NetworkTestDialog::start_test_lan_mqtt_thread()
 		return;
 	}
 
-	if (test_job[TEST_LAN_MQTT_JOB] != nullptr && test_job[TEST_LAN_MQTT_JOB]->joinable()) {
-		test_job[TEST_LAN_MQTT_JOB]->join();
-		delete test_job[TEST_LAN_MQTT_JOB];
-		test_job[TEST_LAN_MQTT_JOB] = nullptr;
-	}
-
-	test_job[TEST_LAN_MQTT_JOB] = new boost::thread([weak_this = weak_this, device_ip] {
-		auto self = weak_this.lock();
-		if (!self) return;
+	launch_job(m_runner, TEST_LAN_MQTT_JOB, [device_ip](NetworkTestRunner& r) {
 		// 测试局域网设备 - 端口默认1884
-		self->start_test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
+		r.test_telnet(TEST_LAN_MQTT_JOB, "LAN Device", device_ip, 1884);
 	});
 }
 
@@ -994,7 +1110,7 @@ wxString NetworkTestDialog::get_cloud_server_address()
 
 void NetworkTestDialog::start_test_cloud_mqtt_thread()
 {
-	if (m_in_testing[TEST_CLOUD_MQTT_JOB].load()) {
+	if (m_runner->is_testing(TEST_CLOUD_MQTT_JOB)) {
 		return;
 	}
 
@@ -1006,102 +1122,49 @@ void NetworkTestDialog::start_test_cloud_mqtt_thread()
 		return;
 	}
 
-	if (test_job[TEST_CLOUD_MQTT_JOB] != nullptr && test_job[TEST_CLOUD_MQTT_JOB]->joinable()) {
-		test_job[TEST_CLOUD_MQTT_JOB]->join();
-		delete test_job[TEST_CLOUD_MQTT_JOB];
-		test_job[TEST_CLOUD_MQTT_JOB] = nullptr;
-	}
-
-	test_job[TEST_CLOUD_MQTT_JOB] = new boost::thread([weak_this = weak_this, cloud_server] {
-		auto self = weak_this.lock();
-		if (!self) return;
+	launch_job(m_runner, TEST_CLOUD_MQTT_JOB, [cloud_server](NetworkTestRunner& r) {
 		// 测试云服务器 - 使用telnet方式，端口8883
-		self->start_test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
+		r.test_telnet(TEST_CLOUD_MQTT_JOB, "Cloud Server", cloud_server, 8883);
 	});
 }
 void NetworkTestDialog::start_test_github_thread()
 {
-    if (m_in_testing[TEST_ORCA_JOB].load())
-        return;
-
-	if (test_job[TEST_ORCA_JOB] != nullptr && test_job[TEST_ORCA_JOB]->joinable()) {
-		test_job[TEST_ORCA_JOB]->join();
-		delete test_job[TEST_ORCA_JOB];
-		test_job[TEST_ORCA_JOB] = nullptr;
-	}
-
-    test_job[TEST_ORCA_JOB] = new boost::thread([weak_this = weak_this] {
-        auto self = weak_this.lock();
-		if (!self) return;
-        self->start_test_url(TEST_ORCA_JOB, "EdgeSlicer(GitHub)", "https://github.com/aceRage/EdgeSlicer");
-    });
+	launch_job(m_runner, TEST_ORCA_JOB, [](NetworkTestRunner& r) {
+		r.test_url(TEST_ORCA_JOB, "EdgeSlicer(GitHub)", "https://github.com/aceRage/EdgeSlicer");
+	});
 }
 
 void NetworkTestDialog::start_test_bing_thread()
 {
-	if (m_in_testing[TEST_BING_JOB].load())
-		return;
-
-	if (test_job[TEST_BING_JOB] != nullptr && test_job[TEST_BING_JOB]->joinable()) {
-		test_job[TEST_BING_JOB]->join();
-		delete test_job[TEST_BING_JOB];
-		test_job[TEST_BING_JOB] = nullptr;
-	}
-
-    test_job[TEST_BING_JOB] = new boost::thread([weak_this = weak_this] {
-        auto self = weak_this.lock();
-		if (!self) return;
-        self->start_test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
-    });
+	launch_job(m_runner, TEST_BING_JOB, [](NetworkTestRunner& r) {
+		r.test_url(TEST_BING_JOB, "Bing", "http://www.bing.com");
+	});
 }
 
 void NetworkTestDialog::start_test_login_api_thread()
 {
-    if (m_in_testing[TEST_LOGIN_API_JOB].load())
-        return;
-
-	if (test_job[TEST_LOGIN_API_JOB] != nullptr && test_job[TEST_LOGIN_API_JOB]->joinable()) {
-		test_job[TEST_LOGIN_API_JOB]->join();
-		delete test_job[TEST_LOGIN_API_JOB];
-		test_job[TEST_LOGIN_API_JOB] = nullptr;
-	}
-
-	test_job[TEST_LOGIN_API_JOB] = new boost::thread([weak_this = weak_this] {
-		auto self = weak_this.lock();
-		if (!self) return;
-		auto app_config = wxGetApp().app_config;
-		std::string region = app_config->get("region");
-		wxString login_api_url = (region == "Chinese Mainland") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
-		self->start_test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
+	// Read the region on the main thread; the worker never touches the app.
+	std::string region = wxGetApp().app_config->get("region");
+	wxString login_api_url = (region == "Chinese Mainland") ? "https://id.snapmaker.cn" : "https://id.snapmaker.com";
+	launch_job(m_runner, TEST_LOGIN_API_JOB, [login_api_url](NetworkTestRunner& r) {
+		r.test_url(TEST_LOGIN_API_JOB, "Login API", login_api_url);
 	});
 }
 
 void NetworkTestDialog::start_test_upload_api_thread()
 {
-    if (m_in_testing[TEST_UPLOAD_API_JOB].load())
-        return;
-
-	if (test_job[TEST_UPLOAD_API_JOB] != nullptr && test_job[TEST_UPLOAD_API_JOB]->joinable()) {
-		test_job[TEST_UPLOAD_API_JOB]->join();
-		delete test_job[TEST_UPLOAD_API_JOB];
-		test_job[TEST_UPLOAD_API_JOB] = nullptr;
-	}
-
-	test_job[TEST_UPLOAD_API_JOB] = new boost::thread([weak_this = weak_this] {
-		auto self = weak_this.lock();
-		if (!self) return;
-		auto app_config = wxGetApp().app_config;
-		std::string region = app_config->get("region");
-		wxString upload_api_url = (region == "Chinese Mainland") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
-		self->start_test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
+	std::string region = wxGetApp().app_config->get("region");
+	wxString upload_api_url = (region == "Chinese Mainland") ? "https://public.resource.snapmaker.cn" : "https://public.resource.snapmaker.com";
+	launch_job(m_runner, TEST_UPLOAD_API_JOB, [upload_api_url](NetworkTestRunner& r) {
+		r.test_url(TEST_UPLOAD_API_JOB, "Upload API", upload_api_url);
 	});
 }
 
 void NetworkTestDialog::on_close(wxCloseEvent& event)
 {
-	m_download_cancel = true;
-	m_closing.store(true);
-	cleanup_threads();
+	// Stop delivering status and let running tests wind down on their own. Nothing is
+	// joined here, so closing never freezes the UI; the threads keep only the runner alive.
+	m_runner->close();
 	event.Skip();
 }
 
@@ -1113,13 +1176,6 @@ wxString NetworkTestDialog::get_studio_version()
 
 void NetworkTestDialog::set_default()
 {
-	for (int i = 0; i < TEST_JOB_MAX; i++) {
-		test_job[i] = nullptr;
-		m_in_testing[i].store(false);
-	}
-
-	m_sequence_job = nullptr;
-
 	text_version_val->SetLabelText(get_studio_version());
 	txt_sys_info_value->SetLabelText(get_os_info());
 	txt_dns_info_value->SetLabelText(get_dns_info());
@@ -1129,8 +1185,6 @@ void NetworkTestDialog::set_default()
 	text_cloud_mqtt_val->SetLabelText(NA_STR);
 	text_login_api_val->SetLabelText(NA_STR);
 	text_upload_api_val->SetLabelText(NA_STR);
-	m_download_cancel = false;
-	m_closing.store(false);
 }
 
 
@@ -1141,27 +1195,17 @@ void NetworkTestDialog::on_dpi_changed(const wxRect &suggested_rect)
 
 void NetworkTestDialog::log_section_header(const wxString& title)
 {
-	static const wxString sep("========================================");
-	update_status(-1, wxEmptyString);
-	update_status(-1, sep);
-	update_status(-1, title);
-	update_status(-1, sep);
-	update_status(-1, wxEmptyString);
+	m_runner->log_section_header(title);
 }
 
 void NetworkTestDialog::update_status(int job_id, wxString info)
 {
-	if (m_closing.load())
-		return;
+	m_runner->update_status(job_id, info);
+}
 
-	if (!wxThread::IsMain()) {
-		wxGetApp().CallAfter([weak_this = weak_this, job_id, info]() {
-			if (auto self = weak_this.lock())
-				self->update_status(job_id, info);
-		});
-		return;
-	}
-
+void NetworkTestDialog::apply_status(int job_id, const wxString& info)
+{
+	// Main thread only, reached through NetworkTestRunner while the dialog is attached.
 	// Send log to MainFrame for file writing
 	auto log_evt = new wxCommandEvent(EVT_NETWORK_TEST_LOG_UPDATE);
 	log_evt->SetString(info);
@@ -1210,46 +1254,10 @@ void NetworkTestDialog::update_status(int job_id, wxString info)
 	std::stringstream buf;
 	buf << std::put_time(now_time, "%a %b %d %H:%M:%S");
 	wxString log_line = wxString(buf.str()) + ": " + info + "\n";
-	if (!m_closing.load() && txt_log) {
+	if (txt_log) {
 		txt_log->AppendText(log_line);
 	}
 }
-
-void NetworkTestDialog::cleanup_threads()
-{
-	// Clean up test job threads
-	for (int i = 0; i < TEST_JOB_MAX; i++) {
-		if (test_job[i] != nullptr) {
-			if (test_job[i]->joinable()) {
-				// Try to join with longer timeout (1000ms) to reduce chance of detach
-				// Threads should check m_closing and exit promptly
-				if (!test_job[i]->try_join_for(boost::chrono::milliseconds(1000))) {
-					// Thread didn't finish in time, detach it to avoid blocking
-					// The thread will check m_closing and should exit safely
-					test_job[i]->detach();
-					BOOST_LOG_TRIVIAL(warning) << "Thread " << i << " didn't finish in time, detached";
-				}
-			}
-			delete test_job[i];
-			test_job[i] = nullptr;
-		}
-	}
-
-	// Clean up sequence job thread
-	if (m_sequence_job != nullptr) {
-		if (m_sequence_job->joinable()) {
-			// Try to join with longer timeout (1000ms)
-			if (!m_sequence_job->try_join_for(boost::chrono::milliseconds(1000))) {
-				// Thread didn't finish in time, detach it
-				m_sequence_job->detach();
-				BOOST_LOG_TRIVIAL(warning) << "Sequence job thread didn't finish in time, detached";
-			}
-		}
-		delete m_sequence_job;
-		m_sequence_job = nullptr;
-	}
-}
-
 
 } // namespace GUI
 } // namespace Slic3r

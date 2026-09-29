@@ -18,6 +18,7 @@ add_executable(${_TEST_NAME}_tests
     hub_event_dedupe_tests.cpp
     reprint_hosts_tests.cpp
     reprint_printer_names_tests.cpp
+    bambu_reprint_tests.cpp
     shutdown_gate_tests.cpp
     hosted_push_tests.cpp
     flashforge_tests.cpp
@@ -46,6 +47,7 @@ add_executable(${_TEST_NAME}_tests
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
     dark_mode_background_tests.cpp
+    bambu_send_diagnosis_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/sentry_wrapper/SentryScrub.cpp

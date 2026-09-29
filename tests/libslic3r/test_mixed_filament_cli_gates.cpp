@@ -374,6 +374,12 @@ TEST_CASE("U1 CLI smoke: outer_wall_filament=2 with no support yields two plate 
     cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
     cfg.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
     cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+    // full_print_config defaults SEMM+purge_in_prime_tower on, which sizes a tower even for one
+    // filament. U1 is not SEMM; turn that path off so a 1-id plate still has depth 0.
+    cfg.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    cfg.option<ConfigOptionBool>("purge_in_prime_tower")->value = false;
+    if (auto *wrapping = cfg.option<ConfigOptionBool>("enable_wrapping_detection"))
+        wrapping->value = false;
     cfg.option<ConfigOptionInt>("raft_layers")->value           = 0;
     cfg.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
     cfg.option<ConfigOptionInt>("wall_filament")->value         = 1;

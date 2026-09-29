@@ -335,9 +335,11 @@ TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare pla
     config.set_num_extruders(2);
     config.set_num_filaments(2);
     config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4};
     config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
     config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
     config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionBool>("spiral_mode")->value          = false;
     config.option<ConfigOptionInt>("outer_wall_filament")->value   = 2;
     config.option<ConfigOptionInt>("wall_filament")->value         = 1;
     config.option<ConfigOptionInt>("sparse_infill_filament")->value = 1;
@@ -347,6 +349,16 @@ TEST_CASE("outer_wall_filament is counted by slicing and matches the Prepare pla
     Model model;
     init_print({TestMesh::cube_20x20x20}, print, model, config);
 
+    REQUIRE(print.default_region_config().outer_wall_filament.value == 2);
+    REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
+
+    // Print::apply counts used filaments before the new PrintObject's regions exist, so a first
+    // apply of a cube whose 2nd filament is only outer_wall_filament sees 1 filament and
+    // normalize_fdm_2 clears enable_prime_tower. Re-apply now that regions are in place so the
+    // used-filament count matches Print::extruders() and the tower stays on.
+    print.apply(model, config);
+    INFO("enable_prime_tower=" << print.config().enable_prime_tower.value
+                               << " filament_diameter=" << print.config().filament_diameter.values.size());
     REQUIRE(print.has_wipe_tower());
     REQUIRE(print.extruders() == std::vector<unsigned int>{0, 1});
 

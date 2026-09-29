@@ -618,11 +618,11 @@ TEST_CASE("A CENTER/LEFT/RIGHT helper pins the outer-wall seam of a cube on ever
         REQUIRE(baseline.points.size() >= 40);
         // Aligned-only must not already satisfy the helper pin, or the helper case is not discriminating.
         if (mode == ModelVolumeType::PRECISE_SEAM_CENTER) {
-            REQUIRE_FALSE(baseline.min_y() > 8.0 && std::abs(baseline.min_x()) < 2.0 && std::abs(baseline.max_x()) < 2.0);
+            REQUIRE_FALSE((baseline.min_y() > 8.0 && std::abs(baseline.min_x()) < 2.0 && std::abs(baseline.max_x()) < 2.0));
         } else if (mode == ModelVolumeType::PRECISE_SEAM_LEFT) {
-            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.min_x() > 1.0);
+            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.min_x() > 1.0));
         } else {
-            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.max_x() < -1.0);
+            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.max_x() < -1.0));
         }
     }
     Model model;
@@ -692,7 +692,7 @@ TEST_CASE("Blocked and Enforced Precise Seam zones override painted seams", "[Se
             SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "left");
             REQUIRE(baseline.points.size() >= 40);
             REQUIRE(baseline.min_x() < -5.0);
-            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.max_y() > 8.0);
+            REQUIRE_FALSE((baseline.min_y() > 8.0 && baseline.max_y() > 8.0));
         }
         Model model;
         ModelObject *object = model.add_object();

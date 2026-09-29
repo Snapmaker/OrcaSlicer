@@ -363,6 +363,8 @@ DynamicPrintConfig two_filament_config(bool by_object, bool mixed_walls)
         {"brim_type",                  "no_brim"},
         {"print_sequence",             by_object ? "by object" : "by layer"},
         {"wall_loops",                 "2"},
+        {"gcode_comments",             "1"},
+        {"single_extruder_multi_material", "1"},
     });
     config.option<ConfigOptionStrings>("filament_colour")->values = {"#FF0000", "#00FF00"};
     if (mixed_walls) {
@@ -420,10 +422,21 @@ std::string strip_gcode_timestamps(const std::string &gcode)
 
 size_t count_toolchange(const std::string &gcode, unsigned int extruder_id)
 {
-    const std::string needle = "T" + std::to_string(extruder_id) + " ; change extruder";
+    const std::string needle = "T" + std::to_string(extruder_id);
     size_t            count  = 0;
-    for (size_t pos = 0; (pos = gcode.find(needle, pos)) != std::string::npos; pos += needle.size())
-        ++count;
+    size_t            pos    = 0;
+    while (pos < gcode.size()) {
+        const size_t eol  = gcode.find('\n', pos);
+        const size_t end  = eol == std::string::npos ? gcode.size() : eol;
+        std::string  line = gcode.substr(pos, end - pos);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        // "T<n>" or "T<n> ; change extruder" — comments are optional when gcode_comments is off.
+        if (line.compare(0, needle.size(), needle) == 0 &&
+            (line.size() == needle.size() || line[needle.size()] == ' ' || line[needle.size()] == ';'))
+            ++count;
+        pos = end == gcode.size() ? gcode.size() : end + 1;
+    }
     return count;
 }
 
@@ -451,13 +464,16 @@ TEST_CASE("ByObject mixed virtual wall filament exports with physical toolchange
         std::string gcode;
         REQUIRE_NOTHROW(gcode = export_print_gcode(print));
         REQUIRE_FALSE(gcode.empty());
-        REQUIRE(count_toolchange(gcode, 0) + count_toolchange(gcode, 1) >= 2);
-        REQUIRE(count_toolchange(gcode, 0) >= 1);
-        REQUIRE(count_toolchange(gcode, 1) >= 1);
         if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
             boost::nowide::ofstream dump(std::string(dir) + (by_object ? "/mixed_byobject.gcode" : "/mixed_bylayer.gcode"));
             dump << strip_gcode_timestamps(gcode);
         }
+        const size_t t0 = count_toolchange(gcode, 0);
+        const size_t t1 = count_toolchange(gcode, 1);
+        INFO("T0=" << t0 << " T1=" << t1);
+        REQUIRE(t0 + t1 >= 2);
+        REQUIRE(t0 >= 1);
+        REQUIRE(t1 >= 1);
     }
 }
 

@@ -1387,6 +1387,7 @@ TEST_CASE("All Precise Seam types and dormant settings survive a 3MF round trip"
     Model              source;
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    config.set_key_value("filament_colour", new ConfigOptionStrings({ "#000000", "#FFFFFF" }));
     populate_precise_seam_model(source, true, shared);
     save_precise_seam_3mf(path, bbs, source, config, shared);
 
@@ -1414,6 +1415,7 @@ TEST_CASE("All Precise Seam types and dormant settings survive a 3MF round trip"
     Model              destination;
     DynamicPrintConfig dest_config = DynamicPrintConfig::full_print_config();
     dest_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    dest_config.set_key_value("filament_colour", new ConfigOptionStrings({ "#000000", "#FFFFFF" }));
     load_precise_seam_3mf(path, bbs, destination, dest_config);
     REQUIRE(destination.objects.size() == 1);
     const auto &volumes = destination.objects.front()->volumes;
@@ -1441,6 +1443,7 @@ TEST_CASE("All Precise Seam types and dormant settings survive a 3MF round trip"
     Model              converted;
     DynamicPrintConfig converted_config = DynamicPrintConfig::full_print_config();
     converted_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    converted_config.set_key_value("filament_colour", new ConfigOptionStrings({ "#000000", "#FFFFFF" }));
     load_precise_seam_3mf(converted_path, bbs, converted, converted_config);
     REQUIRE(converted.objects.size() == 1);
     const auto &converted_volumes = converted.objects.front()->volumes;
@@ -1471,6 +1474,7 @@ TEST_CASE("Seam metadata restores only recognized modes on compatible base types
     Model              source;
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    config.set_key_value("filament_colour", new ConfigOptionStrings({ "#000000", "#FFFFFF" }));
     populate_precise_seam_model(source, false, false);
     save_precise_seam_3mf(original, bbs, source, config, false);
 
@@ -1552,6 +1556,7 @@ TEST_CASE("Seam metadata restores only recognized modes on compatible base types
     Model              destination;
     DynamicPrintConfig dest_config = DynamicPrintConfig::full_print_config();
     dest_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    dest_config.set_key_value("filament_colour", new ConfigOptionStrings({ "#000000", "#FFFFFF" }));
     load_precise_seam_3mf(edited, bbs, destination, dest_config);
     REQUIRE(destination.objects.size() == 1);
     REQUIRE(destination.objects.front()->volumes.size() == 2);

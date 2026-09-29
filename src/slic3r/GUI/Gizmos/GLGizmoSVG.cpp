@@ -277,8 +277,14 @@ bool GLGizmoSVG::create_code(ModelVolumeType volume_type, const std::optional<Ve
     bool is_new_object = volume_type == ModelVolumeType::INVALID;
     if (is_new_object)
         volume_type = ModelVolumeType::MODEL_PART;
-    bool has_object = !is_new_object && (mouse_pos.has_value() ? get_first_hovered_gl_volume(m_parent) != nullptr :
-                                                                  (!selection.is_empty() && selection.get_object_idx() >= 0));
+    // Object under the mouse has to be remembered before the dialog is shown:
+    // the dialog takes the mouse out of the canvas, which clears the hover state.
+    std::optional<GLVolume::CompositeID> hovered_id;
+    if (!is_new_object && mouse_pos.has_value())
+        if (const GLVolume *hovered = get_first_hovered_gl_volume(m_parent); hovered != nullptr)
+            hovered_id = hovered->composite_id;
+    bool has_selected_object = !selection.is_empty() && selection.get_object_idx() >= 0;
+    bool has_object          = !is_new_object && (hovered_id.has_value() || has_selected_object);
 
     CodeEmbossDialogOptions options;
     options.allow_light_part  = volume_type == ModelVolumeType::MODEL_PART;
@@ -315,7 +321,19 @@ bool GLGizmoSVG::create_code(ModelVolumeType volume_type, const std::optional<Ve
     CreateVolumeParams input = create_input(m_parent, m_raycast_manager, volume_type);
     std::string object_name  = params.symbology == Barcode::Symbology::QR ? _u8L("QR code") : _u8L("Barcode");
     std::optional<Vec2d> position = mouse_pos;
-    if (is_new_object) {
+    if (!is_new_object) {
+        // Find the clicked volume again, the scene could be reloaded while the dialog was open
+        input.gl_volume = nullptr;
+        if (hovered_id.has_value())
+            for (const GLVolume *v : m_parent.get_volumes().volumes)
+                if (v != nullptr && v->composite_id == *hovered_id) {
+                    input.gl_volume = v;
+                    break;
+                }
+        // Without the clicked volume place the code near the selected object, never on the bed
+        if (input.gl_volume == nullptr)
+            position.reset();
+    } else {
         // new object is created on the bed under the mouse or in the center of screen
         input.gl_volume = nullptr;
         if (!position.has_value()) {

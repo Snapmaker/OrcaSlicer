@@ -318,6 +318,20 @@ TEST_CASE("expand_0based_extruder_ids uses 3+ id gradients only when resolve wou
     REQUIRE(ids == std::vector<unsigned int>{0, 1});
 }
 
+TEST_CASE("expand_0based_extruder_ids includes bracket-10 pattern tokens", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    std::vector<std::string> colors(10, "#FF0000");
+    colors[9] = "#0000FF";
+    mgr.add_custom_filament(1, 2, 50, colors);
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("1[10]");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 10) == 11);
+
+    std::vector<unsigned int> ids = {10};
+    mgr.expand_0based_extruder_ids(ids, 10);
+    REQUIRE(ids == std::vector<unsigned int>{0, 9});
+}
+
 TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};

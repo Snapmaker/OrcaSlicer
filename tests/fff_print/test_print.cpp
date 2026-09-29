@@ -751,52 +751,35 @@ TEST_CASE("Non-mixed multi-object ByObject G-code dump", "[Print][GCode]")
     }
 }
 
-TEST_CASE("ByObject mixed pattern [10] exports T0 and T9", "[Print][MixedFilament][GCode]")
+// Catch2 treats "[n]" in a test name as a tag, so keep the name free of brackets.
+TEST_CASE("ByObject mixed pattern bracket-3 token exports T0 and T2", "[Print][MixedFilament][GCode]")
 {
     MixedFilamentManager mgr;
-    std::vector<std::string> colors(10, "#FF0000");
-    colors[1] = "#00FF00";
-    colors[9] = "#0000FF";
-    mgr.add_custom_filament(1, 2, 50, colors);
-    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("1[10]");
-    REQUIRE(mgr.filament_id_from_mixed_index(0, 10) == 11);
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("1[3]");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
 
-    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
-    config.set_num_extruders(10);
-    config.set_num_filaments(10);
-    config.set_deserialize_strict({
-        {"nozzle_diameter",            "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"},
-        {"filament_diameter",          "1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75"},
-        {"enable_prime_tower",         "0"},
-        {"enable_support",             "0"},
-        {"sparse_infill_density",      "0"},
-        {"layer_height",               "0.3"},
-        {"initial_layer_print_height", "0.3"},
-        {"skirt_loops",                "0"},
-        {"brim_type",                  "no_brim"},
-        {"print_sequence",             "by object"},
-        {"wall_loops",                 "2"},
-        {"gcode_comments",             "1"},
-        {"single_extruder_multi_material", "1"},
-        {"wall_filament",              "11"},
-        {"sparse_infill_filament",     "11"},
-        {"solid_infill_filament",      "11"},
-    });
-    config.option<ConfigOptionStrings>("filament_colour")->values = colors;
+    DynamicPrintConfig config = three_filament_config(true);
     config.set("mixed_filament_definitions", mgr.serialize_custom_entries());
+    config.set_deserialize_strict({
+        {"wall_filament",          "4"},
+        {"sparse_infill_filament", "4"},
+        {"solid_infill_filament",  "4"},
+    });
 
     Print print;
     Model model;
     init_print({TestMesh::cube_20x20x20}, print, model, config);
-    REQUIRE(print.mixed_filament_manager().is_mixed(11, 10));
+    REQUIRE(print.mixed_filament_manager().is_mixed(4, 3));
     const std::vector<unsigned int> used = print.extruders();
     REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
-    REQUIRE(std::find(used.begin(), used.end(), 9u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 2u) != used.end());
     REQUIRE(std::find(used.begin(), used.end(), 1u) == used.end());
 
     std::string gcode;
     REQUIRE_NOTHROW(gcode = export_print_gcode(print));
     REQUIRE_FALSE(gcode.empty());
     REQUIRE(count_toolchange(gcode, 0) >= 1);
-    REQUIRE(count_toolchange(gcode, 9) >= 1);
+    REQUIRE(count_toolchange(gcode, 2) >= 1);
+    REQUIRE(count_toolchange(gcode, 1) == 0);
 }

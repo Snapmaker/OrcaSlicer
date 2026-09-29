@@ -57,6 +57,7 @@ using namespace nlohmann;
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Platform.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Format/AMF.hpp"
@@ -1213,7 +1214,9 @@ int CLI::run(int argc, char **argv)
     Semver file_version;
     std::map<size_t, bool> orients_requirement;
     std::vector<Preset*> project_presets;
+    ResourceProfileResolver resource_profiles(boost::filesystem::path(resources_dir()) / "profiles");
     std::string new_printer_name, current_printer_name, new_process_name, current_process_name, current_printer_system_name, current_process_system_name, new_process_system_name, new_printer_system_name, printer_model_id, current_printer_model, printer_model;//, printer_inherits, print_inherits;
+    std::string current_printer_vendor, new_printer_vendor;
     std::vector<std::string> upward_compatible_printers, new_print_compatible_printers, current_print_compatible_printers, current_different_settings;
     std::vector<std::string> current_filaments_name, current_filaments_system_name, current_inherits_group;
     DynamicPrintConfig load_process_config, load_machine_config;
@@ -1505,6 +1508,11 @@ int CLI::run(int argc, char **argv)
                         current_filaments_system_name = current_filaments_name;
                         BOOST_LOG_TRIVIAL(info) << boost::format("no inherits_group: use system name the same as current name");
                     }
+                    current_printer_vendor = resource_profiles.vendor_for_printer(current_printer_system_name, current_printer_model);
+                    if (current_printer_vendor.empty())
+                        current_printer_vendor = resource_profiles.vendor_for_printer(current_printer_name, current_printer_model);
+                    BOOST_LOG_TRIVIAL(info) << boost::format("resolved current printer vendor %1% from preset %2%, model %3%")
+                        %current_printer_vendor %current_printer_system_name %current_printer_model;
                     filament_count = current_filaments_name.size();
                     upward_compatible_printers = config.option<ConfigOptionStrings>("upward_compatible_machine", true)->values;
                     current_print_compatible_printers  = config.option<ConfigOptionStrings>("print_compatible_printers", true)->values;
@@ -1758,6 +1766,43 @@ int CLI::run(int argc, char **argv)
         }
         return 0;
     };
+    auto load_system_preset = [&resource_profiles](Preset::Type preset_type, const std::string &preset_name,
+                                                   std::string &vendor_id, DynamicPrintConfig &config,
+                                                   std::string &config_type, std::string &config_name,
+                                                   std::string &filament_id, std::string &config_from) {
+        ResourceProfileResolver::ResolvedPreset resolved;
+        if (!resource_profiles.resolve_preset(preset_type, preset_name, vendor_id, resolved))
+            return CLI_FILE_NOTFOUND;
+
+        config      = std::move(resolved.config);
+        config_name = resolved.name;
+        config_from = "system";
+        filament_id = resolved.filament_id;
+        // The printer establishes the vendor context. A process or filament
+        // may legitimately fall back to a shared or uniquely-owned profile,
+        // which must not replace an already known printer vendor.
+        if (preset_type == Preset::TYPE_PRINTER || vendor_id.empty())
+            vendor_id = resolved.vendor_id;
+        switch (preset_type) {
+        case Preset::TYPE_PRINTER:  config_type = "machine"; break;
+        case Preset::TYPE_PRINT:    config_type = "process"; break;
+        case Preset::TYPE_FILAMENT: config_type = "filament"; break;
+        default:                    return CLI_CONFIG_FILE_ERROR;
+        }
+        return CLI_SUCCESS;
+    };
+    auto update_printer_model_id = [&resource_profiles, &printer_model_id](const std::string &model_name,
+                                                                           std::string &vendor_id) {
+        if (model_name.empty())
+            return;
+        ResourceProfileResolver::ResolvedPrinterModel resolved;
+        if (resource_profiles.resolve_printer_model(model_name, vendor_id, resolved)) {
+            printer_model_id = resolved.model_id;
+            vendor_id        = resolved.vendor_id;
+            BOOST_LOG_TRIVIAL(info) << boost::format("resolved printer model %1%, model_id %2%, vendor %3%")
+                %model_name %printer_model_id %vendor_id;
+        }
+    };
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ":before load settings, file count="<< load_configs.size() << std::endl;
     //std::vector<std::string> filament_compatible_printers;
     // load config files supplied via --load
@@ -1789,19 +1834,10 @@ int CLI::run(int argc, char **argv)
 
             //get printer_model_id
             printer_model = config.option<ConfigOptionString>("printer_model", true)->value;
-            if (!printer_model.empty()) {
-                std::string printer_model_path = resources_dir() + "/profiles/BBL/machine_full/"+printer_model+".json";
-                if (boost::filesystem::exists(printer_model_path))
-                {
-                    std::map<std::string, std::string> key_values;
-
-                    load_key_values_from_json(printer_model_path, key_values);
-                    if (key_values.find("model_id") != key_values.end()) {
-                        printer_model_id = key_values["model_id"];
-                        BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, load printer_model_id %2% from current printer model %3%")%__LINE__ %printer_model_id %printer_model;
-                    }
-                }
-            }
+            new_printer_vendor = resource_profiles.vendor_for_printer(new_printer_system_name, printer_model);
+            if (new_printer_vendor.empty())
+                new_printer_vendor = resource_profiles.vendor_for_printer(new_printer_name, printer_model);
+            update_printer_model_id(printer_model, new_printer_vendor);
 
             //printer_inherits = config.option<ConfigOptionString>("inherits", true)->value;
             load_machine_config = std::move(config);
@@ -1989,19 +2025,7 @@ int CLI::run(int argc, char **argv)
 
                         //get printer_model_id
                         printer_model = config.option<ConfigOptionString>("printer_model", true)->value;
-                        if (!printer_model.empty()) {
-                            std::string printer_model_path = resources_dir() + "/profiles/BBL/machine_full/"+printer_model+".json";
-                            if (boost::filesystem::exists(printer_model_path))
-                            {
-                                std::map<std::string, std::string> key_values;
-
-                                load_key_values_from_json(printer_model_path, key_values);
-                                if (key_values.find("model_id") != key_values.end()) {
-                                    printer_model_id = key_values["model_id"];
-                                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, load printer_model_id %2% from current printer model %3%")%__LINE__ %printer_model_id %printer_model;
-                                }
-                            }
-                        }
+                        update_printer_model_id(printer_model, current_printer_vendor);
 
                         int orig_printable_width = 0, orig_printable_depth = 0, orig_printable_height = 0;
                         Pointfs orig_printable_area;
@@ -2051,38 +2075,22 @@ int CLI::run(int argc, char **argv)
         else {
             if (new_printer_name.empty() && !current_printer_system_name.empty()) {
                 //use the original printer name in 3mf
-                std::string system_printer_path = resources_dir() + "/profiles/BBL/machine_full/"+current_printer_system_name+".json";
-                if (! boost::filesystem::exists(system_printer_path)) {
-                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__<< boost::format(":%1%, can not find system preset file: %2% ")%__LINE__ %system_printer_path;
+                DynamicPrintConfig  config;
+                std::string config_type, config_name, filament_id, config_from;
+                int ret = load_system_preset(Preset::TYPE_PRINTER, current_printer_system_name, current_printer_vendor,
+                                             config, config_type, config_name, filament_id, config_from);
+                if (ret) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":%1%, can not resolve system machine preset %2% for vendor %3%")
+                        %__LINE__ %current_printer_system_name %current_printer_vendor;
                     //use original one
                 }
                 else {
-                    DynamicPrintConfig  config;
-                    std::string config_type, config_name, filament_id, config_from;
-                    int ret = load_config_file(system_printer_path, config, config_type, config_name, filament_id, config_from);
-                    if (ret) {
-                        record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
-                        flush_and_exit(ret);
-                    }
-
                     upward_compatible_printers = config.option<ConfigOptionStrings>("upward_compatible_machine", true)->values;
                     config.set("printer_settings_id", config_name, true);
 
                     //get printer_model_id
                     printer_model = config.option<ConfigOptionString>("printer_model", true)->value;
-                    if (!printer_model.empty()) {
-                        std::string printer_model_path = resources_dir() + "/profiles/BBL/machine_full/"+printer_model+".json";
-                        if (boost::filesystem::exists(printer_model_path))
-                        {
-                            std::map<std::string, std::string> key_values;
-
-                            load_key_values_from_json(printer_model_path, key_values);
-                            if (key_values.find("model_id") != key_values.end()) {
-                                printer_model_id = key_values["model_id"];
-                                BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< boost::format(":%1%, load printer_model_id %2% from current printer model %3%")%__LINE__ %printer_model_id %printer_model;
-                            }
-                        }
-                    }
+                    update_printer_model_id(printer_model, current_printer_vendor);
 
                     load_machine_config = std::move(config);
                 }
@@ -2092,19 +2100,16 @@ int CLI::run(int argc, char **argv)
 
             if (new_process_name.empty() && !current_process_system_name.empty()) {
                 //use the original printer name in 3mf
-                std::string system_process_path = resources_dir() + "/profiles/BBL/process_full/"+current_process_system_name+".json";
-                if (! boost::filesystem::exists(system_process_path)) {
-                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__<< boost::format(":%1%, can not find system preset file: %2% ")%__LINE__ %system_process_path;
+                DynamicPrintConfig  config;
+                std::string config_type, config_name, filament_id, config_from;
+                int ret = load_system_preset(Preset::TYPE_PRINT, current_process_system_name, current_printer_vendor,
+                                             config, config_type, config_name, filament_id, config_from);
+                if (ret) {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":%1%, can not resolve system process preset %2% for vendor %3%")
+                        %__LINE__ %current_process_system_name %current_printer_vendor;
                     //use original one
                 }
                 else {
-                    DynamicPrintConfig  config;
-                    std::string config_type, config_name, filament_id, config_from;
-                    int ret = load_config_file(system_process_path, config, config_type, config_name, filament_id, config_from);
-                    if (ret) {
-                        record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
-                        flush_and_exit(ret);
-                    }
                     current_print_compatible_printers  = config.option<ConfigOptionStrings>("compatible_printers", true)->values;
                     config.set("print_settings_id", config_name, true);
                     load_process_config = std::move(config);
@@ -2162,22 +2167,19 @@ int CLI::run(int argc, char **argv)
                 current_index = 0;
                 for (int index = 0; index < current_filaments_system_name.size(); index++)
                 {
-                    std::string system_filament_path = resources_dir() + "/profiles/BBL/filament_full/"+current_filaments_system_name[index]+".json";
                     current_index++;
-                    if (! boost::filesystem::exists(system_filament_path)) {
-                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__<< boost::format(":%1%, can not find system preset file: %2% ")%__LINE__ %system_filament_path;
-                        continue;
-                    }
                     DynamicPrintConfig  config;
                     std::string config_type, config_name, filament_id, config_from;
-                    int ret = load_config_file(system_filament_path, config, config_type, config_name, filament_id, config_from);
+                    int ret = load_system_preset(Preset::TYPE_FILAMENT, current_filaments_system_name[index], current_printer_vendor,
+                                                 config, config_type, config_name, filament_id, config_from);
                     if (ret) {
-                        record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
-                        flush_and_exit(ret);
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":%1%, can not resolve system filament preset %2% for vendor %3%")
+                            %__LINE__ %current_filaments_system_name[index] %current_printer_vendor;
+                        continue;
                     }
 
                     if (config_type != "filament") {
-                        BOOST_LOG_TRIVIAL(error) <<__FUNCTION__ << boost::format(": unknown config type %1% of file %2% in load-filaments") % config_type % system_filament_path;
+                        BOOST_LOG_TRIVIAL(error) <<__FUNCTION__ << boost::format(": unknown config type %1% of system preset %2% in load-filaments") % config_type % current_filaments_system_name[index];
                         record_exit_reson(outfile_dir, CLI_CONFIG_FILE_ERROR, 0, cli_errors[CLI_CONFIG_FILE_ERROR], sliced_info);
                         flush_and_exit(CLI_CONFIG_FILE_ERROR);
                     }
@@ -2187,7 +2189,7 @@ int CLI::run(int argc, char **argv)
                     load_filaments_config.push_back(std::move(config));
                     load_filaments_index.push_back(current_index);
                     load_filaments_inherit.push_back(config_name);
-                    BOOST_LOG_TRIVIAL(info) << boost::format("LINE %4%: load a filament config %1% from file %2%, index %3%")%config_name %system_filament_path %index %__LINE__;
+                    BOOST_LOG_TRIVIAL(info) << boost::format("LINE %4%: load a filament config %1% from vendor %2%, index %3%")%config_name %current_printer_vendor %index %__LINE__;
                 }
             }
         }
@@ -2201,19 +2203,16 @@ int CLI::run(int argc, char **argv)
     if (fetch_upward_values) {
         if (!current_printer_system_name.empty()) {
             //use the original printer name in 3mf
-            std::string system_printer_path = resources_dir() + "/profiles/BBL/machine_full/"+current_printer_system_name+".json";
-            if (! boost::filesystem::exists(system_printer_path)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__<< boost::format(":%1%, can not find system preset file: %2% ")%__LINE__ %system_printer_path;
+            DynamicPrintConfig  config;
+            std::string config_type, config_name, filament_id, config_from;
+            int ret = load_system_preset(Preset::TYPE_PRINTER, current_printer_system_name, current_printer_vendor,
+                                         config, config_type, config_name, filament_id, config_from);
+            if (ret) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":%1%, can not resolve system machine preset %2% for vendor %3%")
+                    %__LINE__ %current_printer_system_name %current_printer_vendor;
                 //skip
             }
             else {
-                DynamicPrintConfig  config;
-                std::string config_type, config_name, filament_id, config_from;
-                int ret = load_config_file(system_printer_path, config, config_type, config_name, filament_id, config_from);
-                if (ret) {
-                    record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
-                    flush_and_exit(ret);
-                }
                 upward_compatible_printers = config.option<ConfigOptionStrings>("upward_compatible_machine", true)->values;
             }
         }
@@ -2223,19 +2222,16 @@ int CLI::run(int argc, char **argv)
     if (fetch_compatible_values) {
         if (!current_process_system_name.empty()) {
             //use the original printer name in 3mf
-            std::string system_process_path = resources_dir() + "/profiles/BBL/process_full/"+current_process_system_name+".json";
-            if (! boost::filesystem::exists(system_process_path)) {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__<< boost::format(":%1%, can not find system preset file: %2% ")%__LINE__ %system_process_path;
+            DynamicPrintConfig  config;
+            std::string config_type, config_name, filament_id, config_from;
+            int ret = load_system_preset(Preset::TYPE_PRINT, current_process_system_name, current_printer_vendor,
+                                         config, config_type, config_name, filament_id, config_from);
+            if (ret) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(":%1%, can not resolve system process preset %2% for vendor %3%")
+                    %__LINE__ %current_process_system_name %current_printer_vendor;
                 //use original one
             }
             else {
-                DynamicPrintConfig  config;
-                std::string config_type, config_name, filament_id, config_from;
-                int ret = load_config_file(system_process_path, config, config_type, config_name, filament_id, config_from);
-                if (ret) {
-                    record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
-                    flush_and_exit(ret);
-                }
                 current_print_compatible_printers  = config.option<ConfigOptionStrings>("compatible_printers", true)->values;
             }
         }
@@ -2482,7 +2478,8 @@ int CLI::run(int argc, char **argv)
                 //printer safe check
                 BOOST_LOG_TRIVIAL(info) << boost::format("check printer cli safe params, current_printer_name %1%, new_printer_name %2%, printer_model %3%")%current_printer_name %new_printer_name %printer_model;
                 std::map<std::string, std::string> printer_params;
-                std::string cli_config_file = resources_dir() + "/profiles/BBL/cli_config.json";
+                const std::string &printer_vendor = !new_printer_vendor.empty() ? new_printer_vendor : current_printer_vendor;
+                std::string cli_config_file = resource_profiles.vendor_resource(printer_vendor, "cli_config.json").string();
                 boost::filesystem::path directory_path(cli_config_file);
 
                 BOOST_LOG_TRIVIAL(info) << boost::format("line %1% , will parse file %2%")%__LINE__ % cli_config_file;
@@ -3369,30 +3366,30 @@ int CLI::run(int argc, char **argv)
     std::vector<bool> downward_check_status;
     if (downward_check) {
         bool use_default = false;
-        std::string default_path;
         if (downward_settings.size() == 0) {
             //parse from internal
-            std::string cli_config_file = resources_dir() + "/profiles/BBL/cli_config.json";
-            load_downward_settings_list_from_config(cli_config_file, current_printer_name, current_printer_model, downward_settings);
+            std::string cli_config_file = resource_profiles.vendor_resource(current_printer_vendor, "cli_config.json").string();
+            if (!cli_config_file.empty())
+                load_downward_settings_list_from_config(cli_config_file, current_printer_name, current_printer_model, downward_settings);
             use_default = true;
-            default_path = resources_dir() + "/profiles/BBL/machine_full/";
         }
         for (auto const &file : downward_settings) {
             DynamicPrintConfig  config;
             std::string config_type, config_name, filament_id, config_from, downward_printer;
-            std::string file_path = use_default?(default_path+file+".json"):file;
-            int ret = load_config_file(file_path, config, config_type, config_name, filament_id, config_from);
+            int ret = use_default
+                ? load_system_preset(Preset::TYPE_PRINTER, file, current_printer_vendor, config, config_type, config_name, filament_id, config_from)
+                : load_config_file(file, config, config_type, config_name, filament_id, config_from);
             if (ret) {
                 record_exit_reson(outfile_dir, ret, 0, cli_errors[ret], sliced_info);
                 flush_and_exit(ret);
             }
             if ((config_type != "machine") || (config_from != "system")) {
-                BOOST_LOG_TRIVIAL(info) << boost::format("found invalid config type %1% or from %2% in file %3% when downward_check")%config_type %config_from %file_path;
+                BOOST_LOG_TRIVIAL(info) << boost::format("found invalid config type %1% or from %2% in preset %3% when downward_check")%config_type %config_from %file;
                 record_exit_reson(outfile_dir, ret, 0, cli_errors[CLI_CONFIG_FILE_ERROR], sliced_info);
                 flush_and_exit(ret);
 
             }
-            BOOST_LOG_TRIVIAL(info) << boost::format("downward_check: loaded machine config %1%, from %2%")%config_name %file_path ;
+            BOOST_LOG_TRIVIAL(info) << boost::format("downward_check: loaded machine config %1%, from %2%")%config_name %(use_default ? current_printer_vendor : file);
 
             printer_plate_info_t printer_plate;
             Pointfs temp_printable_area, temp_exclude_area;

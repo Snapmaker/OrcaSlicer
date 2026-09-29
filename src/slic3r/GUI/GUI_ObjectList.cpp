@@ -239,16 +239,22 @@ ObjectList::ObjectList(wxWindow* parent) :
         m_last_selected_column = new_selected_column;
 #endif //__WXMSW__
 
-        ObjectDataViewModelNode* sel_node = (ObjectDataViewModelNode*)event.GetItem().GetID();
+        ObjectDataViewModelNode* sel_node = (ObjectDataViewModelNode*) event.GetItem().GetID();
         if (sel_node && (sel_node->GetType() & ItemType::itPlate)) {
-            if (wxGetApp().plater()->is_preview_shown()) {
-                wxGetApp().plater()->select_sliced_plate(sel_node->GetPlateIdx());
+            const int plate_idx = sel_node->GetPlateIdx();
+            Plater*   plater    = wxGetApp().plater();
+            if (plater->is_preview_shown()) {
+                // Defer: FilamentGroupDialog is modal. Opening it inside this
+                // DataView selection handler re-enters wx.
+                this->CallAfter([plate_idx]() {
+                    if (Plater* p = wxGetApp().plater())
+                        p->select_sliced_plate(plate_idx);
+                });
             } else {
-                wxGetApp().plater()->select_plate(sel_node->GetPlateIdx());
+                plater->select_plate(plate_idx);
             }
-            wxGetApp().plater()->deselect_all();
-        }
-        else {
+            plater->deselect_all();
+        } else {
             selection_changed();
         }
 #ifndef __WXMSW__

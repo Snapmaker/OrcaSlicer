@@ -660,6 +660,7 @@ wxMenu* MenuFactory::append_submenu_add_generic(wxMenu* menu, ModelVolumeType ty
 
     append_menu_item_add_text(sub_menu, type);
     append_menu_item_add_svg(sub_menu, type);
+    append_menu_item_add_code(sub_menu, type);
 
     return sub_menu;
 }
@@ -795,6 +796,24 @@ void MenuFactory::append_menu_item_add_text(wxMenu* menu, ModelVolumeType type, 
 
 void MenuFactory::append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item /* = true*/){
     append_menu_itemm_add_(_L("SVG"), GLGizmosManager::Svg, menu, type, is_submenu_item);
+}
+
+void MenuFactory::append_menu_item_add_code(wxMenu *menu, ModelVolumeType type)
+{
+    if (type != ModelVolumeType::MODEL_PART && type != ModelVolumeType::NEGATIVE_VOLUME &&
+        type != ModelVolumeType::PARAMETER_MODIFIER && type != ModelVolumeType::INVALID)
+        return;
+    auto add_code = [type](const wxCommandEvent & /*unnamed*/) {
+        const GLCanvas3D *canvas = plater()->canvas3D();
+        auto *svg = dynamic_cast<GLGizmoSVG *>(canvas->get_gizmos_manager().get_gizmo(GLGizmosManager::Svg));
+        assert(svg != nullptr);
+        if (svg == nullptr)
+            return;
+        // INVALID .. no selected object, code is created as new object
+        svg->create_code(type, canvas->get_popup_menu_position());
+    };
+    append_menu_item(menu, wxID_ANY, _L("QR code / Barcode") + dots, _L("Emboss QR code or barcode, parts can use different filaments or depths"),
+                     add_code, "menu_obj_svg", menu);
 }
 
 void MenuFactory::append_menu_items_add_volume(wxMenu* menu)

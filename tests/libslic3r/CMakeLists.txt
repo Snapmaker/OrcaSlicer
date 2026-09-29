@@ -19,6 +19,7 @@ add_executable(${_TEST_NAME}_tests
 	test_paint_penetration.cpp
 	test_color_mix_solver.cpp
 	test_color_split.cpp
+	test_code_emboss.cpp
 	test_image_fill.cpp
 	test_image_row_transform.cpp
 	test_image_row_dialog.cpp

@@ -265,7 +265,7 @@ bool bbox_overlaps_z_range(const BoundingBoxf3 &bb, const t_layer_height_range &
 
 } // namespace
 
-PrintRegionConfig default_region_config(const DynamicPrintConfig &global)
+PrintRegionConfig plate_default_region_config(const DynamicPrintConfig &global)
 {
     PrintRegionConfig region;
     region.apply(global, true);
@@ -399,7 +399,7 @@ void append_object_plate_filament_ids(const ModelObject        &object,
 
 void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids)
 {
-    append_object_plate_filament_ids(object, global_config, ids, default_region_config(global_config),
+    append_object_plate_filament_ids(object, global_config, ids, plate_default_region_config(global_config),
                                      plate_filament_bound(global_config));
 }
 
@@ -419,7 +419,7 @@ int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBas
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids)
 {
     append_config_filament_ids(print_config, ids);
-    const PrintRegionConfig default_region = default_region_config(print_config);
+    const PrintRegionConfig default_region = plate_default_region_config(print_config);
     const size_t            num_total      = plate_filament_bound(print_config);
     for (const Model &model : models) {
         for (const ModelObject *obj : model.objects) {

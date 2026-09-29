@@ -83,7 +83,7 @@ bool volume_contributes_feature_filaments(const ModelVolume &volume);
 // extruder ids and outer_wall_filament survive on the GUI path.
 size_t plate_filament_bound(const DynamicPrintConfig &cfg_with_filaments, const MixedFilamentManager *mixed = nullptr);
 
-PrintRegionConfig default_region_config(const DynamicPrintConfig &global);
+PrintRegionConfig plate_default_region_config(const DynamicPrintConfig &global);
 
 // Shared by PartPlate::get_extruders, get_extruders_under_cli, and collect_cli_filament_ids.
 // Builds each MODEL_PART region the way slicing does (region_config_from_model_volume per

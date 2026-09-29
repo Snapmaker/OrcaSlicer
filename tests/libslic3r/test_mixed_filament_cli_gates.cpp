@@ -816,6 +816,7 @@ TEST_CASE("height range leaves the rest of the object on the default filament", 
     object->add_instance();
     object->ensure_on_bed();
     object->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("extruder", 2);
+    object->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("layer_height", 0.2, true);
 
     std::vector<int> ids;
     append_object_plate_filament_ids(*object, cfg, ids);
@@ -856,6 +857,7 @@ TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[
     Model              model;
     Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, model, cfg);
     model.objects.front()->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("extruder", 2);
+    model.objects.front()->layer_config_ranges[t_layer_height_range{10.0, 20.0}].set("layer_height", 0.2, true);
     print.apply(model, cfg);
 
     std::vector<int> plate_ids;
@@ -870,6 +872,8 @@ TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[
     const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(two.depth > 0.);
     REQUIRE(print.has_wipe_tower());
+    const std::string gcode = Slic3r::Test::gcode(print);
+    REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
 }
 
 TEST_CASE("U1 CLI smoke: non-intersecting modifier with wall_filament=3 does not produce a tower", "[MixedFilamentCli]")

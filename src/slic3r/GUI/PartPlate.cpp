@@ -1413,7 +1413,7 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 		return plate_extruders;
 	}
 
-	const PrintRegionConfig default_region = default_region_config(glb_config);
+	const PrintRegionConfig default_region = plate_default_region_config(glb_config);
 	const MixedFilamentManager *mixed = (wxApp::GetInstance() != nullptr) ? &wxGetApp().preset_bundle->mixed_filaments : nullptr;
 	const size_t num_total = plate_filament_bound(project_config, mixed);
 
@@ -1461,7 +1461,7 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
                              << " obj_to_instance_count=" << obj_to_instance_set.size()
                              << " consider_custom_gcode=" << conside_custom_gcode;
 
-    const PrintRegionConfig default_region = default_region_config(full_config);
+    const PrintRegionConfig default_region = plate_default_region_config(full_config);
     const size_t            num_total      = plate_filament_bound(full_config);
 
     // if 3mf file

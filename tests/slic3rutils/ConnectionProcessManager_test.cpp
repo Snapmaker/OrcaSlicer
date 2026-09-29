@@ -19,30 +19,30 @@ TEST_CASE("ConnectionProcessManager selects the platform-specific CLI executable
 {
 #if defined(_WIN32)
 #if defined(_M_X64) || defined(__x86_64__)
-    constexpr std::string_view expected = "snapmaker_connection_windows_x64.exe";
+    constexpr std::string_view expected = "snapmaker_control_windows_x64.exe";
 #elif defined(_M_ARM64) || defined(__aarch64__)
-    constexpr std::string_view expected = "snapmaker_connection_windows_arm64.exe";
+    constexpr std::string_view expected = "snapmaker_control_windows_arm64.exe";
 #else
-#error "unsupported Windows architecture for the snapmaker_connection CLI"
+#error "unsupported Windows architecture for the snapmaker_control CLI"
 #endif
 #elif defined(__APPLE__)
 #if defined(__x86_64__)
-    constexpr std::string_view expected = "snapmaker_connection_macos_x64";
+    constexpr std::string_view expected = "snapmaker_control_macos_x64";
 #elif defined(__arm64__) || defined(__aarch64__)
-    constexpr std::string_view expected = "snapmaker_connection_macos_arm64";
+    constexpr std::string_view expected = "snapmaker_control_macos_arm64";
 #else
-#error "unsupported macOS architecture for the snapmaker_connection CLI"
+#error "unsupported macOS architecture for the snapmaker_control CLI"
 #endif
 #elif defined(__linux__)
 #if defined(__x86_64__)
-    constexpr std::string_view expected = "snapmaker_connection_linux_x64";
+    constexpr std::string_view expected = "snapmaker_control_linux_x64";
 #elif defined(__aarch64__) || defined(__arm64__)
-    constexpr std::string_view expected = "snapmaker_connection_linux_arm64";
+    constexpr std::string_view expected = "snapmaker_control_linux_arm64";
 #else
-#error "unsupported Linux architecture for the snapmaker_connection CLI"
+#error "unsupported Linux architecture for the snapmaker_control CLI"
 #endif
 #else
-#error "unsupported platform for the snapmaker_connection CLI"
+#error "unsupported platform for the snapmaker_control CLI"
 #endif
 
     REQUIRE(ConnectionProcessManager::cli_executable_name() == expected);

@@ -15,7 +15,7 @@
 #include <boost/date_time.hpp>
 #include "boost/date_time/posix_time/ptime.hpp"
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 #include "libslic3r.h"
 
@@ -88,6 +88,13 @@ extern std::string log_memory_info(bool ignore_loglevel = false);
 extern void disable_multi_threading();
 // Returns the size of physical memory (RAM) in bytes.
 extern size_t total_physical_memory();
+
+// Returns the minimum of (a) available physical RAM and (b) available system
+// commit, whichever is more constraining.  Physical RAM exhaustion triggers
+// page-fault thrashing (unresponsive hang); commit exhaustion triggers OOM
+// crash (malloc returns null).  Taking the min catches both failure modes.
+// Used by the runtime memory guard in PrintBase.hpp.
+extern size_t get_available_physical_memory();
 
 // Set a path with GUI resource files.
 void set_var_dir(const std::string &path);
@@ -667,7 +674,7 @@ inline std::string get_bbl_remain_time_dhms(float time_in_secs)
     return buffer;
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out);
+bool bbl_calc_md5(const std::string &filename, std::string &md5_out);
 
 inline std::string filter_characters(const std::string& str, const std::string& filterChars)
 {
@@ -682,7 +689,14 @@ inline std::string filter_characters(const std::string& str, const std::string& 
     return filteredStr;
 }
 
-void copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter = nullptr);
+bool copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter = nullptr);
+
+// Copy source tree to target + ".new", run validate_staging, then rename into place (target + ".old" rollback on failure).
+bool atomic_replace_directory(
+    const boost::filesystem::path &source,
+    const boost::filesystem::path &target,
+    std::function<bool(const std::string)> filter,
+    std::function<bool(const boost::filesystem::path &staging)> validate_staging);
 
 // Orca: Since 1.7.9 Boost deprecated save_string_file and load_string_file, copy and modified from boost 1.7.8
 void save_string_file(const boost::filesystem::path& p, const std::string& str);

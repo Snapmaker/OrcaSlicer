@@ -6,7 +6,6 @@
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
-#include "libslic3r/MixedFilament.hpp"
 #include <wx/language.h>
 #include <wx/notebook.h>
 #include "Notebook.hpp"
@@ -19,8 +18,10 @@
 #include <wx/listimpl.cpp>
 #include <wx/display.h>
 #include <map>
+#include <memory>
 
 #include "sentry_wrapper/SentryWrapper.hpp"
+#include "SSWCP.hpp"
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -337,7 +338,7 @@ wxBoxSizer *PreferencesDialog::create_item_region_combobox(wxString title, wxWin
     combobox->GetDropDown().Bind(wxEVT_COMBOBOX, [this, combobox, current_region, local_regions](wxCommandEvent &e) {
         auto region_index = e.GetSelection();
         auto region       = local_regions[region_index];
-        
+
         // snapmaker
         AppConfig* config = GUI::wxGetApp().app_config;
         combobox->SetSelection(region_index);
@@ -722,7 +723,8 @@ void PreferencesDialog::set_dark_mode()
 #endif
 }
 
-wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param)
+wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *parent, wxString tooltip, int padding_left, std::string param,
+                                                  std::function<bool(bool new_val, bool old_val)> confirm_cb)
 {
     wxBoxSizer *m_sizer_checkbox  = new wxBoxSizer(wxHORIZONTAL);
 
@@ -744,16 +746,35 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
     m_sizer_checkbox->Add(checkbox_title, 0, wxALIGN_CENTER | wxALL, 3);
 
 
-     //// save config
-    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param](wxCommandEvent &e) {
+     //// save config 
+    auto reentry_guard = std::make_shared<bool>(false);
+    checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, checkbox, param, confirm_cb, reentry_guard](wxCommandEvent &e) {
+        if (*reentry_guard)
+        {
+            e.Skip();
+            return;
+        }
+        if (confirm_cb) {
+            bool old_val = !checkbox->GetValue();
+            bool new_val = checkbox->GetValue();
+            bool final_val = confirm_cb(new_val, old_val);
+            if (final_val != new_val) {
+                *reentry_guard = true;
+                checkbox->SetValue(final_val);
+                *reentry_guard = false;
+            }
+        }
         app_config->set_bool(param, checkbox->GetValue());
         app_config->save();
 
+        if (param == "allow_filament_temp_mixing" && wxGetApp().plater())
+            wxGetApp().plater()->notify_filament_usage_changed();
+
         if (param == PRIVACY_POLICY_FLAGS)
             {
-            app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());            
+            app_config->set("app", PRIVACY_POLICY_FLAGS, checkbox->GetValue());
                 BOOST_LOG_TRIVIAL(warning) <<"create_item_checkbox changed the privacy policy with: "<<(checkbox->GetValue()?"true" : "false");
-                wxGetApp().user_update_privacy_notify(checkbox->GetValue());    
+                wxGetApp().user_update_privacy_notify(checkbox->GetValue());
             }
         // if (param == "staff_pick_switch") {
         //     bool pbool = app_config->get("staff_pick_switch") == "true";
@@ -777,16 +798,6 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
                 wxGetApp().stop_sync_user_preset();
             }
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " sync_user_preset: " << (sync ? "true" : "false");
-        }
-
-        if (param == "auto_generate_gradients") {
-            MixedFilamentManager::set_auto_generate_enabled(checkbox->GetValue());
-            if (wxGetApp().preset_bundle != nullptr && wxGetApp().plater() != nullptr) {
-                const size_t num_physical = wxGetApp().preset_bundle->filament_presets.size();
-                wxGetApp().plater()->set_auto_generated_gradient_decision(num_physical, checkbox->GetValue());
-                wxGetApp().preset_bundle->update_multi_material_filament_presets();
-                wxGetApp().plater()->on_filaments_change(num_physical);
-            }
         }
 
         #ifdef __WXMSW__
@@ -853,7 +864,8 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
     //// for debug mode
     if (param == "developer_mode") { m_developer_mode_ckeckbox = checkbox; }
     if (param == "internal_developer_mode") { m_internal_developer_mode_ckeckbox = checkbox; }
-    if (param == "legacy_networking") { 
+
+    if (param == "legacy_networking") {
         m_legacy_networking_ckeckbox = checkbox;
         bool pbool = app_config->get_bool("installed_networking");
         checkbox->Enable(pbool);
@@ -1052,8 +1064,6 @@ PreferencesDialog::PreferencesDialog(wxWindow *parent, wxWindowID id, const wxSt
                 j["auto_flushing"] = value;
                 value = wxGetApp().app_config->get("auto_calculate_when_filament_change");
                 j["auto_calculate_when_filament_change"] = value;
-                value = wxGetApp().app_config->get("auto_generate_gradients");
-                j["auto_generate_gradients"] = value;
                 agent->track_event("preferences_changed", j.dump());
             }
         } catch(...) {}
@@ -1200,7 +1210,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto                  item_region= create_item_region_combobox(_L("Login Region"), page, _L("Login Region"), Regions);
 
     // SM Beta: temporarily open the item_stealth_mode and close the network plugin
-    
+
     /*auto item_stealth_mode = create_item_checkbox(_L("Stealth mode"), page, _L("This stops the transmission of data to Bambu's cloud services. Users who don't use BBL machines or use LAN mode only can safely turn on this function."), 50, "stealth_mode");
     /*auto item_stealth_mode = create_item_checkbox(_L("Stealth mode"), page, _L("This stops the transmission of data to Bambu's cloud services. Users who don't use BBL machines or use LAN mode only can safely turn on this function."), 50, "stealth_mode");
     auto item_enable_plugin = create_item_checkbox(_L("Enable network plugin"), page, _L("Enable network plugin"), 50, "installed_networking");
@@ -1210,17 +1220,17 @@ wxWindow* PreferencesDialog::create_general_page()
     app_config->set_bool("installed_networking", false);
     app_config->save();
 
-    
+
     //auto item_check_stable_version_only = create_item_checkbox(_L("Check for stable updates only"), page, _L("Check for stable updates only"), 50, "check_stable_update_only");
 
     std::vector<wxString> Units         = {_L("Metric") + " (mm, g)", _L("Imperial") + " (in, oz)"};
     auto item_currency = create_item_combobox(_L("Units"), page, _L("Units"), "use_inches", Units);
-    auto item_single_instance = create_item_checkbox(_L("Allow only one Snapmaker Orca instance"), page, 
+    auto item_single_instance = create_item_checkbox(_L("Allow only one Snapmaker Orca instance"), page,
     #if __APPLE__
             _L("On OSX there is always only one instance of app running by default. However it is allowed to run multiple instances "
                 "of same app from the command line. In such case this settings will allow only one instance."),
     #else
-            _L("If this is enabled, when starting Snapmaker Orca and another instance of the same Snapmaker Orca is already running, that instance will be reactivated instead."), 
+            _L("If this is enabled, when starting Snapmaker Orca and another instance of the same Snapmaker Orca is already running, that instance will be reactivated instead."),
     #endif
             50, "single_instance");
 
@@ -1234,6 +1244,22 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_use_free_camera_settings = create_item_checkbox(_L("Use free camera"), page, _L("If enabled, use free camera. If not enabled, use constrained camera."), 50, "use_free_camera");
     auto swap_pan_rotate = create_item_checkbox(_L("Swap pan and rotate mouse buttons"), page, _L("If enabled, swaps the left and right mouse buttons pan and rotate functions."), 50, "swap_mouse_buttons");
     auto reverse_mouse_zoom = create_item_checkbox(_L("Reverse mouse zoom"), page, _L("If enabled, reverses the direction of zoom with mouse wheel."), 50, "reverse_mouse_wheel_zoom");
+    auto allow_filament_temp_mixing = create_item_checkbox(_L("Allow high/low temperature filament mixing"), page, _L("If enabled, allows printing with both high-temperature and low-temperature filaments simultaneously."), 50, "allow_filament_temp_mixing",
+        [this](bool new_val, bool old_val) -> bool {
+            // Only confirm when turning ON; allow turning OFF without dialog.
+            if (!new_val)
+                return false;
+
+            wxString msg = _L("Mixing materials with significantly different printing temperatures may result in:\n"
+                              "· Extruder clogging\n"
+                              "· Nozzle damage\n"
+                              "· Layer adhesion issues\n\n"
+                              "Do you want to enable this feature?");
+            MessageDialog dlg(this, msg, _L("High and Low Temperature Material Mixing Risk"), wxICON_WARNING | wxOK | wxCANCEL);
+            dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
+            dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
+            return dlg.ShowModal() == wxID_OK;
+        });
     auto camera_orbit_mult = create_camera_orbit_mult_input(_L("Orbit speed multiplier"), page, _L("Multiplies the orbit speed for finer or coarser camera movement."));
 
     auto item_show_splash_screen = create_item_checkbox(_L("Show splash screen"), page, _L("Show the splash screen during startup."), 50, "show_splash_screen");
@@ -1241,10 +1267,6 @@ wxWindow* PreferencesDialog::create_general_page()
 
     auto item_calc_mode = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time the color changed."), page, _L("If enabled, auto-calculate every time the color changed."), 50, "auto_calculate");
     auto item_calc_in_long_retract = create_item_checkbox(_L("Flushing volumes: Auto-calculate every time when the filament is changed."), page, _L("If enabled, auto-calculate every time when filament is changed"), 50, "auto_calculate_when_filament_change");
-#if 0 // Developer section and auto-generate gradients — hidden, preserved for potential future re-enablement
-    auto item_auto_generate_gradients = create_item_checkbox(_L("Mixed filaments: Auto-generate gradients."), page, _L("If enabled, Snapmaker Orca automatically creates gradient mixed filaments from physical filament pairs."), 50, "auto_generate_gradients");
-    auto title_full_spectrum = create_item_title(_devL("Developer"), page, _devL("Developer"));
-#endif // Developer section and auto-generate gradients
     auto item_remember_printer_config = create_item_checkbox(_L("Remember printer configuration"), page, _L("If enabled, Orca will remember and switch filament/process configuration for each printer automatically."), 50, "remember_printer_config");
     auto item_step_mesh_setting = create_item_checkbox(_L("Show the step mesh parameter setting dialog."), page, _L("If enabled,a parameter settings dialog will appear during STEP file import."), 50, "enable_step_mesh_setting");
     auto item_multi_machine = create_item_checkbox(_L("Multi-device Management (Take effect after restarting Snapmaker Orca)."), page, _L("With this option enabled, you can send a task to multiple devices at the same time and manage multiple devices."), 50, "enable_multi_machine");
@@ -1326,7 +1348,7 @@ wxWindow* PreferencesDialog::create_general_page()
 
     hyperlink->SetFont(Label::Head_13);
     item_priv_policy->Add(hyperlink, 0, wxALIGN_CENTER, 0);
-    
+
     auto title_develop_mode = create_item_title(_L("Develop mode"), page, _L("Develop mode"));
     auto item_develop_mode  = create_item_checkbox(_L("Develop mode"), page, _L("Develop mode"), 50, "developer_mode");
     auto item_skip_ams_blacklist_check  = create_item_checkbox(_L("Skip AMS blacklist check"), page, _L("Skip AMS blacklist check"), 50, "skip_ams_blacklist_check");
@@ -1342,28 +1364,25 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_use_free_camera_settings, 0, wxTOP, FromDIP(3));
     sizer_page->Add(swap_pan_rotate, 0, wxTOP, FromDIP(3));
     sizer_page->Add(reverse_mouse_zoom, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(allow_filament_temp_mixing, 0, wxTOP, FromDIP(3));
     sizer_page->Add(camera_orbit_mult, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_show_splash_screen, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_hints, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_multi_machine, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_step_mesh_setting, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_auto_arrange, 0, wxTOP, FromDIP(3));
     sizer_page->Add(title_presets, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_calc_mode, 0, wxTOP, FromDIP(3));
-    sizer_page->Add(item_calc_in_long_retract, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_user_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_system_sync, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_remember_printer_config, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_save_presets, 0, wxTOP, FromDIP(3));
-#if 0 // Developer section and auto-generate gradients — hidden, preserved for potential future re-enablement
-    sizer_page->Add(title_full_spectrum, 0, wxTOP | wxEXPAND, FromDIP(20));
-    sizer_page->Add(item_auto_generate_gradients, 0, wxTOP, FromDIP(3));
-#endif // Developer section and auto-generate gradients
     //sizer_page->Add(title_network, 0, wxTOP | wxEXPAND, FromDIP(20));
     //sizer_page->Add(item_check_stable_version_only, 0, wxTOP, FromDIP(3));
 
     // SM Beta: temporarily open the item_stealth_mode and close the network plugin
-    
+
     /*sizer_page->Add(item_stealth_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_enable_plugin, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_legacy_network_plugin, 0, wxTOP, FromDIP(3));
@@ -1410,9 +1429,10 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(title_develop_mode, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_develop_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_skip_ams_blacklist_check, 0, wxTOP, FromDIP(3));
-    
+
+
     sizer_page->Add(title_user_experience, 0, wxTOP, FromDIP(20));
-    sizer_page->Add(item_priv_policy, 0, wxTOP, FromDIP(3));    
+    sizer_page->Add(item_priv_policy, 0, wxTOP, FromDIP(3));
 
     page->SetSizer(sizer_page);
     page->Layout();
@@ -1497,6 +1517,7 @@ wxWindow* PreferencesDialog::create_debug_page()
     page->SetBackgroundColour(*wxWHITE);
 
     m_internal_developer_mode_def = app_config->get("internal_developer_mode");
+    m_websocket_debug_def = app_config->get("websocket_debug");
     m_backup_interval_def = app_config->get("backup_interval");
     m_iot_environment_def = app_config->get("iot_environment");
 

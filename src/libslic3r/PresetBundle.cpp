@@ -1,6 +1,7 @@
 #include <cassert>
 
 #include "PresetBundle.hpp"
+#include "FilamentColorLibrary.hpp"
 #include "PrintConfig.hpp"
 #include "libslic3r.h"
 #include "Utils.hpp"
@@ -57,6 +58,144 @@ void startup_profile_log(const std::string& message)
         BOOST_LOG_TRIVIAL(warning) << "[StartupProfile] " << message;
 }
 
+std::vector<std::string> SplitPrinterSetting(const AppConfig &config, const std::string &printerName, const std::string &key)
+{
+    std::vector<std::string> values;
+    const std::string setting = config.get_printer_setting(printerName, key);
+    if (!setting.empty())
+        boost::algorithm::split(values, setting, boost::algorithm::is_any_of(","));
+    return values;
+}
+
+std::vector<FilamentColorMode> LoadFilamentColourModes(const AppConfig &config, const std::string &printerName)
+{
+    std::vector<FilamentColorMode> modes;
+    const std::vector<std::string> modeValues = SplitPrinterSetting(config, printerName, "filament_colour_mode");
+    modes.reserve(modeValues.size());
+    for (size_t i = 0; i < modeValues.size(); ++i)
+    {
+        const char* begin = modeValues[i].c_str();
+        char* end = nullptr;
+        const long parsedMode = std::strtol(begin, &end, 10);
+        int modeValue = 0;
+        if (end != begin && *end == '\0')
+            modeValue = parsedMode == 0 ? 0 : 1;
+        modes.emplace_back(FilamentColorModeFromConfig(modeValue));
+    }
+    return modes;
+}
+
+std::vector<FilamentColor> BuildFilamentColors(const std::vector<std::string>& colors,
+                                               const std::vector<std::string>& multiColors,
+                                               const std::vector<FilamentColorMode>& modes, size_t targetCount)
+{
+    std::vector<FilamentColor> filamentColors;
+    filamentColors.reserve(targetCount);
+
+    for (size_t i = 0; i < targetCount; ++i)
+    {
+        const std::string fallbackColor = i < colors.size() && !colors[i].empty() ? colors[i] : "#26A69A";
+        const std::string multiColor = i < multiColors.size() ? multiColors[i] : std::string();
+        FilamentColorMode colorMode = FilamentColorMode::Segment;
+        if (i < modes.size())
+            colorMode = modes[i];
+        filamentColors.emplace_back(FilamentColor::FromMultiColors(multiColor, colorMode, fallbackColor));
+    }
+
+    return filamentColors;
+}
+
+std::vector<FilamentColor> LoadFilamentColors(const AppConfig &config, const std::string &printerName, size_t targetCount)
+{
+    const std::vector<std::string> colors = SplitPrinterSetting(config, printerName, "filament_colors");
+    const std::vector<std::string> multiColors = SplitPrinterSetting(config, printerName, "filament_multi_colors");
+    const std::vector<FilamentColorMode> modes = LoadFilamentColourModes(config, printerName);
+    return BuildFilamentColors(colors, multiColors, modes, targetCount);
+}
+
+void EnsureFilamentColorFieldsAligned(DynamicPrintConfig &config)
+{
+    ConfigOptionStrings *filamentColor = config.option<ConfigOptionStrings>("filament_colour");
+    if (filamentColor == nullptr)
+        return;
+
+    const size_t targetCount = filamentColor->values.size();
+    ConfigOptionStrings *multiColors = config.option<ConfigOptionStrings>("filament_multi_colors", true);
+    ConfigOptionInts *modes = config.option<ConfigOptionInts>("filament_colour_mode", true);
+
+    const size_t oldMultiCount = multiColors->values.size();
+    multiColors->resize(targetCount);
+    modes->resize(targetCount);
+
+    for (size_t i = 0; i < targetCount; ++i)
+    {
+        const FilamentColorMode colorMode = FilamentColorModeFromConfig(modes->values[i]);
+        modes->values[i] = FilamentColorModeToConfig(colorMode);
+        const bool singleOrEmptyMulti = multiColors->values[i].empty() ||
+                                        multiColors->values[i].find('|') == std::string::npos;
+        const bool shouldRefreshMulti = i >= oldMultiCount || multiColors->values[i].empty() ||
+                                        (colorMode == FilamentColorMode::Segment && singleOrEmptyMulti);
+        if (shouldRefreshMulti)
+            multiColors->values[i] = filamentColor->values[i];
+    }
+}
+
+void ApplyFilamentColors(DynamicPrintConfig &config, const std::vector<FilamentColor>& filamentColors)
+{
+    std::vector<std::string> colors;
+    std::vector<std::string> multiColors;
+    std::vector<int> modes;
+    colors.reserve(filamentColors.size());
+    multiColors.reserve(filamentColors.size());
+    modes.reserve(filamentColors.size());
+
+    for (const FilamentColor& color : filamentColors)
+    {
+        colors.emplace_back(color.PrimaryColor("#26A69A"));
+        multiColors.emplace_back(color.ToMultiColorsString());
+        modes.emplace_back(FilamentColorModeToConfig(color.NormalizedMode()));
+    }
+
+    config.option<ConfigOptionStrings>("filament_colour")->values = colors;
+    config.option<ConfigOptionStrings>("filament_multi_colors", true)->values = multiColors;
+    config.option<ConfigOptionInts>("filament_colour_mode", true)->values = modes;
+    EnsureFilamentColorFieldsAligned(config);
+}
+
+void EraseStringOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+{
+    ConfigOptionStrings *option = config.option<ConfigOptionStrings>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
+
+void EraseIntOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+{
+    ConfigOptionInts *option = config.option<ConfigOptionInts>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
+
+void EraseEnumsOptionAt(DynamicPrintConfig &config, const std::string &key, size_t index)
+{
+    ConfigOptionEnumsGeneric *option = config.option<ConfigOptionEnumsGeneric>(key, true);
+    if (option != nullptr && option->values.size() > index)
+        option->values.erase(option->values.begin() + index);
+}
+
+void EraseFilamentColorFields(DynamicPrintConfig &config, size_t index)
+{
+    EraseStringOptionAt(config, "filament_multi_colors", index);
+    EraseIntOptionAt(config, "filament_colour_mode", index);
+    EnsureFilamentColorFieldsAligned(config);
+}
+
+void EnsureFilamentVolumeTypesAligned(DynamicPrintConfig &config, size_t num_filaments)
+{
+    auto *volume_types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+    volume_types->values.resize(std::max<size_t>(num_filaments, 1), fvtStandard);
+}
+
 } // namespace
 
 static std::vector<std::string> s_project_options {
@@ -64,10 +203,16 @@ static std::vector<std::string> s_project_options {
     "flush_volumes_matrix",
     // BBS
     "filament_colour",
+    "filament_multi_colors",
+    "filament_colour_mode",
     "wipe_tower_x",
     "wipe_tower_y",
     "wipe_tower_rotation_angle",
     "curr_bed_type",
+    // Snapmaker: flow variants
+    "filament_volume_type",
+    "nozzle_volume_type",
+    "filament_grouping_mode",
     "flush_multiplier",
     // Mixed filament / local-Z settings
     "mixed_filament_gradient_mode",
@@ -156,6 +301,8 @@ PresetBundle::PresetBundle()
     this->printers.select_preset(0);
 
     this->project_config.apply_only(FullPrintConfig::defaults(), s_project_options);
+    EnsureFilamentColorFieldsAligned(this->project_config);
+    EnsureFilamentVolumeTypesAligned(this->project_config, this->filament_presets.size());
 }
 
 PresetBundle::PresetBundle(const PresetBundle &rhs)
@@ -1727,13 +1874,10 @@ void PresetBundle::update_selections(AppConfig &config)
             break;
         this->filament_presets.emplace_back(remove_ini_suffix(f_name));
     }
-    std::vector<std::string> filament_colors;
-    auto f_colors = config.get_printer_setting(initial_printer_profile_name, "filament_colors");
-    if (!f_colors.empty()) {
-        boost::algorithm::split(filament_colors, f_colors, boost::algorithm::is_any_of(","));
-    }
-    filament_colors.resize(filament_presets.size(), "#26A69A");
-    project_config.option<ConfigOptionStrings>("filament_colour")->values = filament_colors;
+    std::vector<FilamentColor> filamentColors = LoadFilamentColors(config, initial_printer_profile_name,
+                                                                    filament_presets.size());
+    ApplyFilamentColors(project_config, filamentColors);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -1863,13 +2007,10 @@ void PresetBundle::load_selections(AppConfig &config, const PresetPreferences& p
             break;
         this->filament_presets.emplace_back(remove_ini_suffix(f_name));
     }
-    std::vector<std::string> filament_colors;
-    auto f_colors = config.get_printer_setting(initial_printer_profile_name, "filament_colors");
-    if (!f_colors.empty()) {
-        boost::algorithm::split(filament_colors, f_colors, boost::algorithm::is_any_of(","));
-    }
-    filament_colors.resize(filament_presets.size(), "#26A69A");
-    project_config.option<ConfigOptionStrings>("filament_colour")->values = filament_colors;
+    std::vector<FilamentColor> filamentColors = LoadFilamentColors(config, initial_printer_profile_name,
+                                                                    filament_presets.size());
+    ApplyFilamentColors(project_config, filamentColors);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     std::vector<std::string> matrix;
     if (config.has_printer_setting(initial_printer_profile_name, "flush_volumes_matrix")) {
         boost::algorithm::split(matrix, config.get_printer_setting(initial_printer_profile_name, "flush_volumes_matrix"), boost::algorithm::is_any_of("|"));
@@ -1954,10 +2095,39 @@ void PresetBundle::export_selections(AppConfig &config)
         config.set_printer_setting(printer_name, name, filament_presets[i]);
     }
     CNumericLocalesSetter locales_setter;
-    std::vector<std::string> physical_filament_colors = project_config.option<ConfigOptionStrings>("filament_colour")->values;
-    physical_filament_colors.resize(filament_presets.size(), "#26A69A");
-    std::string filament_colors = boost::algorithm::join(physical_filament_colors, ",");
-    config.set_printer_setting(printer_name, "filament_colors", filament_colors);
+    std::vector<std::string> projectColors = project_config.option<ConfigOptionStrings>("filament_colour")->values;
+    std::vector<std::string> projectMultiColors;
+    std::vector<FilamentColorMode> projectModes;
+    if (ConfigOptionStrings *multiColors = project_config.option<ConfigOptionStrings>("filament_multi_colors"))
+        projectMultiColors = multiColors->values;
+    if (ConfigOptionInts *modes = project_config.option<ConfigOptionInts>("filament_colour_mode"))
+    {
+        projectModes.reserve(modes->values.size());
+        for (const int modeValue : modes->values)
+            projectModes.emplace_back(FilamentColorModeFromConfig(modeValue));
+    }
+
+    const std::vector<FilamentColor> projectFilamentColors =
+        BuildFilamentColors(projectColors, projectMultiColors, projectModes, filament_presets.size());
+    std::vector<std::string> filamentColorValues;
+    std::vector<std::string> filamentMultiColorValues;
+    std::vector<std::string> filamentColourModeStrings;
+    filamentColorValues.reserve(projectFilamentColors.size());
+    filamentMultiColorValues.reserve(projectFilamentColors.size());
+    filamentColourModeStrings.reserve(projectFilamentColors.size());
+    for (const FilamentColor& color : projectFilamentColors)
+    {
+        filamentColorValues.emplace_back(color.PrimaryColor("#26A69A"));
+        filamentMultiColorValues.emplace_back(color.ToMultiColorsString());
+        filamentColourModeStrings.emplace_back(std::to_string(FilamentColorModeToConfig(color.NormalizedMode())));
+    }
+
+    const std::string filamentColors = boost::algorithm::join(filamentColorValues, ",");
+    const std::string filamentMultiColors = boost::algorithm::join(filamentMultiColorValues, ",");
+    const std::string filamentColourModes = boost::algorithm::join(filamentColourModeStrings, ",");
+    config.set_printer_setting(printer_name, "filament_colors", filamentColors);
+    config.set_printer_setting(printer_name, "filament_multi_colors", filamentMultiColors);
+    config.set_printer_setting(printer_name, "filament_colour_mode", filamentColourModes);
     std::string flush_volumes_matrix = boost::algorithm::join(project_config.option<ConfigOptionFloats>("flush_volumes_matrix")->values |
                                                              boost::adaptors::transformed(static_cast<std::string (*)(double)>(std::to_string)),
                                                          "|");
@@ -1999,6 +2169,9 @@ void PresetBundle::update_num_filaments(unsigned int to_del_filament_id)
         ams_multi_color_filment.resize(to_del_filament_id);
     }
 
+    EraseFilamentColorFields(project_config, to_del_filament_id);
+    EraseEnumsOptionAt(project_config, "filament_volume_type", to_del_filament_id);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     update_multi_material_filament_presets(to_del_filament_id, old_filament_count);
 }
 
@@ -2012,16 +2185,43 @@ void PresetBundle::set_num_filaments(unsigned int n, std::vector<std::string> ne
     ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
+    EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, n);
     // BBS set new filament color to new_color
     if (old_filament_count < n) {
         if (!new_colors.empty()) {
+            ConfigOptionStrings *multi_colors = project_config.option<ConfigOptionStrings>("filament_multi_colors", true);
             for (int i = old_filament_count; i < n; i++) {
                 filament_color->values[i] = new_colors[i - old_filament_count];
+                multi_colors->values[i] = new_colors[i - old_filament_count];
             }
+            EnsureFilamentColorFieldsAligned(project_config);
         }
     }
     update_multi_material_filament_presets(size_t(-1), size_t(old_filament_count));
 }
+
+std::vector<FilamentVolumeType> PresetBundle::get_filament_volume_types() const
+{
+    const auto *types = this->project_config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
+    if (types == nullptr)
+        return { fvtStandard };
+    std::vector<FilamentVolumeType> result;
+    result.reserve(types->values.size());
+    for (int value : types->values)
+        result.push_back(FilamentVolumeType(value));
+    return result;
+}
+
+void PresetBundle::set_filament_volume_types(const std::vector<FilamentVolumeType> &types)
+{
+    auto *opt = this->project_config.option<ConfigOptionEnumsGeneric>("filament_volume_type", true);
+    if (types.empty())
+        opt->values = { fvtStandard };
+    else
+        opt->values.assign(types.begin(), types.end());
+}
+
 void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
 {
     int old_filament_count = this->filament_presets.size();
@@ -2034,13 +2234,18 @@ void PresetBundle::set_num_filaments(unsigned int n, std::string new_color)
     ConfigOptionStrings* filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(n);
     ams_multi_color_filment.resize(n);
+    EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, n);
 
     //BBS set new filament color to new_color
     if (old_filament_count < n) {
         if (!new_color.empty()) {
+            ConfigOptionStrings *multi_colors = project_config.option<ConfigOptionStrings>("filament_multi_colors", true);
             for (int i = old_filament_count; i < n; i++) {
                 filament_color->values[i] = new_color;
+                multi_colors->values[i] = new_color;
             }
+            EnsureFilamentColorFieldsAligned(project_config);
         }
     }
 
@@ -2057,7 +2262,7 @@ unsigned int PresetBundle::sync_ams_list(unsigned int &unknowns)
         auto filament_id = ams.opt_string("filament_id", 0u);
         auto filament_color = ams.opt_string("filament_colour", 0u);
         auto filament_changed = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
-        auto filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colors")->values;
+        std::vector<std::string> filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colors")->values;
         if (filament_id.empty()) continue;
         if (!filament_changed && this->filament_presets.size() > filament_presets.size()) {
             filament_presets.push_back(this->filament_presets[filament_presets.size()]);
@@ -2104,6 +2309,8 @@ unsigned int PresetBundle::sync_ams_list(unsigned int &unknowns)
     ConfigOptionStrings *filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     filament_color->resize(filament_presets.size());
     filament_color->values = filament_colors;
+    EnsureFilamentColorFieldsAligned(project_config);
+    EnsureFilamentVolumeTypesAligned(project_config, filament_presets.size());
     update_multi_material_filament_presets();
     return filament_presets.size();
 }
@@ -2319,6 +2526,7 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
 
     // BBS
     size_t  num_filaments = this->filament_presets.size();
+
     auto* extruder_diameter = dynamic_cast<const ConfigOptionFloats*>(out.option("nozzle_diameter"));
     // Collect the "compatible_printers_condition" and "inherits" values over all presets (print, filaments, printers) into a single vector.
     std::vector<std::string> compatible_printers_condition;
@@ -2348,6 +2556,37 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
 
     if (num_filaments <= 1) {
         out.apply(this->filaments.get_edited_preset().config);
+
+        // Snapmaker: align the flow-variant segment of every filament vector option. The composed
+        // config keeps ALL declared variants (ordered by the preset's filament_flow_support);
+        // get_config_idx() resolves the actual index at read time. Padding with resize() duplicates
+        // the first (standard) value for variants the preset provides no value for, and truncates
+        // surplus legacy values of presets without a flow_support declaration.
+        {
+            const DynamicPrintConfig &filament_cfg = this->filaments.get_edited_preset().config;
+            const auto *flow_support = filament_cfg.option<ConfigOptionStrings>("filament_flow_support");
+            int flow_step_size = 1;
+            if (flow_support != nullptr && !flow_support->values.empty())
+                flow_step_size = int(flow_support->values.size());
+
+            for (const std::string &key : filament_flow_variant_options()) {
+                ConfigOption *opt_dst = out.option(key, false);
+                if (opt_dst == nullptr || opt_dst->is_scalar())
+                    continue;
+
+                auto *opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
+                if (opt_vec_dst->size() != size_t(flow_step_size))
+                    opt_vec_dst->resize(size_t(flow_step_size));
+            }
+            if (ConfigOption *flow_support_dst = out.option("filament_flow_support", false);
+                flow_support_dst != nullptr && !flow_support_dst->is_scalar()) {
+                auto *flow_support_vec = static_cast<ConfigOptionVectorBase*>(flow_support_dst);
+                if (flow_support_vec->size() != size_t(flow_step_size))
+                    flow_support_vec->resize(size_t(flow_step_size));
+            }
+            out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = { flow_step_size };
+        }
+
         compatible_printers_condition.emplace_back(this->filaments.get_edited_preset().compatible_printers_condition());
         compatible_prints_condition  .emplace_back(this->filaments.get_edited_preset().compatible_prints_condition());
         //BBS: add logic for settings check between different system presets
@@ -2431,6 +2670,18 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
             different_settings.emplace_back(different_filament_settings);
         }
 
+        // Snapmaker: flow variant: "filament_flow_step_size" init
+        std::vector<int> flow_step_sizes(num_filaments, 1);
+        for (size_t i = 0; i < num_filaments; ++i) {
+            const auto *flow_support = filament_configs[i]->option<ConfigOptionStrings>("filament_flow_support");
+            if (flow_support != nullptr && !flow_support->values.empty())
+                flow_step_sizes[i] = int(flow_support->values.size());
+        }
+
+        size_t flow_total_size = 0;
+        for (int step_size : flow_step_sizes)
+            flow_total_size += size_t(step_size);
+
         // loop through options and apply them to the resulting config.
         for (const t_config_option_key &key : this->filaments.default_preset().config.keys()) {
 			if (key == "compatible_prints" || key == "compatible_printers")
@@ -2442,18 +2693,33 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
                 const ConfigOption *opt_src = filament_configs.front()->option(key);
                 if (opt_src != nullptr)
                     opt_dst->set(opt_src);
-            } else {
-                // BBS
+            } else if (is_filament_flow_variant_option(key) || key == "filament_flow_support") {
                 ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
-                {
-                    std::vector<const ConfigOption*> filament_opts(num_filaments, nullptr);
-                    // Setting a vector value from all filament_configs.
-                    for (size_t i = 0; i < filament_opts.size(); ++i)
-                        filament_opts[i] = filament_configs[i]->option(key);
-                    opt_vec_dst->set(filament_opts);
+                opt_vec_dst->resize(flow_total_size);
+                size_t segment_start = 0;
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const ConfigOption *opt_src = filament_configs[i]->option(key);
+                    if (opt_src != nullptr && !opt_src->is_scalar()) {
+                        const auto *opt_vec_src = static_cast<const ConfigOptionVectorBase *>(opt_src);
+                        const size_t source_size = opt_vec_src->size();
+                        if (source_size > 0) {
+                            for (size_t k = 0; k < size_t(flow_step_sizes[i]); ++k)
+                                opt_vec_dst->set_at(opt_src, segment_start + k, k < source_size ? k : 0);
+                        }
+                    }
+                    segment_start += size_t(flow_step_sizes[i]);
+                }
+            } else {
+                ConfigOptionVectorBase* opt_vec_dst = static_cast<ConfigOptionVectorBase*>(opt_dst);
+                opt_vec_dst->resize(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const ConfigOption *opt_src = filament_configs[i]->option(key);
+                    if (opt_src != nullptr && !opt_src->is_scalar() && static_cast<const ConfigOptionVectorBase*>(opt_src)->size() > 0)
+                        opt_vec_dst->set_at(opt_src, i, 0);
                 }
             }
         }
+        out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = flow_step_sizes;
     }
 
     //BBS: add logic for settings check between different system presets
@@ -2624,6 +2890,26 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     size_t num_filaments = config.option<ConfigOptionStrings>("filament_colour")->size();
 #endif
 
+    // Snapmaker: flow variant. Newer 3MF files store flow-aware filament options as concatenated
+    // per-filament segments. Keep the segment table before splitting the full config back into presets.
+    // Legacy files do not contain the table and retain the original one-value-per-filament layout.
+    std::vector<int> filament_flow_step_sizes(num_filaments, 1);
+    bool has_filament_flow_segments = false;
+    if (const auto *stored_step_sizes = config.option<ConfigOptionInts>("filament_flow_step_size");
+        stored_step_sizes != nullptr && stored_step_sizes->values.size() == num_filaments) {
+        has_filament_flow_segments = true;
+        for (size_t i = 0; i < num_filaments; ++i)
+            filament_flow_step_sizes[i] = std::max(1, stored_step_sizes->values[i]);
+    }
+
+    std::vector<size_t> filament_flow_segment_starts(num_filaments, 0);
+    for (size_t i = 1; i < num_filaments; ++i)
+        filament_flow_segment_starts[i] = filament_flow_segment_starts[i - 1] + size_t(filament_flow_step_sizes[i - 1]);
+
+    // filament_flow_step_size describes the composed config only. It must not be copied into an
+    // individual filament preset; full_fff_config() will regenerate it after presets are restored.
+    config.erase("filament_flow_step_size");
+
     //BBS: add config related logs
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": , name_or_path %1%, is_external %2%, num_filaments %3%") % name_or_path % is_external % num_filaments;
     // Make a copy of the "compatible_machine_expression_group" and "inherits_group" vectors, which
@@ -2769,8 +3055,21 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
                         configs[i].option(key, false)->set(other_opt);
                 }
                 else if (key != "compatible_printers" && key != "compatible_prints") {
-                    for (size_t i = 0; i < configs.size(); ++i)
-                        static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false))->set_at(other_opt, 0, i);
+                    const bool uses_flow_variant_segment = has_filament_flow_segments &&
+                        (is_filament_flow_variant_option(key) || key == "filament_flow_support") &&
+                        static_cast<const ConfigOptionVectorBase*>(other_opt)->size() ==
+                            filament_flow_segment_starts.back() + size_t(filament_flow_step_sizes.back());
+                    for (size_t i = 0; i < configs.size(); ++i) {
+                        auto *dst = static_cast<ConfigOptionVectorBase*>(configs[i].option(key, false));
+                        if (uses_flow_variant_segment) {
+                            const size_t step_size = size_t(filament_flow_step_sizes[i]);
+                            dst->resize(step_size);
+                            for (size_t variant_idx = 0; variant_idx < step_size; ++variant_idx)
+                                dst->set_at(other_opt, variant_idx, filament_flow_segment_starts[i] + variant_idx);
+                        } else {
+                            dst->set_at(other_opt, 0, i);
+                        }
+                    }
                 }
             }
             // Load the configs into this->filaments and make them active.
@@ -2820,6 +3119,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 
         // 4) Load the project config values (the per extruder wipe matrix etc).
         this->project_config.apply_only(config, s_project_options);
+        EnsureFilamentColorFieldsAligned(this->project_config);
+        EnsureFilamentVolumeTypesAligned(this->project_config, this->filament_presets.size());
 
         break;
     }
@@ -3197,9 +3498,9 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
                 // Some system bundles only provide setting_id for filaments. Treat it as a stable fallback
                 // instead of aborting the entire vendor import and losing all dependent presets.
                 filament_id = setting_id;
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
-                                           << ": missing filament_id for " << preset_name
-                                           << ", falling back to setting_id " << setting_id;
+                // BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                //                            << ": missing filament_id for " << preset_name
+                //                            << ", falling back to setting_id " << setting_id;
             }
             //check whether it inherits other preset or not
             auto it1 = key_values.find(BBL_JSON_KEY_INHERITS);
@@ -3613,9 +3914,10 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
 void PresetBundle::update_mixed_filament_id_remap(const std::vector<MixedFilament> &old_mixed,
                                                   size_t old_num_filaments,
                                                   size_t new_num_filaments,
-                                                  size_t deleted_mixed_idx)
+                                                  size_t deleted_mixed_idx,
+                                                  const std::vector<unsigned int> &kept_physical_ids)
 {
-    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u, deleted_mixed_idx);
+    build_filament_id_remap(old_mixed, old_num_filaments, new_num_filaments, false, 0u, deleted_mixed_idx, kept_physical_ids);
 }
 
 // Checks manual_pattern and gradient dependency.
@@ -3655,7 +3957,8 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
                                            size_t new_num_filaments,
                                            bool deleting_filament,
                                            unsigned int deleted_1based,
-                                           size_t deleted_mixed_idx)
+                                           size_t deleted_mixed_idx,
+                                           const std::vector<unsigned int> &kept_physical_ids)
 {
     size_t old_enabled_mixed = 0;
     for (const auto &mf : old_mixed)
@@ -3665,12 +3968,37 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
     const size_t old_total_filaments = old_num_filaments + old_enabled_mixed;
     m_last_filament_id_remap.assign(old_total_filaments + 1, 0);
 
+    // kept-aware physical remap (batch path only). When the caller supplies the
+    // actual set of surviving physical ids, map each old physical id by its
+    // position in the kept set (sorted ascending: the i-th survivor -> new id
+    // i+1; ids not in the kept set -> 0/NONE). This replaces the batch path's
+    // tail-truncation assumption (survivors == {1..new_num}), which only holds
+    // when the palette is head-rewritten (recommended mode). For non-contiguous
+    // selections like manual-mode [2,6,8,10] the tail-truncation maps survivors
+    // to NONE and deleted head ids to identity — the "partial colour loss" bug.
+    // Default empty kept_physical_ids preserves the original behaviour for all
+    // existing callers (recommended confirm + the 4 mixed-only callers that pass
+    // old_num == new_num and never hit this branch).
+    std::vector<unsigned int> kept_sorted;
+    if (!deleting_filament && !kept_physical_ids.empty()) {
+        kept_sorted = kept_physical_ids;
+        std::sort(kept_sorted.begin(), kept_sorted.end());
+        kept_sorted.erase(std::unique(kept_sorted.begin(), kept_sorted.end()), kept_sorted.end());
+    }
+
     for (unsigned int old_id = 1; old_id <= unsigned(old_num_filaments); ++old_id) {
         unsigned int mapped = 0;
         if (deleting_filament && old_id == deleted_1based) {
             mapped = 0;
         } else if (deleting_filament && old_id > deleted_1based) {
             mapped = old_id - 1;
+        } else if (!kept_sorted.empty()) {
+            // kept-aware: find old_id's position in the surviving set.
+            auto it = std::lower_bound(kept_sorted.begin(), kept_sorted.end(), old_id);
+            if (it != kept_sorted.end() && *it == old_id)
+                mapped = static_cast<unsigned int>(it - kept_sorted.begin() + 1);
+            else
+                mapped = 0; // not kept -> removed (painting already migrated by apply)
         } else if (old_id <= unsigned(new_num_filaments)) {
             mapped = old_id;
         }

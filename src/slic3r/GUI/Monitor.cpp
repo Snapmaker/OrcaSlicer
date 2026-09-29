@@ -28,6 +28,7 @@
 #include "MediaFilePanel.h"
 #include "Plater.hpp"
 #include "BindDialog.hpp"
+#include "../Utils/SnapLogClient.hpp"
 
 namespace Slic3r {
 namespace GUI {

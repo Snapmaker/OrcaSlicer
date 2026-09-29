@@ -442,8 +442,8 @@ void ObjectList::create_objects_ctrl()
     });
     bmp_choice_renderer->set_has_default_extruder([this]() {
         return true;
-        return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
-               m_objects_model->GetItemType(GetSelection()) == itLayer;
+        //return m_objects_model->GetVolumeType(GetSelection()) == ModelVolumeType::PARAMETER_MODIFIER ||
+        //       m_objects_model->GetItemType(GetSelection()) == itLayer;
     });
     AppendColumn(new wxDataViewColumn(_L("Fila."), bmp_choice_renderer,
         colFilament, m_columns_width[colFilament] * em, wxALIGN_CENTER_HORIZONTAL, 0));
@@ -865,8 +865,15 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
         auto     object = (*m_objects)[i];
         wxString extruder;
         if (!object->config.has("extruder")) {
-            extruder = std::to_string(1);
-            object->config.set_key_value("extruder", new ConfigOptionInt(1));
+            // Keep this object set to "default": do NOT materialize a
+            // non-zero extruder here.  Materializing (e.g. 1) would pin the
+            // object — and every inheriting ("default") child volume — to a
+            // specific filament after a filament is deleted, silently
+            // changing the real print material.  Leaving the config unset
+            // keeps the object default; a "default" child volume shows the
+            // default icon (see UpdateExtruderAndColorIcon), not the
+            // parent's color.
+            extruder = "0";
         } else if (size_t(object->config.extruder()) == filament_id + 1) {
             extruder = std::to_string(replace_filament_id);
             object->config.set_key_value("extruder", new ConfigOptionInt(replace_filament_id));
@@ -914,6 +921,7 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
                 continue;
             } else if (size_t(object->volumes[id]->config.extruder()) == filament_id + 1) {
                 object->volumes[id]->config.set_key_value("extruder", new ConfigOptionInt(replace_filament_id));
+                extruder = std::to_string(replace_filament_id);
             } else {
                 int new_extruder = object->volumes[id]->config.extruder() > filament_id ? object->volumes[id]->config.extruder() - 1 :
                                                                                           object->volumes[id]->config.extruder();
@@ -1100,6 +1108,7 @@ void ObjectList::update_filament_in_config(const wxDataViewItem& item)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void ObjectList::update_name_in_model(const wxDataViewItem& item) const
@@ -2464,9 +2473,7 @@ void ObjectList::load_mesh_object(const TriangleMesh &mesh, const wxString &name
 
     new_object->ensure_on_bed();
 
-    //BBS init assmeble transformation
-    Geometry::Transformation t = new_object->instances[0]->get_transformation();
-    new_object->instances[0]->set_assemble_transformation(t);
+    model.InitializeAssemblyPositions({new_object});
 
     object_idxs.push_back(model.objects.size() - 1);
 #ifdef _DEBUG
@@ -5922,6 +5929,7 @@ void ObjectList::set_extruder_for_selected_items(const int extruder)
 
     // update scene
     wxGetApp().plater()->update();
+    wxGetApp().plater()->notify_filament_usage_changed();
 
     // BBS: update extruder/filament column
     Refresh();
@@ -5981,6 +5989,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
     wxGetApp().plater()->update();
     // update printable states on canvas
     wxGetApp().plater()->get_view3D_canvas3D()->update_instance_printable_state_for_objects(obj_idxs);
+    wxGetApp().plater()->notify_filament_usage_changed();
 }
 
 void ObjectList::on_plate_selected(int plate_index)

@@ -179,10 +179,35 @@ private:
 
 class WebViewWebKit : public wxWebViewWebKit
 {
+public:
+    explicit WebViewWebKit(const wxString &initialUrl) : m_pendingUrl(initialUrl) {}
+
     ~WebViewWebKit() override
     {
         RemoveScriptMessageHandler("wx");
     }
+
+    void LoadURL(const wxString &url) override
+    {
+        if (!m_scriptMessageHandlerInstalled && url != wxString("about:blank")) {
+            m_pendingUrl = url;
+            return;
+        }
+        wxWebViewWebKit::LoadURL(url);
+    }
+
+    void SetScriptMessageHandlerInstalled()
+    {
+        m_scriptMessageHandlerInstalled = true;
+        auto url = std::move(m_pendingUrl);
+        m_pendingUrl.clear();
+        if (!url.empty() && url != wxString("about:blank"))
+            wxWebViewWebKit::LoadURL(url);
+    }
+
+private:
+    bool     m_scriptMessageHandlerInstalled = false;
+    wxString m_pendingUrl;
 };
 
 #endif
@@ -264,7 +289,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #ifdef __WIN32__
     wxWebView* webView = new WebViewEdge;
 #elif defined(__WXOSX__)
-    wxWebView *webView = new WebViewWebKit;
+    wxWebView *webView = new WebViewWebKit(url2);
 #else
     auto webView = wxWebView::New();
 #endif
@@ -292,7 +317,13 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("wxfs")));
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewFSHandler("memory")));
 #endif
+#ifdef __WXMAC__
+        // WKWebView starts loading during Create(), before the delayed handler callback runs.
+        // Keep its initial document blank; the subclass flushes the pending URL after installation.
+        webView->Create(parent, wxID_ANY, wxString("about:blank"), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#endif
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
 #endif
@@ -307,6 +338,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
                 wxLogError("Could not add script message handler");
             Slic3r::GUI::wxGetApp().set_adding_script_handler(false);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": finished add script message handler for wx.";
+#ifdef __WXMAC__
+            static_cast<WebViewWebKit *>(webView)->SetScriptMessageHandlerInstalled();
+#endif
         };
 #ifndef __WIN32__
         webView->CallAfter([webView, addScriptMessageHandler] {

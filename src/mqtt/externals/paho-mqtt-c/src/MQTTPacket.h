@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2009, 2023 IBM Corp.
+ * Copyright (c) 2009, 2024 IBM Corp.
  *
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v2.0
@@ -28,7 +28,7 @@
 #include "LinkedList.h"
 #include "Clients.h"
 
-typedef unsigned int bool;
+typedef unsigned int bit;
 typedef void* (*pf)(int, unsigned char, char*, size_t);
 
 #include "MQTTProperties.h"
@@ -67,16 +67,16 @@ typedef union
 	struct
 	{
 		unsigned int type : 4;	/**< message type nibble */
-		bool dup : 1;			/**< DUP flag bit */
+		bit dup : 1;			/**< DUP flag bit */
 		unsigned int qos : 2;	/**< QoS value, 0, 1 or 2 */
-		bool retain : 1;		/**< retained flag bit */
+		bit retain : 1;		/**< retained flag bit */
 	} bits;
 #else
 	struct
 	{
-		bool retain : 1;		/**< retained flag bit */
+		bit retain : 1;		/**< retained flag bit */
 		unsigned int qos : 2;	/**< QoS value, 0, 1 or 2 */
-		bool dup : 1;			/**< DUP flag bit */
+		bit dup : 1;			/**< DUP flag bit */
 		unsigned int type : 4;	/**< message type nibble */
 	} bits;
 #endif
@@ -95,24 +95,24 @@ typedef struct
 #if defined(REVERSED)
 		struct
 		{
-			bool username : 1;			/**< 3.1 user name */
-			bool password : 1; 			/**< 3.1 password */
-			bool willRetain : 1;		/**< will retain setting */
+			bit username : 1;			/**< 3.1 user name */
+			bit password : 1; 			/**< 3.1 password */
+			bit willRetain : 1;		/**< will retain setting */
 			unsigned int willQoS : 2;	/**< will QoS value */
-			bool will : 1;			/**< will flag */
-			bool cleanstart : 1;	/**< cleansession flag */
+			bit will : 1;			/**< will flag */
+			bit cleanstart : 1;	/**< cleansession flag */
 			int : 1;	/**< unused */
 		} bits;
 #else
 		struct
 		{
 			int : 1;	/**< unused */
-			bool cleanstart : 1;	/**< cleansession flag */
-			bool will : 1;			/**< will flag */
+			bit cleanstart : 1;	/**< cleansession flag */
+			bit will : 1;			/**< will flag */
 			unsigned int willQoS : 2;	/**< will QoS value */
-			bool willRetain : 1;		/**< will retain setting */
-			bool password : 1; 			/**< 3.1 password */
-			bool username : 1;			/**< 3.1 user name */
+			bit willRetain : 1;		/**< will retain setting */
+			bit password : 1; 			/**< 3.1 password */
+			bit username : 1;			/**< 3.1 user name */
 		} bits;
 #endif
 	} flags;	/**< connect flags byte */
@@ -140,12 +140,12 @@ typedef struct
 		struct
 		{
 			unsigned int reserved : 7;	/**< message type nibble */
-			bool sessionPresent : 1;    /**< was a session found on the server? */
+			bit sessionPresent : 1;    /**< was a session found on the server? */
 		} bits;
 #else
 		struct
 		{
-			bool sessionPresent : 1;    /**< was a session found on the server? */
+			bit sessionPresent : 1;    /**< was a session found on the server? */
 			unsigned int reserved : 7;	/**< message type nibble */
 		} bits;
 #endif
@@ -246,6 +246,7 @@ int MQTTPacket_send_disconnect(Clients* client, enum MQTTReasonCodes reason, MQT
 
 void* MQTTPacket_publish(int MQTTVersion, unsigned char aHeader, char* data, size_t datalen);
 void MQTTPacket_freePublish(Publish* pack);
+int MQTTPacket_formatPayload(int buflen, char* buf, int payloadlen, char* payload);
 int MQTTPacket_send_publish(Publish* pack, int dup, int qos, int retained, networkHandles* net, const char* clientID);
 int MQTTPacket_send_puback(int MQTTVersion, int msgid, networkHandles* net, const char* clientID);
 void* MQTTPacket_ack(int MQTTVersion, unsigned char aHeader, char* data, size_t datalen);

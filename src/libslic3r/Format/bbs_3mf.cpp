@@ -37,7 +37,6 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <boost/foreach.hpp>
-#include <openssl/md5.h>
 
 namespace pt = boost::property_tree;
 
@@ -3796,7 +3795,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             else if (boost::starts_with(m_curr_characters, "Snapmaker_Orca-")) {
                 m_is_bbl_3mf = true;
-                m_bambuslicer_generator_version = Semver::parse(m_curr_characters.substr(11));
+                m_bambuslicer_generator_version = Semver::parse(m_curr_characters.substr(15));
             }
         //TODO: currently use version 0, no need to load&&save this string
         /*} else if (m_curr_metadata_name == BBS_FDM_SUPPORTS_PAINTING_VERSION) {
@@ -6148,23 +6147,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             for (int i = 0; i < plate_data_list.size(); i++) {
                 PlateData *plate_data = plate_data_list[i];
                 if (!plate_data->gcode_file.empty() && plate_data->is_sliced_valid && boost::filesystem::exists(plate_data->gcode_file)) {
-                    unsigned char digest[16];
-                    MD5_CTX       ctx;
-                    MD5_Init(&ctx);
-                    auto                        src_gcode_file = plate_data->gcode_file;
-                    boost::filesystem::ifstream ifs(src_gcode_file, std::ios::binary);
-                    std::string                 buf(64 * 1024, 0);
-                    const std::size_t &         size      = boost::filesystem::file_size(src_gcode_file);
-                    std::size_t                 left_size = size;
-                    while (ifs) {
-                        ifs.read(buf.data(), buf.size());
-                        int read_bytes = ifs.gcount();
-                        MD5_Update(&ctx, (unsigned char *) buf.data(), read_bytes);
+                    if (!bbl_calc_md5(plate_data->gcode_file, plate_data->gcode_file_md5)) {
+                        BOOST_LOG_TRIVIAL(error)
+                            << __FUNCTION__ << ":" << __LINE__
+                            << boost::format(", calculate MD5 for 3mf's gcode file %1%, failed\n") % plate_data->gcode_file;
+                        return false;
                     }
-                    MD5_Final(digest, &ctx);
-                    char md5_str[33];
-                    for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
-                    plate_data->gcode_file_md5 = std::string(md5_str);
+
                     std::string target_file    = (boost::format("Metadata/plate_%1%.gcode.md5") % (plate_data->plate_index + 1)).str();
                     if (!mz_zip_writer_add_mem(&archive, target_file.c_str(), (const void *) plate_data->gcode_file_md5.c_str(), plate_data->gcode_file_md5.length(),
                                                MZ_DEFAULT_COMPRESSION)) {
@@ -6598,8 +6587,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 // Orca: PRIVACY: do not store creation & modification date in 3mf
                 metadata_item_map[BBL_CREATION_DATE_TAG] = "";
                 metadata_item_map[BBL_MODIFICATION_TAG]  = "";
-                //SoftFever: write BambuStudio tag to keep it compatible 
-                metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % "BambuStudio" % Snapmaker_VERSION).str();
+                // Write Snapmaker_Orca tag instead of BambuStudio, so other slicers don't treat the 3mf as a Bambu project
+                metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % "Snapmaker_Orca" % Snapmaker_VERSION).str();
             }
             metadata_item_map[BBS_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
 

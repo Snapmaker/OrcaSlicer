@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <locale>
+#include <memory>
 #include <mutex>
 #include <ctime>
 #include <cstdarg>
@@ -1483,6 +1484,66 @@ size_t total_physical_memory()
 #endif
 }
 
+// Returns the more constraining of physical-RAM-available and commit-available.
+// Physical RAM exhaustion  -> page-fault thrashing (unresponsive hang).
+// Commit exhaustion        -> malloc failure (OOM crash).
+// Taking the min catches both failure modes with a single threshold.
+size_t get_available_physical_memory()
+{
+#ifdef _WIN32
+    // Physical RAM available (predicts page-fault thrashing).
+    size_t phys_avail = 0;
+    {
+        MEMORYSTATUSEX memInfo;
+        memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo))
+            phys_avail = static_cast<size_t>(memInfo.ullAvailPhys);
+    }
+    // System commit available (predicts OOM crash).
+    size_t commit_avail = 0;
+    {
+        PERFORMANCE_INFORMATION perfInfo;
+        perfInfo.cb = sizeof(perfInfo);
+        if (GetPerformanceInfo(&perfInfo, sizeof(perfInfo)) && perfInfo.PageSize > 0) {
+            if (perfInfo.CommitLimit > perfInfo.CommitTotal)
+                commit_avail = static_cast<size_t>(perfInfo.CommitLimit - perfInfo.CommitTotal)
+                             * static_cast<size_t>(perfInfo.PageSize);
+        }
+    }
+    // Return whichever is more constraining.
+    if (phys_avail == 0) return commit_avail;
+    if (commit_avail == 0) return phys_avail;
+    return phys_avail < commit_avail ? phys_avail : commit_avail;
+#elif defined(__linux__)
+	// Prefer /proc/meminfo MemAvailable (accounts for reclaimable cache).
+	std::ifstream f("/proc/meminfo");
+	if (f) {
+		std::string line;
+		while (std::getline(f, line)) {
+			if (line.rfind("MemAvailable:", 0) == 0) {
+				size_t kb = 0;
+				if (sscanf(line.c_str() + 13, "%zu", &kb) == 1)
+					return kb * 1024;
+			}
+		}
+	}
+	// Fallback: _SC_AVPHYS_PAGES
+	long avail_pages = sysconf(_SC_AVPHYS_PAGES);
+	long page_size   = sysconf(_SC_PAGE_SIZE);
+	return (avail_pages > 0 && page_size > 0) ? static_cast<size_t>(avail_pages) * static_cast<size_t>(page_size) : 0;
+#elif defined(__APPLE__)
+	// Memory guard detection on macOS is intentionally disabled by product
+	// decision: the vm_statistics64-based "available" estimate counts free
+	// pages only and ignores reclaimable cache (inactive/purgeable), so it
+	// sits far below the guard threshold on any normally-used system and
+	// raised false low-memory warnings even for small models. Returning 0
+	// makes check_memory_guard() skip the sample entirely (avail == 0).
+	return 0;
+#else
+	return 0;
+#endif
+}
+
 bool makedir(const std::string path) {
 	// if dir doesn't exist, make it
 #ifdef WIN32
@@ -1497,63 +1558,165 @@ bool makedir(const std::string path) {
 	return true;  // dir already exists
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out)
+bool bbl_calc_md5(const std::string& filename, std::string& md5_out)
 {
-    unsigned char digest[16];
-    MD5_CTX       ctx;
-    MD5_Init(&ctx);
+    md5_out.clear();
+
+    boost::system::error_code error_code;
+    if (!boost::filesystem::is_regular_file(filename, error_code) || error_code)
+        return false;
+
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (!mdctx || EVP_DigestInit_ex(mdctx.get(), EVP_md5(), nullptr) != 1)
+        return false;
+
     boost::nowide::ifstream ifs(filename, std::ios::binary);
-    std::string                 buf(64 * 1024, 0);
-    const std::size_t &         size      = boost::filesystem::file_size(filename);
-    std::size_t                 left_size = size;
+    if (!ifs)
+        return false;
+
+    std::string buffer(64 * 1024, 0);
     while (ifs) {
-        ifs.read(buf.data(), buf.size());
-        int read_bytes = ifs.gcount();
-        MD5_Update(&ctx, (unsigned char *) buf.data(), read_bytes);
+        ifs.read(buffer.data(), buffer.size());
+        const std::streamsize read_bytes = ifs.gcount();
+        if (read_bytes > 0 && EVP_DigestUpdate(mdctx.get(), buffer.data(), static_cast<std::size_t>(read_bytes)) != 1)
+            return false;
     }
-    MD5_Final(digest, &ctx);
+    if (!ifs.eof())
+        return false;
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  digest_size = 0;
+    if (EVP_DigestFinal_ex(mdctx.get(), digest, &digest_size) != 1 || digest_size != 16)
+        return false;
+
     char md5_str[33];
-    for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
+    for (unsigned int byte_index = 0; byte_index < digest_size; ++byte_index) {
+        sprintf(&md5_str[byte_index * 2], "%02X", static_cast<unsigned int>(digest[byte_index]));
+    }
     md5_out = std::string(md5_str);
     return true;
 }
 
 // SoftFever: copy directory recursively
-void copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target, std::function<bool(const std::string)> filter)
+bool copy_directory_recursively(const boost::filesystem::path &source, const boost::filesystem::path &target,
+                                std::function<bool(const std::string)> filter)
 {
     BOOST_LOG_TRIVIAL(debug) << Slic3r::format("copy_directory_recursively %1% -> %2%", source, target);
-    std::string error_message;
 
     if (!boost::filesystem::exists(source) || !boost::filesystem::is_directory(source)) {
-        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);        
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("copy_directory_recursively source is invalid: %1%", source);
+        return false;
     }
 
     if (boost::filesystem::exists(target))
         boost::filesystem::remove_all(target);
     boost::filesystem::create_directories(target);
-    for (auto &dir_entry : boost::filesystem::directory_iterator(source))
-    {
-        std::string source_file = dir_entry.path().string();
-        std::string name = dir_entry.path().filename().string();
-        std::string target_file = target.string() + "/" + name;
+
+    std::string error_message;
+    for (auto &dir_entry : boost::filesystem::directory_iterator(source)) {
+        const std::string name = dir_entry.path().filename().string();
 
         if (boost::filesystem::is_directory(dir_entry)) {
-            const auto target_path = target / name;
-            copy_directory_recursively(dir_entry, target_path);
-        }
-        else {
-			if(filter && filter(name))
-				continue;
-            CopyFileResult cfr = copy_file(source_file, target_file, error_message, false);
+            if (!copy_directory_recursively(dir_entry, target / name, filter))
+                return false;
+        } else {
+            if (filter && filter(name))
+                continue;
+            const std::string source_file = dir_entry.path().string();
+            const std::string target_file = (target / name).string();
+            const CopyFileResult cfr      = copy_file(source_file, target_file, error_message, false);
             if (cfr != CopyFileResult::SUCCESS) {
-                BOOST_LOG_TRIVIAL(error) << "Copying failed(" << cfr << "): " << error_message;
-                throw Slic3r::CriticalException(Slic3r::format(
-                    ("Copying directory %1% to %2% failed: %3%"),
-                    source, target, error_message));
+                BOOST_LOG_TRIVIAL(error) << "Copying failed(" << static_cast<int>(cfr) << "): " << error_message
+                                         << " (" << source_file << " -> " << target_file << ")";
+                return false;
             }
         }
     }
-    return;
+    return true;
+}
+
+bool atomic_replace_directory(
+    const boost::filesystem::path &source,
+    const boost::filesystem::path &target,
+    std::function<bool(const std::string)> filter,
+    std::function<bool(const boost::filesystem::path &staging)> validate_staging)
+{
+    namespace fs = boost::filesystem;
+    BOOST_LOG_TRIVIAL(debug) << Slic3r::format("atomic_replace_directory %1% -> %2%", source, target);
+
+    if (!fs::exists(source) || !fs::is_directory(source)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: invalid source %1%", source);
+        return false;
+    }
+
+    const fs::path staging = fs::path(target.string() + ".new");
+    const fs::path backup  = fs::path(target.string() + ".old");
+
+    auto remove_path = [](const fs::path &p) -> bool {
+        boost::system::error_code ec;
+        if (!fs::exists(p))
+            return true;
+        fs::remove_all(p, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(warning) << Slic3r::format("atomic_replace_directory: failed to remove %1%: %2%", p, ec.message());
+            return false;
+        }
+        return true;
+    };
+
+    if (!remove_path(staging)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear staging %1%", staging);
+        return false;
+    }
+
+    if (!copy_directory_recursively(source, staging, filter)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to stage %1% -> %2%", source, staging);
+        remove_path(staging);
+        return false;
+    }
+
+    if (validate_staging && !validate_staging(staging)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: staging validation failed for %1%", target);
+        remove_path(staging);
+        return false;
+    }
+
+    if (!remove_path(backup)) {
+        BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to clear backup %1%", backup);
+        remove_path(staging);
+        return false;
+    }
+
+    {
+        boost::system::error_code ec;
+        fs::rename(target, backup, ec);
+        if (ec && ec != boost::system::errc::no_such_file_or_directory) {
+            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to backup %1%: %2%", target, ec.message());
+            remove_path(staging);
+            return false;
+        }
+    }
+
+    {
+        boost::system::error_code ec;
+        fs::rename(staging, target, ec);
+        if (ec) {
+            BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to activate %1%: %2%", target, ec.message());
+            if (fs::exists(backup)) {
+                boost::system::error_code ec2;
+                fs::rename(backup, target, ec2);
+                if (ec2)
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("atomic_replace_directory: failed to restore %1% from backup: %2%",
+                                                               target, ec2.message());
+            }
+            remove_path(staging);
+            return false;
+        }
+    }
+
+    remove_path(backup);
+    BOOST_LOG_TRIVIAL(info) << Slic3r::format("atomic_replace_directory: replaced %1%", target);
+    return true;
 }
 
 void save_string_file(const boost::filesystem::path& p, const std::string& str)

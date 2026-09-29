@@ -45,6 +45,7 @@ private:
     void update_preview();
     void update_gradient_selector_colors();
     void build_swatch_grid();
+    void rebuild_swatch_sizer();
     void sync_rows_to_result();
     void resize_gradient_ids(int target_count);
     void update_compatibility_warning();
@@ -83,6 +84,7 @@ private:
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
+    std::vector<int>         m_swatch_min_weights;
     wxPanel*                m_error_panel           = nullptr;
     Label*                   m_error_text            = nullptr;
     wxPanel*                m_warning_panel         = nullptr;
@@ -141,6 +143,10 @@ private:
     MatchRangeSlider*       m_match_range_slider    = nullptr;
     wxStaticText*           m_match_range_value     = nullptr;
     int                     m_match_min_pct         = 15;
+    // True once Match-mode state has been saved into m_result during a mode
+    // switch. Guards re-entry so the user's adjustments are restored instead
+    // of being overwritten by the 2:1:1 default / recomputed target color.
+    bool                    m_match_state_persisted { false };
 
     ScalableButton*         m_btn_swap_gradient_dir = nullptr;
     int                     m_gradient_direction   = 0;

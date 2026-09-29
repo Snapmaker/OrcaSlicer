@@ -1,8 +1,9 @@
  #  Changelog
  
-## 2026-06-09
- 
-### Optimization
-  * Improve the user experience.
-### 优化
-  * 优化用户体验。
+ ## 2026-09-05
+ ###Features
+  * Added support for high-flow hotends  
+  * Added gradient filament display
+ ### Bug Fixes
+  * Fixed UI adaptation issues on some pages.
+  * Fixed other known issues.

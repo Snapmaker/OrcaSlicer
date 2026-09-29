@@ -19,14 +19,11 @@ on:
       build-deps-only:
         required: false
         type: boolean
-      force-build:
-        required: false
-        type: boolean
 
 jobs:
   build_deps:
     name: Build Deps
-    if: inputs.build-deps-only || inputs.force-build || inputs.valid-cache != true
+    if: inputs.build-deps-only || inputs.valid-cache != true
     runs-on: ${{ inputs.os }}
     env:
       date:
@@ -49,32 +46,57 @@ jobs:
           cmakeVersion: "~3.28.0"  # use most recent 3.28.x version
 
       - name: setup dev on Windows
-        if: inputs.os == 'windows-latest'
+        if: inputs.os == 'windows-2022'
         uses: microsoft/setup-msbuild@v2
 
       - name: Get the date on Ubuntu and macOS
-        if: inputs.os != 'windows-latest'
+        if: inputs.os != 'windows-2022'
         run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_ENV
         shell: bash
 
       - name: Get the date on Windows
-        if: inputs.os == 'windows-latest'
+        if: inputs.os == 'windows-2022'
         run: echo "date=$(Get-Date -Format 'yyyyMMdd')" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
         shell: pwsh
 
 
       # Build Dependencies
       - name: Build on Windows
-        if: inputs.os == 'windows-latest'
+        if: inputs.os == 'windows-2022'
         working-directory: ${{ github.workspace }}
         run: |
             choco install strawberryperl
             .\build_release_vs2022.bat deps
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             .\build_release_vs2022.bat pack
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             cd ${{ github.workspace }}/deps/build
 
+      - name: Free disk space mac
+        if: inputs.os == 'macos-15'
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+          sw_vers
+          df -h
+          XCODE_DEV="$(xcode-select -p)"
+          XCODE_APP="$(cd "${XCODE_DEV}/../.." && pwd -P)"
+          echo "Keeping selected Xcode: $XCODE_APP"
+          for app in /Applications/Xcode_*.app; do
+            [ -e "$app" ] || continue
+            APP_REAL="$(cd "$app" && pwd -P)"
+            if [ "$APP_REAL" = "$XCODE_APP" ]; then
+              echo "Keeping $app"
+            else
+              echo "Removing unused $app"
+              sudo rm -rf "$app"
+            fi
+          done
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches/*
+          df -h
+
       - name: Build on Mac ${{ inputs.arch }}
-        if: inputs.os == 'macos-14'
+        if: inputs.os == 'macos-15'
         working-directory: ${{ github.workspace }}
         run: |
             brew install automake texinfo libtool
@@ -117,7 +139,7 @@ jobs:
 
       # Upload Artifacts (commented out to reduce artifact storage usage)
       # - name: Upload Mac ${{ inputs.arch }} artifacts
-      #   if: inputs.os == 'macos-14'
+      #   if: inputs.os == 'macos-15'
       #   uses: actions/upload-artifact@v4
       #   with:
       #     name: OrcaSlicer_dep_mac_${{ env.date }}
@@ -142,7 +164,7 @@ jobs:
   build_orca:
     name: Build Snapmaker_Orca
     needs: [build_deps]
-    if: ${{ !cancelled() && !inputs.build-deps-only && inputs.force-build || (inputs.valid-cache == true && needs.build_deps.result == 'skipped') || (inputs.valid-cache != true && success()) }}
+    if: ${{ !cancelled() && (inputs.valid-cache == true && needs.build_deps.result == 'skipped') || (inputs.valid-cache != true && success()) }}
     uses: ./.github/workflows/build_orca.yml
     with:
       cache-key: ${{ inputs.cache-key }}
@@ -159,6 +181,6 @@ jobs:
     with:
       os: ${{ inputs.os }}
       pdb-artifact-name: PDB
-      dsym-artifact-name: ${{ inputs.os == 'macos-14' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
+      dsym-artifact-name: ${{ inputs.os == 'macos-15' && format('dSYM_Mac_{0}', needs.build_orca.outputs.release) || '' }}
       release: ${{ needs.build_orca.outputs.release || github.sha }}
     secrets: inherit

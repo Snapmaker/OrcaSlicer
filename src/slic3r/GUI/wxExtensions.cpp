@@ -9,6 +9,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "FilamentColorUtils.hpp"
 #include "GUI_ObjectList.hpp"
 #include "I18N.hpp"
 #include "GUI_Utils.hpp"
@@ -439,6 +440,8 @@ wxBitmap create_scaled_bitmap(  const std::string& bmp_name_in,
                                 const vector<std::string>& array_new_color/* = vector<std::string>*/)//used for semi transparent material)
 {
     static Slic3r::GUI::BitmapCache cache;
+    if (win == nullptr)
+        win = (wxWindow*)Slic3r::GUI::wxGetApp().mainframe;
     if (bitmap2) {
         return create_scaled_bitmap2(bmp_name_in, cache, win, px_cnt, grayscale, resize, array_new_color);
     }
@@ -547,11 +550,30 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
         Slic3r::GUI::wxGetApp().plater()->get_extruder_colors_from_plater_config(nullptr, false);
     const size_t num_physical = physical_colors.size();
 
+    const Slic3r::DynamicPrintConfig* config = Slic3r::GUI::wxGetApp().preset_bundle != nullptr ?
+                                               &Slic3r::GUI::wxGetApp().preset_bundle->project_config : nullptr;
+    const Slic3r::ConfigOptionStrings* multiColorOption = config != nullptr && config->has("filament_multi_colors") ?
+                                                config->option<Slic3r::ConfigOptionStrings>("filament_multi_colors") : nullptr;
+    const Slic3r::ConfigOptionInts* modeOption = config != nullptr && config->has("filament_colour_mode") ?
+                                                config->option<Slic3r::ConfigOptionInts>("filament_colour_mode") : nullptr;
+
     int index = 0;
     for (const std::string &color : colors)
     {
         auto label = std::to_string(++index);
         const size_t color_idx = size_t(index) - 1;
+
+        if (color_idx < num_physical) {
+            const std::string multiColors = multiColorOption != nullptr && multiColorOption->values.size() > color_idx ?
+                                             multiColorOption->values[color_idx] : std::string();
+            int modeValue = 0;
+            if (modeOption != nullptr && modeOption->values.size() > color_idx)
+                modeValue = modeOption->values[color_idx];
+            const Slic3r::FilamentColorMode colorMode = Slic3r::FilamentColorModeFromConfig(modeValue);
+            bmps.push_back(Slic3r::GUI::FilamentColorUtils::GetFilamentColorIcon(multiColors, colorMode, color, label,
+                                                                                  icon_width, icon_height));
+            continue;
+        }
 
         if (color_idx >= num_physical) {
             // Mixed filament — try to draw a gradient icon.

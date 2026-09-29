@@ -22,6 +22,7 @@
 #include "wx/fs_arc.h"
 #include "wx/fs_mem.h"
 #include "wx/stdpaths.h"
+#include <memory>
 #include <wx/frame.h>
 #include <wx/tbarbase.h>
 #include "wx/textctrl.h"
@@ -31,6 +32,8 @@
 #include "slic3r/Utils/PresetUpdater.hpp"
 
 #include <nlohmann/json.hpp>
+#include <atomic>
+#include <thread>
 
 namespace Slic3r { namespace GUI {
 
@@ -69,7 +72,7 @@ public:
     int LoadProfile();
     int LoadProfileFamily(std::string strVendor, std::string strFilePath);
     int SaveProfile();
-    int GetFilamentInfo(std::string VendorDirectory, json& pFilaList, std::string filepath, std::string& sVendor, std::string& sType);
+    int GetFilamentInfo(std::string VendorDirectory, const json& pFilaList, std::string filepath, std::string& sVendor, std::string& sType);
 
     bool apply_config(AppConfig* app_config, PresetBundle* preset_bundle, const PresetUpdater* updater, bool& apply_keeped_changes);
     bool run();
@@ -123,7 +126,13 @@ public:
     wxString    m_sm_user_agent;
     std::string m_editing_filament_id;
 
-    std::thread* m_load_thread = nullptr;
+    std::unique_ptr<std::thread> m_load_thread;
+    std::atomic<bool> m_profile_ready{false};
+    bool              m_profile_request_pending{false};
+    std::atomic<bool> m_destroy{false};
+
+    void SendUserGuideProfile();
+    void FlushPendingProfileRequest();
 };
 
 }} // namespace Slic3r::GUI

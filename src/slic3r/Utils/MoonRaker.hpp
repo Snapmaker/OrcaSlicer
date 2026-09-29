@@ -118,6 +118,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) {}
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) {}
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) {}
 
@@ -134,6 +135,8 @@ public:
     virtual void async_get_file_page_list(const std::string& root, int files_per_page, int page_number, std::function<void(const nlohmann::json& response)>){}
 
     virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
+
+    virtual void async_upload_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
 
     virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) {}
 
@@ -180,11 +183,11 @@ public:
     private:
         int64_t connection_id_;
         uint32_t seq_id_low_bits_;
-        static const uint32_t MAX_SEQ_ID_INCREASED_LIMIT = 0xFFFFFFFF; // 32位掩码
+        static const uint32_t MAX_SEQ_ID_INCREASED_LIMIT = 0xFFFFFFFF; // 32-bit mask
 
         void init_connection_id() {
             seq_id_low_bits_ = 0;
-            // 获取当前时间戳并取低31位
+            // get current timestamp and take lower 31 bits
             auto now = std::chrono::system_clock::now();
             auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
                 now.time_since_epoch()
@@ -205,9 +208,9 @@ public:
             if (connection_id_ == -1) {
                 throw std::runtime_error("Connection not initialized.");
             }
-            // 递增并限制在32位
+            // increment and wrap within 32 bits
             seq_id_low_bits_ = (seq_id_low_bits_ + 1) & MAX_SEQ_ID_INCREASED_LIMIT;
-            // 组合高31位和低32位，确保符号位为0
+            // combine upper 31 bits and lower 32 bits, sign bit stays 0
             return (connection_id_ << 32) | seq_id_low_bits_;
         }
     };
@@ -269,9 +272,15 @@ public:
 
     virtual void async_start_cloud_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
+    virtual void async_start_local_print(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_machine_heartbeat(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
     virtual void async_cancel_pull_cloud_file(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_upload_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
+
+    virtual void async_upload_timelapse_instance(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_delete_camera_timelapse(const nlohmann::json& targets, std::function<void(const nlohmann::json& response)>) override;
 
@@ -295,6 +304,7 @@ public:
     virtual void async_bedmesh_abort_probe_mesh(std::function<void(const nlohmann::json& response)>) override;
 
     virtual void async_controlPurifier(int fan_speed, int delay_time, int work_time, std::function<void(const nlohmann::json& response)>) override;
+    virtual void async_controlPurifier(const nlohmann::json& params, std::function<void(const nlohmann::json& response)> callback) override;
 
     virtual void async_control_main_fan(int speed, std::function<void(const nlohmann::json& response)>) override;
 
@@ -328,9 +338,10 @@ private:
     bool add_response_target(int64_t id,
                            std::function<void(const nlohmann::json&)> callback,
                            std::function<void()> timeout_callback = nullptr,
+                           bool passthrough = false,
                            std::chrono::milliseconds timeout = std::chrono::milliseconds(80000));
 
-    std::function<void(const nlohmann::json& response)> get_request_callback(int64_t id);
+    std::pair<std::function<void(const nlohmann::json&)>, bool> get_request_callback(int64_t id);
     void delete_response_target(int64_t id);
 
     bool wait_for_sn(int timeout_seconds = 6);
@@ -354,12 +365,15 @@ public:
     struct RequestCallback {
         std::function<void(const nlohmann::json&)> success_cb;  // Success callback
         std::function<void()> timeout_cb;                       // Timeout callback
+        bool passthrough{false};                                // If true, pass raw JSON-RPC body to callback
 
         RequestCallback(
             std::function<void(const nlohmann::json&)> success,
-            std::function<void()> timeout = nullptr)
+            std::function<void()> timeout = nullptr,
+            bool passthrough = false)
             : success_cb(std::move(success))
             , timeout_cb(std::move(timeout))
+            , passthrough(passthrough)
         {}
     };
 

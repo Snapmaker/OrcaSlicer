@@ -15,8 +15,18 @@ endif()
 if(WIN32)
     set(_conf_cmd perl Configure )
     set(_cross_comp_prefix_line "")
-    set(_make_cmd nmake)
-    set(_install_cmd nmake install_sw )
+    configure_file(
+        ${CMAKE_CURRENT_LIST_DIR}/build_windows.bat.in
+        ${CMAKE_CURRENT_BINARY_DIR}/build_windows.bat
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_LIST_DIR}/build_windows_clean.bat.in
+        ${CMAKE_CURRENT_BINARY_DIR}/build_windows_clean.bat
+        @ONLY
+    )
+    set(_make_cmd "${CMAKE_CURRENT_BINARY_DIR}/build_windows.bat")
+    set(_install_cmd ${_make_cmd} install_sw)
 else()
     if(APPLE)
         set(_conf_cmd export MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} && ./Configure -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
@@ -40,8 +50,8 @@ endif()
 
 ExternalProject_Add(dep_OpenSSL
     #EXCLUDE_FROM_ALL ON
-    URL "https://github.com/openssl/openssl/archive/OpenSSL_1_1_1w.tar.gz"
-    URL_HASH SHA256=2130E8C2FB3B79D1086186F78E59E8BC8D1A6AEDF17AB3907F4CB9AE20918C41
+    URL "https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz"
+    URL_HASH SHA256=A8C0D28A529CA480F9F36CF5792E2CD21984552A3C8E4AA11A24AA31AEAC98E8
     # URL "https://github.com/openssl/openssl/archive/refs/tags/openssl-3.1.2.tar.gz"
     # URL_HASH SHA256=8c776993154652d0bb393f506d850b811517c8bd8d24b1008aef57fbe55d3f31
     DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/OpenSSL
@@ -51,16 +61,10 @@ ExternalProject_Add(dep_OpenSSL
         ${_cross_comp_prefix_line}
         no-shared
         no-asm
+        no-apps
         no-ssl3-method
         no-dynamic-engine
     BUILD_IN_SOURCE ON
-    BUILD_COMMAND ${_make_cmd}
+    BUILD_COMMAND ${_make_cmd} build_libs
     INSTALL_COMMAND ${_install_cmd}
-)
-
-ExternalProject_Add_Step(dep_OpenSSL install_cmake_files
-    DEPENDEES install
-
-    COMMAND ${CMAKE_COMMAND} -E copy_directory openssl "${DESTDIR}${CMAKE_INSTALL_LIBDIR}/cmake/openssl"
-    WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}"
 )

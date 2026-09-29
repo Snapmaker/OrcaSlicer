@@ -564,6 +564,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "fan_speedup_overhangs",
         "fan_speedup_time",
         "filament_colour",
+        "filament_multi_colors",
+        "filament_colour_mode",
         "default_filament_colour",
         "filament_diameter",
         "filament_density",
@@ -674,6 +676,17 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         } else if (steps_ignore.find(opt_key) != steps_ignore.end()) {
             // These steps have no influence on the G-code whatsoever. Just ignore them.
         } else if (
+               opt_key == "filament_volume_type"
+            || opt_key == "nozzle_volume_type"
+            || opt_key == "filament_flow_support"
+            || opt_key == "process_flow_support"
+            || opt_key == "printer_flow_support"
+            || opt_key == "filament_flow_step_size") {
+            // Snapmaker: switching a filament's flow variant changes the values read out of
+            // flow-variant arrays without the arrays themselves
+            // changing, so everything has to be recalculated. Do NOT move these keys into steps_gcode.
+            invalidated |= this->invalidate_all_steps();
+        } else if (
                opt_key == "skirt_type"
             || opt_key == "skirt_loops"
             || opt_key == "skirt_speed"
@@ -767,7 +780,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "initial_layer_speed"
             || opt_key == "initial_layer_travel_speed"
             || opt_key == "slow_down_layers"
-            || opt_key == "idle_temperature"
+            || opt_key == "idle_temperature" 
+            || opt_key == "filament_tower_ironing_area"
             || opt_key == "wipe_tower_cone_angle"
             || opt_key == "wipe_tower_extra_spacing"
             || opt_key == "wipe_tower_max_purge_speed"
@@ -775,6 +789,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_extra_rib_length"
             || opt_key == "wipe_tower_rib_width"
             || opt_key == "wipe_tower_fillet_wall"
+            || opt_key == "wipe_tower_wall_gap"
             || opt_key == "wipe_tower_filament"
             || opt_key == "wiping_volumes_extruders"
             || opt_key == "dithering_local_z_infill"
@@ -1556,15 +1571,6 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
     if (extruders.empty())
         return { L("No extrusions under current settings.") };
 
-    if (nozzles < 2 && extruders.size() > 1 && m_config.print_sequence != PrintSequence::ByObject) {
-        auto ret = check_multi_filament_valid(*this);
-        if (!ret.string.empty())
-        {
-            ret.type = STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP;
-            return ret;
-        }
-    }
-
     if (m_config.print_sequence == PrintSequence::ByObject) {
         if (m_config.timelapse_type == TimelapseType::tlSmooth)
             return {L("Smooth mode of timelapse is not supported when \"by object\" sequence is enabled.")};
@@ -1977,12 +1983,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             std::string warning_key;
 
             // check jerk
-            if (m_default_object_config.default_jerk == 1 || m_default_object_config.outer_wall_jerk == 1 ||
-                m_default_object_config.inner_wall_jerk == 1) {
+            if (m_default_object_config.default_jerk.values.front() == 1 || m_default_object_config.outer_wall_jerk.values.front() == 1 ||
+                m_default_object_config.inner_wall_jerk.values.front() == 1) {
                warning->string = L("Setting the jerk speed too low could lead to artifacts on curved surfaces");
-               if (m_default_object_config.outer_wall_jerk == 1)
+               if (m_default_object_config.outer_wall_jerk.values.front() == 1)
                     warning_key = "outer_wall_jerk";
-               else if (m_default_object_config.inner_wall_jerk == 1)
+               else if (m_default_object_config.inner_wall_jerk.values.front() == 1)
                     warning_key = "inner_wall_jerk";
                else
                     warning_key = "default_jerk";
@@ -1990,12 +1996,12 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                warning->opt_key = warning_key;
             }
 
-            if (warning_key.empty() && m_default_object_config.default_jerk > 0) {
+            if (warning_key.empty() && m_default_object_config.default_jerk.values.front() > 0) {
                std::vector<std::string> jerk_to_check = {"default_jerk",     "outer_wall_jerk",    "inner_wall_jerk", "infill_jerk",
                                                          "top_surface_jerk", "initial_layer_jerk", "travel_jerk"};
                const auto               max_jerk = std::min(m_config.machine_max_jerk_x.values[0], m_config.machine_max_jerk_y.values[0]);
                warning_key.clear();
-               if (m_default_object_config.default_jerk > 0)
+               if (m_default_object_config.default_jerk.values.front() > 0)
                     warning_key = check_motion_ability_object_setting(jerk_to_check, max_jerk);
                if (!warning_key.empty()) {
                     warning->string = L(
@@ -2008,7 +2014,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
 
             // check  junction deviation
             const auto max_junction_deviation = m_config.machine_max_junction_deviation.values[0];
-            if (warning_key.empty() && m_default_object_config.default_junction_deviation.value > max_junction_deviation) {
+            if (warning_key.empty() && m_default_object_config.default_junction_deviation.values.front() > max_junction_deviation) {
                 warning->string  = L( "Junction deviation setting exceeds the printer's maximum value "
                                       "(machine_max_junction_deviation).\nOrca will "
                                       "automatically cap the junction deviation to ensure it doesn't surpass the printer's "
@@ -2019,7 +2025,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
             
             // check acceleration
             const auto max_accel = m_config.machine_max_acceleration_extruding.values[0];
-            if (warning_key.empty() && m_default_object_config.default_acceleration > 0 && max_accel > 0) {
+            if (warning_key.empty() && m_default_object_config.default_acceleration.values.front() > 0 && max_accel > 0) {
                const bool support_travel_acc = (m_config.gcode_flavor == gcfRepetier || m_config.gcode_flavor == gcfMarlinFirmware ||
                                                 m_config.gcode_flavor == gcfRepRapFirmware);
 
@@ -3245,14 +3251,14 @@ void Print::_make_wipe_tower()
                         volume_to_purge *= m_config.flush_multiplier;
 
                         // Not all of that can be used for infill purging:
-                        // volume_to_purge -= (float)m_config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id);
+                        // volume_to_purge -= (float)get_value_at(m_config, m_config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, extruder_id);
 
                         // try to assign some infills/objects for the wiping:
                         volume_to_purge = layer_tools.wiping_extrusions().mark_wiping_extrusions(*this, current_extruder_id, extruder_id,
                                                                                                  volume_to_purge);
 
                         // add back the minimal amount toforce on the wipe tower:
-                        // volume_to_purge += (float)m_config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id);
+                        // volume_to_purge += (float)get_value_at(m_config, m_config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, extruder_id);
 
                         // request a toolchange at the wipe tower with at least volume_to_wipe purging amount
                         wipe_tower.plan_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
@@ -3382,14 +3388,14 @@ void Print::_make_wipe_tower()
                             volume_to_wipe = wipe_volumes[current_extruder_id][extruder_id]; // total volume to wipe after this toolchange
                             volume_to_wipe *= m_config.flush_multiplier;
                             // Not all of that can be used for infill purging:
-                            volume_to_wipe -= (float) m_config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id);
+                            volume_to_wipe -= (float) get_value_at(m_config, m_config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, extruder_id);
 
                             // try to assign some infills/objects for the wiping:
                             volume_to_wipe = layer_tools.wiping_extrusions().mark_wiping_extrusions(*this, current_extruder_id, extruder_id,
                                                                                                     volume_to_wipe);
 
                             // add back the minimal amount toforce on the wipe tower:
-                            volume_to_wipe += (float) m_config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id);
+                            volume_to_wipe += (float) get_value_at(m_config, m_config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament, extruder_id);
                         }
 
                         // request a toolchange at the wipe tower with at least volume_to_wipe purging amount
@@ -3445,6 +3451,7 @@ void Print::_make_wipe_tower()
                                                   m_wipe_tower_data.z_and_depth_pairs, m_wipe_tower_data.brim_width,
                                                   config().wipe_tower_rotation_angle, config().wipe_tower_cone_angle,
                                                   {scale_(origin.x()), scale_(origin.y())});
+        m_fake_wipe_tower.outer_wall = wipe_tower.get_outer_wall();
     }
 }
 
@@ -4909,6 +4916,42 @@ PrintRegion *PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_reg
 int PrintObjectRegions::FuzzySkinPaintedRegion::parent_print_object_region_id(const LayerRangeRegions &layer_range) const
 {
     return this->parent_print_object_region(layer_range)->print_object_region_id();
+}
+
+ExtrusionLayers FakeWipeTower::getTrueExtrusionLayersFromWipeTower() const 
+{ 
+    ExtrusionLayers wtels;
+    wtels.type = ExtrusionLayersType::WIPE_TOWER;
+    std::vector<float> layer_heights;
+    layer_heights.reserve(outer_wall.size());
+    auto pre = outer_wall.begin();
+    for (auto it = outer_wall.begin(); it != outer_wall.end(); ++it) {
+        if (it == outer_wall.begin())
+            layer_heights.push_back(it->first);
+        else {
+            layer_heights.push_back(it->first - pre->first);
+            ++pre;
+        }
+    }
+    Point trans = {scale_(pos.x()), scale_(pos.y())};
+    for (auto it = outer_wall.begin(); it != outer_wall.end(); ++it) {
+        int index = std::distance(outer_wall.begin(), it);
+        ExtrusionLayer el;
+        ExtrusionPaths paths;
+        paths.reserve(it->second.size());
+        for (auto& polyline : it->second) {
+            ExtrusionPath path(ExtrusionRole::erWipeTower, 0.0, 0.0, layer_heights[index]);
+            path.polyline = polyline;
+            for (auto& p : path.polyline.points)
+                p += trans;
+            paths.push_back(path);
+        }
+        el.paths = std::move(paths);
+        el.bottom_z = it->first - layer_heights[index];
+        el.layer = nullptr;
+        wtels.push_back(el);
+    }
+    return wtels;
 }
 
 } // namespace Slic3r

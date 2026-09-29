@@ -638,7 +638,7 @@ void Selection::set_deserialized(EMode mode, const std::vector<std::pair<size_t,
     set_bounding_boxes_dirty();
 }
 
-void Selection::clear()
+void Selection::clear(bool notify_sidebar)
 {
     if (!m_valid)
         return;
@@ -682,7 +682,8 @@ void Selection::clear()
 #endif
 
     // #et_FIXME fake KillFocus from sidebar
-    wxGetApp().plater()->canvas3D()->handle_sidebar_focus_event("", false);
+    if (notify_sidebar)
+        wxGetApp().plater()->canvas3D()->handle_sidebar_focus_event("", false);
 }
 
 // Update the selection based on the new instance IDs.
@@ -3169,11 +3170,8 @@ void Selection::paste_objects_from_clipboard()
 
         for (ModelInstance* inst : dst_object->instances) {
             inst->set_offset(displacement);
-
-            //BBS init asssmble transformation
-            Geometry::Transformation t = inst->get_transformation();
-            inst->set_assemble_transformation(t);
         }
+        m_model->InitializeAssemblyPositions({dst_object});
 
         object_idxs.push_back(m_model->objects.size() - 1);
 #ifdef _DEBUG

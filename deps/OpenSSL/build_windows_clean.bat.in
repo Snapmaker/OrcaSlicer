@@ -1,0 +1,37 @@
+@echo off
+
+for /f "delims==" %%V in ('set') do set "%%V="
+
+set "SystemRoot=%~1"
+set "SystemDrive=%~2"
+set "ComSpec=%~3"
+set "TEMP=%~4"
+set "TMP=%~5"
+set "NUMBER_OF_PROCESSORS=%~6"
+set "PROCESSOR_ARCHITECTURE=%~7"
+set "PROCESSOR_IDENTIFIER=%~8"
+set "PROCESSOR_LEVEL=%~9"
+shift
+shift
+shift
+shift
+shift
+shift
+shift
+shift
+shift
+set "PROCESSOR_REVISION=%~1"
+set "ProgramData=%~2"
+set "ProgramFiles=%~3"
+set "ProgramFiles(x86)=%~4"
+set "ProgramW6432=%~5"
+set "USERPROFILE=%~6"
+set "PATHEXT=%~7"
+set "NMAKE_ARGS=%~8"
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0\"
+
+call "@CMAKE_GENERATOR_INSTANCE@\VC\Auxiliary\Build\vcvarsall.bat" x64
+if errorlevel 1 exit /b %ERRORLEVEL%
+
+nmake %NMAKE_ARGS%
+exit /b %ERRORLEVEL%

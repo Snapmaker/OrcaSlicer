@@ -35,6 +35,9 @@ class http_headers
 public:
     std::string get_url() { return url; }
 
+    // Case-insensitive lookup with surrounding whitespace trimmed.
+    std::string get_header(const std::string& name) const;
+
     int content_length()
     {
         auto request = headers.find("content-length");
@@ -85,6 +88,18 @@ public:
     public:
         virtual ~Response()                                   = default;
         virtual void write_response(std::stringstream& ssOut) = 0;
+
+        // Forwarded conditional request headers, used by ResponseFile to implement
+        // 304 Not Modified revalidation (If-Modified-Since / If-None-Match).
+        void set_conditional_headers(const std::string& if_modified_since, const std::string& if_none_match)
+        {
+            m_if_modified_since = if_modified_since;
+            m_if_none_match     = if_none_match;
+        }
+
+    protected:
+        std::string m_if_modified_since;
+        std::string m_if_none_match;
     };
 
     class ResponseNotFound : public Response

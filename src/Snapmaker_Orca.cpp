@@ -4991,6 +4991,28 @@ int CLI::run(int argc, char **argv)
                         print->apply(model, new_print_config);
                         BOOST_LOG_TRIVIAL(info) << boost::format("set no_check to %1%:")%no_check;
                         print->set_no_check_flag(no_check);//BBS
+                        // CLI guard: check high/low temp filament mixing.
+                        // The GUI has Plater::sync_filament_temp_mixing_notification()
+                        // which respects user preferences. For CLI we always block.
+                        if (print_fff)
+                        {
+                            const auto& pcfg = print_fff->config();
+                            const auto& extruders = print_fff->extruders();
+                            std::vector<std::string> ftypes;
+                            ftypes.reserve(extruders.size());
+                            for (unsigned int eid : extruders)
+                                ftypes.push_back(pcfg.filament_type.get_at(eid));
+                            if (!Print::check_multi_filaments_compatibility(ftypes)) {
+                                boost::nowide::cerr
+                                    << "Cannot print multiple filaments which have "
+                                       "large difference of temperature together."
+                                    << std::endl;
+                                record_exit_reson(outfile_dir, CLI_FILAMENTS_DIFFERENT_TEMP,
+                                                  index + 1, cli_errors[CLI_FILAMENTS_DIFFERENT_TEMP],
+                                                  sliced_info);
+                                flush_and_exit(CLI_FILAMENTS_DIFFERENT_TEMP);
+                            }
+                        }
                         StringObjectException warning;
                         auto err = print->validate(&warning);
                         if (!err.string.empty()) {
@@ -5006,7 +5028,7 @@ int CLI::run(int argc, char **argv)
                                     case STRING_EXCEPT_FILAMENT_NOT_MATCH_BED_TYPE:
                                         validate_error = CLI_FILAMENT_NOT_MATCH_BED_TYPE;
                                         break;
-                                    case STRING_EXCEPT_FILAMENTS_DIFFERENT_TEMP:
+                                    case STRING_EXCEPT_FILAMENTS_MIXING_TEMP:
                                         validate_error = CLI_FILAMENTS_DIFFERENT_TEMP;
                                         break;
                                     case STRING_EXCEPT_OBJECT_COLLISION_IN_SEQ_PRINT:
@@ -6364,6 +6386,12 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 extern "C" {
+// The launcher owns the Sentry SDK lifetime. Its bury-point state is
+// separate from the DLL's state so it can load Mesa before this DLL.
+__declspec(dllexport) void __stdcall Snapmaker_Orca_set_sentry_initialized(int initialized) { set_sentry_flags(initialized != 0); }
+
+__declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return get_privacy_policy() ? 1 : 0; }
+
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
         // Convert wchar_t arguments to UTF8.

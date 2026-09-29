@@ -379,7 +379,7 @@ public:
     // BBS
     Vec2d get_size() const { return Vec2d(m_width, m_depth); }
     ModelObjectPtrs get_objects() { return m_model->objects; }
-    ModelObjectPtrs get_objects_on_this_plate();
+    ModelObjectPtrs get_objects_on_this_plate() const;
     ModelInstance* get_instance(int obj_id, int instance_id);
     BoundingBoxf3 get_objects_bounding_box();
 
@@ -775,6 +775,7 @@ public:
 
     //get a plate pointer by index
     PartPlate* get_plate(int index);
+    const PartPlate* get_plate(int index) const;
 
     void get_height_limits(float& height_to_lid, float& height_to_rod)
     {

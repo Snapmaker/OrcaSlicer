@@ -1,11 +1,9 @@
 #include <catch2/catch.hpp>
 
-// NSVGUtils needs the parser, in the application it is compiled by libslic3r_gui (BitmapCache.cpp).
-// It has to be the first include of nanosvg.h in this file.
+// nanosvg's parser implementation is compiled once for this test executable, in libslic3r_tests.cpp.
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#define NANOSVG_IMPLEMENTATION
 #include "nanosvg/nanosvg.h"
 
 

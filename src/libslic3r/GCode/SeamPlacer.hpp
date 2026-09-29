@@ -39,10 +39,22 @@ enum class EnforcedBlockedSeamPoint {
   Enforced = 2,
 };
 
+// Length of an enforced candidate patch [first, second) on a closed perimeter of `perimeter_size` points.
+// Indices are offsets in the layer, not local perimeter indices.
+inline size_t enforced_patch_length(size_t first, size_t second, size_t perimeter_size) {
+  if (second < first) {
+    // Count [start, end) across the closing edge, independently of the contour's start.
+    // Subtract indices first: they are offsets in the layer, not local perimeter indices.
+    return perimeter_size - (first - second);
+  } else {
+    return second - first;
+  }
+}
+
 // struct representing single perimeter loop
 struct Perimeter {
   size_t start_index{};
-  size_t end_index{}; //inclusive!
+  size_t end_index{}; //exclusive (one-past-the-end)
   size_t seam_index{};
   float flow_width{};
 

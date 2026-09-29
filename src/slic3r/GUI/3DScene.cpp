@@ -1141,7 +1141,7 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         return;
 
     GLShaderProgram* sink_shader  = GUI::wxGetApp().get_shader("flat");
-    GLShaderProgram* edges_shader = GUI::wxGetApp().get_shader("flat");
+    const bool canRenderSinkingContours = m_show_sinking_contours && sink_shader != nullptr;
 
     if (type == ERenderType::Transparent) {
         glsafe(::glEnable(GL_BLEND));
@@ -1206,19 +1206,17 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
             volume.first->force_transparent = false;
 #endif // ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
 
-        // render sinking contours of non-hovered volumes
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            if (m_show_sinking_contours) {
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() && volume.first->hover == GLVolume::HS_None &&
-                    !volume.first->force_sinking_contours) {
-                    volume.first->render_sinking_contours();
-                }
+        if (canRenderSinkingContours)
+        {
+            const bool needSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                            volume.first->hover == GLVolume::HS_None && !volume.first->force_sinking_contours;
+            if (needSinkingContour)
+            {
+                sink_shader->start_using();
+                volume.first->render_sinking_contours();
+                shader->start_using();
             }
-            sink_shader->stop_using();
         }
-        shader->start_using();
 
         if (!volume.first->model.is_initialized())
             shader->set_uniform("uniform_color", volume.first->render_color);
@@ -1282,22 +1280,29 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
     }
 
-    if (m_show_sinking_contours) {
-        shader->stop_using();
-        if (sink_shader != nullptr) {
-            sink_shader->start_using();
-            for (GLVolumeWithIdAndZ& volume : to_render) {
-                // render sinking contours of hovered/displaced volumes
-                if (volume.first->is_sinking() && !volume.first->is_below_printbed() &&
-                    (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours)) {
-                    glsafe(::glDepthFunc(GL_ALWAYS));
-                    volume.first->render_sinking_contours();
-                    glsafe(::glDepthFunc(GL_LESS));
-                }
+    if (canRenderSinkingContours)
+    {
+        bool sinkShaderUsing = false;
+        for (GLVolumeWithIdAndZ& volume : to_render)
+        {
+            const bool needHoveredSinkingContour = volume.first->is_sinking() && !volume.first->is_below_printbed() &&
+                                                   (volume.first->hover != GLVolume::HS_None || volume.first->force_sinking_contours);
+            if (!needHoveredSinkingContour)
+                continue;
+
+            if (!sinkShaderUsing)
+            {
+                sink_shader->start_using();
+                sinkShaderUsing = true;
             }
-            sink_shader->start_using();
+
+            glsafe(::glDepthFunc(GL_ALWAYS));
+            volume.first->render_sinking_contours();
+            glsafe(::glDepthFunc(GL_LESS));
         }
-        shader->start_using();
+
+        if (sinkShaderUsing)
+            shader->start_using();
     }
 
     if (disable_cullface)

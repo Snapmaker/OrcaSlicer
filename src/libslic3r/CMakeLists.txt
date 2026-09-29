@@ -144,6 +144,8 @@ set(lisbslic3r_sources
     Barcode.hpp
     CodeEmboss.cpp
     CodeEmboss.hpp
+    SimpleShape.cpp
+    SimpleShape.hpp
     enum_bitmask.hpp
     Execution/Execution.hpp
     Execution/ExecutionSeq.hpp

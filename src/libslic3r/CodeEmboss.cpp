@@ -626,7 +626,8 @@ std::vector<ModelVolume *> get_code_volumes(const ModelObject &object, const std
 
 std::string code_part_path_in_3mf(const std::string &group_id, CodePartRole role)
 {
-    return "3D/code_" + group_id + "_" + to_string(role) + ".svg";
+    // unique per generated data: copies of a code share the path until one of them is edited
+    return "3D/code_" + group_id + "_" + to_string(role) + "_" + create_code_group_id() + ".svg";
 }
 
 const char *to_string(CodePartRole role)

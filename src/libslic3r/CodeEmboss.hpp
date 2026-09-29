@@ -134,7 +134,7 @@ std::string create_code_group_id();
 // Volumes of object, which are parts of the code with group_id
 std::vector<ModelVolume *> get_code_volumes(const ModelObject &object, const std::string &group_id);
 
-// Path of SVG in .3mf archive for code part
+// Path of SVG in .3mf archive for code part, unique for each call
 std::string code_part_path_in_3mf(const std::string &group_id, CodePartRole role);
 
 const char *to_string(CodePartRole role);

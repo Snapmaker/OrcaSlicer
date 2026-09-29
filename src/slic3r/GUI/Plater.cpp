@@ -3499,9 +3499,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
     auto p_mainframe = wxGetApp().mainframe;
     auto cfg = preset_bundle.printers.get_edited_preset().config;
 
-    const auto& appconfig = wxGetApp().app_config;
-
-    bool use_new_connection = appconfig->get("use_new_connect") == "true";
+    const bool use_new_connection = wxGetApp().physical_printer_connected();
 
     auto printer_config     = wxGetApp().preset_bundle->printers.get_edited_preset().config;
     auto printer_model_opt  = printer_config.option<ConfigOptionString>("printer_model");
@@ -3525,7 +3523,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
         const bool showing_u1_device = p_mainframe->m_printer_view && p_mainframe->m_printer_view->is_u1_device_page();
         // Non-U1: always leave path=2 for missing_connection / print_host. Keep skipping
-        // when use_new_connect already sits on the GIF (connect flow loads path=2 afterwards).
+        // when the physical connection already sits on the GIF (connect flow loads path=2 afterwards).
         const bool load_non_u1_page = !is_snapmaker_u1 && reload_printer_view && (!use_new_connection || showing_u1_device);
 
         if (load_non_u1_page) {
@@ -3692,7 +3690,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         update_printer_thumbnail();
     }
         
-    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !use_new_connection);
+    p_mainframe->show_device(preset_bundle.use_bbl_device_tab() && !wxGetApp().physical_printer_connected());
     p_mainframe->m_tabpanel->SetSelection(p_mainframe->m_tabpanel->GetSelection());
 }
 
@@ -15692,7 +15690,7 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
     update_sidebar();
     int old_sel = e.GetOldSelection();
     if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor &&
-        wxGetApp().app_config->get("use_new_connect") != "true") {
+        !wxGetApp().physical_printer_connected()) {
         if (!wxGetApp().getAgent()) {
             e.Veto();
             BOOST_LOG_TRIVIAL(info) << boost::format("skipped tab switch from %1% to %2%, lack of network plugins") % old_sel % new_sel;
@@ -21599,7 +21597,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         is_snapmaker_u1           = boost::icontains(printer_model, "Snapmaker") && boost::icontains(printer_model, "U1");
     }
 
-    if (wxGetApp().app_config->get("use_new_connect") == "true" || is_snapmaker_u1) {
+    if (wxGetApp().physical_printer_connected() || is_snapmaker_u1) {
         // firstly upload and open upload download dialog,
         // get default name       
         // Obtain default output path

@@ -820,11 +820,6 @@ void AppConfig::save()
             continue;
         }
         for (const auto& kvp : category.second) {
-            // SM Orca
-            if (kvp.first == "use_new_connect") {
-                j[category.first][kvp.first] = false;
-                continue;
-            }
             if (kvp.second == "true") {
                 j[category.first][kvp.first] = true;
                 continue;

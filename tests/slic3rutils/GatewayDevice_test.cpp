@@ -3,6 +3,8 @@
 #include "slic3r/Utils/GatewayDevice.hpp"
 #include "slic3r/Utils/GatewayService.hpp"
 
+#include "libslic3r/PresetBundle.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -127,6 +129,29 @@ const nlohmann::json valid_device_snapshot{{"ok", true},
 
 } // namespace
 
+namespace {
+
+nlohmann::json machine_objects()
+{
+    return nlohmann::json{{"extruder", nlohmann::json{{"nozzle_diameter", 0.4}, {"nozzle_volume_type", "standard"}}},
+                          {"extruder1", nlohmann::json{{"nozzle_diameter", "0.6"}, {"nozzle_volume_type", "high_flow"}}},
+                          {"print_task_config",
+                           nlohmann::json{{"filament_vendor", nlohmann::json::array({"Snapmaker", "Polymaker"})},
+                                          {"filament_type", nlohmann::json::array({"PLA", "PETG"})},
+                                          {"filament_sub_type", nlohmann::json::array({"Matte", "NONE"})},
+                                          {"filament_official", nlohmann::json::array({true, false})},
+                                          {"filament_exist", nlohmann::json::array({true, true})},
+                                          {"filament_color", nlohmann::json::array({4281179737, 4294967295})},
+                                          {"filament_color_rgba", nlohmann::json::array({"2D9E59FF", "FFFFFFFF"})},
+                                          {"extruder_map_table", nlohmann::json::array({0, 1})},
+                                          {"filament_color_multi",
+                                           nlohmann::json::array(
+                                               {nlohmann::json{{"mode", 2}, {"colors", nlohmann::json::array({"2D9E59", "FFFFFF"})}},
+                                                nlohmann::json{{"mode", 0}, {"colors", nlohmann::json::array({"FFFFFF"})}}})}}}};
+}
+
+} // namespace
+
 TEST_CASE("GatewayDevice query_machine_info parses the device snapshot", "[gateway][device]")
 {
     ServiceFixture fixture;
@@ -144,7 +169,92 @@ TEST_CASE("GatewayDevice query_machine_info parses the device snapshot", "[gatew
     REQUIRE(nozzles == std::vector<std::string>{"0.4", "0.4", "0.8", "0.6"});
     // Flow types follow the sorted extruder objects; the 0.25 extruder does not participate.
     REQUIRE(flows == std::vector<std::string>{"high_flow", "standard", "high_flow", "standard"});
-    REQUIRE(GatewayDevice::is_device_connected(fixture.service));
+}
+
+TEST_CASE("GatewayDevice parse_machine_slots parses the complete object query", "[gateway][device][machine-slots]")
+{
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE(GatewayDevice::parse_machine_slots(nlohmann::json{{"objects", machine_objects()}}, slots));
+    REQUIRE(slots.size() == 2);
+    REQUIRE(slots[0].index == 0);
+    REQUIRE(slots[0].filament_info == "Snapmaker PLA Matte");
+    REQUIRE(slots[0].filament_type == "PLA");
+    REQUIRE(slots[0].nozzle_info == "0.4");
+    REQUIRE(slots[0].nozzle_volume_type == "standard");
+    REQUIRE(slots[0].color_info == "#2D9E59");
+    REQUIRE(slots[0].multiColors == std::vector<std::string>{"#2D9E59", "#FFFFFF"});
+    REQUIRE(slots[1].filament_info == "Polymaker PETG");
+    REQUIRE(slots[1].nozzle_info == "0.6");
+    REQUIRE(slots[1].nozzle_volume_type == "high_flow");
+}
+
+TEST_CASE("GatewayDevice parse_machine_slots supports legacy and missing optional fields", "[gateway][device][machine-slots]")
+{
+    nlohmann::json objects = machine_objects();
+    objects["print_task_config"].erase("filament_exist");
+    objects["print_task_config"].erase("filament_color_rgba");
+    objects["print_task_config"].erase("filament_color_multi");
+    objects["extruder1"].erase("nozzle_volume_type");
+
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE(GatewayDevice::parse_machine_slots(objects, slots));
+    REQUIRE(slots.size() == 2);
+    REQUIRE(slots[0].color_info == "#2D9E59");
+    REQUIRE(slots[0].multiColors == std::vector<std::string>{"#2D9E59"});
+    REQUIRE(slots[1].filament_info == "Polymaker PETG");
+    REQUIRE(slots[1].nozzle_info == "0.6");
+    REQUIRE(slots[1].nozzle_volume_type == "standard");
+}
+
+TEST_CASE("GatewayDevice parse_machine_slots overrides only present config nozzles", "[gateway][device][machine-slots]")
+{
+    nlohmann::json objects                           = machine_objects();
+    objects["print_task_config"]["nozzle_diameters"] = nlohmann::json::array({0.8});
+
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE(GatewayDevice::parse_machine_slots(objects, slots));
+    REQUIRE(slots.size() == 2);
+    REQUIRE(slots[0].nozzle_info == "0.8");
+    REQUIRE(slots[1].nozzle_info == "0.6");
+}
+
+TEST_CASE("GatewayDevice parse_machine_slots rejects malformed payloads", "[gateway][device][machine-slots]")
+{
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE_FALSE(GatewayDevice::parse_machine_slots(nlohmann::json::object(), slots));
+    REQUIRE_FALSE(GatewayDevice::parse_machine_slots(nlohmann::json{{"objects", nlohmann::json::object()}}, slots));
+    REQUIRE_FALSE(
+        GatewayDevice::parse_machine_slots(nlohmann::json{{"objects", nlohmann::json{{"print_task_config", nlohmann::json::object()}}}},
+                                           slots));
+
+    nlohmann::json missing_nozzle = machine_objects();
+    missing_nozzle.erase("extruder");
+    missing_nozzle.erase("extruder1");
+    REQUIRE_FALSE(GatewayDevice::parse_machine_slots(missing_nozzle, slots));
+    REQUIRE(slots.empty());
+}
+
+TEST_CASE("GatewayDevice machine_slots_equal includes nozzle flow", "[gateway][device][machine-slots]")
+{
+    std::vector<ConnectMachineInfo> left;
+    std::vector<ConnectMachineInfo> right;
+    REQUIRE(GatewayDevice::parse_machine_slots(machine_objects(), left));
+    right = left;
+    REQUIRE(GatewayDevice::machine_slots_equal(left, right));
+    right[1].nozzle_volume_type = "standard";
+    REQUIRE_FALSE(GatewayDevice::machine_slots_equal(left, right));
+}
+
+TEST_CASE("GatewayDevice delta_affects_machine_slots ignores unrelated objects", "[gateway][device][machine-slots]")
+{
+    REQUIRE(GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"print_task_config", nlohmann::json::object()}}));
+    REQUIRE(GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"extruder", nlohmann::json{{"temperature", 25}}}}));
+    REQUIRE(GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"extruder1", nlohmann::json{{"nozzle_diameter", 0.2}}}}));
+    REQUIRE(
+        GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"objects", nlohmann::json{{"extruder2", nlohmann::json::object()}}}}));
+    REQUIRE_FALSE(GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"print_stats", nlohmann::json::object()}}));
+    REQUIRE_FALSE(GatewayDevice::delta_affects_machine_slots(nlohmann::json{{"extruder_sensor", nlohmann::json::object()}}));
+    REQUIRE_FALSE(GatewayDevice::delta_affects_machine_slots(nlohmann::json::array()));
 }
 
 TEST_CASE("GatewayDevice query_machine_info falls back to identity fields", "[gateway][device]")
@@ -215,7 +325,6 @@ TEST_CASE("GatewayDevice query_machine_info rejects malformed payloads", "[gatew
     std::vector<std::string> flows{"untouched"};
     std::string              name = "untouched";
     REQUIRE_FALSE(GatewayDevice::query_machine_info(fixture.service, model, nozzles, flows, name));
-    REQUIRE_FALSE(GatewayDevice::is_device_connected(fixture.service));
     // Outputs are not modified on failure.
     REQUIRE(model == "untouched");
     REQUIRE(nozzles == std::vector<std::string>{"untouched"});
@@ -234,7 +343,6 @@ TEST_CASE("GatewayDevice query_machine_info reports http errors", "[gateway][dev
     std::vector<std::string> flows;
     std::string              name;
     REQUIRE_FALSE(GatewayDevice::query_machine_info(fixture.service, model, nozzles, flows, name));
-    REQUIRE_FALSE(GatewayDevice::is_device_connected(fixture.service));
 }
 
 TEST_CASE("GatewayDevice tolerates a null gateway", "[gateway][device]")
@@ -244,7 +352,6 @@ TEST_CASE("GatewayDevice tolerates a null gateway", "[gateway][device]")
     std::vector<std::string> flows;
     std::string              name;
     REQUIRE_FALSE(GatewayDevice::query_machine_info(nullptr, model, nozzles, flows, name));
-    REQUIRE_FALSE(GatewayDevice::is_device_connected(nullptr));
 }
 
 TEST_CASE("GatewayDevice query_machine_info nozzle_volume_type edge cases", "[gateway][device]")
@@ -286,7 +393,7 @@ TEST_CASE("GatewayDevice query_machine_info nozzle_volume_type edge cases", "[ga
     }
     SECTION("a partial extruder report leaves flow types empty")
     {
-        nlohmann::json snapshot     = valid_device_snapshot;
+        nlohmann::json snapshot = valid_device_snapshot;
         snapshot["data"]["objects"].erase("extruder4");
         fixture.http->device_response = snapshot.dump();
 

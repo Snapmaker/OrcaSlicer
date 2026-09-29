@@ -1,10 +1,16 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace Slic3r { namespace Gateway {
+struct ConnectMachineInfo;
+
+namespace Slic3r {
+
+namespace Gateway {
 
 class GatewayService;
 
@@ -25,9 +31,9 @@ public:
                                    std::vector<std::string>&              out_nozzle_volume_types,
                                    std::string&                           device_name);
 
-    // True when the gateway exposes a product snapshot for the current device
-    // through GET /api/cache/all.
-    static bool is_device_connected(const std::shared_ptr<GatewayService>& gateway);
+    static bool parse_machine_slots(const nlohmann::json& result, std::vector<ConnectMachineInfo>& slots);
+    static bool delta_affects_machine_slots(const nlohmann::json& delta);
+    static bool machine_slots_equal(const std::vector<ConnectMachineInfo>& left, const std::vector<ConnectMachineInfo>& right);
 };
 
 }} // namespace Slic3r::Gateway

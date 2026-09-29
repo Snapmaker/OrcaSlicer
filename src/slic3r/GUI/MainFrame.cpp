@@ -1660,7 +1660,7 @@ bool MainFrame::can_send_gcode() const
             return true;
         }
 
-        if (wxGetApp().app_config->get("use_new_connect") == "true") {
+        if (wxGetApp().physical_printer_connected()) {
             return true;
         } else {
             auto cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;

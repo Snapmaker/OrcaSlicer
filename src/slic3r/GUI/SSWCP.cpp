@@ -1175,7 +1175,6 @@ void SSWCP_Instance::test_mqtt_request() {
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
-        // host->async_get_printer_info([self](const json& response) { SSWCP_Instance::on_mqtt_msg_arrived(self, response); });
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -1694,22 +1693,6 @@ void SSWCP_MachineOption_Instance::process()
         sw_SendGCodes();
     } else if (m_cmd == "sw_FileGetStatus") {
         sw_FileGetStatus();
-    } else if (m_cmd == "sw_SystemGetDeviceInfo") {
-        sw_SystemGetDeviceInfo();
-    } else if (m_cmd == "sw_GetMachineState") {
-        sw_GetMachineState();
-    } else if (m_cmd == "sw_SubscribeMachineState") {
-        sw_SubscribeMachineState();
-    } else if (m_cmd == "sw_GetMachineObjects") {
-        sw_GetMachineObjects();
-    } else if (m_cmd == "sw_SetSubscribeFilter") {
-        sw_SetMachineSubscribeFilter();
-    } else if (m_cmd == "sw_StopMachineStateSubscription") {
-        sw_UnSubscribeMachineState();
-    } else if (m_cmd == "sw_GetPrinterInfo") {
-        sw_GetPrintInfo();
-    } else if (m_cmd == "sw_GetMachineSystemInfo") {
-        sw_GetSystemInfo();
     } else if (m_cmd == "sw_MachinePrintStart") {
         sw_MachinePrintStart();
     } else if (m_cmd == "sw_MachinePrintPause") {
@@ -1801,152 +1784,6 @@ void SSWCP_MachineOption_Instance::process()
         sw_GetDeviceDataStorageSpace();
     }
     else {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_UnSubscribeMachineState() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            m_status = 1;
-            m_msg    = "failure";
-            send_to_js();
-            finish_job();
-        }
-
-        auto weak_self  = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
-        host->async_unsubscribe_machine_info(key, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
-        SSWCP::stop_subscribe_machine();
-
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SubscribeMachineState() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            m_status = 1;
-            m_msg    = "failure";
-            send_to_js();
-            finish_job();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        std::string key       = m_event_id + std::to_string(int64_t(m_webview));
-        host->async_subscribe_machine_info(key, [weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_status_msg_arrived(self, response);
-            }
-        });
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_GetPrintInfo() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_printer_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    }
-    catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_GetMachineState() {
-    try {
-        if (m_param_data.count("objects")) {
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            std::vector<std::pair<std::string, std::vector<std::string>>> targets;
-
-            json items = m_param_data["objects"];
-            for (auto& [key, value] : items.items()) {
-                if (value.is_null()) {
-                    targets.push_back({key, {}});
-                } else {
-                    std::vector<std::string> items;
-                    if (value.is_array()) {
-                        for (size_t i = 0; i < value.size(); ++i) {
-                            items.push_back(value[i].get<std::string>());
-                        }
-                    } else {
-                        items.push_back(value.get<std::string>());
-                    }
-                    targets.push_back({key, items});
-                }
-            }
-
-            if (!host) {
-                handle_general_fail();
-                return;
-            }
-
-            auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-            host->async_get_machine_info(targets, [weak_self](const json& response) {
-                auto self = weak_self.lock();
-                if (self) {
-                    SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-                }
-            });
-        } else {
-            handle_general_fail();
-        }
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SystemGetDeviceInfo() {
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_device_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
-    } catch (const std::exception&) {
         handle_general_fail();
     }
 }
@@ -2102,98 +1939,6 @@ void SSWCP_MachineOption_Instance::sw_MachinePrintCancel()
                 SSWCP_Instance::on_mqtt_msg_arrived(self, response);
             }
         });
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_GetSystemInfo()
-{
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail();
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_system_info([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-    }
-    catch(std::exception& e){
-        handle_general_fail();
-    }
-}
-
-void SSWCP_MachineOption_Instance::sw_SetMachineSubscribeFilter()
-{
-    try {
-        if (m_param_data.count("objects")) {
-            std::shared_ptr<PrintHost> host = nullptr;
-            wxGetApp().get_connect_host(host);
-            std::vector<std::pair<std::string, std::vector<std::string>>> targets;
-
-            json items = m_param_data["objects"];
-            for (auto& [key, value] : items.items()) {
-                if (value.is_null()) {
-                    targets.push_back({key, {}});
-                } else {
-                    std::vector<std::string> items;
-                    if (value.is_array()) {
-                        for (size_t i = 0; i < value.size(); ++i) {
-                            items.push_back(value[i].get<std::string>());
-                        }
-                    } else {
-                        items.push_back(value.get<std::string>());
-                    }
-                    targets.push_back({key, items});
-                }
-            }
-
-            if (!host) {
-                handle_general_fail();
-            } else {
-                auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-                host->async_set_machine_subscribe_filter(targets, [weak_self](const json& response) {
-                    auto self = weak_self.lock();
-                    if (self) {
-                        SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-                    }
-                });
-            }
-        } else {
-            handle_general_fail();
-        }
-
-    } catch (std::exception& e) {
-        handle_general_fail();
-    }
-}
-void SSWCP_MachineOption_Instance::sw_GetMachineObjects()
-{
-    try {
-        std::shared_ptr<PrintHost> host = nullptr;
-        wxGetApp().get_connect_host(host);
-
-        if (!host) {
-            handle_general_fail(-1, "Can't find the active machine");
-            return;
-        }
-
-        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
-        host->async_get_machine_objects([weak_self](const json& response) {
-            auto self = weak_self.lock();
-            if (self) {
-                SSWCP_Instance::on_mqtt_msg_arrived(self, response);
-            }
-        });
-
     } catch (std::exception& e) {
         handle_general_fail();
     }
@@ -4173,7 +3918,6 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
         wxGetApp().CallAfter([]() {
 
             wxGetApp().app_config->clear_filament_extruder_map();
-            wxGetApp().preset_bundle->m_connect_machine_info_list.clear();
             wxGetApp().load_current_presets();
         });
 
@@ -5832,21 +5576,12 @@ std::unordered_set<std::string> SSWCP::m_machine_find_cmd_list = {
 };
 
 std::unordered_set<std::string> SSWCP::m_machine_option_cmd_list = {
-    "system.get_device_info",
     "sw_SendGCodes",
     "sw_FileGetStatus",
-    "sw_SystemGetDeviceInfo",
-    "sw_GetMachineState",
-    "sw_SubscribeMachineState",
-    "sw_GetMachineObjects",
-    "sw_SetSubscribeFilter",
-    "sw_StopMachineStateSubscription",
-    "sw_GetPrinterInfo",
     "sw_MachinePrintStart",
     "sw_MachinePrintPause",
     "sw_MachinePrintResume",
     "sw_MachinePrintCancel",
-    "sw_GetMachineSystemInfo",
     "sw_MachineFilesRoots",
     "sw_MachineFilesMetadata",
     "sw_MachineFilesThumbnails",
@@ -5992,31 +5727,6 @@ void SSWCP::renew_instance_timeout(SSWCP_Instance* instance) {
     m_instance_list.update_timeout(instance, DEFAULT_INSTANCE_TIMEOUT);
 }
 
-// Stop all machine subscriptions
-void SSWCP::stop_subscribe_machine()
-{
-    wxGetApp().CallAfter([]() {
-        std::vector<SSWCP_Instance*> instances_to_stop;
-
-        auto snapshot = m_instance_list.get_snapshot();
-
-        // Get all subscription instances to stop
-        for (const auto& instance : snapshot) {
-            if (instance.second->getType() == SSWCP_MachineFind_Instance::MACHINE_OPTION && instance.second->m_cmd == "sw_SubscribeMachineState") {
-                instances_to_stop.push_back(instance.first);
-            }
-        }
-
-        // Stop each instance
-        for (auto* instance : instances_to_stop) {
-            auto instance_ptr = m_instance_list.get(instance);
-            if (instance_ptr) {
-                (*instance_ptr)->finish_job();
-            }
-        }
-    });
-}
-
 // Stop all machine discovery instances
 void SSWCP::stop_machine_find() {
     wxGetApp().CallAfter([]() {
@@ -6134,135 +5844,6 @@ void SSWCP::update_active_filename(const std::string& filename)
 {
     m_active_gcode_filename = filename;
 }
-
-// query the info of the machine
-bool SSWCP::query_machine_info(std::shared_ptr<PrintHost>& host, MachineInfo& out, int timeout_second)
-{
-    if (!host) return false;
-
-    std::condition_variable cv;
-    std::shared_ptr<std::mutex> mutex(new std::mutex);
-    std::weak_ptr<std::mutex>   cb_mutex = mutex;
-    bool received = false;
-    bool timeout = false;
-    json system_info;
-
-    host->async_get_system_info(
-        [&, cb_mutex](const json& response) {
-            if (cb_mutex.expired()) {
-                return;
-            }
-            std::lock_guard<std::mutex> lock(*mutex);
-            if (!response.is_null() && !response.count("error")) {
-                system_info = response;
-            }
-            received = true;
-            cv.notify_one();
-        }
-    );
-
-    {
-        std::unique_lock<std::mutex> lock(*mutex);
-        auto predicate = [&received]() { return received; };
-        timeout = !cv.wait_for(lock, std::chrono::seconds(timeout_second), predicate);
-    }
-
-    if (!timeout && !system_info.is_null())
-        return SSWCPProtocol::parse_machine_info_response(system_info, out);
-    return false;
-}
-
-
-SSWCPProtocol::ResolveResult SSWCP::resolve_machine_info(std::shared_ptr<PrintHost>& host, int timeout_second)
-{
-    SSWCPProtocol::ResolveResult result;
-    if (!host) return result;
-
-    std::condition_variable cv;
-    std::shared_ptr<std::mutex> mutex(new std::mutex);
-    std::weak_ptr<std::mutex>   cb_mutex = mutex;
-    std::shared_ptr<bool>       done(new bool(false));
-    int                         received_count = 0;
-    const int                   expected_count = 2;
-    json                        system_info;
-    json                        objects_query;
-
-    auto on_system_info = [&, cb_mutex, done](const json& response) {
-        auto locked = cb_mutex.lock();
-        if (!locked) return;
-        std::lock_guard<std::mutex> lock(*locked);
-        if (*done) return;
-        if (!response.is_null() && !response.count("error"))
-            system_info = response;
-        if (++received_count >= expected_count) cv.notify_one();
-    };
-    auto on_objects_query = [&, cb_mutex, done](const json& response) {
-        auto locked = cb_mutex.lock();
-        if (!locked) return;
-        std::lock_guard<std::mutex> lock(*locked);
-        if (*done) return;
-        if (!response.is_null() && !response.count("error"))
-            objects_query = response;
-        if (++received_count >= expected_count) cv.notify_one();
-    };
-
-    // Send both requests in parallel; seq_ids are distinct so they never collide.
-    // Query up to 8 extruder objects. Moonraker ignores keys that don't exist on the printer,
-    // so extra entries are harmless. The parser dynamically discovers whatever is returned.
-    std::vector<std::pair<std::string, std::vector<std::string>>> extruder_targets;
-    extruder_targets.emplace_back("extruder", std::vector<std::string>{});
-    for (int i = 1; i <= 7; ++i)
-        extruder_targets.emplace_back("extruder" + std::to_string(i), std::vector<std::string>{});
-    host->async_get_system_info(on_system_info);
-    host->async_get_machine_info(extruder_targets, on_objects_query);
-
-    {
-        std::unique_lock<std::mutex> lock(*mutex);
-        cv.wait_for(lock, std::chrono::seconds(timeout_second),
-                    [&received_count, expected_count]() { return received_count >= expected_count; });
-        *done = true;
-    }
-    // --- Merge by field priority ---
-    MachineInfo& mi = result.info;
-    // model / device_name: system_info is authoritative, normalized for whitelist safety.
-    MachineInfo sys_mi;
-    bool        got_system = !system_info.is_null() && SSWCPProtocol::parse_machine_info_response(system_info, sys_mi);
-    if (got_system) {
-        mi.model       = SSWCPProtocol::normalize_machine_model(sys_mi.model);
-        mi.device_name = sys_mi.device_name;
-        // system_info nozzle data as fallback
-        mi.nozzle_diameters    = sys_mi.nozzle_diameters;
-        mi.nozzle_volume_types = sys_mi.nozzle_volume_types;
-    }
-    // nozzle: objects.query is preferred (real-time), overrides system_info.
-    std::vector<std::string> obj_diameters, obj_flows;
-    if (!objects_query.is_null() && SSWCPProtocol::parse_extruder_nozzle_info(objects_query, obj_diameters, obj_flows)) {
-        mi.nozzle_diameters    = std::move(obj_diameters);
-        // Only overwrite flows when objects.query actually reported them; otherwise keep
-        // whatever system_info provided so we never silently clear the user's flow config.
-        if (!obj_flows.empty())
-            mi.nozzle_volume_types = std::move(obj_flows);
-    }
-
-    // If the machine reported nozzle diameters but no flow types (neither system_info
-    // nor objects.query carried them), default to standard -- one per nozzle. This
-    // matches the read-side semantics (FlowType::nozzle_volume_types() pads missing
-    // entries with standard) and lets sync always write a complete, usable vector
-    // instead of silently skipping the update.
-    if (!mi.nozzle_diameters.empty() && mi.nozzle_volume_types.empty())
-        mi.nozzle_volume_types.assign(mi.nozzle_diameters.size(), FLOW_MODE_STANDARD);
-
-    // Determine status
-    if (mi.model.empty())
-        result.status = SSWCPProtocol::ResolveStatus::NoResponse;
-    else if (mi.nozzle_diameters.empty())
-        result.status = SSWCPProtocol::ResolveStatus::GotIdentity;
-    else
-        result.status = SSWCPProtocol::ResolveStatus::Complete;
-
-    return result;
-}
-
 
 MachineIPType* MachineIPType::getInstance()
 {

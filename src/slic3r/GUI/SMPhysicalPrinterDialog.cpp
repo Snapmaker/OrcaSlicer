@@ -697,8 +697,6 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
     std::shared_ptr<PrintHost> host(PrintHost::get_print_host(m_config));
     wxString                   msg;
     if (host->test(msg)) {
-        wxGetApp().app_config->set("use_new_connect", "true");
-
         m_connected = true;
 
         auto     cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
@@ -711,6 +709,9 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
         if (cfg.has("printhost_apikey") && (host_type != htSimplyPrint))
             apikey = cfg.opt_string("printhost_apikey");
 
+        wxGetApp().set_connect_host(host);
+        wxGetApp().set_host_config(cfg);
+
         wxGetApp().mainframe->load_printer_url(url, apikey);
 
         MessageDialog msg_window_connected(nullptr, host->get_host() + _L(" connected sucessfully !\n"), L("Machine Connected"),
@@ -720,9 +721,6 @@ void SMPhysicalPrinterDialog::OnOK(wxEvent& event)
         wxGetApp().mainframe->plater()->sidebar().update_all_preset_comboboxes();
         wxGetApp().mainframe->m_print_enable = true;
         wxGetApp().mainframe->update_slice_print_status(MainFrame::eEventPlateUpdate);
-
-        wxGetApp().set_connect_host(host);
-        wxGetApp().set_host_config(cfg);
     } else {
         m_connected = false;
         show_error(this, host->get_test_failed_msg(msg));

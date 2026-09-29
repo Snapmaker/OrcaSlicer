@@ -92,6 +92,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/ColorSplitDialog.hpp
     GUI/ImageFillDialog.cpp
     GUI/ImageFillDialog.hpp
+    GUI/CodeEmbossDialog.cpp
+    GUI/CodeEmbossDialog.hpp
+    GUI/SimpleShapeDialog.cpp
+    GUI/SimpleShapeDialog.hpp
     GUI/ConfigManipulation.cpp
     GUI/ConfigManipulation.hpp
     GUI/ConfigWizard.cpp
@@ -997,6 +1001,8 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/Gizmos/GLGizmoBrimEars.cpp                # HOVER_COLOR clash
     GUI/Gizmos/GLGizmoEmboss.cpp                  # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/Gizmos/GLGizmoMeshBoolean.cpp             # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
+    GUI/CodeEmbossDialog.cpp                      # CFG_SECTION also in other dialogs
+    GUI/SimpleShapeDialog.cpp                     # filament_label() also in CodeEmbossDialog.cpp
     GUI/Gizmos/GLGizmoSVG.cpp                     # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/GLCanvas3D.cpp                            # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h
     GUI/ImGuiWrapper.cpp                          # needs IMGUI_DEFINE_MATH_OPERATORS before the first imgui.h

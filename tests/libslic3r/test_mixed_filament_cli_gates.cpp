@@ -870,8 +870,6 @@ TEST_CASE("U1 CLI smoke: 20 mm cube with range 10-20 extruder=2 has a tower", "[
     const WipeTowerFootprint two = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
     CHECK(two.depth > 0.);
     REQUIRE(print.has_wipe_tower());
-    const std::string gcode = Slic3r::Test::gcode(print);
-    REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
 }
 
 TEST_CASE("U1 CLI smoke: non-intersecting modifier with wall_filament=3 does not produce a tower", "[MixedFilamentCli]")

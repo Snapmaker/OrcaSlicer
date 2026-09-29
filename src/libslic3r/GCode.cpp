@@ -6427,21 +6427,18 @@ LayerResult GCode::process_layer(const Print& print,
                 // it in lock-step with ToolOrdering.cpp's copy regardless.
                 bool          has_interface = support_role_needs_interface_extruder(role);
                 // Extruder ID of the support base. -1 if "don't care".
-                // Mixed virtual IDs (support_filament=3 on a 2-physical plate) must be resolved to
-                // a physical tool here, the same way ToolOrdering::collect_extruders does — otherwise
-                // object_by_extruder buckets the virtual 0-based id and set_extruder throws.
+                // Mixed virtual IDs must be resolved the same way ToolOrdering::collect_extruders
+                // does (LayerTools::resolve_mixed_1based_at → resolve_mixed_with_layer_heights),
+                // including the auto-row A/B layer-height cycle. mixed_mgr->resolve() alone
+                // files support under a tool that is not in layer_tools.extruders, and
+                // process_layer skips it.
                 auto resolve_mixed_filament_0based = [&](int filament_1based) -> unsigned int {
                     if (filament_1based <= 0)
                         return (unsigned int) -1;
-                    unsigned int id1 = unsigned(filament_1based);
-                    if (layer_tools.mixed_mgr != nullptr && layer_tools.num_physical > 0)
-                        id1 = layer_tools.mixed_mgr->resolve(id1,
-                                                            layer_tools.num_physical,
-                                                            layer_tools.layer_index,
-                                                            float(support_layer.print_z),
-                                                            float(support_layer.height),
-                                                            false,
-                                                            &object);
+                    const unsigned int id1 = layer_tools.resolve_mixed_1based_at(unsigned(filament_1based),
+                                                                                 float(support_layer.print_z),
+                                                                                 float(support_layer.height),
+                                                                                 &object);
                     return id1 >= 1 ? id1 - 1 : (unsigned int) -1;
                 };
                 unsigned int support_extruder = resolve_mixed_filament_0based(object.config().support_filament.value);

@@ -503,7 +503,6 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
             "Mixed virtual filament IDs must be resolved to physical extruders before export.",
             extruder_id);
         BOOST_LOG_TRIVIAL(error) << msg;
-        assert(false);
         throw SlicingError(msg);
     }
     m_extruder = &*it_extruder;

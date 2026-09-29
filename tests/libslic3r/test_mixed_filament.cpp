@@ -294,8 +294,28 @@ TEST_CASE("expand_0based_extruder_ids includes manual_pattern tokens", "[MixedFi
 
     std::vector<unsigned int> ids = {3}; // 0-based virtual id 4
     mgr.expand_0based_extruder_ids(ids, 3);
-    // component_a=1, component_b=2, pattern token "3" -> physical 3
+    // resolve() uses only the pattern, so token "3" -> physical 3 and "1" -> component_a.
+    // Filament 2 (component_b) is unused.
+    REQUIRE(ids == std::vector<unsigned int>{0, 2});
+}
+
+TEST_CASE("expand_0based_extruder_ids uses 3+ id gradients only when resolve would", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    MixedFilament &mf = mgr.mixed_filaments().front();
+    mf.gradient_component_ids = "123";
+    mf.distribution_mode      = int(MixedFilament::LayerCycle);
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
+
+    std::vector<unsigned int> ids = {3};
+    mgr.expand_0based_extruder_ids(ids, 3);
     REQUIRE(ids == std::vector<unsigned int>{0, 1, 2});
+
+    mf.distribution_mode = int(MixedFilament::Simple);
+    ids                  = {3};
+    mgr.expand_0based_extruder_ids(ids, 3);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
 }
 
 TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")

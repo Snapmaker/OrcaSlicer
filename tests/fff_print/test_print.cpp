@@ -4,6 +4,7 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
+#include "libslic3r/GCode/ToolOrdering.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "libslic3r/Print.hpp"
@@ -15,6 +16,8 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <iterator>
 #include <sstream>
@@ -484,6 +487,64 @@ size_t count_toolchange(const std::string &gcode, unsigned int extruder_id)
     return count;
 }
 
+struct AutoGenerateGuard
+{
+    AutoGenerateGuard() : previous(MixedFilamentManager::auto_generate_enabled())
+    {
+        MixedFilamentManager::set_auto_generate_enabled(true);
+    }
+    ~AutoGenerateGuard() { MixedFilamentManager::set_auto_generate_enabled(previous); }
+    bool previous;
+};
+
+struct SupportExtrusionHit
+{
+    double   z    = 0.;
+    unsigned tool = 0;
+};
+
+std::vector<SupportExtrusionHit> parse_support_extrusions(const std::string &gcode)
+{
+    std::vector<SupportExtrusionHit> hits;
+    double                           z    = 0.;
+    unsigned                         tool = 0;
+    size_t                           pos  = 0;
+    while (pos < gcode.size()) {
+        const size_t      eol  = gcode.find('\n', pos);
+        const size_t      end  = eol == std::string::npos ? gcode.size() : eol;
+        std::string       line = gcode.substr(pos, end - pos);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if ((line.compare(0, 2, "G0") == 0 || line.compare(0, 2, "G1") == 0) &&
+            (line.size() == 2 || line[2] == ' ' || line[2] == 'X' || line[2] == 'Y' || line[2] == 'Z' || line[2] == 'F' ||
+             line[2] == 'E')) {
+            const size_t zpos = line.find('Z');
+            if (zpos != std::string::npos && zpos + 1 < line.size()) {
+                char *endptr = nullptr;
+                const double parsed = std::strtod(line.c_str() + zpos + 1, &endptr);
+                if (endptr != line.c_str() + zpos + 1)
+                    z = parsed;
+            }
+        }
+        if (!line.empty() && line[0] == 'T' && std::isdigit(static_cast<unsigned char>(line[1]))) {
+            tool = unsigned(std::strtoul(line.c_str() + 1, nullptr, 10));
+        }
+        if (line.find("support material") != std::string::npos)
+            hits.push_back({z, tool});
+        pos = end == gcode.size() ? gcode.size() : end + 1;
+    }
+    return hits;
+}
+
+bool support_hit_at_z(const std::vector<SupportExtrusionHit> &hits, double print_z, unsigned expected_tool)
+{
+    for (const SupportExtrusionHit &hit : hits) {
+        if (std::abs(hit.z - print_z) < 0.05 && hit.tool == expected_tool)
+            return true;
+    }
+    return false;
+}
+
 } // namespace
 
 // S1: ByObject + mixed virtual wall_filament used to SIGSEGV in GCode::needs_retraction
@@ -548,9 +609,10 @@ TEST_CASE("Non-mixed two-filament G-code is unchanged by mixed-id expansion", "[
     }
 }
 
-// Without expanding manual_pattern tokens AND unioning every ByObject ToolOrdering, the later
-// object's pattern "13" (physical 1 and 3) is never registered. toolchange(2) then throws
-// SlicingError instead of emitting T2.
+// Pattern "13" names physical 1 and 3. Expanding those tokens in Print::extruders(), or
+// unioning the later object's ToolOrdering, is each enough to register T0 and T2. Component B
+// (filament 2) is unused and must stay out of Print::extruders() — over-including it would
+// trip temp-compat / CLI hard-block / bed-max / tower validation.
 TEST_CASE("ByObject later object mixed pattern 13 exports T0 and T2", "[Print][MixedFilament][GCode]")
 {
     REQUIRE(mixed_ac_virtual_id() == 4);
@@ -571,6 +633,7 @@ TEST_CASE("ByObject later object mixed pattern 13 exports T0 and T2", "[Print][M
     const std::vector<unsigned int> used = print.extruders();
     REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
     REQUIRE(std::find(used.begin(), used.end(), 2u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 1u) == used.end());
 
     std::string gcode;
     REQUIRE_NOTHROW(gcode = export_print_gcode(print));
@@ -578,6 +641,7 @@ TEST_CASE("ByObject later object mixed pattern 13 exports T0 and T2", "[Print][M
     INFO("T0=" << count_toolchange(gcode, 0) << " T2=" << count_toolchange(gcode, 2));
     REQUIRE(count_toolchange(gcode, 0) >= 1);
     REQUIRE(count_toolchange(gcode, 2) >= 1);
+    REQUIRE(count_toolchange(gcode, 1) == 0);
 }
 
 TEST_CASE("ByObject mixed support filament exports with physical toolchanges", "[Print][MixedFilament][GCode]")
@@ -609,4 +673,130 @@ TEST_CASE("ByObject mixed support filament exports with physical toolchanges", "
     INFO("T0=" << count_toolchange(gcode, 0) << " T1=" << count_toolchange(gcode, 1));
     REQUIRE(count_toolchange(gcode, 0) >= 1);
     REQUIRE(count_toolchange(gcode, 1) >= 1);
+}
+
+TEST_CASE("Auto mixed support with A/B layer heights matches ToolOrdering", "[Print][MixedFilament][GCode]")
+{
+    AutoGenerateGuard auto_mixed;
+    const bool        by_object = GENERATE(true, false);
+    DYNAMIC_SECTION((by_object ? "by object" : "by layer"))
+    {
+        DynamicPrintConfig config = two_filament_config(by_object, false);
+        config.set_deserialize_strict({
+            {"enable_support",             "1"},
+            {"support_type",               "normal(auto)"},
+            {"support_filament",           "3"},
+            {"support_interface_filament", "3"},
+            {"support_on_build_plate_only","0"},
+            {"mixed_color_layer_height_a", "0.3"},
+            {"mixed_color_layer_height_b", "0.6"},
+        });
+
+        Print print;
+        Model model;
+        init_print({TestMesh::overhang}, print, model, config);
+        REQUIRE(print.mixed_filament_manager().is_mixed(3, 2));
+        REQUIRE_FALSE(print.mixed_filament_manager().mixed_filaments().front().custom);
+
+        std::string gcode;
+        REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+        REQUIRE_FALSE(gcode.empty());
+        const std::vector<SupportExtrusionHit> hits = parse_support_extrusions(gcode);
+
+        const PrintObject &object = *print.objects().front();
+        REQUIRE_FALSE(object.support_layers().empty());
+        ToolOrdering ordering = by_object ? ToolOrdering(object, (unsigned int) -1) : print.tool_ordering();
+
+        bool saw_height_cycle_disagreement = false;
+        size_t filled_support_layers       = 0;
+        for (const SupportLayer *sl : object.support_layers()) {
+            if (sl == nullptr || sl->support_fills.entities.empty())
+                continue;
+            ++filled_support_layers;
+            const LayerTools  &lt     = ordering.tools_for_layer(sl->print_z);
+            const unsigned int via_to = lt.resolve_mixed_1based_at(3, float(sl->print_z), float(sl->height), &object);
+            REQUIRE(via_to >= 1);
+            REQUIRE(lt.has_extruder(via_to - 1));
+
+            unsigned int via_direct = 3;
+            if (lt.mixed_mgr != nullptr)
+                via_direct = lt.mixed_mgr->resolve(3, lt.num_physical, lt.layer_index, float(sl->print_z), float(sl->height), false, &object);
+            if (via_direct != via_to)
+                saw_height_cycle_disagreement = true;
+
+            INFO("print_z=" << sl->print_z << " scheduled_tool=" << (via_to - 1) << " direct=" << (via_direct >= 1 ? via_direct - 1 : -1)
+                            << " hits=" << hits.size());
+            REQUIRE(support_hit_at_z(hits, sl->print_z, via_to - 1));
+        }
+        REQUIRE(filled_support_layers >= 1);
+        REQUIRE(saw_height_cycle_disagreement);
+    }
+}
+
+TEST_CASE("Non-mixed multi-object ByObject G-code dump", "[Print][GCode]")
+{
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20, TestMesh::cube_20x20x20}, print, model, two_filament_config(true, false));
+    REQUIRE(print.extruders() == std::vector<unsigned int>{0});
+
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+    REQUIRE_FALSE(gcode.empty());
+    REQUIRE(count_toolchange(gcode, 0) >= 1);
+    REQUIRE(count_toolchange(gcode, 1) == 0);
+    if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
+        boost::nowide::ofstream dump(std::string(dir) + "/nonmixed_byobject_multi.gcode");
+        dump << strip_gcode_timestamps(gcode);
+    }
+}
+
+TEST_CASE("ByObject mixed pattern [10] exports T0 and T9", "[Print][MixedFilament][GCode]")
+{
+    MixedFilamentManager mgr;
+    std::vector<std::string> colors(10, "#FF0000");
+    colors[1] = "#00FF00";
+    colors[9] = "#0000FF";
+    mgr.add_custom_filament(1, 2, 50, colors);
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("1[10]");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 10) == 11);
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(10);
+    config.set_num_filaments(10);
+    config.set_deserialize_strict({
+        {"nozzle_diameter",            "0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4,0.4"},
+        {"filament_diameter",          "1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75,1.75"},
+        {"enable_prime_tower",         "0"},
+        {"enable_support",             "0"},
+        {"sparse_infill_density",      "0"},
+        {"layer_height",               "0.3"},
+        {"initial_layer_print_height", "0.3"},
+        {"skirt_loops",                "0"},
+        {"brim_type",                  "no_brim"},
+        {"print_sequence",             "by object"},
+        {"wall_loops",                 "2"},
+        {"gcode_comments",             "1"},
+        {"single_extruder_multi_material", "1"},
+        {"wall_filament",              "11"},
+        {"sparse_infill_filament",     "11"},
+        {"solid_infill_filament",      "11"},
+    });
+    config.option<ConfigOptionStrings>("filament_colour")->values = colors;
+    config.set("mixed_filament_definitions", mgr.serialize_custom_entries());
+
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+    REQUIRE(print.mixed_filament_manager().is_mixed(11, 10));
+    const std::vector<unsigned int> used = print.extruders();
+    REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 9u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 1u) == used.end());
+
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+    REQUIRE_FALSE(gcode.empty());
+    REQUIRE(count_toolchange(gcode, 0) >= 1);
+    REQUIRE(count_toolchange(gcode, 9) >= 1);
 }

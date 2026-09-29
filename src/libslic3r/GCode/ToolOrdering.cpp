@@ -283,19 +283,27 @@ bool LayerTools::is_extruder_order(unsigned int a, unsigned int b) const
     return false;
 }
 
-// Resolve a 1-based filament ID through the mixed-filament manager for this layer.
-unsigned int LayerTools::resolve_mixed_1based(unsigned int filament_id) const
+unsigned int LayerTools::resolve_mixed_1based_at(unsigned int       filament_id,
+                                                 float              layer_print_z,
+                                                 float              layer_height,
+                                                 const PrintObject *current_object) const
 {
     return resolve_mixed_with_layer_heights(mixed_mgr,
                                             num_physical,
                                             filament_id,
                                             this->layer_index,
-                                            float(this->print_z),
-                                            float(this->layer_height),
+                                            layer_print_z,
+                                            layer_height,
                                             mixed_layer_height_a,
                                             mixed_layer_height_b,
                                             mixed_base_layer_height,
-                                            this->current_object);
+                                            current_object != nullptr ? current_object : this->current_object);
+}
+
+// Resolve a 1-based filament ID through the mixed-filament manager for this layer.
+unsigned int LayerTools::resolve_mixed_1based(unsigned int filament_id) const
+{
+    return resolve_mixed_1based_at(filament_id, float(this->print_z), float(this->layer_height), this->current_object);
 }
 
 // Wave A fix-wave / C-1 (.superpowers/sdd/2026-08-31-paint-depth/wave-a-review.md): wall_filament,
@@ -741,6 +749,25 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         // Set per-object context for the duration of this collect_extruders call.
         // Reset after the loops below so unrelated callers see nullptr.
         layer_tools.current_object           = &object;
+    }
+
+    // Stamp layer_index before support is resolved. The object-layer loop below
+    // used to set it only after support had already been filed under the default
+    // index 0, so GCode (which reads LayerTools::layer_index at emission) and
+    // collect_extruders disagreed on the A/B height cycle. Support-only print_z
+    // values inherit the last object layer at or below them.
+    {
+        int          inherited = 0;
+        size_t       obj_i     = 0;
+        const auto  &layers    = object.layers();
+        for (LayerTools &layer_tools : m_layer_tools) {
+            while (obj_i < layers.size() && layers[obj_i]->print_z <= layer_tools.print_z + EPSILON) {
+                inherited = int(obj_i);
+                ++obj_i;
+            }
+            layer_tools.layer_index        = inherited;
+            layer_tools.object_layer_count = int(layers.size());
+        }
     }
 
     // Collect the support extruders.

@@ -2654,3 +2654,224 @@ SCENARIO("A stale layer height profile on a very short object is not taken for f
         }
     }
 }
+
+// Extruders of 0.6 / 0.8 / 0.4 / 0.2 mm on a 0.40 mm object layer height with the given entered
+// preferred layer heights: the plate of the sidebar's entry cases.
+static DynamicPrintConfig entered_heights_config(const std::vector<double> &heights)
+{
+    DynamicPrintConfig config = four_nozzle_config();
+    config.set_key_value("layer_height",          new ConfigOptionFloat(0.4));
+    config.set_key_value("nozzle_diameter",       new ConfigOptionFloats({0.6, 0.8, 0.4, 0.2}));
+    config.set_key_value("extruder_layer_height", new ConfigOptionFloats(heights));
+    config.set_key_value("min_layer_height",      new ConfigOptionFloats({0.08, 0.08, 0.08, 0.08}));
+    config.set_key_value("max_layer_height",      new ConfigOptionFloats({0.42, 0.56, 0.28, 0.14}));
+    return config;
+}
+
+static std::vector<double> object_print_z(const Print &print)
+{
+    std::vector<double> print_z;
+    for (const Layer *layer : print.objects().front()->layers())
+        print_z.push_back(layer->print_z);
+    return print_z;
+}
+
+SCENARIO("Preferred layer heights are kept as entered and planned for slicing only", "[MultiNozzleLayerHeight][Plan][EnteredHeights]") {
+    using Catch::Approx;
+    GIVEN("0.32 mm entered for the 0.6 mm extruder, the others at Default") {
+        const DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        THEN("slicing plans the grid 0.11 mm, 0.33 / 0.44 / 0.33 / 0.11 mm") {
+            const ExtruderLayerHeightPlan effective = effective_extruder_layer_heights(entered);
+            CHECK(effective.grid == Approx(0.11));
+            REQUIRE(effective.heights.size() == 4);
+            CHECK(effective.heights[0] == Approx(0.33));
+            CHECK(effective.heights[1] == Approx(0.44));
+            CHECK(effective.heights[2] == Approx(0.33));
+            CHECK(effective.heights[3] == Approx(0.11));
+        }
+        THEN("the entered value stays, the sidebar warns that it prints at 0.33 mm and the Default extruders stay Default") {
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].preferred == Approx(0.32));
+            CHECK(notes[0].printed == Approx(0.33));
+            CHECK(notes[0].grid == Approx(0.11));
+            CHECK(notes[0].off_grid);
+            CHECK(notes[3].preferred == 0.);
+            CHECK(notes[3].printed == Approx(0.11));
+            CHECK_FALSE(notes[3].off_grid);
+        }
+        THEN("the plan is written into a copy only, marks it, and a second application changes nothing") {
+            DynamicPrintConfig planned = entered;
+            CHECK(apply_extruder_layer_height_plan(planned));
+            CHECK(planned.opt_float("layer_height") == Approx(0.11));
+            CHECK(planned.option<ConfigOptionFloats>("extruder_layer_height")->values.size() == 4);
+            CHECK(planned.option<ConfigOptionFloats>("extruder_layer_height")->values[1] == Approx(0.44));
+            CHECK(planned.has(extruder_layer_height_planned_key));
+            CHECK(entered.opt_float("layer_height") == Approx(0.4));
+            CHECK(entered.option<ConfigOptionFloats>("extruder_layer_height")->values == std::vector<double>{0.32, 0., 0., 0.});
+            CHECK_FALSE(entered.has(extruder_layer_height_planned_key));
+            const DynamicPrintConfig once = planned;
+            CHECK_FALSE(apply_extruder_layer_height_plan(planned));
+            CHECK(planned.equals(once));
+        }
+        THEN("the planned config validates and slices the layers of the grid 0.11 mm, 0.33 / 0.44 / 0.33 / 0.11 mm") {
+            DynamicPrintConfig planned = entered;
+            apply_extruder_layer_height_plan(planned);
+            DynamicPrintConfig written = entered;
+            written.set_key_value("layer_height",          new ConfigOptionFloat(0.11));
+            written.set_key_value("extruder_layer_height", new ConfigOptionFloats({0.33, 0.44, 0.33, 0.11}));
+
+            Print print_planned, print_written;
+            Model model_planned, model_written;
+            init_cube_print(print_planned, model_planned, planned);
+            init_cube_print(print_written, model_written, written);
+            const StringObjectException error = print_planned.validate();
+            INFO(error.string);
+            REQUIRE(error.string.empty());
+            print_planned.process();
+            print_written.process();
+            const std::vector<double> z_planned = object_print_z(print_planned), z_written = object_print_z(print_written);
+            REQUIRE(! z_planned.empty());
+            REQUIRE(z_planned.size() == z_written.size());
+            for (size_t i = 0; i < z_planned.size(); ++ i)
+                CHECK(z_planned[i] == Approx(z_written[i]));
+        }
+    }
+    GIVEN("the same entry with exact preferred layer heights") {
+        DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        entered.set_key_value("extruder_layer_height_exact", new ConfigOptionBool(true));
+        THEN("0.32 mm prints as entered on a 0.16 mm grid and no warning is due") {
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].grid == Approx(0.16));
+            CHECK(notes[0].printed == Approx(0.32));
+            CHECK_FALSE(notes[0].off_grid);
+        }
+    }
+    GIVEN("a plate on which no other extruder has a preferred layer height") {
+        THEN("the sidebar offers no list: nothing constrains the grid") {
+            CHECK_FALSE(other_extruder_has_layer_height(entered_heights_config({0., 0., 0., 0.}), 0));
+            CHECK_FALSE(other_extruder_has_layer_height(entered_heights_config({0.32, 0., 0., 0.}), 0));
+            CHECK(other_extruder_has_layer_height(entered_heights_config({0.32, 0., 0., 0.}), 3));
+        }
+    }
+    GIVEN("the list of heights offered for an extruder") {
+        const DynamicPrintConfig entered = entered_heights_config({0.32, 0., 0., 0.});
+        THEN("with the others at Default the 0.6 mm extruder is offered the quarter, half and whole object layer height up to its maximum") {
+            const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+            REQUIRE(offered.size() == 3);
+            CHECK(offered[0] == Approx(0.1));
+            CHECK(offered[1] == Approx(0.2));
+            CHECK(offered[2] == Approx(0.4));
+            for (double height : offered) {
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({height, 0., 0., 0.}));
+                INFO("offered " << height);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+            }
+        }
+        THEN("the 0.2 mm extruder is offered the grid of the 0.32 mm entry, which prints as listed") {
+            const std::vector<double> offered = available_extruder_layer_heights(entered, 3);
+            REQUIRE(offered.size() == 1);
+            CHECK(offered[0] == Approx(0.11));
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({0.32, 0., 0., 0.11}));
+            CHECK(notes[3].printed == Approx(0.11));
+            CHECK_FALSE(notes[3].off_grid);
+        }
+    }
+    GIVEN("0.12 mm entered for extruders 2 to 4 at a 0.08 mm object layer height, extruder 1 at Default") {
+        DynamicPrintConfig entered = entered_heights_config({0., 0.12, 0.12, 0.12});
+        entered.set_key_value("layer_height", new ConfigOptionFloat(0.08));
+        const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+        THEN("extruder 1 is offered 0.08 / 0.12 / 0.24 / 0.36 mm, not 0.16 mm, which moves the grid to 0.055 mm") {
+            REQUIRE(offered.size() == 4);
+            CHECK(offered[0] == Approx(0.08));
+            CHECK(offered[1] == Approx(0.12));
+            CHECK(offered[2] == Approx(0.24));
+            CHECK(offered[3] == Approx(0.36));
+            DynamicPrintConfig picked = entered;
+            picked.set_key_value("extruder_layer_height", new ConfigOptionFloats({0.16, 0.12, 0.12, 0.12}));
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(picked);
+            REQUIRE(notes.size() == 4);
+            CHECK(notes[0].grid == Approx(0.055));
+            CHECK(notes[0].off_grid);
+            CHECK(notes[1].printed == Approx(0.11));
+        }
+        THEN("every offered height prints as listed and extruders 2 to 4 keep printing 0.12 mm") {
+            REQUIRE(! offered.empty());
+            for (double height : offered) {
+                DynamicPrintConfig picked = entered;
+                picked.set_key_value("extruder_layer_height", new ConfigOptionFloats({height, 0.12, 0.12, 0.12}));
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(picked);
+                INFO("offered " << height);
+                REQUIRE(notes.size() == 4);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+                for (size_t j = 1; j < 4; ++ j) {
+                    CHECK(notes[j].printed == Approx(0.12));
+                    CHECK_FALSE(notes[j].off_grid);
+                }
+            }
+        }
+    }
+    GIVEN("0.16 mm entered for extruders 2 to 4 at a 0.4 mm object layer height, extruder 1 at Default") {
+        const DynamicPrintConfig entered = entered_heights_config({0., 0.16, 0.16, 0.16});
+        const std::vector<double> reference = [&entered] {
+            std::vector<double> printed;
+            for (const ExtruderLayerHeightNote &note : extruder_layer_height_notes(entered))
+                printed.push_back(note.printed);
+            return printed;
+        }();
+        const std::vector<double> offered = available_extruder_layer_heights(entered, 0);
+        THEN("0.17 mm, which prints at 0.16 mm, is not offered; every offered height prints as listed without moving the others") {
+            REQUIRE(! offered.empty());
+            CHECK(std::none_of(offered.begin(), offered.end(), [](double height) { return std::abs(height - 0.17) < 1e-6; }));
+            REQUIRE(reference.size() == 4);
+            for (double height : offered) {
+                const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(entered_heights_config({height, 0.16, 0.16, 0.16}));
+                INFO("offered " << height);
+                REQUIRE(notes.size() == 4);
+                CHECK(notes[0].printed == Approx(height));
+                CHECK_FALSE(notes[0].off_grid);
+                for (size_t j = 1; j < 4; ++ j)
+                    CHECK(notes[j].printed == Approx(reference[j]));
+            }
+        }
+    }
+    GIVEN("heights that already are whole multiples of the object layer height") {
+        DynamicPrintConfig config = entered_heights_config({0.4, 0., 0., 0.2});
+        config.set_key_value("layer_height", new ConfigOptionFloat(0.2));
+        THEN("the plan leaves the config as it is") {
+            CHECK_FALSE(apply_extruder_layer_height_plan(config));
+            CHECK(config.opt_float("layer_height") == Approx(0.2));
+            CHECK(config.option<ConfigOptionFloats>("extruder_layer_height")->values == std::vector<double>{0.4, 0., 0., 0.2});
+            CHECK(config.has(extruder_layer_height_planned_key));
+        }
+    }
+    GIVEN("an object with its own 0.2 mm layer height") {
+        DynamicPrintConfig planned = entered_heights_config({0.32, 0., 0., 0.});
+        apply_extruder_layer_height_plan(planned);
+        Print print;
+        Model model;
+        TriangleMesh cube = mesh(TestMesh::cube_20x20x20);
+        cube.scale(Vec3f(1.f, 1.f, 0.5f));
+        ModelObject *object = model.add_object();
+        object->name = "cube";
+        object->add_volume(std::move(cube));
+        object->add_instance();
+        object->config.set("layer_height", 0.2);
+        THEN("a planned config fits it to the planned heights and follows a new entry") {
+            place_and_apply(print, model, planned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.11));
+            DynamicPrintConfig replanned = entered_heights_config({0.3, 0., 0., 0.});
+            apply_extruder_layer_height_plan(replanned);
+            print.apply(model, replanned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.145));
+        }
+        THEN("a config without the marker keeps it") {
+            planned.erase(extruder_layer_height_planned_key);
+            place_and_apply(print, model, planned);
+            CHECK(print.objects().front()->config().layer_height.value == Approx(0.2));
+        }
+    }
+}

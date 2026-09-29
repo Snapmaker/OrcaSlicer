@@ -5563,10 +5563,11 @@ void PrintConfigDef::init_fff_params()
     def = this->add("extruder_layer_height", coFloats);
     def->label = L("Preferred layer height");
     def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
-                     "different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest "
-                     "height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the "
-                     "finest preferred height down to a quarter of it), and the preferred heights are rounded to those "
-                     "multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. "
+                     "different nozzle sizes. Any value can be entered and is kept as entered. For slicing, the object "
+                     "layer height becomes the coarsest height on which every preferred layer height lands within 0.01 mm "
+                     "of a whole multiple (from the finest preferred height down to a quarter of it), and the preferred "
+                     "heights print rounded to those multiples; with \"Exact preferred layer heights\" enabled every "
+                     "entered value prints exactly instead. "
                      "A part whose features all follow this extruder prints only on every Nth layer with "
                      "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
                      "falls back to the object layer height. When the rest of the part cannot follow, "
@@ -5590,7 +5591,7 @@ void PrintConfigDef::init_fff_params()
                      "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
                      "printing can take much longer. The prime tower prints one slab per tool change on that grid in "
                      "either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum "
-                     "layer height there, which slicing reports. Off: the preferred heights are rounded to the "
+                     "layer height there, which slicing reports. Off: the preferred heights print rounded to the "
                      "coarsest grid on which they land within 0.01 mm.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
@@ -6594,6 +6595,14 @@ void PrintConfigDef::init_fff_params()
     def->label = "Process shared column count";
     def->tooltip = "Process shared column count.";
     def->set_default_value(new ConfigOptionInt(0));
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: transient, set on a config whose preferred layer heights were planned for
+    // slicing (apply_extruder_layer_height_plan in Slicing.hpp). Internal use only, no translation.
+    def = this->add("extruder_layer_height_planned", coBool);
+    def->label = "Preferred layer heights planned";
+    def->tooltip = "Preferred layer heights planned.";
+    def->set_default_value(new ConfigOptionBool(false));
     def->cli = ConfigOptionDef::nocli;
 
     def = this->add("retract_restart_extra", coFloats);

@@ -264,8 +264,8 @@ const Preset* source_for_head(const PresetBundle &bundle, const Preset &machine,
     }
 
     // The quality rule: the plate's class, then its ladder; within a class the layer height nearest
-    // the head's preferred height, else the saved selected preset's height (the edited copy may hold
-    // the layer height planner's grid).
+    // the head's preferred height, else the saved selected preset's height (an unsaved edit does
+    // not move the source).
     const double      target_height = preferred_layer_height > 0. ? preferred_layer_height : layer_height_of(selected);
     const std::string quality       = quality_class_of(bundle, selected);
     const std::string default_name  = default_print_profile_of(machine);

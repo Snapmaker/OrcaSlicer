@@ -4117,6 +4117,10 @@ SlicingParameters PrintObject::slicing_parameters(const DynamicPrintConfig &full
     // BBS
 	size_t              filament_extruders = print_config.filament_diameter.size();
 	object_config = object_config_from_model_object(object_config, model_object, filament_extruders, variant_index);
+    // Snapmaker Orca: an own layer height fitted to the planned preferred layer heights, as Print::apply fits it.
+    if (full_config.has(extruder_layer_height_planned_key) && model_object.config.has("layer_height"))
+        object_config.layer_height.value = effective_object_layer_height(print_config.extruder_layer_height.values, print_config.nozzle_diameter.values,
+                                                                         object_config.layer_height.value);
 
 	std::vector<unsigned int> object_extruders;
 	for (const ModelVolume* model_volume : model_object.volumes)

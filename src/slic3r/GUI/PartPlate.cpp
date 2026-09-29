@@ -25,6 +25,7 @@
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/GCode/WipeTowerEstimate.hpp"
 #include "libslic3r/UsedFilaments.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -2168,9 +2169,15 @@ WipeTowerFootprint PartPlate::estimate_wipe_tower_footprint(const DynamicPrintCo
     // Tallest object on this plate and the thinnest layer it is sliced at, resolved per object
     // as PrintObject resolves them (override, else preset) and over this plate's objects only -
     // seeding from the global value, or folding in an off-plate override, diverges from Print.
-    const ConfigOption *layer_height_opt    = config.option("layer_height");
-    const double        global_layer_height = layer_height_opt != nullptr ? layer_height_opt->getFloat() : 0.08;
-    double              max_height          = 0.;
+    // Snapmaker Orca: the heights the print plans from the preferred layer heights (Slicing.hpp), so
+    // the estimate sizes the tower of the grid the slice prints on.
+    const ExtruderLayerHeightPlan planned_heights     = effective_extruder_layer_heights(config);
+    const ConfigOptionFloats     *nozzle_diameters    = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const bool                    has_preferred       = std::any_of(planned_heights.heights.begin(), planned_heights.heights.end(), [](double h) { return h > EPSILON; });
+    const ConfigOption           *layer_height_opt    = config.option("layer_height");
+    const double                  global_layer_height = planned_heights.grid > EPSILON ? planned_heights.grid :
+                                                        layer_height_opt != nullptr ? layer_height_opt->getFloat() : 0.08;
+    double                        max_height          = 0.;
     double              layer_height        = std::numeric_limits<double>::max();
     for (int obj_idx = 0; obj_idx < int(m_model->objects.size()); ++obj_idx) {
         const ModelObject *object = m_model->objects[obj_idx];
@@ -2185,7 +2192,10 @@ WipeTowerFootprint PartPlate::estimate_wipe_tower_footprint(const DynamicPrintCo
             max_height = std::max(max_height, object->instance_convex_hull_bounding_box(inst_idx, true).size().z());
         }
         const ConfigOption *object_layer_height = object->config.option("layer_height");
-        layer_height = std::min(layer_height, object_layer_height != nullptr ? object_layer_height->getFloat() : global_layer_height);
+        double              own_layer_height    = object_layer_height != nullptr ? object_layer_height->getFloat() : global_layer_height;
+        if (object_layer_height != nullptr && has_preferred && nozzle_diameters != nullptr)
+            own_layer_height = effective_object_layer_height(planned_heights.heights, nozzle_diameters->values, own_layer_height);
+        layer_height = std::min(layer_height, own_layer_height);
     }
     if (layer_height == std::numeric_limits<double>::max())
         layer_height = global_layer_height;

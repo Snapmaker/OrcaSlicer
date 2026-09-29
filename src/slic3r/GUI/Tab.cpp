@@ -5,6 +5,7 @@
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/FilamentMixer.hpp"
@@ -2220,7 +2221,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 DynamicPrintConfig new_conf = printer_config;
                 new_conf.set_key_value("extruder_layer_height_exact", new ConfigOptionBool(false));
                 printer_tab->load_config(new_conf);
-                wxGetApp().plater()->sidebar().derive_object_layer_height();
             }
         }
         update_wiping_button_visibility();
@@ -2479,18 +2479,9 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     if (opt_key == "layer_height") {
         // ORCA: the range check lives in ConfigManipulation now; it returns true when it adjusted
         // the value (and already showed a dialog for it).
-        bool layer_height_adjusted = m_config_manipulation.check_layer_height(m_config);
-        // ORCA multi-nozzle-size: the extruders' preferred layer heights must stay whole multiples
-        // of the object layer height. Global: adjust them or go back to the derived object layer
-        // height; per object / plate: offer the coarsest value they all are a multiple of. Not
-        // while a preset is rolled back to its saved values (m_postpone_update_ui).
-        if (!m_postpone_update_ui) {
-            if (m_type == Preset::TYPE_PRINT) {
-                if (wxGetApp().plater()->sidebar().confirm_object_layer_height_edit())
-                    layer_height_adjusted = true;
-            } else if (m_config_manipulation.check_layer_height_divides_extruder_heights(m_config))
-                layer_height_adjusted = true;
-        }
+        // The preferred layer heights of the extruders need no question here: slicing plans the
+        // object layer height from them (apply_extruder_layer_height_plan in Slicing.hpp).
+        const bool layer_height_adjusted = m_config_manipulation.check_layer_height(m_config);
         if (layer_height_adjusted)
             wxGetApp().plater()->update();
 
@@ -4488,13 +4479,12 @@ wxString TabPrint::head_selection_description() const
             // TRN %1% the number of settings changed under All tool heads
             text += " " + format_wxstr(_L("%1% settings changed under All extruders apply here too."), source.kept_keys.size());
         if (quality) {
-            // The Layer height field above is greyed: the head's own layer height is named when it
-            // differs from the plate's (a preferred layer height of the nozzle tab).
-            bool         preferred = false;
-            const double height    = PerHeadProcess::target_layer_height(*m_preset_bundle, size_t(head), &preferred);
-            const double plate     = m_preset_bundle->prints.get_selected_preset().config.opt_float("layer_height");
-            if (preferred && std::abs(height - plate) > EPSILON)
-                text += " " + HighFlowNotices::preferred_height_sentence(height, size_t(head));
+            // The Layer height field above is greyed: the height the head prints for slicing is named
+            // when it differs from the object layer height (a preferred layer height of the nozzle tab).
+            const std::vector<ExtruderLayerHeightNote> notes = extruder_layer_height_notes(
+                extruder_layer_height_inputs(m_preset_bundle->printers.get_edited_preset().config, m_preset_bundle->prints.get_edited_preset().config));
+            if (size_t(head) < notes.size() && notes[size_t(head)].preferred > 0. && std::abs(notes[size_t(head)].printed - notes[size_t(head)].grid) > EPSILON)
+                text += " " + HighFlowNotices::preferred_height_sentence(notes[size_t(head)].printed, size_t(head));
             // A line width changed under All tool heads applies here in place of the width source's.
             if (const Preset *from = PerHeadProcess::width_source(source); from != nullptr) {
                 const int shared = PerHeadProcess::shared_column(*m_config, nvtStandard);
@@ -8367,13 +8357,8 @@ void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& v
     if (wxGetApp().plater() == nullptr || m_config_manipulation.is_applying())
         return;
 
-    // ORCA multi-nozzle-size: a preferred layer height edited here must be made printable the
-    // same way as one entered in the sidebar (object layer height derived, defaults pinned).
-    if (boost::starts_with(opt_key, "extruder_layer_height") && !boost::starts_with(opt_key, "extruder_layer_height_"))
-        wxGetApp().plater()->sidebar().derive_object_layer_height();
     // ORCA multi-nozzle-size: exact preferred layer heights are experimental - confirm when they
-    // are turned on (and their prime tower slabs when the tower is on); either way re-derive the
-    // object layer height under the new rule.
+    // are turned on (and their prime tower slabs when the tower is on).
     if (opt_key == "extruder_layer_height_exact") {
         if (boost::any_cast<bool>(value)) {
             const bool tower_on = wxGetApp().preset_bundle->prints.get_edited_preset().config.opt_bool("enable_prime_tower");
@@ -8383,7 +8368,6 @@ void TabPrinter::on_value_change(const std::string& opt_key, const boost::any& v
                 load_config(new_conf);
             }
         }
-        wxGetApp().plater()->sidebar().derive_object_layer_height();
     }
 
     const int pos = opt_key.find("#");

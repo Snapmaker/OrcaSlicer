@@ -322,62 +322,6 @@ bool ConfigManipulation::check_layer_height(DynamicPrintConfig* config)
     return false;
 }
 
-bool ConfigManipulation::check_layer_height_divides_extruder_heights(DynamicPrintConfig* config)
-{
-    const double layer_height = config->opt_float("layer_height");
-    if (layer_height <= EPSILON)
-        return false;
-    const DynamicPrintConfig &printer_config = GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    const auto *heights = printer_config.option<ConfigOptionFloats>("extruder_layer_height");
-    if (heights == nullptr)
-        return false;
-    bool        nonconforming = false;
-    long        common        = 0;
-    std::string list;
-    for (double h : heights->values) {
-        if (h <= EPSILON)
-            continue;
-        common = std::gcd(common, std::lround(h / 0.005));
-        const double n = std::round(h / layer_height);
-        if (n < 1. || std::abs(h - n * layer_height) > 1e-4)
-            nonconforming = true;
-        list += (list.empty() ? "" : " / ") + into_u8(wxString::Format("%g", h));
-    }
-    if (!nonconforming || common == 0)
-        return false;
-    // The object layer height also prints the Default extruders: it must fit through every nozzle.
-    double min_bore = std::numeric_limits<double>::max();
-    if (const auto *nd = printer_config.option<ConfigOptionFloats>("nozzle_diameter"))
-        for (double d : nd->values)
-            if (d > EPSILON)
-                min_bore = std::min(min_bore, d);
-    double suggested = 0.;
-    for (long k = 1; k <= common; ++k)
-        if (common % k == 0 && (common / k) * 0.005 <= min_bore + EPSILON) {
-            suggested = std::round((common / k) * 0.005 * 1e6) / 1e6;
-            break;
-        }
-    if (suggested <= EPSILON)
-        return false;
-
-    wxString msg_text = wxString::Format(_L("A layer height of %g mm is not a divisor of the extruders' preferred layer heights (%s mm); "
-                                            "parts printed by those extruders need whole multiples of the object layer height."),
-                                         layer_height, wxString::FromUTF8(list.c_str()));
-    msg_text += "\n\n" + wxString::Format(_L("Adjust it to %g mm, the coarsest layer height every preferred height is a whole multiple of?"), suggested);
-    MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
-    dialog.SetButtonLabel(wxID_YES, _L("Adjust"));
-    dialog.SetButtonLabel(wxID_NO, _L("Ignore"));
-    is_msg_dlg_already_exist = true;
-    const bool adjust = dialog.ShowModal() == wxID_YES;
-    if (adjust) {
-        DynamicPrintConfig new_conf = *config;
-        new_conf.set_key_value("layer_height", new ConfigOptionFloat(suggested));
-        apply(config, &new_conf);
-    }
-    is_msg_dlg_already_exist = false;
-    return adjust;
-}
-
 bool ConfigManipulation::layer_height_out_of_range_dialog(DynamicPrintConfig* config, double clamp_to)
 {
     wxString msg_text = _(L("Layer height is outside the limits set in Printer Settings -> Extruder -> Layer height limits, "
@@ -808,19 +752,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     const GCodeFlavor gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
     const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
-
-    // ORCA multi-nozzle-size: while a preferred layer height is set for any extruder, the object
-    // layer height is derived from the preferred heights (the finest one; the sidebar and the
-    // Printer tab reconcile it) and a value typed here could only be reconciled back or leave
-    // heights that are no whole multiples of it. Lock the global field; the preferred layer
-    // heights are the place to change it.
-    if (is_global_config) {
-        bool derived = false;
-        if (const auto *heights = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("extruder_layer_height"))
-            for (double h : heights->values)
-                derived = derived || h > EPSILON;
-        toggle_field("layer_height", !derived);
-    }
 
     // Orca: use booleans to avoid repeated comparisons with enum values
     const bool gcf_is_marlin_firmware = gcflavor == GCodeFlavor::gcfMarlinFirmware;

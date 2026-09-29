@@ -9353,6 +9353,7 @@ void GCode::append_full_config(const Print& print, std::string& str)
     cfg.erase("print_extruder_source_column");
     cfg.erase("print_extruder_source_flow");
     cfg.erase("print_extruder_flow_count");
+    cfg.erase("extruder_layer_height_planned");
     { // correct the flush_volumes_matrix with flush_multiplier values
         // Fast purge mode uses flush_multiplier_fast; Default is inert.
         std::vector<double> temp_cfg_flush_multiplier = (print.config().prime_volume_mode == PrimeVolumeMode::pvmFast)

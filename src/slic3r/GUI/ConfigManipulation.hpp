@@ -87,9 +87,6 @@ public:
     void    check_chamber_temperature(DynamicPrintConfig* config);
     void    check_chamber_minimal_temperature(DynamicPrintConfig* config);
     bool    check_layer_height(DynamicPrintConfig* config);
-    // ORCA multi-nozzle-size: a per-object layer height must divide every explicit extruder
-    // layer height; offers the coarsest value that does. Returns true when it adjusted the value.
-    bool    check_layer_height_divides_extruder_heights(DynamicPrintConfig* config);
     bool    layer_height_out_of_range_dialog(DynamicPrintConfig* config, double clamp_to);
     void    layer_height_limits(double& min_layer_height, double& max_layer_height) const;
     void    set_is_BBL_Printer(bool is_bbl_printer) { is_BBL_Printer = is_bbl_printer; };

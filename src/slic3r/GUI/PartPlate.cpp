@@ -1439,6 +1439,8 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode, const Dynam
 
 		ModelObject* mo = m_model->objects[obj_idx];
 		for (ModelVolume* mv : mo->volumes) {
+			if (mv->is_precise_seam())
+				continue; // non-printing helper; get_extruders() also skips these
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
 		}
@@ -1584,6 +1586,8 @@ std::vector<int> PartPlate::get_extruders_under_cli(bool conside_custom_gcode, D
                 continue;
 
             for (ModelVolume* mv : object->volumes) {
+                if (mv->is_precise_seam())
+                    continue; // non-printing helper; get_extruders() also skips these
                 std::vector<int> volume_extruders = mv->get_extruders();
                 plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
             }
@@ -1712,6 +1716,8 @@ std::vector<int> PartPlate::get_extruders_without_support(bool conside_custom_gc
 
 		ModelObject* mo = m_model->objects[obj_idx];
 		for (ModelVolume* mv : mo->volumes) {
+			if (mv->is_precise_seam())
+				continue; // non-printing helper; get_extruders() also skips these
 			std::vector<int> volume_extruders = mv->get_extruders();
 			plate_extruders.insert(plate_extruders.end(), volume_extruders.begin(), volume_extruders.end());
 		}

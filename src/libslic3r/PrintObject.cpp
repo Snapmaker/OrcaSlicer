@@ -4128,6 +4128,8 @@ std::vector<unsigned int> PrintObject::object_extruders() const
 
     const ModelObject* mo = this->model_object();
     for (const ModelVolume* mv : mo->volumes) {
+        if (mv->is_precise_seam())
+            continue; // non-printing helper; get_extruders() also skips these
         std::vector<int> volume_extruders = mv->get_extruders();
         for (int extruder : volume_extruders) {
             assert(extruder > 0);

@@ -19,6 +19,7 @@
 
 #include "libslic3r/Geometry/ConvexHull.hpp"
 
+#include <algorithm>
 #include <float.h>
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -1539,6 +1540,20 @@ void ModelObject::sort_volumes(bool full_sort)
     // sort volumes inside the object to order "Model Part, Negative Volume, Modifier, Support Blocker and Support Enforcer. "
     if (full_sort)
         std::stable_sort(volumes.begin(), volumes.end(), [](ModelVolume* vl, ModelVolume* vr) {
+            // Special handling for Precise Seam modifiers: group-based sorting with user order preservation
+            if (vl->is_precise_seam() && vr->is_precise_seam()) {
+                // Strong (center/left/right) always before weak (enforced/blocked/neutral)
+                bool vl_strong = vl->is_precise_seam_strong();
+                bool vr_strong = vr->is_precise_seam_strong();
+                if (vl_strong != vr_strong)
+                    return vl_strong; // strong < weak → strong group appears first
+
+                // Within same group (both strong or both weak): preserve current order
+                // stable_sort will maintain relative positions when comparator returns false
+                return false;
+            }
+
+            // For non-Precise-Seam or mixed types: use standard enum-based ordering
             return vl->type() < vr->type();
         });
     // sort have to controll "place" of the support blockers/enforcers. But one of the model parts have to be on the first place.
@@ -1546,6 +1561,16 @@ void ModelObject::sort_volumes(bool full_sort)
         std::stable_sort(volumes.begin(), volumes.end(), [](ModelVolume* vl, ModelVolume* vr) {
             ModelVolumeType vl_type = vl->type() > ModelVolumeType::PARAMETER_MODIFIER ? vl->type() : ModelVolumeType::PARAMETER_MODIFIER;
             ModelVolumeType vr_type = vr->type() > ModelVolumeType::PARAMETER_MODIFIER ? vr->type() : ModelVolumeType::PARAMETER_MODIFIER;
+
+            // Apply same Precise Seam grouping logic for partial sort
+            if (vl->is_precise_seam() && vr->is_precise_seam()) {
+                bool vl_strong = vl->is_precise_seam_strong();
+                bool vr_strong = vr->is_precise_seam_strong();
+                if (vl_strong != vr_strong)
+                    return vl_strong;
+                return false; // preserve order within same group
+            }
+
             return vl_type < vr_type;
         });
 }
@@ -2689,7 +2714,8 @@ std::vector<int> ModelVolume::get_extruders() const
     if (m_type == ModelVolumeType::INVALID
         || m_type == ModelVolumeType::NEGATIVE_VOLUME
         || m_type == ModelVolumeType::SUPPORT_BLOCKER
-        || m_type == ModelVolumeType::SUPPORT_ENFORCER)
+        || m_type == ModelVolumeType::SUPPORT_ENFORCER
+        || this->is_precise_seam()) // Precise Seam is non-printing helper geometry
         return std::vector<int>();
 
     if (mmu_segmentation_facets.timestamp() != mmuseg_ts) {
@@ -2903,6 +2929,19 @@ ModelVolumeType ModelVolume::type_from_string(const std::string &s)
 		return ModelVolumeType::SUPPORT_ENFORCER;
     if (s == "support_blocker")
 		return ModelVolumeType::SUPPORT_BLOCKER;
+    // Precise Seam types
+    if (s == "precise_seam_center")
+		return ModelVolumeType::PRECISE_SEAM_CENTER;
+    if (s == "precise_seam_left")
+		return ModelVolumeType::PRECISE_SEAM_LEFT;
+    if (s == "precise_seam_right")
+		return ModelVolumeType::PRECISE_SEAM_RIGHT;
+    if (s == "precise_seam_enforced")
+		return ModelVolumeType::PRECISE_SEAM_ENFORCED;
+    if (s == "precise_seam_blocked")
+		return ModelVolumeType::PRECISE_SEAM_BLOCKED;
+    if (s == "precise_seam_neutral")
+		return ModelVolumeType::PRECISE_SEAM_NEUTRAL;
     //assert(s == "0");
     // Default value if invalud type string received.
 	return ModelVolumeType::MODEL_PART;
@@ -2917,6 +2956,12 @@ std::string ModelVolume::type_to_string(const ModelVolumeType t)
 	case ModelVolumeType::PARAMETER_MODIFIER: return "modifier_part";
 	case ModelVolumeType::SUPPORT_ENFORCER:   return "support_enforcer";
 	case ModelVolumeType::SUPPORT_BLOCKER:    return "support_blocker";
+	case ModelVolumeType::PRECISE_SEAM_CENTER:   return "precise_seam_center";
+	case ModelVolumeType::PRECISE_SEAM_LEFT:     return "precise_seam_left";
+	case ModelVolumeType::PRECISE_SEAM_RIGHT:    return "precise_seam_right";
+	case ModelVolumeType::PRECISE_SEAM_ENFORCED: return "precise_seam_enforced";
+	case ModelVolumeType::PRECISE_SEAM_BLOCKED:  return "precise_seam_blocked";
+	case ModelVolumeType::PRECISE_SEAM_NEUTRAL:  return "precise_seam_neutral";
     default:
         assert(false);
         return "normal_part";
@@ -3700,6 +3745,8 @@ double getadhesionCoeff(const ModelVolumePtrs objectVolumes)
 {
     double adhesionCoeff = 1;
     for (const ModelVolume* modelVolume : objectVolumes) {
+        if (modelVolume->is_precise_seam())
+            continue; // non-printing helper geometry
         if (Model::extruderParamsMap.find(modelVolume->extruder_id()) != Model::extruderParamsMap.end()) {
             if (Model::extruderParamsMap.at(modelVolume->extruder_id()).materialName == "PETG" ||
                 Model::extruderParamsMap.at(modelVolume->extruder_id()).materialName == "PCTG") {
@@ -3719,6 +3766,8 @@ double getTemperatureFromExtruder(const ModelVolumePtrs objectVolumes) {
 #if 1
     std::vector<size_t> extruders;
     for (const ModelVolume* modelVolume : objectVolumes) {
+        if (modelVolume->is_precise_seam())
+            continue; // non-printing helper geometry
         if (modelVolume->extruder_id() >= 0)
             extruders.push_back(modelVolume->extruder_id());
     }

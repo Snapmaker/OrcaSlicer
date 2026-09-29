@@ -3,11 +3,15 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 #include <boost/nowide/cstdio.hpp>
 #include <boost/filesystem.hpp>
 
 #include "test_data.hpp"
+
+#include <algorithm>
+#include <vector>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -60,4 +64,74 @@ SCENARIO("Model construction", "[Model]") {
 			}
         }
     }
+}
+
+TEST_CASE("Precise Seam volume types round-trip through type_to/from_string", "[Model][PreciseSeam]")
+{
+    const ModelVolumeType types[] = {
+        ModelVolumeType::PRECISE_SEAM_CENTER, ModelVolumeType::PRECISE_SEAM_LEFT,
+        ModelVolumeType::PRECISE_SEAM_RIGHT,  ModelVolumeType::PRECISE_SEAM_ENFORCED,
+        ModelVolumeType::PRECISE_SEAM_BLOCKED, ModelVolumeType::PRECISE_SEAM_NEUTRAL
+    };
+    for (ModelVolumeType t : types) {
+        CAPTURE(int(t));
+        CHECK(ModelVolume::type_from_string(ModelVolume::type_to_string(t)) == t);
+        CHECK(is_precise_seam(t));
+    }
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_CENTER));
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_LEFT));
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_RIGHT));
+    CHECK_FALSE(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_ENFORCED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_ENFORCED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_BLOCKED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_NEUTRAL));
+    CHECK_FALSE(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_CENTER));
+    CHECK_FALSE(is_precise_seam(ModelVolumeType::PARAMETER_MODIFIER));
+    CHECK(ModelVolume::type_from_string("unknown_future_seam") == ModelVolumeType::MODEL_PART);
+}
+
+TEST_CASE("sort_volumes keeps strong Precise Seam helpers above weak ones", "[Model][PreciseSeam]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    auto *part = object->add_volume(make_cube(10, 10, 10));
+    part->name = "part";
+    auto *weak = object->add_volume(make_cube(2, 2, 2));
+    weak->set_type(ModelVolumeType::PRECISE_SEAM_BLOCKED);
+    weak->name = "weak";
+    auto *strong = object->add_volume(make_cube(2, 2, 2));
+    strong->set_type(ModelVolumeType::PRECISE_SEAM_CENTER);
+    strong->name = "strong";
+    auto *weak2 = object->add_volume(make_cube(2, 2, 2));
+    weak2->set_type(ModelVolumeType::PRECISE_SEAM_NEUTRAL);
+    weak2->name = "weak2";
+
+    object->sort_volumes(true);
+    REQUIRE(object->volumes.size() == 4);
+    CHECK(object->volumes[0]->is_model_part());
+    CHECK(object->volumes[1]->is_precise_seam_strong());
+    CHECK(object->volumes[1]->name == "strong");
+    CHECK(object->volumes[2]->is_precise_seam_weak());
+    CHECK(object->volumes[2]->name == "weak");
+    CHECK(object->volumes[3]->is_precise_seam_weak());
+    CHECK(object->volumes[3]->name == "weak2");
+}
+
+TEST_CASE("get_extruders excludes Precise Seam helper volumes", "[Model][PreciseSeam]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    auto *part = object->add_volume(make_cube(10, 10, 10));
+    part->config.set_key_value("extruder", new ConfigOptionInt(2));
+    auto *helper = object->add_volume(make_cube(2, 2, 2));
+    helper->set_type(ModelVolumeType::PRECISE_SEAM_LEFT);
+    helper->config.set_key_value("extruder", new ConfigOptionInt(3));
+    helper->config.set_key_value("wall_filament", new ConfigOptionInt(4));
+
+    const std::vector<int> part_ids = part->get_extruders();
+    REQUIRE_FALSE(part_ids.empty());
+    CHECK(std::find(part_ids.begin(), part_ids.end(), 2) != part_ids.end());
+    CHECK(helper->get_extruders().empty());
+    CHECK(helper->is_precise_seam());
+    CHECK_FALSE(helper->is_modifier());
 }

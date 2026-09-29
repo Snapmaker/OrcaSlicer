@@ -19,6 +19,8 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/system/error_code.hpp>
 
+#include <algorithm>
+#include <array>
 #include <fstream>
 #include <functional>
 
@@ -1226,4 +1228,348 @@ TEST_CASE("Paint states 20, 200 and 255 round-trip through a 3MF byte-identicall
     REQUIRE_NOTHROW(restored.deserialize(dst_vol.mmu_segmentation_facets.get_data()));
     for (int i = 0; i < 3; ++i)
         REQUIRE(restored.num_facets(static_cast<EnforcerBlockerType>(states[i])) == 1);
+}
+
+// Precise Seam 3MF (Orca #12974 stage C). Catch2 v2 port of upstream test_precise_seam_3mf.cpp
+// into this existing file so tests/*/CMakeLists.txt is untouched.
+namespace {
+
+constexpr std::array<ModelVolumeType, 6> precise_seam_types = {
+    ModelVolumeType::PRECISE_SEAM_CENTER, ModelVolumeType::PRECISE_SEAM_LEFT,
+    ModelVolumeType::PRECISE_SEAM_RIGHT,  ModelVolumeType::PRECISE_SEAM_ENFORCED,
+    ModelVolumeType::PRECISE_SEAM_BLOCKED, ModelVolumeType::PRECISE_SEAM_NEUTRAL
+};
+// Literal entities and backslashes distinguish XML escaping from config serialization.
+const std::string precise_seam_notes = "quoted \"value\" & <tag>\tcolumn\nnext line &amp; path\\file";
+
+void populate_precise_seam_model(Model &model, bool all_modes, bool shared_mesh)
+{
+    auto *object = model.add_object();
+    object->name = "seam round trip";
+    auto *part = object->add_volume(make_cube(20, 20, 2));
+    part->name = "printable";
+    ModelVolume *first_helper = nullptr;
+    const size_t n = all_modes ? precise_seam_types.size() : size_t(1);
+    for (size_t i = 0; i < n; ++i) {
+        auto *volume = shared_mesh && first_helper ? object->add_volume_with_shared_mesh(*first_helper) :
+                                                    object->add_volume(make_cube(2, 3, 4));
+        if (!first_helper)
+            first_helper = volume;
+        volume->name = "helper_" + std::to_string(i);
+        volume->set_type(precise_seam_types[i]);
+        Geometry::Transformation transform;
+        transform.set_offset(Vec3d(3.0 * double(i), -2.0, 1.0));
+        transform.set_rotation(Vec3d(0.0, 0.0, 0.1 * double(i + 1)));
+        transform.set_scaling_factor(Vec3d(1.0, 1.2, 0.8));
+        volume->set_transformation(transform);
+        volume->config.set_key_value("extruder", new ConfigOptionInt(2));
+        volume->config.set_key_value("sparse_infill_density", new ConfigOptionPercent(100.0 - 5.0 * double(i)));
+        volume->config.set_key_value("notes", new ConfigOptionString(precise_seam_notes + std::to_string(i)));
+    }
+    object->add_instance();
+}
+
+void save_precise_seam_3mf(const std::string &path, bool bbs, Model &model, DynamicPrintConfig &config, bool shared_mesh)
+{
+    if (bbs) {
+        StoreParams params;
+        params.path     = path.c_str();
+        params.model    = &model;
+        params.config   = &config;
+        params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+        if (shared_mesh)
+            params.strategy = params.strategy | SaveStrategy::ShareMesh;
+        REQUIRE(store_bbs_3mf(params));
+    } else {
+        REQUIRE(store_3mf(path.c_str(), &model, &config, false));
+    }
+}
+
+void load_precise_seam_3mf(const std::string &path, bool bbs, Model &model, DynamicPrintConfig &config)
+{
+    ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Enable};
+    if (bbs) {
+        PlateDataPtrs         plates;
+        std::vector<Preset *> presets;
+        bool                  is_bbl_3mf = false;
+        Semver                version;
+        const bool loaded = load_bbs_3mf(path.c_str(), &config, &substitutions, &model, &plates, &presets, &is_bbl_3mf,
+                                         &version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::Silence);
+        release_PlateData_list(plates);
+        for (Preset *preset : presets)
+            delete preset;
+        REQUIRE(loaded);
+    } else {
+        REQUIRE(load_3mf(path.c_str(), config, substitutions, &model, false));
+    }
+}
+
+std::string precise_seam_model_xml(const std::string &path, bool bbs)
+{
+    return extract_zip_entry(path, bbs ? "Metadata/model_settings.config" : "Metadata/Slic3r_PE_model.config");
+}
+
+void check_precise_seam_config(const ModelVolume &volume, size_t index = 0)
+{
+    REQUIRE(volume.config.has("extruder"));
+    CHECK(volume.config.opt_int("extruder") == 2);
+    REQUIRE(volume.config.has("sparse_infill_density"));
+    CHECK_THAT(volume.config.opt_float("sparse_infill_density"), Catch::Matchers::WithinAbs(100.0 - 5.0 * double(index), 1e-9));
+    REQUIRE(volume.config.has("notes"));
+    CHECK(volume.config.get().opt_string("notes") == precise_seam_notes + std::to_string(index));
+}
+
+void check_precise_seam_modifier_config(const ModelVolume &volume, bool bbs, size_t index = 0)
+{
+    if (bbs) {
+        check_precise_seam_config(volume, index);
+    } else {
+        // The Prusa importer whitelists extruder, but drops ordinary notes and infill settings.
+        REQUIRE(volume.config.has("extruder"));
+        CHECK(volume.config.opt_int("extruder") == 2);
+        CHECK_FALSE(volume.config.has("sparse_infill_density"));
+        CHECK_FALSE(volume.config.has("notes"));
+    }
+}
+
+void check_precise_seam_geometry(const ModelVolume &before, const ModelVolume &after)
+{
+    REQUIRE(after.mesh().its.vertices.size() == before.mesh().its.vertices.size());
+    CHECK(after.mesh().its.indices.size() == before.mesh().its.indices.size());
+    std::vector<Vec3d> expected;
+    for (const auto &v : before.mesh().its.vertices)
+        expected.push_back(before.get_matrix() * v.cast<double>());
+    for (const auto &v : after.mesh().its.vertices) {
+        const Vec3d actual = after.get_matrix() * v.cast<double>();
+        const auto  match  = std::find_if(expected.begin(), expected.end(), [&](const Vec3d &p) { return (p - actual).norm() < 1e-4; });
+        REQUIRE(match != expected.end());
+        expected.erase(match);
+    }
+    CHECK(expected.empty());
+}
+
+std::string remove_precise_seam_mode_metadata(std::string &xml)
+{
+    const auto key = xml.find("key=\"precise_seam_type\"");
+    REQUIRE(key != std::string::npos);
+    REQUIRE(xml.find("key=\"precise_seam_type\"", key + 1) == std::string::npos);
+    const auto begin = xml.rfind("<metadata ", key);
+    const auto end   = xml.find("/>", key);
+    REQUIRE(begin != std::string::npos);
+    REQUIRE(end != std::string::npos);
+    const std::string result = xml.substr(begin, end + 2 - begin);
+    xml.erase(begin, result.size());
+    return result;
+}
+
+void replace_once_in(std::string &text, const std::string &from, const std::string &to)
+{
+    const auto pos = text.find(from);
+    REQUIRE(pos != std::string::npos);
+    REQUIRE(text.find(from, pos + from.size()) == std::string::npos);
+    text.replace(pos, from.size(), to);
+}
+
+} // namespace
+
+TEST_CASE("All Precise Seam types and dormant settings survive a 3MF round trip", "[PreciseSeam3mf][3mf]")
+{
+    const bool bbs    = GENERATE(true, false);
+    const bool shared = GENERATE(false, true);
+    CAPTURE(bbs, shared);
+
+    prepare_3mf_temp_dir();
+    const std::string path = make_temp_3mf_path(
+        std::string("precise_seam_rt_") + (bbs ? "bbs_" : "prusa_") + (shared ? "shared_" : "copy_") +
+        boost::filesystem::unique_path("%%%%%%%%").string() + ".3mf");
+    const ScopeGuard cleanup = remove_file_guard(path);
+
+    Model              source;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    populate_precise_seam_model(source, true, shared);
+    save_precise_seam_3mf(path, bbs, source, config, shared);
+
+    const std::string xml   = precise_seam_model_xml(path, bbs);
+    const std::string open  = bbs ? "<part " : "<volume ";
+    const std::string close = bbs ? "</part>" : "</volume>";
+    size_t            pos = 0, helpers = 0;
+    while ((pos = xml.find(open, pos)) != std::string::npos) {
+        const auto end = xml.find(close, pos);
+        REQUIRE(end != std::string::npos);
+        const auto block = xml.substr(pos, end - pos);
+        if (block.find("key=\"precise_seam_type\"") != std::string::npos) {
+            ++helpers;
+            CHECK(block.find(bbs ? "subtype=\"modifier_part\"" : "value=\"ParameterModifier\"") != std::string::npos);
+            for (const std::string key : {"extruder", "sparse_infill_density", "notes"}) {
+                CAPTURE(key);
+                CHECK(block.find("key=\"" + key + "\"") == std::string::npos);
+                CHECK(block.find("key=\"precise_seam_config:" + key + "\"") != std::string::npos);
+            }
+        }
+        pos = end + close.size();
+    }
+    REQUIRE(helpers == precise_seam_types.size());
+
+    Model              destination;
+    DynamicPrintConfig dest_config = DynamicPrintConfig::full_print_config();
+    dest_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    load_precise_seam_3mf(path, bbs, destination, dest_config);
+    REQUIRE(destination.objects.size() == 1);
+    const auto &volumes = destination.objects.front()->volumes;
+    REQUIRE(volumes.size() == 1 + precise_seam_types.size());
+    CHECK(volumes.front()->is_model_part());
+    for (size_t i = 0; i < precise_seam_types.size(); ++i) {
+        CAPTURE(i);
+        CHECK(volumes[i + 1]->type() == precise_seam_types[i]);
+        CHECK(volumes[i + 1]->name == "helper_" + std::to_string(i));
+        check_precise_seam_geometry(*source.objects.front()->volumes[i + 1], *volumes[i + 1]);
+        check_precise_seam_config(*volumes[i + 1], i);
+        if (shared && bbs)
+            CHECK(volumes[i + 1]->mesh_ptr().get() == volumes[1]->mesh_ptr().get());
+        volumes[i + 1]->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    }
+
+    const std::string converted_path = make_temp_3mf_path(
+        std::string("precise_seam_converted_") + boost::filesystem::unique_path("%%%%%%%%").string() + ".3mf");
+    const ScopeGuard converted_cleanup = remove_file_guard(converted_path);
+    save_precise_seam_3mf(converted_path, bbs, destination, dest_config, shared);
+    const std::string converted_xml = precise_seam_model_xml(converted_path, bbs);
+    CHECK(converted_xml.find("key=\"precise_seam_type\"") == std::string::npos);
+    CHECK(converted_xml.find("key=\"precise_seam_config:") == std::string::npos);
+
+    Model              converted;
+    DynamicPrintConfig converted_config = DynamicPrintConfig::full_print_config();
+    converted_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    load_precise_seam_3mf(converted_path, bbs, converted, converted_config);
+    REQUIRE(converted.objects.size() == 1);
+    const auto &converted_volumes = converted.objects.front()->volumes;
+    REQUIRE(converted_volumes.size() == volumes.size());
+    for (size_t i = 0; i < precise_seam_types.size(); ++i) {
+        CAPTURE(i);
+        CHECK(converted_volumes[i + 1]->type() == ModelVolumeType::PARAMETER_MODIFIER);
+        CHECK(converted_volumes[i + 1]->name == "helper_" + std::to_string(i));
+        check_precise_seam_geometry(*volumes[i + 1], *converted_volumes[i + 1]);
+        check_precise_seam_modifier_config(*converted_volumes[i + 1], bbs, i);
+    }
+}
+
+TEST_CASE("Seam metadata restores only recognized modes on compatible base types", "[PreciseSeam3mf][3mf][Regression]")
+{
+    const bool bbs     = GENERATE(true, false);
+    const int  variant = GENERATE(0, 1, 2, 3, 4, 5);
+    CAPTURE(bbs, variant);
+
+    prepare_3mf_temp_dir();
+    const std::string original = make_temp_3mf_path(
+        std::string("precise_seam_orig_") + boost::filesystem::unique_path("%%%%%%%%").string() + ".3mf");
+    const std::string edited = make_temp_3mf_path(
+        std::string("precise_seam_edit_") + boost::filesystem::unique_path("%%%%%%%%").string() + ".3mf");
+    const ScopeGuard original_cleanup = remove_file_guard(original);
+    const ScopeGuard edited_cleanup   = remove_file_guard(edited);
+
+    Model              source;
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    populate_precise_seam_model(source, false, false);
+    save_precise_seam_3mf(original, bbs, source, config, false);
+
+    const std::string entry = bbs ? "Metadata/model_settings.config" : "Metadata/Slic3r_PE_model.config";
+    {
+        mz_zip_archive zip;
+        mz_zip_zero_struct(&zip);
+        REQUIRE(open_zip_reader(&zip, original));
+        std::vector<std::pair<std::string, std::string>> entries;
+        const mz_uint n = mz_zip_reader_get_num_files(&zip);
+        for (mz_uint i = 0; i < n; ++i) {
+            mz_zip_archive_file_stat st;
+            REQUIRE(mz_zip_reader_file_stat(&zip, i, &st));
+            std::string name = st.m_filename;
+            std::string data;
+            if (st.m_uncomp_size > 0) {
+                size_t size = 0;
+                void  *mem  = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+                REQUIRE(mem != nullptr);
+                data.assign(static_cast<const char *>(mem), size);
+                mz_free(mem);
+            }
+            entries.emplace_back(std::move(name), std::move(data));
+        }
+        close_zip_reader(&zip);
+
+        auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
+            std::string n = e.first;
+            std::replace(n.begin(), n.end(), '\\', '/');
+            return n == entry;
+        });
+        REQUIRE(found != entries.end());
+        std::string &xml = found->second;
+
+        if (variant == 0 || variant == 1) {
+            const std::string metadata = remove_precise_seam_mode_metadata(xml);
+            const std::string tag      = bbs ? "part" : "volume";
+            const auto        key      = xml.find("key=\"precise_seam_config:extruder\"");
+            REQUIRE(key != std::string::npos);
+            const auto start = xml.rfind("<" + tag + " ", key);
+            REQUIRE(start != std::string::npos);
+            if (bbs) {
+                const auto end = xml.find("</part>", key);
+                REQUIRE(end != std::string::npos);
+                xml.insert(end, "<metadata key=\"part_type\" value=\"modifier_part\"/>");
+            }
+            const auto opening_end = xml.find('>', start);
+            REQUIRE(opening_end != std::string::npos);
+            const auto insertion = variant == 0 ? opening_end + 1 : xml.find("</" + tag + ">", key);
+            REQUIRE(insertion != std::string::npos);
+            xml.insert(insertion, metadata);
+        } else if (variant == 2) {
+            replace_once_in(xml, "value=\"precise_seam_center\"", "value=\"unknown_future_seam\"");
+        } else if (variant == 3) {
+            remove_precise_seam_mode_metadata(xml);
+        } else if (variant == 4) {
+            if (bbs)
+                replace_once_in(xml, "subtype=\"modifier_part\"", "subtype=\"normal_part\"");
+            else {
+                replace_once_in(xml, "key=\"modifier\" value=\"1\"", "key=\"modifier\" value=\"0\"");
+                replace_once_in(xml, "value=\"ParameterModifier\"", "value=\"ModelPart\"");
+            }
+        } else {
+            remove_precise_seam_mode_metadata(xml);
+            if (bbs)
+                replace_once_in(xml, "subtype=\"modifier_part\"", "subtype=\"precise_seam_center\"");
+            else
+                replace_once_in(xml, "value=\"ParameterModifier\"", "value=\"precise_seam_center\"");
+            for (const std::string key : {"extruder", "sparse_infill_density", "notes"})
+                replace_once_in(xml, "key=\"precise_seam_config:" + key + "\"", "key=\"" + key + "\"");
+        }
+
+        Zipper out(edited);
+        for (const auto &e : entries)
+            out.add_entry(e.first, e.second.data(), e.second.size());
+        out.finalize();
+    }
+
+    Model              destination;
+    DynamicPrintConfig dest_config = DynamicPrintConfig::full_print_config();
+    dest_config.set_key_value("filament_settings_id", new ConfigOptionStrings(std::vector<std::string>{"A", "B"}));
+    load_precise_seam_3mf(edited, bbs, destination, dest_config);
+    REQUIRE(destination.objects.size() == 1);
+    REQUIRE(destination.objects.front()->volumes.size() == 2);
+    const ModelVolume &helper = *destination.objects.front()->volumes[1];
+    if (variant == 0 || variant == 1 || variant == 5) {
+        CHECK(helper.type() == ModelVolumeType::PRECISE_SEAM_CENTER);
+        if (variant == 5 && !bbs) {
+            REQUIRE(helper.config.has("extruder"));
+            CHECK(helper.config.opt_int("extruder") == 2);
+            CHECK_FALSE(helper.config.has("sparse_infill_density"));
+            CHECK_FALSE(helper.config.has("notes"));
+        } else {
+            check_precise_seam_config(helper);
+        }
+    } else {
+        CHECK(helper.type() == (variant == 4 ? ModelVolumeType::MODEL_PART : ModelVolumeType::PARAMETER_MODIFIER));
+        CHECK_FALSE(helper.config.has("extruder"));
+        CHECK_FALSE(helper.config.has("sparse_infill_density"));
+        CHECK_FALSE(helper.config.has("notes"));
+    }
 }

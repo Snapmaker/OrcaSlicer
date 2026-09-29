@@ -935,20 +935,24 @@ void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, si
             if (mf != nullptr && mf->enabled) {
                 // Mirror MixedFilamentManager::resolve: a pattern is exclusive (tokens, else
                 // component_a); a 3+ id gradient is exclusive when the mode is not Simple;
-                // otherwise only the A/B pair is reachable.
+                // otherwise only the A/B pair is reachable. resolve() falls back to
+                // component_a for any unmapped token, so expansion must register it too.
                 if (!mf->manual_pattern.empty()) {
-                    bool any_token = false;
+                    bool any_mapped   = false;
+                    bool any_unmapped = false;
                     const std::string flattened = flatten_manual_pattern_groups(mf->manual_pattern);
                     if (!flattened.empty()) {
                         for (const auto &token : split_pattern_group_to_tokens(flattened, num_physical)) {
                             const unsigned int phys = physical_filament_from_token(token, *mf, num_physical);
                             if (phys >= 1) {
                                 expanded.push_back(static_cast<int>(phys));
-                                any_token = true;
+                                any_mapped = true;
+                            } else {
+                                any_unmapped = true;
                             }
                         }
                     }
-                    if (!any_token)
+                    if (!any_mapped || any_unmapped)
                         expanded.push_back(static_cast<int>(mf->component_a));
                 } else {
                     const bool use_simple_mode = mf->distribution_mode == int(MixedFilament::Simple);

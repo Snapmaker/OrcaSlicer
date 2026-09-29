@@ -302,20 +302,34 @@ TEST_CASE("expand_0based_extruder_ids includes manual_pattern tokens", "[MixedFi
 TEST_CASE("expand_0based_extruder_ids uses 3+ id gradients only when resolve would", "[MixedFilament]")
 {
     MixedFilamentManager mgr;
-    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"});
     MixedFilament &mf = mgr.mixed_filaments().front();
-    mf.gradient_component_ids = "123";
+    // Gradient 1/3/4 does not include component_b, so LayerCycle must not collapse to A/B.
+    mf.gradient_component_ids = "134";
     mf.distribution_mode      = int(MixedFilament::LayerCycle);
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 4) == 5);
+
+    std::vector<unsigned int> ids = {4};
+    mgr.expand_0based_extruder_ids(ids, 4);
+    REQUIRE(ids == std::vector<unsigned int>{0, 2, 3});
+
+    mf.distribution_mode = int(MixedFilament::Simple);
+    ids                  = {4};
+    mgr.expand_0based_extruder_ids(ids, 4);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+}
+
+TEST_CASE("expand_0based_extruder_ids adds component_a when any pattern token is unmapped", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("39");
     REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
 
     std::vector<unsigned int> ids = {3};
     mgr.expand_0based_extruder_ids(ids, 3);
-    REQUIRE(ids == std::vector<unsigned int>{0, 1, 2});
-
-    mf.distribution_mode = int(MixedFilament::Simple);
-    ids                  = {3};
-    mgr.expand_0based_extruder_ids(ids, 3);
-    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+    // Token "3" -> physical 3; token "9" is unmapped so resolve() falls back to component_a.
+    REQUIRE(ids == std::vector<unsigned int>{0, 2});
 }
 
 TEST_CASE("expand_0based_extruder_ids includes bracket-10 pattern tokens", "[MixedFilament]")

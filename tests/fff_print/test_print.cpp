@@ -545,6 +545,61 @@ bool support_hit_at_z(const std::vector<SupportExtrusionHit> &hits, double print
     return false;
 }
 
+std::vector<SupportExtrusionHit> parse_wall_infill_extrusions(const std::string &gcode)
+{
+    std::vector<SupportExtrusionHit> hits;
+    double                           z    = 0.;
+    unsigned                         tool = 0;
+    size_t                           pos  = 0;
+    while (pos < gcode.size()) {
+        const size_t      eol  = gcode.find('\n', pos);
+        const size_t      end  = eol == std::string::npos ? gcode.size() : eol;
+        std::string       line = gcode.substr(pos, end - pos);
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if ((line.compare(0, 2, "G0") == 0 || line.compare(0, 2, "G1") == 0) &&
+            (line.size() == 2 || line[2] == ' ' || line[2] == 'X' || line[2] == 'Y' || line[2] == 'Z' || line[2] == 'F' ||
+             line[2] == 'E')) {
+            const size_t zpos = line.find('Z');
+            if (zpos != std::string::npos && zpos + 1 < line.size()) {
+                char *endptr = nullptr;
+                const double parsed = std::strtod(line.c_str() + zpos + 1, &endptr);
+                if (endptr != line.c_str() + zpos + 1)
+                    z = parsed;
+            }
+        }
+        if (!line.empty() && line[0] == 'T' && std::isdigit(static_cast<unsigned char>(line[1]))) {
+            tool = unsigned(std::strtoul(line.c_str() + 1, nullptr, 10));
+        }
+        const size_t comment = line.find(';');
+        if (comment != std::string::npos && line.compare(0, 2, "G1") == 0 && line.find('E') < comment) {
+            const std::string desc = line.substr(comment);
+            const bool wall_or_infill =
+                (desc.find("perimeter") != std::string::npos || desc.find("infill") != std::string::npos) &&
+                desc.find("width") == std::string::npos && desc.find("move to") == std::string::npos;
+            if (wall_or_infill)
+                hits.push_back({z, tool});
+        }
+        pos = end == gcode.size() ? gcode.size() : end + 1;
+    }
+    return hits;
+}
+
+bool wall_infill_hit_at_z_on_scheduled(const std::vector<SupportExtrusionHit> &hits,
+                                       double                                  print_z,
+                                       const LayerTools                       &lt)
+{
+    bool saw = false;
+    for (const SupportExtrusionHit &hit : hits) {
+        if (std::abs(hit.z - print_z) > 0.05)
+            continue;
+        saw = true;
+        if (!lt.has_extruder(hit.tool))
+            return false;
+    }
+    return saw;
+}
+
 } // namespace
 
 // S1: ByObject + mixed virtual wall_filament used to SIGSEGV in GCode::needs_retraction
@@ -782,4 +837,56 @@ TEST_CASE("ByObject mixed pattern bracket-3 token exports T0 and T2", "[Print][M
     REQUIRE(count_toolchange(gcode, 0) >= 1);
     REQUIRE(count_toolchange(gcode, 2) >= 1);
     REQUIRE(count_toolchange(gcode, 1) == 0);
+}
+
+// ByLayer shares LayerTools across objects. Stamping every entry in collect_extruders
+// let a later shorter object overwrite a taller object's layer_index above the short
+// top, so mixed walls/infill resolved to a tool that was not in layer_tools.extruders.
+TEST_CASE("ByLayer mixed walls on a short-then-tall plate stay on scheduled tools", "[Print][MixedFilament][GCode]")
+{
+    REQUIRE(mixed_ab_virtual_id() == 3);
+
+    DynamicPrintConfig config = two_filament_config(false, true);
+    config.set_deserialize_strict({{"sparse_infill_density", "20"}});
+
+    Print print;
+    Model model;
+    init_print({make_cube(20., 20., 20.), make_cube(20., 20., 6.)}, print, model, config);
+    REQUIRE(print.objects().size() == 2);
+    REQUIRE(print.mixed_filament_manager().is_mixed(3, 2));
+
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+    REQUIRE_FALSE(gcode.empty());
+
+    const PrintObject &tall = *print.objects().front();
+    const PrintObject &shrt = *print.objects().back();
+    REQUIRE_FALSE(tall.layers().empty());
+    REQUIRE_FALSE(shrt.layers().empty());
+    const double short_top = shrt.layers().back()->print_z;
+    REQUIRE(tall.layers().back()->print_z > short_top + 0.5);
+
+    const ToolOrdering                    &ordering = print.tool_ordering();
+    const std::vector<SupportExtrusionHit> hits     = parse_wall_infill_extrusions(gcode);
+    REQUIRE_FALSE(hits.empty());
+
+    size_t layers_above_short = 0;
+    for (const Layer *layer : tall.layers()) {
+        if (layer == nullptr || layer->print_z <= short_top + 0.05)
+            continue;
+        bool has_walls_or_infill = false;
+        for (const LayerRegion *region : layer->regions()) {
+            if (region != nullptr && region->has_extrusions()) {
+                has_walls_or_infill = true;
+                break;
+            }
+        }
+        if (!has_walls_or_infill)
+            continue;
+        ++layers_above_short;
+        const LayerTools &lt = ordering.tools_for_layer(layer->print_z);
+        INFO("print_z=" << layer->print_z << " layer_index=" << lt.layer_index);
+        REQUIRE(wall_infill_hit_at_z_on_scheduled(hits, layer->print_z, lt));
+    }
+    REQUIRE(layers_above_short >= 1);
 }

@@ -751,28 +751,27 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         layer_tools.current_object           = &object;
     }
 
-    // Stamp layer_index before support is resolved. The object-layer loop below
-    // used to set it only after support had already been filed under the default
-    // index 0, so GCode (which reads LayerTools::layer_index at emission) and
-    // collect_extruders disagreed on the A/B height cycle. Support-only print_z
-    // values inherit the last object layer at or below them.
-    {
-        int          inherited = 0;
-        size_t       obj_i     = 0;
-        const auto  &layers    = object.layers();
-        for (LayerTools &layer_tools : m_layer_tools) {
-            while (obj_i < layers.size() && layers[obj_i]->print_z <= layer_tools.print_z + EPSILON) {
-                inherited = int(obj_i);
-                ++obj_i;
-            }
-            layer_tools.layer_index        = inherited;
-            layer_tools.object_layer_count = int(layers.size());
+    // Collect the support extruders. Stamp layer_index only at this object's
+    // support print_z (inherited from the last object layer at or below it).
+    // ByLayer shares LayerTools across objects: writing every m_layer_tools
+    // entry let a later shorter object overwrite a taller object's indices
+    // above the short top, so mixed walls/infill resolved to unscheduled tools.
+    const auto &object_layers = object.layers();
+    auto inherited_layer_index = [&object_layers](coordf_t print_z) {
+        int inherited = 0;
+        for (size_t i = 0; i < object_layers.size(); ++i) {
+            if (object_layers[i]->print_z <= print_z + EPSILON)
+                inherited = int(i);
+            else
+                break;
         }
-    }
+        return inherited;
+    };
 
-    // Collect the support extruders.
     for (auto support_layer : object.support_layers()) {
         LayerTools   &layer_tools = this->tools_for_layer(support_layer->print_z);
+        layer_tools.layer_index        = inherited_layer_index(support_layer->print_z);
+        layer_tools.object_layer_count = int(object_layers.size());
         layer_tools.layer_height = support_layer->height;
         ExtrusionRole role = support_layer->support_fills.role();
         bool         has_support        = role == erMixed || role == erSupportMaterial || role == erSupportTransition;

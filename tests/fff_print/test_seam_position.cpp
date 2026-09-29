@@ -504,6 +504,15 @@ void paint_cube_face(ModelVolume &volume, const Vec3f &normal)
     volume.seam_facets.set(selector);
 }
 
+ModelObject *plain_cube_object(Model &model)
+{
+    ModelObject *object = model.add_object();
+    object->name        = "ps_plain_cube";
+    object->add_volume(make_cube(20, 20, 20));
+    object->add_instance();
+    return object;
+}
+
 ModelObject *cube_with_back_helper(Model &model, ModelVolumeType type, const Vec3d &extra_offset = Vec3d::Zero())
 {
     ModelObject *object = model.add_object();
@@ -602,6 +611,20 @@ TEST_CASE("A CENTER/LEFT/RIGHT helper pins the outer-wall seam of a cube on ever
 {
     const auto mode = GENERATE(ModelVolumeType::PRECISE_SEAM_LEFT, ModelVolumeType::PRECISE_SEAM_CENTER,
                                ModelVolumeType::PRECISE_SEAM_RIGHT);
+    {
+        Model baseline_model;
+        ModelObject *baseline_object = plain_cube_object(baseline_model);
+        SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "aligned");
+        REQUIRE(baseline.points.size() >= 40);
+        // Aligned-only must not already satisfy the helper pin, or the helper case is not discriminating.
+        if (mode == ModelVolumeType::PRECISE_SEAM_CENTER) {
+            REQUIRE_FALSE(baseline.min_y() > 8.0 && std::abs(baseline.min_x()) < 2.0 && std::abs(baseline.max_x()) < 2.0);
+        } else if (mode == ModelVolumeType::PRECISE_SEAM_LEFT) {
+            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.min_x() > 1.0);
+        } else {
+            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.max_x() < -1.0);
+        }
+    }
     Model model;
     ModelObject *object = cube_with_back_helper(model, mode);
     SeamCloud cloud = seams_for_object(object, model, "aligned");
@@ -634,20 +657,54 @@ TEST_CASE("A Strong helper beats Aligned left and Aligned right", "[Seam][Precis
 TEST_CASE("Blocked and Enforced Precise Seam zones override painted seams", "[Seam][PreciseSeam]")
 {
     const bool blocked = GENERATE(true, false);
-    Model model;
-    ModelObject *object = model.add_object();
-    auto *part = object->add_volume(make_cube(20, 20, 20));
-    paint_cube_face(*part, Vec3f(0.f, 1.f, 0.f));
-    auto *helper = object->add_volume(make_cube(22, 4, 20));
-    helper->set_type(blocked ? ModelVolumeType::PRECISE_SEAM_BLOCKED : ModelVolumeType::PRECISE_SEAM_ENFORCED);
-    helper->set_offset(part->get_offset() + Vec3d(0, 10, 0));
-    object->add_instance();
-    SeamCloud cloud = seams_for_object(object, model, "aligned");
-    REQUIRE(cloud.points.size() >= 40);
-    if (blocked)
+    CAPTURE(blocked);
+
+    if (blocked) {
+        // Paint +Y so paint-only keeps the seam on the back; BLOCKED must evict it.
+        {
+            Model baseline_model;
+            ModelObject *baseline_object = baseline_model.add_object();
+            auto *baseline_part = baseline_object->add_volume(make_cube(20, 20, 20));
+            paint_cube_face(*baseline_part, Vec3f(0.f, 1.f, 0.f));
+            baseline_object->add_instance();
+            SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "aligned");
+            REQUIRE(baseline.points.size() >= 40);
+            REQUIRE(baseline.min_y() > 8.0);
+        }
+        Model model;
+        ModelObject *object = model.add_object();
+        auto *part = object->add_volume(make_cube(20, 20, 20));
+        paint_cube_face(*part, Vec3f(0.f, 1.f, 0.f));
+        auto *helper = object->add_volume(make_cube(22, 4, 20));
+        helper->set_type(ModelVolumeType::PRECISE_SEAM_BLOCKED);
+        helper->set_offset(part->get_offset() + Vec3d(0, 10, 0));
+        object->add_instance();
+        SeamCloud cloud = seams_for_object(object, model, "aligned");
+        REQUIRE(cloud.points.size() >= 40);
         REQUIRE(cloud.max_y() < 8.0);
-    else
+    } else {
+        // Painting the helper's +Y face would pass on #201 without Precise Seam, because paint
+        // alone already puts the seam there. Aligned-left puts the default seam on -X; ENFORCED
+        // on +Y must pull it to the back.
+        {
+            Model baseline_model;
+            ModelObject *baseline_object = plain_cube_object(baseline_model);
+            SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "left");
+            REQUIRE(baseline.points.size() >= 40);
+            REQUIRE(baseline.min_x() < -5.0);
+            REQUIRE_FALSE(baseline.min_y() > 8.0 && baseline.max_y() > 8.0);
+        }
+        Model model;
+        ModelObject *object = model.add_object();
+        auto *part = object->add_volume(make_cube(20, 20, 20));
+        auto *helper = object->add_volume(make_cube(22, 4, 20));
+        helper->set_type(ModelVolumeType::PRECISE_SEAM_ENFORCED);
+        helper->set_offset(part->get_offset() + Vec3d(0, 10, 0));
+        object->add_instance();
+        SeamCloud cloud = seams_for_object(object, model, "left");
+        REQUIRE(cloud.points.size() >= 40);
         REQUIRE(cloud.min_y() > 8.0);
+    }
 }
 
 TEST_CASE("A Strong Precise Seam helper beats a Weak zone on another face", "[Seam][PreciseSeam]")
@@ -670,6 +727,14 @@ TEST_CASE("A Strong Precise Seam helper beats a Weak zone on another face", "[Se
 
 TEST_CASE("Overlapping weak Precise Seam helpers follow tree order", "[Seam][PreciseSeam]")
 {
+    {
+        Model baseline_model;
+        ModelObject *baseline_object = plain_cube_object(baseline_model);
+        SeamCloud baseline = seams_for_object(baseline_object, baseline_model, "aligned");
+        REQUIRE(baseline.points.size() >= 40);
+        // Without helpers, aligned is not already off the back; otherwise BLOCKED-wins is not discriminating.
+        REQUIRE(baseline.max_y() >= 8.0);
+    }
     Model model;
     ModelObject *object = model.add_object();
     auto *part = object->add_volume(make_cube(20, 20, 20));
@@ -775,6 +840,39 @@ TEST_CASE("Editing a Precise Seam helper invalidates G-code export and moves the
     }
     REQUIRE(after.points.size() == before.points.size());
     REQUIRE(after.max_y() < before.min_y() - 1.0);
+}
+
+TEST_CASE("A config-only Precise Seam helper edit invalidates G-code export", "[Seam][PreciseSeam][Print]")
+{
+    Model model;
+    ModelObject *object = cube_with_back_helper(model, ModelVolumeType::PRECISE_SEAM_CENTER);
+    Print print;
+    DynamicPrintConfig config = seam_test_config("aligned");
+    object->ensure_on_bed();
+    print.auto_assign_extruders(model.objects.front());
+    print.apply(model, config);
+    print.set_status_silent();
+    print.process();
+    REQUIRE(print.is_step_done(posPerimeters));
+    const std::string first_gcode = strip_gcode_volatile(Test::gcode(print));
+    REQUIRE(print.is_step_done(psGCodeExport));
+
+    ModelVolume *helper = nullptr;
+    for (ModelVolume *volume : model.objects.front()->volumes)
+        if (volume->is_precise_seam())
+            helper = volume;
+    REQUIRE(helper != nullptr);
+    helper->config.set_key_value("notes", new ConfigOptionString("future-proof"));
+
+    const auto status = print.apply(model, config);
+    CHECK(status == PrintBase::APPLY_STATUS_INVALIDATED);
+    REQUIRE_FALSE(print.is_step_done(psGCodeExport));
+    REQUIRE(print.is_step_done(posPerimeters));
+
+    // PreciseSeam does not read helper config yet, so G-code may stay identical. Invalidating
+    // psGCodeExport here is future-proofing for a later stage that does.
+    const std::string second_gcode = strip_gcode_volatile(Test::gcode(print));
+    REQUIRE(first_gcode == second_gcode);
 }
 
 TEST_CASE("A through-body Precise Seam helper surfaces a warning from SeamPlacer", "[Seam][PreciseSeam]")

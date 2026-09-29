@@ -1822,6 +1822,8 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 // geometry, so posPerimeters stays valid.
                 update_apply_status(this->invalidate_step(psGCodeExport));
             } else if (model_custom_seam_data_changed(model_object, model_object_new) ||
+                       // Future-proofing: PreciseSeam does not read helper volume config yet, but a
+                       // later stage that does must not silently keep stale G-code.
                        model_precise_seam_config_changed(model_object, model_object_new)) {
                 update_apply_status(this->invalidate_step(psGCodeExport));
             }

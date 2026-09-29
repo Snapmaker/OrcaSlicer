@@ -335,9 +335,10 @@ public:
                                                                    size_t             num_physical = 0);
 
     // Expand virtual mixed-filament IDs in a sorted/deduplicated vector into
-    // their physical component IDs (component_a, component_b, and gradient
-    // component IDs).  IDs ≤ num_physical are left unchanged.  The caller is
-    // responsible for re-sorting and re-deduplicating after the call.
+    // their physical component IDs (component_a, component_b, gradient
+    // component IDs, and any physical IDs named by manual_pattern tokens via
+    // physical_filament_from_token).  IDs ≤ num_physical are left unchanged.
+    // The caller is responsible for re-sorting and re-deduplicating after the call.
     void expand_virtual_extruder_ids(std::vector<int> &ids, size_t num_physical) const;
 
     // 0-based counterpart used by Print::extruders() / GCodeWriter::set_extruders.

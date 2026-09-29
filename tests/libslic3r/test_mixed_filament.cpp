@@ -285,6 +285,19 @@ TEST_CASE("expand_0based_extruder_ids maps mixed virtual ids to physical compone
     REQUIRE(ids == std::vector<unsigned int>{0, 1});
 }
 
+TEST_CASE("expand_0based_extruder_ids includes manual_pattern tokens", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("13");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
+
+    std::vector<unsigned int> ids = {3}; // 0-based virtual id 4
+    mgr.expand_0based_extruder_ids(ids, 3);
+    // component_a=1, component_b=2, pattern token "3" -> physical 3
+    REQUIRE(ids == std::vector<unsigned int>{0, 1, 2});
+}
+
 TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};

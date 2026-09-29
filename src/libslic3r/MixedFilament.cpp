@@ -939,6 +939,16 @@ void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, si
                     mf->gradient_component_ids, num_physical);
                 for (unsigned int gid : gradient_ids)
                     expanded.push_back(static_cast<int>(gid));
+                const std::string norm = normalize_manual_pattern(mf->manual_pattern);
+                if (!norm.empty()) {
+                    for (const auto &group : split_pattern_groups(norm)) {
+                        for (const auto &token : split_pattern_group_to_tokens(group, num_physical)) {
+                            const unsigned int phys = physical_filament_from_token(token, *mf, num_physical);
+                            if (phys >= 1)
+                                expanded.push_back(static_cast<int>(phys));
+                        }
+                    }
+                }
             } else {
                 expanded.push_back(id);
             }

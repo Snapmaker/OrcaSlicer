@@ -2958,12 +2958,21 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             // No object to print was found, cancel the G-code export.
             throw Slic3r::SlicingError(_(L("No object can be printed. Maybe too small")));
         // We don't allow switching of extruders per layer by Model::custom_gcode_per_print_z in sequential mode.
-        // Print::extruders() expands mixed virtual IDs (wall_filament=3 on a 2-physical plate) to
-        // physical components via MixedFilamentManager. Union ToolOrdering's resolved set too:
-        // that is what the by-layer path feeds GCodeWriter, and it picks up any extra physical
-        // IDs collect_extruders registered (image-row candidates, grouped patterns).
+        // Print::extruders() expands mixed virtual IDs (including manual_pattern tokens) to
+        // physical components via MixedFilamentManager. Union every object's ToolOrdering as
+        // well — the first-object ordering above is not enough: later objects get a fresh
+        // ToolOrdering in the per-instance loop, and collect_extruders can register extra
+        // physical IDs (image-row candidates, grouped patterns) that Print::extruders() misses.
         std::vector<unsigned int> extruder_ids = print.extruders();
-        append(extruder_ids, tool_ordering.all_extruders());
+        {
+            const PrintObject *prev = nullptr;
+            for (const PrintInstance *inst : print_object_instances_ordering) {
+                if (inst->print_object == prev)
+                    continue;
+                prev = inst->print_object;
+                append(extruder_ids, ToolOrdering(*inst->print_object, (unsigned int) -1).all_extruders());
+            }
+        }
         sort_remove_duplicates(extruder_ids);
         this->set_extruders(extruder_ids);
 
@@ -10229,6 +10238,7 @@ LiftType GCode::to_lift_type(ZHopType z_hop_types)
 
 bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftType& lift_type)
 {
+    assert(this->writer().extruder() != nullptr);
     if (this->writer().extruder() == nullptr)
         return false;
     if (travel.length() < scale_(EXTRUDER_CONFIG(retraction_minimum_travel))) {

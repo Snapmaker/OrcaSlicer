@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/Config.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Layer.hpp"
@@ -385,6 +386,49 @@ DynamicPrintConfig two_filament_config(bool by_object, bool mixed_walls)
     return config;
 }
 
+std::string mixed_ac_pattern13_definition()
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("13");
+    return mgr.serialize_custom_entries();
+}
+
+unsigned int mixed_ac_virtual_id()
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    return mgr.filament_id_from_mixed_index(0, 3);
+}
+
+DynamicPrintConfig three_filament_config(bool by_object)
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(3);
+    config.set_num_filaments(3);
+    config.set_deserialize_strict({
+        {"nozzle_diameter",            "0.4,0.4,0.4"},
+        {"filament_diameter",          "1.75,1.75,1.75"},
+        {"enable_prime_tower",         "0"},
+        {"enable_support",             "0"},
+        {"sparse_infill_density",      "0"},
+        {"layer_height",               "0.3"},
+        {"initial_layer_print_height", "0.3"},
+        {"skirt_loops",                "0"},
+        {"brim_type",                  "no_brim"},
+        {"print_sequence",             by_object ? "by object" : "by layer"},
+        {"wall_loops",                 "2"},
+        {"gcode_comments",             "1"},
+        {"single_extruder_multi_material", "1"},
+        {"wall_filament",              "1"},
+        {"sparse_infill_filament",     "1"},
+        {"solid_infill_filament",      "1"},
+    });
+    config.option<ConfigOptionStrings>("filament_colour")->values = {"#FF0000", "#00FF00", "#0000FF"};
+    config.set("mixed_filament_definitions", mixed_ac_pattern13_definition());
+    return config;
+}
+
 std::string export_print_gcode(Print &print)
 {
     print.set_status_silent();
@@ -493,11 +537,76 @@ TEST_CASE("Non-mixed two-filament G-code is unchanged by mixed-id expansion", "[
         std::string gcode;
         REQUIRE_NOTHROW(gcode = export_print_gcode(print));
         REQUIRE_FALSE(gcode.empty());
+        REQUIRE(count_toolchange(gcode, 0) >= 1);
         REQUIRE(count_toolchange(gcode, 1) == 0);
+        REQUIRE(count_toolchange(gcode, 2) == 0);
         REQUIRE_FALSE(strip_gcode_timestamps(gcode).empty());
         if (const char *dir = std::getenv("DUMP_GCODE_DIR")) {
             boost::nowide::ofstream dump(std::string(dir) + (by_object ? "/nonmixed_byobject.gcode" : "/nonmixed_bylayer.gcode"));
             dump << strip_gcode_timestamps(gcode);
         }
     }
+}
+
+// Without expanding manual_pattern tokens AND unioning every ByObject ToolOrdering, the later
+// object's pattern "13" (physical 1 and 3) is never registered. toolchange(2) then throws
+// SlicingError instead of emitting T2.
+TEST_CASE("ByObject later object mixed pattern 13 exports T0 and T2", "[Print][MixedFilament][GCode]")
+{
+    REQUIRE(mixed_ac_virtual_id() == 4);
+
+    Print print;
+    Model model;
+    DynamicPrintConfig config = three_filament_config(true);
+    init_print({TestMesh::cube_20x20x20, TestMesh::cube_20x20x20}, print, model, config);
+    REQUIRE(model.objects.size() == 2);
+    REQUIRE(print.mixed_filament_manager().is_mixed(4, 3));
+
+    model.objects[1]->volumes[0]->config.set_key_value("wall_filament", new ConfigOptionInt(4));
+    model.objects[1]->volumes[0]->config.set_key_value("sparse_infill_filament", new ConfigOptionInt(4));
+    model.objects[1]->volumes[0]->config.set_key_value("solid_infill_filament", new ConfigOptionInt(4));
+    print.apply(model, config);
+    print.validate();
+
+    const std::vector<unsigned int> used = print.extruders();
+    REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 2u) != used.end());
+
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+    REQUIRE_FALSE(gcode.empty());
+    INFO("T0=" << count_toolchange(gcode, 0) << " T2=" << count_toolchange(gcode, 2));
+    REQUIRE(count_toolchange(gcode, 0) >= 1);
+    REQUIRE(count_toolchange(gcode, 2) >= 1);
+}
+
+TEST_CASE("ByObject mixed support filament exports with physical toolchanges", "[Print][MixedFilament][GCode]")
+{
+    DynamicPrintConfig config = two_filament_config(true, true);
+    config.set_deserialize_strict({
+        {"wall_filament",                 "1"},
+        {"sparse_infill_filament",        "1"},
+        {"solid_infill_filament",         "1"},
+        {"enable_support",                "1"},
+        {"support_type",                  "normal(auto)"},
+        {"support_filament",               "3"},
+        {"support_interface_filament",     "3"},
+        {"support_on_build_plate_only",    "0"},
+    });
+
+    Print print;
+    Model model;
+    init_print({TestMesh::overhang}, print, model, config);
+    REQUIRE(print.mixed_filament_manager().is_mixed(3, 2));
+
+    const std::vector<unsigned int> used = print.extruders();
+    REQUIRE(std::find(used.begin(), used.end(), 0u) != used.end());
+    REQUIRE(std::find(used.begin(), used.end(), 1u) != used.end());
+
+    std::string gcode;
+    REQUIRE_NOTHROW(gcode = export_print_gcode(print));
+    REQUIRE_FALSE(gcode.empty());
+    INFO("T0=" << count_toolchange(gcode, 0) << " T1=" << count_toolchange(gcode, 1));
+    REQUIRE(count_toolchange(gcode, 0) >= 1);
+    REQUIRE(count_toolchange(gcode, 1) >= 1);
 }

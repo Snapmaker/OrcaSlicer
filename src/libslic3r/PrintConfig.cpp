@@ -4421,6 +4421,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionString(""));
 
+    def = this->add("mixed_filament_auto_gradient_choice", coInt);
+    def->label = L("Remembered auto-gradient choice");
+    def->tooltip = L("Project-specific remembered response to the large auto-gradient confirmation.");
+    def->gui_flags = "serialized";
+    def->min = -1;
+    def->max = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(-1));
+
+    def = this->add("mixed_filament_auto_gradient_physical_count", coInt);
+    def->label = L("Remembered auto-gradient physical filament count");
+    def->tooltip = L("Physical filament count for which the project-specific auto-gradient response was remembered.");
+    def->gui_flags = "serialized";
+    def->min = 0;
+    def->max = MAXIMUM_FILAMENT_NUMBER;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def = this->add("dithering_z_step_size", coFloat);
     def->label = L("Dithering Z step size");
     def->category = L("Others");

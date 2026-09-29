@@ -340,6 +340,11 @@ public:
     // responsible for re-sorting and re-deduplicating after the call.
     void expand_virtual_extruder_ids(std::vector<int> &ids, size_t num_physical) const;
 
+    // 0-based counterpart used by Print::extruders() / GCodeWriter::set_extruders.
+    // Converts to 1-based, expands mixed virtual IDs, drops anything that is
+    // still outside the physical range, then sorts and unique's in place.
+    void expand_0based_extruder_ids(std::vector<unsigned int> &ids, size_t num_physical) const;
+
     // Normalize a gradient_component_ids string to canonical form.
     // Canonical form uses legacy encoding when all IDs ≤ 9, extended otherwise.
     static std::string normalize_gradient_component_ids(const std::string &components);

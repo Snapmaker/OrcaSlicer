@@ -266,6 +266,25 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
 }
 
+TEST_CASE("expand_0based_extruder_ids maps mixed virtual ids to physical components", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00"});
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 2) == 3);
+
+    std::vector<unsigned int> ids = {2}; // 0-based virtual id 3
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+
+    ids = {0};
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0});
+
+    ids = {0, 1};
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+}
+
 TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};

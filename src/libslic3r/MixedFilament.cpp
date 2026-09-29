@@ -949,6 +949,22 @@ void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, si
     ids = std::move(expanded);
 }
 
+void MixedFilamentManager::expand_0based_extruder_ids(std::vector<unsigned int> &ids, size_t num_physical) const
+{
+    std::vector<int> ids_1based;
+    ids_1based.reserve(ids.size());
+    for (unsigned int id : ids)
+        ids_1based.push_back(int(id) + 1);
+    expand_virtual_extruder_ids(ids_1based, num_physical);
+    std::vector<unsigned int> physical;
+    physical.reserve(ids_1based.size());
+    for (int id1 : ids_1based)
+        if (id1 >= 1 && size_t(id1) <= num_physical)
+            physical.push_back(unsigned(id1 - 1));
+    sort_remove_duplicates(physical);
+    ids = std::move(physical);
+}
+
 static int normalize_distribution_mode_without_pointillism(int distribution_mode, const std::string &gradient_component_ids)
 {
     const int clamped_mode = clamp_int(distribution_mode, int(MixedFilament::LayerCycle), int(MixedFilament::ImageWeighted));

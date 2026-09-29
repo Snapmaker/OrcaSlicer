@@ -492,7 +492,13 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
-    assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
+    if (it_extruder == m_extruders.end() || it_extruder->id() != extruder_id) {
+        // Mixed virtual IDs used to reach here on the ByObject path (writer only had the
+        // clamped physical-0 Extruder). Never leave a dangling m_extruder; the caller
+        // should have resolved mixed IDs first.
+        BOOST_LOG_TRIVIAL(error) << "GCodeWriter::toolchange: no physical extruder registered for id " << extruder_id;
+        return "";
+    }
     m_extruder = &*it_extruder;
 
     // return the toolchange command

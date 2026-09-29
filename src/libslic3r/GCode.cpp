@@ -2958,8 +2958,14 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             // No object to print was found, cancel the G-code export.
             throw Slic3r::SlicingError(_(L("No object can be printed. Maybe too small")));
         // We don't allow switching of extruders per layer by Model::custom_gcode_per_print_z in sequential mode.
-        // Use the extruder IDs collected from Regions.
-        this->set_extruders(print.extruders());
+        // Print::extruders() expands mixed virtual IDs (wall_filament=3 on a 2-physical plate) to
+        // physical components via MixedFilamentManager. Union ToolOrdering's resolved set too:
+        // that is what the by-layer path feeds GCodeWriter, and it picks up any extra physical
+        // IDs collect_extruders registered (image-row candidates, grouped patterns).
+        std::vector<unsigned int> extruder_ids = print.extruders();
+        append(extruder_ids, tool_ordering.all_extruders());
+        sort_remove_duplicates(extruder_ids);
+        this->set_extruders(extruder_ids);
 
         has_wipe_tower = print.has_wipe_tower() && tool_ordering.has_wipe_tower();
     } else {
@@ -10223,6 +10229,8 @@ LiftType GCode::to_lift_type(ZHopType z_hop_types)
 
 bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftType& lift_type)
 {
+    if (this->writer().extruder() == nullptr)
+        return false;
     if (travel.length() < scale_(EXTRUDER_CONFIG(retraction_minimum_travel))) {
         // skip retraction if the move is shorter than the configured threshold
         return false;

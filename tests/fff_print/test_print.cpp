@@ -839,10 +839,11 @@ TEST_CASE("ByObject mixed pattern bracket-3 token exports T0 and T2", "[Print][M
     REQUIRE(count_toolchange(gcode, 1) == 0);
 }
 
-// ByLayer shares LayerTools across objects. Stamping every entry in collect_extruders
-// let a later shorter object overwrite a taller object's layer_index above the short
-// top, so mixed walls/infill resolved to a tool that was not in layer_tools.extruders.
-TEST_CASE("ByLayer mixed walls on a short-then-tall plate stay on scheduled tools", "[Print][MixedFilament][GCode]")
+// ByLayer shares LayerTools across objects. This plate is taller first, shorter
+// second. Stamping every entry in collect_extruders let the later shorter object
+// overwrite the taller object's layer_index above the short top, so mixed
+// walls/infill resolved to a tool that was not in layer_tools.extruders.
+TEST_CASE("ByLayer mixed walls on a tall-then-short plate stay on scheduled tools", "[Print][MixedFilament][GCode]")
 {
     REQUIRE(mixed_ab_virtual_id() == 3);
 

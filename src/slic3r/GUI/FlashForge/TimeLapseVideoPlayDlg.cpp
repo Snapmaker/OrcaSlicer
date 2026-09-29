@@ -83,10 +83,8 @@ namespace GUI {
         , m_width(width)
         , m_height(height)
     {
-        m_filepath2 = filepath;
 #ifdef __WIN32__
         m_filepath.Replace("\\", "/");
-        m_filepath2.Replace("\\", "/");
 #endif
         generate_html();
 

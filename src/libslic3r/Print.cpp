@@ -1677,7 +1677,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 }
                 if (max_top_shell > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). "
+                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the top shell layers."),
                             max_top_shell, total_layers),
                         print_object.model_object(),
@@ -1685,7 +1685,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     };
                 if (max_bottom_shell > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("Shell layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). "
+                        Slic3r::format(_u8L("The shell layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the bottom shell layers."),
                             max_bottom_shell, total_layers),
                         print_object.model_object(),
@@ -1703,7 +1703,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                 }
                 if (max_top_penetration > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). "
+                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the top paint penetration layers."),
                             max_top_penetration, total_layers),
                         print_object.model_object(),
@@ -1711,7 +1711,7 @@ StringObjectException Print::validate(StringObjectException *warning, Polygons* 
                     };
                 if (max_bottom_penetration > total_layers)
                     return StringObjectException{
-                        Slic3r::format(_u8L("Paint penetration layers (current setting: %1% layers) exceed the total layer count of the model (current setting: %2% layers). "
+                        Slic3r::format(_u8L("The paint penetration layers (current: %1%) exceed the model layers (total: %2%). "
                                             "Please reduce the bottom paint penetration layers."),
                             max_bottom_penetration, total_layers),
                         print_object.model_object(),

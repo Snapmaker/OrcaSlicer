@@ -1818,9 +1818,11 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 // First stop background processing before shuffling or deleting the ModelVolumes in the ModelObject's list.
                 this->call_cancel_callback();
                 update_apply_status(false);
-                // Invalidate seam placement (affects G-code export). 7D emits the warning from GCode.cpp.
+                // Invalidate seam placement (affects G-code export). Helpers do not change wall
+                // geometry, so posPerimeters stays valid.
                 update_apply_status(this->invalidate_step(psGCodeExport));
-            } else if (model_custom_seam_data_changed(model_object, model_object_new)) {
+            } else if (model_custom_seam_data_changed(model_object, model_object_new) ||
+                       model_precise_seam_config_changed(model_object, model_object_new)) {
                 update_apply_status(this->invalidate_step(psGCodeExport));
             }
             // Synchronize both families once, after cancellation and all affected-step invalidations.

@@ -4184,6 +4184,14 @@ bool model_custom_seam_data_changed(const ModelObject& mo, const ModelObject& mo
         [](const ModelVolume &mv_old, const ModelVolume &mv_new){ return mv_old.seam_facets.timestamp_matches(mv_new.seam_facets); });
 }
 
+bool model_precise_seam_config_changed(const ModelObject &mo, const ModelObject &mo_new)
+{
+    // Assumes the Precise Seam volume list is synchronized (ids, types, transforms, order).
+    return model_property_changed(mo, mo_new,
+        [](const ModelVolumeType t) { return is_precise_seam(t); },
+        [](const ModelVolume &mv_old, const ModelVolume &mv_new) { return mv_old.config.timestamp_matches(mv_new.config); });
+}
+
 bool model_mmu_segmentation_data_changed(const ModelObject& mo, const ModelObject& mo_new)
 {
     return model_property_changed(mo, mo_new,

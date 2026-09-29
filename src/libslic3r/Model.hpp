@@ -1867,6 +1867,11 @@ bool model_support_group_data_changed(const ModelObject& mo, const ModelObject& 
 // The function assumes that volumes list is synchronized.
 bool model_custom_seam_data_changed(const ModelObject& mo, const ModelObject& mo_new);
 
+// Precise Seam volume config (dormant keys, notes, extra settings). Transform/type/list
+// changes are already covered by model_volume_list_changed(precise_seam_types).
+// The function assumes that the Precise Seam volume list is synchronized.
+bool model_precise_seam_config_changed(const ModelObject &mo, const ModelObject &mo_new);
+
 // Test whether the now ModelObject has newer MMU segmentation data than the old one.
 // The function assumes that volumes list is synchronized.
 extern bool model_mmu_segmentation_data_changed(const ModelObject& mo, const ModelObject& mo_new);

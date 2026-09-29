@@ -7,6 +7,7 @@
 #include <memory>
 #include <atomic>
 #include <functional>
+#include <string>
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -22,6 +23,9 @@ class PrintObject;
 class ExtrusionLoop;
 class Print;
 class Layer;
+namespace PreciseSeam {
+struct PreciseSeamWarnings;
+}
 
 namespace EdgeGrid {
 class Grid;
@@ -42,7 +46,7 @@ enum class EnforcedBlockedSeamPoint {
 // struct representing single perimeter loop
 struct Perimeter {
   size_t start_index{};
-  size_t end_index{}; //inclusive!
+  size_t end_index{}; // exclusive (one-past-the-end)
   size_t seam_index{};
   float flow_width{};
 
@@ -51,6 +55,10 @@ struct Perimeter {
   // Random position also uses this flexibility to set final seam point position
   bool finalized = false;
   Vec3f final_seam_position = Vec3f::Zero();
+
+  // Stores precise seam coordinates found by Precise Seam modifiers
+  std::optional<Vec3f> precise_seam_point;
+  size_t precise_seam_index{};
 };
 
 //Struct over which all processing of perimeters is done. For each perimeter point, its respective candidate is created,
@@ -109,6 +117,9 @@ struct PrintObjectSeamData
   // Map of PrintObjects (PO) -> vector of layers of PO -> unique_ptr to KD
   // tree of all points of the given layer
 
+  // Indicates presence of strong Precise Seam modifiers (CENTER/LEFT/RIGHT) for this object
+  bool has_precise_seam_strong_volumes = false;
+
   void clear()
   {
     layers.clear();
@@ -148,9 +159,20 @@ public:
   //The following data structures hold all perimeter points for all PrintObject.
   std::unordered_map<const PrintObject*, PrintObjectSeamData> m_seam_per_object;
 
+  SeamPlacer();
+  SeamPlacer(SeamPlacer &&) noexcept;
+  SeamPlacer &operator=(SeamPlacer &&) noexcept;
+  SeamPlacer(const SeamPlacer &) = delete;
+  SeamPlacer &operator=(const SeamPlacer &) = delete;
+  ~SeamPlacer();
+
   void init(const Print &print, std::function<void(void)> throw_if_canceled_func);
 
   void place_seam(const Layer *layer, ExtrusionLoop &loop, const Point &last_pos, float& overhang) const;
+
+  // One-line Precise Seam warning aggregated across every object processed by init()/init_object().
+  // Empty when no unsupported-intersection flags were raised. GCode.cpp emits it once.
+  std::string precise_seam_warning_message() const;
 
   // The seam the slicer picks for one outer wall loop (Auto-paint seam, see plan_object_seams()).
   struct PlannedSeam
@@ -178,7 +200,8 @@ public:
 private:
   void init_object(const Print &print, const PrintObject *po, SeamPosition seam_position, bool prefer_part_joints,
                    bool use_painted_seams, const std::function<void(void)> &throw_if_canceled_func);
-  void gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info);
+  void gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info,
+                              PreciseSeam::PreciseSeamWarnings *warnings = nullptr);
   void calculate_candidates_visibility(const PrintObject *po,
                                        const SeamPlacerImpl::GlobalModelInfo &global_model_info);
   void calculate_overhangs_and_layer_embedding(const PrintObject *po);
@@ -191,6 +214,9 @@ private:
       const Vec3f& projected_position,
       const size_t layer_idx, const float max_distance,
       const SeamPlacerImpl::SeamComparator &comparator) const;
+
+  std::unique_ptr<PreciseSeam::PreciseSeamWarnings> m_precise_seam_warnings;
+  PreciseSeam::PreciseSeamWarnings &precise_seam_warnings();
 };
 
 } // namespace Slic3r

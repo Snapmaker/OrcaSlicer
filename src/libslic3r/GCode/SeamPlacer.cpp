@@ -1,4 +1,5 @@
 #include "SeamPlacer.hpp"
+#include "PreciseSeam.hpp"
 
 #include "Polygon.hpp"
 #include "PrintConfig.hpp"
@@ -11,6 +12,9 @@
 #include <array>
 #include <chrono>
 #include <queue>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "libslic3r/AABBTreeLines.hpp"
 #include "libslic3r/KDTreeIndirect.hpp"
@@ -19,6 +23,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Layer.hpp"
+#include "libslic3r/I18N.hpp"
 
 #include "libslic3r/Geometry/Curves.hpp"
 #include "libslic3r/ShortEdgeCollapse.hpp"
@@ -34,6 +39,11 @@
 #endif
 
 namespace Slic3r {
+
+SeamPlacer::SeamPlacer() = default;
+SeamPlacer::SeamPlacer(SeamPlacer &&) noexcept = default;
+SeamPlacer &SeamPlacer::operator=(SeamPlacer &&) noexcept = default;
+SeamPlacer::~SeamPlacer() = default;
 
 namespace SeamPlacerImpl {
 
@@ -346,6 +356,15 @@ struct GlobalModelInfo {
   AABBTreeIndirect::Tree<3, float> enforcers_tree;
   AABBTreeIndirect::Tree<3, float> blockers_tree;
 
+  // Precise Seam modifiers: strong modifiers (CENTER/LEFT/RIGHT) determine exact seam placement
+  std::vector<const ModelVolume *> precise_seam_strong_volumes;
+  // Precise Seam modifiers: weak modifiers (ENFORCED/BLOCKED/NEUTRAL) provide hints for seam placement
+  std::vector<const ModelVolume *> precise_seam_weak_volumes;
+
+  // Pre-sliced modifier polygons, keyed by ModelVolume pointer.
+  // Populated once in SeamPlacer::init_object() to avoid re-slicing on every perimeter.
+  PreciseSeam::ModifierSlicesCache precise_seam_slices;
+
   // Part joints (seam_prefer_part_joints): points on the surface of one part that touch another part,
   // see gather_part_joints(). Empty unless the object has touching parts (or touches another object).
   std::vector<Vec3f> part_joint_points;
@@ -493,7 +512,8 @@ static float part_joint_radius(const Perimeter &perimeter, const GlobalModelInfo
 }
 
 //Extract perimeter polygons of the given layer
-Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerRegion*> &corresponding_regions_out) {
+Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerRegion*> &corresponding_regions_out,
+                                   bool has_precise_seam_modifiers) {
   Polygons polygons;
   for (const LayerRegion *layer_region : layer->regions()) {
     for (const ExtrusionEntity *ex_entity : layer_region->perimeters.entities) {
@@ -530,6 +550,18 @@ Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerR
     }
   }
 
+  if (has_precise_seam_modifiers) {
+    // Extrusion loops repeat their start point; Polygon closes the contour implicitly.
+    // Normalize here for Precise Seam without changing ordinary seam candidates.
+    for (Polygon &polygon : polygons) {
+      // Adjacent extrusion paths share endpoints; zero-length edges would prevent refinement at their junctions.
+      // Remove only consecutive duplicates, preserving distinct visits to a self-touching contour point.
+      polygon.points.erase(std::unique(polygon.points.begin(), polygon.points.end()), polygon.points.end());
+      while (polygon.size() > 1 && polygon.points.front() == polygon.points.back())
+        polygon.points.pop_back();
+    }
+  }
+
   if (polygons.empty()) { // If there are no perimeter polygons for whatever reason (disabled perimeters .. ) insert dummy point
     // it is easier than checking everywhere if the layer is not emtpy, no seam will be placed to this layer anyway
     polygons.emplace_back(Points{ { 0, 0 } });
@@ -544,12 +576,34 @@ Polygons extract_perimeter_polygons(const Layer *layer, std::vector<const LayerR
 //each SeamCandidate also contains pointer to shared Perimeter structure representing the polygon
 // if Custom Seam modifiers are present, oversamples the polygon if necessary to better fit user intentions
 void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const LayerRegion *region,
-                               const GlobalModelInfo &global_model_info, PrintObjectSeamData::LayerSeams &result) {
+                               const GlobalModelInfo &global_model_info, PrintObjectSeamData::LayerSeams &result,
+                               PreciseSeam::PreciseSeamWarnings *warnings = nullptr) {
   if (orig_polygon.size() == 0) {
     return;
   }
   Polygon polygon = orig_polygon;
   bool was_clockwise = polygon.make_counter_clockwise();
+
+  const Layer *layer = region ? region->layer() : nullptr;
+  const auto  &strong_volumes = global_model_info.precise_seam_strong_volumes;
+  const auto  &weak_volumes   = global_model_info.precise_seam_weak_volumes;
+
+  auto seam_point = PreciseSeam::insert_strong_seam_point(strong_volumes, polygon, layer,
+                                                          global_model_info.precise_seam_slices, warnings);
+
+  std::optional<Vec3f> inserted_seam_position;
+  if (seam_point.has_value()) {
+    Vec2f unscaled_p = unscale(seam_point.value()).cast<float>();
+    inserted_seam_position = Vec3f(unscaled_p.x(), unscaled_p.y(), z_coord);
+  }
+
+  // Weak modifiers only apply when no strong modifier pinned this perimeter.
+  std::vector<PreciseSeam::WeakModifierSegment> weak_segments;
+  if (!inserted_seam_position.has_value()) {
+    weak_segments = PreciseSeam::collect_weak_modifier_segments(weak_volumes, polygon, layer,
+                                                                global_model_info.precise_seam_slices, warnings);
+  }
+
   float angle_arm_len = region != nullptr ? region->flow(FlowRole::frExternalPerimeter).nozzle_diameter() : 0.5f;
 
   std::vector<float> lengths { };
@@ -628,6 +682,11 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
 
   perimeter.end_index = result.points.size();
 
+  // Apply weak modifiers if no strong modifier was inserted
+  if (!inserted_seam_position.has_value() && !weak_segments.empty()) {
+    PreciseSeam::apply_weak_modifiers_to_perimeter(weak_segments, result, perimeter, some_point_enforced);
+  }
+
   if (some_point_enforced) {
     // We will patches of enforced points (patch: continuous section of enforced points), choose
     // the longest patch, and select the middle point or sharp point (depending on the angle)
@@ -691,6 +750,21 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
       } else {
         size_t central_idx = large_angle_points_indices.size() / 2;
         result.points[large_angle_points_indices[central_idx]].central_enforcer = true;
+      }
+    }
+  }
+
+  // Strong Precise Seam: pin one point and block every other candidate on this perimeter.
+  if (inserted_seam_position.has_value()) {
+    for (size_t i = perimeter.start_index; i < perimeter.end_index; ++i) {
+      if (result.points[i].position == inserted_seam_position.value()) {
+        result.points[i].type = EnforcedBlockedSeamPoint::Enforced;
+        result.points[i].central_enforcer = true;
+        perimeter.precise_seam_point = inserted_seam_position;
+        perimeter.precise_seam_index = i;
+      } else {
+        result.points[i].type = EnforcedBlockedSeamPoint::Blocked;
+        result.points[i].central_enforcer = false;
       }
     }
   }
@@ -1517,13 +1591,14 @@ void pick_random_seam_point(const std::vector<SeamCandidate> &perimeter_points, 
 // Parallel process and extract each perimeter polygon of the given print object.
 // Gather SeamCandidates of each layer into vector and build KDtree over them
 // Store results in the SeamPlacer variables m_seam_per_object
-void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info) {
+void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerImpl::GlobalModelInfo &global_model_info,
+                                        PreciseSeam::PreciseSeamWarnings *warnings) {
   using namespace SeamPlacerImpl;
   PrintObjectSeamData &seam_data = m_seam_per_object.emplace(po, PrintObjectSeamData { }).first->second;
   seam_data.layers.resize(po->layer_count());
 
   tbb::parallel_for(tbb::blocked_range<size_t>(0, po->layers().size()),
-                    [po, &global_model_info, &seam_data]
+                    [po, &global_model_info, &seam_data, warnings]
                     (tbb::blocked_range<size_t> r) {
                       for (size_t layer_idx = r.begin(); layer_idx < r.end(); ++layer_idx) {
                         PrintObjectSeamData::LayerSeams &layer_seams = seam_data.layers[layer_idx];
@@ -1531,10 +1606,13 @@ void SeamPlacer::gather_seam_candidates(const PrintObject *po, const SeamPlacerI
                         auto unscaled_z = layer->slice_z;
                         std::vector<const LayerRegion*> regions;
                         //NOTE corresponding region ptr may be null, if the layer has zero perimeters
-                        Polygons polygons = extract_perimeter_polygons(layer, regions);
+                        const bool has_precise_seam_modifiers = !global_model_info.precise_seam_strong_volumes.empty() ||
+                                                               !global_model_info.precise_seam_weak_volumes.empty();
+                        Polygons polygons = extract_perimeter_polygons(layer, regions, has_precise_seam_modifiers);
                         for (size_t poly_index = 0; poly_index < polygons.size(); ++poly_index) {
                           process_perimeter_polygon(polygons[poly_index], unscaled_z,
-                                                    regions[poly_index], global_model_info, layer_seams);
+                                                    regions[poly_index], global_model_info, layer_seams,
+                                                    warnings);
                         }
                         auto functor = SeamCandidateCoordinateFunctor { layer_seams.points };
                         seam_data.layers[layer_idx].points_tree =
@@ -1949,8 +2027,48 @@ void SeamPlacer::align_seam_points(const PrintObject *po, const SeamPlacerImpl::
 
 }
 
+PreciseSeam::PreciseSeamWarnings &SeamPlacer::precise_seam_warnings()
+{
+  if (!m_precise_seam_warnings)
+    m_precise_seam_warnings = std::make_unique<PreciseSeam::PreciseSeamWarnings>();
+  return *m_precise_seam_warnings;
+}
+
+std::string SeamPlacer::precise_seam_warning_message() const
+{
+  if (!m_precise_seam_warnings)
+    return {};
+  const auto &w = *m_precise_seam_warnings;
+  const bool mi = w.multiple_intersections.load(std::memory_order_relaxed);
+  const bool tb = w.through_body.load(std::memory_order_relaxed);
+  const bool mc = w.multiply_connected.load(std::memory_order_relaxed);
+  const bool fc = w.full_containment.load(std::memory_order_relaxed);
+  std::vector<std::string> parts;
+  if (mi)
+    parts.push_back(_u8L("multiple intersections with a perimeter detected"));
+  if (tb)
+    parts.push_back(_u8L("modifier fully crosses the printable perimeter"));
+  if (mc)
+    parts.push_back(_u8L("modifier shape is not solid (has holes inside) and was ignored"));
+  if (fc)
+    parts.push_back(_u8L("perimeter is fully contained inside modifier and was ignored"));
+  if (parts.empty())
+    return {};
+  // One line: the export warnings dialog shows only the first line of each warning.
+  std::string warning_text = _u8L("Precise Seam") + ": ";
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0)
+      warning_text += "; ";
+    warning_text += parts[i];
+  }
+  warning_text += ". ";
+  warning_text += _u8L("Seam placement may differ from expected.");
+  return warning_text;
+}
+
 void SeamPlacer::init(const Print &print, std::function<void(void)> throw_if_canceled_func) {
   m_seam_per_object.clear();
+  m_precise_seam_warnings = std::make_unique<PreciseSeam::PreciseSeamWarnings>();
 
   for (const PrintObject *po : print.objects()) {
     throw_if_canceled_func();
@@ -1974,6 +2092,19 @@ void SeamPlacer::init_object(const Print &print, const PrintObject *po, SeamPosi
         has_part_joints = global_model_info.has_part_joints();
       }
       gather_enforcers_blockers(global_model_info, po, use_painted_seams);
+      // Precise Seam modifiers are explicit volumes, not paint, so they also steer Auto-paint
+      // (plan_object_seams) even when use_painted_seams is false. Gate on the volume list.
+      PreciseSeam::init_precise_seam_data(global_model_info.precise_seam_strong_volumes,
+                                          global_model_info.precise_seam_weak_volumes,
+                                          m_seam_per_object[po].has_precise_seam_strong_volumes,
+                                          po->model_object());
+      if (!global_model_info.precise_seam_strong_volumes.empty() ||
+          !global_model_info.precise_seam_weak_volumes.empty()) {
+        for (const ModelVolume *vol : global_model_info.precise_seam_strong_volumes)
+          global_model_info.precise_seam_slices[vol] = po->slice_single_volume(vol);
+        for (const ModelVolume *vol : global_model_info.precise_seam_weak_volumes)
+          global_model_info.precise_seam_slices[vol] = po->slice_single_volume(vol);
+      }
       throw_if_canceled_func();
       if (is_aligned_setup(configured_seam_preference) || configured_seam_preference == spNearest) {
         compute_global_occlusion(global_model_info, po, throw_if_canceled_func, configured_seam_preference);
@@ -1981,7 +2112,7 @@ void SeamPlacer::init_object(const Print &print, const PrintObject *po, SeamPosi
       throw_if_canceled_func();
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: gather_seam_candidates: start";
-      gather_seam_candidates(po, global_model_info);
+      gather_seam_candidates(po, global_model_info, &precise_seam_warnings());
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: gather_seam_candidates: end";
       throw_if_canceled_func();
@@ -2032,6 +2163,9 @@ void SeamPlacer::init_object(const Print &print, const PrintObject *po, SeamPosi
       BOOST_LOG_TRIVIAL(debug)
           << "SeamPlacer: align_seam_points : end";
     }
+
+    if (m_seam_per_object[po].has_precise_seam_strong_volumes)
+      PreciseSeam::restore_precise_seam_positions(m_seam_per_object[po].layers);
 
 #ifdef DEBUG_FILES
     debug_export_points(m_seam_per_object[po].layers, po->bounding_box(), comparator);

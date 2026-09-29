@@ -105,7 +105,11 @@ public:
         // id for the usual reason (active_step_add_warning de-duplicates by id), and critically so
         // that the CLI's result.json filter - which drops anything left on
         // SlicingDefaultNotification - actually reports it. Appended, so no existing value moves.
-        SlicingInvalidPrintSpeed
+        SlicingInvalidPrintSpeed,
+        // Precise Seam (Orca #12974 stage D): unsupported modifier intersections (multiple, through
+        // body, multiply-connected, full containment). Appended, so no existing value moves. Its
+        // own id so the CLI result.json filter, which drops SlicingDefaultNotification, reports it.
+        SlicingPreciseSeamWarning
     };
 
     typedef size_t TimeStamp;

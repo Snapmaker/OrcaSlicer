@@ -2193,6 +2193,19 @@ void MainFrame::update_side_button_style()
 
 void MainFrame::update_slice_print_status(SlicePrintEventType event, bool can_slice, bool can_print)
 {
+    // TEMP GUARD + DEBUG PROBE (crash c2788d36): stale callbacks may still reach
+    // this after the frame was torn down by recreate_GUI / shutdown. Skip the
+    // UI update in that state and log loudly; normal calls stay silent.
+    // Remove once the stale-pointer audit is complete.
+    if (m_shutting_down || IsBeingDeleted() || !wxTheApp->IsMainLoopRunning()) {
+        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " PROBE-ABNORMAL"
+            << " btn=" << (void*)m_print_btn
+            << " being_deleted=" << IsBeingDeleted()
+            << " shutting_down=" << m_shutting_down
+            << " mainloop_running=" << wxTheApp->IsMainLoopRunning();
+        return;
+    }
+
     bool enable_print = true, enable_slice = true;
 
     if (event == eEventPlateUpdate)

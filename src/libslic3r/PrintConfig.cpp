@@ -10082,6 +10082,12 @@ CLIActionsConfigDef::CLIActionsConfigDef()
     def->tooltip = L("Export the objects as multiple STLs to directory.");
     def->set_default_value(new ConfigOptionString("stl_path"));
 
+    def = this->add("export_step", coString);
+    def->label = L("Export STEP");
+    def->tooltip = L("Export all objects as one STEP file of solids (parts imported from STEP keep their exact geometry).");
+    def->cli_params = "filename.step";
+    def->set_default_value(new ConfigOptionString("output.step"));
+
     /*def = this->add("export_gcode", coBool);
     def->label = L("Export G-code");
     def->tooltip = L("Slice the model and export toolpaths as G-code.");

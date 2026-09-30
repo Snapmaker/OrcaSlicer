@@ -246,6 +246,10 @@ set(lisbslic3r_sources
     Format/SL1.hpp
     Format/STEP.cpp
     Format/STEP.hpp
+    Format/STEPExport.cpp
+    Format/STEPExport.hpp
+    BRep/MeshToBRep.cpp
+    BRep/MeshToBRep.hpp
     Format/STL.cpp
     Format/STL.hpp
     Format/svg.cpp
@@ -622,6 +626,8 @@ slic3r_unity_build(libslic3r SKIP
     SLA/Pad.cpp                     # libnest2d headers clash with neighbours
     Support/TreeSupport.cpp         # libnest2d headers clash with neighbours
     Format/STEP.cpp                 # OCCT's Handle() macro breaks CGAL headers in neighbours
+    Format/STEPExport.cpp           # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/MeshToBRep.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
     Shape/TextShape.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
     Geometry/VoronoiUtilsCgal.cpp   # CGAL must come before OCCT's Handle() macro (Model.hpp -> STEP.hpp)
     FlushVolCalc.cpp                # calls RGB2HSV() from libslic3r_gui; alone it is dropped by the linker in libslic3r_tests
@@ -677,7 +683,7 @@ target_include_directories(libslic3r PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_
 target_include_directories(libslic3r SYSTEM PUBLIC ${EXPAT_INCLUDE_DIRS})
 
 # Find the OCCT and related libraries
-set(OpenCASCADE_DIR "${CMAKE_PREFIX_PATH}/lib/cmake/occt")
+set(OpenCASCADE_DIR "${OCCT_PREFIX}/lib/cmake/occt")
 find_package(OpenCASCADE REQUIRED)
 target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 
@@ -698,6 +704,11 @@ set(OCCT_LIBS
     TKV3d
     TKService
     TKMesh
+    # ModelingAlgorithms (deps/OCCT/OCCT.cmake): B-rep fillet/chamfer, offset/shell, features.
+    TKFeat
+    TKOffset
+    TKFillet
+    TKBool
     TKBO
     TKPrim
     TKHLR

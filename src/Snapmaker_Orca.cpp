@@ -62,6 +62,7 @@ using namespace nlohmann;
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "libslic3r/Format/STL.hpp"
+#include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Utils.hpp"
@@ -167,6 +168,7 @@ std::map<int, std::string> cli_errors = {
     {CLI_OBJECT_COLLISION_IN_LAYER_PRINT, "Object conflicts were detected. Please verify the slicing of all plates in EdgeSlicer before uploading."},
     {CLI_SPIRAL_MODE_INVALID_PARAMS, "Some slicing parameters cannot work with Spiral Vase mode. Please solve the issue in EdgeSlicer before uploading."},
     {CLI_MIXED_FILAMENT_INVALID, "A mixed filament is invalid: its components are different filament types, or it has no filament of its own."},
+    {CLI_EXPORT_STEP_ERROR, "Failed exporting the STEP file."},
     {CLI_SLICING_ERROR, "Failed slicing the model. Please verify the slicing of all plates on EdgeSlicer before uploading."},
     {CLI_GCODE_PATH_CONFLICTS, " G-code conflicts detected after slicing. Please make sure the 3mf file can be successfully sliced in the latest EdgeSlicer."}
 };
@@ -2057,11 +2059,17 @@ int CLI::run(int argc, char **argv)
                 // BBS: adjust whebackup
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
-                model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
-                // Snapshot keys the file actually carried before create=true reads insert defaults
-                // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
-                if (project_file_keys.empty() && !config.empty())
-                    project_file_keys = project_config_snapshot_loaded_keys(config);
+                if (boost::algorithm::iends_with(file, ".step") || boost::algorithm::iends_with(file, ".stp")) {
+                    // STEP, tessellated with the GUI's default precision (linear 0.003 mm, angular
+                    // 0.5 rad), compounds kept whole: the GUI import without its dialog.
+                    model = Model::read_from_step(file, strategy, nullptr, nullptr, nullptr, 0.003, 0.5, false);
+                } else {
+                    model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                    // Snapshot keys the file actually carried before create=true reads insert defaults
+                    // (printer_model, printable_area, bed_exclude_area, upward_compatible_machine, …).
+                    if (project_file_keys.empty() && !config.empty())
+                        project_file_keys = project_config_snapshot_loaded_keys(config);
+                }
                 // The importer flags any 3mf written by Bambu Studio / Orca / this fork as a project file,
                 // including geometry-only ones without Metadata/project_settings.config (the bundled handy
                 // models, for instance). Only a file that actually carried a config is a project: the GUI
@@ -5702,6 +5710,33 @@ int CLI::run(int argc, char **argv)
                 record_exit_reson(outfile_dir, CLI_EXPORT_STL_ERROR, 0, cli_errors[CLI_EXPORT_STL_ERROR], sliced_info);
                 flush_and_exit(CLI_EXPORT_STL_ERROR);
             }
+        } else if (opt_key == "export_step") {
+            // Every object of every loaded model, all instances, into ONE STEP file.
+            boost::filesystem::path step_path(m_config.opt_string(opt_key));
+            const std::string outdir = m_config.opt_string("outputdir");
+            if (step_path.is_relative() && !outdir.empty())
+                step_path = boost::filesystem::path(outdir) / step_path;
+            std::vector<StepExportItem> items;
+            for (auto &model : m_models) {
+                model.add_default_instances();
+                for (const ModelObject *object : model.objects)
+                    items.push_back({object, -1});
+            }
+            StepExportParams step_params;
+            if (const ConfigOptionStrings *colours = m_print_config.option<ConfigOptionStrings>("filament_colour"))
+                step_params.extruder_colours = colours->values;
+            step_params.product_name = step_path.stem().string();
+            StepExportReport step_report;
+            if (! store_step(step_path.string(), items, step_params, step_report)) {
+                boost::nowide::cerr << "STEP export to " << step_path.string() << " failed: " << step_report.error << std::endl;
+                record_exit_reson(outfile_dir, CLI_EXPORT_STEP_ERROR, 0, cli_errors[CLI_EXPORT_STEP_ERROR], sliced_info);
+                flush_and_exit(CLI_EXPORT_STEP_ERROR);
+            }
+            for (const std::string &warning : step_report.warnings)
+                BOOST_LOG_TRIVIAL(warning) << "STEP export: " << warning;
+            boost::nowide::cout << "Exported " << step_report.parts << " parts (" << step_report.exact_parts << " exact from STEP, "
+                                << step_report.mesh_parts << " from mesh, " << step_report.open_parts << " open) to "
+                                << step_path.string() << " in " << step_report.seconds << " s" << std::endl;
         } else if (opt_key == "export_obj") {
             for (auto &model : m_models)
                 model.add_default_instances();

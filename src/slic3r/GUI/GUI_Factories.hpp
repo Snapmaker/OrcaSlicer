@@ -177,6 +177,7 @@ private:
     // Ultra: "Export part as STL" for a single selected ModelVolume (part, modifier,
     // negative volume or support blocker/enforcer - they are all meshes).
     void        append_menu_item_export_stl_part(wxMenu* menu);
+    void        append_menu_item_export_step(wxMenu* menu);
     void        append_menu_item_reload_from_disk(wxMenu* menu);
     void        append_menu_item_replace_with_stl(wxMenu* menu);
     void        append_menu_item_change_extruder(wxMenu* menu);

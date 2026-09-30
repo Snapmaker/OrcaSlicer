@@ -1,0 +1,26 @@
+# AI harness review job — copy into the target repo's .gitlab-ci.yml.
+# Requires two masked CI/CD variables on the target project:
+#   AI_REVIEW_GITLAB_TOKEN  — project access token with api scope (Reporter+)
+#   AI_REVIEW_LLM_API_KEY   — OpenAI-compatible LLM API key
+# See scripts/ai_review_gitlab.py in dev-guidelines for behavior details.
+
+ai_review:
+  image: python:3.11
+  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  resource_group: "ai-review-mr-$CI_MERGE_REQUEST_IID"
+  allow_failure: true
+  timeout: 15m
+  variables:
+    GITLAB_HOST: "gitlab.s.com"
+    AI_REVIEW_LLM_BASE_URL: "https://api.deepseek.com"
+    AI_REVIEW_MODEL: "deepseek-v4-pro"
+    AI_REVIEW_LLM_EFFORT: "low"
+    AI_REVIEW_PROJECT_STANDARDS: "projects/snapmaker-orca"
+    DG_REF: "main"
+  script:
+    - pip install --quiet pyyaml
+    - git clone --depth 1 https://github.com/zhangzhend0ng/dev-guidelines /tmp/dg
+    - git -C /tmp/dg checkout "$DG_REF" 2>/dev/null || true
+    - python /tmp/dg/scripts/ai_review_gitlab.py

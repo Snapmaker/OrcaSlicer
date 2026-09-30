@@ -267,6 +267,34 @@ TEST_CASE("A single part is laid on its own face while the rest of the object st
     check_on_bed(object);
 }
 
+TEST_CASE("Dropping after a part rotation puts every instance of the object on the bed", "[LayOnFace]")
+{
+    Model        model;
+    ModelObject &object = add_plate_with_tilted_block(model);
+    object.add_instance();
+    object.instances[0]->set_offset({ 0, 0, 7 });  // floating
+    object.instances[1]->set_offset({ 50, 0, -3 }); // sunk
+
+    // What the GUI does: the part's matrix changes first, the drop follows.
+    ModelVolume &block = *object.volumes[1];
+    const std::vector<LayOnFacePlane> planes = lay_on_face_planes(block, object.instances.front()->get_matrix_no_offset());
+    const int idx = find_largest_plane(planes);
+    REQUIRE(idx >= 0);
+    block.set_transformation(Geometry::Transformation(lay_part_on_face_matrix(block, block.get_matrix(), object.instances.front()->get_matrix(), planes[idx].normal)));
+    object.invalidate_bounding_box();
+    CHECK(bed_drop_shift(object, 0) != 0.);
+
+    drop_object_to_bed(object);
+    for (size_t i = 0; i < 2; ++i) {
+        CHECK_THAT(object.instance_bounding_box(i).min.z(), WithinAbs(0., 1e-6));
+        CHECK(bed_drop_shift(object, i) == 0.);
+    }
+    // Dropping again changes nothing.
+    const Vec3d offset = object.instances[0]->get_offset();
+    drop_object_to_bed(object);
+    CHECK(object.instances[0]->get_offset().isApprox(offset, 1e-12));
+}
+
 TEST_CASE("A part's face ends up pointing down whatever the instance rotation and scale", "[LayOnFace]")
 {
     Model        model;

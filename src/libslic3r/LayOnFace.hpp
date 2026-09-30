@@ -56,6 +56,14 @@ void lay_on_face(ModelObject &object, size_t instance_idx, const Vec3d &normal);
 Transform3d lay_part_on_face_matrix(const ModelVolume &volume, const Transform3d &volume_matrix, const Transform3d &instance_matrix,
                                     const Vec3d &normal);
 
+// The z translation that puts the lowest point of the object's instance on the bed (z = 0), measured on the
+// parts' exact geometry like lay_on_face() does. Zero when it is on the bed already (within a nanometre).
+double bed_drop_shift(const ModelObject &object, size_t instance_idx);
+
+// Puts the lowest point of every instance of the object on the bed. Used after a part has been turned: the
+// parts share the instances, so all of them drop.
+void drop_object_to_bed(ModelObject &object);
+
 // Rotates one part of the object with lay_part_on_face_matrix(), then drops the object so its lowest point is
 // at z = 0 again. The other parts and the instance rotation stay as they were.
 void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_idx, const Vec3d &normal);

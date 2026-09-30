@@ -255,10 +255,21 @@ void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_id
     ModelVolume &volume = *object.volumes[volume_idx];
     volume.set_transformation(Geometry::Transformation(
         lay_part_on_face_matrix(volume, volume.get_matrix(), object.instances[instance_idx]->get_matrix(), normal)));
-    object.invalidate_bounding_box();
     // Parts share one instance transformation, so every instance moves with the part: drop each of them.
+    drop_object_to_bed(object);
+}
+
+double bed_drop_shift(const ModelObject &object, size_t instance_idx)
+{
+    const double z = -object.instance_bounding_box(instance_idx).min.z();
+    return std::abs(z) < 1e-6 ? 0. : z;
+}
+
+void drop_object_to_bed(ModelObject &object)
+{
+    object.invalidate_bounding_box();
     for (size_t i = 0; i < object.instances.size(); ++i)
-        object.translate_instance(i, -object.instance_bounding_box(i).min.z() * Vec3d::UnitZ());
+        object.translate_instance(i, bed_drop_shift(object, i) * Vec3d::UnitZ());
 }
 
 } // namespace Slic3r

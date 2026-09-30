@@ -109,6 +109,8 @@ private:
     void set_volume_by_selection();
     void reset_volume();
 
+    void set_keep_up(bool keep_up);
+
     // create volume from text - main functionality
     bool process(bool make_snapshot = true);
     void close();

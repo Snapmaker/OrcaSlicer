@@ -386,7 +386,8 @@ class GLCanvas3D
         ObjectClashed,
         GCodeConflict,
         ToolHeightOutside,
-        SpiralLiftNearBoundary  // Snapmaker: 螺旋抬升靠近边界警告
+        SpiralLiftNearBoundary,
+        MixUsePLAAndPETG
     };
 
     class RenderStats
@@ -1372,6 +1373,9 @@ private:
 
     // generates a warning notification containing the given message
     void _set_warning_notification(EWarning warning, bool state);
+
+    // per-frame PLA/PETG mix check without the full_config() merge (see render())
+    void _update_pla_petg_mix_warning();
 
     bool _is_any_volume_outside() const;
     // Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）

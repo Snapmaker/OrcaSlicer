@@ -582,6 +582,10 @@ public:
     bool m_lan_session_up{false};
     void set_lan_session_up(bool up) { m_lan_session_up = up; }
     bool lan_session_up() const { return m_lan_session_up; }
+    // Ultra: whether a report carrying the AMS / external spools has been parsed in full for this
+    // printer, and when DeviceManager::full_report_tick last asked it for one (see there).
+    bool m_full_report_seen{false};
+    std::chrono::steady_clock::time_point m_full_report_asked{};
     void set_ctt_dlg( wxString text);
     int  parse_msg_count = 0;
     int  keep_alive_count = 0;
@@ -1308,6 +1312,23 @@ public:
     // Call it on the GUI thread only: it touches MachineObject and the network agent.
     void lan_reconnect_tick();
 
+    // Ultra: the phone's printer screen lists every printer's AMS trays and external spools, and a
+    // cloud printer the PC has not selected only reports those when they change (a P1 / A1) or as
+    // diffs against a full report it may never have been asked for. So a cloud printer that is
+    // online and has not had a full report parsed is asked for one (pushall), at most once every
+    // FULL_REPORT_RETRY_MS. GUI thread, off the same one-second heartbeat as lan_reconnect_tick.
+    void full_report_tick();
+    static constexpr long long FULL_REPORT_RETRY_MS = 5 * 60 * 1000;
+
+    // Ultra: the agent holds one LAN session, to the selected printer, so every other LAN-only
+    // Bambu printer was online (SSDP) with no report behind it: no AMS, no spools, no state on the
+    // phone. With the UltraNet plug-in the visible slicer hands it the rest of its LAN printers
+    // (those with an access code and an address) to watch over read-only sessions of their own;
+    // each asks for a full report when it comes up. The hidden instance keeps its round robin
+    // (lan_watch_rotate). Every LAN_WATCH_SET_MS, GUI thread, off the same heartbeat.
+    void lan_watch_tick();
+    static constexpr long long LAN_WATCH_SET_MS = 10 * 1000;
+
     // The backoff ladder, in milliseconds: how long a LAN printer must have looked disconnected
     // before the first retry, and how long between retries after that. The numbers and the formula
     // live in LanReconnectLadder.hpp, which is wx-free, so a unit test can check the
@@ -1330,6 +1351,8 @@ private:
     // The hidden hub-managed instance's round robin over its LAN printers (see the .cpp): which
     // printer currently holds the agent's single LAN session, and since when.
     std::string m_lan_watch_id;
+    std::chrono::steady_clock::time_point m_lan_watch_set_at {};
+    std::string m_lan_watch_set; // the last set handed to the plug-in, for the log
     long long   m_lan_watch_since { 0 };
     MachineObject* lan_watch_rotate();
     // When something other than the rotation last chose a printer (set_selected_machine: a send,

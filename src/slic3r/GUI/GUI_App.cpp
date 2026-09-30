@@ -2662,12 +2662,13 @@ void GUI_App::init_networking_callbacks()
 
                     auto sel = this->m_device_manager->get_selected_machine();
 
-                    if (sel && sel->dev_id == dev_id) {
-                        obj->parse_json(msg);
-                    }
-                    else {
-                        obj->parse_json(msg, true);
-                    }
+                    // Ultra: every printer is parsed in full, not only the selected one. Upstream
+                    // parses the others key-fields-only, which skips the AMS trays and the external
+                    // spools - so the phone's printer screen (RemoteControl::describe_bambu) showed a
+                    // filament list only for a printer this PC had selected, which in practice meant
+                    // one it had just sent a print to. The hidden hub-managed instance selects
+                    // nothing, so there it never had one at all.
+                    obj->parse_json(msg);
 
 
                     if (!this->is_enable_multi_machine()) {

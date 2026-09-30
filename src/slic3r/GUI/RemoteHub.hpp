@@ -210,6 +210,26 @@ struct CameraCandidate
 std::string camera_for_printer(const std::string& printer_id, const std::string& printer_ip,
                                const std::vector<CameraCandidate>& cams);
 
+// ---- one printer reported by several windows (poll_printers) ----
+// Every slicer window lists every Bambu printer it knows, but a Bambu LAN printer reports only to
+// the one window holding its MQTT session (the network plug-in has one LAN session per window):
+// the visible window's selected printer, the hidden instance's current watch. Every other window's
+// row for it is a MachineObject nobody is updating - no temperatures, and no AMS unless it was once
+// selected there. Last-polled-wins let such a row replace the live one.
+//
+// So: a fresh row (`cached_fresh`) from the window that is `connected` to the printer is kept over a
+// not-connected row from another window (`keep_cached`). Otherwise the incoming row is taken, and
+// when it carries no filament at all (no AMS tray, no external spool) while the cached one did, the
+// cached `ams` / `ext_spools` are carried into it as the last reading, with load / unload off on
+// every slot: the window that answers would not be the one connected to the printer.
+struct MergedPrinterRow
+{
+    bool        keep_cached { false };
+    std::string row; // the row to store when !keep_cached (JSON)
+};
+MergedPrinterRow merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
+                                   const std::string& incoming_row_json, long incoming_instance);
+
 } // namespace Testing
 
 // ---- signing with the hub identity (the push forwarder's X-Hub-Sig) ----

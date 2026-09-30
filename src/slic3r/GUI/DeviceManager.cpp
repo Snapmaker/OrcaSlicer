@@ -2932,6 +2932,7 @@ void MachineObject::reset()
     BOOST_LOG_TRIVIAL(trace) << "reset dev_id=" << dev_id;
     last_update_time = std::chrono::system_clock::now();
     m_push_count = 0;
+    m_full_report_seen = false;
     is_220V_voltage = false;
     get_version_retry = 0;
     camera_recording = false;
@@ -4393,6 +4394,8 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                     }
                     update_printer_preset_name();
                     update_filament_list();
+                    if (!key_field_only && (jj.contains("ams") || jj.contains("vt_tray")))
+                        m_full_report_seen = true; // DeviceManager::full_report_tick
                     if (jj.contains("ams")) {
                         if (jj["ams"].contains("ams")) {
                             long int last_ams_exist_bits = ams_exist_bits;
@@ -6732,6 +6735,54 @@ void DeviceManager::lan_reconnect_tick()
             lan_reconnect_now(obj, !session_up ? "session lost" : "no report for two minutes");
             break;
         }
+    }
+}
+
+void DeviceManager::full_report_tick()
+{
+    // Only the cloud printers: a LAN printer is reached over the one LAN session the agent holds,
+    // which lan_reconnect_tick already keeps asking for reports.
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& kv : userMachineList) {
+        MachineObject* m = kv.second;
+        if (!m || m->is_lan_mode_printer() || !m->is_online() || m->m_full_report_seen)
+            continue;
+        if (m->m_full_report_asked != std::chrono::steady_clock::time_point{} &&
+            now - m->m_full_report_asked < std::chrono::milliseconds(FULL_REPORT_RETRY_MS))
+            continue;
+        m->m_full_report_asked = now;
+        const int rc = m->command_request_push_all();
+        BOOST_LOG_TRIVIAL(info) << "full_report: dev_id=" << m->dev_id << " has sent no AMS / spool report yet, asked for one (rc="
+                                << rc << ")";
+    }
+}
+
+void DeviceManager::lan_watch_tick()
+{
+    if (!m_agent || Slic3r::GUI::wxGetApp().is_hub_managed()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (m_lan_watch_set_at != std::chrono::steady_clock::time_point{} &&
+        now - m_lan_watch_set_at < std::chrono::milliseconds(LAN_WATCH_SET_MS))
+        return;
+    m_lan_watch_set_at = now;
+
+    // The selected printer is on the agent's own session and is left out; the plug-in skips it
+    // too, but naming it here would only log a set that is not what is being watched.
+    const MachineObject* sel = get_selected_machine();
+    json        targets = json::array();
+    std::string ids;
+    for (const auto& kv : get_my_machine_list()) {
+        MachineObject* m = kv.second;
+        if (!m || !m->is_lan_mode_printer() || m == sel) continue;
+        if (!m->has_access_right() || m->dev_ip.empty()) continue;
+        targets.push_back({{"dev_id", m->dev_id}, {"dev_ip", m->dev_ip}, {"username", "bblp"}, {"password", m->get_access_code()}});
+        ids += (ids.empty() ? "" : ",") + m->dev_id;
+    }
+    const int n = m_agent->watch_printers(targets.dump());
+    if (ids != m_lan_watch_set) {
+        m_lan_watch_set = ids;
+        BOOST_LOG_TRIVIAL(info) << "lan_watch: watching [" << ids << "] besides the selected printer (plug-in says " << n
+                                << (n < 0 ? ": not supported" : "") << ")";
     }
 }
 

@@ -298,6 +298,16 @@ public:
             try {
                 dm->lan_reconnect_tick();
             } catch (...) {}
+            // And a cloud printer that has never reported its AMS / spools is asked to, so the
+            // phone's printer screen has a filament list for it (DeviceManager::full_report_tick).
+            try {
+                dm->full_report_tick();
+            } catch (...) {}
+            // And every LAN printer besides the selected one gets a session of its own to report
+            // over, when the plug-in can do that (DeviceManager::lan_watch_tick).
+            try {
+                dm->lan_watch_tick();
+            } catch (...) {}
         }
         // The printer event watcher rides on this tick: it needs the GUI thread for the Bambu
         // MachineObjects anyway, and it polls at its own, slower rate (RemoteEvents.cpp).

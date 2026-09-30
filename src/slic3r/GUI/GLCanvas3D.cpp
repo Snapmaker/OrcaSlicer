@@ -26,6 +26,7 @@
 #include "Plater.hpp"
 #include "MainFrame.hpp"
 #include "GUI_App.hpp"
+#include "Theme.hpp"
 #include "GUI_ObjectList.hpp"
 #include "ParamsPanel.hpp"
 #include "GUI_Colors.hpp"
@@ -9116,7 +9117,19 @@ void GLCanvas3D::_render_background()
 
     ColorRGBA background_color = m_is_dark ? DEFAULT_BG_LIGHT_COLOR_DARK : DEFAULT_BG_LIGHT_COLOR;
     ColorRGBA error_background_color = m_is_dark ? ERROR_BG_LIGHT_COLOR_DARK : ERROR_BG_LIGHT_COLOR;
+    // The UI theme's 3D view background (docs/themes.md): one colour, or a gradient up to canvas_bg_top.
+    // The red "outside the plate" warning keeps its colour.
+    ColorRGBA themed_top = background_color;
+    if (Theme::active()) {
+        const auto& palette = Theme::spec().palette;
+        if (auto it = palette.find("canvas_bg"); it != palette.end())
+            decode_color(it->second, background_color);
+        themed_top = background_color;
+        if (auto it = palette.find("canvas_bg_top"); it != palette.end())
+            decode_color(it->second, themed_top);
+    }
     const ColorRGBA bottom_color = use_error_color ? error_background_color : background_color;
+    const ColorRGBA top_color    = use_error_color ? error_background_color : themed_top;
 
     if (!m_background.is_initialized()) {
         m_background.reset();
@@ -9142,7 +9155,7 @@ void GLCanvas3D::_render_background()
     GLShaderProgram* shader = wxGetApp().get_shader("background");
     if (shader != nullptr) {
         shader->start_using();
-        shader->set_uniform("top_color", bottom_color);
+        shader->set_uniform("top_color", top_color);
         shader->set_uniform("bottom_color", bottom_color);
         m_background.render();
         shader->stop_using();

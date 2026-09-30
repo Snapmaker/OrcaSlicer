@@ -5,6 +5,7 @@
 #include "DarkModeBackground.hpp"
 #include "RemoteAccess.hpp"
 #include "RemoteHub.hpp"
+#include "Theme.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
@@ -3289,6 +3290,8 @@ bool GUI_App::on_init_inner()
     ::SetCurrentProcessExplicitAppUserModelID(L"aceRage.EdgeSlicer");
 #endif // _WIN32
 
+    // The UI theme (docs/themes.md) hands over its colours, fonts and shapes before any are made.
+    Theme::load(app_config->get("ui_theme"));
     ::Label::initSysFont();
 
     // Set initialization of image handlers before any UI actions - See GH issue #7469
@@ -4411,6 +4414,9 @@ bool GUI_App::dark_mode()
     // proper dark mode was first introduced.
     return wxPlatformInfo::Get().CheckOSVersion(10, 14) && mac_dark_mode();
 #else
+    // A theme built on the light or dark look decides it; macOS follows the system either way.
+    if (const int themed = Theme::base_dark(); themed >= 0)
+        return themed == 1;
     return wxGetApp().app_config->get("dark_color_mode") == "1" ? true : check_dark_mode();
     //const unsigned luma = get_colour_approx_luma(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
     //return luma < 128;

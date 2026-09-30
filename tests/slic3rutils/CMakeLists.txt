@@ -10,6 +10,7 @@ add_executable(${_TEST_NAME}_tests
     login_useragent_tests.cpp
     hub_home_tests.cpp
     home_tab_tests.cpp
+    theme_pack_tests.cpp
     library_index_tests.cpp
     vendor_connector_tests.cpp
     step_mesh_tests.cpp

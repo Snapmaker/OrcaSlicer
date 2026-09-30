@@ -31,6 +31,14 @@ public:
     static double LAB_Delta_E(const wxColour& c1, const wxColour& c2);
 
     static void SetDarkMode(bool dark);
+    static bool IsDarkMode();
+
+    // The active UI theme (GUI/Theme.cpp): stock light colour -> themed colour. darkModeColorFor()
+    // returns the themed colour first, in light and dark mode; lightModeColorFor() too.
+    static void SetThemeMap(std::map<wxColour, wxColour> const &map);
+    static bool HasTheme();
+    // The themed colour for a stock light colour, or `fallback` when the theme leaves it alone.
+    static wxColour themedColorFor(wxColour const &color, wxColour const &fallback);
 
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);

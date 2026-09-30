@@ -12,7 +12,9 @@
 #include "PartPlate.hpp"
 #include "MsgDialog.hpp"
 #include "RemoteHub.hpp"
+#include "Theme.hpp"
 
+#include <algorithm>
 #include <thread>
 
 #include <boost/log/trivial.hpp>
@@ -46,14 +48,51 @@ public:
     virtual void DrawButton(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& item, const wxRect& rect) wxOVERRIDE;
 };
 
+// The stock title bar text colour, or the UI theme's.
+static wxColour topbar_text_colour()
+{
+#ifdef __WINDOWS__
+    return GUI::Theme::colour("titlebar_text", wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT));
+#else
+    return GUI::Theme::colour("titlebar_text", *wxWHITE);
+#endif
+}
+
+// The UI theme's title bar banner (docs/themes.md), scaled to the bar's height (or its whole
+// size for "stretch") once per size and drawn under the buttons and the title.
+static void draw_banner(wxDC& dc, const wxRect& rect)
+{
+    const wxBitmap& banner = GUI::Theme::banner();
+    if (!banner.IsOk() || rect.width <= 0 || rect.height <= 0)
+        return;
+    const std::string& align = GUI::Theme::spec().banner_align;
+
+    static wxBitmap scaled;
+    static wxSize   scaled_for;
+    wxSize          want = align == "stretch" ? rect.GetSize() :
+                                                wxSize(std::max(1, banner.GetWidth() * rect.height / std::max(1, banner.GetHeight())), rect.height);
+    if (!scaled.IsOk() || scaled_for != want) {
+        scaled     = wxBitmap(banner.ConvertToImage().Scale(want.x, want.y, wxIMAGE_QUALITY_HIGH));
+        scaled_for = want;
+    }
+
+    if (align == "tile") {
+        for (int x = rect.x; x < rect.GetRight(); x += want.x)
+            dc.DrawBitmap(scaled, x, rect.y, true);
+        return;
+    }
+    int x = rect.x;
+    if (align == "center")
+        x = rect.x + (rect.width - want.x) / 2;
+    else if (align == "right")
+        x = rect.GetRight() - want.x;
+    dc.DrawBitmap(scaled, x, rect.y, true);
+}
+
 void BBLTopbarArt::DrawLabel(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& item, const wxRect& rect)
 {
     dc.SetFont(m_font);
-#ifdef __WINDOWS__
-    dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT));
-#else
-    dc.SetTextForeground(*wxWHITE);
-#endif
+    dc.SetTextForeground(topbar_text_colour());
 
     int textWidth = 0, textHeight = 0;
     dc.GetTextExtent(item.GetLabel(), &textWidth, &textHeight);
@@ -76,12 +115,16 @@ void BBLTopbarArt::DrawLabel(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& it
 
 void BBLTopbarArt::DrawBackground(wxDC& dc, wxWindow* wnd, const wxRect& rect)
 {
-    dc.SetBrush(wxBrush(wxColour(38, 46, 48)));
+    const wxColour bg = GUI::Theme::colour("titlebar_bg", wxColour(38, 46, 48));
+    dc.SetBrush(wxBrush(bg));
+    if (GUI::Theme::active())
+        dc.SetPen(wxPen(bg));
     wxRect clipRect = rect;
     clipRect.y -= 8;
     clipRect.height += 8;
     dc.SetClippingRegion(clipRect);
     dc.DrawRectangle(rect);
+    draw_banner(dc, rect);
     dc.DestroyClippingRegion();
 }
 
@@ -170,11 +213,7 @@ void BBLTopbarArt::DrawButton(wxDC& dc, wxWindow* wnd, const wxAuiToolBarItem& i
         dc.DrawBitmap(bmp, bmpX, bmpY, true);
 
     // set the item's text color based on if it is disabled
-#ifdef __WINDOWS__
-    dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_HIGHLIGHTTEXT));
-#else
-    dc.SetTextForeground(*wxWHITE);
-#endif
+    dc.SetTextForeground(topbar_text_colour());
     if (item.GetState() & wxAUI_BUTTON_STATE_DISABLED)
     {
         dc.SetTextForeground(wxSystemSettings::GetColour(wxSYS_COLOUR_GRAYTEXT));

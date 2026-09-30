@@ -409,6 +409,17 @@
     if (persist) post('home_section', { section: section });
   }
 
+  // The slicer's UI theme (docs/themes.md): CSS variables over the light or dark ones. Only the
+  // page's own variables, only #RRGGBB values.
+  function applyTheme(theme) {
+    if (!theme || typeof theme !== 'object') return;
+    const root = document.documentElement;
+    for (const [name, value] of Object.entries(theme)) {
+      if (/^--[a-z-]+$/.test(name) && typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value))
+        root.style.setProperty(name, value);
+    }
+  }
+
   function applyStrings() {
     for (const e of document.querySelectorAll('[data-i18n]')) {
       const s = state.strings[e.dataset.i18n];
@@ -1367,6 +1378,7 @@
       switch (msg.type) {
         case 'init':
           state.strings = msg.strings || {};
+          applyTheme(msg.theme);
           applyStrings();
           showSection(msg.section || state.section, false);
           break;

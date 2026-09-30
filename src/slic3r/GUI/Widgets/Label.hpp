@@ -56,6 +56,12 @@ public:
 	
 	static void initSysFont();
 
+    // The active UI theme's font faces (GUI/Theme.cpp), set before initSysFont(); empty keeps the
+    // stock face. Bold fonts (Head_*) take the heading face, the rest (Body_*) the body face.
+    static void SetThemeFaces(wxString const &body, wxString const &heading, wxString const &button);
+    // `font` in the theme's button face, or `font` itself when the theme has none.
+    static wxFont ThemedButtonFont(wxFont const &font);
+
     static wxFont sysFont(int size, bool bold = false);
 
     static wxSize split_lines(wxDC &dc, int width, const wxString &text, wxString &multiline_text);

@@ -8,6 +8,7 @@
 #include "MainFrame.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
+#include "Theme.hpp"
 #include "WebViewDialog.hpp"
 #include "Widgets/Button.hpp"
 #include "Widgets/Label.hpp"
@@ -17,6 +18,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/HomeTabLogic.hpp"
+#include "slic3r/Utils/ThemePack.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -504,6 +506,8 @@ void HomePanel::send_init()
     init["type"]    = "init";
     init["strings"] = s;
     init["section"] = HomeTab::section_or_default(wxGetApp().app_config->get(SECTION_KEY));
+    if (Theme::active())
+        init["theme"] = ThemePack::home_css(Theme::spec()); // CSS variable -> #RRGGBB
     send(init);
 }
 

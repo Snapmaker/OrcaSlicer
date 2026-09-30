@@ -27,6 +27,8 @@ ButtonsListCtrl::ButtonsListCtrl(wxWindow *parent, wxBoxSizer* side_tools) :
 #else
     default_btn_bg = wxColour("#2D2D30"); // Gradient #414B4E
 #endif
+    // The tab buttons are #3B4446 (StateColor maps it); a UI theme recolours the bar behind them too.
+    default_btn_bg = StateColor::themedColorFor(wxColour("#3B4446"), default_btn_bg);
 
    
     SetBackgroundColour(default_btn_bg);
@@ -145,7 +147,7 @@ void ButtonsListCtrl::SetSelection(int sel)
     wxColour selected_btn_bg("#009688");    // Gradient #009688
     if (m_selection >= 0) {
         StateColor bg_color = StateColor(
-        std::pair{wxColour(107, 107, 107), (int) StateColor::Hovered},
+        std::pair{wxColour(107, 107, 108), (int) StateColor::Hovered},
         std::pair{wxColour(59, 68, 70), (int) StateColor::Normal});
         m_pageButtons[m_selection]->SetBackgroundColor(bg_color);
         StateColor text_color = StateColor(
@@ -180,7 +182,7 @@ bool ButtonsListCtrl::InsertPage(size_t n, const wxString &text, bool bSelect /*
     btn->SetMinSize({(text.empty() ? 40 : 136) * em / 10, 36 * em / 10});
 
     StateColor bg_color = StateColor(
-        std::pair{wxColour(107, 107, 107), (int) StateColor::Hovered},
+        std::pair{wxColour(107, 107, 108), (int) StateColor::Hovered},
         std::pair{wxColour(59, 68, 70), (int) StateColor::Normal});
 
     btn->SetBackgroundColor(bg_color);

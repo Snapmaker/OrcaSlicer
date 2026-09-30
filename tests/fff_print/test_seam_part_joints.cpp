@@ -196,6 +196,19 @@ void touching_objects(Model &model)
     }
 }
 
+// flush_boxes with a Strong CENTER helper on the right outer face (x = +10 after centering).
+// The helper is 4 mm thick in X and 8 mm in Y, sitting on the right cube's +X face so it clips
+// that wall and not the joint at x = 0.
+void flush_boxes_strong_on_right(Model &model)
+{
+    flush_boxes(model);
+    ModelObject *object = model.objects.front();
+    ModelVolume *right  = object->volumes[1];
+    ModelVolume *helper = object->add_volume(make_cube(4., 8., 10.));
+    helper->set_type(ModelVolumeType::PRECISE_SEAM_CENTER);
+    helper->set_offset(right->get_offset() + Vec3d(5., 0., 0.));
+}
+
 // flush_boxes with seam blockers painted on the front faces (y = 0) of both parts.
 void flush_boxes_front_blocked(Model &model)
 {
@@ -322,6 +335,23 @@ SCENARIO("Separate objects placed against each other hide the seam in the face t
                 INFO((left_cube ? "left" : "right") << " cube, z = " << s.z << ", seam at " << s.pos.x() << ", " << s.pos.y());
                 CHECK(std::abs(s.pos.x() - face_x) < 0.6);
                 CHECK(std::abs(s.pos.y()) < 1.5);
+            }
+        }
+    }
+}
+
+SCENARIO("A Strong Precise Seam helper wins over a part joint", "[Seam][SeamJoints][PreciseSeam]")
+{
+    GIVEN("two touching cubes with a CENTER helper on the right outer face, joints still preferred")
+    {
+        const std::vector<Seam> seams = seams_for(flush_boxes_strong_on_right, "aligned", true);
+        REQUIRE(seams.size() >= 45);
+        THEN("every seam is on the helper's face, not the joint at x = 0")
+        {
+            for (const Seam &s : seams) {
+                INFO("z = " << s.z << ", seam at " << s.pos.x() << ", " << s.pos.y());
+                CHECK(s.pos.x() > 7.);
+                CHECK(std::abs(s.pos.y()) < 4.);
             }
         }
     }

@@ -105,7 +105,13 @@ public:
         // id for the usual reason (active_step_add_warning de-duplicates by id), and critically so
         // that the CLI's result.json filter - which drops anything left on
         // SlicingDefaultNotification - actually reports it. Appended, so no existing value moves.
-        SlicingInvalidPrintSpeed
+        SlicingInvalidPrintSpeed,
+        // Precise Seam (Orca #12974 stage D): unsupported modifier intersections (multiple, through
+        // body, multiply-connected, full containment). Appended, so no existing value moves. Own id
+        // because active_step_add_warning de-duplicates by id. Raised during export_gcode, after
+        // the CLI's pre-export g_slicing_warnings sweep, so Snapmaker_Orca.cpp records it in the
+        // post-export loop (same place as SlicingInvalidPrintSpeed) via cli_record_warning.
+        SlicingPreciseSeamWarning
     };
 
     typedef size_t TimeStamp;

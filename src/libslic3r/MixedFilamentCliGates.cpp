@@ -118,6 +118,8 @@ void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPri
             for (const ModelVolume *mv : obj->volumes) {
                 if (mv == nullptr)
                     continue;
+                if (mv->is_precise_seam())
+                    continue; // non-printing helper; not a per-feature filament source
                 const std::vector<int> volume_extruders = mv->get_extruders();
                 ids.insert(ids.end(), volume_extruders.begin(), volume_extruders.end());
             }

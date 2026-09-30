@@ -359,7 +359,49 @@ enum class ModelVolumeType : int {
     PARAMETER_MODIFIER,
     SUPPORT_BLOCKER,
     SUPPORT_ENFORCER,
+    // Precise seam modifiers (6 subtypes for seam placement control).
+    // Order is critical: strong types first, then weak. Range checks in is_precise_seam*() depend on it.
+    PRECISE_SEAM_CENTER,
+    PRECISE_SEAM_LEFT,
+    PRECISE_SEAM_RIGHT,
+    PRECISE_SEAM_ENFORCED,
+    PRECISE_SEAM_BLOCKED,
+    PRECISE_SEAM_NEUTRAL,
 };
+
+// Free functions for checking ModelVolumeType without a ModelVolume object.
+// Keep in sync with ModelVolume::is_precise_seam*() methods below.
+inline bool is_precise_seam(ModelVolumeType t)        { return t >= ModelVolumeType::PRECISE_SEAM_CENTER && t <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
+inline bool is_precise_seam_strong(ModelVolumeType t) { return t >= ModelVolumeType::PRECISE_SEAM_CENTER && t <= ModelVolumeType::PRECISE_SEAM_RIGHT; }
+inline bool is_precise_seam_weak(ModelVolumeType t)   { return t >= ModelVolumeType::PRECISE_SEAM_ENFORCED && t <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
+
+// Compact Change Type dialog index. Layout when helpers are listed:
+//   0 Part, 1 Negative, 2 Modifier, 3 Support Blocker, 4 Support Enforcer, 5 Precise Seam.
+// All six Precise Seam subtypes share index 5 (PRECISE_SEAM_CENTER). Out-of-range
+// types map to -1 / INVALID so the dialog and enum conversion stay bounds-safe
+// even if the list is shortened (SVG/text hide helper entries).
+inline int model_volume_type_to_choice_index(ModelVolumeType t)
+{
+    const int v = int(t);
+    if (v < int(ModelVolumeType::MODEL_PART))
+        return -1;
+    if (v <= int(ModelVolumeType::SUPPORT_ENFORCER))
+        return v;
+    if (is_precise_seam(t))
+        return int(ModelVolumeType::PRECISE_SEAM_CENTER);
+    return -1;
+}
+
+inline ModelVolumeType model_volume_type_from_choice_index(int index)
+{
+    if (index < int(ModelVolumeType::MODEL_PART))
+        return ModelVolumeType::INVALID;
+    if (index <= int(ModelVolumeType::SUPPORT_ENFORCER))
+        return ModelVolumeType(index);
+    if (index == int(ModelVolumeType::PRECISE_SEAM_CENTER))
+        return ModelVolumeType::PRECISE_SEAM_CENTER;
+    return ModelVolumeType::INVALID;
+}
 
 // A printable object, possibly having multiple print volumes (each with its own set of parameters and materials),
 // and possibly having multiple modifier volumes, each modifier volume with its set of parameters and materials.
@@ -946,6 +988,14 @@ public:
 	bool                is_support_enforcer()   const { return m_type == ModelVolumeType::SUPPORT_ENFORCER; }
 	bool                is_support_blocker()    const { return m_type == ModelVolumeType::SUPPORT_BLOCKER; }
 	bool                is_support_modifier()   const { return m_type == ModelVolumeType::SUPPORT_BLOCKER || m_type == ModelVolumeType::SUPPORT_ENFORCER; }
+	// Check if this volume is any of the precise seam modifier subtypes
+	bool                is_precise_seam()       const { return m_type >= ModelVolumeType::PRECISE_SEAM_CENTER && m_type <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
+	// Helper to check if volume is a "strong" Precise Seam type (center, left, right)
+	// Strong modifiers have priority and always appear above weak modifiers in UI
+	bool                is_precise_seam_strong() const { return m_type >= ModelVolumeType::PRECISE_SEAM_CENTER && m_type <= ModelVolumeType::PRECISE_SEAM_RIGHT; }
+	// Helper to check if volume is a "weak" Precise Seam type (enforced, blocked, neutral)
+	// Weak modifiers always appear below strong modifiers in UI
+	bool                is_precise_seam_weak()   const { return m_type >= ModelVolumeType::PRECISE_SEAM_ENFORCED && m_type <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
     bool                is_text()               const { return text_configuration.has_value(); }
     bool                is_svg() const { return emboss_shape.has_value()  && !text_configuration.has_value(); }
     bool                is_the_only_one_part() const; // behave like an object
@@ -1062,7 +1112,7 @@ protected:
     friend class SLAPrint;
     friend class Model;
 	friend class ModelObject;
-    friend void model_volume_list_update_supports(ModelObject& model_object_dst, const ModelObject& model_object_new);
+    friend void model_volume_list_update_supports_and_seams(ModelObject& model_object_dst, const ModelObject& model_object_new);
 
 	// Copies IDs of both the ModelVolume and its config.
 	explicit ModelVolume(const ModelVolume &rhs) = default;
@@ -1844,6 +1894,11 @@ bool model_support_group_data_changed(const ModelObject& mo, const ModelObject& 
 // Test whether the now ModelObject has newer custom seam data than the old one.
 // The function assumes that volumes list is synchronized.
 bool model_custom_seam_data_changed(const ModelObject& mo, const ModelObject& mo_new);
+
+// Precise Seam volume config (dormant keys, notes, extra settings). Transform/type/list
+// changes are already covered by model_volume_list_changed(precise_seam_types).
+// The function assumes that the Precise Seam volume list is synchronized.
+bool model_precise_seam_config_changed(const ModelObject &mo, const ModelObject &mo_new);
 
 // Test whether the now ModelObject has newer MMU segmentation data than the old one.
 // The function assumes that volumes list is synchronized.

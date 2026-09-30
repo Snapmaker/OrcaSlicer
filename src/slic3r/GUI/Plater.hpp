@@ -528,6 +528,8 @@ public:
 
     void reload_from_disk();
     void replace_with_stl();
+    // Opens the selected part in Blender; saving there updates the part (GUI/BlenderBridge).
+    void edit_in_blender();
     void reload_all_from_disk();
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
@@ -792,6 +794,7 @@ public:
     bool can_redo() const;
     bool can_reload_from_disk() const;
     bool can_replace_with_stl() const;
+    bool can_edit_in_blender() const;
     bool can_mirror() const;
     bool can_split(bool to_objects) const;
     bool can_split_by_color() const;

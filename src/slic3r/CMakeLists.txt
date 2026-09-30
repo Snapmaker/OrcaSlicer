@@ -38,6 +38,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BBLStatusBar.hpp
     GUI/BBLStatusBarSend.cpp
     GUI/BBLStatusBarSend.hpp
+    GUI/BlenderBridge.cpp
+    GUI/BlenderBridge.hpp
     GUI/BBLTopbar.cpp
     GUI/BBLTopbar.hpp
     GUI/BedShapeDialog.cpp
@@ -815,6 +817,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/bambu_networking.hpp
     Utils/BambuStudioLauncher.cpp
     Utils/BambuStudioLauncher.hpp
+    Utils/BlenderLauncher.cpp
+    Utils/BlenderLauncher.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp
     Utils/MeshInspect.cpp

@@ -89,6 +89,7 @@
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "../Utils/BambuStudioLauncher.hpp"
+#include "BlenderBridge.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"   // get_instance_arrange_poly, for the Fill bed dialog's defaults
@@ -10483,6 +10484,8 @@ struct Plater::priv
     wxTimer                     background_process_timer;
     // Bambu two-extruder printers: marks plates for re-slice when the selected printer changes.
     std::unique_ptr<DualNozzle::Watcher> dual_nozzle_watcher;
+    // "Edit in Blender" sessions; created on first use.
+    std::unique_ptr<BlenderBridge> blender_bridge;
 
     std::string                 label_btn_export;
     std::string                 label_btn_send;
@@ -22516,6 +22519,13 @@ void Plater::replace_with_stl()
     p->replace_with_stl();
 }
 
+void Plater::edit_in_blender()
+{
+    if (!p->blender_bridge)
+        p->blender_bridge = std::make_unique<BlenderBridge>(this);
+    p->blender_bridge->edit_selection();
+}
+
 void Plater::reload_all_from_disk()
 {
     p->reload_all_from_disk();
@@ -26504,6 +26514,7 @@ bool Plater::can_reload_from_disk() const { return p->can_reload_from_disk(); }
 bool Plater::can_fillcolor() const { return p->can_fillcolor(); }
 bool Plater::has_assmeble_view() const { return p->has_assemble_view(); }
 bool Plater::can_replace_with_stl() const { return p->can_replace_with_stl(); }
+bool Plater::can_edit_in_blender() const { return BlenderBridge::can_edit(p->get_selection()); }
 bool Plater::can_mirror() const { return p->can_mirror(); }
 bool Plater::can_split(bool to_objects) const { return p->can_split(to_objects); }
 

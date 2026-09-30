@@ -38,6 +38,7 @@ add_executable(${_TEST_NAME}_tests
     test_flow_variant_edit.cpp
     app_update_check_tests.cpp
     bambu_studio_launcher_tests.cpp
+    blender_launcher_tests.cpp
     page_server_security_tests.cpp
     sentry_scrub_tests.cpp
     dual_nozzle_layout_tests.cpp

@@ -6,6 +6,7 @@
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
 #include "Theme.hpp"
+#include "ThemesPage.hpp"
 #include "PresetMirror.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -14,8 +15,6 @@
 #include "Notebook.hpp"
 #include "OG_CustomCtrl.hpp"
 #include "wx/graphics.h"
-#include <wx/filedlg.h>
-#include <boost/filesystem/operations.hpp>
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "Widgets/RadioBox.hpp"
@@ -1154,91 +1153,6 @@ wxBoxSizer* PreferencesDialog::create_item_darkmode_checkbox(wxString title, wxW
     return m_sizer_checkbox;
 }
 
-void PreferencesDialog::fill_theme_list()
-{
-    if (m_theme_combobox == nullptr)
-        return;
-    m_theme_combobox->Clear();
-    m_theme_ids.assign(1, std::string());
-    m_theme_combobox->Append(_L("None (stock look)"));
-    const std::string chosen  = app_config->get("ui_theme");
-    int               current = 0;
-    for (const auto &t : Theme::available()) {
-        m_theme_ids.push_back(t.id);
-        m_theme_combobox->Append(from_u8(t.name) + (t.builtin ? wxString() : " (" + _L("installed") + ")"));
-        if (t.id == chosen)
-            current = int(m_theme_ids.size()) - 1;
-    }
-    m_theme_combobox->SetSelection(current);
-}
-
-wxBoxSizer *PreferencesDialog::create_item_theme(wxWindow *parent)
-{
-    const wxString tooltip = _L("Colours, fonts, button shapes and a title bar banner for the whole window. "
-                                "A theme can also choose light or dark. Takes effect after restarting EdgeSlicer.");
-    auto [sizer, combobox] = create_item_combobox_base(_L("Theme"), parent, tooltip, "ui_theme", {_L("None (stock look)")}, 0);
-    m_theme_combobox = combobox;
-    fill_theme_list();
-
-    auto restart_note = [this]() {
-        MessageDialog(this, _L("The theme changes the next time EdgeSlicer starts."), _L("Theme"), wxOK | wxICON_INFORMATION).ShowModal();
-    };
-    combobox->GetDropDown().Bind(wxEVT_COMBOBOX, [this, restart_note](wxCommandEvent &e) {
-        const int sel = e.GetSelection();
-        if (sel >= 0 && size_t(sel) < m_theme_ids.size() && m_theme_ids[sel] != app_config->get("ui_theme")) {
-            app_config->set("ui_theme", m_theme_ids[sel]);
-            app_config->save();
-            restart_note();
-        }
-        e.Skip();
-    });
-
-    auto install = new Button(parent, _L("Install..."));
-    install->SetStyle(ButtonStyle::Regular, ButtonType::Window);
-    install->SetToolTip(_L("Add a theme from a .zip file. To add a theme folder, copy it into the themes folder."));
-    install->Bind(wxEVT_BUTTON, [this, restart_note](wxCommandEvent &e) {
-        wxFileDialog dialog(this, _L("Choose a theme"), wxEmptyString, wxEmptyString, _L("Theme (*.zip)") + "|*.zip;*.ZIP",
-                            wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-        if (dialog.ShowModal() != wxID_OK)
-            return;
-        bool        exists = false;
-        std::string error;
-        const auto  source = into_path(dialog.GetPath());
-        std::string id     = Theme::install(source, false, exists, error);
-        if (exists) {
-            MessageDialog ask(this, wxString::Format(_L("A theme named \"%s\" is already installed. Replace it?"), from_u8(id)),
-                              _L("Theme"), wxYES_NO | wxICON_QUESTION);
-            id = ask.ShowModal() == wxID_YES ? Theme::install(source, true, exists, error) : std::string();
-            if (id.empty() && error.empty())
-                return;
-        }
-        if (id.empty()) {
-            MessageDialog(this, _L("The theme could not be installed:") + "\n" + from_u8(error), _L("Theme"), wxOK | wxICON_WARNING).ShowModal();
-            return;
-        }
-        app_config->set("ui_theme", id);
-        app_config->save();
-        fill_theme_list();
-        restart_note();
-        e.Skip();
-    });
-
-    auto folder = new Button(parent, _L("Open folder"));
-    folder->SetStyle(ButtonStyle::Regular, ButtonType::Window);
-    folder->SetToolTip(_L("The folder installed themes live in. Copy a theme folder here, then pick it in the list."));
-    folder->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-        boost::system::error_code ec;
-        boost::filesystem::create_directories(Theme::user_dir(), ec);
-        desktop_open_any_folder(Theme::user_dir().string());
-        fill_theme_list();
-        e.Skip();
-    });
-
-    sizer->Add(install, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(8));
-    sizer->Add(folder, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
-    return sizer;
-}
-
 void PreferencesDialog::set_dark_mode()
 {
 #ifdef __WINDOWS__
@@ -1657,12 +1571,13 @@ void PreferencesDialog::create()
 
     auto general_page = create_general_page();
     auto ultra_page   = create_ultra_page();
+    auto themes_page  = new ThemesPage(m_scrolledWindow);
 #if !BBL_RELEASE_TO_PUBLIC
     auto debug_page   = create_debug_page();
 #endif
 
     // Tab bar switching between the pages (BambuStudio-style tabbed preferences).
-    std::vector<std::pair<wxString, wxWindow*>> pages = { { _L("General"), general_page }, { _L("Extras"), ultra_page } };
+    std::vector<std::pair<wxString, wxWindow*>> pages = { { _L("General"), general_page }, { _L("Extras"), ultra_page }, { _L("Themes"), themes_page } };
 #if !BBL_RELEASE_TO_PUBLIC
     pages.emplace_back(_L("Develop"), debug_page);
 #endif
@@ -1692,6 +1607,7 @@ void PreferencesDialog::create()
     m_sizer_body->Add(0, 0, 0, wxTOP, FromDIP(14));
     m_sizer_body->Add(general_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
     m_sizer_body->Add(ultra_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
+    m_sizer_body->Add(themes_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
 #if !BBL_RELEASE_TO_PUBLIC
     m_sizer_body->Add(debug_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
 #endif
@@ -1959,11 +1875,9 @@ wxWindow* PreferencesDialog::create_general_page()
     if (Theme::base_dark() >= 0 && m_dark_mode_ckeckbox != nullptr) {
         // The running theme picks light or dark itself.
         m_dark_mode_ckeckbox->Enable(false);
-        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark."));
+        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark (Preferences > Themes)."));
     }
 #endif
-    auto title_theme = create_item_title(_L("Theme"), page, _L("Theme"));
-    auto item_theme  = create_item_theme(page);
 
     // The "User Experience" section ("Join Customer Experience Improvement Program", linking to
     // Snapmaker's privacy policy) is gone: EdgeSlicer runs no such program. What replaced it is
@@ -2079,8 +1993,6 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(title_darkmode, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_darkmode, 0, wxEXPAND, FromDIP(3));
 #endif
-    sizer_page->Add(title_theme, 0, wxTOP | wxEXPAND, FromDIP(20));
-    sizer_page->Add(item_theme, 0, wxTOP, FromDIP(3));
 
     sizer_page->Add(title_privacy, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_crash_reports, 0, wxTOP, FromDIP(3));

@@ -3,9 +3,24 @@
 A theme recolours EdgeSlicer beyond light and dark, and can change its fonts, the corners of its
 buttons and boxes, the title bar (colour and a banner image) and the 3D view background.
 
-Pick one in **Preferences > General > Theme**. The choice takes effect the next time EdgeSlicer
-starts. **Install...** adds a theme from a `.zip`; **Open folder** opens the folder installed
-themes live in, where a theme folder can also be copied by hand.
+Everything is in **Preferences > Themes**:
+
+- **Theme** picks the theme EdgeSlicer starts with. **Default (clean)** is the stock look; it
+  cannot be changed or deleted, so **Back to Default** always gets you back to it. **Install...**
+  adds a theme from a `.zip`, **Open folder** opens the folder installed themes live in (a theme
+  folder can also be copied in by hand), and **Delete** removes one of your own themes.
+- Below the list, each part of the selected theme has its own control, with a small picture of the
+  window that follows every change: name, author and the look it is built on (light, dark, or
+  following the dark mode setting); a colour picker per palette role (**reset** puts a role back to
+  stock); a font list for text, headings and buttons, with every installed font plus **From
+  file...** for a `.ttf` or `.otf`; corner sizes for buttons and boxes; and the title bar banner,
+  chosen with a file dialog, with its placement.
+- **Save** writes your own themes in place. Default and the themes that come with EdgeSlicer are
+  read-only, so saving a change to one asks for a name and makes your own copy; **Save as new...**
+  does the same for one of yours. Picked font and image files are copied into the theme's folder.
+
+A theme takes effect the next time EdgeSlicer starts; the page says when a restart is needed.
+Parts the page has no control for (`overrides`, `home`) are kept as they are when a theme is saved.
 
 EdgeSlicer ships two sample themes with original art: **Ember Forge** (dark, charcoal and oxblood
 with bronze) and **Silver Bastion** (light, parchment and navy with gold). Both use the Cinzel font

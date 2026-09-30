@@ -77,7 +77,7 @@ static bool pack_file(const std::string& relative, uintmax_t max_bytes, fs::path
 }
 
 // The folder a theme id lives in: an installed one first, then a shipped one.
-static bool find_dir(const std::string& id, fs::path& dir, bool& builtin)
+bool locate(const std::string& id, fs::path& dir, bool& builtin)
 {
     if (!ThemePack::valid_id(id))
         return false;
@@ -145,7 +145,7 @@ void load(const std::string& id)
         return;
     fs::path dir;
     bool     builtin = false;
-    if (!find_dir(id, dir, builtin)) {
+    if (!locate(id, dir, builtin)) {
         BOOST_LOG_TRIVIAL(warning) << "Theme \"" << id << "\" is not installed; using the stock look";
         return;
     }
@@ -220,6 +220,43 @@ const wxBitmap& banner()
     }
     g_banner = wxBitmap(image);
     return g_banner;
+}
+
+bool read(const std::string& id, ThemePack::Spec& spec, fs::path& dir, bool& builtin, std::string& error)
+{
+    if (!locate(id, dir, builtin)) {
+        error = "the theme \"" + id + "\" is not there";
+        return false;
+    }
+    return read_spec(dir, spec, error);
+}
+
+bool installed(const std::string& id)
+{
+    boost::system::error_code ec;
+    return ThemePack::valid_id(id) && fs::is_regular_file(user_dir() / id / "theme.json", ec);
+}
+
+bool shipped(const std::string& id)
+{
+    boost::system::error_code ec;
+    return ThemePack::valid_id(id) && fs::is_regular_file(builtin_dir() / id / "theme.json", ec);
+}
+
+bool remove(const std::string& id, std::string& error)
+{
+    if (!installed(id)) {
+        error = "only installed themes can be deleted";
+        return false;
+    }
+    boost::system::error_code ec;
+    fs::remove_all(user_dir() / id, ec);
+    if (ec) {
+        error = ec.message();
+        return false;
+    }
+    BOOST_LOG_TRIVIAL(info) << "Theme \"" << id << "\" deleted";
+    return true;
 }
 
 // ------------------------------------------------------------------------------ installing ----
@@ -347,6 +384,81 @@ static bool copy_folder(const fs::path& from, const fs::path& into, std::string&
     return true;
 }
 
+// Moves a finished staging folder into place as user_dir()/id, replacing what is there.
+static bool replace_with(const fs::path& staging, const std::string& id, std::string& error)
+{
+    boost::system::error_code ec;
+    const fs::path target = user_dir() / id;
+    if (fs::exists(target, ec)) {
+        fs::remove_all(target, ec);
+        if (ec) {
+            error = "could not replace the installed copy: " + ec.message();
+            return false;
+        }
+    }
+    fs::rename(staging, target, ec);
+    if (ec) {
+        error = "could not move the theme into place: " + ec.message();
+        return false;
+    }
+    return true;
+}
+
+static fs::path make_staging(std::string& error)
+{
+    boost::system::error_code ec;
+    const fs::path staging = user_dir() / (".install-" + fs::unique_path("%%%%%%%%").string());
+    fs::create_directories(staging, ec);
+    if (ec) {
+        error = "could not create " + staging.string() + ": " + ec.message();
+        return {};
+    }
+    return staging;
+}
+
+bool save(const std::string& id, const ThemePack::Spec& spec, const fs::path& source_dir,
+          const std::map<std::string, fs::path>& imports, std::string& error)
+{
+    if (!ThemePack::valid_id(id)) {
+        error = "\"" + id + "\" cannot be a theme folder name";
+        return false;
+    }
+    // Built next to the installed themes and moved into place at the end, like an install.
+    const fs::path staging = make_staging(error);
+    if (staging.empty())
+        return false;
+    auto fail = [&staging]() { boost::system::error_code e; fs::remove_all(staging, e); return false; };
+
+    boost::system::error_code ec;
+    if (!source_dir.empty() && fs::is_directory(source_dir, ec) && !copy_folder(source_dir, staging, error))
+        return fail();
+    for (const auto& [rel, from] : imports) {
+        const std::string ext  = boost::algorithm::to_lower_copy(fs::path(rel).extension().string());
+        const uintmax_t   max  = (ext == ".ttf" || ext == ".otf") ? MAX_FONT_FILE : MAX_IMAGE_FILE;
+        const uintmax_t   size = fs::file_size(from, ec);
+        if (!ThemePack::safe_relative_path(rel) || !allowed_file(rel) || ec || size > max) {
+            error = "could not add \"" + from.string() + "\" (missing, too big or not a font or image)";
+            return fail();
+        }
+        const fs::path to = staging / fs::path(rel).make_preferred();
+        fs::create_directories(to.parent_path(), ec);
+        fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            error = "could not copy \"" + from.string() + "\": " + ec.message();
+            return fail();
+        }
+    }
+    if (!write_file(staging / "theme.json", ThemePack::to_json(spec))) {
+        error = "could not write theme.json";
+        return fail();
+    }
+    ThemePack::Spec check;
+    if (!read_spec(staging, check, error) || !replace_with(staging, id, error))
+        return fail();
+    BOOST_LOG_TRIVIAL(info) << "Theme \"" << spec.name << "\" saved to " << (user_dir() / id).string();
+    return true;
+}
+
 std::string install(const fs::path& source, bool overwrite, bool& exists, std::string& error)
 {
     exists = false;
@@ -359,12 +471,9 @@ std::string install(const fs::path& source, bool overwrite, bool& exists, std::s
     }
 
     // Unpack next to the installed themes first, so a bad pack never touches one that works.
-    const fs::path staging = user_dir() / (".install-" + fs::unique_path("%%%%%%%%").string());
-    fs::create_directories(staging, ec);
-    if (ec) {
-        error = "could not create " + staging.string() + ": " + ec.message();
+    const fs::path staging = make_staging(error);
+    if (staging.empty())
         return {};
-    }
     auto cleanup = [&staging]() { boost::system::error_code e; fs::remove_all(staging, e); };
 
     if (!(is_zip ? unzip(source, staging, error) : copy_folder(source, staging, error))) {
@@ -378,22 +487,12 @@ std::string install(const fs::path& source, bool overwrite, bool& exists, std::s
     }
     const std::string id     = ThemePack::id_from_name(spec.name);
     const fs::path    target = user_dir() / id;
-    if (fs::exists(target, ec)) {
-        if (!overwrite) {
-            exists = true;
-            cleanup();
-            return id;
-        }
-        fs::remove_all(target, ec);
-        if (ec) {
-            error = "could not replace the installed copy: " + ec.message();
-            cleanup();
-            return {};
-        }
+    if (fs::exists(target, ec) && !overwrite) {
+        exists = true;
+        cleanup();
+        return id;
     }
-    fs::rename(staging, target, ec);
-    if (ec) {
-        error = "could not move the theme into place: " + ec.message();
+    if (!replace_with(staging, id, error)) {
         cleanup();
         return {};
     }

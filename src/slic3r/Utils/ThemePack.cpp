@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 
 namespace Slic3r {
 namespace ThemePack {
@@ -117,6 +119,21 @@ std::string id_from_name(const std::string& name)
     while (!id.empty() && (id.back() == '.' || id.back() == ' '))
         id.pop_back();
     return id.empty() ? std::string("theme") : id;
+}
+
+std::string stock_colour(const std::string& role)
+{
+    // What BBLTopbar, GLCanvas3D and BitmapCache draw when a theme leaves these alone.
+    static const std::map<std::string, std::string> direct = {
+        {"titlebar_bg", "#262E30"}, {"titlebar_text", "#FFFFFF"}, {"canvas_bg", "#E7E7E7"},
+        {"canvas_bg_top", "#E7E7E7"}, {"icon", "#262E30"},
+    };
+    if (auto it = direct.find(role); it != direct.end())
+        return it->second;
+    for (const auto& r : roles())
+        if (r.first == role)
+            return r.second.empty() ? std::string() : r.second.front();
+    return {};
 }
 
 static std::string text_field(const json& j, const char* key, size_t max_len)
@@ -262,6 +279,150 @@ bool parse(const std::string& text, Spec& out, std::string& error)
         }
     }
     return true;
+}
+
+std::string to_json(const Spec& spec)
+{
+    // Ordered, so the file reads top to bottom the way docs/themes.md describes it.
+    nlohmann::ordered_json j;
+    j["name"] = spec.name;
+    using Text = std::pair<const char*, const std::string*>;
+    for (const auto& [key, value] : std::initializer_list<Text>{
+             {"author", &spec.author}, {"version", &spec.version}, {"description", &spec.description}, {"base", &spec.base}})
+        if (!value->empty())
+            j[key] = *value;
+    if (!spec.palette.empty()) {
+        // In the order of roles(), not alphabetically.
+        nlohmann::ordered_json palette = nlohmann::ordered_json::object();
+        for (const auto& r : roles())
+            if (auto it = spec.palette.find(r.first); it != spec.palette.end())
+                palette[r.first] = it->second;
+        j["palette"] = palette;
+    }
+    if (!spec.overrides.empty())
+        j["overrides"] = spec.overrides;
+    nlohmann::ordered_json fonts = nlohmann::ordered_json::object();
+    using Face = std::pair<const char*, const Font*>;
+    for (const auto& [key, font] : std::initializer_list<Face>{{"body", &spec.body}, {"heading", &spec.heading}, {"button", &spec.button}}) {
+        if (font->empty())
+            continue;
+        nlohmann::ordered_json f;
+        if (!font->files.empty())
+            f["files"] = font->files;
+        f["face"]  = font->face;
+        fonts[key] = f;
+    }
+    if (!fonts.empty())
+        j["fonts"] = fonts;
+    nlohmann::ordered_json shapes = nlohmann::ordered_json::object();
+    if (spec.button_radius >= 0)
+        shapes["button_radius"] = spec.button_radius;
+    if (spec.box_radius >= 0)
+        shapes["box_radius"] = spec.box_radius;
+    if (!shapes.empty())
+        j["shapes"] = shapes;
+    if (!spec.banner.empty())
+        j["titlebar"] = {{"banner", spec.banner}, {"align", spec.banner_align}};
+    if (!spec.home.empty())
+        j["home"] = spec.home;
+    return j.dump(2) + "\n";
+}
+
+std::string font_family(const std::string& data)
+{
+    const auto* d = reinterpret_cast<const unsigned char*>(data.data());
+    const size_t n = data.size();
+    auto u16 = [&](size_t at) -> uint32_t { return at + 2 <= n ? uint32_t(d[at] << 8 | d[at + 1]) : 0u; };
+    auto u32 = [&](size_t at) -> uint32_t { return at + 4 <= n ? (u16(at) << 16 | u16(at + 2)) : 0u; };
+
+    const uint32_t tag = u32(0);
+    if (n < 12 || (tag != 0x00010000 && tag != 0x4F54544F /* OTTO */ && tag != 0x74727565 /* true */))
+        return {};
+    const uint32_t tables = u16(4);
+    size_t name_at = 0, name_len = 0;
+    for (uint32_t i = 0; i < tables; ++i) {
+        const size_t rec = 12 + size_t(i) * 16;
+        if (rec + 16 > n)
+            return {};
+        if (u32(rec) == 0x6E616D65 /* name */) {
+            name_at  = u32(rec + 8);
+            name_len = u32(rec + 12);
+        }
+    }
+    if (name_at == 0 || name_at >= n || name_len > n - name_at || name_len < 6)
+        return {};
+    const size_t count = u16(name_at + 2), strings = name_at + u16(name_at + 4);
+
+    // Best first: Windows English, any Windows, Unicode, then Mac Roman.
+    int         best_rank = 0;
+    std::string best;
+    for (size_t i = 0; i < count; ++i) {
+        const size_t rec = name_at + 6 + i * 12;
+        if (rec + 12 > name_at + name_len)
+            break;
+        const uint32_t platform = u16(rec), encoding = u16(rec + 2), language = u16(rec + 4), name_id = u16(rec + 6);
+        const size_t   len = u16(rec + 8), at = strings + u16(rec + 10);
+        if (name_id != 1 || len == 0 || at + len > n)
+            continue;
+        int  rank  = 0;
+        bool utf16 = true;
+        if (platform == 3 && (encoding == 1 || encoding == 10))
+            rank = language == 0x409 ? 4 : 3;
+        else if (platform == 0)
+            rank = 2;
+        else if (platform == 1 && encoding == 0) {
+            rank  = 1;
+            utf16 = false;
+        }
+        if (rank <= best_rank)
+            continue;
+        std::string out;
+        if (utf16) {
+            for (size_t k = 0; k + 1 < len; k += 2) {
+                uint32_t c = uint32_t(d[at + k] << 8 | d[at + k + 1]);
+                if (c >= 0xD800 && c < 0xDC00 && k + 3 < len) {
+                    const uint32_t lo = uint32_t(d[at + k + 2] << 8 | d[at + k + 3]);
+                    if (lo >= 0xDC00 && lo < 0xE000) {
+                        c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
+                        k += 2;
+                    }
+                }
+                if (c >= 0xD800 && c < 0xE000)
+                    c = '?';
+                if (c < 0x80)
+                    out += char(c);
+                else if (c < 0x800) {
+                    out += char(0xC0 | c >> 6);
+                    out += char(0x80 | (c & 0x3F));
+                } else if (c < 0x10000) {
+                    out += char(0xE0 | c >> 12);
+                    out += char(0x80 | (c >> 6 & 0x3F));
+                    out += char(0x80 | (c & 0x3F));
+                } else {
+                    out += char(0xF0 | c >> 18);
+                    out += char(0x80 | (c >> 12 & 0x3F));
+                    out += char(0x80 | (c >> 6 & 0x3F));
+                    out += char(0x80 | (c & 0x3F));
+                }
+            }
+        } else {
+            for (size_t k = 0; k < len; ++k)
+                out += d[at + k] < 0x80 ? char(d[at + k]) : '?';
+        }
+        // Control characters would make a useless face name.
+        if (out.empty() || std::any_of(out.begin(), out.end(), [](unsigned char c) { return c < 0x20; }))
+            continue;
+        best_rank = rank;
+        best      = out;
+    }
+    if (best.size() > 128) {
+        best.resize(128);
+        while (!best.empty() && (static_cast<unsigned char>(best.back()) & 0xC0) == 0x80)
+            best.pop_back(); // a cut character
+        if (!best.empty() && static_cast<unsigned char>(best.back()) >= 0xC0)
+            best.pop_back();
+    }
+    return best;
 }
 
 static std::string nudge(const std::string& colour, const std::set<std::string>& reserved)

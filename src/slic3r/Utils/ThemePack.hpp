@@ -74,6 +74,17 @@ bool parse(const std::string& text, Spec& out, std::string& error);
 // #FFFFFE, so a colour that was already themed can never be mistaken for one still to be themed.
 std::map<std::string, std::string> colour_map(const Spec& spec, const std::set<std::string>& reserved);
 
+// The colour a role has when a theme leaves it alone, in the light look, for showing next to the
+// theme's own; "" for an unknown role.
+std::string stock_colour(const std::string& role);
+
+// theme.json for `spec`, the inverse of parse(): only what differs from the stock look is written.
+std::string to_json(const Spec& spec);
+
+// The family name inside a .ttf or .otf file (its 'name' table, name 1), which is the face a theme
+// names for it; "" when `data` is not a font this can read.
+std::string font_family(const std::string& data);
+
 // The Home tab's CSS variables for this theme (resources/web/home/home.css), from the palette and
 // then the pack's own "home" entries. Only variables the page defines are passed.
 nlohmann::json home_css(const Spec& spec);

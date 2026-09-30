@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_Theme_hpp_
 #define slic3r_GUI_Theme_hpp_
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,23 @@ bool     has_colour(const std::string& role);
 
 // The title bar banner, loaded on first use; !IsOk() when there is none or it could not be read.
 const wxBitmap& banner();
+
+// Where theme `id` lives (an installed one first, then a shipped one) and its theme.json.
+bool locate(const std::string& id, boost::filesystem::path& dir, bool& builtin);
+bool read(const std::string& id, ThemePack::Spec& spec, boost::filesystem::path& dir, bool& builtin, std::string& error);
+// Whether an installed (not shipped) theme with folder name `id` exists.
+bool installed(const std::string& id);
+bool shipped(const std::string& id);
+
+// Writes `spec` as the installed theme `id`, replacing it if it is there. The files of the theme
+// being edited are carried over from `source_dir` (empty for none), then `imports` (a path inside
+// the pack -> a file on disk the user picked, a font or an image) are copied in. Nothing is changed
+// when it fails. The Themes page of Preferences saves with this.
+bool save(const std::string& id, const ThemePack::Spec& spec, const boost::filesystem::path& source_dir,
+          const std::map<std::string, boost::filesystem::path>& imports, std::string& error);
+
+// Deletes the installed theme `id`. Shipped themes cannot be deleted.
+bool remove(const std::string& id, std::string& error);
 
 // Copies a theme from a folder or a .zip into user_dir() and returns its folder name, or "" with
 // `error` set. `exists` is set (and nothing written) when a theme with that folder name is already

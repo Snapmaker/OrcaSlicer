@@ -463,6 +463,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/HomePanel.cpp
     GUI/Theme.cpp
     GUI/Theme.hpp
+    GUI/ThemesPage.cpp
+    GUI/ThemesPage.hpp
     GUI/HomePanel.hpp
     GUI/HomeVendors.cpp
     GUI/HomeVendors.hpp

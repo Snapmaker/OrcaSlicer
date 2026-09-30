@@ -247,7 +247,14 @@ Transform3d lay_part_on_face_matrix(const ModelVolume &volume, const Transform3d
     const Transform3d rotation    = Transform3d(Eigen::Quaterniond().setFromTwoVectors(normal, down));
     // Pivot about the part's center so it turns in place instead of swinging around the object origin.
     const Vec3d       center      = volume.get_convex_hull().transformed_bounding_box(volume_matrix).center();
-    return Geometry::translation_transform(center) * rotation * Geometry::translation_transform(-center) * volume_matrix;
+    const Transform3d turned      = Geometry::translation_transform(center) * rotation * Geometry::translation_transform(-center) * volume_matrix;
+    // The picked face is a face of the part's convex hull pointing straight down now, so it lies at the part's lowest
+    // world z. Slide the part along world Z until that is the bed (z = 0), which leaves its XY position alone. The slide
+    // is worked out in object coordinates through the instance's linear part, so any rotation, mirror or scale of the
+    // instance is respected.
+    const double      face_z      = volume.get_convex_hull().transformed_bounding_box(instance_matrix * turned).min.z();
+    const Vec3d       slide       = inst_linear.inverse() * Vec3d(0., 0., -face_z);
+    return Geometry::translation_transform(slide) * turned;
 }
 
 void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_idx, const Vec3d &normal)
@@ -255,7 +262,8 @@ void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_id
     ModelVolume &volume = *object.volumes[volume_idx];
     volume.set_transformation(Geometry::Transformation(
         lay_part_on_face_matrix(volume, volume.get_matrix(), object.instances[instance_idx]->get_matrix(), normal)));
-    // Parts share one instance transformation, so every instance moves with the part: drop each of them.
+    // The part's face is on the bed now. If another part reaches below it the whole object comes back up so nothing is
+    // under the bed; the parts share the instances, so every instance is brought to rest.
     drop_object_to_bed(object);
 }
 

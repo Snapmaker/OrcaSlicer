@@ -267,6 +267,60 @@ TEST_CASE("A single part is laid on its own face while the rest of the object st
     check_on_bed(object);
 }
 
+TEST_CASE("A laid part's face lands on the bed even when the object already rests on it through another part", "[LayOnFace]")
+{
+    // A plate resting on the bed, and a block standing on edge in the air beside it (not touching anything).
+    Model        model;
+    ModelObject *object = model.add_object();
+    add_box(*object, { 30, 30, 2 });
+    add_box(*object, { 10, 20, 4 }, { 40, 5, 15 });
+    object->add_instance();
+    ModelVolume &block  = *object->volumes[1];
+    const Vec3d  center = block.mesh().bounding_box().center();
+    block.set_transformation(Geometry::Transformation(Geometry::translation_transform(center) *
+                                                      Geometry::rotation_transform({ PI / 2., 0, 0 }) *
+                                                      Geometry::translation_transform(-center)));
+    check_on_bed(*object); // the plate is on it, so the object is
+    const BoundingBoxf3 before = part_bounding_box(*object, 1);
+    CHECK(before.min.z() > 10.);
+
+    SECTION("plain instance") {
+        lay_part_on_largest_face(*object, 1);
+    }
+    SECTION("rotated, mirrored and scaled instance, lifted off the bed") {
+        object->instances.front()->set_rotation({ 0., 0., PI / 3. }); // stays square to the bed, so the plate still rests on it
+        object->instances.front()->set_mirror({ -1., 1., 1. });
+        object->instances.front()->set_scaling_factor({ 1.5, 0.75, 2. });
+        object->instances.front()->set_offset({ 11., -4., 30. });
+        // The plate's lowest point is what the object rests on: bring the object to the bed first.
+        drop_object_to_bed(*object);
+        check_on_bed(*object);
+        const std::vector<LayOnFacePlane> planes = lay_on_face_planes(*object->volumes[1], object->instances.front()->get_matrix_no_offset());
+        const int idx = find_largest_plane(planes);
+        REQUIRE(idx >= 0);
+        lay_part_on_face(*object, 0, 1, planes[idx].normal);
+    }
+
+    // The picked face is on the bed and nothing is below it.
+    const BoundingBoxf3 block_box = part_bounding_box(*object, 1);
+    CHECK_THAT(block_box.min.z(), WithinAbs(0., 1e-5));
+    check_on_bed(*object);
+}
+
+TEST_CASE("A laid part keeps its XY position in the world", "[LayOnFace]")
+{
+    Model        model;
+    ModelObject &object = add_plate_with_tilted_block(model);
+    object.instances.front()->set_rotation({ 0., 0., PI / 3. });
+    object.instances.front()->set_offset({ 20., 10., 0. });
+    const Vec3d before = part_bounding_box(object, 1).center();
+    lay_part_on_largest_face(object, 1);
+    const Vec3d after = part_bounding_box(object, 1).center();
+    // The object may move up as a whole, never sideways; the part turns in place.
+    CHECK_THAT(after.x(), WithinAbs(before.x(), 1e-4));
+    CHECK_THAT(after.y(), WithinAbs(before.y(), 1e-4));
+}
+
 TEST_CASE("Dropping after a part rotation puts every instance of the object on the bed", "[LayOnFace]")
 {
     Model        model;

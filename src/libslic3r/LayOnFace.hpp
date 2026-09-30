@@ -51,8 +51,9 @@ int find_plane_at_point(const std::vector<LayOnFacePlane> &planes, const Transfo
 void lay_on_face(ModelObject &object, size_t instance_idx, const Vec3d &normal);
 
 // The part's new volume matrix after turning it about its own center so that `normal` (object coordinates,
-// from the part's planes) points down in the world. `volume_matrix` is the part's current volume matrix;
-// only the part moves, `instance_matrix` is not changed.
+// from the part's planes) points down in the world, and then sliding it along world Z so that face lies at the
+// bed level z = 0 (its XY position is unchanged). `volume_matrix` is the part's current volume matrix and
+// `instance_matrix` (with its offset) places the object in the world; only the part moves.
 Transform3d lay_part_on_face_matrix(const ModelVolume &volume, const Transform3d &volume_matrix, const Transform3d &instance_matrix,
                                     const Vec3d &normal);
 
@@ -64,8 +65,8 @@ double bed_drop_shift(const ModelObject &object, size_t instance_idx);
 // parts share the instances, so all of them drop.
 void drop_object_to_bed(ModelObject &object);
 
-// Rotates one part of the object with lay_part_on_face_matrix(), then drops the object so its lowest point is
-// at z = 0 again. The other parts and the instance rotation stay as they were.
+// Rotates one part of the object with lay_part_on_face_matrix(), which puts the picked face on the bed, then raises
+// the object if another part is left below z = 0. The other parts and the instance rotation stay as they were.
 void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_idx, const Vec3d &normal);
 
 } // namespace Slic3r

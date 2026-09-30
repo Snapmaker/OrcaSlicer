@@ -1,4 +1,5 @@
 #include "LibraryIndex.hpp"
+#include "MeshThumbnail.hpp"
 
 #include "libslic3r/miniz_extension.hpp"
 
@@ -541,6 +542,10 @@ Index scan(const std::vector<Folder>& folders_in, const Index& previous, const s
                     e.designer      = std::move(info.designer);
                     e.sliced        = info.sliced;
                     e.has_thumbnail = !info.thumbnail_png.empty() && write_file(thumb, info.thumbnail_png);
+                } else if (type == "stl" || type == "obj" || type == "amf") {
+                    // No picture in the file: draw one (once; an unchanged file keeps it).
+                    const std::string png = mesh_thumbnail_png(path, type);
+                    e.has_thumbnail       = !png.empty() && write_file(thumb, png);
                 }
             }
             e.name     = name;

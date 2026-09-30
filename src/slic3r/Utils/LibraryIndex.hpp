@@ -116,7 +116,7 @@ struct ScanLimits
 
 // Walk `folders` and return the new index. An entry whose path, size and time match one in
 // `previous` is taken from it without opening the file. New or changed 3MF files are read and their
-// cover written to <cache>/thumbs/<id>.png; thumbnails of files that are gone are removed. A file
+// cover written to <cache>/thumbs/<id>.png (an STL, OBJ or AMF is drawn, MeshThumbnail.hpp); thumbnails of files that are gone are removed. A file
 // under two Library folders belongs to the deepest one (its tags win). `hidden` paths are left
 // out. `progress` is told the number of files seen so far now and then; `cancel` stops the walk
 // (the index returned is then partial and should not be saved). `now` is the time new entries are

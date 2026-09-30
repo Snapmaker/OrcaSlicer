@@ -871,6 +871,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/HomeTabLogic.hpp
     Utils/LibraryIndex.cpp
     Utils/LibraryIndex.hpp
+    Utils/MeshThumbnail.cpp
+    Utils/MeshThumbnail.hpp
     Utils/MainThreadGate.cpp
     Utils/MainThreadGate.hpp
     Utils/ServerLifetime.cpp

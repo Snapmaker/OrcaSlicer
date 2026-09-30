@@ -1,14 +1,17 @@
 #include <catch2/catch.hpp>
 
 #include "slic3r/Utils/LibraryIndex.hpp"
+#include "slic3r/Utils/MeshThumbnail.hpp"
 #include "libslic3r/miniz_extension.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <random>
+#include <set>
 
 using namespace Slic3r;
 using namespace Slic3r::Library;
@@ -361,4 +364,156 @@ TEST_CASE("library: a missing or broken index is empty", "[Library]")
     CHECK(load_index(tmp.path.string()).entries.empty());
     write(tmp.path / "index.json", "{broken");
     CHECK(load_index(tmp.path.string()).entries.empty());
+}
+
+// ------------------------------------------------------------------------------ mesh pictures ----
+
+namespace {
+
+std::string binary_stl(const std::vector<std::array<float, 9>>& tris)
+{
+    std::string out(80, ' ');
+    const uint32_t n = uint32_t(tris.size());
+    out.append(reinterpret_cast<const char*>(&n), 4);
+    for (const auto& t : tris) {
+        const float normal[3] = {0, 0, 0};
+        out.append(reinterpret_cast<const char*>(normal), 12);
+        out.append(reinterpret_cast<const char*>(t.data()), 36);
+        out.append(2, '\0');
+    }
+    return out;
+}
+
+const char* const CUBE_OBJ = "# a unit cube\n"
+                             "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\n"
+                             "f 1 3 2\nf 1 4 3\nf 5 6 7 8\nf 1/1 2/2 6/3 5/4\nf 2//1 3//1 7//1 6//1\n"
+                             "f -5 -1 -2 -6\nf 4 1 5 8\n";
+
+} // namespace
+
+TEST_CASE("library: meshes are read without a Model", "[Library]")
+{
+    Triangles t;
+    SECTION("binary STL")
+    {
+        REQUIRE(parse_stl(binary_stl({{0, 0, 0, 1, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0, 1}}), t));
+        CHECK(t.size() == 18);
+        CHECK(t[3] == 1.0f);
+    }
+    SECTION("a binary STL whose header starts with \"solid\" is still binary")
+    {
+        std::string b = binary_stl({{0, 0, 0, 1, 0, 0, 0, 1, 0}});
+        b.replace(0, 5, "solid");
+        REQUIRE(parse_stl(b, t));
+        CHECK(t.size() == 9);
+    }
+    SECTION("ASCII STL, whatever the number format")
+    {
+        const std::string a = "solid part\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1.5e1 0 0\n"
+                              "   vertex 0 -2.25 +3\n  endloop\n endfacet\nendsolid part\n";
+        REQUIRE(parse_stl(a, t));
+        REQUIRE(t.size() == 9);
+        CHECK(t[3] == 15.0f);
+        CHECK(t[7] == -2.25f);
+        CHECK(t[8] == 3.0f);
+    }
+    SECTION("not a mesh")
+    {
+        CHECK_FALSE(parse_stl("", t));
+        CHECK_FALSE(parse_stl("solid x\nendsolid x\n", t));
+        CHECK_FALSE(parse_stl(std::string(90, 'z'), t));
+    }
+    SECTION("OBJ: polygons, texture and normal indices, negative indices")
+    {
+        REQUIRE(parse_obj(CUBE_OBJ, t));
+        CHECK(t.size() / 9 == 12);
+    }
+    SECTION("OBJ: a face naming a vertex that is not there is left out")
+    {
+        REQUIRE(parse_obj("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\nf 1 2 9\nf 0 1 2\n", t));
+        CHECK(t.size() == 9);
+        CHECK_FALSE(parse_obj("o empty\n", t));
+    }
+    SECTION("AMF: vertices numbered per object")
+    {
+        const std::string amf = R"(<?xml version="1.0"?><amf unit="millimeter">
+            <object id="0"><mesh><vertices>
+              <vertex><coordinates><x>0</x><y>0</y><z>0</z></coordinates></vertex>
+              <vertex><coordinates><x>1</x><y>0</y><z>0</z></coordinates></vertex>
+              <vertex><coordinates><x>0</x><y>1</y><z>0</z></coordinates></vertex>
+            </vertices><volume><triangle><v1>0</v1><v2>1</v2><v3>2</v3></triangle></volume></mesh></object>
+            <object id="1"><mesh><vertices>
+              <vertex><coordinates><x>5</x><y>5</y><z>5</z></coordinates></vertex>
+              <vertex><coordinates><x>6</x><y>5</y><z>5</z></coordinates></vertex>
+              <vertex><coordinates><x>5</x><y>6</y><z>5</z></coordinates></vertex>
+            </vertices><volume><triangle><v1>0</v1><v2>2</v2><v3>1</v3></triangle>
+              <triangle><v1>0</v1><v2>1</v2><v3>7</v3></triangle></volume></mesh></object></amf>)";
+        REQUIRE(parse_amf(amf, t));
+        REQUIRE(t.size() == 18);
+        CHECK(t[9] == 5.0f); // the second object's first vertex, not the first object's
+        CHECK(t[12] == 5.0f);
+        CHECK(t[13] == 6.0f);
+    }
+    SECTION("limits")
+    {
+        MeshLimits one;
+        one.max_triangles = 1;
+        REQUIRE(parse_obj(CUBE_OBJ, t, one));
+        CHECK(t.size() == 9); // stops once the limit is reached
+        CHECK_FALSE(parse_stl(binary_stl({{0, 0, 0, 1, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0, 1}}), t, one));
+    }
+}
+
+TEST_CASE("library: a mesh is drawn on a transparent background", "[Library]")
+{
+    Triangles t;
+    REQUIRE(parse_obj(CUBE_OBJ, t));
+    const int size = 64;
+    const std::vector<unsigned char> px = render_rgba(t, size);
+    REQUIRE(px.size() == size_t(size) * size * 4);
+    auto alpha = [&](int x, int y) { return px[(size_t(y) * size + x) * 4 + 3]; };
+    CHECK(alpha(0, 0) == 0);                // corners are empty
+    CHECK(alpha(size - 1, size - 1) == 0);
+    CHECK(alpha(size / 2, size / 2) == 255); // the middle is the cube
+    // Three faces are seen, lit differently.
+    std::set<int> greys;
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x)
+            if (alpha(x, y) == 255)
+                greys.insert(px[(size_t(y) * size + x) * 4]);
+    CHECK(greys.size() >= 3);
+
+    const std::string png = encode_png(px, size);
+    REQUIRE(png.size() > 8);
+    CHECK(png.compare(0, 8, std::string("\x89PNG\r\n\x1a\n", 8)) == 0);
+    CHECK(render_rgba({}, size).empty());
+    CHECK(encode_png({}, size).empty());
+    // Everything in one point: nothing to draw.
+    CHECK(render_rgba(Triangles(9, 1.0f), size).empty());
+}
+
+TEST_CASE("library: the scan draws covers for meshes", "[Library]")
+{
+    TempDir tmp;
+    const fs::path lib = tmp.path / "lib", cache = tmp.path / "cache";
+    write(lib / "cube.obj", CUBE_OBJ);
+    write(lib / "tri.stl", binary_stl({{0, 0, 0, 10, 0, 0, 0, 10, 5}}));
+    write(lib / "broken.stl", "solid x\nendsolid x\n");
+    write(lib / "part.step", "ISO-10303-21;");
+    Folder f;
+    f.path = lib.string();
+    std::atomic<bool> cancel { false };
+    const Index index = scan({f}, Index(), {}, cache.string(), 1000, cancel);
+    auto entry = [&](const std::string& name) -> const Entry* {
+        for (const Entry& e : index.entries)
+            if (e.name == name) return &e;
+        return nullptr;
+    };
+    REQUIRE(entry("cube.obj"));
+    CHECK(entry("cube.obj")->has_thumbnail);
+    CHECK(fs::is_regular_file(thumbnail_path(cache.string(), entry("cube.obj")->id)));
+    CHECK(entry("tri.stl")->has_thumbnail);
+    CHECK_FALSE(entry("broken.stl")->has_thumbnail);
+    CHECK_FALSE(entry("part.step")->has_thumbnail); // not drawn yet
+    CHECK(mesh_thumbnail_png((lib / "cube.obj").string(), "step").empty());
 }

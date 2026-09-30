@@ -11488,13 +11488,18 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     }
 
     this->q->Bind(EVT_LOAD_MODEL_OTHER_INSTANCE, [this](LoadFromOtherInstanceEvent& evt) {
-        BOOST_LOG_TRIVIAL(trace) << "Received load from other instance event.";
+        BOOST_LOG_TRIVIAL(info) << "Received " << evt.data.size() << " file(s) from another instance (window " <<
+            (wxGetApp().mainframe->IsShown() ? "visible" : "hidden") << ")";
         wxArrayString input_files;
         for (size_t i = 0; i < evt.data.size(); ++i) {
+            BOOST_LOG_TRIVIAL(info) << "  from another instance: " << evt.data[i].string();
             input_files.push_back(from_u8(evt.data[i].string()));
         }
         // Ultra: a file forwarded from Explorer to a hidden (hub-managed) instance must not vanish.
         if (!wxGetApp().mainframe->IsShown()) {
+            // Hidden instances no longer take the hand-off (InstanceRouting.hpp), so this only happens
+            // if a sender found this window anyway; load the files rather than lose them.
+            BOOST_LOG_TRIVIAL(warning) << "A hidden instance received files from another instance; showing its window";
             wxGetApp().mainframe->Show(true);
             RemoteAccess::get().set_hidden(false);
         }

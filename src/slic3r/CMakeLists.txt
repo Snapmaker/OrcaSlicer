@@ -819,6 +819,7 @@ set(SLIC3R_GUI_SOURCES
     Utils/BambuStudioLauncher.hpp
     Utils/BlenderLauncher.cpp
     Utils/BlenderLauncher.hpp
+    Utils/InstanceRouting.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp
     Utils/MeshInspect.cpp

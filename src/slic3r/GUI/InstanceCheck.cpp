@@ -10,6 +10,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Config.hpp"
+#include "slic3r/Utils/InstanceRouting.hpp"
 
 #include "boost/nowide/convert.hpp"
 #include <boost/log/trivial.hpp>
@@ -132,15 +133,22 @@ namespace instance_check_internal
 			other_instance_hash_major = PtrToUint(handle);
 			other_instance_hash_major = other_instance_hash_major << 32;
 			other_instance_hash += other_instance_hash_major;
-			if(my_instance_hash == other_instance_hash)
+			// Only a window somebody can see receives the files. A hidden hub-managed slicer of the same
+			// executable has a main window too (and answers to the same hash); handing it the files
+			// would load them into a window nobody can look at.
+			const bool visible = IsWindowVisible(hwnd) != 0;
+			if (InstanceRouting::is_hand_off_target(my_instance_hash, other_instance_hash, visible))
 			{
-				BOOST_LOG_TRIVIAL(debug) << "win enum - found correct instance";
+				BOOST_LOG_TRIVIAL(info) << "Instance check: found the visible instance of this executable (window " << (void*)hwnd << ")";
 				l_bambu_studio_hwnd = hwnd;
 				ShowWindow(hwnd, SW_SHOWMAXIMIZED);
 				SetForegroundWindow(hwnd);
 				return false;
 			}
-			BOOST_LOG_TRIVIAL(debug) << "win enum - found wrong instance";
+			if (my_instance_hash == other_instance_hash)
+				BOOST_LOG_TRIVIAL(info) << "Instance check: skipping a hidden instance of this executable (window " << (void*)hwnd << "), it does not receive single-instance files";
+			else
+				BOOST_LOG_TRIVIAL(debug) << "win enum - found wrong instance";
 		}
 		return true;
 	}
@@ -162,8 +170,10 @@ namespace instance_check_internal
 			data_to_send.cbData = sizeof(TCHAR) * (wcslen(*command_line_args.get()) + 1);
 			data_to_send.lpData = *command_line_args.get();
 			SendMessage(l_bambu_studio_hwnd, WM_COPYDATA, 0, (LPARAM)&data_to_send);
+			BOOST_LOG_TRIVIAL(info) << "Instance check: handed the launch arguments to the running instance: " << message;
 			return true;  
 		}
+		BOOST_LOG_TRIVIAL(warning) << "Instance check: no visible instance of this executable (hash " << version << ") to hand the arguments to: " << message;
 	    return false;
 	}
 
@@ -199,6 +209,25 @@ namespace instance_check_internal
 		BOOST_LOG_TRIVIAL(debug) << "Creating lockfile.";
 		s_created_lockfile = true;
 		return false;
+	}
+
+	// Whether another process holds the lock, without taking it. A hidden instance uses this: it may
+	// hand its files to a visible instance, but must never become the one that receives them.
+	static bool lock_is_held_by_other(const std::string& name, const std::string& path)
+	{
+		std::string dest_dir = path + name;
+		struct      flock fl;
+		fl.l_type = F_WRLCK;
+		fl.l_whence = SEEK_SET;
+		fl.l_start = 0;
+		fl.l_len = 1;
+		fl.l_pid = 0;
+		int fdlock = open(dest_dir.c_str(), O_RDONLY);
+		if (fdlock == -1)
+			return false;
+		const bool held = fcntl(fdlock, F_GETLK, &fl) != -1 && fl.l_type != F_UNLCK;
+		close(fdlock);
+		return held;
 	}
 
 	// Deletes lockfile if it was created by this instance
@@ -317,11 +346,39 @@ namespace instance_check_internal
 #endif //__APPLE__/__linux__
 } //namespace instance_check_internal
 
-bool instance_check(int argc, char** argv, bool app_config_single_instance)
+#ifdef _WIN32
+// The text an instance's identity is hashed from. It is the running module's own path, resolved
+// through junctions and symlinks (the EdgeSlicerBuilds "current" folder is a junction) and normalised
+// for case and separators: the same install reached through two spellings - the path Blender was
+// given, the one Explorer or the hub launched it by - must be one instance, or a hand-off never
+// finds it.
+static std::string windows_instance_key(const char* argv0)
+{
+	std::string full;
+	static wchar_t module_path[32768];
+	const DWORD n = GetModuleFileNameW(nullptr, module_path, (DWORD)(sizeof(module_path) / sizeof(module_path[0])));
+	if (n > 0 && n < sizeof(module_path) / sizeof(module_path[0]))
+		full = boost::nowide::narrow(module_path);
+	else
+		full = boost::filesystem::system_complete(argv0).string();
+	const std::wstring wide = boost::nowide::widen(full);
+	HANDLE h = CreateFileW(wide.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+	if (h != INVALID_HANDLE_VALUE) {
+		static wchar_t final_path[32768];
+		const DWORD m = GetFinalPathNameByHandleW(h, final_path, (DWORD)(sizeof(final_path) / sizeof(final_path[0])), FILE_NAME_NORMALIZED);
+		CloseHandle(h);
+		if (m > 0 && m < sizeof(final_path) / sizeof(final_path[0]))
+			full = boost::nowide::narrow(final_path);
+	}
+	return InstanceRouting::normalize_exe_path_key(full);
+}
+#endif // _WIN32
+
+bool instance_check(int argc, char** argv, bool app_config_single_instance, bool hidden_start)
 {
 	std::size_t hashed_path;
 #ifdef _WIN32
-	hashed_path = std::hash<std::string>{}(boost::filesystem::system_complete(argv[0]).string());
+	hashed_path = std::hash<std::string>{}(windows_instance_key(argv[0]));
 #else
 	boost::system::error_code ec;
 #ifdef __linux__
@@ -361,25 +418,41 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 	instance_check_internal::CommandLineAnalysis cla = instance_check_internal::process_command_line(argc, argv);
 	if (! cla.should_send.has_value())
 		cla.should_send = app_config_single_instance;
+	BOOST_LOG_TRIVIAL(info) << "Instance check: instance " << lock_name << (hidden_start ? ", starting hidden (does not claim the single-instance lock)" : "")
+		<< ", hand-off " << (*cla.should_send ? "requested" : "not requested") << ", arguments " << cla.cl_string;
+	const bool claims_lock = InstanceRouting::claims_instance_lock(hidden_start);
 #ifdef _WIN32
-	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\\cache\\");
-	if (cla.should_send.value() && GUI::wxGetApp().single_instance_checker()->IsAnotherRunning()) {
+	// The named lock is taken here. A hidden instance gives it back below, so it never stands in the
+	// way of a visible instance.
+	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\cache\\");
+	const bool other_holds_lock = GUI::wxGetApp().single_instance_checker()->IsAnotherRunning();
 #else // mac & linx
-	// get_lock() creates the lockfile therefore *cla.should_send is checked after
-	if (instance_check_internal::get_lock(lock_name + ".lock", data_dir() + "/cache/") && *cla.should_send) {
+	// get_lock() creates the lockfile, so only a visible instance may call it.
+	const bool other_holds_lock = claims_lock ? instance_check_internal::get_lock(lock_name + ".lock", data_dir() + "/cache/")
+	                                          : instance_check_internal::lock_is_held_by_other(lock_name + ".lock", data_dir() + "/cache/");
 #endif
-		instance_check_internal::send_message(cla.cl_string, lock_name);
-		BOOST_LOG_TRIVIAL(error) << "Instance check: Another instance found. This instance will terminate. Lock file of current running instance is located at " << data_dir() << 
+	if (*cla.should_send && other_holds_lock) {
+		const bool delivered = instance_check_internal::send_message(cla.cl_string, lock_name);
+		if (InstanceRouting::should_hand_off(true, true, delivered)) {
+			BOOST_LOG_TRIVIAL(info) << "Instance check: another instance received the arguments. This instance will terminate. Lock file of current running instance is located at " << data_dir() <<
 #ifdef _WIN32
-			"\\cache\\"
+				"\cache\\"
 #else // mac & linx
-			"/cache/"
+				"/cache/"
 #endif
-			<< lock_name << ".lock";
-		return true;
+				<< lock_name << ".lock";
+			return true;
+		}
+		// The lock is held (by a hidden slicer, one that is still starting, or one that has hung) but
+		// no visible instance took the arguments. Exiting here would drop them; start normally instead.
+		BOOST_LOG_TRIVIAL(warning) << "Instance check: the lock is held but no visible instance received the arguments; starting this instance with them instead.";
 	}
-	BOOST_LOG_TRIVIAL(info) << "Instance check: Another instance not found or single-instance not set.";
-	
+#ifdef _WIN32
+	if (!claims_lock)
+		GUI::wxGetApp().release_single_instance_checker();
+#endif
+	BOOST_LOG_TRIVIAL(info) << "Instance check: no other instance took over this launch; starting normally.";
+
 	return false;
 }
 
@@ -530,6 +603,9 @@ void OtherInstanceMessageHandler::handle_message(const std::string& message)
 		else if (boost::regex_search(*it, results, re) || boost::regex_search(*it, results, re2))
 			downloads.emplace_back(*it);
 	}
+	BOOST_LOG_TRIVIAL(info) << "Instance check: the message from the other instance carries " << paths.size() << " file(s) and " << downloads.size() << " download link(s)";
+	if (args.size() > 1 && paths.empty() && downloads.empty())
+		BOOST_LOG_TRIVIAL(warning) << "Instance check: none of the arguments from the other instance is an existing file: " << message;
 	if (! paths.empty()) {
 		//wxEvtHandler* evt_handler = wxGetApp().plater(); //assert here?
 		//if (evt_handler) {

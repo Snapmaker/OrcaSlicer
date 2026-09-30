@@ -19,7 +19,7 @@
 bl_info = {
     "name": "EdgeSlicer Bridge",
     "author": "EdgeSlicer",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > EdgeSlicer, Object > Send to EdgeSlicer",
     "description": "Send meshes to EdgeSlicer and send parts opened from EdgeSlicer back to it",
@@ -137,9 +137,35 @@ def objects_to_arrays(objects, scale=1.0):
 # Finding and starting EdgeSlicer
 # ------------------------------------------------------------------------------------------------
 
+def _log(message):
+    # Goes to the console Blender was started from (Window > Toggle System Console on Windows), so a
+    # send that reports success but shows nothing in EdgeSlicer can be traced to the exe and the
+    # arguments that were used.
+    try:
+        print("EdgeSlicer Bridge: " + message, flush=True)
+    except Exception:
+        pass
+
+
 def _prefs():
     addon = bpy.context.preferences.addons.get(ADDON_ID)
     return addon.preferences if addon else None
+
+
+def _remember_session_exe(exe):
+    # The EdgeSlicer that opened this Blender is the one the user is working in. Keep it as the default
+    # for sends from other files, so they do not fall back to a different install.
+    prefs = _prefs()
+    if prefs is None or not exe or getattr(prefs, "edgeslicer_last_exe", None) is None:
+        return
+    if prefs.edgeslicer_last_exe == exe:
+        return
+    prefs.edgeslicer_last_exe = exe
+    if not bpy.app.background:
+        try:
+            bpy.ops.wm.save_userpref()
+        except Exception:
+            pass
 
 
 def default_edgeslicer_paths():
@@ -153,16 +179,29 @@ def default_edgeslicer_paths():
 
 
 def find_edgeslicer(scene=None):
+    # Precedence: the EdgeSlicer that started this edit session (its exe is saved in the scene), then
+    # the location typed into the add-on preferences, then the EdgeSlicer that started the last
+    # session, then the usual install location. The session comes first because a hand-off only
+    # reaches an EdgeSlicer of the very same executable: another install (for example the normal
+    # install while a test build is open) would start or find a different instance, and the files
+    # would never appear in the window the user is looking at.
     prefs = _prefs()
     candidates = []
-    if prefs and prefs.edgeslicer_path:
-        candidates.append(bpy.path.abspath(prefs.edgeslicer_path))
     if scene is not None and scene.get(PROP_EXE):
-        candidates.append(scene[PROP_EXE])
-    candidates += default_edgeslicer_paths()
-    for path in candidates:
+        candidates.append(("the edit session", scene[PROP_EXE]))
+    if prefs and prefs.edgeslicer_path:
+        candidates.append(("the add-on preferences", bpy.path.abspath(prefs.edgeslicer_path)))
+    last = getattr(prefs, "edgeslicer_last_exe", "") if prefs else ""
+    if last:
+        candidates.append(("the last edit session", last))
+    candidates += [("the default install location", p) for p in default_edgeslicer_paths()]
+    for source, path in candidates:
         if path and os.path.exists(path):
+            _log("using the EdgeSlicer from %s: %s" % (source, path))
             return path
+        if path:
+            _log("ignoring the EdgeSlicer from %s, it does not exist: %s" % (source, path))
+    _log("no EdgeSlicer found")
     return None
 
 
@@ -178,7 +217,14 @@ def launch_edgeslicer(exe, files):
         kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
-    subprocess.Popen(argv, **kwargs)
+    # When no EdgeSlicer is open this starts one. Somebody just asked for these files, so it must
+    # show a window even if EdgeSlicer is set to "Start hidden" (an open one is unaffected).
+    env = dict(os.environ)
+    env["SNORCA_HIDDEN"] = "0"
+    kwargs["env"] = env
+    _log("launching %s" % argv)
+    proc = subprocess.Popen(argv, **kwargs)
+    _log("launched, pid %d" % proc.pid)
 
 
 def _safe_filename(name):
@@ -271,6 +317,7 @@ def start_edit_session(opts):
     scene[PROP_NAME] = name
     if opts.get("exe"):
         scene[PROP_EXE] = opts["exe"]
+        _remember_session_exe(opts["exe"])
 
     # Save next to the exchange files, so Ctrl+S has somewhere to go without asking.
     blend = os.path.join(os.path.dirname(opts["out"]), _safe_filename(name) + ".blend")
@@ -390,8 +437,8 @@ def _finish_install(script_path, exe):
         bpy.ops.preferences.addon_install(filepath=script_path, overwrite=True)
         bpy.ops.preferences.addon_enable(module=ADDON_ID)
         prefs = _prefs()
-        if prefs is not None and exe and not prefs.edgeslicer_path:
-            prefs.edgeslicer_path = exe
+        if prefs is not None and exe and getattr(prefs, "edgeslicer_last_exe", None) is not None:
+            prefs.edgeslicer_last_exe = exe
         bpy.ops.wm.save_userpref()
         print("EdgeSlicer Bridge: add-on installed")
     except Exception as ex:
@@ -457,6 +504,11 @@ if __name__ != "__main__":
             description="EdgeSlicer.exe, EdgeSlicer.app or the EdgeSlicer executable. Leave empty to look in the usual install location",
             subtype="FILE_PATH",
         )
+        edgeslicer_last_exe: bpy.props.StringProperty(
+            name="Last EdgeSlicer",
+            description="The EdgeSlicer that most recently opened a part in Blender. Used when the current file is not an edit session and the location above is empty",
+            subtype="FILE_PATH",
+        )
         use_scene_units: bpy.props.BoolProperty(
             name="Use scene units",
             description="Convert from the scene's unit scale to millimetres. Off sends one Blender unit as one millimetre, like Blender's STL export",
@@ -465,6 +517,8 @@ if __name__ != "__main__":
 
         def draw(self, context):
             self.layout.prop(self, "edgeslicer_path")
+            if self.edgeslicer_last_exe:
+                self.layout.label(text="Last EdgeSlicer used: %s" % self.edgeslicer_last_exe)
             self.layout.prop(self, "use_scene_units")
 
     _classes.insert(0, EDGESLICER_AddonPreferences)
@@ -494,6 +548,15 @@ def _run_as_script():
     if installed is not None and hasattr(installed, "start_edit_session"):
         # The add-on is installed: let it own the session instead of registering a second copy.
         if opts:
+            installed_version = tuple(getattr(installed, "bl_info", {}).get("version", (0, 0, 0)))
+            if installed_version < tuple(bl_info["version"]) and opts.get("exe"):
+                # An older installed copy prefers the location in the preferences over the EdgeSlicer
+                # that opened this session, so a send could reach a different install. Point it at this
+                # one for now; reinstalling the add-on from this session replaces the old copy.
+                prefs = _prefs()
+                if prefs is not None and getattr(prefs, "edgeslicer_path", None) is not None:
+                    _log("the installed add-on is older (%s); using %s for this session" % (installed_version, opts["exe"]))
+                    prefs.edgeslicer_path = opts["exe"]
             installed.start_edit_session(opts)
         return
     register()

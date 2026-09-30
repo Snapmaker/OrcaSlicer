@@ -1528,6 +1528,9 @@ int CLI::run(int argc, char **argv)
             boost::nowide::cerr << "--inspect-paint cannot be combined with --hub" << std::endl;
             return CLI_INVALID_PARAMS;
         }
+        // The hub is headless: it never reaches the single-instance check, so it holds no lock and owns
+        // no window, and files another process hands over (Send to EdgeSlicer) can never end up in it.
+        BOOST_LOG_TRIVIAL(info) << "hub instance: ignores single-instance messages (no lock, no window)";
         return Slic3r::GUI::RemoteHub::run_server(m_config.opt_string("hub_token"), m_config.opt_bool("hub_phone"));
     }
 #endif

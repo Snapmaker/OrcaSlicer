@@ -8,6 +8,7 @@
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Geometry/ConvexHull.hpp"
+#include "libslic3r/LayOnFace.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Utils.hpp"
@@ -6430,6 +6431,27 @@ void GLCanvas3D::do_rotate(const std::string& snapshot_type)
             }
 
             wxGetApp().obj_list()->update_info_items(static_cast<size_t>(i.first));
+        }
+
+        // Lay on face of a single part: whatever the drop above made of the convex hulls, the object's lowest point
+        // has to end up on the bed, as it does when the whole object is laid on a face. The object's instances all
+        // share the part, so every one of them is dropped.
+        if (snapshot_type == L("Gizmo-Place on Face") && m_selection.is_single_volume()) {
+            const int object_idx = m_selection.get_object_idx();
+            if (object_idx >= 0 && object_idx < static_cast<int>(m_model->objects.size())) {
+                ModelObject* m = m_model->objects[object_idx];
+                m->invalidate_bounding_box();
+                for (int j = 0; j < static_cast<int>(m->instances.size()); ++j) {
+                    const double z_shift = bed_drop_shift(*m, static_cast<size_t>(j));
+                    if (z_shift == 0.0)
+                        continue;
+                    const Vec3d shift(0.0, 0.0, z_shift);
+                    m_selection.translate(object_idx, j, shift);
+                    m->translate_instance(j, shift);
+                    m_selection.notify_instance_update(object_idx, j);
+                }
+                wxGetApp().obj_list()->update_info_items(static_cast<size_t>(object_idx));
+            }
         }
     }
     //BBS: nofity object list to update

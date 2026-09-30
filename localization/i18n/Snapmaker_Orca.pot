@@ -9252,11 +9252,6 @@ msgstr ""
 msgid "Abnormal print file data. Please slice again"
 msgstr ""
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

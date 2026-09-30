@@ -9805,13 +9805,6 @@ msgstr "Enviar i imprimir"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Dades anormals del fitxer d'impressió. Si us plau, torneu a laminar"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Imprimir Per Objecte: \n"
-"Utilitzeu l'ordenació automàtica per evitar col·lisions en imprimir."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

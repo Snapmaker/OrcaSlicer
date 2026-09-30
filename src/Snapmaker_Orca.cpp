@@ -8383,6 +8383,12 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 static std::atomic<bool> g_dump_in_progress{false};
 
 extern "C" {
+// The launcher owns the Sentry SDK lifetime. Its bury-point state is
+// separate from the DLL's state so it can load Mesa before this DLL.
+__declspec(dllexport) void __stdcall Snapmaker_Orca_set_sentry_initialized(int initialized) { set_sentry_flags(initialized != 0); }
+
+__declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return get_privacy_policy() ? 1 : 0; }
+
     __declspec(dllexport) int __stdcall Snapmaker_Orca_main(int argc, wchar_t **argv)
     {
         // Convert wchar_t arguments to UTF8.

@@ -9610,13 +9610,6 @@ msgstr "Envoyer & Imprimer"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Données de fichier d'impression anormales. Veuillez découper le fichier à nouveau"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Imprimer par objet :\n"
-"Nous vous suggérons d'utiliser la disposition automatique pour éviter les collisions lors de l'impression."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

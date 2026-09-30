@@ -1425,7 +1425,10 @@ private:
     {
         if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
             wxSize size = GetSize();
-            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+            // Clamp to 0: during construction / first OnSize the notebook can still
+            // report a zero height, making the page height negative. GTK rejects the
+            // size request (assertion) and the page keeps a stale geometry.
+            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, wxMax(size.x - 4, 0), wxMax(size.y - m_tabHeight - 4, 0));
             m_tabs[m_selectedIndex].page->Layout();
         }
     }
@@ -5638,7 +5641,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
             
             // Orca: Update proj_config directly to avoid callback context issues
             if (is_snapmaker_u1 && !support_multi_bed_types) {
-                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP && bed_type_to_use != btSuperTack) {
+                if (bed_type_to_use != btPTE && bed_type_to_use != btPEI && bed_type_to_use != btGESP) {
                     bed_type_to_use = btPTE;
                     wxGetApp().app_config->set("curr_bed_type", std::to_string(int(bed_type_to_use)));
                     wxGetApp().app_config->set_printer_setting(printer_name, "curr_bed_type", std::to_string(int(bed_type_to_use)));
@@ -5651,7 +5654,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
         } else {
             if (is_snapmaker_u1 && !support_multi_bed_types) {
                 BedType curr = wxGetApp().preset_bundle->project_config.opt_enum<BedType>("curr_bed_type");
-                if (curr != btPTE && curr != btPEI && curr != btGESP && curr != btSuperTack) {
+                if (curr != btPTE && curr != btPEI && curr != btGESP) {
                     wxGetApp().preset_bundle->project_config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
                     m_bed_type_list->SetSelection(0);
                 } else
@@ -14047,6 +14050,7 @@ struct Plater::priv
     struct LongSliceAnswer { size_t layers = 0; bool proceed = false; };
     std::map<int, LongSliceAnswer> long_slice_answers;
     bool                           long_slice_prompt_open{false};
+    bool                           temp_mixing_prompt_open{false}; // the filament temp mixing question is up
     size_t                         auto_slice_skip_notified{0}; // estimate the skip notification was shown for
 
     bool m_need_update{false};
@@ -16709,30 +16713,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
                     }
                     if (!silence) wxGetApp().app_config->update_config_dir(path.parent_path().string());
-
-                    // BBS: Check for Snapmaker U1 + Print by Object warning after loading 3mf config
-                    if (load_config && is_project_file) {
-                        auto print_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
-                        auto printer_config = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-
-                        auto print_seq_opt = print_config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-                        auto printer_model_opt = printer_config.option<ConfigOptionString>("printer_model");
-
-                        if (print_seq_opt && printer_model_opt &&
-                            print_seq_opt->value == PrintSequence::ByObject &&
-                            !printer_model_opt->value.empty()) {
-                            std::string printer_model = printer_model_opt->value;
-                            bool is_snapmaker_u1 = boost::icontains(printer_model, "Snapmaker") &&
-                                                   boost::icontains(printer_model, "U1");
-
-                            if (is_snapmaker_u1) {
-                                if (q->get_notification_manager()) {
-                                    wxString warning_text = _L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
-                                    q->get_notification_manager()->push_plater_error_notification(warning_text.ToStdString());
-                                }
-                            }
-                        }
-                    }
                 }
             } else {
                 // BBS: add plate data related logic
@@ -19813,6 +19793,11 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
     if (std::find(panels.begin(), panels.end(), panel) == panels.end())
         return;
 
+    // Prepare and Preview both show the by-object warning: re-evaluate it on every page switch. The first
+    // call comes from the priv constructor, before Plater::p is assigned, and is skipped.
+    if (current_panel != nullptr)
+        q->sync_print_seq_warning_notification();
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current_panel %1%, new_panel %2%")%current_panel%panel;
 #ifdef __WXMAC__
     bool force_render = (current_panel != nullptr);
@@ -19846,14 +19831,21 @@ void Plater::priv::set_current_panel(wxPanel* panel, bool no_slice)
                 if (!this->background_process.running() && !this->m_is_slicing)
                 {
                     this->m_slice_all = false;
-                    // ORCA: a very long slice needs the user's consent; one they just aborted from
-                    // the Slice button is skipped silently (shells only, like a cancelled slice).
-                    slice_cancelled = !this->q->confirm_long_slice_before_slice(false) || !this->q->reslice();
+                    // ORCA: the page-switch slice runs the pre-slice guard too, as an implicit request: nothing starts
+                    // under an open slice question and a long slice aborted on Slice is not asked again (shells only).
+                    if (this->q->guard_before_slice_plate(false))
+                        slice_cancelled = !this->q->reslice();
+                    else {
+                        slice_cancelled = true;
+                        if (main_frame != nullptr)
+                            main_frame->update_slice_print_status(MainFrame::eEventSliceUpdate, true);
+                    }
                 }
                 else {
                     //reset current plate to the slicing plate
                     int plate_index = this->background_process.get_current_plate()->get_index();
                     this->partplate_list.select_plate(plate_index);
+                    this->q->sync_print_seq_warning_notification();
                 }
             }
             else if (only_has_gcode_need_preview)
@@ -21289,6 +21281,7 @@ void Plater::priv::on_plate_selected(SimpleEvent&)
 {
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received plate selected event\n" ;
     sidebar->obj_list()->on_plate_selected(partplate_list.get_curr_plate_index());
+    q->sync_print_seq_warning_notification();
 }
 
 void Plater::priv::on_action_request_model_id(wxCommandEvent& evt)
@@ -28711,24 +28704,6 @@ bool Plater::update_filament_colors_in_full_config()
     return true;
 }
 
-void Plater::config_change_notification(const DynamicPrintConfig &config, const std::string& key)
-{
-    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
-    if (key == std::string("print_sequence")) {
-        auto seq_print = config.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-        if (seq_print && view3d_canvas && view3d_canvas->is_initialized() && view3d_canvas->is_rendering_enabled()) {
-            NotificationManager* notify_manager = get_notification_manager();
-            if (seq_print->value == PrintSequence::ByObject) {
-                std::string info_text = _u8L("Print By Object: \nSuggest to use auto-arrange to avoid collisions when printing.");
-                notify_manager->bbl_show_seqprintinfo_notification(info_text);
-            }
-            else
-                notify_manager->bbl_close_seqprintinfo_notification();
-        }
-    }
-    // notification for more options
-}
-
 bool Plater::check_filament_temp_mixing(int plate_index)
 {
     FilamentTempMixingDetail unused;
@@ -29417,12 +29392,44 @@ bool Plater::sync_cold_plate_notification()
     return slicing_allowed;
 }
 
-bool Plater::guard_before_slice_plate()
+void Plater::sync_print_seq_warning_notification()
+{
+    NotificationManager* notify_manager = get_notification_manager();
+    if (notify_manager == nullptr)
+        return;
+
+    // Suppress during startup / preset loading, before the 3D view is live.
+    GLCanvas3D* view3d_canvas = get_view3D_canvas3D();
+    if (view3d_canvas == nullptr || !view3d_canvas->is_initialized() || !view3d_canvas->is_rendering_enabled()) {
+        notify_manager->bbl_close_seqprintinfo_notification();
+        return;
+    }
+
+    // Effective sequence: an explicit per-plate value overrides the global
+    // one (PartPlate::get_real_print_seq falls back to global on ByDefault).
+    PartPlate* curr_plate = get_partplate_list().get_curr_plate();
+    const bool by_object = curr_plate != nullptr &&
+        curr_plate->get_real_print_seq() == PrintSequence::ByObject;
+
+    if (by_object) {
+        std::string info_text = _u8L("Warning:") + "\n" +
+            _u8L("Printing by object with caution. This function may cause the print head to collide with printed parts during switching.");
+        notify_manager->bbl_show_seqprintinfo_notification(info_text);
+    } else {
+        notify_manager->bbl_close_seqprintinfo_notification();
+    }
+}
+
+bool Plater::guard_before_slice_plate(bool explicit_request)
 {
     sync_filament_temp_mixing_notification();
     sync_flow_ratio_zero_notification();
     sync_cold_plate_notification();
-    return confirm_filament_temp_mixing_before_slice() && confirm_long_slice_before_slice(true);
+    // A preview switch handled while a question of the slice flow is up starts nothing: the open question decides.
+    if (!explicit_request && (p->temp_mixing_prompt_open || p->long_slice_prompt_open ||
+                              (p->main_frame != nullptr && !p->main_frame->IsEnabled())))
+        return false;
+    return confirm_filament_temp_mixing_before_slice() && confirm_long_slice_before_slice(explicit_request);
 }
 
 bool Plater::guard_before_slice_all()
@@ -29538,7 +29545,10 @@ bool Plater::confirm_filament_temp_mixing_before_slice()
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
     dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
     dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
-    return dlg.ShowModal() == wxID_OK;
+    p->temp_mixing_prompt_open = true;
+    const bool proceed         = dlg.ShowModal() == wxID_OK;
+    p->temp_mixing_prompt_open = false;
+    return proceed;
 }
 
 bool Plater::confirm_filament_temp_mixing_before_slice_all()
@@ -29577,7 +29587,10 @@ bool Plater::confirm_filament_temp_mixing_before_slice_all()
                       _L("Confirm slicing"), wxICON_WARNING | wxOK | wxCANCEL);
     dlg.SetButtonLabel(wxID_OK, _L("Confirm"));
     dlg.SetButtonLabel(wxID_CANCEL, _L("Cancel"));
-    return dlg.ShowModal() == wxID_OK;
+    p->temp_mixing_prompt_open = true;
+    const bool proceed         = dlg.ShowModal() == wxID_OK;
+    p->temp_mixing_prompt_open = false;
+    return proceed;
 }
 
 void Plater::notify_filament_usage_changed()
@@ -29595,7 +29608,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
     bool nozzle_tabs_changed = false;
     bool nozzle_sizes_changed = false;
     bool head_selector_changed = false;
-    //bool print_sequence_changed = false;
+    bool print_sequence_changed = false;
     t_config_option_keys diff_keys = p->config->diff(config);
     for (auto opt_key : diff_keys) {
         if (opt_key == "filament_colour") {
@@ -29667,7 +29680,7 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         }
         else if (opt_key == "print_sequence") {
             update_scheduled = true;
-            //print_sequence_changed = true;
+            print_sequence_changed = true;
         }
         else if (opt_key == "printer_model") {
             p->reset_gcode_toolpaths();
@@ -29726,8 +29739,6 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
     if (bed_shape_changed)
         set_bed_shape();
 
-    config_change_notification(config, std::string("print_sequence"));
-
     if (update_scheduled)
         update();
 
@@ -29735,6 +29746,10 @@ void Plater::on_config_change(const DynamicPrintConfig &config)
         this->p->schedule_background_process();
         update_title_dirty_status();
     }
+
+    // Only a print_sequence change re-evaluates the by-object warning; other edits leave it as it is.
+    if (print_sequence_changed)
+        sync_print_seq_warning_notification();
 
     notify_filament_usage_changed();
 }
@@ -29819,7 +29834,7 @@ void Plater::on_activate()
 // Get vector of extruder colors considering filament color, if extruder color is undefined.
 std::vector<std::string> Plater::get_extruder_colors_from_plater_config(const GCodeProcessorResult* const result, bool include_mixed) const
 {
-    if (wxGetApp().is_gcode_viewer() && result != nullptr)
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode))
         return result->extruder_colors;
     else {
         if (wxGetApp().preset_bundle == nullptr)
@@ -29978,7 +29993,7 @@ std::vector<std::string> Plater::get_colors_for_color_print(const GCodeProcessor
 {
     std::vector<std::string> colors = get_extruder_colors_from_plater_config(result);
 
-    if (wxGetApp().is_gcode_viewer() && result != nullptr) {
+    if (result != nullptr && (wxGetApp().is_gcode_viewer() || m_only_gcode)) {
         for (const CustomGCode::Item& code : result->custom_gcode_per_print_z) {
             if (code.type == CustomGCode::ColorChange)
                 colors.emplace_back(code.color);
@@ -30805,6 +30820,8 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         else
             curr_plate->set_print_seq(PrintSequence::ByDefault);
 
+        sync_print_seq_warning_notification();
+
         int spiral_sel = dlg.get_spiral_mode_choice();
         if (spiral_sel == 1) {
             curr_plate->set_spiral_vase_mode(true, false);
@@ -30819,8 +30836,6 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
         update_project_dirty_from_presets();
         set_plater_dirty(true);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format("select print sequence %1% for plate %2% at plate side") % ps_sel % plate_index;
-        auto plate_config = *(curr_plate->config());
-        wxGetApp().plater()->config_change_notification(plate_config, std::string("print_sequence"));
         update();
         wxGetApp().obj_list()->update_selections();
         });
@@ -31015,6 +31030,7 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         p->partplate_list.update_plates();
         update();
         p->partplate_list.select_plate(0);
+        sync_print_seq_warning_notification();
     }
 
     else
@@ -31037,6 +31053,7 @@ int Plater::add_plate()
     if (new_plate < 0)
         return new_plate;
     p->partplate_list.select_plate(new_plate);
+    sync_print_seq_warning_notification();
     update();
 
     // BBS set default view
@@ -31075,6 +31092,10 @@ int Plater::delete_plate(int plate_index)
     p->background_process.set_fff_print(nullptr);
 
     ret = p->partplate_list.delete_plate(index);
+    // Deleting can reselect another plate (PartPlateList::delete_plate),
+    // so re-evaluate the by-object warning against the new current plate.
+    if (!ret)
+        sync_print_seq_warning_notification();
 
     //BBS: update the current print to the current plate
     p->partplate_list.update_slice_context_to_current_plate(p->background_process);

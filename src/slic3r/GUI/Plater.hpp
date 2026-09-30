@@ -730,7 +730,6 @@ public:
     void on_bed_type_change(BedType bed_type);
 
     bool update_filament_colors_in_full_config();
-    void config_change_notification(const DynamicPrintConfig &config, const std::string& key);
     void on_config_change(const DynamicPrintConfig &config);
     /// @brief Check whether high-temperature and low-temperature filaments are mixed on the current plate.
     /// @return True if compatible; false if high/low temperature materials are mixed.
@@ -805,8 +804,12 @@ public:
     /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
     /// @return True if slicing is allowed on current plate after sync.
     bool sync_cold_plate_notification();
-    /// Check and guard filament temp mixing before slicing current plate.
-    bool guard_before_slice_plate();
+    /// Check and guard filament temp mixing before slicing current plate. explicit_request = false (preview
+    /// switch): starts nothing while a slice question is up and reuses the long-slice answer (confirm_long_slice_before_slice).
+    bool guard_before_slice_plate(bool explicit_request = true);
+    /// Shows the yellow by-object warning while the current plate's effective print sequence is by object and
+    /// closes it otherwise. Called on global and per-plate print_sequence edits, plate switches and page switches.
+    void sync_print_seq_warning_notification();
     /// Check and guard filament temp mixing before slicing all plates.
     bool guard_before_slice_all();
     /// @brief Show confirmation dialog for allowed high/low temperature mixing before slice.

@@ -115,6 +115,8 @@ const unsigned int VERSION_BBS_3MF = 1;
 const unsigned int VERSION_BBS_3MF_COMPATIBLE = 2;
 const char* BBS_3MF_VERSION1 = "bamboo_slicer:Version3mf"; // definition of the metadata name saved into .model file
 const char* BBS_3MF_VERSION = "BambuStudio:3mfVersion"; //compatible with prusa currently
+// New version key written on save; the two keys above remain load-only legacy aliases
+const char* SNAPMAKER_3MF_VERSION = "Snapmaker_Orca:3mfVersion";
 // Painting gizmos data version numbers
 // 0 : initial version of fdm, seam, mm
 const unsigned int FDM_SUPPORTS_PAINTING_VERSION = 0;
@@ -163,6 +165,11 @@ const std::string THUMBNAIL_EXTENSION = ".png";
 const std::string CALIBRATION_INFO_EXTENSION = ".json";
 const std::string CONTENT_TYPES_FILE = "[Content_Types].xml";
 const std::string RELATIONSHIPS_FILE = "_rels/.rels";
+// Relationship type URIs are OPC identifiers only: never resolved, never fetched, the
+// schemas.snapmaker.com domain does not need to exist. Readers match them by string.
+const std::string SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE = "http://schemas.snapmaker.com/package/2026/cover-thumbnail-middle";
+const std::string SNAPMAKER_REL_COVER_THUMBNAIL_SMALL  = "http://schemas.snapmaker.com/package/2026/cover-thumbnail-small";
+const std::string SNAPMAKER_REL_GCODE                  = "http://schemas.snapmaker.com/package/2026/gcode";
 const std::string THUMBNAIL_FILE = "Metadata/plate_1.png";
 const std::string THUMBNAIL_FOR_PRINTER_FILE = "Metadata/bbl_thumbnail.png";
 const std::string PRINTER_THUMBNAIL_SMALL_FILE = "/Auxiliaries/.thumbnails/thumbnail_small.png";
@@ -4051,7 +4058,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
     bool _BBS_3MF_Importer::_handle_end_metadata()
     {
-        if ((m_curr_metadata_name == BBS_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION1)) {
+        if ((m_curr_metadata_name == SNAPMAKER_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION)||(m_curr_metadata_name == BBS_3MF_VERSION1)) {
             //m_is_bbl_3mf = true;
             m_version = (unsigned int)atoi(m_curr_characters.c_str());
             /*if (m_check_version && (m_version > VERSION_BBS_3MF_COMPATIBLE)) {
@@ -5045,9 +5052,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         } else if (boost::starts_with(type, "http://schemas.openxmlformats.org/") && boost::ends_with(type, "thumbnail")) {
             if (boost::algorithm::ends_with(path, ".png"))
                 m_thumbnail_path = path;
-        } else if (boost::starts_with(type, "http://schemas.bambulab.com/") && boost::ends_with(type, "cover-thumbnail-middle")) {
+        } else if ((boost::starts_with(type, "http://schemas.bambulab.com/") || boost::starts_with(type, "http://schemas.snapmaker.com/")) && boost::ends_with(type, "cover-thumbnail-middle")) {
             m_thumbnail_middle = path;
-        } else if (boost::starts_with(type, "http://schemas.bambulab.com/") && boost::ends_with(type, "cover-thumbnail-small")) {
+        } else if ((boost::starts_with(type, "http://schemas.bambulab.com/") || boost::starts_with(type, "http://schemas.snapmaker.com/")) && boost::ends_with(type, "cover-thumbnail-small")) {
             m_thumbnail_small = path;
         }
         return true;
@@ -5793,7 +5800,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
     bool _BBS_3MF_Importer::ObjectImporter::_handle_object_end_metadata()
     {
-        if ((obj_curr_metadata_name == BBS_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION1)) {
+        if ((obj_curr_metadata_name == SNAPMAKER_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION)||(obj_curr_metadata_name == BBS_3MF_VERSION1)) {
             is_bbl_3mf = true;
         }
         return true;
@@ -6855,18 +6862,18 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 if (data._3mf_printer_thumbnail_middle.empty()) {
                     stream << " <Relationship Target=\"/Metadata/plate_1.png"
-                           << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                           << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
                 } else {
                     stream << " <Relationship Target=\"/" << xml_escape(data._3mf_printer_thumbnail_middle)
-                           << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                           << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
                 }
 
                 if (data._3mf_printer_thumbnail_small.empty()) {
                     stream << "<Relationship Target=\"/Metadata/plate_1_small.png"
-                           << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                           << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
                 } else {
                     stream << " <Relationship Target=\"/" << xml_escape(data._3mf_printer_thumbnail_small)
-                           << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                           << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
                 }
             }
             else {
@@ -6877,11 +6884,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
                 thumbnail_file_str = (boost::format("Metadata/plate_%1%.png") % (export_plate_idx + 1)).str();
                 stream << " <Relationship Target=\"/" << xml_escape(thumbnail_file_str)
-                   << "\" Id=\"rel-4\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-middle\"/>\n";
+                   << "\" Id=\"rel-4\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_MIDDLE << "\"/>\n";
 
                 thumbnail_file_str = (boost::format("Metadata/plate_%1%_small.png") % (export_plate_idx + 1)).str();
                 stream << " <Relationship Target=\"/" << xml_escape(thumbnail_file_str)
-                   << "\" Id=\"rel-5\" Type=\"http://schemas.bambulab.com/package/2021/cover-thumbnail-small\"/>\n";
+                   << "\" Id=\"rel-5\" Type=\"" << SNAPMAKER_REL_COVER_THUMBNAIL_SMALL << "\"/>\n";
             }
         }
         else if (targets.empty()) {
@@ -6961,7 +6968,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             std::stringstream stream;
             reset_stream(stream);
             stream << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-            stream << "<" << MODEL_TAG << " unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" xmlns:BambuStudio=\"http://schemas.bambulab.com/package/2021\"";
+            stream << "<" << MODEL_TAG << " unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\"";
+            // 3MF core 3.4.1: a vendor metadata name prefix must be declared on <model>. Declared exactly
+            // when the Snapmaker_Orca:3mfVersion key below is written, so a minimal published file stays tag-less.
+            if (!m_minimal_published)
+                stream << " xmlns:Snapmaker_Orca=\"http://schemas.snapmaker.com/package/2026\"";
             if (m_production_ext)
                 stream << " xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\" requiredextensions=\"p\"";
             stream << ">\n";
@@ -7006,6 +7017,17 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     metadata_item_map = model.model_info.get()->metadata_items;
                 }
 
+                // strip Bambu-branded keys loaded via the catch-all loader so they don't
+                // round-trip into new files. Local map copy only - GUI still reads
+                // metadata_items in memory.
+                for (auto it = metadata_item_map.begin(); it != metadata_item_map.end(); ) {
+                    if (boost::starts_with(it->first, "BambuStudio:") ||
+                        boost::starts_with(it->first, "bamboo_slicer:"))
+                        it = metadata_item_map.erase(it);
+                    else
+                        ++it;
+                }
+
                 metadata_item_map[BBL_MODEL_NAME_TAG]           = xml_escape(name);
                 metadata_item_map[BBL_ORIGIN_TAG]               = xml_escape(origin);
                 metadata_item_map[BBL_DESIGNER_TAG]             = xml_escape(user_name);
@@ -7038,6 +7060,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     // popup, and no version marker survives to seed a later re-save.
                     metadata_item_map.erase(BBL_APPLICATION_TAG);
                     metadata_item_map.erase(ORCASLICER_TAG);
+                    metadata_item_map.erase(SNAPMAKER_3MF_VERSION);
                     metadata_item_map.erase(BBS_3MF_VERSION);
                     metadata_item_map.erase(BBS_3MF_VERSION1);
                 } else {
@@ -7047,11 +7070,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     metadata_item_map[BBL_APPLICATION_TAG] = (boost::format("%1%-%2%") % "Snapmaker_Orca" % Snapmaker_VERSION).str();
                 }
             }
-            // The Bambu 3MF version marker is part of the slicer identity: omit it for a minimal
-            // published file along with the tags erased above (skipping the overwrite alone would
-            // leave the value the source file seeded into metadata_item_map).
+            // The 3MF version marker is part of the slicer identity: omitted for a minimal published
+            // file along with the tags erased above. Sub model files carry it too, where
+            // ObjectImporter::_handle_object_end_metadata recognizes the bbl format by this key.
             if (!m_minimal_published)
-                metadata_item_map[BBS_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
+                metadata_item_map[SNAPMAKER_3MF_VERSION] = std::to_string(VERSION_BBS_3MF);
 
             if (!model.mk_name.empty()) {
                 metadata_item_map[BBL_MAKERLAB_TAG] = xml_escape(model.mk_name);
@@ -8310,7 +8333,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         // write model rels
         if (save_gcode)
-            _add_relationships_file_to_archive(archive, BBS_MODEL_CONFIG_RELS_FILE, gcode_paths, {"http://schemas.bambulab.com/package/2021/gcode"}, Slic3r::PackingTemporaryData(), export_plate_idx);
+            _add_relationships_file_to_archive(archive, BBS_MODEL_CONFIG_RELS_FILE, gcode_paths, {SNAPMAKER_REL_GCODE}, Slic3r::PackingTemporaryData(), export_plate_idx);
 
         if (!m_skip_model) {
         //BBS: store assemble related info
@@ -8422,10 +8445,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 
         // save slice header for debug
         stream << "  <" << SLICE_HEADER_TAG << ">\n";
-        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-BBL-Client-Type"    << "\" " << VALUE_ATTR << "=\"" << "slicer" << "\"/>\n";
-        // Orca: X-BBL-Client-Version must be the 4-component AA.BB.CC.DD form, so it has to come from
-        // SLIC3R_VERSION (convert_to_full_version() returns an empty string for a 3-component version).
-        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-BBL-Client-Version" << "\" " << VALUE_ATTR << "=\"" << convert_to_full_version(SLIC3R_VERSION) << "\"/>\n";
+        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-SM-Client-Type"    << "\" " << VALUE_ATTR << "=\"" << "slicer" << "\"/>\n";
+        // X-SM-Client-Version takes the 4-component AA.BB.CC.DD form: convert_to_full_version() returns an
+        // empty string for the 3-component Snapmaker_VERSION, so a zero fourth component is appended.
+        stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "X-SM-Client-Version" << "\" " << VALUE_ATTR << "=\"" << convert_to_full_version(std::string(Snapmaker_VERSION) + ".0") << "\"/>\n";
         stream << "    <" << SLICE_HEADER_ITEM_TAG << " " << KEY_ATTR << "=\"" << "Snapmaker_Orca-Version" << "\" " << VALUE_ATTR << "=\"" << Snapmaker_VERSION << "\"/>\n";
         stream << "  </" << SLICE_HEADER_TAG << ">\n";
 

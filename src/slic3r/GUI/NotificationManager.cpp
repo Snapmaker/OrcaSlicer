@@ -3311,8 +3311,6 @@ void NotificationManager::set_in_preview(bool preview)
             notification->hide(!preview);
         if (notification->get_type() == NotificationType::BBLObjectInfo)
             notification->hide(preview);
-        if (notification->get_type() == NotificationType::BBLSeqPrintInfo)
-            notification->hide(preview);
 		if (m_in_preview && notification->get_type() == NotificationType::DidYouKnowHint)
 			notification->close();
         if (notification->get_type() == NotificationType::ValidateWarning) 
@@ -3446,7 +3444,7 @@ void NotificationManager::bbl_close_objectsinfo_notification()
 
 void NotificationManager::bbl_show_seqprintinfo_notification(const std::string &text)
 {
-    NotificationData data{NotificationType::BBLSeqPrintInfo, NotificationLevel::PrintInfoNotificationLevel, BBL_NOTICE_MAX_INTERVAL, text};
+    NotificationData data{NotificationType::BBLSeqPrintInfo, NotificationLevel::WarningNotificationLevel, 0, text};
 
     for (std::unique_ptr<PopNotification> &notification : m_pop_notifications) {
         if (notification->get_type() == NotificationType::BBLSeqPrintInfo) {

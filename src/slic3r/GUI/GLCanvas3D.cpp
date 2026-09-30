@@ -1071,6 +1071,17 @@ void GLCanvas3D::SequentialPrintClearance::set_polygons(const Polygons& polygons
 
 void GLCanvas3D::SequentialPrintClearance::render()
 {
+    if (!m_visible)
+    {
+        return;
+    }
+
+    const bool hasRenderableData = m_perimeter.is_initialized() || m_fill.is_initialized() || m_height_limit.is_initialized();
+    if (!hasRenderableData)
+    {
+        return;
+    }
+
     const ColorRGBA FILL_COLOR = { 0.7f, 0.7f, 1.0f, 0.5f };
     const ColorRGBA NO_FILL_COLOR = { 0.75f, 0.75f, 0.75f, 0.75f };
 
@@ -7137,8 +7148,15 @@ void GLCanvas3D::_switch_toolbars_icon_filename()
     background_data.bottom = 16;
     m_main_toolbar.init(background_data);
     m_assemble_view_toolbar.init(background_data);
-    m_separator_toolbar.init(background_data);
     wxGetApp().plater()->get_collapse_toolbar().init(background_data);
+
+    // The separator toolbar keeps the borderless metadata that _init_separator_toolbar() sets.
+    BackgroundTexture::Metadata separator_background_data = background_data;
+    separator_background_data.left = 0;
+    separator_background_data.top = 0;
+    separator_background_data.right = 0;
+    separator_background_data.bottom = 0;
+    m_separator_toolbar.init(separator_background_data);
 
     // main toolbar
     {

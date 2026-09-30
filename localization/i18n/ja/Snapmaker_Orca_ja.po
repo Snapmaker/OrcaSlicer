@@ -9728,13 +9728,6 @@ msgstr "アップロードとプリント"
 msgid "Abnormal print file data. Please slice again"
 msgstr "ファイルに異常があります、もう一度スライスしてください"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"オブジェクト順で造形：\n"
-"衝突を回避するため、自動レイアウトはお勧めです"
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

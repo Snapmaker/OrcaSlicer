@@ -10517,13 +10517,6 @@ msgstr "Ladda upp och skriv ut"
 msgid "Abnormal print file data. Please slice again"
 msgstr "Onormal utskrifts fil data. Vänligen bered igen"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"Skriv ut per Objekt:\n"
-"Rekommenderar att auto-placering för att undvika kollisioner under utskrift."
-
 msgid "Slicing was not started because you aborted the very long slice. Use Slice to slice anyway."
 msgstr ""
 

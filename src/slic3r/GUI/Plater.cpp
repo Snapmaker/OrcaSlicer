@@ -84,6 +84,7 @@
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Format/STEP.hpp"
+#include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/Format/AMF.hpp"
 //#include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
@@ -22143,6 +22144,96 @@ void Plater::export_stl_part()
         return;
 
     Slic3r::store_stl(into_u8(out_path).c_str(), &mesh, true);
+}
+
+static bool selection_is_full_objects(const Selection &selection)
+{
+    return !selection.is_empty() && !selection.is_wipe_tower() &&
+           (selection.is_single_full_instance() || selection.is_single_full_object() || selection.is_multiple_full_instance() ||
+            selection.is_multiple_full_object());
+}
+
+void Plater::export_step(bool selection_only)
+{
+    if (p->model.objects.empty())
+        return;
+
+    Selection                  &selection = p->get_selection();
+    std::vector<StepExportItem> items;
+    Vec3d                       world_offset = Vec3d::Zero();
+    if (selection_is_full_objects(selection)) {
+        for (const std::pair<int, int> &oi : selection.get_selected_object_instances())
+            if (oi.first >= 0 && oi.first < int(p->model.objects.size()))
+                items.push_back({p->model.objects[oi.first], oi.second});
+    } else if (!selection_only) {
+        // Nothing selected: the current plate, placed relative to the plate's origin.
+        PartPlate *plate = p->partplate_list.get_curr_plate();
+        for (int oi = 0; oi < int(p->model.objects.size()); ++oi)
+            for (int ii = 0; ii < int(p->model.objects[oi]->instances.size()); ++ii)
+                if (plate->contain_instance(oi, ii))
+                    items.push_back({p->model.objects[oi], ii});
+        world_offset = -plate->get_origin();
+    }
+    if (items.empty()) {
+        p->notification_manager->push_notification(NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            _u8L("Nothing to export as STEP: select objects, or place objects on the current plate."));
+        return;
+    }
+
+    boost::filesystem::path output_file = p->get_export_file_path(FT_STL);
+    output_file.replace_extension("step");
+    const std::string out_dir = output_file.parent_path().string();
+    wxFileDialog dlg(this, _L("Export STEP file:"),
+        is_shapes_dir(out_dir) ? from_u8(wxGetApp().app_config->get_last_dir()) : from_path(output_file.parent_path()),
+        from_path(output_file.filename()), file_wildcards(FT_STEP), wxFD_SAVE | wxFD_OVERWRITE_PROMPT | wxPD_APP_MODAL);
+    if (dlg.ShowModal() != wxID_OK)
+        return;
+    boost::filesystem::path path(into_path(dlg.GetPath()));
+    if (!boost::iequals(path.extension().string(), ".step") && !boost::iequals(path.extension().string(), ".stp"))
+        path += ".step";
+    wxGetApp().app_config->update_last_output_dir(path.parent_path().string());
+
+    StepExportParams params;
+    if (const ConfigOptionStrings *colours = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour"))
+        params.extruder_colours = colours->values;
+    params.world_offset = world_offset;
+    params.product_name = path.stem().string();
+
+    StepExportReport report;
+    bool             ok = false;
+    {
+        wxBusyCursor wait;
+        wxBusyInfo   info(_L("Exporting STEP..."), this);
+        ok = store_step(path.string(), items, params, report);
+    }
+    BOOST_LOG_TRIVIAL(info) << "STEP export to " << path.string() << ": " << (ok ? std::string("ok") : report.error) << ", "
+                            << report.parts << " parts, " << report.exact_parts << " exact, " << report.mesh_parts << " from mesh, "
+                            << report.open_parts << " open, " << report.seconds << " s";
+    for (const std::string &warning : report.warnings)
+        BOOST_LOG_TRIVIAL(warning) << "STEP export: " << warning;
+    if (!ok) {
+        show_error(this, _L("The STEP export failed.") + "\n" + from_u8(report.error));
+        return;
+    }
+
+    std::string summary = (boost::format(_u8L("Exported %1% part(s) to STEP: %2% with their exact CAD geometry, %3% converted from the mesh.")) %
+                           report.parts % report.exact_parts % report.mesh_parts).str();
+    if (report.open_parts > 0)
+        summary += " " + (boost::format(_u8L("%1% part(s) have holes in their mesh and were written as surfaces, not solids.")) %
+                          report.open_parts).str();
+    p->notification_manager->push_exporting_finished_notification(path.string(), path.parent_path().string(), false);
+    if (report.warnings.empty())
+        p->notification_manager->push_notification(summary);
+    else {
+        const size_t shown = std::min<size_t>(report.warnings.size(), 4);
+        for (size_t i = 0; i < shown; ++i)
+            summary += "\n" + report.warnings[i];
+        if (report.warnings.size() > shown)
+            summary += "\n" + (boost::format(_u8L("... and %1% more (see the log).")) % (report.warnings.size() - shown)).str();
+        p->notification_manager->push_notification(NotificationType::CustomNotification,
+            NotificationManager::NotificationLevel::WarningNotificationLevel, summary);
+    }
 }
 
 //BBS: remove amf export

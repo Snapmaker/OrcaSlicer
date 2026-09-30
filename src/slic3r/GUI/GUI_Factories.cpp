@@ -1182,6 +1182,19 @@ void MenuFactory::append_menu_item_export_stl(wxMenu* menu, bool is_mulity_menu)
         }, m_parent);
 }
 
+// Export the selected object(s)/instance(s) as a STEP file of solids.
+void MenuFactory::append_menu_item_export_step(wxMenu* menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Export as STEP") + dots,
+        _L("Export the selection as a STEP file of solids; parts imported from STEP keep their exact geometry"),
+        [](wxCommandEvent&) { plater()->export_step(true); }, "", nullptr,
+        []() {
+            const Selection& selection = plater()->canvas3D()->get_selection();
+            return selection.is_single_full_instance() || selection.is_single_full_object() ||
+                   selection.is_multiple_full_instance() || selection.is_multiple_full_object();
+        }, m_parent);
+}
+
 // Ultra: export the ONE selected part. The object menu's "Export as one STL" only ever
 // handled whole objects/instances, so a single selected ModelVolume had no export at all.
 // Enabled for exactly one volume - modifiers, negative volumes and support blockers or
@@ -2082,6 +2095,7 @@ void MenuFactory::create_common_object_menu(wxMenu* menu)
     // BBS
     append_menu_item_reload_from_disk(menu);
     append_menu_item_export_stl(menu);
+    append_menu_item_export_step(menu);
     // "Scale to print volume" makes a sense just for whole object
     append_menu_item_scale_selection_to_fit_print_volume(menu);
 
@@ -2192,6 +2206,7 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_reload_from_disk(&m_object_menu);
     append_menu_item_replace_with_stl(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
+    append_menu_item_export_step(&m_object_menu);
 }
 
 void MenuFactory::create_bbl_assemble_object_menu()
@@ -2698,6 +2713,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         append_menu_item_change_filament(menu);
         menu->AppendSeparator();
         append_menu_item_export_stl(menu, true);
+        append_menu_item_export_step(menu);
     }
     else {
         append_menu_item_center(menu);

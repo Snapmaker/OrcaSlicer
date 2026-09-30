@@ -35,6 +35,7 @@
 #include "BRep_Tool.hxx"
 #include "BRepTools.hxx"
 #include <IMeshTools_Parameters.hxx>
+#include <Standard_Failure.hxx>
 
 
 namespace Slic3r {
@@ -410,6 +411,40 @@ bool load_step(const char *path, Model *model, bool& is_cancel,
     }
 
     return true;
+}
+
+bool read_step_named_shapes(const char *path, std::vector<NamedSolid> &plain, std::vector<NamedSolid> &split)
+{
+    plain.clear();
+    split.clear();
+    Handle(TDocStd_Document) document;
+    Handle(XCAFApp_Application) application = XCAFApp_Application::GetApplication();
+    application->NewDocument(path, document);
+    bool ok = false;
+    try {
+        STEPCAFControl_Reader reader;
+        reader.SetNameMode(true);
+        if (reader.ReadFile(path) == IFSelect_RetDone && reader.Transfer(document)) {
+            Handle(XCAFDoc_ShapeTool) shapeTool = XCAFDoc_DocumentTool::ShapeTool(document->Main());
+            TDF_LabelSequence topLevelShapes;
+            shapeTool->GetFreeShapes(topLevelShapes);
+            // Same traversal as load_step(), once per split mode, so names and order match.
+            unsigned int id_plain{1}, id_split{1};
+            for (Standard_Integer iLabel = 1; iLabel <= topLevelShapes.Length(); ++iLabel) {
+                getNamedSolids(TopLoc_Location{}, "", id_plain, shapeTool, topLevelShapes.Value(iLabel), plain, false);
+                getNamedSolids(TopLoc_Location{}, "", id_split, shapeTool, topLevelShapes.Value(iLabel), split, true);
+            }
+            ok = true;
+        }
+    } catch (const Standard_Failure &) {
+        ok = false;
+    }
+    application->Close(document);
+    if (!ok) {
+        plain.clear();
+        split.clear();
+    }
+    return ok;
 }
 
 Step::Step(fs::path path, ImportStepProgressFn stepFn, StepIsUtf8Fn isUtf8Fn):

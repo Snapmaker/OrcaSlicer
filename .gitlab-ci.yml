@@ -1,12 +1,9 @@
-# AI harness review job — copy into the target repo's .gitlab-ci.yml.
-# Requires two masked CI/CD variables on the target project:
-#   AI_REVIEW_GITLAB_TOKEN  — project access token with api scope (Reporter+)
-#   AI_REVIEW_LLM_API_KEY   — OpenAI-compatible LLM API key
-# See scripts/ai_review_gitlab.py in dev-guidelines for behavior details.
-
+# AI harness review job - runs on the local project runner (tag: ai-review).
+# Requires masked CI/CD variables:
+#   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)
+#   AI_REVIEW_LLM_API_KEY   - OpenAI-compatible LLM API key
 ai_review:
-  image: python:3.11
-  stage: test
+  tags: [ai-review]
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
   resource_group: "ai-review-mr-$CI_MERGE_REQUEST_IID"
@@ -21,6 +18,6 @@ ai_review:
     DG_REF: "main"
   script:
     - pip install --quiet pyyaml
-    - git clone --depth 1 https://github.com/zhangzhend0ng/dev-guidelines /tmp/dg
-    - git -C /tmp/dg checkout "$DG_REF" 2>/dev/null || true
-    - python /tmp/dg/scripts/ai_review_gitlab.py
+    - git clone --depth 1 https://github.com/zhangzhend0ng/dev-guidelines dg
+    - git -C dg checkout "%DG_REF%"
+    - python dg\scriptsi_review_gitlab.py

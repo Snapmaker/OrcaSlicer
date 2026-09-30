@@ -71,6 +71,10 @@ Info new_link();                                        // replace the phone lin
                                                         // saved links, QR codes and home-screen
                                                         // icons made from the old one stop working
 bool post_state(const std::string& json); // full Stream-tab state; remembered for a hub started later
+// The camera list the Stream tab last saved: from the running hub, else what this process last
+// posted, else <datadir>/hub/streams.json. Empty when there is none. Every window's Stream tab
+// opens with this rather than its own localStorage, which is per port and so per window.
+std::string saved_state();
 // One printer event from this instance's watcher (RemoteEvents.hpp), handed to the hub's
 // POST /hub/event on the loopback control plane. Fire and forget: with no hub running it is a
 // failed connect and false, never an error anybody sees. The hub assigns the id and the time.

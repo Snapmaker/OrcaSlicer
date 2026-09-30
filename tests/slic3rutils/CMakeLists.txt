@@ -9,6 +9,11 @@ add_executable(${_TEST_NAME}_tests
     device_model_code_tests.cpp
     login_useragent_tests.cpp
     hub_home_tests.cpp
+    home_tab_tests.cpp
+    library_index_tests.cpp
+    vendor_connector_tests.cpp
+    step_mesh_tests.cpp
+    http_body_redirect_tests.cpp
     snapmaker_silent_login_tests.cpp
     ff_diagnostics_tests.cpp
     elegoo_canvas_tests.cpp

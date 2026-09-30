@@ -1380,8 +1380,7 @@ void MainFrame::init_tabpanel() {
 
         // Send "inactive" to previous tab if leaving a monitored tab
         if (prev_monitored_tab == tpHome && sel != tpHome) {
-            // Leaving Home: the hub view pauses; the start page (if it is the one showing) hears
-            // "inactive" from HomePanel.
+            // Leaving Home: the start page (if it is the one showing) hears "inactive" from HomePanel.
             if (m_home)
                 m_home->on_tab_changed(false);
         } else if (prev_monitored_tab == tpMonitor && sel != tpMonitor) {
@@ -1394,8 +1393,8 @@ void MainFrame::init_tabpanel() {
 
         // Send "active" to current tab if entering a monitored tab
         if (sel == tpHome) {
-            // Entering Home: the hub view loads (first time) or re-checks the hub; the start page
-            // (if it is the one showing) hears "active" from HomePanel.
+            // Entering Home: the Home page is built (first time) or refreshed; the start page (if it
+            // is the one showing) hears "active" from HomePanel.
             if (m_home)
                 m_home->on_tab_changed(true);
             prev_monitored_tab = tpHome;
@@ -1437,8 +1436,8 @@ void MainFrame::init_tabpanel() {
 
     if (wxGetApp().is_editor()) {
         {
-            // Home shows the phone hub. The old start page (m_webview) is built only when asked
-            // for (show_start_page / start_page), so nothing loads it at startup any more.
+            // Home shows Recent and Print History. The old start page (m_webview) is built only when
+            // asked for (show_start_page / start_page), so nothing loads it at startup any more.
             Slic3r::StartupScopedTimer t("MainFrame::init_tabpanel step=HomePanel");
             m_home = new HomePanel(m_tabpanel);
         }
@@ -2934,8 +2933,8 @@ void MainFrame::init_menubar_as_editor()
 
         Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& evt) { evt.Enable(can_open_project() && (m_recent_projects.GetCount() > 0)); }, recent_projects_submenu->GetId());
 
-        // The Home tab shows the phone hub; the old start page (recent projects, Snapmaker's
-        // model library) stays one click away here.
+        // The Home tab shows Recent and Print History; the old start page (Snapmaker's model
+        // library) stays one click away here.
         append_menu_item(fileMenu, wxID_ANY, _L("Start page"), _L("Show the start page with recent projects on the Home tab"),
             [this](wxCommandEvent&) { show_start_page(); }, "", nullptr,
             [this]() { return m_home != nullptr; }, this);

@@ -660,17 +660,11 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
       }
       //now pick the longest patch
       std::pair<size_t, size_t> longest_patch { 0, 0 };
-      auto patch_len = [perimeter_size](const std::pair<size_t, size_t> &start_end) {
-        if (start_end.second < start_end.first) {
-          return start_end.first + (perimeter_size - start_end.second);
-        } else {
-          return start_end.second - start_end.first;
-        }
-      };
       for (size_t patch_idx = start_on_second ? 1 : 0; patch_idx < patches_starts_ends.size(); patch_idx += 2) {
         std::pair<size_t, size_t> current_patch { patches_starts_ends[patch_idx], patches_starts_ends[patch_idx
                                                                                                     + 1] };
-        if (patch_len(longest_patch) < patch_len(current_patch)) {
+        if (enforced_patch_length(longest_patch.first, longest_patch.second, perimeter_size) <
+            enforced_patch_length(current_patch.first, current_patch.second, perimeter_size)) {
           longest_patch = current_patch;
         }
       }

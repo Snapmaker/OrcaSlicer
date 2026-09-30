@@ -10762,6 +10762,8 @@ OtherSlicingStatesConfigDef::OtherSlicingStatesConfigDef()
 
     new_def("initial_no_support_extruder", coInt, "Initial no support extruder", "Zero-based index of the first extruder used for printing without support. Same as initial_no_support_tool.");
     new_def("in_head_wrap_detect_zone", coBool, "In head wrap detect zone", "Indicates if the first layer overlaps with the head wrap zone.");
+    new_def("curr_bed_type", coString, "Current bed type",
+            "Bed type of the current plate, e.g. \"Textured PEI Plate\", \"High Temp Plate\", \"Cool Plate\".");
 }
 
 PrintStatisticsConfigDef::PrintStatisticsConfigDef()

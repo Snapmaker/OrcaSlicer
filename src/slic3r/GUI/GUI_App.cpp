@@ -121,6 +121,7 @@
 #include "Mouse3DController.hpp"
 #include "RemovableDriveManager.hpp"
 #include "InstanceCheck.hpp"
+#include "slic3r/Utils/InstanceRouting.hpp"
 #include "NotificationManager.hpp"
 #include "UnsavedChangesDialog.hpp"
 #include "SavePresetDialog.hpp"
@@ -3267,12 +3268,9 @@ bool GUI_App::on_init_inner()
     // either way) > --hidden on the command line > app_config "start_hidden".
     {
         wxString env;
-        if (wxGetEnv("SNORCA_HIDDEN", &env) && !env.empty())
-            m_hub_managed = env != "0";
-        else if (init_params != nullptr && init_params->start_hidden)
-            m_hub_managed = true;
-        else
-            m_hub_managed = app_config->get_bool("start_hidden");
+        m_hub_managed = InstanceRouting::resolve_hidden_start(
+            wxGetEnv("SNORCA_HIDDEN", &env) ? std::optional<std::string>(env.ToStdString()) : std::nullopt,
+            init_params != nullptr && init_params->start_hidden, app_config->get_bool("start_hidden"));
         if (m_hub_managed)
             BOOST_LOG_TRIVIAL(info) << "starting hidden: no splash, no window until the hub shows it";
     }

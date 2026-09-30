@@ -877,6 +877,8 @@ private:
     wxSingleInstanceChecker* single_instance_checker() {return m_single_instance_checker.get();}
 
 	void        init_single_instance_checker(const std::string &name, const std::string &path);
+	// A hidden instance gives the single-instance lock back right after the check (see instance_check()).
+	void        release_single_instance_checker() { m_single_instance_checker.reset(); }
 	void        set_instance_hash (const size_t hash) { m_instance_hash_int = hash; m_instance_hash_string = std::to_string(hash); }
     std::string get_instance_hash_string ()           { return m_instance_hash_string; }
 	size_t      get_instance_hash_int ()              { return m_instance_hash_int; }

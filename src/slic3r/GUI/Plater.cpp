@@ -90,6 +90,7 @@
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/BambuExport.hpp"
 #include "../Utils/BambuStudioLauncher.hpp"
+#include "BlenderBridge.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"   // get_instance_arrange_poly, for the Fill bed dialog's defaults
@@ -10484,6 +10485,8 @@ struct Plater::priv
     wxTimer                     background_process_timer;
     // Bambu two-extruder printers: marks plates for re-slice when the selected printer changes.
     std::unique_ptr<DualNozzle::Watcher> dual_nozzle_watcher;
+    // "Edit in Blender" sessions; created on first use.
+    std::unique_ptr<BlenderBridge> blender_bridge;
 
     std::string                 label_btn_export;
     std::string                 label_btn_send;
@@ -11486,13 +11489,18 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     }
 
     this->q->Bind(EVT_LOAD_MODEL_OTHER_INSTANCE, [this](LoadFromOtherInstanceEvent& evt) {
-        BOOST_LOG_TRIVIAL(trace) << "Received load from other instance event.";
+        BOOST_LOG_TRIVIAL(info) << "Received " << evt.data.size() << " file(s) from another instance (window " <<
+            (wxGetApp().mainframe->IsShown() ? "visible" : "hidden") << ")";
         wxArrayString input_files;
         for (size_t i = 0; i < evt.data.size(); ++i) {
+            BOOST_LOG_TRIVIAL(info) << "  from another instance: " << evt.data[i].string();
             input_files.push_back(from_u8(evt.data[i].string()));
         }
         // Ultra: a file forwarded from Explorer to a hidden (hub-managed) instance must not vanish.
         if (!wxGetApp().mainframe->IsShown()) {
+            // Hidden instances no longer take the hand-off (InstanceRouting.hpp), so this only happens
+            // if a sender found this window anyway; load the files rather than lose them.
+            BOOST_LOG_TRIVIAL(warning) << "A hidden instance received files from another instance; showing its window";
             wxGetApp().mainframe->Show(true);
             RemoteAccess::get().set_hidden(false);
         }
@@ -22622,6 +22630,13 @@ void Plater::replace_with_stl()
     p->replace_with_stl();
 }
 
+void Plater::edit_in_blender()
+{
+    if (!p->blender_bridge)
+        p->blender_bridge = std::make_unique<BlenderBridge>(this);
+    p->blender_bridge->edit_selection();
+}
+
 void Plater::reload_all_from_disk()
 {
     p->reload_all_from_disk();
@@ -26642,6 +26657,7 @@ bool Plater::can_reload_from_disk() const { return p->can_reload_from_disk(); }
 bool Plater::can_fillcolor() const { return p->can_fillcolor(); }
 bool Plater::has_assmeble_view() const { return p->has_assemble_view(); }
 bool Plater::can_replace_with_stl() const { return p->can_replace_with_stl(); }
+bool Plater::can_edit_in_blender() const { return BlenderBridge::can_edit(p->get_selection()); }
 bool Plater::can_mirror() const { return p->can_mirror(); }
 bool Plater::can_split(bool to_objects) const { return p->can_split(to_objects); }
 

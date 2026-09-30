@@ -1864,6 +1864,14 @@ wxWindow* PreferencesDialog::create_general_page()
            "Full path to bambu-studio.exe (Windows), the BambuStudio.app bundle (macOS), or the executable (Linux)."),
         "bambu_studio_path");
 
+    // "Edit in Blender" finds Blender on its own (file association, usual install folders, PATH,
+    // Snap, Flatpak); this is for an install it cannot find.
+    auto title_blender = create_item_title(_L("Blender"), page, _L("Blender"));
+    auto item_blender_path = create_item_text_input(_L("Blender path"), page,
+        _L("Only needed if \"Edit in Blender\" cannot find Blender automatically. "
+           "Full path to blender.exe (Windows), the Blender.app bundle (macOS), or the blender executable (Linux)."),
+        "blender_path");
+
     //dark mode
 #ifdef _WIN32
     auto title_darkmode = create_item_title(_L("Dark Mode"), page, _L("Dark Mode"));
@@ -1979,6 +1987,9 @@ wxWindow* PreferencesDialog::create_general_page()
 
     sizer_page->Add(title_bambu_studio, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_bambu_studio_path, 0, wxTOP, FromDIP(3));
+
+    sizer_page->Add(title_blender, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_blender_path, 0, wxTOP, FromDIP(3));
 
 #ifdef _WIN32
     sizer_page->Add(title_darkmode, 0, wxTOP | wxEXPAND, FromDIP(20));

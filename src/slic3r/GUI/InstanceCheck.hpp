@@ -22,7 +22,10 @@ namespace Slic3r {
 // checks for other running instances and sends them argv,
 // if there is --single-instance argument or AppConfig is set to single_instance=1
 // returns true if this instance should terminate
-bool    instance_check(int argc, char** argv, bool app_config_single_instance);
+// A hidden instance (hub-managed, --hidden, "Start hidden") never claims the single-instance lock and
+// is never chosen to receive another launch's files; a launch that finds no visible instance to take
+// its arguments starts normally instead of exiting (see Utils/InstanceRouting.hpp).
+bool    instance_check(int argc, char** argv, bool app_config_single_instance, bool hidden_start = false);
 
 #if __APPLE__
 // apple implementation of inner functions of instance_check

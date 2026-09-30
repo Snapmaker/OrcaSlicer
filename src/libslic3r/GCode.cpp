@@ -3618,6 +3618,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     // Collect custom seam data from all objects.
     std::function<void(void)> throw_if_canceled_func = [&print]() { print.throw_if_canceled(); };
     m_seam_placer.init(print, throw_if_canceled_func);
+    if (const std::string warning = m_seam_placer.precise_seam_warning_message(); !warning.empty()) {
+        print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning,
+                                      PrintStateBase::SlicingPreciseSeamWarning);
+    }
 
     // BBS: get path for change filament
     if (m_writer.multiple_extruders) {

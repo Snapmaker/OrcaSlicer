@@ -6180,11 +6180,37 @@ int CLI::run(int argc, char **argv)
                                     // invalid print speed would exit 0. CI and scripted slicing
                                     // have no notification UI at all, so this is the only place
                                     // the message can reach them.
-                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); i++) {
+                                    // Precise Seam warnings are also raised during export_gcode
+                                    // (SeamPlacer::init), so they miss the pre-export sweep too.
+                                    // Record them as non-fatal NON_CRITICAL; --strict still fails.
+                                    // Do not clear the whole list afterwards: other post-export
+                                    // statuses (invalid print speed among them) must stay. Drop
+                                    // only the Precise Seam entries we just recorded, or a later
+                                    // plate's pre-export sweep would re-emit them under plate N+1.
+                                    for (unsigned int i = 0; i < g_slicing_warnings.size(); ) {
                                         PrintBase::SlicingStatus& status = g_slicing_warnings[i];
-                                        if (status.warning_step == -1 ||
-                                            status.message_type != PrintStateBase::SlicingInvalidPrintSpeed)
+                                        if (status.warning_step == -1) {
+                                            ++i;
                                             continue;
+                                        }
+                                        if (status.message_type == PrintStateBase::SlicingPreciseSeamWarning) {
+                                            sliced_plate_info.warning_message = status.text;
+                                            sliced_plate_info.warnings.push_back(status.text);
+                                            cli_record_warning(sliced_info, "slicing_warning_non_critical",
+                                                               nlohmann::json{{"plate_id", index+1}, {"text", status.text}});
+                                            BOOST_LOG_TRIVIAL(warning) << "plate "<< index+1<< ": found NON_CRITICAL slicing warnings: "<<status.text <<std::endl;
+                                            if (sliced_info.strict_mode) {
+                                                sliced_info.sliced_plates.push_back(sliced_plate_info);
+                                                record_exit_reson(outfile_dir, CLI_SLICING_ERROR, index+1, cli_errors[CLI_SLICING_ERROR], sliced_info);
+                                                flush_and_exit(CLI_SLICING_ERROR);
+                                            }
+                                            g_slicing_warnings.erase(g_slicing_warnings.begin() + i);
+                                            continue;
+                                        }
+                                        if (status.message_type != PrintStateBase::SlicingInvalidPrintSpeed) {
+                                            ++i;
+                                            continue;
+                                        }
                                         sliced_plate_info.warning_message = status.text;
                                         sliced_plate_info.warnings.push_back(status.text);
                                         cli_record_warning(sliced_info, "invalid_print_speed",

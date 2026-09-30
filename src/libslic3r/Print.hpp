@@ -601,6 +601,10 @@ public:
     // function is now a two-liner over it, so enforcer / blocker behaviour is unchanged by
     // construction and support_group_masks() reuses exactly the same machinery.
     std::vector<Polygons>       slice_volumes_at_layers(const std::vector<const ModelVolume*> &volumes) const;
+    // Precise Seam (Orca #12974 stage C): aliases of slice_volumes_at_layers so 7D can slice
+    // one helper at a time without merging. Edge already extracted the shared body for support groups.
+    std::vector<Polygons>       slice_modifier_volumes(const std::vector<const ModelVolume*> &volumes) const { return this->slice_volumes_at_layers(volumes); }
+    std::vector<Polygons>       slice_single_volume(const ModelVolume *volume) const { return this->slice_volumes_at_layers({volume}); }
     // Helpers to slice support enforcer / blocker meshes by the support generator.
     std::vector<Polygons>       slice_support_volumes(const ModelVolumeType model_volume_type) const;
     std::vector<Polygons>       slice_support_blockers() const { return this->slice_support_volumes(ModelVolumeType::SUPPORT_BLOCKER); }

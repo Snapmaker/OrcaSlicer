@@ -198,6 +198,43 @@ TEST_CASE("theme apply: fonts wait for a restart", "[ThemeLive]")
     CHECK_FALSE(Theme::fonts_pending());
 }
 
+TEST_CASE("theme switch: colours nobody remembers are taken back through the old look", "[ThemeLive]")
+{
+    ThemeDir themes;
+    themes.save("live-a", dark_theme());
+    themes.save("live-b", light_theme());
+
+    // A window whose colour was copied from a parent, or set by a widget's own code in theme A's
+    // dark look, has no stash entry. Left alone it would keep A's colour; taken back through A it
+    // gets B's.
+    REQUIRE(Theme::apply("live-a"));
+    const auto inverse = StateColor::ThemeInverse();
+    StateColor::BeginUntheme(inverse, true);
+    CHECK(StateColor::UnthemeActive());
+    REQUIRE(Theme::apply("live-b"));
+
+    const wxColour themed_a("#112233"); // what A's window_bg gave both stock whites
+    const wxColour stock = StateColor::unpainted(themed_a);
+    CHECK((stock == wxColour("#FFFFFF") || stock == wxColour("#F8F7F7")));
+    CHECK(StateColor::themedColorFor(stock, *wxBLACK) == wxColour("#EEDDCC")); // B's window_bg
+
+    // The old look was dark: a dark twin goes back to its light colour (#2D2D31 is #FFFFFF's twin).
+    CHECK(StateColor::unpainted(wxColour("#2D2D31")) == wxColour("#FFFFFF"));
+    // Anything else is somebody's own colour.
+    CHECK(StateColor::unpainted(wxColour("#123456")) == wxColour("#123456"));
+
+    // Only while a switch runs.
+    StateColor::EndUntheme();
+    CHECK_FALSE(StateColor::UnthemeActive());
+    CHECK(StateColor::unpainted(themed_a) == themed_a);
+    CHECK(StateColor::unpainted(wxColour("#2D2D31")) == wxColour("#2D2D31"));
+
+    // A light look leaves dark twins alone.
+    StateColor::BeginUntheme(inverse, false);
+    CHECK(StateColor::unpainted(wxColour("#2D2D31")) == wxColour("#2D2D31"));
+    StateColor::EndUntheme();
+}
+
 TEST_CASE("theme colour map: one themed colour stands for several stock ones", "[ThemeLive]")
 {
     // The reason windows keep their stock colours instead of the map being run backwards: both

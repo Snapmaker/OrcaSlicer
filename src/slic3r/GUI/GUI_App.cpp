@@ -116,6 +116,7 @@
 #include "Preferences.hpp"
 #include "ThemesPage.hpp"
 #include "WindowColourStash.hpp"
+#include <set>
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -138,6 +139,7 @@
 #include "BitmapCache.hpp"
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
+#include "Widgets/SideButton.hpp"
 #include "Widgets/ProgressDialog.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
@@ -4528,6 +4530,10 @@ static bool is_default(wxWindow* win)
 }
 #endif
 
+// The windows UpdateDarkUI has already taken back to stock colours during the live theme switch that
+// is running (see StateColor::BeginUntheme).
+static std::set<wxWindow*> g_unthemed_windows;
+
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
@@ -4574,6 +4580,23 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
 
     /*if (m_is_dark_mode != dark_mode() )
         m_is_dark_mode = dark_mode();*/
+
+    // SideButton (Slice plate / Print plate) keeps its colours as state lists that are themed as it
+    // is drawn, but its SetBackgroundColour/SetForegroundColour replace the whole list with one
+    // colour. Painting it here would freeze it in the look it was painted in.
+    if (dynamic_cast<SideButton*>(window))
+        return;
+
+    // A live theme switch: turn the colours of the look being left back into stock ones first, for
+    // windows whose colour nobody remembers (see StateColor::unpainted). Once per window per switch.
+    if (StateColor::UnthemeActive() && g_unthemed_windows.insert(window).second) {
+        const wxColour bg = window->GetBackgroundColour(), stock_bg = StateColor::unpainted(bg);
+        if (stock_bg != bg)
+            window->SetBackgroundColour(stock_bg);
+        const wxColour fg = window->GetForegroundColour(), stock_fg = StateColor::unpainted(fg);
+        if (stock_fg != fg)
+            window->SetForegroundColour(stock_fg);
+    }
 
     // Keep the colours the window had, so a live theme switch can put them back (WindowColourStash.hpp).
     const WindowColourStash::Stock stock_colours = WindowColourStash::snapshot(window);
@@ -5382,8 +5405,13 @@ void GUI_App::apply_theme_live()
     BOOST_LOG_TRIVIAL(info) << "Theme: applying \"" << id << "\" live";
 
     // 1. Put every window UpdateDarkUI painted back to the colours it had (WindowColourStash.hpp);
-    //    they are themed again from the new tables below.
+    //    they are themed again from the new tables below. Windows whose colour came from elsewhere
+    //    (copied from a parent, set by a widget's own code) have no stash entry: they are taken
+    //    back through the old theme's colours instead, while the walk below reaches them.
     WindowColourStash::restore_all();
+    g_unthemed_windows.clear();
+    const std::map<wxColour, wxColour> old_theme_inverse = StateColor::ThemeInverse();
+    const bool                         was_dark          = m_is_dark_mode;
 
     // 2. The new theme: resets the colour table, radii and banner, then loads it. Fonts stay.
     if (!Theme::apply(id))
@@ -5393,6 +5421,15 @@ void GUI_App::apply_theme_live()
     //    SVG icon cache needs nothing: its keys carry the theme's icon and accent colours.
     init_label_colours();
     Update_dark_mode_flag();
+    StateColor::BeginUntheme(old_theme_inverse, was_dark);
+    struct EndUntheme
+    {
+        ~EndUntheme()
+        {
+            StateColor::EndUntheme();
+            g_unthemed_windows.clear();
+        }
+    } end_untheme;
 
     // 4. Everything that shows a colour. The 3D view and the GL toolbar take the dark flag from the
     //    Plater, so tell it (async, it is what the dark mode checkbox does).

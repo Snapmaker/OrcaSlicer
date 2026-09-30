@@ -542,6 +542,11 @@ void BBLTopbar::ThemeChanged()
     // The text and background colours are read as the bar is drawn; the icons come from the
     // (theme-keyed) SVG cache.
     Rescale();
+    // Realize() (in Rescale) leaves the bar as wide as its items; it is the frame's width it has to fill.
+    if (m_frame) {
+        UpdateToolbarWidth(m_frame->GetClientSize().GetWidth());
+        m_frame->Layout();
+    }
     Refresh();
 }
 

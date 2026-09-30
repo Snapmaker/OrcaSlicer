@@ -231,6 +231,47 @@ void StateColor::SetThemeMap(std::map<wxColour, wxColour> const &map)
 
 bool StateColor::HasTheme() { return !gThemeColors.empty(); }
 
+static bool                         gUnthemeActive  = false;
+static bool                         gUnthemeWasDark = false;
+static std::map<wxColour, wxColour> gUnthemeColors;
+
+std::map<wxColour, wxColour> StateColor::ThemeInverse()
+{
+    std::map<wxColour, wxColour> inverse;
+    for (auto &p : gThemeColors) inverse.emplace(p.second, p.first); // the first key of a shared value stays
+    return inverse;
+}
+
+void StateColor::BeginUntheme(std::map<wxColour, wxColour> const &inverse, bool was_dark)
+{
+    gUnthemeColors  = inverse;
+    gUnthemeWasDark = was_dark;
+    gUnthemeActive  = true;
+}
+
+void StateColor::EndUntheme()
+{
+    gUnthemeActive = false;
+    gUnthemeColors.clear();
+}
+
+bool StateColor::UnthemeActive() { return gUnthemeActive; }
+
+wxColour StateColor::unpainted(wxColour const &color)
+{
+    if (!gUnthemeActive) return color;
+    auto themed = gUnthemeColors.find(color);
+    if (themed != gUnthemeColors.end()) return themed->second;
+    if (gUnthemeWasDark) {
+        static std::map<wxColour, wxColour> gTwins;
+        if (gTwins.empty())
+            for (auto &p : gDarkColors) gTwins.emplace(p.second, p.first);
+        auto twin = gTwins.find(color);
+        if (twin != gTwins.end()) return twin->second;
+    }
+    return color;
+}
+
 wxColour StateColor::themedColorFor(wxColour const &color, wxColour const &fallback)
 {
     auto iter = gThemeColors.find(color);

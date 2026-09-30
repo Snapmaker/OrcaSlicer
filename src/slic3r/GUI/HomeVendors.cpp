@@ -750,7 +750,7 @@ void HomeVendors::send_thumbnails(const std::vector<std::string>& keys)
     std::thread([this, alive, cancel, jobs = std::move(jobs)]() {
         const Vendors::HttpFn thumb_http = [](const Vendors::Request& q) { return http_call(q, THUMB_LIMIT); };
         json images = json::object();
-        auto flush  = [&]() {
+        auto flush  = [this, &alive, &images]() { // explicit: MSVC rejects [&] here
             if (images.empty())
                 return;
             wxGetApp().CallAfter([this, alive, images]() {

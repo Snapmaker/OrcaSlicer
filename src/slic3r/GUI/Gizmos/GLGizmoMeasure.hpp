@@ -6,6 +6,7 @@
 #include "slic3r/GUI/GUI_Utils.hpp"
 #include "slic3r/GUI/MeshUtils.hpp"
 #include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/UltraExactFootprint.hpp"
 #include "libslic3r/Measure.hpp"
 #include "libslic3r/Model.hpp"
 
@@ -331,6 +332,24 @@ protected:
     // Ultra (Curve mode): the "Curve angle" slider + "Smooth shell" toggle. Both persist in app config.
     void ultra_show_curve_pick_ui();
     void ultra_load_curve_pick_settings();
+    // Ultra ("Exact highlight", Face and Curve modes): once the target is picked, the moving part highlights
+    // only the TARGET face's own shape at the cursor, and Auto-fit lands exactly that footprint on the
+    // target (instead of mating the whole, larger, moving face centre to centre).
+    struct UltraExactAnchor
+    {
+        GLVolume* volume{nullptr};
+        Vec3d     hit_mesh{Vec3d::Zero()};      // cursor point on the moving part, its mesh coords
+        Vec3d     normal_mesh{Vec3d::UnitZ()};  // outward facet normal there, mesh coords
+        bool      valid{false};
+    };
+    bool ultra_exact_active() const;            // toggle on, in a mode it applies to
+    bool ultra_exact_axis(GLVolume* v, const Measure::SurfaceFeature& f, Vec3d& axis, double& aspect);
+    bool ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out);
+    void ultra_exact_init_model(const UltraFit::ExactFootprint& fp, PickingModel& model);
+    void ultra_exact_refresh_models();           // per frame: hover + picked footprint highlights
+    bool ultra_exact_fit();                      // Auto-fit through the footprint; false = not applicable
+    void ultra_show_exact_ui();
+    void ultra_load_exact_setting();
 
     bool is_pick_meet_assembly_mode(const SelectedFeatures::Item& item);
  protected:
@@ -353,6 +372,20 @@ protected:
     float                    m_ultra_curve_angle{20.f};
     bool                     m_ultra_curve_smooth_shell{false};
     bool                     m_ultra_curve_settings_loaded{false};
+    // Ultra (Exact highlight): persisted toggle, the cursor anchor this frame, the clicked anchor, and the
+    // two footprint highlights (rebuilt only when their inputs change).
+    bool                     m_ultra_exact{false};
+    bool                     m_ultra_exact_loaded{false};
+    UltraExactAnchor         m_ultra_exact_hover;
+    UltraExactAnchor         m_ultra_exact_pick;
+    PickingModel             m_ultra_exact_hover_model;
+    PickingModel             m_ultra_exact_pick_model;
+    bool                     m_ultra_exact_hover_shown{false};
+    bool                     m_ultra_exact_pick_shown{false};
+    std::vector<double>      m_ultra_exact_hover_key;
+    std::vector<double>      m_ultra_exact_pick_key;
+    struct UltraExactAxisCache { GLVolume* v{nullptr}; std::vector<double> key; Vec3d axis{Vec3d::Zero()}; double aspect{1.0}; bool ok{false}; };
+    UltraExactAxisCache      m_ultra_exact_axis_cache[2];
     std::string              m_units;
     mutable bool             m_same_model_object;
     mutable unsigned int     m_current_active_imgui_id;

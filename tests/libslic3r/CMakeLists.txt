@@ -12,6 +12,7 @@ add_executable(${_TEST_NAME}_tests
 	test_aabbindirect.cpp
 	test_ams_lookup.cpp
 	test_assembly_face_pick.cpp
+	test_assembly_exact_footprint.cpp
 	test_curve_pick.cpp
 	test_chameleon_brim.cpp
 	test_paint_depth.cpp

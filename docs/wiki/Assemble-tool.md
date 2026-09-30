@@ -36,6 +36,17 @@ New assembly modes include **Triangle and triangle** and **Curve and curve**. **
 
 Rotation is chosen by outline fit **and** a whole-mesh collision check, so pegs seat square without intersecting.
 
+### Exact highlight (large part onto a small target)
+
+In **Face and face** and **Curve and curve** modes, tick **Exact highlight** when the moving part's face is larger than the target's (a wide plate onto a small post, say).
+
+1. Pick the target face first (the part that stays put).
+2. Hover the moving part: instead of its whole face, only the **target face's own shape** is highlighted, centred on the cursor and lined up with the face's edges (or a cylinder's axis).
+3. Click where it should touch. Clicking the same face again moves the footprint.
+4. Press **Auto-fit**: exactly that spot lands on the target. On curved faces the footprint follows the surface and the part is slid along the target normal until the two surfaces just touch.
+
+The collision roll search is skipped in this mode, so the result matches the highlight; use **Rotate / Offset** afterwards if needed. The setting is remembered.
+
 ### Related assembly helpers
 
 - **Assemble Separately / Separate** — pull parts out of an assembly in place  
@@ -47,6 +58,7 @@ Rotation is chosen by outline fit **and** a whole-mesh collision check, so pegs 
 |---|---|
 | Poor feature picks | Auto-fit may not find a clean mate — try another mode or feature. |
 | Collision check | Favours mates that do not intersect; adjust Rotate / Offset if needed. |
+| Exact highlight | Only for a flat or curved target; a circular-rim target uses the normal Auto-fit. If the footprint hangs past the moving face's edge, Auto-fit says how many points missed. |
 | Upstream face-and-face snapping | Edge also carries fixes so face-and-face picking uses the facet under the cursor again. |
 
 For cut-plane joints instead of assembly mates, see [Flexi joints and Cut tool](Flexi-joints).

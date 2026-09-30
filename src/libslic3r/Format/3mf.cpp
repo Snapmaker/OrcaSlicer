@@ -3105,7 +3105,11 @@ ModelVolumeType type_from_string(const std::string &s)
 
                 // stores object's config data
                 for (const std::string& key : obj->config.keys()) {
-                    stream << "  <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << OBJECT_TYPE << "\" " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << obj->config.opt_serialize(key) << "\"/>\n";
+                    const std::string value = obj->config.opt_serialize(key);
+                    // Config serialization is C-style, not XML: escape values too, including tabs.
+                    stream << "  <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << OBJECT_TYPE << "\" "
+                           << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\""
+                           << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                 }
 
                 for (const ModelVolume* volume : obj_metadata.second.object->volumes) {
@@ -3143,7 +3147,9 @@ ModelVolumeType type_from_string(const std::string &s)
 
                             // stores volume's source data
                             {
-                                std::string input_file = xml_escape(m_fullpath_sources ? volume->source.input_file : boost::filesystem::path(volume->source.input_file).filename().string());
+                                const std::string raw_source = m_fullpath_sources ? volume->source.input_file :
+                                                               boost::filesystem::path(volume->source.input_file).filename().string();
+                                const std::string input_file = xml_escape_double_quotes_attribute_value(raw_source);
                                 std::string prefix = std::string("   <") + METADATA_TAG + " " + TYPE_ATTR + "=\"" + VOLUME_TYPE + "\" " + KEY_ATTR + "=\"";
                                 if (! volume->source.input_file.empty()) {
                                     stream << prefix << SOURCE_FILE_KEY      << "\" " << VALUE_ATTR << "=\"" << input_file << "\"/>\n";
@@ -3162,7 +3168,11 @@ ModelVolumeType type_from_string(const std::string &s)
 
                             // stores volume's config data
                             for (const std::string& key : volume->config.keys()) {
-                                stream << "   <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << VOLUME_TYPE << "\" " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
+                                const std::string value = volume->config.opt_serialize(key);
+                                // Config serialization is C-style, not XML: escape values too, including tabs.
+                                stream << "   <" << METADATA_TAG << " " << TYPE_ATTR << "=\"" << VOLUME_TYPE << "\" "
+                                       << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\""
+                                       << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                             }
 
                             // stores mesh's statistics

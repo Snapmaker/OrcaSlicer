@@ -1227,3 +1227,147 @@ TEST_CASE("Paint states 20, 200 and 255 round-trip through a 3MF byte-identicall
     for (int i = 0; i < 3; ++i)
         REQUIRE(restored.num_facets(static_cast<EnforcerBlockerType>(states[i])) == 1);
 }
+
+// Object and volume config are written as double-quoted XML attributes. ConfigOptionString
+// serializes C-style (so '"' becomes '\"' and a tab stays a tab); the 3MF writers must then
+// XML-escape that serialized text. Unescaped quotes break the attribute; an unescaped tab is
+// collapsed to a space by XML attribute-value normalization
+// (https://www.w3.org/TR/REC-xml/#AVNormalize). source_file is a raw path, not a config option,
+// so it needs the same attribute helper. Placed at EOF so it does not collide with draft PR #117,
+// which inserts above the paint cases.
+TEST_CASE("Volume config values with XML special characters survive a 3MF round trip", "[3mf][Regression]")
+{
+    const bool bbs_format   = GENERATE(false, true);
+    const bool object_level = GENERATE(false, true);
+    INFO((bbs_format ? "bbs" : "prusa"));
+    INFO((object_level ? "object" : "volume"));
+
+    const std::string special = "quoted \"value\" & <tag>\tcolumn";
+    // Hard-coded independently of xml_escape_double_quotes_attribute_value so a double-escape
+    // (turning &quot; into &amp;quot;) cannot hide behind the same helper.
+    const std::string encoded = R"(quoted \&quot;value\&quot; &amp; &lt;tag>&#x9;column)";
+    const std::string source_path    = "C:\\R&D\\\"x\".stl";
+    const std::string encoded_source = R"(C:\R&amp;D\&quot;x&quot;.stl)";
+
+    Model        src_model;
+    ModelObject *src_object = src_model.add_object();
+    src_object->name        = "xml_escape_vol";
+    ModelVolume *part = src_object->add_volume(make_cube(10., 10., 10.));
+    part->name                = "part";
+    part->source.input_file   = source_path;
+    ModelVolume *modifier = src_object->add_volume(make_cube(5., 5., 5.));
+    modifier->name        = "mod";
+    modifier->set_type(ModelVolumeType::PARAMETER_MODIFIER);
+    if (object_level)
+        src_object->config.set_key_value("notes", new ConfigOptionString(special));
+    else
+        modifier->config.set_key_value("notes", new ConfigOptionString(special));
+    src_object->add_instance();
+    src_object->ensure_on_bed();
+
+    const std::string path = make_temp_3mf_path(std::string(bbs_format ? "cfg_escape_bbs_" : "cfg_escape_prusa_") +
+                                                (object_level ? "object.3mf" : "volume.3mf"));
+    const ScopeGuard  cleanup = remove_file_guard(path);
+
+    DynamicPrintConfig store_config = DynamicPrintConfig::full_print_config();
+    if (bbs_format) {
+        StoreParams store_params;
+        store_params.path     = path.c_str();
+        store_params.model    = &src_model;
+        store_params.config   = &store_config;
+        store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary |
+                                SaveStrategy::FullPathSources;
+        REQUIRE(store_bbs_3mf(store_params));
+    } else {
+        REQUIRE(store_3mf(path.c_str(), &src_model, &store_config, true));
+    }
+
+    const std::string xml_entry = bbs_format ? "Metadata/model_settings.config" : "Metadata/Slic3r_PE_model.config";
+    const std::string xml       = extract_zip_entry(path, xml_entry);
+    REQUIRE_FALSE(xml.empty());
+    REQUIRE(xml.find("key=\"notes\" value=\"" + encoded + "\"") != std::string::npos);
+    REQUIRE(xml.find("key=\"source_file\" value=\"" + encoded_source + "\"") != std::string::npos);
+    REQUIRE(xml.find("&amp;quot;") == std::string::npos);
+
+    Model dst_model;
+    if (bbs_format) {
+        REQUIRE(load_project(path, dst_model));
+    } else {
+        DynamicPrintConfig        dst_config;
+        ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+        REQUIRE(load_3mf(path.c_str(), dst_config, ctxt, &dst_model, false));
+    }
+
+    REQUIRE(dst_model.objects.size() == 1);
+    REQUIRE(dst_model.objects.front()->volumes.size() == 2);
+    const ModelObject *dst_object = dst_model.objects.front();
+    const ModelVolume *dst_part   = nullptr;
+    const ModelVolume *dst_mod    = nullptr;
+    for (const ModelVolume *volume : dst_object->volumes) {
+        if (volume->name == "part")
+            dst_part = volume;
+        else if (volume->name == "mod")
+            dst_mod = volume;
+    }
+    REQUIRE(dst_part != nullptr);
+    REQUIRE(dst_mod != nullptr);
+    REQUIRE(dst_part->source.input_file == source_path);
+
+    if (bbs_format) {
+        if (object_level) {
+            REQUIRE(dst_object->config.has("notes"));
+            REQUIRE(dst_object->config.get().opt_string("notes") == special);
+        } else {
+            REQUIRE(dst_mod->is_modifier());
+            REQUIRE(dst_mod->config.has("notes"));
+            REQUIRE(dst_mod->config.get().opt_string("notes") == special);
+        }
+    }
+    // Prusa 3mf.cpp is covered by the encoded-XML checks above. Its importer whitelist drops
+    // ordinary keys such as notes (same as upstream Orca) but restores source_file.
+}
+
+// Escaping must be a no-op for values without ", &, <, CR, LF or tab, so a default project still
+// writes byte-identical Metadata/model_settings.config across independently allocated Models.
+TEST_CASE("A default project with plain values writes byte-identical model_settings.config", "[3mf][Regression]")
+{
+    prepare_3mf_temp_dir();
+    const boost::filesystem::path tmp_root = boost::filesystem::temp_directory_path() / "snorca_tests";
+
+    auto make_plain = []() {
+        Model        model;
+        ModelObject *object = model.add_object();
+        object->name        = "cube";
+        object->add_volume(make_cube(10., 10., 10.))->name = "cube";
+        object->add_instance();
+        object->ensure_on_bed();
+        return model;
+    };
+
+    DynamicPrintConfig store_config = DynamicPrintConfig::full_print_config();
+    std::vector<std::string> configs;
+    std::vector<std::string> files;
+    for (int run = 0; run < 2; ++run) {
+        Model             model     = make_plain();
+        const std::string test_file = (tmp_root / ("plain_model_settings_" + std::to_string(run) + ".3mf")).string();
+        files.push_back(test_file);
+        StoreParams store_params;
+        store_params.path     = test_file.c_str();
+        store_params.model    = &model;
+        store_params.config   = &store_config;
+        store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+        REQUIRE(store_bbs_3mf(store_params));
+        configs.push_back(extract_zip_entry(test_file, "Metadata/model_settings.config"));
+    }
+    const ScopeGuard cleanup([&files]() {
+        for (const std::string &f : files)
+            boost::filesystem::remove(f);
+    });
+
+    REQUIRE_FALSE(configs[0].empty());
+    REQUIRE(configs[1] == configs[0]);
+    REQUIRE(configs[0].find("key=\"name\" value=\"cube\"") != std::string::npos);
+    REQUIRE(configs[0].find("&amp;") == std::string::npos);
+    REQUIRE(configs[0].find("&quot;") == std::string::npos);
+    REQUIRE(configs[0].find("&lt;") == std::string::npos);
+}

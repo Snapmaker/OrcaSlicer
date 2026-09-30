@@ -5,6 +5,7 @@
 #include "DarkModeBackground.hpp"
 #include "RemoteAccess.hpp"
 #include "RemoteHub.hpp"
+#include "Theme.hpp"
 #include "GUI_Init.hpp"
 #include "GUI_ObjectList.hpp"
 #include "GUI_Factories.hpp"
@@ -113,6 +114,7 @@
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
+#include "ThemesPage.hpp"
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -3236,6 +3238,14 @@ int GUI_App::OnExit()
         BOOST_LOG_TRIVIAL(error) << "Failed to clean up encrypt bbl network log file";
     }
 
+    // A restart was asked for (request_relaunch). It was started once the window closed; if that
+    // did not happen (the window went some other way), start it now.
+    if (m_relaunch_pending) {
+        BOOST_LOG_TRIVIAL(warning) << "OnExit: relaunch " << (m_relaunch_started ? "already started" : "starting now");
+        m_single_instance_checker.reset(); // the lock is let go before the process is gone
+        relaunch_now();
+    }
+
     return wxApp::OnExit();
 }
 
@@ -3264,6 +3274,15 @@ bool GUI_App::on_init_inner()
 #endif
     StartupProfiler profiler("GUI_App::on_init_inner");
 
+    // Started by GUI_App::request_relaunch of the instance it replaces (main() already waited for it).
+    {
+        wxString note;
+        if (wxGetEnv("EDGESLICER_RELAUNCH_NOTE", &note)) {
+            BOOST_LOG_TRIVIAL(warning) << "Relaunch: this process replaces another (" << note.ToUTF8().data() << ")";
+            wxUnsetEnv("EDGESLICER_RELAUNCH_NOTE");
+        }
+    }
+
     // Ultra: hidden launch. Precedence: SNORCA_HIDDEN (1/0, lets the hub or a test force
     // either way) > --hidden on the command line > app_config "start_hidden".
     {
@@ -3288,6 +3307,8 @@ bool GUI_App::on_init_inner()
     ::SetCurrentProcessExplicitAppUserModelID(L"aceRage.EdgeSlicer");
 #endif // _WIN32
 
+    // The UI theme (docs/themes.md) hands over its colours, fonts and shapes before any are made.
+    Theme::load(app_config->get("ui_theme"));
     ::Label::initSysFont();
 
     // Set initialization of image handlers before any UI actions - See GH issue #7469
@@ -4410,6 +4431,9 @@ bool GUI_App::dark_mode()
     // proper dark mode was first introduced.
     return wxPlatformInfo::Get().CheckOSVersion(10, 14) && mac_dark_mode();
 #else
+    // A theme built on the light or dark look decides it; macOS follows the system either way.
+    if (const int themed = Theme::base_dark(); themed >= 0)
+        return themed == 1;
     return wxGetApp().app_config->get("dark_color_mode") == "1" ? true : check_dark_mode();
     //const unsigned luma = get_colour_approx_luma(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
     //return luma < 128;
@@ -4866,6 +4890,53 @@ void GUI_App::schedule_recreate_gui_when_no_modal(const wxString &msg_name)
             return;
         recreate_GUI(msg_name);
     });
+}
+
+void GUI_App::request_relaunch()
+{
+    if (m_relaunch_pending || mainframe == nullptr)
+        return;
+    m_relaunch_pending = true;
+    BOOST_LOG_TRIVIAL(warning) << "Relaunch: requested (process " << wxGetProcessId() << "), closing the main window first";
+    CallAfter([this]() { relaunch_when_idle(0); });
+}
+
+void GUI_App::relaunch_when_idle(int attempt)
+{
+    if (mainframe == nullptr) {
+        m_relaunch_pending = false;
+        return;
+    }
+    // The dialog that asked is closing; closing the main window under a modal one is asking for trouble.
+    if (!mainframe->IsEnabled() && attempt < 40) {
+        wxMilliSleep(25);
+        CallAfter([this, attempt]() { relaunch_when_idle(attempt + 1); });
+        return;
+    }
+    // The same close File > Quit does: it asks about the unsaved project and can be cancelled.
+    if (!mainframe->request_quit(false)) {
+        BOOST_LOG_TRIVIAL(warning) << "Relaunch: cancelled, the close was vetoed (unsaved-project prompt, say)";
+        m_relaunch_pending = false;
+        return;
+    }
+    // The window is closed and the project dealt with. Start the new process now: it waits for this
+    // one to exit (--relaunch-after), so it cannot collide with it, and it is not lost if the
+    // teardown that follows hangs or crashes. The window tear-down of a big project can take a
+    // while; the new process has its own start-up to do in the meantime.
+    BOOST_LOG_TRIVIAL(warning) << "Relaunch: the main window is closed";
+    relaunch_now();
+}
+
+void GUI_App::relaunch_now()
+{
+    if (!m_relaunch_pending || m_relaunch_started)
+        return;
+    if (init_params == nullptr) {
+        BOOST_LOG_TRIVIAL(error) << "Relaunch: no command line to start again with, not relaunching";
+        return;
+    }
+    m_relaunch_started = true;
+    relaunch_slicer(init_params->argc, init_params->argv, init_params->input_files);
 }
 
 void GUI_App::start_remote_access()
@@ -7722,6 +7793,19 @@ void  GUI_App::show_ip_address_enter_dialog_handler(wxCommandEvent& evt)
 {
     wxString title = evt.GetString();
     show_modal_ip_address_enter_dialog(title);
+}
+
+void GUI_App::open_themes()
+{
+    if (mainframe == nullptr)
+        return;
+    {
+        ThemesDialog dlg(mainframe);
+        dlg.ShowModal();
+    }
+    if (plater_ != nullptr)
+        if (GLCanvas3D* canvas = plater_->get_current_canvas3D())
+            canvas->force_set_focus();
 }
 
 void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_option)

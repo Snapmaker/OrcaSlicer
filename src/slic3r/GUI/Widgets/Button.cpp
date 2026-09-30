@@ -67,7 +67,7 @@ void Button::SetLabel(const wxString& label)
 
 bool Button::SetFont(const wxFont& font)
 {
-    wxWindow::SetFont(font);
+    wxWindow::SetFont(Label::ThemedButtonFont(font));
     messureSize();
     Refresh();
     return true;
@@ -192,7 +192,7 @@ void Button::SetStyle(const ButtonStyle style, const ButtonType type)
 
     this->SetBorderWidth(this->FromDIP(1));
 
-    bool is_dark = StateColor::darkModeColorFor("#FFFFFF") != wxColour("#FFFFFF");
+    bool is_dark = StateColor::IsDarkMode();
 
     auto clr_arr = style == ButtonStyle::Regular  ? btn_regular  :
                    style == ButtonStyle::Confirm  ? btn_confirm  :

@@ -1,0 +1,40 @@
+{
+  "name": "Silver Bastion",
+  "author": "EdgeSlicer",
+  "version": "1.0",
+  "description": "Parchment panels, deep navy bars and gold trim, with a starred band across the title bar. Built on the light look.",
+  "base": "light",
+  "palette": {
+    "window_bg": "#FBF8F1",
+    "panel_bg": "#F2ECDD",
+    "sidebar_bg": "#DCD3BE",
+    "text": "#1B2A44",
+    "text_secondary": "#3E4E6A",
+    "text_disabled": "#8C8A80",
+    "accent": "#1F4E9A",
+    "accent_hover": "#2F64B8",
+    "accent_soft": "#D6E0F2",
+    "accent_text": "#FFFDF5",
+    "secondary_accent": "#C9A227",
+    "button_bg": "#E6DDC8",
+    "button_hover_bg": "#D9CDB1",
+    "border": "#B8A77E",
+    "separator": "#E3D9C3",
+    "disabled_bg": "#EEE8DA",
+    "toggle_track": "#D5CBB3",
+    "error": "#B3261E",
+    "tabbar_bg": "#14284A",
+    "tabbar_hover": "#274677",
+    "titlebar_bg": "#0E1D38",
+    "titlebar_text": "#E8D8A8",
+    "canvas_bg": "#E7E1D3",
+    "canvas_bg_top": "#F7F3EA",
+    "icon": "#22314D"
+  },
+  "fonts": {
+    "heading": { "files": ["fonts/Cinzel-Bold.ttf"], "face": "Cinzel" },
+    "button": { "files": ["fonts/Cinzel-Regular.ttf", "fonts/Cinzel-Bold.ttf"], "face": "Cinzel" }
+  },
+  "shapes": { "button_radius": 3, "box_radius": 3 },
+  "titlebar": { "banner": "images/banner.png", "align": "tile" }
+}

@@ -5,6 +5,10 @@
 
 #include <map>
 
+// Ordering for the std::map / std::set of colours used by the theme and dark-mode maps.
+// It has to be visible in every file that builds one (StateColor.cpp, Theme.cpp).
+inline bool operator<(wxColour const &l, wxColour const &r) { return l.GetRGBA() < r.GetRGBA(); }
+
 class StateColor
 {
 public:
@@ -31,6 +35,14 @@ public:
     static double LAB_Delta_E(const wxColour& c1, const wxColour& c2);
 
     static void SetDarkMode(bool dark);
+    static bool IsDarkMode();
+
+    // The active UI theme (GUI/Theme.cpp): stock light colour -> themed colour. darkModeColorFor()
+    // returns the themed colour first, in light and dark mode; lightModeColorFor() too.
+    static void SetThemeMap(std::map<wxColour, wxColour> const &map);
+    static bool HasTheme();
+    // The themed colour for a stock light colour, or `fallback` when the theme leaves it alone.
+    static wxColour themedColorFor(wxColour const &color, wxColour const &fallback);
 
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);

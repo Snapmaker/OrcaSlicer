@@ -183,7 +183,7 @@ bool run_ams_ui_preview_if_asked()
                                        << " trays=" << kv.second->trayList.size() << " exists=" << kv.second->is_exists
                                        << " dry_status=" << kv.second->dry.status << " sub=" << kv.second->dry.sub_status;
 
-    const bool dark_before = StateColor::darkModeColorFor(*wxWHITE) != *wxWHITE;
+    const bool dark_before = StateColor::IsDarkMode();
 
     auto *frame = new wxFrame(nullptr, wxID_ANY, "AMS preview", wxPoint(-20000, -20000), wxDefaultSize,
                               wxFRAME_NO_TASKBAR | wxFRAME_TOOL_WINDOW | wxBORDER_NONE);

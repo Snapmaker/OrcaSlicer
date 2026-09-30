@@ -5,6 +5,7 @@
 #include "Plater.hpp"
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
+#include "Theme.hpp"
 #include "PresetMirror.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -1876,6 +1877,11 @@ wxWindow* PreferencesDialog::create_general_page()
 #ifdef _WIN32
     auto title_darkmode = create_item_title(_L("Dark Mode"), page, _L("Dark Mode"));
     auto item_darkmode = create_item_darkmode_checkbox(_L("Enable Dark mode"), page,_L("Enable dark mode"), 50, "dark_color_mode");
+    if (Theme::base_dark() >= 0 && m_dark_mode_ckeckbox != nullptr) {
+        // The running theme picks light or dark itself.
+        m_dark_mode_ckeckbox->Enable(false);
+        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark (main menu > Themes...)."));
+    }
 #endif
 
     // The "User Experience" section ("Join Customer Experience Improvement Program", linking to

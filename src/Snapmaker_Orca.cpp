@@ -7520,18 +7520,27 @@ int main(int argc, char **argv)
 {
     // Before initSentry(): it reads the crash-report preference from the EdgeSlicer.conf that
     // --datadir points at.
+    // A relaunch waits for the instance it replaces first (see common_func.hpp).
+    common::wait_for_relaunch_parent(argc, argv);
     common::set_datadir_from_command_line(argc, argv);
     initSentry();
     auto soft_start_time = get_time_timestamp();    
     // Parse from copies, then blank secret option values in the originals: those sit at the
     // top of the main thread's stack, which a crash minidump includes.
-    std::vector<std::string> arg_copies(argv, argv + argc);
+    std::vector<std::string> arg_copies;
+    for (int i = 0; i < argc; ++i) {
+        if (i > 0 && common::is_relaunch_after_arg(argv[i])) { // handled above, not a CLI option
+            ++i;
+            continue;
+        }
+        arg_copies.emplace_back(argv[i]);
+    }
     std::vector<char*>       arg_ptrs;
     for (std::string& a : arg_copies)
         arg_ptrs.push_back(a.data());
     arg_ptrs.push_back(nullptr);
     common::mask_secret_args(argc, argv);
-    auto res = CLI().run(argc, arg_ptrs.data());
+    auto res = CLI().run(int(arg_copies.size()), arg_ptrs.data());
     auto soft_end_time = get_time_timestamp();    
 
     std::string softEndTime = BP_SOFT_WORKS_TIME + std::string(":") + get_works_time(soft_end_time - soft_start_time);

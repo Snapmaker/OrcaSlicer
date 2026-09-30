@@ -4,6 +4,7 @@
 #include "../Utils/MacDarkMode.hpp"
 #include "GUI.hpp"
 #include "GUI_Utils.hpp"
+#include "Theme.hpp"
 
 #include <boost/nowide/cstdio.hpp>
 #include <boost/filesystem.hpp>
@@ -344,6 +345,19 @@ wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_
 
     if (strstr(bitmap_name.c_str(), "toggle_on") != NULL && dark_mode) // ORCA only replace color of toggle button
         replaces["#009688"] = "#00675b";
+
+    // The UI theme's accent and icon colours (docs/themes.md) win over both looks.
+    auto themed = [&replaces](const char *role, std::initializer_list<const char *> stock) {
+        auto it = Theme::spec().palette.find(role);
+        if (!Theme::active() || it == Theme::spec().palette.end())
+            return;
+        for (const char *c : stock) {
+            replaces[std::string("\"") + c + "\""] = "\"" + it->second + "\"";
+            replaces[c]                             = it->second;
+        }
+    };
+    themed("accent", {"#009688"});
+    themed("icon", {"#262E30", "#323A3D"});
 
     //if (!new_color.empty())
     //    replaces["\"#ED6B21\""] = "\"" + new_color + "\"";

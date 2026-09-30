@@ -463,6 +463,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/StreamPanel.cpp
     GUI/StreamPanel.hpp
     GUI/HomePanel.cpp
+    GUI/Theme.cpp
+    GUI/Theme.hpp
+    GUI/ThemesPage.cpp
+    GUI/ThemesPage.hpp
     GUI/HomePanel.hpp
     GUI/HomeVendors.cpp
     GUI/HomeVendors.hpp
@@ -876,6 +880,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/HubHomeLogic.hpp
     Utils/HomeTabLogic.cpp
     Utils/HomeTabLogic.hpp
+    Utils/ThemePack.cpp
+    Utils/ThemePack.hpp
     Utils/LibraryIndex.cpp
     Utils/LibraryIndex.hpp
     Utils/MeshThumbnail.cpp

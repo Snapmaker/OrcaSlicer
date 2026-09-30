@@ -71,6 +71,7 @@
 #include "UnsavedChangesDialog.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
+#include "Theme.hpp"
 #include "GUI_Factories.hpp"
 #include "GUI_ObjectList.hpp"
 #include "NotificationManager.hpp"
@@ -285,7 +286,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     m_topbar         = new BBLTopbar(this);
 #else
     auto panel_topbar = new wxPanel(this, wxID_ANY);
-    panel_topbar->SetBackgroundColour(wxColour(38, 46, 48));
+    panel_topbar->SetBackgroundColour(Theme::colour("titlebar_bg", wxColour(38, 46, 48)));
     auto sizer_tobar = new wxBoxSizer(wxVERTICAL);
     panel_topbar->SetSizer(sizer_tobar);
     panel_topbar->Layout();
@@ -1094,10 +1095,10 @@ void MainFrame::update_autosave_timer()
 }
 
 // Called when closing the application and when switching the application language.
-void MainFrame::request_quit(bool discard)
+bool MainFrame::request_quit(bool discard)
 {
     m_quit_requested = true;
-    Close(discard); // discard -> CanVeto() == false -> no prompts at all
+    return Close(discard); // discard -> CanVeto() == false -> no prompts at all; false: the user cancelled
 }
 
 void MainFrame::shutdown(bool isRecreate)
@@ -3381,6 +3382,10 @@ void MainFrame::init_menubar_as_editor()
                 plater()->refresh_print();
         },
         "", nullptr, []() { return true; }, this, 1);
+    append_menu_item(
+        parent_menu, wxID_ANY, _L("Themes") + dots, _L("Colours, fonts, corners and the title bar"),
+        [this](wxCommandEvent &) { wxGetApp().open_themes(); },
+        "", nullptr, []() { return true; }, this, 2);
     //parent_menu->Insert(1, preference_item);
 #endif
     // Help menu
@@ -3401,6 +3406,12 @@ void MainFrame::init_menubar_as_editor()
             wxGetApp().open_preferences();
             plater()->get_current_canvas3D()->force_set_focus();
         },
+        "", nullptr, []() { return true; }, this);
+    // Themes live in a window of their own so Preferences stays quick to open. No shortcut: the
+    // obvious letters are taken.
+    append_menu_item(
+        m_topbar->GetTopMenu(), wxID_ANY, _L("Themes") + dots, _L("Colours, fonts, corners and the title bar"),
+        [this](wxCommandEvent &) { wxGetApp().open_themes(); },
         "", nullptr, []() { return true; }, this);
 
     m_topbar->AddDropDownSubMenu(helpMenu, _L("Help"));

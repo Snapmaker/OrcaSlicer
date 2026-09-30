@@ -4093,6 +4093,16 @@ void HubServer::handle_hub(tcp::socket& client, Request& r)
         j["ok"]  = pid > 0;
         j["pid"] = pid;
         respond_json(client, pid > 0 ? 200 : 500, pid > 0 ? j.dump() : json_error("could not start a slicer"));
+    } else if (r.path == "/hub/state" && r.method == "GET") {
+        // The camera list as last saved, for a Stream tab to open with. Each window's page runs
+        // on its own port (13618 or the next free one), so its localStorage is its own; the hub
+        // is the one copy they all share.
+        std::string state;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            state = m_state;
+        }
+        respond_json(client, 200, state.empty() ? "{}" : state);
     } else if (r.path == "/hub/state" && r.method == "POST") {
         if (r.content_type.compare(0, 16, "application/json") != 0) { respond_json(client, 415, json_error("Content-Type must be application/json")); return; }
         std::string body;
@@ -5421,6 +5431,27 @@ Info set_phone(bool on, const std::string& token)
 Info new_link() { return hub_call("POST", "/hub/newlink", "", 5); }
 
 void quit() { hub_call("POST", "/hub/quit", "", 3); }
+
+std::string saved_state()
+{
+    const HubFile hf = hub_file();
+    if (hf.admin_port != 0) {
+        std::string body;
+        bool        ok = false;
+        Http::get("http://127.0.0.1:" + std::to_string(hf.admin_port) + "/hub/state")
+            .header("X-Hub-Secret", hf.secret)
+            .timeout_connect(1).timeout_max(5)
+            .on_complete([&](std::string b, unsigned status) { ok = status == 200; body = b; })
+            .perform_sync();
+        if (ok) return body == "{}" ? std::string() : body;
+    }
+    // No hub: what this process last handed over, else what the last hub saved.
+    {
+        std::lock_guard<std::mutex> lock(s_state_mutex);
+        if (!s_last_state.empty()) return s_last_state;
+    }
+    return read_file(streams_json_path());
+}
 
 bool post_state(const std::string& state_json)
 {

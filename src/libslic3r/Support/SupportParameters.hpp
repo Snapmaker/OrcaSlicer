@@ -24,8 +24,10 @@ struct SupportParameters {
 	        (object_config.support_filament.value == 0 || ! print_config.filament_soluble.get_at(object_config.support_filament.value - 1));
 
 	    {
-	        this->num_top_interface_layers    = std::max(0, object_config.support_interface_top_layers.value);
-	        this->num_bottom_interface_layers = object_config.support_interface_bottom_layers < 0 ? 
+	        // Orca: fin support has its own interface layer count; it never prints bottom interfaces.
+	        const bool fin_support = object_config.support_type.value == stFins;
+	        this->num_top_interface_layers    = std::max(0, fin_support ? object_config.support_fin_interface_layers.value : object_config.support_interface_top_layers.value);
+	        this->num_bottom_interface_layers = fin_support ? 0 : object_config.support_interface_bottom_layers < 0 ? 
 	            num_top_interface_layers : object_config.support_interface_bottom_layers;
 	        this->has_top_contacts              = num_top_interface_layers    > 0;
 	        this->has_bottom_contacts           = num_bottom_interface_layers > 0;
@@ -170,6 +172,7 @@ struct SupportParameters {
                                                        object_config.tree_support_wall_count.value == 0 ? 0.25 * sqr(scaled<double>(5.0)) * M_PI :
                                                                                                           std::numeric_limits<double>::max();
 
+        this->fins = object_config.support_type.value == stFins;
         support_style = object_config.support_style;
         if (support_style != smsDefault) {
             if ((support_style == smsSnug || support_style == smsGrid) && is_tree(object_config.support_type)) support_style = smsDefault;
@@ -243,6 +246,8 @@ struct SupportParameters {
     // Density of the base support layers.
     coordf_t 				support_density;
     SupportMaterialStyle    support_style = smsDefault;
+    // Fin support (support_type == fins): base layers are printed solid.
+    bool                    fins = false;
 
     // Pattern of the sparse infill including sparse raft layers.
     InfillPattern           base_fill_pattern;

@@ -7844,8 +7844,11 @@ DynamicPrintConfig* DynamicPrintConfig::new_from_defaults_keys(const std::vector
 
 double min_object_distance(const ConfigBase &cfg)
 {
-    const ConfigOptionEnum<PrinterTechnology> *opt_printer_technology = cfg.option<ConfigOptionEnum<PrinterTechnology>>("printer_technology");
-    auto printer_technology = opt_printer_technology ? opt_printer_technology->value : ptUnknown;
+    // Read through the base option + virtual getInt(): a DynamicConfig stores enums as
+    // ConfigOptionEnumGeneric, where a typed downcast would be UB.
+    const ConfigOption *opt_printer_technology = cfg.option("printer_technology");
+    auto printer_technology = (opt_printer_technology != nullptr && opt_printer_technology->type() == coEnum) ?
+        static_cast<PrinterTechnology>(opt_printer_technology->getInt()) : ptUnknown;
 
     double ret = 0.;
 
@@ -7855,13 +7858,13 @@ double min_object_distance(const ConfigBase &cfg)
         //BBS: duplicate_distance seam to be useless
         constexpr double duplicate_distance = 6.;
         auto ecr_opt = cfg.option<ConfigOptionFloat>("extruder_clearance_radius");
-        auto co_opt  = cfg.option<ConfigOptionEnum<PrintSequence>>("print_sequence");
+        const ConfigOption *co_opt = cfg.option("print_sequence");
 
-        if (!ecr_opt || !co_opt)
+        if (!ecr_opt || !co_opt || co_opt->type() != coEnum)
             ret = 0.;
         else {
             // min object distance is max(duplicate_distance, clearance_radius)
-            ret = ((co_opt->value == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
+            ret = ((static_cast<PrintSequence>(co_opt->getInt()) == PrintSequence::ByObject) && ecr_opt->value > duplicate_distance) ?
                       ecr_opt->value : duplicate_distance;
         }
     }
@@ -8004,11 +8007,11 @@ t_config_option_keys DynamicPrintConfig::normalize_fdm_2(int num_objects, int us
     if (used_filaments > 0 && ept_opt != nullptr) {
         ConfigOptionBool* islh_opt = this->option<ConfigOptionBool>("independent_support_layer_height", true);
         //ConfigOptionBool* alh_opt = this->option<ConfigOptionBool>("adaptive_layer_height");
-        ConfigOptionEnum<PrintSequence>* ps_opt = this->option<ConfigOptionEnum<PrintSequence>>("print_sequence");
-
-        ConfigOptionEnum<TimelapseType>* timelapse_opt = this->option<ConfigOptionEnum<TimelapseType>>("timelapse_type");
-        bool is_smooth_timelapse = timelapse_opt != nullptr && timelapse_opt->value == TimelapseType::tlSmooth;
-        if (!is_smooth_timelapse && (used_filaments == 1 || (ps_opt->value == PrintSequence::ByObject && num_objects > 1))) {
+        // Read enums via opt_enum() (virtual getInt()): this DynamicConfig may store them
+        // as ConfigOptionEnumGeneric, where a typed downcast would be UB.
+        const bool by_object = this->has("print_sequence") && this->opt_enum<PrintSequence>("print_sequence") == PrintSequence::ByObject;
+        const bool is_smooth_timelapse = this->has("timelapse_type") && this->opt_enum<TimelapseType>("timelapse_type") == TimelapseType::tlSmooth;
+        if (!is_smooth_timelapse && (used_filaments == 1 || (by_object && num_objects > 1))) {
             if (ept_opt->value) {
                 ept_opt->value = false;
                 changed_keys.push_back("enable_prime_tower");

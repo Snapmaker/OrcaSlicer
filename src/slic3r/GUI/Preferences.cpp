@@ -1,6 +1,7 @@
 #include "Preferences.hpp"
 #include "OptionsGroup.hpp"
 #include "GUI_App.hpp"
+#include "GLAOPass.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
 #include "GLCanvas3D.hpp"
@@ -1242,6 +1243,56 @@ wxWindow* PreferencesDialog::create_general_page()
     std::vector<wxString> CameraNavStyle = {_L("Default"), _L("Touchpad")};
     auto item_camera_navigation_style = create_item_combobox(_L("Camera style"), page, _L("Select camera navigation style.\nDefault: LMB+move for rotation, RMB/MMB+move for panning.\nTouchpad: Alt+move for rotation, Shift+move for panning."), "camera_navigation_style", CameraNavStyle);
 
+    const std::vector<std::string> ao_values = {"off", "auto", "low", "medium", "high"};
+    auto ao_it = std::find(ao_values.begin(), ao_values.end(), app_config->get("render_ao_quality"));
+    auto [ao_sizer, ao_combo] = create_item_combobox_base(_L("Ambient occlusion"), page,
+        _L("Adds contact shading in the Prepare view. Auto uses conservative quality. Specialized editing modes use the original rendering."),
+        "render_ao_quality", {_L("Off"), _L("Auto"), _L("Low"), _L("Medium"), _L("High")},
+        ao_it == ao_values.end() ? 0 : static_cast<unsigned int>(ao_it - ao_values.begin()));
+    ao_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_values](wxCommandEvent& e) {
+        const int index = e.GetSelection();
+        if (index >= 0 && index < static_cast<int>(ao_values.size())) {
+            app_config->set("render_ao_quality", ao_values[index]);
+            app_config->save();
+            if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) canvas->set_as_dirty();
+        }
+        e.Skip();
+    });
+    std::vector<std::string> ao_strength_values = {"0", "0.25", "0.5", "0.6", "0.75", "1"};
+    std::vector<wxString> ao_strength_labels = {"0%", "25%", "50%", "60%", "75%", "100%"};
+    const float ao_strength = GLAOPass::resolve_strength(app_config->get("render_ao_strength"));
+    const auto ao_strength_it = std::find_if(ao_strength_values.begin(), ao_strength_values.end(), [ao_strength](const std::string& value) {
+        return GLAOPass::resolve_strength(value) == ao_strength;
+    });
+    const auto ao_strength_index = static_cast<unsigned int>(ao_strength_it - ao_strength_values.begin());
+    if (ao_strength_it == ao_strength_values.end()) {
+        // Preserve valid custom values imported from a config instead of displaying a different preset.
+        ao_strength_values.push_back(app_config->get("render_ao_strength"));
+        ao_strength_labels.push_back(wxString::Format("%.1f%%", 100.0f * ao_strength));
+    }
+    auto [ao_strength_sizer, ao_strength_combo] = create_item_combobox_base(_L("Ambient occlusion strength"), page,
+        _L("Controls contact shading strength independently of quality. 60% is the default. 0% preserves the original colors."),
+        "render_ao_strength", ao_strength_labels, ao_strength_index);
+    ao_strength_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_strength_values](wxCommandEvent& e) {
+        const int index = e.GetSelection();
+        if (index >= 0 && index < static_cast<int>(ao_strength_values.size())) {
+            app_config->set("render_ao_strength", ao_strength_values[index]);
+            app_config->save();
+            if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) canvas->set_as_dirty();
+        }
+        e.Skip();
+    });
+    auto* ao_status = new wxStaticText(page, wxID_ANY, wxEmptyString);
+    ao_status->Bind(wxEVT_UPDATE_UI, [ao_status](wxUpdateUIEvent&) {
+        auto* canvas = wxGetApp().plater()->get_current_canvas3D();
+        const std::string reason = canvas ? canvas->get_ao_failure_reason() : std::string();
+        const wxString label = reason.empty() ? wxString() : _L("Ambient occlusion unavailable") + ": " + wxString::FromUTF8(reason.c_str());
+        if (ao_status->GetLabel() != label) {
+            ao_status->SetLabel(label);
+            ao_status->GetParent()->Layout();
+        }
+    });
+
     auto item_mouse_zoom_settings = create_item_checkbox(_L("Zoom to mouse position"), page, _L("Zoom in towards the mouse pointer's position in the 3D view, rather than the 2D window center."), 50, "zoom_to_mouse");
     auto item_use_free_camera_settings = create_item_checkbox(_L("Use free camera"), page, _L("If enabled, use free camera. If not enabled, use constrained camera."), 50, "use_free_camera");
 #ifndef __APPLE__
@@ -1375,6 +1426,9 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_currency, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_default_page, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_camera_navigation_style, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(ao_sizer, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(ao_strength_sizer, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(ao_status, 0, wxLEFT | wxTOP, FromDIP(3));
     sizer_page->Add(item_single_instance, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_mouse_zoom_settings, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_use_free_camera_settings, 0, wxTOP, FromDIP(3));

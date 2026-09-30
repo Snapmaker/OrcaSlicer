@@ -367,9 +367,23 @@ void Bed3D::on_change_color_mode(bool is_dark)
     m_is_dark = is_dark;
 }
 
-void Bed3D::render(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, float scale_factor, bool show_axes)
+void Bed3D::render(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, float scale_factor, bool show_axes, SceneRenderStage stage)
 {
-    render_internal(canvas, view_matrix, projection_matrix, bottom, scale_factor, show_axes);
+    if (stage == SceneRenderStage::AOReceiverDepth) {
+        // Only the custom fallback plane is displayed without depth writes.
+        if (m_type == Type::Custom && m_model_filename.empty() && !bottom) {
+            update_bed_triangles();
+            m_triangles.render();
+        }
+        return;
+    }
+    if (stage == SceneRenderStage::Decoration) {
+        m_scale_factor = scale_factor;
+        if (show_axes) render_axes();
+        return;
+    }
+    render_internal(canvas, view_matrix, projection_matrix, bottom, scale_factor,
+        stage == SceneRenderStage::Legacy && show_axes);
 }
 
 void Bed3D::render_internal(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, float scale_factor,

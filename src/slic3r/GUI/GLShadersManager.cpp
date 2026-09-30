@@ -31,13 +31,14 @@ std::pair<bool, std::string> GLShadersManager::init()
     };
 
     auto appendOptionalShader = [&append_shader, &error](const std::string& name,
-                                                          const GLShaderProgram::ShaderFilenames& filenames) {
+                                                          const GLShaderProgram::ShaderFilenames& filenames,
+                                                          const std::initializer_list<std::string_view>& defines = {}) {
         const size_t errorLength = error.size();
-        if (append_shader(name, filenames))
+        if (append_shader(name, filenames, defines))
             return;
 
         error.erase(errorLength);
-        BOOST_LOG_TRIVIAL(warning) << "Selection highlight shader unavailable: " << name;
+        BOOST_LOG_TRIVIAL(warning) << "Optional shader unavailable: " << name;
     };
 
     assert(m_shaders.empty());
@@ -117,13 +118,41 @@ std::pair<bool, std::string> GLShadersManager::init()
     else
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" });
 
-    return { valid, error };
+    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1)) {
+        // Keep runtime handles stable; filenames describe each stage's role.
+        appendOptionalShader("ao_normal", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"});
+        appendOptionalShader("ao_normal_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"}, {"AO_CONFIDENCE_OUTPUT"});
+        appendOptionalShader("gtao", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate_reference.fs"});
+        appendOptionalShader("ao_filter", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_geometry_reference.fs"});
+        appendOptionalShader("ao_upsample", {"140/ao_fullscreen_triangle.vs", "140/ao_upsample_bilateral.fs"});
+        appendOptionalShader("ao_composite", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility.fs"});
+        appendOptionalShader("ao_composite_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+        appendOptionalShader("ao_composite_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_reference.fs"});
+        appendOptionalShader("gtao_reuse", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate.fs"});
+        appendOptionalShader("ao_filter_reuse", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_geometry.fs"});
+        appendOptionalShader("gtao_edges", {"140/ao_fullscreen_triangle.vs", "140/gtao_evaluate.fs"}, {"AO_EDGE_OUTPUT"});
+        appendOptionalShader("ao_denoise_connectivity", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_connectivity.fs"});
+        appendOptionalShader("ao_depth", {"140/ao_receiver_depth.vs", "140/ao_receiver_depth.fs"});
+        if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 0)) {
+            appendOptionalShader("ao_composite_msaa", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"});
+            appendOptionalShader("ao_composite_msaa_confidence", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+            appendOptionalShader("ao_composite_msaa_reference", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_visibility_msaa_reference.fs"});
+        }
+    }
+    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 3)) {
+        const std::pair<std::string, std::string> stages[] = {{"xegtao_depth", "xegtao_prefilter_depth_mips"},
+                                                              {"xegtao_main", "xegtao_evaluate_visibility_edges"},
+                                                              {"xegtao_denoise", "xegtao_denoise_visibility"}};
+        for (const auto& stage : stages) {
+            GLShaderProgram::ShaderFilenames files{};
+            files[static_cast<size_t>(GLShaderProgram::EShaderType::Compute)] = "430/" + stage.second + ".cs";
+            appendOptionalShader(stage.first, files);
+        }
+    }
+    return {valid, error};
 }
 
-void GLShadersManager::shutdown()
-{
-    m_shaders.clear();
-}
+void GLShadersManager::shutdown() { m_shaders.clear(); }
 
 GLShaderProgram* GLShadersManager::get_shader(const std::string& shader_name)
 {
@@ -143,4 +172,3 @@ GLShaderProgram* GLShadersManager::get_current_shader()
 }
 
 } // namespace Slic3r
-

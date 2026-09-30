@@ -1394,6 +1394,29 @@ bool GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
     return lodStateChanged;
 }
 
+void GLVolumeCollection::render_sinking_contours(ERenderType type, const GUI::Camera& camera,
+    std::function<bool(const GLVolume&)> filter_func) const
+{
+    GLShaderProgram* shader = GUI::wxGetApp().get_shader("flat");
+    if (shader == nullptr) return;
+    GLint program = 0, depth_func = 0;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+    glGetIntegerv(GL_DEPTH_FUNC, &depth_func);
+    const GLboolean depth_enabled = glIsEnabled(GL_DEPTH_TEST);
+    glEnable(GL_DEPTH_TEST);
+    shader->start_using();
+    for (const auto& entry : volumes_to_render(volumes, type, camera.get_view_matrix(), filter_func)) {
+        GLVolume& volume = *entry.first;
+        if (!camera.GetFrustum().Intersects(volume.transformed_bounding_box()) ||
+            !volume.is_sinking() || volume.is_below_printbed()) continue;
+        glDepthFunc(volume.hover != GLVolume::HS_None || volume.force_sinking_contours ? GL_ALWAYS : GL_LESS);
+        volume.render_sinking_contours();
+    }
+    glDepthFunc(depth_func);
+    if (!depth_enabled) glDisable(GL_DEPTH_TEST);
+    glUseProgram(program);
+}
+
 bool GLVolumeCollection::check_outside_state(const BuildVolume& build_volume, ModelInstanceEPrintVolumeState* out_state) const
 {
     if (GUI::wxGetApp().plater() == NULL || GUI::wxGetApp().is_recreating_gui()) {

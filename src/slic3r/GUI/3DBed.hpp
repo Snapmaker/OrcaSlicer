@@ -2,6 +2,7 @@
 #define slic3r_3DBed_hpp_
 
 #include "GLTexture.hpp"
+#include "SceneRenderStage.hpp"
 #include "3DScene.hpp"
 #include "GLModel.hpp"
 
@@ -152,7 +153,7 @@ public:
     bool contains(const Point& point) const;
     Point point_projection(const Point& point) const;
 
-    void render(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, float scale_factor, bool show_axes);
+    void render(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, float scale_factor, bool show_axes, SceneRenderStage stage = SceneRenderStage::Legacy);
 
     void on_change_color_mode(bool is_dark);
 

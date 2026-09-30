@@ -450,7 +450,7 @@ public:
     bool contains(const BoundingBoxf3& bb) const;
     bool intersects(const BoundingBoxf3& bb) const;
 
-    void render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_body = false, bool force_background_color = false, HeightLimitMode mode = HEIGHT_LIMIT_NONE, int hover_id = -1, bool render_cali = false, bool show_grid = true);
+    void render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_body = false, bool force_background_color = false, HeightLimitMode mode = HEIGHT_LIMIT_NONE, int hover_id = -1, bool render_cali = false, bool show_grid = true, SceneRenderStage stage = SceneRenderStage::Legacy);
 
     void set_selected();
     void set_unselected();

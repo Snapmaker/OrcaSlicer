@@ -25,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -442,5 +443,49 @@ SCENARIO("The Left and Right seam keys survive a round trip through the config",
             REQUIRE(int(spLeft) == 5);
             REQUIRE(int(spRight) == 6);
         }
+    }
+}
+
+TEST_CASE("Enforced patch length counts wrapping patches without over-counting", "[seam][patch_len]")
+{
+    using SeamPlacerImpl::enforced_patch_length;
+
+    SECTION("non-wrapping (2,7,10) gives 5")
+    {
+        REQUIRE(enforced_patch_length(2, 7, 10) == 5);
+    }
+
+    SECTION("wrapping (7,2,10) gives 5 (the old code gave 15)")
+    {
+        REQUIRE(enforced_patch_length(7, 2, 10) == 5);
+        // Old wrapping formula: first + (perimeter_size - second) = 7 + (10 - 2) = 15.
+        REQUIRE(size_t(7) + (size_t(10) - size_t(2)) == 15);
+    }
+
+    SECTION("layer-offset indices (107,102,10) give 5")
+    {
+        REQUIRE(enforced_patch_length(107, 102, 10) == 5);
+    }
+
+    SECTION("a longer non-wrapping patch must beat a shorter wrapping one")
+    {
+        const std::pair<size_t, size_t> wrapping{7, 2};            // true length 5; old formula 15
+        const std::pair<size_t, size_t> longer_nonwrapping{1, 8}; // length 7
+        const size_t                    perimeter_size = 10;
+
+        std::pair<size_t, size_t> longest{0, 0};
+        const auto                longer_of = [perimeter_size](std::pair<size_t, size_t> a, std::pair<size_t, size_t> b) {
+            return enforced_patch_length(a.first, a.second, perimeter_size) <
+                           enforced_patch_length(b.first, b.second, perimeter_size) ?
+                       b :
+                       a;
+        };
+        longest = longer_of(longest, wrapping);
+        longest = longer_of(longest, longer_nonwrapping);
+
+        REQUIRE(enforced_patch_length(wrapping.first, wrapping.second, perimeter_size) == 5);
+        REQUIRE(enforced_patch_length(longer_nonwrapping.first, longer_nonwrapping.second, perimeter_size) == 7);
+        REQUIRE(longest.first == longer_nonwrapping.first);
+        REQUIRE(longest.second == longer_nonwrapping.second);
     }
 }

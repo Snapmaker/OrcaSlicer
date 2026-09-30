@@ -49,6 +49,7 @@ add_executable(${_TEST_NAME}_tests
 	test_bambu_idle_precool.cpp
 	test_export_stl_part.cpp
 	test_step_export.cpp
+	test_cad_edit.cpp
 	test_elephant_foot_compensation.cpp
 	test_fill_bed_pack.cpp
 	test_elegoo_cc2_profiles.cpp

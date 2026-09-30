@@ -221,6 +221,7 @@ public:
     void                create_objects_ctrl();
     // BBS
     void                update_objects_list_filament_column(size_t filaments_count);
+    void                refresh_layer_range_filament_items();
     void                update_objects_list_filament_column_when_delete_filament(size_t filament_id, size_t filaments_count, int replace_filament_id = -1);
     void                update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id = -1);
     void                update_filament_colors();

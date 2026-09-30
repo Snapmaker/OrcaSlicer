@@ -72,6 +72,12 @@ class GLGizmoMove3D : public GLGizmoBase
     SurfaceHit  m_snap_press_hit;
     bool        m_snap_moved{ false };
     double      m_snap_spin{ 0.0 };
+    // Spin step sizes in degrees (Fine / Coarse), and "always use Fine". Persisted in AppConfig
+    // (move_snap_spin_fine, move_snap_spin_coarse, move_snap_spin_always_fine); loaded lazily.
+    double      m_snap_spin_fine{ 1.0 };
+    double      m_snap_spin_coarse{ 5.0 };
+    bool        m_snap_spin_always_fine{ false };
+    bool        m_snap_prefs_loaded{ false };
     SurfaceHit  m_snap_last_target;
     bool        m_snap_has_target{ false };
     Vec3d       m_snap_start_point{ Vec3d::Zero() };  // picked face at drag start, world coords
@@ -137,6 +143,10 @@ private:
     void snap_update_drag();
     void snap_commit();
     void snap_spin_in_place(double angle);
+    void snap_load_prefs();
+    void snap_save_prefs() const;
+    // Spin amount in degrees (clamped): Fine when "always use fine" is on or `want_fine`, else Coarse.
+    double snap_spin_step_deg(bool want_fine) const;
     void snap_reset();
     void render_snap_faces();
 private:

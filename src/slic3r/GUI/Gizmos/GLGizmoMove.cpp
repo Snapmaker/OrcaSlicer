@@ -17,6 +17,9 @@
 
 #include <wx/utils.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace Slic3r {
 namespace GUI {
 
@@ -640,12 +643,70 @@ void GLGizmoMove3D::snap_update_drag()
     m_snap_moved = true;
 }
 
+namespace {
+constexpr double SNAP_SPIN_MIN_DEG = 0.1;
+constexpr double SNAP_SPIN_MAX_DEG = 180.0;
+constexpr double SNAP_SPIN_FINE_DEFAULT_DEG   = 1.0;
+constexpr double SNAP_SPIN_COARSE_DEFAULT_DEG = 5.0;
+
+double snap_spin_clamp(double deg, double fallback)
+{
+    if (!std::isfinite(deg))
+        return fallback;
+    return std::clamp(deg, SNAP_SPIN_MIN_DEG, SNAP_SPIN_MAX_DEG);
+}
+
+// Reads a degrees value from AppConfig; anything absent, unparsable or out of range gives `fallback`.
+double snap_spin_from_config(const char* key, double fallback)
+{
+    AppConfig* cfg = wxGetApp().app_config;
+    if (cfg == nullptr)
+        return fallback;
+    const std::string text = cfg->get(key);
+    if (text.empty())
+        return fallback;
+    char* end = nullptr;
+    const double value = std::strtod(text.c_str(), &end);
+    if (end == text.c_str() || !std::isfinite(value) || value < SNAP_SPIN_MIN_DEG || value > SNAP_SPIN_MAX_DEG)
+        return fallback;
+    return value;
+}
+} // namespace
+
+void GLGizmoMove3D::snap_load_prefs()
+{
+    if (m_snap_prefs_loaded)
+        return;
+    m_snap_prefs_loaded = true;
+    m_snap_spin_fine        = snap_spin_from_config("move_snap_spin_fine", SNAP_SPIN_FINE_DEFAULT_DEG);
+    m_snap_spin_coarse      = snap_spin_from_config("move_snap_spin_coarse", SNAP_SPIN_COARSE_DEFAULT_DEG);
+    AppConfig* cfg = wxGetApp().app_config;
+    m_snap_spin_always_fine = cfg != nullptr && cfg->get("move_snap_spin_always_fine") == "1";
+}
+
+void GLGizmoMove3D::snap_save_prefs() const
+{
+    AppConfig* cfg = wxGetApp().app_config;
+    if (cfg == nullptr)
+        return;
+    cfg->set("move_snap_spin_fine", float_to_string_decimal_point(m_snap_spin_fine));
+    cfg->set("move_snap_spin_coarse", float_to_string_decimal_point(m_snap_spin_coarse));
+    cfg->set("move_snap_spin_always_fine", m_snap_spin_always_fine ? "1" : "0");
+}
+
+double GLGizmoMove3D::snap_spin_step_deg(bool want_fine) const
+{
+    return (m_snap_spin_always_fine || want_fine) ? snap_spin_clamp(m_snap_spin_fine, SNAP_SPIN_FINE_DEFAULT_DEG) :
+                                                   snap_spin_clamp(m_snap_spin_coarse, SNAP_SPIN_COARSE_DEFAULT_DEG);
+}
+
 bool GLGizmoMove3D::on_mouse_wheel_snap(const wxMouseEvent& evt)
 {
     if (!m_snap_enabled || m_snap_state != SnapState::Dragging)
         return false;
     const double notches = (double) evt.GetWheelRotation() / (double) std::max(1, evt.GetWheelDelta());
-    const double step    = evt.ShiftDown() ? 5.0 : 15.0;
+    snap_load_prefs();
+    const double step    = snap_spin_step_deg(evt.ShiftDown()); // Shift = Fine, otherwise Coarse
     m_snap_spin += notches * step * PI / 180.0;
     if (m_snap_has_target) {
         snap_apply(snap_delta(m_snap_start_point, m_snap_start_normal, m_snap_last_target.point, m_snap_last_target.normal, m_snap_spin));
@@ -786,23 +847,75 @@ void GLGizmoMove3D::render_snap_to_surface_ui(ImGuiWrapper* imgui, float wrap_wi
         imgui->text_wrapped(_L("Click a face of the selected object to use as the contact face."), wrap_width);
         return;
     }
-    imgui->text_wrapped(_L("Drag onto another object's surface. Scroll while dragging to spin (Shift for finer steps). "
-                           "Click another face to change the contact face."),
+    imgui->text_wrapped(_L("Drag onto another object's surface. Scroll while dragging to spin by the Coarse amount "
+                           "(hold Shift for the Fine amount). Click another face to change the contact face."),
                         wrap_width);
+
+    snap_load_prefs();
+
+    // One row:  Spin  [Fine] [Coarse]  [+] [-]  [Clear Face]   with Fine/Coarse headers above the boxes.
+    const float em       = ImGui::GetFontSize();
+    const float gap      = em * 0.9f;
+    const float box_w    = em * 3.2f;
+    const float label_w  = imgui->calc_text_size(_L("Spin")).x;
+    const float x0       = ImGui::GetCursorPosX();
+    const float x_fine   = x0 + label_w + gap;
+    const float x_coarse = x_fine + box_w + gap * 0.6f;
+    const float x_plus   = x_coarse + box_w + gap;
+
+    ImGui::SetCursorPosX(x_fine);
+    imgui->text(_L("Fine"));
+    ImGui::SameLine(x_coarse);
+    imgui->text(_L("Coarse"));
+
+    const bool dark = wxGetApp().dark_mode();
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, dark ? ImVec4(62 / 255.f, 62 / 255.f, 69 / 255.f, 1.f) : ImVec4(238 / 255.f, 238 / 255.f, 238 / 255.f, 1.f));
+    auto spin_box = [&](const char* id, double& value, double fallback, const wxString& tip) {
+        ImGui::SetNextItemWidth(box_w);
+        ImGui::InputDouble(id, &value, 0.0, 0.0, "%g", ImGuiInputTextFlags_CharsDecimal);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            value = snap_spin_clamp(value, fallback);
+            snap_save_prefs();
+        }
+        if (ImGui::IsItemHovered())
+            imgui->tooltip(tip, wrap_width);
+    };
     ImGui::AlignTextToFramePadding();
     imgui->text(_L("Spin"));
-    ImGui::SameLine();
-    if (imgui->button(wxString::FromUTF8("-15\xC2\xB0")))
-        snap_spin_in_place(-15.0 * PI / 180.0);
-    ImGui::SameLine();
-    if (imgui->button(wxString::FromUTF8("+15\xC2\xB0")))
-        snap_spin_in_place(15.0 * PI / 180.0);
-    ImGui::SameLine();
-    if (imgui->button(_L("Clear face"))) {
+    ImGui::SameLine(x_fine);
+    spin_box("##snap_spin_fine", m_snap_spin_fine, SNAP_SPIN_FINE_DEFAULT_DEG,
+             _L("Fine spin step in degrees (0.1 to 180). Used by Shift+scroll, or by everything when \"Always use Fine\" is on."));
+    ImGui::SameLine(x_coarse);
+    spin_box("##snap_spin_coarse", m_snap_spin_coarse, SNAP_SPIN_COARSE_DEFAULT_DEG,
+             _L("Coarse spin step in degrees (0.1 to 180). Used by scroll and by the + and - buttons."));
+    ImGui::PopStyleColor();
+
+    ImGui::SameLine(x_plus);
+    if (imgui->button(wxString::FromUTF8("+")))
+        snap_spin_in_place(snap_spin_step_deg(false) * PI / 180.0);
+    if (ImGui::IsItemHovered())
+        imgui->tooltip(_L("Spin the snapped selection in place by the Coarse amount (Fine when \"Always use Fine\" is on)."), wrap_width);
+    ImGui::SameLine(0, gap * 0.6f);
+    if (imgui->button(wxString::FromUTF8("-")))
+        snap_spin_in_place(-snap_spin_step_deg(false) * PI / 180.0);
+    if (ImGui::IsItemHovered())
+        imgui->tooltip(_L("Spin the snapped selection in place the other way by the Coarse amount (Fine when \"Always use Fine\" is on)."), wrap_width);
+    ImGui::SameLine(0, gap);
+    if (imgui->button(_L("Clear Face"))) {
         m_snap_face.valid = false;
         m_snap_face.region.reset();
         m_parent.set_as_dirty();
     }
+
+    bool always_fine = m_snap_spin_always_fine;
+    if (imgui->checkbox(_L("Always use Fine"), always_fine)) {
+        m_snap_spin_always_fine = always_fine;
+        snap_save_prefs();
+    }
+    if (ImGui::IsItemHovered())
+        imgui->tooltip(_L("Make the + and - buttons and the scroll wheel all use the Fine amount. Without it, they use Coarse "
+                          "and Shift+scroll uses Fine."),
+                       wrap_width);
 }
 
 } // namespace GUI

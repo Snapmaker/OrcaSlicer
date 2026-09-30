@@ -549,3 +549,45 @@ TEST_CASE("camera_for_printer returns empty when nothing matches", "[RemoteHub][
     REQUIRE(camera_for_printer("printer-1", "", cams).empty());
     REQUIRE(camera_for_printer("printer-1", "10.0.0.206", {}).empty());
 }
+
+// ---- merge_printer_row -------------------------------------------------------------------
+
+namespace {
+const char* const LIVE_ROW = R"({"id":"X1C","kind":"bambu","connected":true,"bed_temp":60,
+    "ams":[{"id":"0","trays":[{"id":"0","exists":true,"type":"PLA","can_load":true,"can_unload":false}]}],
+    "ext_spools":[{"ams_id":"254","exists":true,"type":"PETG","can_load":true,"can_unload":false}]})";
+const char* const IDLE_ROW = R"({"id":"X1C","kind":"bambu","connected":false,"bed_temp":0,"ams":[],"ext_spools":[{"ams_id":"254","exists":false}]})";
+} // namespace
+
+TEST_CASE("merge_printer_row keeps the connected window's fresh row over another window's idle one", "[RemoteHub]")
+{
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, true, IDLE_ROW, 200);
+    REQUIRE(m.keep_cached);
+}
+
+TEST_CASE("merge_printer_row takes the same window's row, and a row once the live one is stale", "[RemoteHub]")
+{
+    REQUIRE_FALSE(merge_printer_row(LIVE_ROW, 100, true, IDLE_ROW, 100).keep_cached);
+    REQUIRE_FALSE(merge_printer_row(LIVE_ROW, 100, false, IDLE_ROW, 200).keep_cached);
+}
+
+TEST_CASE("merge_printer_row carries the last AMS reading into a row with none, load and unload off", "[RemoteHub]")
+{
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, false, IDLE_ROW, 200);
+    REQUIRE_FALSE(m.keep_cached);
+    const nlohmann::json row = nlohmann::json::parse(m.row);
+    REQUIRE(row["bed_temp"] == 0); // everything else is the incoming row's
+    REQUIRE(row["ams"][0]["trays"][0]["type"] == "PLA");
+    REQUIRE(row["ams"][0]["trays"][0]["can_load"] == false);
+    REQUIRE(row["ext_spools"][0]["type"] == "PETG");
+    REQUIRE(row["ext_spools"][0]["can_load"] == false);
+    REQUIRE(row["ext_spools"][0].contains("filament_why"));
+}
+
+TEST_CASE("merge_printer_row never overrides a row that reports filament of its own", "[RemoteHub]")
+{
+    const char* const other = R"({"id":"X1C","kind":"bambu","connected":true,
+        "ams":[{"id":"0","trays":[{"id":"0","exists":true,"type":"ABS"}]}]})";
+    const MergedPrinterRow m = merge_printer_row(LIVE_ROW, 100, false, other, 200);
+    REQUIRE(nlohmann::json::parse(m.row)["ams"][0]["trays"][0]["type"] == "ABS");
+}

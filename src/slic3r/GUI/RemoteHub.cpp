@@ -1166,6 +1166,59 @@ std::string Testing::camera_for_printer(const std::string& printer_id, const std
     return {};
 }
 
+static bool row_has_filament(const json& row)
+{
+    if (row.contains("ams") && row["ams"].is_array())
+        for (const json& u : row["ams"])
+            if (u.is_object() && u.contains("trays") && u["trays"].is_array() && !u["trays"].empty()) return true;
+    if (row.contains("ext_spools") && row["ext_spools"].is_array())
+        for (const json& t : row["ext_spools"])
+            if (t.is_object() && t.value("exists", false)) return true;
+    return false;
+}
+
+static void last_reading_only(json& slot)
+{
+    slot["can_load"]     = false;
+    slot["can_unload"]   = false;
+    slot["filament_why"] = "The last reading: the PC is not connected to this printer right now.";
+}
+
+Testing::MergedPrinterRow Testing::merge_printer_row(const std::string& cached_row_json, long cached_instance, bool cached_fresh,
+                                                     const std::string& incoming_row_json, long incoming_instance)
+{
+    MergedPrinterRow out;
+    out.row = incoming_row_json;
+    try {
+        json incoming = json::parse(incoming_row_json);
+        if (cached_row_json.empty()) return out;
+        const json cached = json::parse(cached_row_json);
+        if (!cached.is_object() || !incoming.is_object()) return out;
+        const bool bambu = incoming.value("kind", std::string()) == "bambu";
+        if (bambu && cached_fresh && cached_instance != incoming_instance && cached.value("connected", false) &&
+            !incoming.value("connected", false)) {
+            out.keep_cached = true;
+            return out;
+        }
+        if (!row_has_filament(incoming) && row_has_filament(cached)) {
+            for (const char* k : { "ams", "ext_spools" }) {
+                if (!cached.contains(k)) continue;
+                json v = cached[k];
+                if (v.is_array())
+                    for (json& e : v) {
+                        if (!e.is_object()) continue;
+                        if (std::string(k) == "ams" && e.contains("trays") && e["trays"].is_array())
+                            for (json& t : e["trays"]) if (t.is_object()) last_reading_only(t);
+                        if (std::string(k) == "ext_spools") last_reading_only(e);
+                    }
+                incoming[k] = v;
+            }
+            out.row = incoming.dump();
+        }
+    } catch (...) {}
+    return out;
+}
+
 // The pairing document's origins and identity, pure so the shape can be tested without a hub.
 // Three named origins, one of them always empty today, and the public half of the hub identity.
 std::string Testing::pair_identity_json(const std::string& lan_url, const std::string& remote_url,
@@ -2594,10 +2647,16 @@ void HubServer::poll_printers()
             const std::string id = row.value("id", std::string());
             if (id.empty() || id.size() > 200) continue;
             CachedPrinter& c = m_printers[id];
-            c.row      = row;
+            reported.insert(id);
+            // Several windows report the same printer; keep the one that is connected to it
+            // (Testing::merge_printer_row).
+            const bool fresh = c.at > 0 && at - c.at <= PRINTERS_STALE_MS;
+            const Testing::MergedPrinterRow m = Testing::merge_printer_row(
+                c.row.is_object() ? c.row.dump() : std::string(), c.instance, fresh, row.dump(), inst.pid);
+            if (m.keep_cached) continue;
+            try { c.row = json::parse(m.row); } catch (...) { c.row = row; }
             c.at       = at;
             c.instance = inst.pid;
-            reported.insert(id);
         }
         // A Snapmaker row this window (or the hub's previous run) reported and no longer does is
         // gone, not stale: the Device tab's connect card after a disconnect, or one that now gives

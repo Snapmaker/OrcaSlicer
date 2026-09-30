@@ -282,7 +282,7 @@ TEST_CASE("A laid part's face lands on the bed even when the object already rest
                                                       Geometry::translation_transform(-center)));
     check_on_bed(*object); // the plate is on it, so the object is
     const BoundingBoxf3 before = part_bounding_box(*object, 1);
-    CHECK(before.min.z() > 10.);
+    CHECK(before.min.z() > 5.); // standing on edge it reaches down to z = 7
 
     SECTION("plain instance") {
         lay_part_on_largest_face(*object, 1);
@@ -336,7 +336,7 @@ TEST_CASE("Dropping after a part rotation puts every instance of the object on t
     REQUIRE(idx >= 0);
     block.set_transformation(Geometry::Transformation(lay_part_on_face_matrix(block, block.get_matrix(), object.instances.front()->get_matrix(), planes[idx].normal)));
     object.invalidate_bounding_box();
-    CHECK(bed_drop_shift(object, 0) != 0.);
+    CHECK(bed_drop_shift(object, 1) != 0.); // the sunk instance is off the bed (the part was put on it for the first)
 
     drop_object_to_bed(object);
     for (size_t i = 0; i < 2; ++i) {

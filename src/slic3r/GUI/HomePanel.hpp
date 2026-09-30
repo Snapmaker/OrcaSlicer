@@ -1,6 +1,8 @@
 #ifndef slic3r_GUI_HomePanel_hpp_
 #define slic3r_GUI_HomePanel_hpp_
 
+#include <atomic>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -9,6 +11,8 @@
 #include <wx/panel.h>
 
 #include <nlohmann/json.hpp>
+
+#include "slic3r/Utils/LibraryIndex.hpp"
 
 class wxStaticText;
 class wxBoxSizer;
@@ -22,9 +26,9 @@ namespace GUI {
 class WebViewPanel;
 
 // The Home tab: a local page (resources/web/home) with a side menu of sections - Recent (the
-// recent projects) and Print History (the G-code archive). The page only draws; everything on disk
-// is read here and every action runs here, for files this panel itself listed
-// (Utils/HomeTabLogic.hpp has the rules).
+// recent projects), Library (the model files in folders the user picked, Utils/LibraryIndex.hpp)
+// and Print History (the G-code archive). The page only draws; everything on disk is read here and
+// every action runs here, for files this panel itself listed (Utils/HomeTabLogic.hpp has the rules).
 //
 // The old flutter start page (WebViewPanel: Snapmaker's model library) is kept behind it for the
 // code that still talks to it: it is built only on demand - File > Start page, EVT_LOAD_URL - and
@@ -69,6 +73,23 @@ private:
     void reveal_archived(const std::string& id);
     void delete_archived(const std::string& id);
 
+    // Library. The folders and the hidden files live in app_config; the index and the covers in
+    // <data_dir>/library. The index is loaded once, then kept here and rescanned off the GUI thread.
+    std::vector<Library::Folder> library_folders() const;
+    void                         save_library_folders(const std::vector<Library::Folder>& folders);
+    std::set<std::string>        library_hidden() const;
+    void                         save_library_hidden(const std::set<std::string>& hidden);
+    void                         library_refresh(bool force_scan);
+    void                         library_scan();
+    void                         send_library();
+    void                         send_library_thumbnails(const std::vector<std::string>& ids);
+    std::string                  library_path(const std::string& id) const; // "" unless listed and present
+    void                         library_open(const std::string& id, bool import);
+    void                         library_hide(const std::string& id);
+    void                         library_add_folder();
+    void                         library_update_folder(const nlohmann::json& msg);
+    void                         library_remove_folder(const std::string& path);
+
     wxBoxSizer*   m_sizer { nullptr };
     wxPanel*      m_strip { nullptr };
     wxStaticText* m_strip_label { nullptr };
@@ -83,6 +104,15 @@ private:
     std::vector<std::string> m_recent_paths;
     std::set<std::string>    m_history_ids;
     unsigned                 m_history_generation { 0 };
+    std::map<std::string, std::string> m_library_paths; // id -> path
+
+    Library::Index m_library;
+    bool           m_library_loading { false };
+    bool           m_library_loaded { false };
+    bool           m_library_scanning { false };
+    bool           m_library_rescan { false }; // asked for again while a scan ran
+    size_t         m_library_seen { 0 };       // files seen by the running scan
+    std::shared_ptr<std::atomic<bool>> m_library_cancel { std::make_shared<std::atomic<bool>>(false) };
 
     // Worker threads report back through CallAfter only while this is alive.
     std::shared_ptr<bool> m_alive { std::make_shared<bool>(true) };

@@ -10,7 +10,7 @@ using json = nlohmann::json;
 
 bool valid_section(const std::string& section)
 {
-    return section == "recent" || section == "history";
+    return section == "recent" || section == "library" || section == "history";
 }
 
 std::string section_or_default(const std::string& section)

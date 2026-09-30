@@ -13,6 +13,7 @@
 #include "Widgets/StateColor.hpp"
 #include "Widgets/WebView.hpp"
 
+#include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/Utils/HomeTabLogic.hpp"
 
@@ -22,11 +23,15 @@
 #include <boost/nowide/fstream.hpp>
 #include <boost/property_tree/ptree.hpp> // MainFrame::get_recent_projects() has a wptree overload
 
+#include <algorithm>
 #include <climits>
+#include <ctime>
 #include <sstream>
 #include <thread>
 
+#include <wx/dirdlg.h>
 #include <wx/sizer.h>
+#include <wx/stdpaths.h>
 #include <wx/utils.h>
 #include <wx/stattext.h>
 #include <wx/webview.h>
@@ -38,6 +43,11 @@ namespace fs = boost::filesystem;
 using json   = nlohmann::json;
 
 static constexpr const char* SECTION_KEY = "home_tab_section";
+static constexpr const char* LIBRARY_FOLDERS_KEY = "home_library_folders";
+static constexpr const char* LIBRARY_SEEDED_KEY  = "home_library_seeded"; // Downloads was added once
+static constexpr const char* LIBRARY_HIDDEN_KEY  = "home_library_hidden";
+// Coming back to Home rescans the Library when the last scan is older than this; Refresh always does.
+static constexpr int64_t LIBRARY_STALE_S = 120;
 // A plate thumbnail the archive wrote is a few kB; anything this big is not one.
 static constexpr uintmax_t MAX_THUMBNAIL_BYTES = 4 * 1024 * 1024;
 
@@ -90,6 +100,7 @@ HomePanel::HomePanel(wxWindow* parent)
 HomePanel::~HomePanel()
 {
     *m_alive = false;
+    *m_library_cancel = true;
 }
 
 void HomePanel::ensure_browser()
@@ -159,6 +170,7 @@ void HomePanel::show_home()
     if (m_selected && m_page_ready) {
         send_recent();
         send_history();
+        library_refresh(false);
     }
 }
 
@@ -180,6 +192,7 @@ void HomePanel::on_tab_changed(bool selected)
     if (m_page_ready) {
         send_recent();
         send_history();
+        library_refresh(false);
     }
 }
 
@@ -268,6 +281,9 @@ void HomePanel::handle(const json& msg)
         send_init();
         send_recent();
         send_history();
+        if (m_library_loaded)
+            send_library(); // the page was reloaded (a theme change): it starts empty
+        library_refresh(false);
     } else if (command == "home_section") {
         const std::string section = msg.value("section", std::string());
         if (HomeTab::valid_section(section))
@@ -275,6 +291,7 @@ void HomePanel::handle(const json& msg)
     } else if (command == "home_refresh") {
         send_recent();
         send_history();
+        library_refresh(true);
     } else if (command == "recent_open") {
         if (HomeTab::is_listed(path, m_recent_paths))
             open_recent(path);
@@ -310,6 +327,38 @@ void HomePanel::handle(const json& msg)
             delete_archived(id);
     } else if (command == "history_settings") {
         wxGetApp().open_preferences();
+    } else if (command == "library_scan") {
+        library_refresh(true);
+    } else if (command == "library_thumbs") {
+        std::vector<std::string> ids;
+        if (msg.contains("ids") && msg["ids"].is_array())
+            for (const json& v : msg["ids"])
+                if (v.is_string() && m_library_paths.count(v.get<std::string>()) && ids.size() < 200)
+                    ids.push_back(v.get<std::string>());
+        if (!ids.empty())
+            send_library_thumbnails(ids);
+    } else if (command == "library_open") {
+        if (m_library_paths.count(id))
+            library_open(id, false);
+    } else if (command == "library_import") {
+        if (m_library_paths.count(id))
+            library_open(id, true);
+    } else if (command == "library_reveal") {
+        const std::string p = library_path(id);
+        if (!p.empty())
+            desktop_open_any_folderEx(fs::path(p).make_preferred().string());
+    } else if (command == "library_hide") {
+        if (m_library_paths.count(id))
+            library_hide(id);
+    } else if (command == "library_unhide_all") {
+        save_library_hidden({});
+        library_refresh(true);
+    } else if (command == "library_add_folder") {
+        library_add_folder();
+    } else if (command == "library_update_folder") {
+        library_update_folder(msg);
+    } else if (command == "library_remove_folder") {
+        library_remove_folder(path);
     } else {
         BOOST_LOG_TRIVIAL(warning) << "HomePanel: unknown command \"" << command << "\"";
     }
@@ -355,6 +404,36 @@ void HomePanel::send_init()
     s["sort_newest"]       = _u8L("Newest first");
     s["sort_oldest"]       = _u8L("Oldest first");
     s["sort_name"]         = _u8L("Name");
+    s["sort_added"]        = _u8L("Recently added");
+    s["sort_size"]         = _u8L("Largest first");
+    s["library"]           = _u8L("Library");
+    s["folders"]           = _u8L("Folders");
+    s["manage_folders"]    = _u8L("Manage folders");
+    s["add_folder"]        = _u8L("Add folder");
+    s["remove"]            = _u8L("Remove");
+    s["done"]              = _u8L("Done");
+    s["category"]          = _u8L("Category");
+    s["vendor"]            = _u8L("Vendor");
+    s["type"]              = _u8L("Type");
+    s["none"]              = _u8L("None");
+    s["include_subfolders"] = _u8L("Include subfolders");
+    s["folders_hint"]      = _u8L("Every model file in these folders shows up in the Library. Give a folder a Category and a Vendor to filter by them.");
+    s["files"]             = _u8L("files");
+    s["offline"]           = _u8L("Not reachable, showing the files from the last scan");
+    s["not_scanned"]       = _u8L("Not scanned yet");
+    s["scanning"]          = _u8L("Scanning...");
+    s["scanned"]           = _u8L("Scanned");
+    s["library_empty"]     = _u8L("No model files in your Library folders yet.");
+    s["library_no_folders"] = _u8L("Add the folders where you keep your models to browse them here.");
+    s["add_to_plate"]      = _u8L("Add to current project");
+    s["hide"]              = _u8L("Hide from Library");
+    s["hidden"]            = _u8L("hidden");
+    s["show_hidden"]       = _u8L("Show them again");
+    s["sliced"]            = _u8L("Sliced");
+    s["plates"]            = _u8L("plates");
+    s["by"]                = _u8L("by");
+    s["clear_filters"]     = _u8L("Clear filters");
+    s["all"]               = _u8L("All");
 
     json init;
     init["type"]    = "init";
@@ -541,6 +620,297 @@ void HomePanel::delete_archived(const std::string& id)
     if (!GcodeArchive::remove(id))
         BOOST_LOG_TRIVIAL(warning) << "HomePanel: removing archive record " << id << " found no sidecar";
     send_history();
+}
+
+// ------------------------------------------------------------------------------ library ----
+
+std::vector<Library::Folder> HomePanel::library_folders() const
+{
+    AppConfig* cfg = wxGetApp().app_config;
+    if (cfg->get(LIBRARY_SEEDED_KEY) != "1") {
+        // The Library starts with the Downloads folder, once: removing it later sticks.
+        std::vector<Library::Folder> folders = Library::folders_from_json(cfg->get(LIBRARY_FOLDERS_KEY));
+        const std::string downloads = into_u8(wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads));
+        boost::system::error_code ec;
+        if (!downloads.empty() && fs::is_directory(fs::path(downloads), ec)) {
+            Library::Folder f;
+            f.path = downloads;
+            folders.insert(folders.begin(), f);
+        }
+        cfg->set(LIBRARY_FOLDERS_KEY, Library::folders_to_json(folders));
+        cfg->set(LIBRARY_SEEDED_KEY, "1");
+    }
+    return Library::folders_from_json(cfg->get(LIBRARY_FOLDERS_KEY));
+}
+
+void HomePanel::save_library_folders(const std::vector<Library::Folder>& folders)
+{
+    wxGetApp().app_config->set(LIBRARY_FOLDERS_KEY, Library::folders_to_json(folders));
+}
+
+std::set<std::string> HomePanel::library_hidden() const
+{
+    std::set<std::string> hidden;
+    try {
+        const json j = json::parse(wxGetApp().app_config->get(LIBRARY_HIDDEN_KEY));
+        if (j.is_array())
+            for (const json& v : j)
+                if (v.is_string())
+                    hidden.insert(v.get<std::string>());
+    } catch (...) {}
+    return hidden;
+}
+
+void HomePanel::save_library_hidden(const std::set<std::string>& hidden)
+{
+    json j = json::array();
+    for (const std::string& p : hidden)
+        j.push_back(p);
+    wxGetApp().app_config->set(LIBRARY_HIDDEN_KEY, j.dump());
+}
+
+static std::string library_cache_dir()
+{
+    return (fs::path(data_dir()) / "library").string();
+}
+
+void HomePanel::library_refresh(bool force_scan)
+{
+    if (m_browser == nullptr || !m_page_ready)
+        return;
+    if (!m_library_loaded) {
+        // First time: what the last run found is shown at once, then the folders are scanned again.
+        if (m_library_loading)
+            return;
+        m_library_loading = true;
+        std::weak_ptr<bool> alive = m_alive;
+        std::thread([this, alive]() {
+            Library::Index index = Library::load_index(library_cache_dir());
+            wxGetApp().CallAfter([this, alive, index = std::move(index)]() mutable {
+                if (alive.expired())
+                    return;
+                m_library         = std::move(index);
+                m_library_loading = false;
+                m_library_loaded  = true;
+                send_library();
+                library_scan();
+            });
+        }).detach();
+        return;
+    }
+    if (force_scan || int64_t(std::time(nullptr)) - m_library.scanned_at > LIBRARY_STALE_S)
+        library_scan();
+}
+
+void HomePanel::library_scan()
+{
+    if (!m_library_loaded)
+        return;
+    if (m_library_scanning) {
+        m_library_rescan = true;
+        return;
+    }
+    m_library_scanning = true;
+    m_library_rescan   = false;
+    m_library_seen     = 0;
+    send({{"type", "library_progress"}, {"scanning", true}, {"files", 0}});
+
+    const std::vector<Library::Folder> folders  = library_folders();
+    const std::set<std::string>        hidden   = library_hidden();
+    std::shared_ptr<std::atomic<bool>> cancel   = m_library_cancel;
+    std::weak_ptr<bool>                alive    = m_alive;
+    Library::Index                     previous = m_library;
+    std::thread([this, alive, cancel, folders, hidden, previous = std::move(previous)]() {
+        const std::string cache = library_cache_dir();
+        auto progress = [this, alive](size_t seen) {
+            wxGetApp().CallAfter([this, alive, seen]() {
+                if (alive.expired() || !m_library_scanning)
+                    return;
+                m_library_seen = seen;
+                send({{"type", "library_progress"}, {"scanning", true}, {"files", seen}});
+            });
+        };
+        Library::Index index = Library::scan(folders, previous, hidden, cache, int64_t(std::time(nullptr)), *cancel, progress);
+        if (*cancel)
+            return; // the panel is going away: a partial index is not saved
+        if (!Library::save_index(cache, index))
+            BOOST_LOG_TRIVIAL(warning) << "HomePanel: could not save the Library index in " << cache;
+        wxGetApp().CallAfter([this, alive, index = std::move(index)]() mutable {
+            if (alive.expired())
+                return;
+            m_library          = std::move(index);
+            m_library_scanning = false;
+            send_library();
+            if (m_library_rescan)
+                library_scan(); // the folders changed while this one ran
+        });
+    }).detach();
+}
+
+void HomePanel::send_library()
+{
+    const std::vector<Library::Folder> folders = library_folders();
+    const std::set<std::string>        hidden  = library_hidden();
+
+    std::map<std::string, const Library::Folder*> by_path;
+    for (const Library::Folder& f : folders)
+        by_path[f.path] = &f;
+    std::map<std::string, const Library::FolderState*> states;
+    for (const Library::FolderState& st : m_library.folders)
+        states[st.path] = &st;
+
+    json folder_list = json::array();
+    for (const Library::Folder& f : folders) {
+        auto st = states.find(f.path);
+        folder_list.push_back({{"path", f.path},
+                               {"recursive", f.recursive},
+                               {"category", f.category},
+                               {"vendor", f.vendor},
+                               {"scanned", st != states.end()},
+                               {"online", st == states.end() || st->second->online},
+                               {"files", st == states.end() ? 0 : st->second->files}});
+    }
+
+    // Tags come from the folders as they are now, so an edit shows before the next scan; files of a
+    // folder that was removed, or that the user hid, are left out.
+    m_library_paths.clear();
+    json items = json::array();
+    for (const Library::Entry& e : m_library.entries) {
+        if (hidden.count(e.path))
+            continue;
+        auto f = by_path.find(e.root);
+        if (f == by_path.end())
+            continue;
+        json item        = Library::page_item(e);
+        item["category"] = f->second->category;
+        item["vendor"]   = f->second->vendor;
+        items.push_back(std::move(item));
+        m_library_paths[e.id] = e.path;
+    }
+    send({{"type", "library"},
+          {"folders", folder_list},
+          {"items", items},
+          {"hidden", hidden.size()},
+          {"scanning", m_library_scanning},
+          {"files_seen", m_library_seen},
+          {"scanned_at", m_library.scanned_at}});
+}
+
+void HomePanel::send_library_thumbnails(const std::vector<std::string>& ids)
+{
+    std::weak_ptr<bool> alive = m_alive;
+    std::thread([this, alive, ids]() {
+        const std::string cache  = library_cache_dir();
+        json              images = json::object();
+        for (const std::string& id : ids) {
+            // Only ids this panel listed reach here; the cover is read from the cache by id.
+            const std::string uri = HomeTab::png_data_uri(read_small_file(Library::thumbnail_path(cache, id)));
+            if (!uri.empty())
+                images[id] = uri;
+        }
+        if (images.empty())
+            return;
+        wxGetApp().CallAfter([this, alive, images = std::move(images)]() {
+            if (!alive.expired())
+                send({{"type", "library_thumbs"}, {"images", images}});
+        });
+    }).detach();
+}
+
+std::string HomePanel::library_path(const std::string& id) const
+{
+    auto it = m_library_paths.find(id);
+    return it == m_library_paths.end() ? std::string() : it->second;
+}
+
+void HomePanel::library_open(const std::string& id, bool import)
+{
+    const std::string path   = library_path(id);
+    Plater*           plater = wxGetApp().plater();
+    if (path.empty() || plater == nullptr)
+        return;
+    boost::system::error_code ec;
+    if (!fs::is_regular_file(fs::path(path), ec)) {
+        show_error(this, _L("The file is no longer there."));
+        library_refresh(true);
+        return;
+    }
+    if (plater->is_background_process_slicing()) {
+        show_info(this, _L("new or open project file is not allowed during the slicing process!"), _L("Open Project"));
+        return;
+    }
+    if (!import && Library::file_type(fs::path(path).filename().string()) == "3mf") {
+        // Asks about unsaved changes first, like Open Project.
+        wxGetApp().request_open_project(path);
+        return;
+    }
+    // A mesh, or "Add to current project": the same as dropping the file on the plater (a 3MF asks
+    // whether to open it as a project or take its geometry only).
+    wxArrayString files;
+    files.Add(from_u8(path));
+    if (plater->load_files(files))
+        if (MainFrame* mf = wxGetApp().mainframe)
+            mf->select_tab(size_t(MainFrame::tp3DEditor));
+}
+
+void HomePanel::library_hide(const std::string& id)
+{
+    const std::string path = library_path(id);
+    if (path.empty())
+        return;
+    std::set<std::string> hidden = library_hidden();
+    hidden.insert(path);
+    save_library_hidden(hidden);
+    send_library();
+}
+
+void HomePanel::library_add_folder()
+{
+    wxDirDialog dlg(this, _L("Add a folder to the Library"), wxEmptyString, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+    if (dlg.ShowModal() != wxID_OK)
+        return;
+    std::vector<Library::Folder> folders = library_folders();
+    Library::Folder              f;
+    f.path = into_u8(dlg.GetPath());
+    folders.push_back(f);
+    // Normalized and de-duplicated the way it is stored.
+    folders = Library::folders_from_json(Library::folders_to_json(folders));
+    save_library_folders(folders);
+    send_library();
+    library_scan();
+}
+
+void HomePanel::library_update_folder(const json& msg)
+{
+    const std::string            path    = msg.value("path", std::string());
+    std::vector<Library::Folder> folders = library_folders();
+    auto it = std::find_if(folders.begin(), folders.end(), [&path](const Library::Folder& f) { return f.path == path; });
+    if (path.empty() || it == folders.end())
+        return;
+    const bool was_recursive = it->recursive;
+    auto text = [&msg](const char* key, const std::string& fallback) {
+        return msg.contains(key) && msg[key].is_string() ? msg[key].get<std::string>().substr(0, 80) : fallback;
+    };
+    it->category  = text("category", it->category);
+    it->vendor    = text("vendor", it->vendor);
+    it->recursive = msg.contains("recursive") && msg["recursive"].is_boolean() ? msg["recursive"].get<bool>() : it->recursive;
+    save_library_folders(Library::folders_from_json(Library::folders_to_json(folders)));
+    send_library();
+    if (it->recursive != was_recursive)
+        library_scan();
+}
+
+void HomePanel::library_remove_folder(const std::string& path)
+{
+    std::vector<Library::Folder> folders = library_folders();
+    const size_t                 before  = folders.size();
+    folders.erase(std::remove_if(folders.begin(), folders.end(), [&path](const Library::Folder& f) { return f.path == path; }),
+                  folders.end());
+    if (path.empty() || folders.size() == before)
+        return;
+    save_library_folders(folders);
+    send_library();
+    library_scan(); // drops the folder's entries and covers from the cache
 }
 
 } // namespace GUI

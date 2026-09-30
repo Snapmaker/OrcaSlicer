@@ -6279,8 +6279,8 @@ msgid "Upload and Print"
 msgstr ""
 
 msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
+"Printing by object with caution. This function may cause the print head to "
+"collide with printed parts during switching."
 msgstr ""
 
 msgid "Send G-code"

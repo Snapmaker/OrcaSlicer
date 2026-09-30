@@ -260,6 +260,29 @@ struct BackgroundTexture
     Metadata metadata;
 };
 
+struct GLToolbarRenderLayout
+{
+    bool horizontal;
+    GLToolbarItem::EType item_type;
+    float left;
+    float right;
+    float top;
+    float bottom;
+    float icon_left;
+    float icon_top;
+    float border_w;
+    float border_h;
+    float icons_size_x;
+    float icons_size_y;
+    float separator_stride;
+    float icon_stride;
+    float inv_cnv_w;
+    float inv_cnv_h;
+    float icon_size;
+
+    GLToolbarRenderLayout();
+};
+
 class GLToolbar
 {
 public:
@@ -329,6 +352,7 @@ private:
     mutable GLTexture m_images_texture;
     mutable bool m_images_texture_dirty;
     BackgroundTexture m_background_texture;
+    const GLTexture* m_shared_background_texture;
     GLTexture m_arrow_texture;
     Layout m_layout;
 
@@ -355,6 +379,7 @@ public:
     ~GLToolbar();
 
     bool init(const BackgroundTexture::Metadata& background_texture);
+    bool init_shared_background(const BackgroundTexture::Metadata& background_texture, const GLTexture* shared_texture);
 
     bool init_arrow(const std::string& filename);
 
@@ -411,6 +436,9 @@ public:
     bool update_items_state();
 
     void render(const GLCanvas3D& parent,GLToolbarItem::EType type = GLToolbarItem::Action);
+    bool prepare_render_layout(const GLCanvas3D& parent, GLToolbarItem::EType type, GLToolbarRenderLayout& render_layout);
+    void render_prepared_background(const GLToolbarRenderLayout& render_layout) const;
+    void render_prepared_icons(const GLCanvas3D& parent, const GLToolbarRenderLayout& render_layout) const;
     void render_arrow(const GLCanvas3D& parent, GLToolbarItem* highlighted_item);
 
     bool on_mouse(wxMouseEvent& evt, GLCanvas3D& parent);
@@ -438,6 +466,7 @@ private:
     int contains_mouse_horizontal(const Vec2d& mouse_pos, const GLCanvas3D& parent) const;
     int contains_mouse_vertical(const Vec2d& mouse_pos, const GLCanvas3D& parent) const;
 
+    const GLTexture* get_background_texture() const;
     void render_background(float left, float top, float right, float bottom, float border_w, float border_h) const;
     void render_horizontal(const GLCanvas3D &parent, GLToolbarItem::EType type);
     void render_vertical(const GLCanvas3D& parent);

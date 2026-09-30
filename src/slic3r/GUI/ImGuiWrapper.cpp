@@ -2970,9 +2970,6 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
         return;
 
     GLShaderProgram* curr_shader = wxGetApp().get_current_shader();
-    if (curr_shader != nullptr)
-        curr_shader->stop_using();
-
     shader->start_using();
 
     // We are using the OpenGL fixed pipeline to make the example code simpler to read!
@@ -3048,11 +3045,16 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
             glsafe(::glEnableVertexAttribArray(color_id));
         }
 
+        bool hasBoundTexture = false;
+        GLuint boundTextureId = 0;
+
         for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; ++cmd_i) {
             const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-            if (pcmd->UserCallback)
+            if (pcmd->UserCallback) {
                 // User callback (registered via ImDrawList::AddCallback)
                 pcmd->UserCallback(cmd_list, pcmd);
+                hasBoundTexture = false;
+            }
             else {
                 // Project scissor/clipping rectangles into framebuffer space
                 const ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x, (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
@@ -3064,7 +3066,12 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
                 glsafe(::glScissor((int)clip_min.x, (int)(fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y)));
 
                 // Bind texture, Draw
-                glsafe(::glBindTexture(GL_TEXTURE_2D, (GLuint)(intptr_t)pcmd->GetTexID()));
+                const GLuint textureId = (GLuint)(intptr_t)pcmd->GetTexID();
+                if (!hasBoundTexture || boundTextureId != textureId) {
+                    glsafe(::glBindTexture(GL_TEXTURE_2D, textureId));
+                    boundTextureId = textureId;
+                    hasBoundTexture = true;
+                }
                 glsafe(::glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, (void*)(intptr_t)(pcmd->IdxOffset * sizeof(ImDrawIdx))));
             }
         }
@@ -3092,10 +3099,10 @@ void ImGuiWrapper::render_draw_data(ImDrawData *draw_data)
     glsafe(::glViewport(last_viewport[0], last_viewport[1], (GLsizei)last_viewport[2], (GLsizei)last_viewport[3]));
     glsafe(::glScissor(last_scissor_box[0], last_scissor_box[1], (GLsizei)last_scissor_box[2], (GLsizei)last_scissor_box[3]));
 
-    shader->stop_using();
-
     if (curr_shader != nullptr)
         curr_shader->start_using();
+    else
+        shader->stop_using();
 }
 
 bool ImGuiWrapper::display_initialized() const

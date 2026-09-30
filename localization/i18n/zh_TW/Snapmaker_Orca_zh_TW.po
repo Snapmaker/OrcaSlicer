@@ -6414,13 +6414,6 @@ msgstr "列印設備是否準備完成？列印平台是否在正確的位置、
 msgid "Upload and Print"
 msgstr "上傳並列印"
 
-msgid ""
-"Print By Object: \n"
-"Suggest to use auto-arrange to avoid collisions when printing."
-msgstr ""
-"逐件列印：\n"
-"建議使用自動擺放避免列印時發生碰撞。"
-
 msgid "Send G-code"
 msgstr "傳送 G-code"
 

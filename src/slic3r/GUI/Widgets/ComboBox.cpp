@@ -39,7 +39,7 @@ ComboBox::ComboBox(wxWindow *parent,
                    int             n,
                    const wxString  choices[],
                    long            style)
-    : drop(texts, tips, icons)
+    : drop(texts, tips, icons, muted)
 {
     if (style & wxCB_READONLY)
         style |= wxRIGHT;
@@ -160,6 +160,7 @@ int ComboBox::Append(const wxString &item,
     icons.push_back(bitmap);
     datas.push_back(clientData);
     types.push_back(wxClientData_None);
+    muted.push_back(false);
     drop.Invalidate();
     return texts.size() - 1;
 }
@@ -172,6 +173,7 @@ void ComboBox::DoClear()
     icons.clear();
     datas.clear();
     types.clear();
+    muted.clear();
     drop.Invalidate(true);
 }
 
@@ -183,7 +185,15 @@ void ComboBox::DoDeleteOneItem(unsigned int pos)
     icons.erase(icons.begin() + pos);
     datas.erase(datas.begin() + pos);
     types.erase(types.begin() + pos);
+    muted.erase(muted.begin() + pos);
     drop.Invalidate(true);
+}
+
+void ComboBox::SetItemMuted(unsigned int n, bool value)
+{
+    if (n >= muted.size()) return;
+    muted[n] = value;
+    drop.Invalidate();
 }
 
 unsigned int ComboBox::GetCount() const { return texts.size(); }
@@ -234,6 +244,7 @@ int ComboBox::DoInsertItems(const wxArrayStringsAdapter &items,
         icons.insert(icons.begin() + pos, wxNullBitmap);
         datas.insert(datas.begin() + pos, clientData ? clientData[i] : NULL);
         types.insert(types.begin() + pos, type);
+        muted.insert(muted.begin() + pos, false);
         ++pos;
     }
     drop.Invalidate(true);

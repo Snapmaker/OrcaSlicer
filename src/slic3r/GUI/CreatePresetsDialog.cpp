@@ -629,8 +629,9 @@ static void adjust_dialog_in_screen(DPIDialog* dialog) {
     if (pos_x != dialog_x || pos_y != dialog_y) { dialog->SetPosition(wxPoint(dialog_x, dialog_y)); }
 }
 
-CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent) 
-	: DPIDialog(parent ? parent : nullptr, wxID_ANY, _L("Create Filament"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxCENTRE)
+CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
+	: DPIDialog(parent ? parent : nullptr, wxID_ANY, _L("Create Filament"), wxDefaultPosition, wxDefaultSize,
+	            wxCAPTION | wxCLOSE_BOX | wxCENTRE | wxRESIZE_BORDER)
 {
     m_create_type.base_filament = _L("Create Based on Current Filament");
     m_create_type.base_filament_preset = _L("Copy Current Filament Preset ");
@@ -638,6 +639,7 @@ CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
 
 	this->SetBackgroundColour(*wxWHITE);
     this->SetSize(wxSize(FromDIP(600), FromDIP(480)));
+    this->SetMinSize(wxSize(FromDIP(560), FromDIP(420)));
 
     std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
@@ -672,14 +674,32 @@ CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
     m_filament_preset_text = new wxStaticText(this, wxID_ANY, _L("We could create the filament presets for your following printer:"), wxDefaultPosition, wxDefaultSize);
     m_main_sizer->Add(m_filament_preset_text, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(15));
 
-    m_scrolled_preset_panel = new wxScrolledWindow(this, wxID_ANY);
-    m_scrolled_preset_panel->SetMaxSize(wxSize(-1, FromDIP(350)));
+    // Plain wxPanel, not wxScrolledWindow: with wxRESIZE_BORDER + proportion=1 below, the
+    // dialog itself grows to show all rows — no artificial max height, no internal scrollbar.
+    m_scrolled_preset_panel = new wxPanel(this, wxID_ANY);
     m_scrolled_preset_panel->SetBackgroundColour(*wxWHITE);
-    m_scrolled_preset_panel->SetScrollRate(5, 5);
     m_scrolled_sizer = new wxBoxSizer(wxVERTICAL);
+
+    // "All nozzle" — checks/unchecks every printer/preset entry currently in the grid below,
+    // so there's always an easy way to end up with more than one profile selected at once.
+    wxBoxSizer *selectAllSizer = new wxBoxSizer(wxHORIZONTAL);
+    m_select_all_nozzle_checkbox = new ::CheckBox(m_scrolled_preset_panel);
+    selectAllSizer->Add(m_select_all_nozzle_checkbox, 0, wxALIGN_CENTER_VERTICAL, 0);
+    selectAllSizer->Add(0, 0, 0, wxLEFT, FromDIP(5));
+    wxStaticText *selectAllText = new wxStaticText(m_scrolled_preset_panel, wxID_ANY, _L("All nozzle"));
+    selectAllSizer->Add(selectAllText, 0, wxALIGN_CENTER_VERTICAL, 0);
+    m_scrolled_sizer->Add(selectAllSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(5));
+    m_select_all_nozzle_checkbox->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent &) {
+        const bool value = m_select_all_nozzle_checkbox->GetValue();
+        for (auto &cb_preset : m_filament_preset) cb_preset.first->SetValue(value);
+        for (auto &cb_preset : m_machint_filament_preset) cb_preset.first->SetValue(value);
+    });
+
     m_scrolled_sizer->Add(create_item(FilamentOptionType::PRESET_FOR_PRINTER), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(5));
     m_scrolled_sizer->Add(0, 0, 0, wxTOP, FromDIP(5));
-    m_scrolled_preset_panel->SetSizerAndFit(m_scrolled_sizer);
+    // SetSizer (not SetSizerAndFit): the latter would force this panel's actual size to match
+    // its content, defeating the wxEXPAND/proportion=1 growth below.
+    m_scrolled_preset_panel->SetSizer(m_scrolled_sizer);
     m_main_sizer->Add(m_scrolled_preset_panel, 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(10));
     m_main_sizer->Add(create_dialog_buttons(), 0, wxEXPAND);
 
@@ -690,6 +710,10 @@ CreateFilamentPresetDialog::CreateFilamentPresetDialog(wxWindow *parent)
 
     Layout();
     Fit();
+    // Fit() can end up smaller than this dialog's SetMinSize() floor, in which case the OS
+    // clamps the window without re-Layout()'ing it — this second pass makes sure the printer
+    // grid panel actually claims that extra height instead of it sitting as a dead gap.
+    Layout();
 
 	wxGetApp().UpdateDlgDarkUI(this);
 }
@@ -707,6 +731,129 @@ CreateFilamentPresetDialog::~CreateFilamentPresetDialog()
 
 void CreateFilamentPresetDialog::on_dpi_changed(const wxRect &suggested_rect) {
     Layout();
+}
+
+bool CreateFilamentPresetDialog::prefill_from_machine_filament(const std::string& vendor,
+                                                                const std::string& type,
+                                                                const std::string& serial_hint,
+                                                                const std::string& preferred_base_public_name,
+                                                                const std::string& current_nozzle_diameter)
+{
+    // --- Vendor ---
+    bool vendor_known = false;
+    for (const std::string& v : filament_vendors) {
+        if (v == vendor) { vendor_known = true; break; }
+    }
+    if (vendor_known) {
+        m_filament_vendor_combobox->SetLabel(from_u8(vendor));
+        m_filament_vendor_combobox->SetLabelColor(*wxBLACK);
+    } else if (!vendor.empty()) {
+        m_can_not_find_vendor_checkbox->SetValue(true);
+        m_filament_vendor_combobox->Hide();
+        m_filament_custom_vendor_input->Show();
+        m_filament_custom_vendor_input->GetTextCtrl()->SetValue(from_u8(vendor));
+    }
+
+    // --- Serial (required free-text field; the machine rarely reports a usable one) ---
+    m_filament_serial_input->GetTextCtrl()->SetValue(from_u8(serial_hint.empty() ? std::string("Basic") : serial_hint));
+
+    // Nothing more to do if the reported type isn't one we know any preset for.
+    if (m_system_filament_types_set.find(type) == m_system_filament_types_set.end())
+        return false;
+
+    // --- Type + base filament family (mirrors the Type combobox's wxEVT_COMBOBOX handler) ---
+    m_filament_type_combobox->SetLabel(from_u8(type));
+    m_filament_type_combobox->SetLabelColor(*wxBLACK);
+    clear_filament_preset_map();
+    wxArrayString filament_preset_choice = get_filament_preset_choices();
+    m_filament_preset_combobox->Set(filament_preset_choice);
+
+    // Pick the closest family to base the new preset on: exact public-name match first, else
+    // the plain "Generic <type>" entry (exact match — NOT the first choice merely *containing*
+    // "Generic", which came from an unordered_map and could just as easily land on "Generic
+    // <type> High Speed"/"Silk"/"CF"/etc. depending on hash order), else the first entry
+    // containing "Generic" as a last resort, else just the first available choice.
+    wxString chosen;
+    const wxString preferred = from_u8(preferred_base_public_name);
+    for (size_t i = 0; i < filament_preset_choice.size(); ++i) {
+        if (filament_preset_choice[i] == preferred) { chosen = filament_preset_choice[i]; break; }
+    }
+    if (chosen.empty()) {
+        const wxString genericPlain = from_u8("Generic " + (type == "PLA-AERO" ? std::string("PLA Aero") : type));
+        for (size_t i = 0; i < filament_preset_choice.size(); ++i) {
+            if (filament_preset_choice[i] == genericPlain) { chosen = filament_preset_choice[i]; break; }
+        }
+    }
+    if (chosen.empty()) {
+        for (size_t i = 0; i < filament_preset_choice.size(); ++i) {
+            if (filament_preset_choice[i].Contains("Generic")) { chosen = filament_preset_choice[i]; break; }
+        }
+    }
+    if (chosen.empty() && !filament_preset_choice.empty())
+        chosen = filament_preset_choice.front();
+
+    if (chosen.empty()) {
+        // No known family for this type after all (shouldn't normally happen since the type
+        // came from m_system_filament_types_set) — leave it for the user to pick.
+        m_filament_preset_combobox->SetLabel(_L("Select Filament Preset"));
+        m_filament_preset_combobox->SetLabelColor(DEFAULT_PROMPT_TEXT_COLOUR);
+        update_dialog_size();
+        return true;
+    }
+
+    m_filament_preset_combobox->SetLabel(chosen);
+    m_filament_preset_combobox->SetLabelColor(*wxBLACK);
+
+    // --- Populate the printer/preset grid for the chosen family (mirrors the Filament Preset
+    //     combobox's wxEVT_COMBOBOX handler) ---
+    auto iter = m_filament_choice_map.find(m_public_name_to_filament_id_map[chosen]);
+    m_scrolled_preset_panel->Freeze();
+    m_filament_presets_sizer->Clear(true);
+    m_filament_preset.clear();
+
+    std::vector<std::pair<std::string, Preset *>> printer_name_to_filament_preset;
+    if (iter != m_filament_choice_map.end()) {
+        std::unordered_map<std::string, float> nozzle_diameter = nozzle_diameter_map;
+        for (Preset* preset : iter->second) {
+            auto compatible_printers = preset->config.option<ConfigOptionStrings>("compatible_printers", true);
+            if (!compatible_printers || compatible_printers->values.empty()) {
+                for (const std::string& visible_printer : m_visible_printers) {
+                    std::string nozzle = get_printer_nozzle_diameter(visible_printer);
+                    if (nozzle_diameter[nozzle] == 0) continue;
+                    printer_name_to_filament_preset.push_back(std::make_pair(visible_printer, preset));
+                }
+                continue;
+            }
+            for (std::string &compatible_printer_name : compatible_printers->values) {
+                if (m_visible_printers.find(compatible_printer_name) == m_visible_printers.end()) continue;
+                std::string nozzle = get_printer_nozzle_diameter(compatible_printer_name);
+                if (nozzle_diameter[nozzle] == 0) continue;
+                printer_name_to_filament_preset.push_back(std::make_pair(compatible_printer_name, preset));
+            }
+        }
+    }
+    sort_printer_by_nozzle(printer_name_to_filament_preset);
+    for (std::pair<std::string, Preset *> printer_to_preset : printer_name_to_filament_preset)
+        m_filament_presets_sizer->Add(create_checkbox(m_filament_preset_panel, printer_to_preset.first, printer_to_preset.second, m_filament_preset), 0,
+                                      wxEXPAND | wxTOP | wxLEFT, FromDIP(5));
+    m_scrolled_preset_panel->Thaw();
+    update_dialog_size();
+
+    // Auto-check the entry matching the printer's current nozzle diameter, so Create() can be
+    // used right away with something that will actually be selectable afterwards; NOTHING is
+    // auto-checked if none match — better to make the user pick explicitly (and see, thanks to
+    // the resizable/larger grid, that only a wrong-nozzle option exists) than to silently create
+    // a preset incompatible with the current printer.
+    if (!current_nozzle_diameter.empty()) {
+        for (auto& cb_preset : m_filament_preset) {
+            if (get_printer_nozzle_diameter(cb_preset.second.first) == current_nozzle_diameter) {
+                cb_preset.first->SetValue(true);
+                break;
+            }
+        }
+    }
+
+    return true;
 }
 
 bool CreateFilamentPresetDialog::is_check_box_selected()
@@ -871,7 +1018,6 @@ wxBoxSizer *CreateFilamentPresetDialog::create_type_item()
         } else if (curr_create_type == m_create_type.base_filament_preset) {
             get_filament_presets_by_machine();
         }
-        m_scrolled_preset_panel->SetSizerAndFit(m_scrolled_sizer);
 
         update_dialog_size();
         e.Skip();
@@ -984,7 +1130,6 @@ wxBoxSizer *CreateFilamentPresetDialog::create_filament_preset_item()
         for (std::pair<std::string, Preset *> printer_to_preset : printer_name_to_filament_preset)
             m_filament_presets_sizer->Add(create_checkbox(m_filament_preset_panel, printer_to_preset.first, printer_to_preset.second, m_filament_preset), 0,
                                           wxEXPAND | wxTOP | wxLEFT, FromDIP(5));
-        m_scrolled_preset_panel->SetSizerAndFit(m_scrolled_sizer);
         m_scrolled_preset_panel->Thaw();
 
         update_dialog_size();
@@ -1177,7 +1322,8 @@ wxWindow *CreateFilamentPresetDialog::create_dialog_buttons()
             }
         }
         preset_bundle->update_compatible(PresetSelectCompatibleType::Always);
-        EndModal(wxID_OK); 
+        m_last_created_filament_name = filament_preset_name;
+        EndModal(wxID_OK);
         });
 
     dlg_btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) { 
@@ -1228,7 +1374,6 @@ wxArrayString CreateFilamentPresetDialog::get_filament_preset_choices()
             }
             preset_name_set.insert(from_u8(cur_preset_name));
         }
-        assert(1 == preset_name_set.size());
         if (preset_name_set.size() > 1) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " the same filament has different filament(vendor type serial)"; 
         }
@@ -1306,7 +1451,6 @@ void CreateFilamentPresetDialog::select_curr_radiobox(std::vector<std::pair<Radi
                     
                 }
             }
-            m_scrolled_preset_panel->SetSizerAndFit(m_scrolled_sizer);
             this->Thaw();
         } else {
             radiobox_list[i].first->SetValue(false);
@@ -1459,7 +1603,12 @@ void CreateFilamentPresetDialog::get_all_filament_presets()
         auto filament_type = preset.config.option<ConfigOptionStrings>("filament_type");
         if (filament_type && filament_type->values.size())
             m_system_filament_types_set.insert(filament_type->values[0]);
-        if (!preset.is_visible) continue;
+        // NOTE: deliberately NOT filtering on preset.is_visible here. That flag tracks whether
+        // the user has toggled this preset visible in the main filament picker (persisted in
+        // AppConfig) — a brand new system preset (e.g. a nozzle size just added to the vendor
+        // pack) starts out invisible until the user does that manually, even though it's a
+        // perfectly valid template to clone from in *this* dialog. Filtering on it here made
+        // such presets silently vanish from the printer/preset grid below.
         std::string filament_preset_name        = preset.name;
         Preset *filament_preset                 = new Preset(preset);
         m_all_presets_map[filament_preset_name] = filament_preset;
@@ -1477,6 +1626,22 @@ void CreateFilamentPresetDialog::get_all_visible_printer_name()
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " entry, and visible printer is: " << printer_preset.name;
     }
 
+    // Always include every nozzle-size variant of the printer *model* currently active for the
+    // project ("Snapmaker U1 (0.2 nozzle)", "... (0.4 nozzle)", etc.), even if individual
+    // variants aren't flagged "visible" in the system-preset picker sense (that flag governs
+    // what shows up when *browsing* printers, not what's currently in use) — the user is on
+    // this printer model right now and may want a filament preset for any of its nozzles, not
+    // just the one currently loaded.
+    const std::string& edited_printer_name = preset_bundle->printers.get_edited_preset().name;
+    if (!edited_printer_name.empty()) {
+        m_visible_printers.insert(edited_printer_name);
+        const size_t paren_pos = edited_printer_name.find(" (");
+        const std::string base_model = paren_pos != std::string::npos ? edited_printer_name.substr(0, paren_pos) : edited_printer_name;
+        for (const Preset &printer_preset : preset_bundle->printers.get_presets()) {
+            if (printer_preset.name == base_model || printer_preset.name.rfind(base_model + " (", 0) == 0)
+                m_visible_printers.insert(printer_preset.name);
+        }
+    }
 }
 
 void CreateFilamentPresetDialog::update_dialog_size()
@@ -1485,11 +1650,18 @@ void CreateFilamentPresetDialog::update_dialog_size()
     m_filament_preset_panel->SetSizerAndFit(m_filament_presets_sizer);
     int width      = m_filament_preset_panel->GetSize().GetWidth();
     int height     = m_filament_preset_panel->GetSize().GetHeight();
-    m_scrolled_preset_panel->SetMinSize(wxSize(std::min(1400, width + FromDIP(26)), std::min(600, height + FromDIP(18))));
-    m_scrolled_preset_panel->SetMaxSize(wxSize(std::min(1400, width + FromDIP(26)), std::min(600, height + FromDIP(18))));
-    m_scrolled_preset_panel->SetSize(wxSize(std::min(1500, width + FromDIP(26)), std::min(600, height + FromDIP(18))));
+    // Just a sane cap so a pathologically long list can't blow the dialog past the screen; in
+    // practice this essentially never triggers. No SetMinSize/SetMaxSize on the panel itself —
+    // it's a plain wxPanel, so standard wxEXPAND + proportion=1 in the main sizer sizes it to
+    // its actual content, and the dialog (wxRESIZE_BORDER) grows/shrinks around it normally.
+    if (height + FromDIP(18) > FromDIP(900) || width + FromDIP(26) > FromDIP(1400))
+        m_filament_preset_panel->SetSize(wxSize(std::min(width, FromDIP(1400)), std::min(height, FromDIP(900))));
     Layout();
     Fit();
+    // Fit() can end up smaller than this dialog's SetMinSize() floor, in which case the OS
+    // clamps the window without re-Layout()'ing it — this second pass makes sure the printer
+    // grid panel actually claims that extra height instead of it sitting as a dead gap.
+    Layout();
     Refresh();
     adjust_dialog_in_screen(this);
     this->Thaw();
@@ -1521,7 +1693,6 @@ void CreateFilamentPresetDialog::sort_printer_by_nozzle(std::vector<std::pair<st
                   try {
                       nozzle_a = nozzle_diameter[nozzle_str_a];
                       nozzle_b = nozzle_diameter[nozzle_str_b];
-                      assert(nozzle_a != 0 && nozzle_b != 0);
                   } catch (...) {
                       BOOST_LOG_TRIVIAL(info) << "find nozzle filed, and nozzle is: " << nozzle_str_a << "mm and " << nozzle_str_b << "mm";
                       return a.first < b.first;

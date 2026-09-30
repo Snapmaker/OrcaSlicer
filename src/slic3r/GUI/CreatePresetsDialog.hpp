@@ -23,6 +23,23 @@ public:
     CreateFilamentPresetDialog(wxWindow *parent);
     ~CreateFilamentPresetDialog();
 
+    // Pre-fills Basic Information (vendor/type/serial) from a machine-reported filament with no
+    // matching local preset, and — if the reported type is a known system filament type — selects
+    // "Create Based on Current Filament" with the closest-matching filament family and auto-checks
+    // the printer/preset entry matching current_nozzle_diameter (e.g. "0.4"), so Create() can be
+    // used right away — every other compatible printer/nozzle entry is still shown (and can be
+    // checked too) in case the user wants more than one. Call before ShowModal(). Returns false
+    // (nothing pre-filled beyond vendor/type/serial) if the type is unknown.
+    bool prefill_from_machine_filament(const std::string& vendor, const std::string& type,
+                                        const std::string& serial_hint,
+                                        const std::string& preferred_base_public_name,
+                                        const std::string& current_nozzle_diameter);
+
+    // Base name ("Vendor Type Serial", no "@printer nozzle" suffix) of the preset(s) created by
+    // the last successful Create() click, so a caller can remember it (e.g. to link it back to
+    // the machine filament that prompted this dialog). Empty until Create() succeeds.
+    const std::string& get_last_created_filament_name() const { return m_last_created_filament_name; }
+
 protected:
     enum FilamentOptionType { 
         VENDOR = 0,
@@ -84,10 +101,14 @@ private:
     TextInput *                                                      m_filament_custom_vendor_input = nullptr;
     wxGridSizer *                                                    m_filament_presets_sizer       = nullptr;
     wxPanel *                                                        m_filament_preset_panel        = nullptr;
-    wxScrolledWindow *                                               m_scrolled_preset_panel        = nullptr;
+    // Plain wxPanel, not wxScrolledWindow — see the comment where it's constructed.
+    wxPanel *                                                        m_scrolled_preset_panel        = nullptr;
+    // "All nozzle" — checks/unchecks every entry currently in the printer/preset grid at once.
+    ::CheckBox *                                                     m_select_all_nozzle_checkbox   = nullptr;
     TextInput *                                                      m_filament_serial_input        = nullptr;
     wxBoxSizer *                                                     m_scrolled_sizer               = nullptr;
     wxStaticText *                                                   m_filament_preset_text         = nullptr;
+    std::string                                                      m_last_created_filament_name;
 
 };
 

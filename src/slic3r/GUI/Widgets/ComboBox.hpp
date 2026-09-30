@@ -14,6 +14,7 @@ class ComboBox : public wxWindowWithItems<TextInput, wxItemContainer>
     std::vector<wxBitmap>         icons;
     std::vector<void *>           datas;
     std::vector<wxClientDataType> types;
+    std::vector<bool>             muted;
 
     DropDown               drop;
     bool     drop_down = false;
@@ -65,6 +66,13 @@ public:
 
     wxBitmap GetItemBitmap(unsigned int n);
     void     SetItemBitmap(unsigned int n, wxBitmap const &bitmap);
+
+    // Marks an item to be rendered in a muted/light-grey text colour while remaining fully
+    // clickable/selectable — used e.g. for "Machine Filament" entries reported by a remote
+    // printer that have no matching local preset.
+    void SetItemMuted(unsigned int n, bool value = true);
+    bool IsItemMuted(unsigned int n) const { return n < muted.size() && muted[n]; }
+
     bool     is_drop_down(){return drop_down;}
     void     DeleteOneItem(unsigned int pos) { DoDeleteOneItem(pos); }
 protected:

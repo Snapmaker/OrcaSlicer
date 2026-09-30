@@ -5,6 +5,7 @@
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 //#include "I18N.hpp"
 #include "GLGizmosManager.hpp"
+#include "GLGizmoMove.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
@@ -1116,6 +1117,9 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
     // straight in AppConfig (no gizmo-local copy) so this row and the Ultra preferences page are
     // always showing the same single value.
     if (m_glcanvas.get_gizmos_manager().get_current_type() == GLGizmosManager::Move) {
+        // EdgeSlicer: Snap face to surface (face project snapping with align rotation).
+        if (auto *move_gizmo = dynamic_cast<GLGizmoMove3D *>(dock_owner))
+            move_gizmo->render_snap_to_surface_ui(imgui_wrapper, ImGui::GetFontSize() * 20.0f);
         ImGui::Separator();
         bool hide_other_plates = wxGetApp().app_config->get_bool("hide_other_plates_on_move");
         if (imgui_wrapper->checkbox(_L("Hide other plates while moving"), hide_other_plates))

@@ -44,6 +44,19 @@ public:
     // The themed colour for a stock light colour, or `fallback` when the theme leaves it alone.
     static wxColour themedColorFor(wxColour const &color, wxColour const &fallback);
 
+    // A live theme switch (GUI_App::apply_theme_live) re-themes windows whose colour was set by
+    // code other than UpdateDarkUI (copied from a parent, a text field's inner control, ...), so
+    // nothing remembers what they were. For that one pass a colour a window wears from the look
+    // that is being left is turned back into its stock light colour: a colour the old theme
+    // produced (ThemeInverse(), taken before the new theme is applied; several stock colours with
+    // one themed colour give the first of them), or, when the old look was dark, a dark twin.
+    // Anything else is left as it is.
+    static std::map<wxColour, wxColour> ThemeInverse();
+    static void BeginUntheme(std::map<wxColour, wxColour> const &inverse, bool was_dark);
+    static void EndUntheme();
+    static bool UnthemeActive();
+    static wxColour unpainted(wxColour const &color);
+
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);
     static wxColour lightModeColorFor(wxColour const &color);

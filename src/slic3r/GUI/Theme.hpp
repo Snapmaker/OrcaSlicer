@@ -14,8 +14,9 @@
 // UI themes (docs/themes.md). A theme is a folder with a theme.json, found in the app's
 // resources/themes (the ones EdgeSlicer ships) or in <data dir>/themes (ones the user installed;
 // these win over a shipped one with the same folder name). The chosen one is the "ui_theme" app
-// setting and is loaded once at startup, before the fonts and colours are made, so changing it
-// takes a restart.
+// setting and is loaded at startup, before the fonts and colours are made. Choosing another one
+// later applies its colours, corner radii, icons, title bar, 3D view and Home page at once
+// (GUI_App::apply_theme_live); its fonts need a restart.
 namespace Slic3r {
 namespace GUI {
 namespace Theme {
@@ -39,6 +40,19 @@ boost::filesystem::path user_dir();
 // that cannot be read is logged and left off. Call once, after the app config is loaded and before
 // Label::initSysFont().
 void load(const std::string& id);
+
+// Switches the running look to theme `id` ("" for Default, the stock look): everything a theme
+// hands over is reset first (the pack, the colour table, the corner radii, the banner), then the
+// theme is loaded, so going from one theme to another, or back to Default, leaves nothing of the
+// old one behind. Returns false when `id` could not be loaded (the stock look is then in force).
+// The fonts are left as they are unless `fonts` is set: the faces Label made its fonts from at
+// start stay until the next start, and fonts_pending() says whether the theme now in force wants
+// others. This only changes state; GUI_App::apply_theme_live() repaints the UI afterwards.
+bool apply(const std::string& id, bool fonts = false);
+
+// The theme in force wants fonts (or none) other than the ones the running fonts were made from,
+// so they will only show after a restart.
+bool fonts_pending();
 
 bool                       active();
 const std::string&         active_id();

@@ -82,10 +82,11 @@ private:
     void on_banner_file();
     bool save(bool as_new);
     bool confirm_discard();
-    // After the theme in use changed, or a different one was chosen: themes load at startup, so
-    // ask whether to restart EdgeSlicer now. "Later" leaves the note on the page.
-    void offer_restart(bool after_save = false);
-    // A different theme is chosen than the one running, or the running one was saved since start.
+    // After a theme was chosen or saved it is applied at once (GUI_App::apply_theme_live); its fonts
+    // are made at startup, so when they differ from the running ones ask whether to restart
+    // EdgeSlicer now. "Later" leaves the note on the page.
+    void offer_restart();
+    // The theme in force wants other fonts than the running ones.
     bool restart_pending() const;
     // Closes Preferences and restarts EdgeSlicer (GUI_App::request_relaunch).
     void restart_now();

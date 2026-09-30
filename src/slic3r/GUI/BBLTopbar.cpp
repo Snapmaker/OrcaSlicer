@@ -58,6 +58,11 @@ static wxColour topbar_text_colour()
 #endif
 }
 
+// The banner scaled for the bar; made again for a new size, and dropped when the theme changes
+// (BBLTopbar::ThemeChanged) because the new theme has another banner, or none.
+static wxBitmap g_banner_scaled;
+static wxSize   g_banner_scaled_for;
+
 // The UI theme's title bar banner (docs/themes.md), scaled to the bar's height (or its whole
 // size for "stretch") once per size and drawn under the buttons and the title.
 static void draw_banner(wxDC& dc, const wxRect& rect)
@@ -67,8 +72,8 @@ static void draw_banner(wxDC& dc, const wxRect& rect)
         return;
     const std::string& align = GUI::Theme::spec().banner_align;
 
-    static wxBitmap scaled;
-    static wxSize   scaled_for;
+    wxBitmap& scaled     = g_banner_scaled;
+    wxSize&   scaled_for = g_banner_scaled_for;
     wxSize          want = align == "stretch" ? rect.GetSize() :
                                                 wxSize(std::max(1, banner.GetWidth() * rect.height / std::max(1, banner.GetHeight())), rect.height);
     if (!scaled.IsOk() || scaled_for != want) {
@@ -528,6 +533,21 @@ void BBLTopbar::SetWindowSize()
 void BBLTopbar::UpdateToolbarWidth(int width)
 {
     this->SetSize(width, m_toolbar_h);
+}
+
+void BBLTopbar::ThemeChanged()
+{
+    g_banner_scaled     = wxBitmap();
+    g_banner_scaled_for = wxSize();
+    // The text and background colours are read as the bar is drawn; the icons come from the
+    // (theme-keyed) SVG cache.
+    Rescale();
+    // Realize() (in Rescale) leaves the bar as wide as its items; it is the frame's width it has to fill.
+    if (m_frame) {
+        UpdateToolbarWidth(m_frame->GetClientSize().GetWidth());
+        m_frame->Layout();
+    }
+    Refresh();
 }
 
 void BBLTopbar::Rescale() {

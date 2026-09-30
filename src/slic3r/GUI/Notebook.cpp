@@ -21,17 +21,7 @@ ButtonsListCtrl::ButtonsListCtrl(wxWindow *parent, wxBoxSizer* side_tools) :
     SetDoubleBuffered(true);
 #endif //__WINDOWS__
 
-    wxColour default_btn_bg;
-#ifdef __APPLE__
-    default_btn_bg = wxColour("#3B4446"); // Gradient #414B4E
-#else
-    default_btn_bg = wxColour("#2D2D30"); // Gradient #414B4E
-#endif
-    // The tab buttons are #3B4446 (StateColor maps it); a UI theme recolours the bar behind them too.
-    default_btn_bg = StateColor::themedColorFor(wxColour("#3B4446"), default_btn_bg);
-
-   
-    SetBackgroundColour(default_btn_bg);
+    UpdateColours();
 
     int em = em_unit(this);// Slic3r::GUI::wxGetApp().em_unit();
     // BBS: no gap
@@ -60,6 +50,21 @@ ButtonsListCtrl::ButtonsListCtrl(wxWindow *parent, wxBoxSizer* side_tools) :
     //this->Bind(wxEVT_PAINT, &ButtonsListCtrl::OnPaint, this);
     Bind(wxEVT_SYS_COLOUR_CHANGED, [this](auto& e){
     });
+}
+
+void ButtonsListCtrl::UpdateColours()
+{
+    wxColour default_btn_bg;
+#ifdef __APPLE__
+    default_btn_bg = wxColour("#3B4446"); // Gradient #414B4E
+#else
+    default_btn_bg = wxColour("#2D2D30"); // Gradient #414B4E
+#endif
+    // The tab buttons are #3B4446 (StateColor maps it); a UI theme recolours the bar behind them too.
+    default_btn_bg = StateColor::themedColorFor(wxColour("#3B4446"), default_btn_bg);
+
+    SetBackgroundColour(default_btn_bg);
+    Refresh();
 }
 
 void ButtonsListCtrl::OnPaint(wxPaintEvent&)

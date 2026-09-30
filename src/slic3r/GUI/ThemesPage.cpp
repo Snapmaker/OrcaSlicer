@@ -89,13 +89,11 @@ static bool same_font(const ThemePack::Font& a, const ThemePack::Font& b) { retu
 static std::set<std::string> g_private_files;
 static std::set<std::string> g_private_faces;
 
-// What the user was already asked about this run ("switch:<id>[:<n>]"): one question per pending
+// What the user was already asked about this run ("fonts:<id>:<n>"): one question per pending
 // change, however often the page is reopened. Every save is a new change (g_save_serial), so it
 // asks again.
 static std::set<std::string> g_offered_restart;
-// The running theme was saved over since start (its id), and how many saves that took.
-static std::string g_saved_running;
-static int         g_save_serial = 0;
+static int                   g_save_serial = 0;
 
 // A section heading with a rule after it, as on the other Preferences pages.
 static wxSizer* section_title(wxWindow* parent, const wxString& title)
@@ -620,9 +618,10 @@ void ThemesPage::build_actions(wxSizer* sizer)
     row->Add(m_discard, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
     sizer->Add(row, 0, wxTOP, FromDIP(6));
 
-    // Themes load at startup; this is the way to restart whenever one is waiting, even after "Later".
+    // A theme's colours, corners, icons, title bar, 3D view and Home page apply at once; its fonts
+    // load at startup. This is the way to restart whenever fonts are waiting, even after "Later".
     auto row2  = new wxBoxSizer(wxHORIZONTAL);
-    m_relaunch = button(this, _L("Restart to apply"), _L("Restart EdgeSlicer now so the chosen theme, or your saved changes to the one in use, take effect."));
+    m_relaunch = button(this, _L("Restart to apply fonts"), _L("Restart EdgeSlicer now so the fonts of the chosen theme take effect. Everything else is already applied."));
     m_relaunch->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         // Edits that were not saved would be lost with the restart.
         if (confirm_discard())
@@ -860,8 +859,8 @@ void ThemesPage::update_state()
     const std::string running = Theme::active_id();
     if (m_id != running)
         note = _L("Restart EdgeSlicer to switch to this theme.");
-    else if (g_saved_running == m_id && !m_id.empty())
-        note = _L("Saved. Restart EdgeSlicer to see the changes.");
+    else if (Theme::fonts_pending())
+        note = _L("In use now. Its fonts show after a restart.");
     else
         note = _L("In use now.");
     if (m_id.empty())
@@ -902,8 +901,8 @@ bool ThemesPage::confirm_discard()
 
 bool ThemesPage::restart_pending() const
 {
-    const std::string chosen = wxGetApp().app_config->get("ui_theme"); // what the next start loads
-    return chosen != Theme::active_id() || (!chosen.empty() && chosen == g_saved_running);
+    // Colours, shapes and pictures are applied as soon as a theme is chosen or saved; only fonts wait.
+    return Theme::fonts_pending();
 }
 
 void ThemesPage::restart_now()
@@ -917,25 +916,18 @@ void ThemesPage::restart_now()
     wxGetApp().request_relaunch();
 }
 
-void ThemesPage::offer_restart(bool after_save)
+void ThemesPage::offer_restart()
 {
-    // What the next start loads (the choice is saved as it is made) against what is running.
-    const std::string chosen  = wxGetApp().app_config->get("ui_theme");
-    const std::string running = Theme::active_id();
-    std::string       key;
-    if (chosen != running)
-        key = "switch:" + chosen + (after_save ? ":" + std::to_string(g_save_serial) : std::string());
-    else if (!chosen.empty() && g_saved_running == chosen)
-        key = "saved:" + chosen + ":" + std::to_string(g_save_serial);
-    else
-        return; // nothing to restart for
+    // The theme is applied by now; only its fonts (against the ones the running ones were made from) wait for a restart.
+    if (!Theme::fonts_pending())
+        return;
+    const std::string chosen = wxGetApp().app_config->get("ui_theme");
+    const std::string key    = "fonts:" + chosen + ":" + std::to_string(g_save_serial);
     if (!g_offered_restart.insert(key).second)
         return; // already asked about this one; the note on the page still says so
 
     const wxString name = chosen.empty() ? _L("Default") : (m_id == chosen && !m_spec.name.empty() ? from_u8(m_spec.name) : from_u8(chosen));
-    const wxString question = chosen != running
-                                  ? wxString::Format(_L("Restart EdgeSlicer now to apply the \"%s\" theme?"), name)
-                                  : wxString::Format(_L("Restart EdgeSlicer now to see your changes to the \"%s\" theme?"), name);
+    const wxString question = wxString::Format(_L("The \"%s\" theme is applied. Its fonts show after a restart: restart EdgeSlicer now?"), name);
     RichMessageDialog ask(this, question + "\n" + _L("If the project has unsaved changes you will be asked to save it first."), _L("Theme"),
                       wxYES_NO | wxICON_QUESTION);
     ask.SetYesNoLabels(_L("Restart now"), _L("Later"));
@@ -1002,6 +994,7 @@ void ThemesPage::on_pick(int selection)
     m_dirty = false;
     wxGetApp().app_config->set("ui_theme", id);
     wxGetApp().app_config->save();
+    wxGetApp().apply_theme_live();
     load(id);
     offer_restart();
 }
@@ -1031,6 +1024,7 @@ void ThemesPage::on_install()
     }
     wxGetApp().app_config->set("ui_theme", id);
     wxGetApp().app_config->save();
+    wxGetApp().apply_theme_live();
     m_id = id;
     fill_list();
     load(id);
@@ -1057,6 +1051,7 @@ void ThemesPage::on_delete()
     if (wxGetApp().app_config->get("ui_theme") == m_id) {
         wxGetApp().app_config->set("ui_theme", next);
         wxGetApp().app_config->save();
+        wxGetApp().apply_theme_live();
     }
     m_id = next;
     fill_list();
@@ -1168,14 +1163,13 @@ bool ThemesPage::save(bool as_new)
         return false;
     }
     ++g_save_serial; // a new change, asked about again
-    if (id == Theme::active_id())
-        g_saved_running = id;
     wxGetApp().app_config->set("ui_theme", id);
     wxGetApp().app_config->save();
+    wxGetApp().apply_theme_live(); // also when it is the running theme that was saved over: it is read again
     m_id = id;
     fill_list();
     load(id);
-    offer_restart(true);
+    offer_restart();
     return true;
 }
 

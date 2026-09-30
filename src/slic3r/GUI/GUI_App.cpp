@@ -115,6 +115,8 @@
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
 #include "ThemesPage.hpp"
+#include "WindowColourStash.hpp"
+#include <set>
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -137,6 +139,7 @@
 #include "BitmapCache.hpp"
 #include "Notebook.hpp"
 #include "Widgets/Label.hpp"
+#include "Widgets/SideButton.hpp"
 #include "Widgets/ProgressDialog.hpp"
 
 //BBS: DailyTip and UserGuide Dialog
@@ -4527,6 +4530,10 @@ static bool is_default(wxWindow* win)
 }
 #endif
 
+// The windows UpdateDarkUI has already taken back to stock colours during the live theme switch that
+// is running (see StateColor::BeginUntheme).
+static std::set<wxWindow*> g_unthemed_windows;
+
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
@@ -4573,6 +4580,26 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
 
     /*if (m_is_dark_mode != dark_mode() )
         m_is_dark_mode = dark_mode();*/
+
+    // SideButton (Slice plate / Print plate) keeps its colours as state lists that are themed as it
+    // is drawn, but its SetBackgroundColour/SetForegroundColour replace the whole list with one
+    // colour. Painting it here would freeze it in the look it was painted in.
+    if (dynamic_cast<SideButton*>(window))
+        return;
+
+    // A live theme switch: turn the colours of the look being left back into stock ones first, for
+    // windows whose colour nobody remembers (see StateColor::unpainted). Once per window per switch.
+    if (StateColor::UnthemeActive() && g_unthemed_windows.insert(window).second) {
+        const wxColour bg = window->GetBackgroundColour(), stock_bg = StateColor::unpainted(bg);
+        if (stock_bg != bg)
+            window->SetBackgroundColour(stock_bg);
+        const wxColour fg = window->GetForegroundColour(), stock_fg = StateColor::unpainted(fg);
+        if (stock_fg != fg)
+            window->SetForegroundColour(stock_fg);
+    }
+
+    // Keep the colours the window had, so a live theme switch can put them back (WindowColourStash.hpp).
+    const WindowColourStash::Stock stock_colours = WindowColourStash::snapshot(window);
 
     if (m_is_dark_mode) {
 
@@ -4625,6 +4652,8 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
             window->SetForegroundColour(fg_col);
         }
     }
+
+    WindowColourStash::commit(window, stock_colours);
 }
 
 // recursive function for scaling fonts for all controls in Window
@@ -5341,6 +5370,108 @@ void GUI_App::update_ui_from_settings()
     }
 
     if (mainframe) {mainframe->update_ui_from_settings();}
+}
+
+// Redraws a window and everything in it (Refresh() does not reach every child on every platform).
+static void refresh_tree(wxWindow* window)
+{
+    if (window == nullptr)
+        return;
+    window->Refresh();
+    for (wxWindow* child : window->GetChildren())
+        refresh_tree(child);
+}
+
+void GUI_App::apply_theme_live()
+{
+    // The hidden instance the hub manages has no window anyone sees, and its first-run and plug-in
+    // prompts already stay away from it: it keeps the look it started with and loads the chosen one
+    // at its next start.
+    if (mainframe == nullptr || (m_hub_managed && RemoteAccess::get().hidden())) {
+        BOOST_LOG_TRIVIAL(info) << "Theme: live switch skipped, no visible window";
+        return;
+    }
+    static bool running = false;
+    if (running)
+        return;
+    running = true;
+    struct Done
+    {
+        ~Done() { running = false; }
+    } done;
+
+    wxBusyCursor wait;
+    const std::string id = app_config->get("ui_theme");
+    BOOST_LOG_TRIVIAL(info) << "Theme: applying \"" << id << "\" live";
+
+    // 1. Put every window UpdateDarkUI painted back to the colours it had (WindowColourStash.hpp);
+    //    they are themed again from the new tables below. Windows whose colour came from elsewhere
+    //    (copied from a parent, set by a widget's own code) have no stash entry: they are taken
+    //    back through the old theme's colours instead, while the walk below reaches them.
+    WindowColourStash::restore_all();
+    g_unthemed_windows.clear();
+    const std::map<wxColour, wxColour> old_theme_inverse = StateColor::ThemeInverse();
+    const bool                         was_dark          = m_is_dark_mode;
+
+    // 2. The new theme: resets the colour table, radii and banner, then loads it. Fonts stay.
+    if (!Theme::apply(id))
+        BOOST_LOG_TRIVIAL(warning) << "Theme \"" << id << "\" could not be applied; using the stock look";
+
+    // 3. The labels, the dark flag and the widgets' dark mode follow the theme's base look. The
+    //    SVG icon cache needs nothing: its keys carry the theme's icon and accent colours.
+    init_label_colours();
+    Update_dark_mode_flag();
+    StateColor::BeginUntheme(old_theme_inverse, was_dark);
+    struct EndUntheme
+    {
+        ~EndUntheme()
+        {
+            StateColor::EndUntheme();
+            g_unthemed_windows.clear();
+        }
+    } end_untheme;
+
+    // 4. Everything that shows a colour. The 3D view and the GL toolbar take the dark flag from the
+    //    Plater, so tell it (async, it is what the dark mode checkbox does).
+    SimpleEvent color_mode_changed(EVT_GLCANVAS_COLOR_MODE_CHANGED);
+    if (plater_ != nullptr)
+        wxPostEvent(plater_, color_mode_changed);
+
+#ifdef __WINDOWS__
+    // The dark title bar and explorer theme for the new base, then the main frame: on_sys_color_changed()
+    // (tabs, side bar, menus, title bar, Home page and web views), scroll bars and every child's colours.
+    force_colors_update();
+    update_ui_from_settings();
+#else
+    // The system colour change handler does the same, and more.
+    mainframe->theme_changed();
+#endif
+
+    // 5. Windows that are open next to the main one (and the ones kept hidden) are themed too.
+    std::vector<wxWindow*> others;
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext())
+        if (wxWindow* top = node->GetData(); top != nullptr && top != mainframe)
+            others.push_back(top);
+    for (wxWindow* top : others) {
+        if (wxDialog* dialog = dynamic_cast<wxDialog*>(top))
+            UpdateDlgDarkUI(dialog);
+        else if (wxFrame* frame = dynamic_cast<wxFrame*>(top))
+            UpdateFrameDarkUI(frame);
+        else
+            update_dark_children_ui(top);
+        if (top->IsShown()) {
+            if (auto* dpi_dialog = dynamic_cast<DPIDialog*>(top))
+                dpi_dialog->theme_changed();
+            else if (auto* dpi_frame = dynamic_cast<DPIFrame*>(top))
+                dpi_frame->theme_changed();
+        }
+        refresh_tree(top);
+    }
+
+    refresh_tree(mainframe);
+    if (plater_ != nullptr)
+        if (GLCanvas3D* canvas = plater_->get_current_canvas3D())
+            canvas->set_as_dirty();
 }
 
 void GUI_App::persist_window_geometry(wxTopLevelWindow *window, bool default_maximized)

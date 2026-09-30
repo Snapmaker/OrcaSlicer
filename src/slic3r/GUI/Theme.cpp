@@ -36,6 +36,20 @@ static bool            g_active = false;
 static wxBitmap        g_banner;
 static bool            g_banner_tried = false;
 
+// The fonts of the theme the process started with: those are the ones Label made its fonts from,
+// and they stay until the next start (fonts_pending()).
+struct FontSet
+{
+    ThemePack::Font body, heading, button;
+};
+static FontSet g_running_fonts;
+
+static bool same_font(const ThemePack::Font& a, const ThemePack::Font& b) { return a.face == b.face && a.files == b.files; }
+static bool same_fonts(const FontSet& a, const FontSet& b)
+{
+    return same_font(a.body, b.body) && same_font(a.heading, b.heading) && same_font(a.button, b.button);
+}
+
 static fs::path builtin_dir() { return fs::path(resources_dir()) / "themes"; }
 
 fs::path user_dir() { return fs::path(data_dir()) / "themes"; }
@@ -139,21 +153,38 @@ static wxString register_font(const ThemePack::Font& font, const char* which)
     return from_u8(font.face);
 }
 
-void load(const std::string& id)
+// Back to the stock look: everything load_pack() hands over, and the banner. The fonts are only
+// reset when asked to (a start), because the ones Label already made stay until the next start.
+static void reset(bool fonts)
 {
-    if (id.empty())
-        return;
+    g_id.clear();
+    g_dir.clear();
+    g_spec   = ThemePack::Spec();
+    g_active = false;
+    g_banner = wxBitmap();
+    g_banner_tried = false;
+    StateColor::SetThemeMap({});
+    StaticBox::SetThemeRadius(-1, -1);
+    if (fonts) {
+        Label::SetThemeFaces(wxString(), wxString(), wxString());
+        g_running_fonts = FontSet();
+    }
+}
+
+// Reads theme `id` and hands its colours and shapes to the widgets, and its fonts when `fonts`.
+static bool load_pack(const std::string& id, bool fonts)
+{
     fs::path dir;
     bool     builtin = false;
     if (!locate(id, dir, builtin)) {
         BOOST_LOG_TRIVIAL(warning) << "Theme \"" << id << "\" is not installed; using the stock look";
-        return;
+        return false;
     }
     ThemePack::Spec spec;
     std::string     error;
     if (!read_spec(dir, spec, error)) {
         BOOST_LOG_TRIVIAL(error) << "Theme \"" << id << "\" not loaded: " << error;
-        return;
+        return false;
     }
     for (const auto& w : spec.warnings)
         BOOST_LOG_TRIVIAL(warning) << "Theme \"" << id << "\": " << w;
@@ -175,11 +206,35 @@ void load(const std::string& id)
         map.emplace(wxColour(from_u8(key)), wxColour(from_u8(value)));
     StateColor::SetThemeMap(map);
 
-    Label::SetThemeFaces(register_font(g_spec.body, "body"), register_font(g_spec.heading, "heading"),
-                         register_font(g_spec.button, "button"));
+    if (fonts) {
+        Label::SetThemeFaces(register_font(g_spec.body, "body"), register_font(g_spec.heading, "heading"),
+                             register_font(g_spec.button, "button"));
+        g_running_fonts = {g_spec.body, g_spec.heading, g_spec.button};
+    }
     StaticBox::SetThemeRadius(g_spec.button_radius, g_spec.box_radius);
 
-    BOOST_LOG_TRIVIAL(info) << "Theme \"" << g_spec.name << "\" loaded from " << dir.string() << " (" << map.size() << " colours)";
+    BOOST_LOG_TRIVIAL(info) << "Theme \"" << g_spec.name << "\" " << (fonts ? "loaded" : "applied") << " from " << dir.string() << " ("
+                            << map.size() << " colours)";
+    return true;
+}
+
+void load(const std::string& id)
+{
+    reset(true);
+    if (!id.empty())
+        load_pack(id, true);
+}
+
+bool apply(const std::string& id, bool fonts)
+{
+    reset(fonts);
+    return id.empty() || load_pack(id, fonts);
+}
+
+bool fonts_pending()
+{
+    const FontSet chosen = g_active ? FontSet{g_spec.body, g_spec.heading, g_spec.button} : FontSet();
+    return !same_fonts(chosen, g_running_fonts);
 }
 
 bool                   active() { return g_active; }

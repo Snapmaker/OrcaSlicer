@@ -1200,7 +1200,7 @@ private:
 
     void UpdateColors()
     {
-        bool is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+        bool is_dark = wxGetApp().dark_mode();
 
         if (!is_dark) {
             m_bgColor           = wxColour(255, 255, 255);
@@ -9794,7 +9794,7 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
         // Add diameter label and combobox
         wxBoxSizer*   diameter_sizer = new wxBoxSizer(wxHORIZONTAL);
         wxStaticText* diameter_label = new wxStaticText(nozzle_panel, wxID_ANY, _L("Diameter"));
-        bool          is_dark        = wxGetApp().app_config->get("dark_color_mode") == "1";
+        bool          is_dark        = wxGetApp().dark_mode();
         if (!is_dark) {
             diameter_label->SetForegroundColour(wxColor(0, 0, 0));
         }
@@ -11016,7 +11016,9 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     //BBS :partplatelist construction
     , partplate_list(this->q, &model)
 {
-    m_is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+    // dark_mode(), not the app setting: a UI theme built on the dark look makes the whole UI dark
+    // whatever the setting says, the GL toolbar and ImGui included.
+    m_is_dark = wxGetApp().dark_mode();
 
     m_aui_mgr.SetManagedWindow(q);
     m_aui_mgr.SetDockSizeConstraint(1, 1);
@@ -17091,7 +17093,7 @@ void Plater::priv::on_apple_change_color_mode(wxSysColourChangedEvent& evt) {
 }
 
 void Plater::priv::on_change_color_mode(SimpleEvent& evt) {
-    m_is_dark = wxGetApp().app_config->get("dark_color_mode") == "1";
+    m_is_dark = wxGetApp().dark_mode();
     view3D->get_canvas3d()->on_change_color_mode(m_is_dark);
     preview->get_canvas3d()->on_change_color_mode(m_is_dark);
     assemble_view->get_canvas3d()->on_change_color_mode(m_is_dark);

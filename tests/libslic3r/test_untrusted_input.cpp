@@ -143,6 +143,10 @@ TEST_CASE("our own pages are recognised by origin", "[Untrusted][Bridge]")
 
     CHECK(local_path_from_file_url("file:///C:/Program%20Files/EdgeSlicer/resources/web/model/index.html?lang=en") ==
           "C:/Program Files/EdgeSlicer/resources/web/model/index.html");
+    CHECK(local_path_from_file_url("file:///C:/Users/a%20b/%23x/%25y/index.html?lang=en") ==
+          "C:/Users/a b/#x/%y/index.html");
+    CHECK(local_path_from_file_url("file:///home/a%20b/%23x/%25y/index.html?lang=en") ==
+          "/home/a b/#x/%y/index.html");
     CHECK(local_path_from_file_url("file:///usr/share/edgeslicer/web/x.html") == "/usr/share/edgeslicer/web/x.html");
     CHECK(local_path_from_file_url("file://localhost/C:/x.html") == "C:/x.html");
     CHECK(local_path_from_file_url("file://server/share/x.html").empty());

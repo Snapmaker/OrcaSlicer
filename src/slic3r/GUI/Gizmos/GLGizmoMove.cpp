@@ -400,34 +400,6 @@ Transform3d snap_delta(const Vec3d& face_point, const Vec3d& face_normal, const 
     return delta;
 }
 
-// Closest point to `p` on triangle abc (Ericson, Real-Time Collision Detection 5.1.5).
-Vec3d closest_point_on_triangle(const Vec3d& p, const Vec3d& a, const Vec3d& b, const Vec3d& c)
-{
-    const Vec3d ab = b - a, ac = c - a, ap = p - a;
-    const double d1 = ab.dot(ap), d2 = ac.dot(ap);
-    if (d1 <= 0. && d2 <= 0.)
-        return a;
-    const Vec3d bp = p - b;
-    const double d3 = ab.dot(bp), d4 = ac.dot(bp);
-    if (d3 >= 0. && d4 <= d3)
-        return b;
-    const double vc = d1 * d4 - d3 * d2;
-    if (vc <= 0. && d1 >= 0. && d3 <= 0.)
-        return a + ab * (d1 / (d1 - d3));
-    const Vec3d cp = p - c;
-    const double d5 = ab.dot(cp), d6 = ac.dot(cp);
-    if (d6 >= 0. && d5 <= d6)
-        return c;
-    const double vb = d5 * d2 - d1 * d6;
-    if (vb <= 0. && d2 >= 0. && d6 <= 0.)
-        return a + ac * (d2 / (d2 - d6));
-    const double va = d3 * d6 - d5 * d4;
-    if (va <= 0. && (d4 - d3) >= 0. && (d5 - d6) >= 0.)
-        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
-    const double denom = 1.0 / (va + vb + vc);
-    return a + ab * (vb * denom) + ac * (vc * denom);
-}
-
 } // namespace
 
 bool GLGizmoMove3D::snap_available() const
@@ -607,17 +579,13 @@ const GLVolume* GLGizmoMove3D::snap_target_volume() const
     return nullptr;
 }
 
-// Where the cursor puts the contact face while a target surface is set. The cursor ray is
-// intersected with the target's plane; the point is then clamped to the nearest point of the
-// target region (its coplanar facets), so the selection keeps sliding on that face, and stops at
-// its edge, instead of jumping onto other geometry. Inside the region this is exactly the ray hit.
+// Where the cursor puts the contact face while a target surface is set: the cursor ray
+// intersected with the target's (unbounded) plane, so the selection slides freely along that plane
+// in every direction. The highlighted target face is only a guide; there is no edge stop.
 bool GLGizmoMove3D::snap_target_hit(SurfaceHit& hit) const
 {
     const GLVolume* tv = snap_target_volume();
     if (tv == nullptr)
-        return false;
-    const indexed_triangle_set* its = tv->mesh_raycaster->get_aabb_mesh().get_triangle_mesh();
-    if (its == nullptr || m_snap_target_facets.empty())
         return false;
 
     const Camera& camera = wxGetApp().plater()->get_camera();
@@ -638,37 +606,17 @@ bool GLGizmoMove3D::snap_target_hit(SurfaceHit& hit) const
         return false; // the plane is behind the camera
     const Vec3d on_plane = origin + t * dir;
 
-    const Vec3d p = trafo.inverse() * on_plane;
-    Vec3d  best    = p;
-    double best_d2 = std::numeric_limits<double>::max();
-    for (size_t f : m_snap_target_facets) {
-        if (f >= its->indices.size())
-            continue;
-        const Vec3i32& tri = its->indices[f];
-        const Vec3d c = closest_point_on_triangle(p, its->vertices[tri[0]].cast<double>(), its->vertices[tri[1]].cast<double>(),
-                                                  its->vertices[tri[2]].cast<double>());
-        const double d2 = (c - p).squaredNorm();
-        if (d2 < best_d2) {
-            best_d2 = d2;
-            best    = c;
-            if (d2 < 1e-12)
-                break; // inside the region
-        }
-    }
-    if (best_d2 == std::numeric_limits<double>::max())
-        return false;
-
     hit             = SurfaceHit();
-    hit.mesh_point  = best;
+    hit.mesh_point  = trafo.inverse() * on_plane;
     hit.mesh_normal = m_snap_target.mesh_normal;
-    hit.point       = trafo * best;
+    hit.point       = on_plane;
     hit.normal      = plane_normal;
     return true;
 }
 
 void GLGizmoMove3D::snap_set_target(const SurfaceHit& hit)
 {
-    snap_set_face(m_snap_target, hit, &m_snap_target_facets);
+    snap_set_face(m_snap_target, hit);
     m_snap_target_name.clear();
     const GLVolumePtrs& volumes = m_parent.get_volumes().volumes;
     const Model&        model   = wxGetApp().plater()->model();
@@ -694,7 +642,6 @@ void GLGizmoMove3D::snap_clear_target()
 {
     m_snap_target.valid = false;
     m_snap_target.region.reset();
-    m_snap_target_facets.clear();
     m_snap_target_name.clear();
     m_snap_pick_target = false;
     m_snap_target_hover.valid = false;
@@ -868,8 +815,11 @@ void GLGizmoMove3D::snap_apply(const Transform3d& world_delta)
 
 void GLGizmoMove3D::snap_update_drag()
 {
+    // Holding Alt while dragging releases the target surface: the contact face then follows whatever
+    // other object is under the cursor, and the target takes over again when Alt is let go.
+    const bool use_target = m_snap_target.valid && !wxGetKeyState(WXK_ALT);
     SurfaceHit target;
-    if (m_snap_target.valid ? !snap_target_hit(target) : !snap_raycast(false, target))
+    if (use_target ? !snap_target_hit(target) : !snap_raycast(false, target))
         return; // off every other object (or no usable target): stay where the last surface put it
     m_snap_last_target = target;
     m_snap_has_target  = true;
@@ -1078,9 +1028,10 @@ void GLGizmoMove3D::render_snap_target_row(ImGuiWrapper* imgui, float wrap_width
     ImGui::AlignTextToFramePadding();
     imgui->text(_L("Target surface"));
     if (ImGui::IsItemHovered())
-        imgui->tooltip(_L("Optional. Pick a face of another object or part and the contact face is projected onto that face only, "
-                          "sliding along it and stopping at its edge, instead of following whatever is under the cursor. "
-                          "Leave it empty to snap to any other object."),
+        imgui->tooltip(_L("Optional. Pick a face of another object or part and the contact face is projected onto that face's "
+                          "plane, sliding freely along it instead of following whatever is under the cursor. The highlighted "
+                          "face is only a guide. Hold Alt while dragging to release the target. Leave it empty to snap to "
+                          "any other object."),
                        wrap_width);
     ImGui::SameLine(x0 + label_w + gap);
 
@@ -1146,8 +1097,10 @@ void GLGizmoMove3D::render_snap_to_surface_ui(ImGuiWrapper* imgui, float wrap_wi
         render_snap_target_row(imgui, wrap_width);
         return;
     }
-    imgui->text_wrapped(_L("Drag onto another object's surface, or onto the target surface if one is set. Scroll while dragging "
-                           "to spin by the Coarse amount (hold Shift for the Fine amount). Click another face to change the contact face."),
+    imgui->text_wrapped(_L("Drag onto another object's surface. With a target surface set, the contact face slides along the "
+                           "target's plane instead; hold Alt while dragging to release the target. Scroll while dragging to spin by "
+                           "the Coarse amount (hold Shift for the Fine amount). Click another face of the selection to change the "
+                           "contact face."),
                         wrap_width);
     render_snap_target_row(imgui, wrap_width);
 

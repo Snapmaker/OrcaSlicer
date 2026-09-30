@@ -87,9 +87,9 @@ class GLGizmoMove3D : public GLGizmoBase
     bool        m_snap_prefs_loaded{ false };
     SurfaceHit  m_snap_last_target;
     // Optional target surface: when set, dragging projects onto this face of another object/part
-    // only. Held by model ids, cleared when its object goes away or the gizmo closes.
+    // only (its plane, without an edge stop; Alt releases it while dragging). Held by model ids,
+    // cleared when its object goes away or the gizmo closes.
     SnapFace    m_snap_target;
-    std::vector<size_t> m_snap_target_facets;   // sorted facet indices of the target region
     std::string m_snap_target_name;
     bool        m_snap_pick_target{ false };    // next click on another object's face sets the target
     SnapFace    m_snap_target_hover;            // preview while picking

@@ -465,6 +465,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/HomePanel.cpp
     GUI/Theme.cpp
     GUI/Theme.hpp
+    GUI/WindowColourStash.cpp
+    GUI/WindowColourStash.hpp
     GUI/ThemesPage.cpp
     GUI/ThemesPage.hpp
     GUI/HomePanel.hpp

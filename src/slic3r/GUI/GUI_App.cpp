@@ -115,6 +115,7 @@
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
 #include "ThemesPage.hpp"
+#include "WindowColourStash.hpp"
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -4574,6 +4575,9 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
     /*if (m_is_dark_mode != dark_mode() )
         m_is_dark_mode = dark_mode();*/
 
+    // Keep the colours the window had, so a live theme switch can put them back (WindowColourStash.hpp).
+    const WindowColourStash::Stock stock_colours = WindowColourStash::snapshot(window);
+
     if (m_is_dark_mode) {
 
         auto orig_col = window->GetBackgroundColour();
@@ -4625,6 +4629,8 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
             window->SetForegroundColour(fg_col);
         }
     }
+
+    WindowColourStash::commit(window, stock_colours);
 }
 
 // recursive function for scaling fonts for all controls in Window
@@ -5341,6 +5347,94 @@ void GUI_App::update_ui_from_settings()
     }
 
     if (mainframe) {mainframe->update_ui_from_settings();}
+}
+
+// Redraws a window and everything in it (Refresh() does not reach every child on every platform).
+static void refresh_tree(wxWindow* window)
+{
+    if (window == nullptr)
+        return;
+    window->Refresh();
+    for (wxWindow* child : window->GetChildren())
+        refresh_tree(child);
+}
+
+void GUI_App::apply_theme_live()
+{
+    // The hidden instance the hub manages has no window anyone sees, and its first-run and plug-in
+    // prompts already stay away from it: it keeps the look it started with and loads the chosen one
+    // at its next start.
+    if (mainframe == nullptr || (m_hub_managed && RemoteAccess::get().hidden())) {
+        BOOST_LOG_TRIVIAL(info) << "Theme: live switch skipped, no visible window";
+        return;
+    }
+    static bool running = false;
+    if (running)
+        return;
+    running = true;
+    struct Done
+    {
+        ~Done() { running = false; }
+    } done;
+
+    wxBusyCursor wait;
+    const std::string id = app_config->get("ui_theme");
+    BOOST_LOG_TRIVIAL(info) << "Theme: applying \"" << id << "\" live";
+
+    // 1. Put every window UpdateDarkUI painted back to the colours it had (WindowColourStash.hpp);
+    //    they are themed again from the new tables below.
+    WindowColourStash::restore_all();
+
+    // 2. The new theme: resets the colour table, radii and banner, then loads it. Fonts stay.
+    if (!Theme::apply(id))
+        BOOST_LOG_TRIVIAL(warning) << "Theme \"" << id << "\" could not be applied; using the stock look";
+
+    // 3. The labels, the dark flag and the widgets' dark mode follow the theme's base look. The
+    //    SVG icon cache needs nothing: its keys carry the theme's icon and accent colours.
+    init_label_colours();
+    Update_dark_mode_flag();
+
+    // 4. Everything that shows a colour. The 3D view and the GL toolbar take the dark flag from the
+    //    Plater, so tell it (async, it is what the dark mode checkbox does).
+    SimpleEvent color_mode_changed(EVT_GLCANVAS_COLOR_MODE_CHANGED);
+    if (plater_ != nullptr)
+        wxPostEvent(plater_, color_mode_changed);
+
+#ifdef __WINDOWS__
+    // The dark title bar and explorer theme for the new base, then the main frame: on_sys_color_changed()
+    // (tabs, side bar, menus, title bar, Home page and web views), scroll bars and every child's colours.
+    force_colors_update();
+    update_ui_from_settings();
+#else
+    // The system colour change handler does the same, and more.
+    mainframe->theme_changed();
+#endif
+
+    // 5. Windows that are open next to the main one (and the ones kept hidden) are themed too.
+    std::vector<wxWindow*> others;
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext())
+        if (wxWindow* top = node->GetData(); top != nullptr && top != mainframe)
+            others.push_back(top);
+    for (wxWindow* top : others) {
+        if (wxDialog* dialog = dynamic_cast<wxDialog*>(top))
+            UpdateDlgDarkUI(dialog);
+        else if (wxFrame* frame = dynamic_cast<wxFrame*>(top))
+            UpdateFrameDarkUI(frame);
+        else
+            update_dark_children_ui(top);
+        if (top->IsShown()) {
+            if (auto* dpi_dialog = dynamic_cast<DPIDialog*>(top))
+                dpi_dialog->theme_changed();
+            else if (auto* dpi_frame = dynamic_cast<DPIFrame*>(top))
+                dpi_frame->theme_changed();
+        }
+        refresh_tree(top);
+    }
+
+    refresh_tree(mainframe);
+    if (plater_ != nullptr)
+        if (GLCanvas3D* canvas = plater_->get_current_canvas3D())
+            canvas->set_as_dirty();
 }
 
 void GUI_App::persist_window_geometry(wxTopLevelWindow *window, bool default_maximized)

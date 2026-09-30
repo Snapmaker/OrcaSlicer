@@ -18,6 +18,8 @@ public:
     ~BBLTopbar();
     void UpdateToolbarWidth(int width);
     void Rescale();
+    // The UI theme changed (GUI_App::apply_theme_live): forget the scaled banner, remake the icons, redraw.
+    void ThemeChanged();
     void OnIconize(wxAuiToolBarEvent& event);
     void OnFullScreen(wxAuiToolBarEvent& event);
     void OnCloseFrame(wxAuiToolBarEvent& event);

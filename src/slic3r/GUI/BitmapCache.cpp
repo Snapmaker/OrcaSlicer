@@ -307,6 +307,22 @@ error:
     return NULL;
 }
 
+// The UI theme's accent and icon colours recolour the SVGs (see load_svg), so a cached bitmap is
+// only good for the colours it was made under: they are part of its key, and switching theme
+// (GUI_App::apply_theme_live) finds or makes the ones for the new theme, with no cache to clear.
+// Empty when the theme leaves both alone, like no theme at all.
+static std::string theme_key()
+{
+    if (!Theme::active())
+        return {};
+    const auto& palette = Theme::spec().palette;
+    auto        accent  = palette.find("accent");
+    auto        icon    = palette.find("icon");
+    if (accent == palette.end() && icon == palette.end())
+        return {};
+    return "-th" + (accent == palette.end() ? std::string() : accent->second) + "-" + (icon == palette.end() ? std::string() : icon->second);
+}
+
 wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_width, unsigned target_height, 
     const bool grayscale/* = false*/, const bool dark_mode/* = false*/, const std::string& new_color /*= ""*/, const float scale_in_center/* = 0*/)
 {
@@ -316,7 +332,8 @@ wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_
                                          + (m_scale != 1.0f ? "-s" + float_to_string_decimal_point(m_scale) : "")
                                          + (dark_mode ? "-dm" : "")
                                          + (grayscale ? "-gs" : "")
-                                         + new_color;
+                                         + new_color
+                                         + theme_key();
 
     auto it = m_map.find(bitmap_key);
     if (it != m_map.end())

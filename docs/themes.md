@@ -21,13 +21,15 @@ own, so Preferences stays quick to open and nothing theme-related is built until
   read-only, so saving a change to one asks for a name and makes your own copy; **Save as new...**
   does the same for one of yours. Picked font and image files are copied into the theme's folder.
 
-A theme takes effect the next time EdgeSlicer starts. When you pick a different theme, or save a
-change to the one in use, EdgeSlicer asks whether to **Restart now** or **Later**. Restarting closes
-EdgeSlicer the way File > Quit does (an unsaved project is offered for saving, and cancelling that
-cancels the restart) and starts it again with the same command line. **Later** leaves a highlighted
-note on the page saying a restart is needed, and **Restart to apply** at the bottom of the page
-stays available whenever one is pending. Every save is a new change and asks again; picking the
-same theme twice asks once.
+Picking a theme, installing one, deleting the one in use, or saving a change to it applies the
+colours, corner sizes, icons, title bar, 3D view background and Home page at once, with no restart
+(windows that are open next to the main one follow too). Fonts are loaded when EdgeSlicer starts, so
+a change of fonts shows after a restart: only then does EdgeSlicer ask whether to **Restart now** or
+**Later**. Restarting closes EdgeSlicer the way File > Quit does (an unsaved project is offered for
+saving, and cancelling that cancels the restart) and starts it again with the same command line.
+**Later** leaves a highlighted note on the page saying the fonts wait for a restart, and **Restart to
+apply fonts** at the bottom of the page stays available whenever that is so. Every save is a new
+change and asks again; picking the same theme twice asks once.
 Parts the page has no control for (`overrides`, `home`) are kept as they are when a theme is saved.
 
 EdgeSlicer ships two sample themes with original art: **Ember Forge** (dark, charcoal and oxblood

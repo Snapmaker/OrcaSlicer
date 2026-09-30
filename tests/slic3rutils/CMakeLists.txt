@@ -55,6 +55,9 @@ add_executable(${_TEST_NAME}_tests
     ams_dual_layout_tests.cpp
     gizmo_selection_object_tests.cpp
     dark_mode_background_tests.cpp
+    # After the other wx-window tests: it starts a plain wxApp when none is up, and the tests
+    # that run before it (hms_lookup_tests) call wxGetApp() whenever an app exists.
+    theme_live_tests.cpp
     bambu_send_diagnosis_tests.cpp
     # The crash-report scrubber is plain C++ with no library of its own; the test compiles
     # the very file the app does.

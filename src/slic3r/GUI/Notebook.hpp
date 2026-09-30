@@ -24,6 +24,9 @@ public:
     void SetSelection(int sel);
     void UpdateMode();
     void Rescale();
+    // The bar's own background: the stock one, or the UI theme's for the tab buttons' colour. Set
+    // when the bar is made and again when the theme changes.
+    void UpdateColours();
     bool InsertPage(size_t n, const wxString &text, bool bSelect = false, const std::string &bmp_name = "", const std::string &inactive_bmp_name = "");
     void RemovePage(size_t n);
     bool SetPageImage(size_t n, const std::string& bmp_name) const;

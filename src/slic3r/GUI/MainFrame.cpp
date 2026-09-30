@@ -287,6 +287,7 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
 #else
     auto panel_topbar = new wxPanel(this, wxID_ANY);
     panel_topbar->SetBackgroundColour(Theme::colour("titlebar_bg", wxColour(38, 46, 48)));
+    m_mac_topbar_panel = panel_topbar;
     auto sizer_tobar = new wxBoxSizer(wxVERTICAL);
     panel_topbar->SetSizer(sizer_tobar);
     panel_topbar->Layout();
@@ -2639,6 +2640,16 @@ void MainFrame::on_sys_color_changed()
 
     // update label colors in respect to the system mode
     wxGetApp().init_label_colours();
+
+    // A UI theme colours the bar behind the tab buttons and the title bar. Both were set when they
+    // were built, so redo them: this is also how a live theme switch reaches them (Theme.hpp).
+    m_tabpanel->GetBtnsListCtrl()->UpdateColours();
+    if (m_topbar)
+        m_topbar->ThemeChanged();
+    if (m_mac_topbar_panel) {
+        m_mac_topbar_panel->SetBackgroundColour(Theme::colour("titlebar_bg", wxColour(38, 46, 48)));
+        m_mac_topbar_panel->Refresh();
+    }
 
 #ifndef __WINDOWS__
     wxGetApp().force_colors_update();

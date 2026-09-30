@@ -803,6 +803,9 @@ private:
     void            open_preferences(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
     // Menu > Themes...: the themes window, built when it opens.
     void            open_themes();
+    // Makes the theme app_config "ui_theme" names the running look without a restart: colours,
+    // corner radii, icons, title bar, 3D view and Home page. Fonts still need one (Theme::fonts_pending()).
+    void            apply_theme_live();
 
     virtual bool OnExceptionInMainLoop() override;
     // Calls wxLaunchDefaultBrowser if user confirms in dialog.

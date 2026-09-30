@@ -405,6 +405,7 @@ public:
 
     // BBS. Replace title bar and menu bar with top bar.
     BBLTopbar*            m_topbar{ nullptr };
+    wxPanel*              m_mac_topbar_panel{ nullptr }; // macOS: the plain bar the UI theme's title bar colour goes on
     PrintHostQueueDialog* printhost_queue_dlg() { return m_printhost_queue_dlg; }
     Plater*               m_plater { nullptr };
     //BBS: GUI refactor

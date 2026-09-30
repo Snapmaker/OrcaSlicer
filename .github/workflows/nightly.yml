@@ -13,7 +13,8 @@ name: Nightly
 
 on:
   schedule:
-    - cron: '0 18 * * *'
+    # Weekly, Sundays 18:00 UTC (was daily; scaled back 2026-09-30 to save hosted-runner minutes).
+    - cron: '0 18 * * 0'
   workflow_dispatch:
     inputs:
       publish:

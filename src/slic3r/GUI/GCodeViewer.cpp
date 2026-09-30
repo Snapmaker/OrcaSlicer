@@ -1039,7 +1039,8 @@ void GCodeViewer::load(const GCodeProcessorResult& gcode_result, const Print& pr
 
     m_max_print_height = gcode_result.printable_height;
 
-    // When skip_toolpaths is set (user confirmed memory warning), build layer metadata
+    // When skip_toolpaths is set (too little free memory, see
+    // Preview::toolpath_preview_exceeds_free_memory()), build layer metadata
     // via Z-scan but skip GPU vertex buffers entirely to avoid OOM.
     if (skip_toolpaths) {
         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": skip_toolpaths=true, building layers only (no GPU vertex buffers), moves=%1%") % gcode_result.moves.size() << log_memory_info(true);

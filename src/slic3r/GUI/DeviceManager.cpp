@@ -6757,6 +6757,35 @@ void DeviceManager::full_report_tick()
     }
 }
 
+void DeviceManager::lan_watch_tick()
+{
+    if (!m_agent || Slic3r::GUI::wxGetApp().is_hub_managed()) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (m_lan_watch_set_at != std::chrono::steady_clock::time_point{} &&
+        now - m_lan_watch_set_at < std::chrono::milliseconds(LAN_WATCH_SET_MS))
+        return;
+    m_lan_watch_set_at = now;
+
+    // The selected printer is on the agent's own session and is left out; the plug-in skips it
+    // too, but naming it here would only log a set that is not what is being watched.
+    const MachineObject* sel = get_selected_machine();
+    json        targets = json::array();
+    std::string ids;
+    for (const auto& kv : get_my_machine_list()) {
+        MachineObject* m = kv.second;
+        if (!m || !m->is_lan_mode_printer() || m == sel) continue;
+        if (!m->has_access_right() || m->dev_ip.empty()) continue;
+        targets.push_back({{"dev_id", m->dev_id}, {"dev_ip", m->dev_ip}, {"username", "bblp"}, {"password", m->get_access_code()}});
+        ids += (ids.empty() ? "" : ",") + m->dev_id;
+    }
+    const int n = m_agent->watch_printers(targets.dump());
+    if (ids != m_lan_watch_set) {
+        m_lan_watch_set = ids;
+        BOOST_LOG_TRIVIAL(info) << "lan_watch: watching [" << ids << "] besides the selected printer (plug-in says " << n
+                                << (n < 0 ? ": not supported" : "") << ")";
+    }
+}
+
 // The round robin the hidden instance runs over its LAN printers, because the SDK gives it one
 // session to spend. Each candidate holds the session for LAN_WATCH_DWELL_MS; the tick above then
 // keeps that one alive. A dwell long enough to see a state change (a print starting, finishing,

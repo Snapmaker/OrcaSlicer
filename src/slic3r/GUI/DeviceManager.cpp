@@ -2932,6 +2932,7 @@ void MachineObject::reset()
     BOOST_LOG_TRIVIAL(trace) << "reset dev_id=" << dev_id;
     last_update_time = std::chrono::system_clock::now();
     m_push_count = 0;
+    m_full_report_seen = false;
     is_220V_voltage = false;
     get_version_retry = 0;
     camera_recording = false;
@@ -4393,6 +4394,8 @@ int MachineObject::parse_json(std::string payload, bool key_field_only)
                     }
                     update_printer_preset_name();
                     update_filament_list();
+                    if (!key_field_only && (jj.contains("ams") || jj.contains("vt_tray")))
+                        m_full_report_seen = true; // DeviceManager::full_report_tick
                     if (jj.contains("ams")) {
                         if (jj["ams"].contains("ams")) {
                             long int last_ams_exist_bits = ams_exist_bits;
@@ -6732,6 +6735,25 @@ void DeviceManager::lan_reconnect_tick()
             lan_reconnect_now(obj, !session_up ? "session lost" : "no report for two minutes");
             break;
         }
+    }
+}
+
+void DeviceManager::full_report_tick()
+{
+    // Only the cloud printers: a LAN printer is reached over the one LAN session the agent holds,
+    // which lan_reconnect_tick already keeps asking for reports.
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto& kv : userMachineList) {
+        MachineObject* m = kv.second;
+        if (!m || m->is_lan_mode_printer() || !m->is_online() || m->m_full_report_seen)
+            continue;
+        if (m->m_full_report_asked != std::chrono::steady_clock::time_point{} &&
+            now - m->m_full_report_asked < std::chrono::milliseconds(FULL_REPORT_RETRY_MS))
+            continue;
+        m->m_full_report_asked = now;
+        const int rc = m->command_request_push_all();
+        BOOST_LOG_TRIVIAL(info) << "full_report: dev_id=" << m->dev_id << " has sent no AMS / spool report yet, asked for one (rc="
+                                << rc << ")";
     }
 }
 

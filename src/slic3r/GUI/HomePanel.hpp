@@ -24,10 +24,11 @@ namespace Slic3r {
 namespace GUI {
 
 class WebViewPanel;
+class HomeVendors;
 
 // The Home tab: a local page (resources/web/home) with a side menu of sections - Recent (the
-// recent projects), Library (the model files in folders the user picked, Utils/LibraryIndex.hpp)
-// and Print History (the G-code archive). The page only draws; everything on disk is read here and
+// recent projects), Library (the model files in folders the user picked, Utils/LibraryIndex.hpp),
+// Print History (the G-code archive) and Vendors (connectors to vendors' APIs, HomeVendors.hpp). The page only draws; everything on disk is read here and
 // every action runs here, for files this panel itself listed (Utils/HomeTabLogic.hpp has the rules).
 //
 // The old flutter start page (WebViewPanel: Snapmaker's model library) is kept behind it for the
@@ -113,6 +114,8 @@ private:
     bool           m_library_rescan { false }; // asked for again while a scan ran
     size_t         m_library_seen { 0 };       // files seen by the running scan
     std::shared_ptr<std::atomic<bool>> m_library_cancel { std::make_shared<std::atomic<bool>>(false) };
+
+    std::unique_ptr<HomeVendors> m_vendors; // made when the page first asks
 
     // Worker threads report back through CallAfter only while this is alive.
     std::shared_ptr<bool> m_alive { std::make_shared<bool>(true) };

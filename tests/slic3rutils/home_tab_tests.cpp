@@ -15,7 +15,8 @@ TEST_CASE("home tab: sections", "[HomeTab]")
     CHECK(valid_section("history"));
     CHECK_FALSE(valid_section(""));
     CHECK(valid_section("library"));
-    CHECK_FALSE(valid_section("vendors")); // not built yet
+    CHECK(valid_section("vendors"));
+    CHECK_FALSE(valid_section("hub"));
     CHECK_FALSE(valid_section("Recent"));
     CHECK(section_or_default("history") == "history");
     CHECK(section_or_default("") == "recent");

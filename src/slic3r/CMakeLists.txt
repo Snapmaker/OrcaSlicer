@@ -462,6 +462,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/StreamPanel.hpp
     GUI/HomePanel.cpp
     GUI/HomePanel.hpp
+    GUI/HomeVendors.cpp
+    GUI/HomeVendors.hpp
     GUI/BambuCamRelay.cpp
     GUI/BambuCamRelay.hpp
     GUI/RemoteAccess.cpp
@@ -873,6 +875,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/LibraryIndex.hpp
     Utils/MeshThumbnail.cpp
     Utils/MeshThumbnail.hpp
+    Utils/VendorConnector.cpp
+    Utils/VendorConnector.hpp
     Utils/MainThreadGate.cpp
     Utils/MainThreadGate.hpp
     Utils/ServerLifetime.cpp

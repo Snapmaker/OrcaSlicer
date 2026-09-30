@@ -17,7 +17,7 @@
 namespace Slic3r {
 namespace HomeTab {
 
-// The sections the page has: "recent", "library" and "history".
+// The sections the page has: "recent", "library", "history" and "vendors".
 bool valid_section(const std::string& section);
 // `section` when it is one of them, else "recent".
 std::string section_or_default(const std::string& section);

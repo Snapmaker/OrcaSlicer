@@ -12,6 +12,11 @@
 //                                          of files: the page acts on ids)
 //   library_progress {scanning, files}     a scan is running
 //   library_thumbs {images: {id: dataUri}} Library covers, asked for as cards scroll in
+//   vendors {connectors: [...], items: [...]}  HomeVendors.cpp send_state(): connector specs (never
+//                                          a secret), and items keyed by opaque keys
+//   vendor_thumbs {images: {key: dataUri}} vendor thumbnails (PNG, JPEG, GIF or WebP)
+//   vendor_notice {text, error}            a result to show for a moment
+//   vendor_saved {id} / vendor_invalid {error}  the connector editor's save went through or not
 // Text from files and printers is only ever set with textContent, never parsed as HTML.
 (function () {
   'use strict';
@@ -26,7 +31,7 @@
     asked: new Set(),
     printer: '',
     search: '',
-    sort: { recent: 'newest', library: 'newest', history: 'newest' },
+    sort: { recent: 'newest', library: 'newest', history: 'newest', vendors: 'newest' },
     lib: null,          // the last 'library' message
     libThumbs: {},
     libAsked: new Set(),
@@ -34,12 +39,19 @@
     libShown: [],
     libRendered: 0,
     libSeen: 0,
+    ven: null,          // the last 'vendors' message
+    venThumbs: {},
+    venAsked: new Set(),
+    venFilter: { connector: new Set(), tag: new Set() },
+    venShown: [],
+    venRendered: 0,
   };
-  const SECTIONS = ['recent', 'library', 'history'];
+  const SECTIONS = ['recent', 'library', 'history', 'vendors'];
   const SORTS = {
     recent: ['newest', 'oldest', 'name'],
     library: ['newest', 'oldest', 'added', 'name', 'size'],
     history: ['newest', 'oldest', 'name'],
+    vendors: ['newest', 'oldest', 'name'],
   };
   const SORT_LABELS = { newest: ['sort_newest', 'Newest first'], oldest: ['sort_oldest', 'Oldest first'],
     added: ['sort_added', 'Recently added'], name: ['sort_name', 'Name'], size: ['sort_size', 'Largest first'] };
@@ -236,7 +248,7 @@
 
   // ---- Print History ----
   // Thumbnails are asked for in batches as their cards come near the screen.
-  function thumbAsker(command, have, asked) {
+  function thumbAsker(command, have, asked, field) {
     let timer = 0;
     const queue = [];
     return function (id) {
@@ -245,7 +257,7 @@
       queue.push(id);
       if (!timer) timer = setTimeout(() => {
         timer = 0;
-        while (queue.length) post(command, { ids: queue.splice(0, 40) });
+        while (queue.length) post(command, { [field || 'ids']: queue.splice(0, 40) });
       }, 30);
     };
   }
@@ -362,6 +374,7 @@
   function render() {
     if (state.section === 'history') renderHistory();
     else if (state.section === 'library') renderLibrary();
+    else if (state.section === 'vendors') renderVendors();
     else renderRecent();
   }
 
@@ -385,7 +398,7 @@
       b.setAttribute('aria-current', on ? 'page' : 'false');
     }
     for (const id of SECTIONS) $(id).hidden = section !== id;
-    $('title').textContent = t(section, { recent: 'Recent', library: 'Library', history: 'Print History' }[section]);
+    $('title').textContent = t(section, { recent: 'Recent', library: 'Library', history: 'Print History', vendors: 'Vendors' }[section]);
     fillSort(section);
     $('refresh').classList.toggle('spin', section === 'library' && !!state.lib && state.lib.scanning);
     closeMenu();
@@ -611,6 +624,529 @@
     }
   }
 
+
+  // ---- toast ----
+  let toastTimer = 0;
+  function toast(text, error) {
+    const box = $('toast');
+    box.textContent = text;
+    box.classList.toggle('error', !!error);
+    box.hidden = !text;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { box.hidden = true; }, error ? 9000 : 5000);
+  }
+
+  // ---- Vendors ----
+  let venThumbObserver = null;
+  let venMoreObserver = null;
+  const askVenThumb = thumbAsker('vendor_thumbs', () => state.venThumbs, () => state.venAsked, 'keys');
+  const ICON_CUBE_BIG = ICON_CUBE;
+
+  function isoSeconds(s) {
+    const n = Date.parse(s || '');
+    return isNaN(n) ? 0 : Math.floor(n / 1000);
+  }
+  function connectorOf(id) {
+    return state.ven ? state.ven.connectors.find((c) => c.id === id) : null;
+  }
+
+  function receiveVendors(msg) {
+    const ven = {
+      connectors: Array.isArray(msg.connectors) ? msg.connectors : [],
+      items: Array.isArray(msg.items) ? msg.items : [],
+    };
+    const keys = new Set(ven.items.map((i) => i.key));
+    for (const k of Object.keys(state.venThumbs)) if (!keys.has(k)) delete state.venThumbs[k];
+    state.venAsked = new Set(Object.keys(state.venThumbs));
+    const keepScroll = state.ven !== null;
+    state.ven = ven;
+    if (state.section === 'vendors') renderVendors(keepScroll);
+    if (!$('ven-editor').hidden && editor.id) renderEditorSlots();
+    if (!$('ven-detail').hidden && detailKey) {
+      const item = ven.items.find((i) => i.key === detailKey);
+      if (item) openDetail(item); else closeDetail();
+    }
+  }
+
+  function applyVendorThumbs(images) {
+    for (const key of Object.keys(images)) {
+      const uri = images[key];
+      if (typeof uri !== 'string' || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(uri)) continue;
+      state.venThumbs[key] = uri;
+      const c = document.querySelector('#vendors-grid .card[data-id="' + CSS.escape(key) + '"] .thumb');
+      if (c) { c.textContent = ''; const img = el('img'); img.alt = ''; img.src = uri; c.appendChild(img); }
+      if (detailKey === key) setDetailThumb(uri);
+    }
+  }
+
+  function venMatchesExcept(i, skip) {
+    const f = state.venFilter;
+    if (skip !== 'connector' && f.connector.size && !f.connector.has(i.connector)) return false;
+    if (skip !== 'tag' && f.tag.size && !(i.tags || []).some((x) => f.tag.has(x))) return false;
+    const c = connectorOf(i.connector);
+    return matches([i.name, i.designer, i.description, c && c.name, c && c.vendor].concat(i.tags || [])
+      .concat((i.subs || []).map((s) => s.name + ' ' + s.variant)), state.search);
+  }
+
+  function connectorCard(c) {
+    const box = el('div', 'conn');
+    const top = el('div', 'top');
+    const title = el('div', 'title', c.name);
+    title.title = c.name + (c.vendor ? ' · ' + c.vendor : '');
+    top.appendChild(title);
+    if (c.vendor && c.vendor !== c.name) top.appendChild(el('span', 'badge', c.vendor));
+    const more = el('button', 'more');
+    more.type = 'button';
+    more.setAttribute('aria-label', 'More');
+    more.appendChild(svg(ICON_MORE));
+    const menu = [
+      { label: t('full_sync', 'Fetch everything again'), run: () => post('vendor_sync', { id: c.id, full: true }) },
+      { label: t('test', 'Test connection'), run: () => post('vendor_test', { id: c.id }) },
+      { label: t('edit', 'Edit'), run: () => openEditor(c) },
+      { label: t('export', 'Export'), run: () => post('vendor_export_spec', { id: c.id }) },
+    ];
+    if ((c.slots || []).some((s) => s.set)) menu.push({ label: t('forget', 'Forget credentials'), run: () => post('vendor_forget', { id: c.id }) });
+    menu.push('-');
+    menu.push({ label: t('delete_connector', 'Remove connector'), danger: true, run: () => post('vendor_delete', { id: c.id }) });
+    more.addEventListener('click', (e) => { e.stopPropagation(); if (menuFor === more) closeMenu(); else openMenu(more, menu); });
+    top.appendChild(more);
+    box.appendChild(top);
+
+    const lines = [];
+    if (c.syncing) lines.push(t('syncing', 'Refreshing...'));
+    else if (c.synced_at) lines.push(c.count + ' ' + t('models', 'models') + ' · ' + t('synced', 'Fetched') + ' ' + fmtDate(c.synced_at));
+    else lines.push(t('never_synced', 'Not fetched yet'));
+    for (const l of lines) box.appendChild(el('div', 'line', l));
+    const q = c.quota || {};
+    if (q.limit) box.appendChild(el('div', 'line' + (Number(q.used) >= Number(q.limit) ? ' warn' : ''),
+      t('api_calls', 'API calls') + ' ' + (q.used || '?') + ' / ' + q.limit + (q.resets ? ' · ' + t('resets', 'resets') + ' ' + fmtDate(isoSeconds(q.resets) || 0) || q.resets : '')));
+    if (c.downloads_limited) box.appendChild(el('div', 'line', t('limited_downloads', 'Downloads count against a limit')));
+    const missing = (c.slots || []).filter((s) => !s.set);
+    if (missing.length) box.appendChild(el('div', 'line warn', t('credentials', 'Credentials') + ': ' + missing.map((s) => s.label).join(', ') + ' ' + t('not_set', 'not set')));
+    if (c.last_error) { const e = el('div', 'line err', c.last_error); box.appendChild(e); }
+
+    const row = el('div', 'row');
+    const sync = el('button', 'btn primary', c.syncing ? t('syncing', 'Refreshing...') : t('sync', 'Refresh list'));
+    sync.type = 'button';
+    sync.disabled = !!c.syncing;
+    sync.addEventListener('click', () => post('vendor_sync', { id: c.id }));
+    row.appendChild(sync);
+    for (const slot of c.slots || []) {
+      const b = el('button', 'btn', (slot.set ? t('change', 'Change') : t('set', 'Set')) + ' ' + slot.label);
+      b.type = 'button';
+      b.addEventListener('click', () => post('vendor_secret', { id: c.id, slot: slot.key }));
+      row.appendChild(b);
+    }
+    box.appendChild(row);
+    return box;
+  }
+
+  function renderVendorFilters() {
+    const box = $('ven-filters');
+    box.textContent = '';
+    const ven = state.ven;
+    if (!ven) return;
+    const groups = [
+      { key: 'connector', label: t('connector', 'Connector'), values: (i) => [i.connector], name: (v) => (connectorOf(v) || { name: v }).name },
+      { key: 'tag', label: t('category', 'Category'), values: (i) => i.tags || [], name: (v) => v },
+    ];
+    let any = false;
+    for (const g of groups) {
+      const all = new Map();
+      for (const i of ven.items) for (const v of g.values(i)) all.set(v, 0);
+      const sel = state.venFilter[g.key];
+      for (const v of [...sel]) if (!all.has(v)) sel.delete(v);
+      if (all.size < 2) continue;
+      for (const i of ven.items) if (venMatchesExcept(i, g.key)) for (const v of g.values(i)) all.set(v, all.get(v) + 1);
+      const row = el('div', 'filter-row');
+      row.appendChild(el('span', 'label', g.label));
+      const values = [...all.entries()].sort((a, b) => b[1] - a[1] || String(g.name(a[0])).localeCompare(String(g.name(b[0])))).slice(0, 40);
+      for (const [v, n] of values) {
+        const c = el('button', 'chip' + (sel.has(v) ? ' active' : ''), g.name(v));
+        c.type = 'button';
+        c.setAttribute('aria-pressed', sel.has(v) ? 'true' : 'false');
+        c.appendChild(el('span', 'count', n));
+        c.addEventListener('click', () => { if (sel.has(v)) sel.delete(v); else sel.add(v); renderVendors(); });
+        row.appendChild(c);
+      }
+      box.appendChild(row);
+      any = true;
+    }
+    if (any && Object.values(state.venFilter).some((f) => f.size)) {
+      const row = el('div', 'filter-row');
+      row.appendChild(el('span', 'label', ''));
+      const c = el('button', 'chip clear', t('clear_filters', 'Clear filters'));
+      c.type = 'button';
+      c.addEventListener('click', () => { for (const f of Object.values(state.venFilter)) f.clear(); renderVendors(); });
+      row.appendChild(c);
+      box.appendChild(row);
+    }
+  }
+
+  function itemMenu(i) {
+    const menu = [];
+    if (i.has_page) {
+      menu.push({ label: t('open_page', 'Open vendor page'), run: () => post('vendor_open', { key: i.key }) });
+      menu.push({ label: t('copy_link', 'Copy link'), run: () => post('vendor_copy', { key: i.key }) });
+    }
+    const subs = (i.subs || []).filter((s) => s.can_download);
+    if (i.can_download) menu.push({ label: t('download', 'Download'), download: true, run: () => post('vendor_download', { key: i.key }) });
+    else if (subs.length === 1) menu.push({ label: t('download', 'Download'), download: true, run: () => post('vendor_download', { key: i.key, sub: subs[0].id }) });
+    return menu;
+  }
+
+  function vendorCard(i) {
+    const c0 = connectorOf(i.connector);
+    const badges = [];
+    if ((i.subs || []).length > 1) badges.push({ text: i.subs.length + ' ' + t('files', 'files') });
+    const meta = el('div', 'meta');
+    const upd = fmtDate(isoSeconds(i.updated));
+    if (upd) meta.appendChild(el('span', '', upd));
+    const c = card({
+      name: i.name,
+      image: state.venThumbs[i.key] || '',
+      badges: badges,
+      lines: [i.designer ? t('by', 'by') + ' ' + i.designer : '', [c0 && c0.name].concat((i.tags || []).slice(0, 3)).filter(Boolean).join(' · ')],
+      meta: meta,
+      onOpen: () => openDetail(i),
+      menu: itemMenu(i),
+    });
+    c.dataset.id = i.key;
+    if (i.has_thumb && !state.venThumbs[i.key]) {
+      if (venThumbObserver) venThumbObserver.observe(c); else askVenThumb(i.key);
+    }
+    return c;
+  }
+
+  function renderMoreVendors() {
+    const end = Math.min(state.venShown.length, state.venRendered + LIB_PAGE);
+    const frag = document.createDocumentFragment();
+    for (let k = state.venRendered; k < end; ++k) frag.appendChild(vendorCard(state.venShown[k]));
+    $('vendors-grid').appendChild(frag);
+    state.venRendered = end;
+  }
+
+  function renderVendors(keepScroll) {
+    const section = $('vendors');
+    const scroll = keepScroll ? section.scrollTop : 0;
+    const grid = $('vendors-grid'), empty = $('vendors-empty'), emptyText = $('vendors-empty-text');
+    grid.textContent = '';
+    $('ven-connectors').textContent = '';
+    if (venThumbObserver) venThumbObserver.disconnect();
+    if (venMoreObserver) venMoreObserver.disconnect();
+    state.venShown = [];
+    state.venRendered = 0;
+    if (state.ven === null) { emptyText.textContent = t('loading', 'Loading...'); empty.hidden = false; return; }
+    const ven = state.ven;
+    for (const c of ven.connectors) $('ven-connectors').appendChild(connectorCard(c));
+    renderVendorFilters();
+    $('ven-status').textContent = ven.connectors.length ? ven.items.length + ' ' + t('models', 'models') : '';
+    $('ven-csv').disabled = !ven.items.length;
+    state.venShown = sortBy(ven.items.filter((i) => venMatchesExcept(i, '')), state.sort.vendors,
+      (i) => i.name || '', (i) => isoSeconds(i.updated));
+    if ('IntersectionObserver' in window) {
+      venThumbObserver = new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) { askVenThumb(e.target.dataset.id); venThumbObserver.unobserve(e.target); }
+      }, { root: section, rootMargin: '400px' });
+      venMoreObserver = new IntersectionObserver((entries) => {
+        if (entries.some((e) => e.isIntersecting) && state.venRendered < state.venShown.length) renderMoreVendors();
+      }, { root: section, rootMargin: '800px' });
+    }
+    renderMoreVendors();
+    while (keepScroll && state.venRendered < state.venShown.length && grid.scrollHeight < scroll + section.clientHeight) renderMoreVendors();
+    if (keepScroll) section.scrollTop = scroll;
+    if (venMoreObserver) venMoreObserver.observe($('ven-more'));
+    else while (state.venRendered < state.venShown.length) renderMoreVendors();
+    empty.hidden = state.venShown.length > 0;
+    emptyText.textContent = !ven.connectors.length ? t('vendors_empty', 'Connect a vendor\'s API to browse the models you have access to.')
+      : !ven.items.length ? t('vendor_no_items', 'Nothing fetched yet. Set the credentials, then Refresh list.')
+        : t('no_match', 'Nothing matches your search.');
+  }
+
+  // ---- item detail ----
+  let detailKey = '';
+  function setDetailThumb(uri) {
+    const box = $('ven-detail-thumb');
+    box.textContent = '';
+    if (uri) { const img = el('img'); img.alt = ''; img.src = uri; box.appendChild(img); } else box.appendChild(svg(ICON_CUBE_BIG));
+  }
+  function openDetail(i) {
+    closeMenu();
+    detailKey = i.key;
+    const c = connectorOf(i.connector);
+    setDetailThumb(state.venThumbs[i.key] || '');
+    if (i.has_thumb && !state.venThumbs[i.key]) askVenThumb(i.key);
+    $('ven-detail-name').textContent = i.name;
+    $('ven-detail-sub').textContent = [i.designer ? t('by', 'by') + ' ' + i.designer : '', c && c.name, fmtDate(isoSeconds(i.updated))]
+      .concat(i.tags || []).filter(Boolean).join(' · ');
+    $('ven-detail-desc').textContent = i.description || '';
+    const actions = $('ven-detail-actions');
+    actions.textContent = '';
+    for (const m of itemMenu(i)) {
+      // The files table has a Download per file.
+      if (m === '-' || (m.download && (i.subs || []).length)) continue;
+      const b = el('button', 'btn', m.label);
+      b.type = 'button';
+      b.addEventListener('click', m.run);
+      actions.appendChild(b);
+    }
+    const files = $('ven-detail-files');
+    files.textContent = '';
+    if ((i.subs || []).length) {
+      const table = el('table', 'files');
+      const head = el('tr');
+      for (const h of [t('files_label', 'Files'), '', t('plates_label', 'Plates'), '', '', '', '']) head.appendChild(el('th', '', h));
+      head.children[1].textContent = t('variant', 'Variant');
+      head.children[3].textContent = t('print_time', 'Time');
+      head.children[4].textContent = t('size', 'Size');
+      const thead = el('thead'); thead.appendChild(head); table.appendChild(thead);
+      const body = el('tbody');
+      for (const s of i.subs) {
+        const tr = el('tr');
+        tr.appendChild(el('td', '', s.name || s.id));
+        tr.appendChild(el('td', '', s.variant || ''));
+        tr.appendChild(el('td', '', s.plates || ''));
+        tr.appendChild(el('td', '', s.print_time_s ? fmtDuration(s.print_time_s) : s.print_time_text || ''));
+        tr.appendChild(el('td', '', fmtSize(s.size)));
+        const sw = el('td');
+        const box = el('span', 'swatches');
+        for (const col of (s.colours || []).slice(0, 12)) { const d = el('span', 'swatch'); d.style.background = col; d.title = col; box.appendChild(d); }
+        sw.appendChild(box);
+        tr.appendChild(sw);
+        const act = el('td');
+        if (s.can_download) {
+          const b = el('button', 'btn', t('download', 'Download'));
+          b.type = 'button';
+          b.addEventListener('click', () => post('vendor_download', { key: i.key, sub: s.id }));
+          act.appendChild(b);
+        }
+        tr.appendChild(act);
+        body.appendChild(tr);
+      }
+      table.appendChild(body);
+      files.appendChild(table);
+    }
+    $('ven-detail').hidden = false;
+  }
+  function closeDetail() { $('ven-detail').hidden = true; detailKey = ''; }
+
+  // ---- connector editor ----
+  // One field per line of the template; `path` is where it lives in the connector's JSON.
+  const EDITOR = [
+    { group: 'Basics', fields: [
+      { path: 'name', label: 'Name' },
+      { path: 'vendor', label: 'Vendor tag', list: 'dl-vendor' },
+      { path: 'base_url', label: 'API address', wide: true, hint: 'https://api.vendor.example/v1' },
+    ] },
+    { group: 'Sign-in', headers: true, fields: [
+      { path: 'auth.type', label: 'Type', options: [['none', 'None'], ['bearer', 'Bearer token'], ['header', 'Key in a header'], ['query', 'Key in the address'], ['basic', 'User name and password']] },
+      { path: 'auth.name', label: 'Header or parameter name', hint: 'X-API-Key' },
+    ] },
+    { group: 'Model list', fields: [
+      { path: 'list.path', label: 'Path', hint: '/library' },
+      { path: 'list.items', label: 'Items in the answer at', hint: 'models' },
+      { path: 'list.query', label: 'Fixed parameters (name=value per line)', query: true, wide: true },
+    ] },
+    { group: 'Pages', fields: [
+      { path: 'list.paging.type', label: 'Paging', options: [['none', 'One page'], ['page', 'Page number'], ['offset', 'Offset'], ['cursor', 'Cursor token'], ['next', 'Next-page link']] },
+      { path: 'list.paging.param', label: 'Page, offset or cursor parameter' },
+      { path: 'list.paging.start', label: 'First page', number: true },
+      { path: 'list.paging.size_param', label: 'Page size parameter', hint: 'limit' },
+      { path: 'list.paging.size', label: 'Page size', number: true },
+      { path: 'list.paging.has_more', label: '"More pages" flag at', hint: 'has_next' },
+      { path: 'list.paging.total', label: 'Total count at', hint: 'total' },
+      { path: 'list.paging.cursor', label: 'Next cursor or link at' },
+      { path: 'list.since.param', label: 'Only changes since: parameter', hint: 'updated_since' },
+      { path: 'list.since.field', label: 'Compared with item field', hint: 'files_updated_at' },
+    ] },
+    { group: 'Item fields', fields: [
+      { path: 'fields.id', label: 'Id' }, { path: 'fields.name', label: 'Name' },
+      { path: 'fields.thumbnail', label: 'Thumbnail URL' },
+      { path: 'fields.page_url', label: 'Page URL (field, or template like https://site/m/{slug})' },
+      { path: 'fields.designer', label: 'Designer' }, { path: 'fields.tags', label: 'Tags or category' },
+      { path: 'fields.updated', label: 'Updated' }, { path: 'fields.description', label: 'Description' },
+    ] },
+    { group: 'Files of an item (optional)', fields: [
+      { path: 'files.path', label: 'Files at', hint: 'print_profiles' },
+      { path: 'files.fields.id', label: 'Id' }, { path: 'files.fields.name', label: 'Name' },
+      { path: 'files.fields.variant', label: 'Variant' }, { path: 'files.fields.size', label: 'Size (bytes)' },
+      { path: 'files.fields.plates', label: 'Plates' }, { path: 'files.fields.print_time', label: 'Print time (s)' },
+      { path: 'files.fields.colours', label: 'Colours list' }, { path: 'files.fields.colour', label: 'Colour in each', hint: 'hex' },
+    ] },
+    { group: 'Download (optional)', fields: [
+      { path: 'download.path', label: 'Endpoint path', hint: '/models/{id}/download?profile={sub.id}', wide: true },
+      { path: 'download.url_field', label: 'File link in its answer at', hint: 'download_url' },
+      { path: 'download.direct_field', label: 'Or: direct link field of a file' },
+      { path: 'download.limited', label: 'Downloads count against a limit (ask first)', check: true },
+    ] },
+    { group: 'Quota headers (optional)', fields: [
+      { path: 'quota.used', label: 'Used', hint: 'X-Api-Calls-Used' },
+      { path: 'quota.limit', label: 'Limit', hint: 'X-Api-Calls-Limit' },
+      { path: 'quota.resets', label: 'Resets', hint: 'X-Api-Period-Resets' },
+    ] },
+  ];
+  const NEW_SPEC = {
+    name: '', vendor: '', base_url: 'https://', auth: { type: 'bearer', name: '' }, headers: [],
+    list: { path: '/', items: '', query: {}, paging: { type: 'page', param: 'page', start: 1, size_param: 'limit', size: 100, has_more: '', total: '', cursor: '' },
+      since: { param: '', field: '' } },
+    fields: { id: 'id', name: 'name', thumbnail: 'thumbnail', page_url: '', designer: '', tags: '', updated: '', description: '' },
+    files: { path: '', fields: {} }, download: { path: '', url_field: '', direct_field: '', limited: false },
+    quota: { used: '', limit: '', resets: '' },
+  };
+  const editor = { id: '', spec: null, json: false };
+
+  function getPath(o, path) { return path.split('.').reduce((a, k) => (a && typeof a === 'object' ? a[k] : undefined), o); }
+  function setPath(o, path, v) {
+    const ks = path.split('.');
+    let cur = o;
+    for (const k of ks.slice(0, -1)) { if (!cur[k] || typeof cur[k] !== 'object') cur[k] = {}; cur = cur[k]; }
+    cur[ks[ks.length - 1]] = v;
+  }
+
+  function openEditor(c) {
+    closeMenu();
+    editor.id = c ? c.id : '';
+    editor.spec = JSON.parse(JSON.stringify(c ? c.spec : NEW_SPEC));
+    editor.json = false;
+    $('ven-editor-error').hidden = true;
+    $('ven-editor-title').textContent = c ? c.name : t('add_connector', 'Add connector');
+    renderEditor();
+    $('ven-editor').hidden = false;
+  }
+  function closeEditor() { $('ven-editor').hidden = true; }
+  function editorDone() { if (!$('ven-editor').hidden) closeEditor(); }
+  function editorError(text) {
+    const e = $('ven-editor-error');
+    e.textContent = text;
+    e.hidden = !text;
+    if (text) e.scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderEditorSlots() {
+    const box = document.getElementById('ven-editor-slots');
+    if (!box) return;
+    box.textContent = '';
+    const c = connectorOf(editor.id);
+    if (!c) { box.appendChild(el('p', 'hint', 'Save the connector first, then set its credentials here or on its card.')); return; }
+    if (!(c.slots || []).length) { box.appendChild(el('p', 'hint', t('none', 'None'))); return; }
+    for (const s of c.slots) {
+      const row = el('div', 'slot');
+      row.appendChild(el('span', 'what', s.label + ': ' + (s.set ? (c.secure ? t('saved_secure', 'saved in your system\'s credential store') : t('saved_session', 'kept until EdgeSlicer closes')) : t('not_set', 'not set'))));
+      const b = el('button', 'btn', s.set ? t('change', 'Change') : t('set', 'Set'));
+      b.type = 'button';
+      b.addEventListener('click', () => post('vendor_secret', { id: c.id, slot: s.key }));
+      row.appendChild(b);
+      box.appendChild(row);
+    }
+  }
+
+  function renderHeaders(box) {
+    box.textContent = '';
+    const list = Array.isArray(editor.spec.headers) ? editor.spec.headers : (editor.spec.headers = []);
+    list.forEach((h, n) => {
+      const row = el('div', 'hdr-row');
+      const name = el('label'); name.appendChild(el('span', '', 'Header'));
+      const ni = el('input'); ni.type = 'text'; ni.value = h.name || ''; ni.addEventListener('input', () => { h.name = ni.value.trim(); });
+      name.appendChild(ni); row.appendChild(name);
+      const val = el('label'); val.appendChild(el('span', '', 'Value'));
+      const vi = el('input'); vi.type = 'text'; vi.value = h.secret ? '' : h.value || ''; vi.disabled = !!h.secret;
+      vi.placeholder = h.secret ? 'set on the connector card' : '';
+      vi.addEventListener('input', () => { h.value = vi.value; });
+      val.appendChild(vi); row.appendChild(val);
+      const sec = el('label', 'check'); const cb = el('input'); cb.type = 'checkbox'; cb.checked = !!h.secret;
+      cb.addEventListener('change', () => { h.secret = cb.checked; if (h.secret) delete h.value; renderHeaders(box); });
+      sec.appendChild(cb); sec.appendChild(el('span', '', 'Secret')); row.appendChild(sec);
+      const rm = el('button', 'btn', t('remove', 'Remove')); rm.type = 'button';
+      rm.addEventListener('click', () => { list.splice(n, 1); renderHeaders(box); });
+      row.appendChild(rm);
+      box.appendChild(row);
+    });
+    const add = el('button', 'btn', '+ Header'); add.type = 'button';
+    add.addEventListener('click', () => { list.push({ name: '', value: '' }); renderHeaders(box); });
+    box.appendChild(add);
+  }
+
+  function renderEditor() {
+    const body = $('ven-editor-body'), text = $('ven-editor-json');
+    body.hidden = editor.json;
+    text.hidden = !editor.json;
+    $('ven-editor-mode').textContent = editor.json ? t('edit_form', 'Edit as form') : t('edit_json', 'Edit as JSON');
+    if (editor.json) { text.value = JSON.stringify(editor.spec, null, 2); return; }
+    body.textContent = '';
+    const creds = el('fieldset', 'group');
+    creds.appendChild(el('legend', '', t('credentials', 'Credentials')));
+    const slots = el('div', 'slots'); slots.id = 'ven-editor-slots';
+    creds.appendChild(slots);
+    for (const g of EDITOR) {
+      const fs = el('fieldset', 'group');
+      fs.appendChild(el('legend', '', g.group));
+      const grid = el('div', 'form-grid');
+      for (const f of g.fields) {
+        const l = el('label', f.check ? 'check' : 'field');
+        if (f.wide) l.classList.add('wide');
+        let input;
+        const v = getPath(editor.spec, f.path);
+        if (f.options) {
+          input = el('select');
+          for (const [value, label] of f.options) { const op = el('option', '', label); op.value = value; input.appendChild(op); }
+          input.value = v || f.options[0][0];
+          input.addEventListener('change', () => setPath(editor.spec, f.path, input.value));
+        } else if (f.check) {
+          input = el('input'); input.type = 'checkbox'; input.checked = !!v;
+          input.addEventListener('change', () => setPath(editor.spec, f.path, input.checked));
+        } else if (f.query) {
+          input = el('textarea');
+          input.spellcheck = false;
+          input.value = Object.entries(v || {}).map(([k, x]) => k + '=' + x).join('\n');
+          input.addEventListener('input', () => {
+            const q = {};
+            for (const line of input.value.split('\n')) { const at = line.indexOf('='); if (at > 0) q[line.slice(0, at).trim()] = line.slice(at + 1).trim(); }
+            setPath(editor.spec, f.path, q);
+          });
+        } else {
+          input = el('input');
+          input.type = f.number ? 'number' : 'text';
+          input.value = v === undefined || v === null ? '' : String(v);
+          if (f.hint) input.placeholder = f.hint;
+          if (f.list) input.setAttribute('list', f.list);
+          input.spellcheck = false;
+          input.addEventListener('input', () => setPath(editor.spec, f.path, f.number ? Number(input.value) : input.value.trim()));
+        }
+        if (f.check) { l.appendChild(input); l.appendChild(el('span', '', f.label)); }
+        else { l.appendChild(el('span', '', f.label)); l.appendChild(input); }
+        grid.appendChild(l);
+      }
+      fs.appendChild(grid);
+      if (g.headers) {
+        fs.appendChild(el('p', 'hint', 'Extra headers. Mark a header secret to keep its value in the credential store.'));
+        const hb = el('div');
+        renderHeaders(hb);
+        fs.appendChild(hb);
+      }
+      body.appendChild(fs);
+      if (g.group === 'Basics') body.appendChild(creds);
+    }
+    renderEditorSlots();
+  }
+
+  function readEditorJson() {
+    try { editor.spec = JSON.parse($('ven-editor-json').value); return true; }
+    catch (e) { editorError('JSON: ' + e.message); return false; }
+  }
+  function toggleEditorMode() {
+    if (editor.json && !readEditorJson()) return;
+    editorError('');
+    editor.json = !editor.json;
+    renderEditor();
+  }
+  function saveEditor() {
+    if (editor.json && !readEditorJson()) return;
+    editorError('');
+    const spec = JSON.parse(JSON.stringify(editor.spec));
+    if (editor.id) spec.id = editor.id; else delete spec.id;
+    post('vendor_save', { spec: spec });
+  }
+
   // ---- Library folders ----
   function openFolders() {
     closeMenu();
@@ -641,7 +1177,7 @@
     list.textContent = '';
     const folders = state.lib ? state.lib.folders : [];
     fillDatalist('dl-category', folders.map((f) => f.category));
-    fillDatalist('dl-vendor', folders.map((f) => f.vendor));
+    fillDatalist('dl-vendor', folders.map((f) => f.vendor).concat(state.ven ? state.ven.connectors.map((c) => c.vendor) : []));
     if (!folders.length) list.appendChild(el('p', 'hint', t('library_no_folders', 'Add the folders where you keep your models to browse them here.')));
     for (const f of folders) {
       const row = el('div', 'folder');
@@ -728,6 +1264,21 @@
         case 'library_thumbs':
           applyThumbs(msg.images || {}, state.libThumbs, 'library-grid');
           break;
+        case 'vendors':
+          receiveVendors(msg);
+          break;
+        case 'vendor_thumbs':
+          applyVendorThumbs(msg.images || {});
+          break;
+        case 'vendor_notice':
+          toast(String(msg.text || ''), !!msg.error);
+          break;
+        case 'vendor_saved':
+          editorDone();
+          break;
+        case 'vendor_invalid':
+          editorError(String(msg.error || ''));
+          break;
       }
     },
   };
@@ -742,11 +1293,28 @@
     searchTimer = setTimeout(() => { state.search = $('search').value.trim(); render(); }, 120);
   });
   $('sort').addEventListener('change', () => { state.sort[state.section] = $('sort').value; render(); });
-  $('refresh').addEventListener('click', () => { $('refresh').classList.add('spin'); post('home_refresh'); setTimeout(stopSpin, 3000); });
+  $('refresh').addEventListener('click', () => {
+    // Vendors' lists are metered: Refresh only redraws them; each connector has its own Refresh list.
+    if (state.section === 'vendors') { post('vendor_state'); return; }
+    $('refresh').classList.add('spin'); post('home_refresh'); setTimeout(stopSpin, 3000);
+  });
   $('new-project').addEventListener('click', () => post('project_new'));
   $('open-project').addEventListener('click', () => post('project_open'));
   $('history-settings').addEventListener('click', () => post('history_settings'));
   $('lib-manage').addEventListener('click', openFolders);
+  $('ven-add').addEventListener('click', () => openEditor(null));
+  $('ven-import').addEventListener('click', () => post('vendor_import'));
+  $('ven-csv').addEventListener('click', () => post('vendor_csv', { keys: state.venShown.map((i) => i.key) }));
+  $('ven-detail-close').addEventListener('click', closeDetail);
+  $('ven-detail').addEventListener('click', (e) => { if (e.target === $('ven-detail')) closeDetail(); });
+  $('ven-editor-cancel').addEventListener('click', closeEditor);
+  $('ven-editor-save').addEventListener('click', saveEditor);
+  $('ven-editor-mode').addEventListener('click', toggleEditorMode);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('ven-editor').hidden) closeEditor();
+    else if (!$('ven-detail').hidden) closeDetail();
+  });
   $('lib-empty-add').addEventListener('click', () => post('library_add_folder'));
   $('folder-add').addEventListener('click', () => post('library_add_folder'));
   $('folders-done').addEventListener('click', closeFolders);

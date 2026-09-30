@@ -3,6 +3,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "GcodeArchive.hpp"
+#include "HomeVendors.hpp"
 #include "I18N.hpp"
 #include "MainFrame.hpp"
 #include "MsgDialog.hpp"
@@ -99,6 +100,7 @@ HomePanel::HomePanel(wxWindow* parent)
 
 HomePanel::~HomePanel()
 {
+    m_vendors.reset();
     *m_alive = false;
     *m_library_cancel = true;
 }
@@ -284,6 +286,9 @@ void HomePanel::handle(const json& msg)
         if (m_library_loaded)
             send_library(); // the page was reloaded (a theme change): it starts empty
         library_refresh(false);
+        if (!m_vendors)
+            m_vendors = std::make_unique<HomeVendors>(this, [this](const json& m) { send(m); }, [this]() { library_refresh(true); });
+        m_vendors->send_state();
     } else if (command == "home_section") {
         const std::string section = msg.value("section", std::string());
         if (HomeTab::valid_section(section))
@@ -327,6 +332,8 @@ void HomePanel::handle(const json& msg)
             delete_archived(id);
     } else if (command == "history_settings") {
         wxGetApp().open_preferences();
+    } else if (m_vendors && m_vendors->handle(msg)) {
+        // a Vendors command
     } else if (command == "library_scan") {
         library_refresh(true);
     } else if (command == "library_thumbs") {
@@ -434,6 +441,46 @@ void HomePanel::send_init()
     s["by"]                = _u8L("by");
     s["clear_filters"]     = _u8L("Clear filters");
     s["all"]               = _u8L("All");
+    s["vendors"]           = _u8L("Vendors");
+    s["connectors"]        = _u8L("Connectors");
+    s["connector"]         = _u8L("Connector");
+    s["add_connector"]     = _u8L("Add connector");
+    s["import"]            = _u8L("Import");
+    s["export"]            = _u8L("Export");
+    s["export_csv"]        = _u8L("Export CSV");
+    s["edit"]              = _u8L("Edit");
+    s["save"]              = _u8L("Save");
+    s["cancel"]            = _u8L("Cancel");
+    s["test"]              = _u8L("Test connection");
+    s["sync"]              = _u8L("Refresh list");
+    s["full_sync"]         = _u8L("Fetch everything again");
+    s["syncing"]           = _u8L("Refreshing...");
+    s["never_synced"]      = _u8L("Not fetched yet");
+    s["synced"]            = _u8L("Fetched");
+    s["models"]            = _u8L("models");
+    s["api_calls"]         = _u8L("API calls");
+    s["resets"]            = _u8L("resets");
+    s["credentials"]       = _u8L("Credentials");
+    s["set"]               = _u8L("Set");
+    s["change"]            = _u8L("Change");
+    s["not_set"]           = _u8L("not set");
+    s["saved_secure"]      = _u8L("saved in your system's credential store");
+    s["saved_session"]     = _u8L("kept until EdgeSlicer closes (no credential store on this system)");
+    s["forget"]            = _u8L("Forget credentials");
+    s["open_page"]         = _u8L("Open vendor page");
+    s["copy_link"]         = _u8L("Copy link");
+    s["download"]          = _u8L("Download");
+    s["files_label"]       = _u8L("Files");
+    s["plates_label"]      = _u8L("Plates");
+    s["variant"]           = _u8L("Variant");
+    s["print_time"]        = _u8L("Time");
+    s["size"]              = _u8L("Size");
+    s["vendors_empty"]     = _u8L("Connect a vendor's API to browse the models you have access to. EdgeSlicer includes no vendors: add a connector for yours, or import one someone shared.");
+    s["vendor_no_items"]   = _u8L("Nothing fetched yet. Set the credentials, then Refresh list.");
+    s["edit_json"]         = _u8L("Edit as JSON");
+    s["edit_form"]         = _u8L("Edit as form");
+    s["delete_connector"]  = _u8L("Remove connector");
+    s["limited_downloads"] = _u8L("Downloads count against a limit");
 
     json init;
     init["type"]    = "init";

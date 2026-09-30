@@ -21,6 +21,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8H5a3 3 0 0 0-3 3v6h4v4h12v-4h4v-6a3 3 0 0 0-3-3zm-3 11H8v-5h8zm3-7a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm-1-9H6v4h12z"/></svg>
       <span data-i18n="history">Print History</span>
     </button>
+    <button class="rail-item" data-section="vendors" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4v2h16zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6zm-9 4H6v-4h6z"/></svg>
+      <span data-i18n="vendors">Vendors</span>
+    </button>
   </nav>
 
   <main id="main">
@@ -59,6 +63,20 @@
       </div>
     </section>
 
+    <section id="vendors" class="section" hidden>
+      <div class="lib-top">
+        <div id="ven-status" class="status"></div>
+        <button id="ven-csv" class="btn" type="button" data-i18n="export_csv">Export CSV</button>
+        <button id="ven-import" class="btn" type="button" data-i18n="import">Import</button>
+        <button id="ven-add" class="btn primary" type="button" data-i18n="add_connector">Add connector</button>
+      </div>
+      <div id="ven-connectors" class="connectors"></div>
+      <div id="ven-filters"></div>
+      <div class="grid" id="vendors-grid"></div>
+      <div id="ven-more" aria-hidden="true"></div>
+      <div class="empty" id="vendors-empty" hidden><p id="vendors-empty-text"></p></div>
+    </section>
+
     <section id="history" class="section" hidden>
       <div class="notice" id="history-off" hidden>
         <span id="history-off-text"></span>
@@ -85,6 +103,38 @@
     </div>
   </div>
 </div>
+<div id="ven-detail" class="overlay" hidden>
+  <div class="dialog detail" role="dialog" aria-modal="true" aria-labelledby="ven-detail-name">
+    <div class="detail-head">
+      <div class="detail-thumb" id="ven-detail-thumb"></div>
+      <div class="detail-info">
+        <h2 id="ven-detail-name"></h2>
+        <div class="sub" id="ven-detail-sub"></div>
+        <p class="desc" id="ven-detail-desc"></p>
+        <div class="dialog-actions" id="ven-detail-actions"></div>
+      </div>
+    </div>
+    <div id="ven-detail-files"></div>
+    <div class="dialog-actions"><span class="grow"></span><button id="ven-detail-close" class="btn primary" type="button" data-i18n="done">Done</button></div>
+  </div>
+</div>
+
+<div id="ven-editor" class="overlay" hidden>
+  <div class="dialog editor" role="dialog" aria-modal="true" aria-labelledby="ven-editor-title">
+    <h2 id="ven-editor-title" data-i18n="connector">Connector</h2>
+    <div id="ven-editor-error" class="notice" hidden></div>
+    <div id="ven-editor-body"></div>
+    <textarea id="ven-editor-json" spellcheck="false" hidden></textarea>
+    <div class="dialog-actions">
+      <button id="ven-editor-mode" class="btn" type="button" data-i18n="edit_json">Edit as JSON</button>
+      <span class="grow"></span>
+      <button id="ven-editor-cancel" class="btn" type="button" data-i18n="cancel">Cancel</button>
+      <button id="ven-editor-save" class="btn primary" type="button" data-i18n="save">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden role="status"></div>
 <datalist id="dl-category"></datalist>
 <datalist id="dl-vendor"></datalist>
 

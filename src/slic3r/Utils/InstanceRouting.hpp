@@ -11,7 +11,7 @@
 // The rules:
 //  * An instance is identified by a hash of its own executable path, so a hand-off only ever goes to
 //    another process of the same executable. The path is normalised first (case, separators, the
-//    \?\ prefix, junctions resolved by the caller) so that the same install reached by two
+//    extended-length path prefix, junctions resolved by the caller) so that the same install reached by two
 //    spellings is one instance.
 //  * Only an instance somebody can see receives hand-offs. A hidden instance (started with
 //    --hidden / SNORCA_HIDDEN, "Start hidden", or by the phone hub) never claims the lock and is never
@@ -44,17 +44,17 @@ inline bool resolve_hidden_start(const std::optional<std::string> &env_value, bo
 inline std::string normalize_exe_path_key(const std::string &path)
 {
     std::string p = path;
-    if (p.rfind("\\?\UNC\\", 0) == 0)
+    if (p.rfind("\\\\?\\UNC\\", 0) == 0)
         p = "\\\\" + p.substr(8);
-    else if (p.rfind("\\?\\", 0) == 0)
+    else if (p.rfind("\\\\?\\", 0) == 0)
         p = p.substr(4);
     for (char &c : p) {
         if (c == '/')
-            c = '\';
+            c = '\\';
         else if (c >= 'A' && c <= 'Z')
             c = char(c - 'A' + 'a');
     }
-    while (p.size() > 1 && p.back() == '\')
+    while (p.size() > 1 && p.back() == '\\')
         p.pop_back();
     return p;
 }

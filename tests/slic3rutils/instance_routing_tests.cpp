@@ -24,14 +24,14 @@ TEST_CASE("Hidden start follows SNORCA_HIDDEN, then --hidden, then the preferenc
 
 TEST_CASE("Executable path keys ignore case, separators and the extended-length prefix", "[InstanceRouting]")
 {
-    const std::string plain = "c:\dev\edgeslicertest\blender-themes-212-213\edgeslicer.exe";
-    CHECK(normalize_exe_path_key("C:\Dev\EdgeSlicerTest\Blender-Themes-212-213\EdgeSlicer.exe") == plain);
+    const std::string plain = "c:\\dev\\edgeslicertest\\blender-themes-212-213\\edgeslicer.exe";
+    CHECK(normalize_exe_path_key("C:\\Dev\\EdgeSlicerTest\\Blender-Themes-212-213\\EdgeSlicer.exe") == plain);
     CHECK(normalize_exe_path_key("C:/Dev/EdgeSlicerTest/blender-themes-212-213/EdgeSlicer.exe") == plain);
-    CHECK(normalize_exe_path_key("\\?\C:\Dev\EdgeSlicerTest\blender-themes-212-213\EdgeSlicer.exe") == plain);
-    CHECK(normalize_exe_path_key("\\?\UNC\server\share\EdgeSlicer.exe") == "\\server\share\edgeslicer.exe");
-    CHECK(normalize_exe_path_key("C:\Program Files\EdgeSlicer\\") == "c:\program files\edgeslicer");
+    CHECK(normalize_exe_path_key("\\\\?\\C:\\Dev\\EdgeSlicerTest\\blender-themes-212-213\\EdgeSlicer.exe") == plain);
+    CHECK(normalize_exe_path_key("\\\\?\\UNC\\server\\share\\EdgeSlicer.exe") == "\\\\server\\share\\edgeslicer.exe");
+    CHECK(normalize_exe_path_key("C:\\Program Files\\EdgeSlicer\\") == "c:\\program files\\edgeslicer");
     // Different installs stay different.
-    CHECK(normalize_exe_path_key("C:\Program Files\EdgeSlicer\EdgeSlicer.exe") != plain);
+    CHECK(normalize_exe_path_key("C:\\Program Files\\EdgeSlicer\\EdgeSlicer.exe") != plain);
     CHECK(normalize_exe_path_key("") == "");
 }
 

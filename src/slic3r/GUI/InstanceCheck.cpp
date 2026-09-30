@@ -424,7 +424,7 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance, bool
 #ifdef _WIN32
 	// The named lock is taken here. A hidden instance gives it back below, so it never stands in the
 	// way of a visible instance.
-	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\cache\\");
+	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\\cache\\");
 	const bool other_holds_lock = GUI::wxGetApp().single_instance_checker()->IsAnotherRunning();
 #else // mac & linx
 	// get_lock() creates the lockfile, so only a visible instance may call it.
@@ -436,7 +436,7 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance, bool
 		if (InstanceRouting::should_hand_off(true, true, delivered)) {
 			BOOST_LOG_TRIVIAL(info) << "Instance check: another instance received the arguments. This instance will terminate. Lock file of current running instance is located at " << data_dir() <<
 #ifdef _WIN32
-				"\cache\\"
+				"\\cache\\"
 #else // mac & linx
 				"/cache/"
 #endif

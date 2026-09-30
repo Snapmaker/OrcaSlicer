@@ -314,6 +314,8 @@ bool GLGizmoMeasure::on_mouse(const wxMouseEvent &mouse_event)
                                                   item.feature->is_planar() && item.feature->volume == m_ultra_exact_hover.volume;
                         if (m_selected_features.second == item && exact_anchor) {
                             m_ultra_exact_pick = m_ultra_exact_hover;
+                            m_ultra_exact_pick_roll = m_ultra_exact_hover_roll; // the clicked footprint is the one shown
+                            m_ultra_exact_pick_roll_key = m_ultra_exact_hover_roll_key;
                             m_ultra_exact_pick_key.clear();
                         }
                         else if (m_selected_features.second == item) {
@@ -325,6 +327,8 @@ bool GLGizmoMeasure::on_mouse(const wxMouseEvent &mouse_event)
                             // 2nd feature selection
                             m_selected_features.second = item;
                             m_ultra_exact_pick = exact_anchor ? m_ultra_exact_hover : UltraExactAnchor();
+                            m_ultra_exact_pick_roll = exact_anchor ? m_ultra_exact_hover_roll : UltraFit::ExactRollState();
+                            m_ultra_exact_pick_roll_key = exact_anchor ? m_ultra_exact_hover_roll_key : std::vector<double>();
                             m_ultra_exact_pick_key.clear();
                             if (requires_sphere_raycaster_for_picking(item)) {
                                 auto pick = std::make_shared<PickRaycaster>(SEL_SPHERE_2_ID, *m_sphere.mesh_raycaster);
@@ -2480,6 +2484,8 @@ void GLGizmoMeasure::reset_feature2()
      remove_selected_sphere_raycaster(SEL_SPHERE_2_ID);
      m_selected_features.second.reset();
      m_ultra_exact_pick = UltraExactAnchor(); // Ultra (Exact highlight)
+     m_ultra_exact_pick_roll = UltraFit::ExactRollState();
+     m_ultra_exact_pick_roll_key.clear();
      m_ultra_exact_pick_key.clear();
      m_show_reset_first_tip = false;
      m_selected_wrong_feature_waring_tip = false;
@@ -3374,7 +3380,8 @@ bool GLGizmoMeasure::ultra_exact_axis(GLVolume* v, const Measure::SurfaceFeature
 
 // Footprint of the picked target face on the moving feature `fb`, anchored at `a` (view world, like the
 // features themselves).
-bool GLGizmoMeasure::ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out)
+bool GLGizmoMeasure::ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out,
+                                           UltraFit::ExactRollState& roll, std::vector<double>& roll_key)
 {
     out = UltraFit::ExactFootprint();
     if (!a.valid || !a.volume || !m_selected_features.first.feature.has_value()) return false;
@@ -3386,6 +3393,16 @@ bool GLGizmoMeasure::ultra_exact_footprint(const UltraExactAnchor& a, const Meas
     if (mt == m_mesh_measure_map.end() || mb == m_mesh_measure_map.end() || !mt->second || !mb->second) return false;
     Vec3d nA, cA, nB, cB;
     if (!ultra_feature_dir_point(fa, nA, cA) || !ultra_feature_dir_point(fb, nB, cB)) return false;
+
+    // The roll belongs to one (target face, moving part) pair: a new target or part starts afresh, but moving the
+    // cursor -- even over other facets of the same curved part -- keeps it, so the footprint slides without spinning.
+    {
+        std::vector<double> k{ double(reinterpret_cast<uintptr_t>(vt)), double(reinterpret_cast<uintptr_t>(a.volume)),
+                               double(int(fa.get_type())), fa.get_value() };
+        for (int i = 0; i < 3; ++i) { k.push_back(fa.get_pt1()[i]); k.push_back(fa.get_pt2()[i]); }
+        for (int i = 0; i < 16; ++i) k.push_back(fa.world_tran.matrix().data()[i]);
+        if (k != roll_key) { roll_key = std::move(k); roll = UltraFit::ExactRollState(); }
+    }
 
     UltraFit::ExactFootprintInput in;
     in.t_its    = &mt->second->get_its();
@@ -3401,8 +3418,11 @@ bool GLGizmoMeasure::ultra_exact_footprint(const UltraExactAnchor& a, const Meas
     // A flat face has one normal; on a curved one start from the facet under the cursor (the footprint
     // then re-estimates it from the region it covers).
     in.a_normal = in.a_curved ? Vec3d((fb.world_tran.linear().inverse().transpose() * a.normal_mesh).normalized()) : nB;
+    in.roll_state = &roll;
     Vec3d ta, tb; double asp_a = 1.0, asp_b = 1.0;
-    if (ultra_exact_axis(vt, fa, ta, asp_a) && ultra_exact_axis(a.volume, fb, tb, asp_b)) {
+    // The axes only matter while the roll is being decided; afterwards they are not even looked up.
+    if (UltraFit::exact_roll_needs_axes(&roll, in.a_normal, in.roll_hysteresis) &&
+        ultra_exact_axis(vt, fa, ta, asp_a) && ultra_exact_axis(a.volume, fb, tb, asp_b)) {
         in.t_axis = ta; in.a_axis = tb;
         // Two oblong faces line up long side to long side; if either is squarish any edge will do.
         in.axis_fold = (asp_a > 1.1 && asp_b > 1.1) ? M_PI : M_PI / 2;
@@ -3449,12 +3469,13 @@ void GLGizmoMeasure::ultra_exact_refresh_models()
         }
         return k;
     };
-    auto refresh = [&](const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, std::vector<double>& key, PickingModel& model) {
+    auto refresh = [&](const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, std::vector<double>& key, PickingModel& model,
+                       UltraFit::ExactRollState& roll, std::vector<double>& roll_key) {
         std::vector<double> k = key_of(a, *m_selected_features.first.feature, fb);
         if (k != key) {
             key = std::move(k);
             UltraFit::ExactFootprint fp;
-            if (ultra_exact_footprint(a, fb, fp)) ultra_exact_init_model(fp, model);
+            if (ultra_exact_footprint(a, fb, fp, roll, roll_key)) ultra_exact_init_model(fp, model);
             else model.reset();
         }
         return model.model.is_initialized();
@@ -3464,10 +3485,12 @@ void GLGizmoMeasure::ultra_exact_refresh_models()
     m_ultra_exact_pick_shown  = false;
     if (!ultra_exact_active() || !m_selected_features.first.feature.has_value()) return;
     if (m_ultra_exact_hover.valid && m_curr_feature.has_value() && m_curr_feature->is_planar())
-        m_ultra_exact_hover_shown = refresh(m_ultra_exact_hover, *m_curr_feature, m_ultra_exact_hover_key, m_ultra_exact_hover_model);
+        m_ultra_exact_hover_shown = refresh(m_ultra_exact_hover, *m_curr_feature, m_ultra_exact_hover_key, m_ultra_exact_hover_model,
+                                                       m_ultra_exact_hover_roll, m_ultra_exact_hover_roll_key);
     if (m_ultra_exact_pick.valid && m_selected_features.second.feature.has_value() &&
         m_selected_features.second.feature->volume == m_ultra_exact_pick.volume)
-        m_ultra_exact_pick_shown = refresh(m_ultra_exact_pick, *m_selected_features.second.feature, m_ultra_exact_pick_key, m_ultra_exact_pick_model);
+        m_ultra_exact_pick_shown = refresh(m_ultra_exact_pick, *m_selected_features.second.feature, m_ultra_exact_pick_key, m_ultra_exact_pick_model,
+                                                      m_ultra_exact_pick_roll, m_ultra_exact_pick_roll_key);
 }
 
 // Ultra (Exact highlight) Auto-fit: move the moving part so the clicked footprint lands on the target face
@@ -3487,7 +3510,7 @@ bool GLGizmoMeasure::ultra_exact_fit()
             NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, t);
     };
     UltraFit::ExactFootprint fp;
-    if (!ultra_exact_footprint(m_ultra_exact_pick, *m_selected_features.second.feature, fp)) {
+    if (!ultra_exact_footprint(m_ultra_exact_pick, *m_selected_features.second.feature, fp, m_ultra_exact_pick_roll, m_ultra_exact_pick_roll_key)) {
         notify(_u8L("Exact highlight: the footprint could not be placed, so the normal Auto-fit was used."));
         return false;
     }
@@ -3543,6 +3566,8 @@ void GLGizmoMeasure::ultra_show_exact_ui()
         if (m_selected_features.second.feature.has_value()) reset_feature2();
         m_ultra_exact_hover_key.clear();
         m_ultra_exact_pick_key.clear();
+        m_ultra_exact_hover_roll = UltraFit::ExactRollState();
+        m_ultra_exact_hover_roll_key.clear();
     }
     if (ImGui::IsItemHovered())
         m_imgui->tooltip(_L("For a moving part whose face is larger than the target's. Pick the target face first; the moving part "

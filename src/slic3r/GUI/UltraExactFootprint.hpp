@@ -15,10 +15,33 @@
 
 namespace Slic3r { namespace GUI { namespace UltraFit {
 
+// The edge roll of a footprint, kept between cursor moves so hovering only slides the footprint and never
+// spins it. It is decided for one (target face, moving part) pair and stays until the moving normal turns
+// by more than the hysteresis angle onto a face big enough to have edges of its own. The caller resets it
+// when the pair changes.
+struct ExactRollState
+{
+    bool   valid{false};
+    bool   settled{false};      // set from a face comparable to the target (false: a placeholder from a tiny patch)
+    double roll{0.0};           // radians about the target normal, on top of the smallest turn of the normals
+    Vec3d  nB_ref{Vec3d::Zero()}; // the moving normal it was decided at (common frame)
+};
+
+// True when exact_footprint() would recompute the roll from the faces' axes rather than keep the stored one, so
+// the caller only pays for the axes then.
+inline bool exact_roll_needs_axes(const ExactRollState* s, const Vec3d& nB, double hysteresis_rad)
+{
+    if (!s || !s->valid || !s->settled) return true;
+    const double c = std::clamp(nB.normalized().dot(s->nB_ref.normalized()), -1.0, 1.0);
+    return std::acos(c) > hysteresis_rad;
+}
+
 struct ExactFootprintInput
 {
     // Target (fixed) face: facet list on t_its, mesh -> common-frame transform, outward normal and centre
-    // in the common frame, and an optional in-plane reference axis (zero = none).
+    // in the common frame, and an optional in-plane reference axis (zero = none). The footprint is anchored
+    // by the AREA centroid of the target facets (t_centre is only a fallback for a degenerate patch): that
+    // is the point of the shape the eye takes for its middle, and it is what lands under the cursor.
     const indexed_triangle_set* t_its{nullptr};
     const std::vector<int>*     t_facets{nullptr};
     Transform3d                 t_w{Transform3d::Identity()};
@@ -39,6 +62,9 @@ struct ExactFootprintInput
     // true: drape the footprint onto the moving surface (curved faces). false: the moving face is flat,
     // so the footprint is the target shape laid on its plane.
     bool                        a_curved{false};
+    // Optional roll memory (see ExactRollState). Null: the roll is decided afresh from the axes every call.
+    ExactRollState*             roll_state{nullptr};
+    double                      roll_hysteresis{10.0 * M_PI / 180.0};
 };
 
 struct ExactFootprint
@@ -46,7 +72,9 @@ struct ExactFootprint
     bool               ok{false};
     // Footprint triangles on the moving part, 3 points each, in the common frame, wound to face out of it.
     std::vector<Vec3d> tris;
-    Vec3d              anchor{Vec3d::Zero()};  // cursor point on the moving part; the target centre lands here
+    Vec3d              anchor{Vec3d::Zero()};  // cursor point on the moving part; the target centroid lands here
+    Vec3d              ref_target{Vec3d::Zero()}; // the target patch's area centroid (common frame), the footprint's reference point
+    bool               roll_reused{false};     // the roll came from the ExactRollState, not from the axes
     Vec3d              normal{Vec3d::UnitZ()}; // moving part's outward normal under the footprint
     // Moves the MOVING part (common frame) so the footprint lands exactly on the target face.
     Transform3d        mate{Transform3d::Identity()};
@@ -164,7 +192,6 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
     if (!in.t_its || !in.t_facets || !in.a_its || in.t_facets->empty()) return out;
     if (in.t_normal.norm() < 1e-12 || in.a_normal.norm() < 1e-12) return out;
     const Vec3d nA = in.t_normal.normalized();
-    const Vec3d cA = in.t_centre;
     const Vec3d h  = in.a_hit;
 
     // Target patch in the common frame, vertices shared.
@@ -190,6 +217,17 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
     }
     if (T.empty()) return out;
 
+    // The footprint's reference point: the area centroid of the target patch. (A feature's own "centre" is
+    // the mean of its border vertices, which a densely tessellated arc drags well off the middle of the shape.)
+    Vec3d  csum = Vec3d::Zero();
+    double t_area = 0.0;
+    for (const auto& t : T) {
+        const double a = 0.5 * (P[t[1]] - P[t[0]]).cross(P[t[2]] - P[t[0]]).norm();
+        csum += a * (P[t[0]] + P[t[1]] + P[t[2]]) / 3.0;
+        t_area += a;
+    }
+    const Vec3d cA = t_area > 1e-12 ? Vec3d(csum / t_area) : in.t_centre;
+
     // Moving patch in the common frame (only needed to drape onto a curved face).
     std::vector<std::array<Vec3d, 3>> A;
     if (in.a_curved && in.a_facets) {
@@ -206,8 +244,39 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
     const bool have_axes = in.t_axis.norm() > 1e-9 && in.a_axis.norm() > 1e-9;
 
     Vec3d nB = in.a_normal.normalized();
+    const Vec3d nB0 = nB; // the normal the roll is decided at: what the caller measured under the cursor
     Matrix3d R = Matrix3d::Identity();
     double roll = 0.0;
+
+    // Roll: from the axes, or kept from an earlier call so a cursor move slides the footprint without spinning it.
+    bool   use_fixed = false, store = false, settled = false;
+    double fixed_roll = 0.0;
+    if (ExactRollState* rs = in.roll_state) {
+        if (!exact_roll_needs_axes(rs, nB0, in.roll_hysteresis)) {
+            use_fixed = true; fixed_roll = rs->roll; out.roll_reused = true;
+        } else {
+            // A recompute is due. Only a face comparable to the target has edges worth lining up with its own;
+            // a small facet of a curved surface keeps the roll it has (or starts from the plain turn).
+            double a_area = t_area;
+            if (in.a_its && in.a_facets) {
+                a_area = 0.0;
+                for (int t : *in.a_facets) {
+                    if (t < 0 || t >= (int) in.a_its->indices.size()) continue;
+                    const auto& f = in.a_its->indices[t];
+                    a_area += 0.5 * (in.a_w.linear() * (in.a_its->vertices[f[1]] - in.a_its->vertices[f[0]]).cast<double>())
+                                        .cross(in.a_w.linear() * (in.a_its->vertices[f[2]] - in.a_its->vertices[f[0]]).cast<double>()).norm();
+                }
+            }
+            const bool big = a_area >= 0.5 * t_area;
+            if (!big) {
+                use_fixed = true; out.roll_reused = rs->valid;
+                fixed_roll = rs->valid ? rs->roll : 0.0;
+                if (!rs->valid) { store = true; settled = false; }
+            } else {
+                store = true; settled = true;
+            }
+        }
+    }
     std::vector<Vec3d> Q(P.size());
     std::vector<char>  hit(P.size(), 0);
     detail::PatchGrid grid;
@@ -215,7 +284,7 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
     for (int pass = 0; pass < passes; ++pass) {
         // R: moving-part frame -> target frame. nB -> -nA by the smallest turn, then the edge roll.
         R = Eigen::Quaterniond::FromTwoVectors(nB, -nA).toRotationMatrix();
-        roll = have_axes ? exact_axis_roll(nA, R * in.a_axis, in.t_axis, in.axis_fold) : 0.0;
+        roll = use_fixed ? fixed_roll : have_axes ? exact_axis_roll(nA, R * in.a_axis, in.t_axis, in.axis_fold) : 0.0;
         if (std::abs(roll) > 1e-12) R = Eigen::AngleAxisd(roll, nA).toRotationMatrix() * R;
         const Matrix3d Rt = R.transpose();
         if (drape) grid.build(A, nB, h);
@@ -242,7 +311,12 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
         nB = nNew;
     }
 
-    // Mate: target centre <- cursor point, rotated by R; then slide along nA to contact.
+    if (store) {
+        in.roll_state->valid = true; in.roll_state->settled = settled;
+        in.roll_state->roll = roll;  in.roll_state->nB_ref = nB0;
+    }
+
+    // Mate: target centroid <- cursor point, rotated by R; then slide along nA to contact.
     Transform3d M = Transform3d::Identity();
     M.linear() = R;
     M.translation() = cA - R * h;
@@ -258,7 +332,7 @@ inline ExactFootprint exact_footprint(const ExactFootprintInput& in)
 
     out.tris.reserve(T.size() * 3);
     for (const auto& t : T) { out.tris.push_back(Q[t[0]]); out.tris.push_back(Q[t[2]]); out.tris.push_back(Q[t[1]]); }
-    out.anchor = h; out.normal = nB; out.roll = roll; out.contact_shift = shift;
+    out.anchor = h; out.ref_target = cA; out.normal = nB; out.roll = roll; out.contact_shift = shift;
     out.draped = draped; out.missed = missed;
     out.ok = true;
     return out;

@@ -344,7 +344,8 @@ protected:
     };
     bool ultra_exact_active() const;            // toggle on, in a mode it applies to
     bool ultra_exact_axis(GLVolume* v, const Measure::SurfaceFeature& f, Vec3d& axis, double& aspect);
-    bool ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out);
+    bool ultra_exact_footprint(const UltraExactAnchor& a, const Measure::SurfaceFeature& fb, UltraFit::ExactFootprint& out,
+                               UltraFit::ExactRollState& roll, std::vector<double>& roll_key);
     void ultra_exact_init_model(const UltraFit::ExactFootprint& fp, PickingModel& model);
     void ultra_exact_refresh_models();           // per frame: hover + picked footprint highlights
     bool ultra_exact_fit();                      // Auto-fit through the footprint; false = not applicable
@@ -384,6 +385,12 @@ protected:
     bool                     m_ultra_exact_pick_shown{false};
     std::vector<double>      m_ultra_exact_hover_key;
     std::vector<double>      m_ultra_exact_pick_key;
+    // The footprints' edge roll, kept per (target face, moving part) so a cursor move only slides the highlight.
+    // The clicked footprint takes over the hovered one's roll, which is what makes Auto-fit land what was shown.
+    UltraFit::ExactRollState m_ultra_exact_hover_roll;
+    UltraFit::ExactRollState m_ultra_exact_pick_roll;
+    std::vector<double>      m_ultra_exact_hover_roll_key;
+    std::vector<double>      m_ultra_exact_pick_roll_key;
     struct UltraExactAxisCache { GLVolume* v{nullptr}; std::vector<double> key; Vec3d axis{Vec3d::Zero()}; double aspect{1.0}; bool ok{false}; };
     UltraExactAxisCache      m_ultra_exact_axis_cache[2];
     std::string              m_units;

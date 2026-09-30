@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <iomanip>
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include <wx/frame.h>
 #include <wx/progdlg.h>
 #include <wx/sizer.h>

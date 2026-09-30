@@ -80,7 +80,7 @@
 #pragma comment(lib, "Wtsapi32.lib")
 #endif // _WIN32
 #include <slic3r/GUI/CreatePresetsDialog.hpp>
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include "GenericDownloadDialog.hpp"
 
 #define UPDATE_BUSER    true

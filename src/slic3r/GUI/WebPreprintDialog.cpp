@@ -6,7 +6,7 @@
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
 #include "NotificationManager.hpp"
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
 

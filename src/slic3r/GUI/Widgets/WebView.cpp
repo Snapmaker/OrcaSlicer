@@ -17,7 +17,7 @@
 #include "wx/private/jsscriptwrapper.h"
 #endif
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 #if defined(__linux__)
 #include <mutex>

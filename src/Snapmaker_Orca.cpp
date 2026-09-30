@@ -34,7 +34,7 @@ using namespace nlohmann;
 #endif
 
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -78,7 +78,7 @@ using namespace nlohmann;
 //BBS: add exception handler for win32
 #include <wx/stdpaths.h>
 #ifdef WIN32
-#include "dev-utils/BaseException.h"
+#include "app_common/BaseException.h"
 #endif
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"

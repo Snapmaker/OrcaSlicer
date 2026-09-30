@@ -38,7 +38,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include "ProfileLoadUtil.hpp"
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 using namespace nlohmann;
 

@@ -110,7 +110,7 @@ namespace {
 constexpr float SELECTION_MASK_SCALE = 0.5f;
 constexpr float SELECTION_GLOW_SCALE = 0.5f;
 constexpr float SELECTION_EDGE_THICKNESS = 1.0f;
-constexpr float SELECTION_GLOW_BLUR_RADIUS = 4.0f;
+constexpr float SELECTION_GLOW_BLUR_RADIUS = 0.0f;
 constexpr int GAUSSIAN_LOGICAL_TAP_COUNT = 4;
 constexpr float GAUSSIAN_MAX_RADIUS = 4.0f; // Larger radii use the original nine-fetch kernel.
 constexpr float GAUSSIAN_EPSILON = 1.0e-6f;
@@ -2745,6 +2745,11 @@ void GLCanvas3D::reset_select_plate_toolbar_selection() {
 void GLCanvas3D::enable_select_plate_toolbar(bool enable)
 {
     m_sel_plate_toolbar.set_enabled(enable);
+}
+
+void GLCanvas3D::invalidate_select_plate_toolbar()
+{
+    m_sel_plate_toolbar.is_render_finish = false;
 }
 
 void GLCanvas3D::enable_assemble_view_toolbar(bool enable)
@@ -7834,6 +7839,7 @@ bool GLCanvas3D::_update_imgui_select_plate_toolbar()
     bool result = true;
     if (!m_sel_plate_toolbar.is_enabled() || m_sel_plate_toolbar.is_render_finish) return false;
 
+    make_current_for_postinit();
     _update_select_plate_toolbar_stats_item();
 
     m_sel_plate_toolbar.del_all_item();
@@ -9444,7 +9450,8 @@ void GLCanvas3D::_render_imgui_select_plate_toolbar()
     }
 
     imgui.end();
-    m_sel_plate_toolbar.is_render_finish = true;
+    if (!m_sel_plate_toolbar.m_items.empty())
+        m_sel_plate_toolbar.is_render_finish = true;
 }
 
 //BBS: GUI refactor: GLToolbar adjust

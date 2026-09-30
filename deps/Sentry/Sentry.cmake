@@ -20,9 +20,23 @@ if (WIN32)
     -DCMAKE_CXX_FLAGS_RELWITHDEBINFO:STRING=/Zi /O2
     -DCMAKE_EXE_LINKER_FLAGS:STRING=/DEBUG
     -DCMAKE_SHARED_LINKER_FLAGS:STRING=/DEBUG
+    # No warnings: sentry-native builds with -Werror under clang-cl.
+    -DCMAKE_C_FLAGS_INIT:STRING=/w
+    -DCMAKE_CXX_FLAGS_INIT:STRING=/w
   )
-  if (MSVC)
-    set(_sentry_cmake_generator -G "Visual Studio 17 2022")
+  # The Sentry build takes the superbuild's generator and compilers (orcaslicer_add_cmake_project); the
+  # crashpad pre-build below uses the same, so both follow the Visual Studio or clang-cl the host has.
+  if (CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(_sentry_crashpad_generator -G "${CMAKE_GENERATOR}")
+    if (CMAKE_GENERATOR_PLATFORM)
+      list(APPEND _sentry_crashpad_generator -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
+    if (CMAKE_GENERATOR_TOOLSET)
+      list(APPEND _sentry_crashpad_generator -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif()
+  else()
+    set(_sentry_crashpad_generator -G "${CMAKE_GENERATOR}" "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}"
+        "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}" "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
   endif()
 elseif (APPLE)
   # macOS: build shared libs so we get libsentry.dylib
@@ -72,7 +86,7 @@ endif ()
 
 if(WIN32)
   set(SENTRY_PATCH_COMMAND 
-     ${GIT_EXECUTABLE} submodule update --init --recursive && ${CMAKE_COMMAND} -S external/crashpad -B external/crashpad/build ${_sentry_cmake_generator} -DCMAKE_BUILD_TYPE=Release && ${CMAKE_COMMAND} --build external/crashpad/build --config Release
+     ${GIT_EXECUTABLE} submodule update --init --recursive && ${CMAKE_COMMAND} -S external/crashpad -B external/crashpad/build ${_sentry_crashpad_generator} -DCMAKE_BUILD_TYPE=Release && ${CMAKE_COMMAND} --build external/crashpad/build --config Release
   )
 elseif(APPLE)
   set(SENTRY_PATCH_COMMAND 

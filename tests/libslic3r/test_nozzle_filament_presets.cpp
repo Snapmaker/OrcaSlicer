@@ -1528,3 +1528,114 @@ TEST_CASE("A tool head adopts the per-extruder machine values of its size preset
         CHECK(adopt_extruder_values_from_size_preset(config, p02->config, &p04->config, 4, nozzle_size_extruder_options()).empty());
     }
 }
+
+TEST_CASE("A user filament saved from a slot is pinned to the machine preset of the slot's extruder", "[NozzleFilament][FilamentFlow]")
+{
+    auto bundle = load_snapmaker_bundle();
+    const char *const PETG_04 = "Generic PETG";
+    const char *const PETG_06 = "Generic PETG @U1 0.6 nozzle";
+    // The 0.6 mm printer preset with a 0.4 mm nozzle on extruder 2.
+    select_u1(*bundle, { 0.6, 0.4, 0.6, 0.6 }, { PETG_06, PETG_04, PETG_06, PETG_06 }, U1_06);
+    CHECK(NozzleFilament::printer_to_pin(*bundle, 1) == U1_04);
+    // A slot of the printer preset's size, and no slot at all: the printer preset.
+    CHECK(NozzleFilament::printer_to_pin(*bundle, 0) == U1_06);
+    CHECK(NozzleFilament::printer_to_pin(*bundle, -1) == U1_06);
+}
+
+TEST_CASE("A second user preset of a material keeps a user preset of another size where it is", "[NozzleFilament][FilamentFlow]")
+{
+    auto bundle = load_snapmaker_bundle();
+    const char *const PETG_04 = "Generic PETG";
+    const char *const PETG_06 = "Generic PETG @U1 0.6 nozzle";
+    add_user_filament(*bundle, "My PETG @0.6", PETG_06);
+    add_user_filament(*bundle, "My PETG", PETG_04);
+    // Extruder 2 carries 0.4 mm while its slot holds the 0.6 mm user preset.
+    select_u1(*bundle, { 0.6, 0.4, 0.4, 0.4 }, { "My PETG @0.6", "My PETG @0.6", PETG_04, PETG_04 });
+    CHECK(NozzleFilament::user_children(*bundle, system_filament(*bundle, PETG_04), machine(*bundle, U1_04)).size() == 1);
+    NozzleFilament::SlotTarget second = target(*bundle, 1);
+    CHECK(second.reason == NozzleFilament::Reason::Switched);
+    CHECK(second.to == "My PETG");
+
+    // A user preset saved with High Flow values from a system preset is a second child.
+    add_user_filament(*bundle, "Generic PETG - Copy", PETG_04);
+    CHECK(NozzleFilament::user_children(*bundle, system_filament(*bundle, PETG_04), machine(*bundle, U1_04)).size() == 2);
+    second = target(*bundle, 1);
+    CHECK(second.reason == NozzleFilament::Reason::UserPresetKept);
+    CHECK(second.to == "My PETG @0.6");
+    CHECK(second.suggestion == PETG_04);
+}
+
+TEST_CASE("A user filament saved from a slot is pinned to the machine preset of the slot's extruder with the nozzle size rule off", "[NozzleFilament][FilamentFlow]")
+{
+    auto bundle = load_snapmaker_bundle();
+    const char *const PETG_04 = "Generic PETG";
+    const char *const PETG_06 = "Generic PETG @U1 0.6 nozzle";
+    select_u1(*bundle, { 0.6, 0.4, 0.6, 0.6 }, { PETG_06, PETG_04, PETG_06, PETG_06 }, U1_06);
+    bundle->nozzle_filament_enabled = false;
+    CHECK(NozzleFilament::printer_to_pin(*bundle, 1) == U1_04);
+    CHECK(NozzleFilament::printer_to_pin(*bundle, 0) == U1_06);
+}
+
+TEST_CASE("A filament saved under a new name takes over only the slots whose extruder it fits", "[NozzleFilament][FilamentFlow]")
+{
+    auto bundle = load_snapmaker_bundle();
+    const char *const PETG_04 = "Generic PETG";
+    const char *const PETG_06 = "Generic PETG @U1 0.6 nozzle";
+    const char *const COPY    = "Generic PETG - Copy";
+    // Slot 1 on a 0.6 mm extruder and slot 2 on a 0.4 mm one hold the same preset.
+    select_u1(*bundle, { 0.6, 0.4, 0.6, 0.6 }, { PETG_04, PETG_04, PETG_06, PETG_06 }, U1_06);
+    add_user_filament(*bundle, COPY, PETG_04);
+    Preset *copy = bundle->filaments.find_preset(COPY, false, true);
+    REQUIRE(copy != nullptr);
+
+    SECTION("a copy pinned to the 0.4 mm machine preset takes over slot 2 only") {
+        copy->config.option<ConfigOptionStrings>("compatible_printers", true)->values = { U1_04 };
+        CHECK(NozzleFilament::slots_to_switch(*bundle, PETG_04, *copy) == std::vector<size_t>{ 1 });
+    }
+    SECTION("a copy restricting no printer takes over both slots") {
+        copy->config.option<ConfigOptionStrings>("compatible_printers", true)->values.clear();
+        copy->config.option<ConfigOptionString>("compatible_printers_condition", true)->value.clear();
+        CHECK(NozzleFilament::slots_to_switch(*bundle, PETG_04, *copy) == std::vector<size_t>{ 0, 1 });
+    }
+    SECTION("slots holding another preset are left alone") {
+        CHECK(NozzleFilament::slots_to_switch(*bundle, "no such preset", *copy).empty());
+    }
+}
+
+TEST_CASE("High Flow values are offered for a filament a High Flow extruder may print", "[NozzleFilament][FilamentFlow]")
+{
+    auto bundle = load_snapmaker_bundle();
+    const char *const PETG_04 = "Generic PETG";
+    const char *const PETG_06 = "Generic PETG @U1 0.6 nozzle";
+    // The 0.6 mm printer preset with a 0.4 mm High Flow nozzle on extruder 2.
+    select_u1(*bundle, { 0.6, 0.4, 0.6, 0.6 }, { PETG_06, PETG_04, PETG_06, PETG_06 }, U1_06);
+    auto &volume_types = bundle->project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values;
+    volume_types = { int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard) };
+    add_user_filament(*bundle, "My library PETG", PETG_04);
+    Preset *library = bundle->filaments.find_preset("My library PETG", false, true);
+    REQUIRE(library != nullptr);
+    // A preset restricting no printer, as the filament library ships them.
+    library->config.option<ConfigOptionStrings>("compatible_printers", true)->values.clear();
+    library->config.option<ConfigOptionString>("compatible_printers_condition", true)->value.clear();
+
+    CHECK(NozzleFilament::fits_high_flow_extruder(*bundle, system_filament(*bundle, PETG_04)));
+    CHECK(NozzleFilament::fits_high_flow_extruder(*bundle, *library));
+    // Pinned to 0.6 mm: no High Flow extruder prints it.
+    CHECK_FALSE(NozzleFilament::fits_high_flow_extruder(*bundle, system_filament(*bundle, PETG_06)));
+
+    SECTION("no extruder set to High Flow") {
+        volume_types = { int(nvtStandard), int(nvtStandard), int(nvtStandard), int(nvtStandard) };
+        CHECK_FALSE(NozzleFilament::fits_high_flow_extruder(*bundle, system_filament(*bundle, PETG_04)));
+        CHECK_FALSE(NozzleFilament::fits_high_flow_extruder(*bundle, *library));
+    }
+}
+
+TEST_CASE("A slot on a High Flow extruder marks a filament with High Flow values after its size", "[NozzleFilament][FilamentFlow]")
+{
+    const std::string name = "Generic PETG - Copy";
+    CHECK(NozzleFilament::size_marked_label(name, NozzleFilament::high_flow_marker("0.4 mm", true)) == "0.4 mm \xC2\xB7 HF \xC2\xB7 Generic PETG - Copy");
+    CHECK(NozzleFilament::size_marked_label(name, NozzleFilament::high_flow_marker("", true)) == "HF \xC2\xB7 Generic PETG - Copy");
+    // Without High Flow values: the size marker alone, or the name alone.
+    CHECK(NozzleFilament::size_marked_label(name, NozzleFilament::high_flow_marker("0.4 mm", false)) == "0.4 mm \xC2\xB7 Generic PETG - Copy");
+    CHECK(NozzleFilament::size_marked_label(name, NozzleFilament::high_flow_marker("", false)) == name);
+}

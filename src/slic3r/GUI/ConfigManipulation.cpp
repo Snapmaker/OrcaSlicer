@@ -1,5 +1,6 @@
 // #include "libslic3r/GCodeSender.hpp"
 #include "ConfigManipulation.hpp"
+#include <algorithm>
 #include <numeric>
 #include <limits>
 #include "I18N.hpp"
@@ -10,6 +11,7 @@
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/MaterialType.hpp"
 #include "MsgDialog.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -215,15 +217,19 @@ void ConfigManipulation::check_filament_max_volumetric_speed(DynamicPrintConfig 
     //if (is_msg_dlg_already_exist) return;
     //float max_volumetric_speed = config->opt_float("filament_max_volumetric_speed");
 
-    float max_volumetric_speed = config->has("filament_max_volumetric_speed") ? config->opt_float("filament_max_volumetric_speed", (float) 0.5) : 0.5;
     // BBS: limite the min max_volumetric_speed
-    if (max_volumetric_speed < 0.5) {
+    // Snapmaker Orca: per variant column; only a column below the limit is reset, the others keep their value.
+    const std::vector<size_t> too_small = filament_columns_below(*config, "filament_max_volumetric_speed", 0.5);
+    if (!too_small.empty()) {
         const wxString     msg_text = _(L("Too small max volumetric speed.\nValue was reset to 0.5"));
         MessageDialog      dialog(nullptr, msg_text, "", wxICON_WARNING | wxOK);
         DynamicPrintConfig new_conf = *config;
         is_msg_dlg_already_exist    = true;
         dialog.ShowModal();
-        new_conf.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({0.5}));
+        const ConfigOptionFloat minimum(0.5);
+        if (auto *speeds = dynamic_cast<ConfigOptionVectorBase *>(new_conf.option("filament_max_volumetric_speed")); speeds != nullptr)
+            for (size_t column : too_small)
+                speeds->set_at(&minimum, column, 0);
         apply(config, &new_conf);
         is_msg_dlg_already_exist = false;
     }
@@ -237,7 +243,9 @@ void ConfigManipulation::check_chamber_temperature(DynamicPrintConfig* config)
         std::string filament_type = config->option<ConfigOptionStrings>("filament_type")->get_at(0);
         int chamber_min_temp, chamber_max_temp;
     if (MaterialType::get_chamber_temperature_range(filament_type, chamber_min_temp, chamber_max_temp)) {
-            if (chamber_max_temp < config->option<ConfigOptionInts>("chamber_temperature")->get_at(0)) {
+            // One value per filament variant column (Standard, High Flow): the highest one is checked.
+            const std::vector<int> &targets = config->option<ConfigOptionInts>("chamber_temperature")->values;
+            if (!targets.empty() && chamber_max_temp < *std::max_element(targets.begin(), targets.end())) {
                 wxString msg_text = wxString::Format(_L("Current chamber temperature is higher than the material\'s safe temperature; this may result in material softening and nozzle clogs. The maximum safe temperature for the material is %d"), chamber_max_temp);
                 MessageDialog dialog(m_msg_dlg_parent, msg_text, "", wxICON_WARNING | wxOK);
                 is_msg_dlg_already_exist = true;
@@ -254,9 +262,15 @@ void ConfigManipulation::check_chamber_minimal_temperature(DynamicPrintConfig* c
     // print start macro. It must not exceed the target chamber temperature, otherwise the macro
     // could wait forever for a temperature the heater is never asked to reach.
     if (config->has("chamber_minimal_temperature") && config->has("chamber_temperature")) {
-        const int chamber_min_temp    = config->option<ConfigOptionInts>("chamber_minimal_temperature")->get_at(0);
-        const int chamber_target_temp = config->option<ConfigOptionInts>("chamber_temperature")->get_at(0);
-        if (chamber_min_temp > chamber_target_temp) {
+        // Both keys hold one value per filament variant column; each column is checked against its own target.
+        std::vector<int>        minimal = config->option<ConfigOptionInts>("chamber_minimal_temperature")->values;
+        const ConfigOptionInts *targets = config->option<ConfigOptionInts>("chamber_temperature");
+        size_t                  column  = 0;
+        while (column < minimal.size() && minimal[column] <= targets->get_at(column))
+            ++column;
+        if (column < minimal.size()) {
+            const int chamber_min_temp    = minimal[column];
+            const int chamber_target_temp = targets->get_at(column);
             wxString msg_text = wxString::Format(_L("The minimal chamber temperature (%d℃) is higher than the target chamber temperature (%d℃). "
                                                     "The minimal value is the threshold at which printing starts while the chamber keeps heating toward the target, "
                                                     "so it should not exceed it. It will be clamped to the target."),
@@ -265,7 +279,9 @@ void ConfigManipulation::check_chamber_minimal_temperature(DynamicPrintConfig* c
             DynamicPrintConfig new_conf = *config;
             is_msg_dlg_already_exist    = true;
             dialog.ShowModal();
-            new_conf.set_key_value("chamber_minimal_temperature", new ConfigOptionInts({chamber_target_temp}));
+            for (size_t i = column; i < minimal.size(); ++i)
+                minimal[i] = std::min(minimal[i], targets->get_at(i));
+            new_conf.set_key_value("chamber_minimal_temperature", new ConfigOptionInts(minimal));
             apply(config, &new_conf);
             is_msg_dlg_already_exist = false;
         }
@@ -304,62 +320,6 @@ bool ConfigManipulation::check_layer_height(DynamicPrintConfig* config)
     if (min_layer_height > EPSILON && layer_height < min_layer_height - EPSILON)
         return layer_height_out_of_range_dialog(config, min_layer_height);
     return false;
-}
-
-bool ConfigManipulation::check_layer_height_divides_extruder_heights(DynamicPrintConfig* config)
-{
-    const double layer_height = config->opt_float("layer_height");
-    if (layer_height <= EPSILON)
-        return false;
-    const DynamicPrintConfig &printer_config = GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
-    const auto *heights = printer_config.option<ConfigOptionFloats>("extruder_layer_height");
-    if (heights == nullptr)
-        return false;
-    bool        nonconforming = false;
-    long        common        = 0;
-    std::string list;
-    for (double h : heights->values) {
-        if (h <= EPSILON)
-            continue;
-        common = std::gcd(common, std::lround(h / 0.005));
-        const double n = std::round(h / layer_height);
-        if (n < 1. || std::abs(h - n * layer_height) > 1e-4)
-            nonconforming = true;
-        list += (list.empty() ? "" : " / ") + into_u8(wxString::Format("%g", h));
-    }
-    if (!nonconforming || common == 0)
-        return false;
-    // The object layer height also prints the Default extruders: it must fit through every nozzle.
-    double min_bore = std::numeric_limits<double>::max();
-    if (const auto *nd = printer_config.option<ConfigOptionFloats>("nozzle_diameter"))
-        for (double d : nd->values)
-            if (d > EPSILON)
-                min_bore = std::min(min_bore, d);
-    double suggested = 0.;
-    for (long k = 1; k <= common; ++k)
-        if (common % k == 0 && (common / k) * 0.005 <= min_bore + EPSILON) {
-            suggested = std::round((common / k) * 0.005 * 1e6) / 1e6;
-            break;
-        }
-    if (suggested <= EPSILON)
-        return false;
-
-    wxString msg_text = wxString::Format(_L("A layer height of %g mm is not a divisor of the extruders' preferred layer heights (%s mm); "
-                                            "parts printed by those extruders need whole multiples of the object layer height."),
-                                         layer_height, wxString::FromUTF8(list.c_str()));
-    msg_text += "\n\n" + wxString::Format(_L("Adjust it to %g mm, the coarsest layer height every preferred height is a whole multiple of?"), suggested);
-    MessageDialog dialog(wxGetApp().plater(), msg_text, "", wxICON_WARNING | wxYES | wxNO);
-    dialog.SetButtonLabel(wxID_YES, _L("Adjust"));
-    dialog.SetButtonLabel(wxID_NO, _L("Ignore"));
-    is_msg_dlg_already_exist = true;
-    const bool adjust = dialog.ShowModal() == wxID_YES;
-    if (adjust) {
-        DynamicPrintConfig new_conf = *config;
-        new_conf.set_key_value("layer_height", new ConfigOptionFloat(suggested));
-        apply(config, &new_conf);
-    }
-    is_msg_dlg_already_exist = false;
-    return adjust;
 }
 
 bool ConfigManipulation::layer_height_out_of_range_dialog(DynamicPrintConfig* config, double clamp_to)
@@ -792,19 +752,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, in
 
     const GCodeFlavor gcflavor = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnum<GCodeFlavor>>("gcode_flavor")->value;
     const bool bSEMM = preset_bundle->printers.get_edited_preset().config.opt_bool("single_extruder_multi_material");
-
-    // ORCA multi-nozzle-size: while a preferred layer height is set for any extruder, the object
-    // layer height is derived from the preferred heights (the finest one; the sidebar and the
-    // Printer tab reconcile it) and a value typed here could only be reconciled back or leave
-    // heights that are no whole multiples of it. Lock the global field; the preferred layer
-    // heights are the place to change it.
-    if (is_global_config) {
-        bool derived = false;
-        if (const auto *heights = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("extruder_layer_height"))
-            for (double h : heights->values)
-                derived = derived || h > EPSILON;
-        toggle_field("layer_height", !derived);
-    }
 
     // Orca: use booleans to avoid repeated comparisons with enum values
     const bool gcf_is_marlin_firmware = gcflavor == GCodeFlavor::gcfMarlinFirmware;

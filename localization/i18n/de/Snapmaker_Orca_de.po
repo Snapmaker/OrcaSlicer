@@ -3,7 +3,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Snapmaker Orca\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 22:15+0200\n"
+"POT-Creation-Date: 2026-09-28 13:11+0200\n"
 "PO-Revision-Date: \n"
 "Last-Translator: Heiko Liebscher <hliebschergmail.com>\n"
 "Language-Team: \n"
@@ -9746,8 +9746,9 @@ msgstr "Volumen: %1% mm³\n"
 msgid "Triangles: %1%\n"
 msgstr "Dreiecke: %1%\n"
 
-msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
-msgstr "Die Funktion \"Modell reparieren\" ist derzeit nur unter Windows verfügbar. Bitte reparieren Sie das Modell in Snapmaker Orca (Windows) oder CAD-Software."
+# AI Translated
+msgid "Use \"Fix Model\" to repair the mesh."
+msgstr "Verwenden Sie „Modell reparieren“, um das Netz zu reparieren."
 
 #, c-format, boost-format
 msgid "Plate %d: %s is not suggested to be used to print filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to non-zero."
@@ -9911,17 +9912,23 @@ msgstr ""
 msgid "%1%mm High Flow nozzles are not recommended for %2%"
 msgstr ""
 
+#. TRN N3: %1% is a filament preset name, %2% an extruder number
 #, boost-format
-msgid "%1% has no High Flow values; its Standard values are used on extruder %2%."
+msgid "%1% has no High Flow values; its Standard values are used on extruder %2%. Open it from the filament slot of extruder %2% and change a High Flow value, or use Create High Flow values."
 msgstr ""
 
 #, boost-format
 msgid "The process preset has no High Flow speeds; extruder %1% prints at Standard speeds."
 msgstr ""
 
-#. TRN N7: %1% is a filament preset name, %2% a tool head number, %3% the name of the system preset %1% was made from
+#. TRN N7: %1% is a filament preset name, %2% an extruder number, %3% the name of the system preset %1% was made from
 #, boost-format
 msgid "%1% changes Standard values that its High Flow column does not follow; extruder %2% prints with the High Flow values of %3%."
+msgstr ""
+
+#. TRN N7: %1% is a filament preset name, %2% an extruder number
+#, boost-format
+msgid "%1% changes Standard values that its High Flow column does not follow; extruder %2% prints the earlier High Flow values."
 msgstr ""
 
 #. TRN N7: %1% is a list of tool head numbers, %2% the name of the system process preset
@@ -10936,6 +10943,12 @@ msgstr "Extruderfarbe ändern"
 #. TRN: separator in the filament list of a tool head, above the materials that have no preset for its nozzle size. %1% is a number like 0.6.
 #, boost-format
 msgid "No %1% mm version:"
+msgstr ""
+
+msgid "High Flow values"
+msgstr ""
+
+msgid "Standard values only"
 msgstr ""
 
 msgid "Machine Filament"
@@ -11967,6 +11980,9 @@ msgstr "Änderungen der Parameter mit den entsprechenden Parametern eines andere
 msgid "Click to reset all settings to the last saved preset."
 msgstr "Klicken Sie hier, um alle Einstellungen auf die zuletzt gespeicherten Parameter zurückzusetzen."
 
+msgid "Reverts every value of the preset, Standard and High Flow."
+msgstr ""
+
 msgid "The current layer height is 0.1 mm or below. Enabling Subdivide Mixing Layers may cause the subdivided layer height to fall outside the printer's supported range. This could affect print quality."
 msgstr ""
 
@@ -12535,6 +12551,63 @@ msgstr "Kompatible Prozessprofile"
 msgid "Smooth PEI Plate"
 msgstr ""
 
+msgid "Shared by Standard and High Flow. Switch to Standard to change it."
+msgstr ""
+
+#. TRN %1% is a filament preset name
+#, boost-format
+msgid "%1% cannot be printed with a High Flow nozzle."
+msgstr ""
+
+#. TRN %1% is a filament preset name
+#, boost-format
+msgid "No High Flow values yet. The fields show the Standard values; your first change to a field on a line with the extruder icon gives %1% its own High Flow values, starting as a copy of Standard. Greyed fields are shared with Standard."
+msgstr ""
+
+#. TRN %1% is a filament preset name
+#, boost-format
+msgid "%1% is not recommended for High Flow nozzles."
+msgstr ""
+
+msgid "Create High Flow values"
+msgstr ""
+
+msgid "Only the fields on lines with the extruder icon have their own High Flow values; greyed fields are shared with Standard."
+msgstr ""
+
+#. TRN %1% is a list of settings, such as "Nozzle, Max volumetric speed"
+#, boost-format
+msgid "Changed under Standard, High Flow keeps the earlier value: %1%."
+msgstr ""
+
+msgid "Apply to High Flow too"
+msgstr ""
+
+#. TRN %1% is an extruder number, %2% a filament preset name
+#, boost-format
+msgid "Extruder %1% (High Flow) also prints these values until %2% has High Flow values."
+msgstr ""
+
+#. TRN %1% is a system filament preset
+#, boost-format
+msgid "%1% stays unchanged. The new preset holds its Standard values and your High Flow values. Slots that use %1% switch to the new preset."
+msgstr ""
+
+#. TRN %1% is a system filament preset, %2% a nozzle size such as 0.4
+#, boost-format
+msgid "%1% stays unchanged. The new preset holds its Standard values and your High Flow values. Slots on %2% mm extruders that use %1% switch to it."
+msgstr ""
+
+#. TRN %1% is a system filament preset, %2% a user preset made from it
+#, boost-format
+msgid "%1% already has the user preset %2%. To keep one preset per material: Cancel, pick %2% in this slot and choose Transfer when asked about unsaved changes."
+msgstr ""
+
+#. TRN %1% is a user filament preset
+#, boost-format
+msgid "The Standard values of %1% stay as they are; the High Flow values are saved with it."
+msgstr ""
+
 msgid "Printable space"
 msgstr "Druckbarer Raum"
 
@@ -13021,6 +13094,9 @@ msgstr "Anzahl der Extruder"
 
 msgid "Capabilities"
 msgstr "Fähigkeiten"
+
+msgid "Added"
+msgstr ""
 
 msgid "Show all presets (including incompatible)"
 msgstr "Alle Profile anzeigen (auch inkompatible)"
@@ -26527,6 +26603,9 @@ msgid ""
 "Did you know that when printing materials that are prone to warping such as ABS, appropriately increasing the heatbed temperature can reduce the probability of warping."
 msgstr ""
 
+#~ msgid "\"Fix Model\" feature is currently only on Windows. Please repair the model on Snapmaker Orca(windows) or CAD softwares."
+#~ msgstr "Die Funktion \"Modell reparieren\" ist derzeit nur unter Windows verfügbar. Bitte reparieren Sie das Modell in Snapmaker Orca (Windows) oder CAD-Software."
+
 #~ msgid "Line width too small"
 #~ msgstr "Zu geringe Linienbreite"
 
@@ -29940,10 +30019,6 @@ msgstr ""
 # AI Translated
 #~ msgid "Find on OrcaCloud"
 #~ msgstr "Auf OrcaCloud suchen"
-
-# AI Translated
-#~ msgid "Use \"Fix Model\" to repair the mesh."
-#~ msgstr "Verwenden Sie „Modell reparieren“, um das Netz zu reparieren."
 
 #, c-format, boost-format
 #~ msgid "Plate %d: %s is not suggested for use printing filament %s (%s). If you still want to do this print job, please set this filament's bed temperature to a number that is not zero."

@@ -487,7 +487,10 @@ jobs:
         # resources/ the shipped profiles (PROFILES_DIR), the printers/ maps, and
         # the icon SVGs (NativeCommands icon names are checked against them).
         find "$d" -mindepth 1 -maxdepth 1 -type d \
-          ! -name tests ! -name build_flatpak ! -name scripts ! -name resources -exec rm -rf {} +
+          ! -name tests ! -name build_flatpak ! -name scripts ! -name resources ! -name src -exec rm -rf {} +
+        # Source checks read src/slic3r/GUI.
+        find "$d/src" -mindepth 1 -maxdepth 1 ! -name slic3r -exec rm -rf {} +
+        find "$d/src/slic3r" -mindepth 1 -maxdepth 1 ! -name GUI -exec rm -rf {} +
         find "$d/resources" -mindepth 1 -maxdepth 1 ! -name profiles ! -name printers ! -name images -exec rm -rf {} +
         # Only the SVGs are read; the png/ico/icns/gif assets are ~35MB of dead weight.
         find "$d/resources/images" -mindepth 1 -maxdepth 1 ! -name '*.svg' -exec rm -rf {} + 2>/dev/null || true

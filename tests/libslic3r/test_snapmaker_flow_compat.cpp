@@ -7,7 +7,9 @@
 #include <vector>
 
 #include <boost/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
 
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Model.hpp"
@@ -24,7 +26,7 @@
 
 using namespace Slic3r;
 
-// Pressure advance, fan, ramming and purge values hold one value per filament variant column
+// Pressure advance, fan, ramming, purge, bed and chamber values hold one value per filament variant column
 // (Standard / High Flow). Project files of mainline OrcaSlicer and of earlier versions store them
 // once per filament; these cases cover the rebuild of such files.
 
@@ -111,6 +113,43 @@ TEST_CASE("Loading an older project gives every filament preset its own pressure
         CHECK_THAT(preset->config.option<ConfigOptionFloats>("filament_minimal_purge_on_wipe_tower")->values, Catch::Matchers::Approx(expected_purge[i]));
         // A key that was stored per column all along.
         CHECK(preset->config.option<ConfigOptionInts>("nozzle_temperature")->values == expected_temp[i]);
+    }
+}
+
+TEST_CASE("Per filament bed and chamber temperatures of an older project are rebuilt per filament variant column", "[HighFlow][FlowCompat][hf_promoted_shim][BedChamber]")
+{
+    // Mainline projects and projects of earlier versions store them once per filament.
+    DynamicPrintConfig config = two_filaments_with_flow_columns();
+    config.set_key_value("textured_plate_temp", new ConfigOptionInts({60, 80}));
+    config.set_key_value("textured_plate_temp_initial_layer", new ConfigOptionInts({65, 85}));
+    config.set_key_value("activate_chamber_temp_control", new ConfigOptionBools({false, true}));
+    config.set_key_value("chamber_temperature", new ConfigOptionInts({0, 40}));
+
+    SECTION("the values are spread over the columns of each filament") {
+        CHECK(normalize_promoted_filament_keys(config, 2, {1, 1, 2, 2}) == 4);
+        CHECK(config.option<ConfigOptionInts>("textured_plate_temp")->values == std::vector<int>{60, 60, 80, 80});
+        CHECK(config.option<ConfigOptionInts>("textured_plate_temp_initial_layer")->values == std::vector<int>{65, 65, 85, 85});
+        CHECK(config.option<ConfigOptionBools>("activate_chamber_temp_control")->values == std::vector<unsigned char>{0, 0, 1, 1});
+        CHECK(config.option<ConfigOptionInts>("chamber_temperature")->values == std::vector<int>{0, 0, 40, 40});
+    }
+    SECTION("every filament preset of the loaded project has its own values in both columns") {
+        // The application normalizes the project settings before it loads them.
+        Preset::normalize(config);
+        PresetBundle bundle;
+        bundle.load_config_model("older_project.3mf", std::move(config), Semver());
+        REQUIRE(bundle.filament_presets.size() == 2);
+        const std::vector<std::vector<int>>           expected_bed     = {{60, 60}, {80, 80}};
+        const std::vector<std::vector<int>>           expected_chamber = {{0, 0}, {40, 40}};
+        const std::vector<std::vector<unsigned char>> expected_control = {{0, 0}, {1, 1}};
+        for (size_t i = 0; i < 2; ++i) {
+            INFO("filament " << i + 1 << ": " << bundle.filament_presets[i]);
+            const Preset *preset = bundle.filaments.find_preset(bundle.filament_presets[i], false);
+            REQUIRE(preset != nullptr);
+            CHECK(preset->config.option<ConfigOptionStrings>("filament_extruder_variant")->values == std::vector<std::string>{STANDARD, HIGH_FLOW});
+            CHECK(preset->config.option<ConfigOptionInts>("textured_plate_temp")->values == expected_bed[i]);
+            CHECK(preset->config.option<ConfigOptionInts>("chamber_temperature")->values == expected_chamber[i]);
+            CHECK(preset->config.option<ConfigOptionBools>("activate_chamber_temp_control")->values == expected_control[i]);
+        }
     }
 }
 
@@ -830,4 +869,72 @@ TEST_CASE("A 0.6 mm project saved with one printer column per tool head fills bo
     bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
     const DynamicPrintConfig composed = composed_per_head(bundle);
     CHECK_THAT(composed.option<ConfigOptionFloats>("retraction_length")->values, Catch::Matchers::Approx(std::vector<double>{1.4, 2.0, 1.4, 1.4}));
+}
+
+TEST_CASE("A user filament preset of Snapmaker Orca 2.4 with High Flow values keeps both columns over a parent without them", "[HighFlow][FlowCompat][FilamentFlow]")
+{
+    const auto    loaded = load_snapmaker_bundle();
+    PresetBundle &bundle = *loaded;
+    const Preset *parent = bundle.filaments.find_preset("Generic PETG", false, true);
+    REQUIRE(parent != nullptr);
+    REQUIRE(strings_of(parent->config, "filament_extruder_variant") == std::vector<std::string>{STANDARD});
+
+    ScopedTemporaryDir user_dir("orca_hf_24_one_column");
+    fs::create_directories(fs::path(user_dir.string()) / "filament");
+    {
+        boost::nowide::ofstream out((fs::path(user_dir.string()) / "filament" / "My PETG 2.4.json").string());
+        out << R"({
+    "type": "filament",
+    "name": "My PETG 2.4",
+    "from": "User",
+    "inherits": "Generic PETG",
+    "version": "2.4.0",
+    "filament_settings_id": ["My PETG 2.4"],
+    "filament_flow_support": ["standard", "high_flow"],
+    "nozzle_temperature": ["250", "265"]
+})";
+    }
+    PresetsConfigSubstitutions substitutions;
+    bundle.filaments.load_presets(user_dir.string(), "filament", substitutions, ForwardCompatibilitySubstitutionRule::Enable, nullptr, PresetOrigin(), true);
+
+    const Preset *filament = bundle.filaments.find_preset("My PETG 2.4", false);
+    REQUIRE(filament != nullptr);
+    REQUIRE(filament->name == "My PETG 2.4");
+    CHECK(strings_of(filament->config, "filament_extruder_variant") == std::vector<std::string>{STANDARD, HIGH_FLOW});
+    CHECK(filament->config.option<ConfigOptionInts>("nozzle_temperature")->values == std::vector<int>{250, 265});
+    CHECK(filament_columns_consistent(filament->config));
+    // A key the file does not state holds the parent's value in both columns.
+    const double speed = parent->config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(0);
+    const auto  *speeds = filament->config.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    REQUIRE(speeds->values.size() == 2);
+    CHECK_THAT(speeds->values[0], Catch::Matchers::WithinAbs(speed, 1e-9));
+    CHECK_THAT(speeds->values[1], Catch::Matchers::WithinAbs(speed, 1e-9));
+}
+
+TEST_CASE("The project config lists a filament's High Flow column right after its Standard column", "[HighFlow][FlowCompat][FilamentFlow]")
+{
+    // Snapmaker Orca 2.4 reads filament i at column i of every per-column key and has no segment
+    // table here (no filament_flow_step_size): in such a project it reads the second filament from
+    // the first one's High Flow column. This pins the layout that it misreads.
+    const auto    loaded = load_snapmaker_bundle();
+    PresetBundle &bundle = *loaded;
+    REQUIRE(bundle.printers.select_preset_by_name(U1_MACHINE, true));
+    REQUIRE(bundle.prints.select_preset_by_name(U1_PROCESS, true));
+    bundle.filament_presets = {"Generic PETG", "Generic PLA", "Generic PLA", "Generic PLA"};
+    bundle.project_config.option<ConfigOptionStrings>("filament_colour", true)->values.assign(4, "#FFFFFF");
+    bundle.project_config.option<ConfigOptionInts>("filament_map", true)->values = {1, 2, 3, 4};
+    bundle.project_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
+    REQUIRE(bundle.filaments.select_preset_by_name("Generic PETG", true));
+    DynamicPrintConfig &petg = bundle.filaments.get_edited_preset().config;
+    REQUIRE(filament_add_flow_column(petg, nvtHighFlow));
+    petg.option<ConfigOptionInts>("nozzle_temperature")->values[1] = 265;
+
+    const DynamicPrintConfig project = bundle.full_config_secure();
+    CHECK(strings_of(project, "filament_extruder_variant") == std::vector<std::string>{STANDARD, HIGH_FLOW, STANDARD, STANDARD, STANDARD});
+    CHECK(project.option<ConfigOptionInts>("filament_self_index")->values == std::vector<int>{1, 1, 2, 3, 4});
+    const std::vector<int> temperatures = project.option<ConfigOptionInts>("nozzle_temperature")->values;
+    REQUIRE(temperatures.size() == 5);
+    CHECK(temperatures[1] == 265);
+    CHECK(project.option("filament_flow_step_size") == nullptr);
+    CHECK(project_schema_version_for(project) == 2);
 }

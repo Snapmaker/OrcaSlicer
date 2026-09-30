@@ -16,6 +16,7 @@
 #include <boost/filesystem.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -139,8 +140,9 @@ DynamicPrintConfig u1_shaped_config(ColumnLayout layout, const std::vector<Nozzl
     config.set_key_value("default_filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
     config.set_key_value("filament_type",           new ConfigOptionStrings(std::vector<std::string>(HEADS, "PLA")));
     config.set_key_value("filament_map",            new ConfigOptionInts({1, 2, 3, 4}));
-    config.set_key_value("flush_multiplier",        new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",        new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts(std::vector<int>(HEADS, 190)));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts(std::vector<int>(HEADS, 240)));
     // The cooling slowdown would rewrite the feed rates under test.
@@ -679,8 +681,8 @@ DynamicPrintConfig u1_plate_config(PresetBundle &bundle, const U1Plate &plate, c
     // The application sizes the colours and the flush volumes with the filament list; nothing is
     // flushed here.
     config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("enable_support", new ConfigOptionBool(false));
     config.set_key_value("skirt_loops",    new ConfigOptionInt(0));
     // The cooling slowdown would rewrite the feed rates under test.
@@ -975,4 +977,250 @@ TEST_CASE("A U1 plate with a 0.6 mm High Flow tool head prints that head alone w
     CHECK(high_flow.auxiliary_fan_speeds == std::set<int>{fan_command(high_flow_fan)});
     // Pressure advance is the same in both columns, so both tool heads are sent the same.
     CHECK(standard.pressure_advances == high_flow.pressure_advances);
+}
+
+// ---------------------------------------------------------------------------------------------
+// High Flow values for any filament: Generic PETG (one column) gains a High Flow column copied from
+// Standard (FilamentFlowColumns.hpp), here with max volumetric speed 22 against the Standard 12.
+// ---------------------------------------------------------------------------------------------
+
+TEST_CASE("A filament given High Flow values prints them on the High Flow extruder and its Standard values elsewhere", "[HighFlow][FilamentFlow]")
+{
+    const U1Plate plate{U1_MACHINE, U1_PROCESS, {"Generic PETG", "Generic PETG", "Snapmaker PLA SnapSpeed @U1", "Snapmaker PETG HF"}};
+    constexpr double STANDARD_CAP  = 12.;
+    constexpr double HIGH_FLOW_CAP = 22.;
+    auto               bundle = std::make_unique<PresetBundle>();
+    DynamicPrintConfig config = u1_plate_config(*bundle, plate, {nvtStandard, nvtHighFlow, nvtStandard, nvtStandard}, {}, [](PresetBundle &b) {
+        Preset *petg = b.filaments.find_preset("Generic PETG", false, true);
+        REQUIRE(petg != nullptr);
+        REQUIRE(filament_add_flow_column(petg->config, nvtHighFlow));
+        petg->config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values[1] = HIGH_FLOW_CAP;
+    });
+    REQUIRE(config.opt_bool("use_relative_e_distances"));
+    const Preset *petg = bundle->filaments.find_preset("Generic PETG", false, true);
+    REQUIRE(petg != nullptr);
+    CHECK_THAT(petg->config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values,
+               Catch::Matchers::Approx(std::vector<double>{STANDARD_CAP, HIGH_FLOW_CAP}));
+
+    const std::string               gcode = two_head_gcode(config);
+    std::map<int, ShippedToolFacts> facts = shipped_tool_facts(gcode, config.option<ConfigOptionFloats>("filament_diameter")->get_at(0));
+    const ShippedToolFacts         &standard  = facts[0];
+    const ShippedToolFacts         &high_flow = facts[1];
+    // The process asks for more than either ceiling; each extruder stops at the one of its column.
+    REQUIRE(standard.max_wall_flow > 0.);
+    CHECK(standard.max_wall_flow < STANDARD_CAP * 1.05);
+    CHECK(high_flow.max_wall_flow > STANDARD_CAP * 1.2);
+    CHECK(high_flow.max_wall_flow < HIGH_FLOW_CAP * 1.05);
+    // A value both columns share: the nozzle temperature of Generic PETG.
+    CHECK(standard.print_temperature == 255);
+    CHECK(high_flow.print_temperature == 255);
+}
+
+// ---------------------------------------------------------------------------------------------
+// A filament whose per-column key is narrower than its variant list (a width bug elsewhere) is
+// repaired when the project config joins the filaments, so the next filaments keep their values.
+// ---------------------------------------------------------------------------------------------
+
+TEST_CASE("A narrow per-column value of one filament leaves the values of the next filaments in place", "[HighFlow][FilamentFlow]")
+{
+    const std::string narrow = "Snapmaker PLA SnapSpeed @U1";
+    const U1Plate plate{U1_MACHINE, U1_PROCESS, {narrow, U1_FILAMENT, U1_FILAMENT, "Snapmaker PETG HF"}};
+    const std::vector<NozzleVolumeType> flow_types{nvtStandard, nvtHighFlow, nvtStandard, nvtStandard};
+    auto               bundle = std::make_unique<PresetBundle>();
+    DynamicPrintConfig config = u1_plate_config(*bundle, plate, flow_types, {}, [narrow](PresetBundle &b) {
+        Preset *preset = b.filaments.find_preset(narrow, false, true);
+        REQUIRE(preset != nullptr);
+        REQUIRE(filament_flow_column(preset->config, nvtHighFlow) == 1);
+        preset->config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values.resize(1);
+    });
+
+    // The joined project config: one value per column of every filament.
+    const size_t columns = config.option<ConfigOptionStrings>("filament_extruder_variant")->values.size();
+    CHECK(config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values.size() == columns);
+    CHECK(config.option<ConfigOptionInts>("filament_self_index")->values.size() == columns);
+
+    // Resolved per filament as Print::apply does it: each filament reads its own column.
+    auto column_value = [&bundle](const std::string &name, NozzleVolumeType type) {
+        const Preset *preset = bundle->filaments.find_preset(name, false, true);
+        REQUIRE(preset != nullptr);
+        const int column = std::max(filament_flow_column(preset->config, type), 0);
+        return preset->config.option<ConfigOptionFloats>("filament_max_volumetric_speed")->get_at(size_t(column));
+    };
+    DynamicPrintConfig                          resolved = config;
+    std::vector<std::vector<NozzleVolumeType>>  nozzle_volume_types;
+    const int count = resolved.get_extruder_nozzle_volume_count(int(HEADS), nozzle_volume_types);
+    // As Print::apply sets it: each filament takes the flow type of the extruder that prints it.
+    std::vector<int> volume_map;
+    for (NozzleVolumeType type : flow_types)
+        volume_map.emplace_back(int(type));
+    resolved.option<ConfigOptionInts>("filament_volume_map", true)->values = volume_map;
+    std::set<std::string> filament_keys = filament_options_with_variant;
+    filament_keys.insert("filament_self_index");
+    resolved.update_values_to_printer_extruders_for_multiple_filaments(resolved, int(HEADS), count, filament_keys, "filament_self_index", "filament_extruder_variant");
+    const auto *speeds = resolved.option<ConfigOptionFloats>("filament_max_volumetric_speed");
+    REQUIRE(speeds->values.size() == HEADS);
+    for (size_t slot = 0; slot < HEADS; ++slot) {
+        INFO("filament " << slot + 1);
+        CHECK_THAT(speeds->values[slot], Catch::Matchers::WithinAbs(column_value(plate.filaments[slot], flow_types[slot]), 1e-9));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A filament without High Flow values prints its Standard values on a High Flow extruder too, so a
+// Standard change reaches both extruders until the preset has High Flow values.
+// ---------------------------------------------------------------------------------------------
+
+TEST_CASE("A Standard change of a filament without High Flow values reaches the Standard and the High Flow extruder", "[HighFlow][FilamentFlow]")
+{
+    const U1Plate plate{U1_MACHINE, U1_PROCESS, {"Generic PETG", "Generic PETG", "Snapmaker PLA SnapSpeed @U1", "Snapmaker PETG HF"}};
+    const std::vector<NozzleVolumeType> flow_types{nvtStandard, nvtHighFlow, nvtStandard, nvtStandard};
+    constexpr int      CHANGED = 245;
+    auto               bundle  = std::make_unique<PresetBundle>();
+    DynamicPrintConfig config  = u1_plate_config(*bundle, plate, flow_types, {}, [](PresetBundle &b) {
+        Preset *petg = b.filaments.find_preset("Generic PETG", false, true);
+        REQUIRE(petg != nullptr);
+        REQUIRE(filament_flow_column(petg->config, nvtHighFlow) < 0);
+        petg->config.option<ConfigOptionInts>("nozzle_temperature")->values = {CHANGED};
+    });
+
+    DynamicPrintConfig                         resolved = config;
+    std::vector<std::vector<NozzleVolumeType>> nozzle_volume_types;
+    const int count = resolved.get_extruder_nozzle_volume_count(int(HEADS), nozzle_volume_types);
+    // As Print::apply sets it: each filament takes the flow type of the extruder that prints it.
+    std::vector<int> volume_map;
+    for (NozzleVolumeType type : flow_types)
+        volume_map.emplace_back(int(type));
+    resolved.option<ConfigOptionInts>("filament_volume_map", true)->values = volume_map;
+    std::set<std::string> filament_keys = filament_options_with_variant;
+    filament_keys.insert("filament_self_index");
+    resolved.update_values_to_printer_extruders_for_multiple_filaments(resolved, int(HEADS), count, filament_keys, "filament_self_index", "filament_extruder_variant");
+    const auto *temperatures = resolved.option<ConfigOptionInts>("nozzle_temperature");
+    REQUIRE(temperatures->values.size() == HEADS);
+    CHECK(temperatures->values[0] == CHANGED);
+    CHECK(temperatures->values[1] == CHANGED);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bed and chamber temperatures per column: Generic PETG given High Flow values for the Textured PEI
+// Plate and the chamber. Each printed filament counts with the column of the extruder that prints it.
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+
+// The S values of the bed and chamber commands of a G-code, in order, and the line the start
+// G-code of the case below adds.
+struct BedChamberFacts {
+    std::vector<int> bed_set;      // M140
+    std::vector<int> bed_wait;     // M190
+    std::vector<int> chamber_wait; // M191
+    std::string      placeholders;
+};
+
+BedChamberFacts bed_chamber_facts(const std::string &gcode)
+{
+    BedChamberFacts    facts;
+    std::istringstream in(gcode);
+    std::string        line;
+    while (std::getline(in, line)) {
+        if (line.rfind("M140 ", 0) == 0)
+            facts.bed_set.emplace_back(int(word_value(line, 'S')));
+        else if (line.rfind("M190 ", 0) == 0)
+            facts.bed_wait.emplace_back(int(word_value(line, 'S')));
+        else if (line.rfind("M191 ", 0) == 0)
+            facts.chamber_wait.emplace_back(int(word_value(line, 'S')));
+        else if (line.rfind(";BED_CHAMBER ", 0) == 0)
+            facts.placeholders = line;
+    }
+    return facts;
+}
+
+std::set<int> above_zero(const std::vector<int> &values)
+{
+    std::set<int> out;
+    for (int value : values)
+        if (value > 0)
+            out.insert(value);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("Bed and chamber temperatures of a filament follow the column of the extruder that prints it", "[HighFlow][FilamentFlow][BedChamber]")
+{
+    // Textured PEI Plate: first layer 60 / 75, other layers 62 / 77; chamber 35 / 45 (Standard / High Flow).
+    const U1Plate plate{U1_MACHINE, U1_PROCESS, {"Generic PETG", "Generic PETG", "Snapmaker PLA SnapSpeed @U1", "Snapmaker PETG HF"}};
+    const auto petg_bed_and_chamber_columns = [](PresetBundle &b) {
+        Preset *petg = b.filaments.find_preset("Generic PETG", false, true);
+        REQUIRE(petg != nullptr);
+        REQUIRE(filament_add_flow_column(petg->config, nvtHighFlow));
+        DynamicPrintConfig &config = petg->config;
+        config.option<ConfigOptionInts>("textured_plate_temp_initial_layer")->values = {60, 75};
+        config.option<ConfigOptionInts>("textured_plate_temp")->values               = {62, 77};
+        config.option<ConfigOptionBools>("activate_chamber_temp_control")->values    = {1, 1};
+        config.option<ConfigOptionInts>("chamber_temperature")->values               = {35, 45};
+        REQUIRE(filament_columns_consistent(config));
+    };
+    const auto slice = [&](const std::vector<NozzleVolumeType> &flow_types) {
+        auto               bundle = std::make_unique<PresetBundle>();
+        DynamicPrintConfig config = u1_plate_config(*bundle, plate, flow_types, {}, petg_bed_and_chamber_columns);
+        config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
+        config.set_key_value("bed_temperature_formula", new ConfigOptionEnum<BedTempFormula>(BedTempFormula::btfHighestTemp));
+        // The placeholders of custom G-code, filaments 1 and 2.
+        config.set_key_value("machine_start_gcode",
+                             new ConfigOptionString(config.opt_string("machine_start_gcode") +
+                                                    "\n;BED_CHAMBER {bed_temperature_initial_layer[0]} {bed_temperature_initial_layer[1]} "
+                                                    "{bed_temperature[0]} {bed_temperature[1]} {chamber_temperature[0]} {chamber_temperature[1]} "
+                                                    "{textured_plate_temp_initial_layer[1]}\n"));
+        return bed_chamber_facts(two_head_gcode(config));
+    };
+
+    SECTION("both extruders on Standard print the Standard values") {
+        const BedChamberFacts facts = slice({nvtStandard, nvtStandard, nvtStandard, nvtStandard});
+        CHECK(above_zero(facts.bed_wait) == std::set<int>{60});
+        CHECK(above_zero(facts.bed_set) == std::set<int>{60, 62});
+        CHECK(facts.chamber_wait == std::vector<int>{35});
+        CHECK(facts.placeholders == ";BED_CHAMBER 60 60 62 62 35 35 60");
+    }
+    SECTION("both extruders on High Flow print the High Flow values") {
+        const BedChamberFacts facts = slice({nvtHighFlow, nvtHighFlow, nvtStandard, nvtStandard});
+        CHECK(above_zero(facts.bed_wait) == std::set<int>{75});
+        CHECK(above_zero(facts.bed_set) == std::set<int>{75, 77});
+        CHECK(facts.chamber_wait == std::vector<int>{45});
+        CHECK(facts.placeholders == ";BED_CHAMBER 75 75 77 77 45 45 75");
+    }
+    SECTION("a Standard and a High Flow extruder: each filament with its own column, the highest value wins") {
+        const BedChamberFacts facts = slice({nvtStandard, nvtHighFlow, nvtStandard, nvtStandard});
+        CHECK(above_zero(facts.bed_wait) == std::set<int>{75});
+        CHECK(above_zero(facts.bed_set) == std::set<int>{75, 77});
+        CHECK(facts.chamber_wait == std::vector<int>{45});
+        CHECK(facts.placeholders == ";BED_CHAMBER 60 75 62 77 35 45 75");
+    }
+}
+
+TEST_CASE("A filament without High Flow values on a High Flow extruder prints its own temperatures", "[HighFlow][FilamentFlow][BedChamber]")
+{
+    // Generic PLA (220 C, Textured PEI Plate 65) on the Standard extruder 1, Generic PETG (255 C, 80)
+    // on the High Flow extruder 2. Neither preset has a High Flow column: extruder 2 prints the only
+    // column of Generic PETG, never the column of the first filament.
+    const U1Plate plate{U1_MACHINE, U1_PROCESS, {"Generic PLA", "Generic PETG", "Snapmaker PLA SnapSpeed @U1", "Snapmaker PETG HF"}};
+    auto               bundle = std::make_unique<PresetBundle>();
+    DynamicPrintConfig config = u1_plate_config(*bundle, plate, {nvtStandard, nvtHighFlow, nvtStandard, nvtStandard});
+    for (const char *name : {"Generic PLA", "Generic PETG"}) {
+        const Preset *preset = bundle->filaments.find_preset(name, false, true);
+        REQUIRE(preset != nullptr);
+        REQUIRE(filament_flow_column(preset->config, nvtHighFlow) < 0);
+    }
+    config.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(btPTE));
+    config.set_key_value("bed_temperature_formula", new ConfigOptionEnum<BedTempFormula>(BedTempFormula::btfHighestTemp));
+    config.set_key_value("machine_start_gcode",
+                         new ConfigOptionString(config.opt_string("machine_start_gcode") +
+                                                "\n;BED_CHAMBER {bed_temperature_initial_layer[0]} {bed_temperature_initial_layer[1]} "
+                                                "{nozzle_temperature[0]} {nozzle_temperature[1]}\n"));
+    const std::string               gcode = two_head_gcode(config);
+    const BedChamberFacts           facts = bed_chamber_facts(gcode);
+    std::map<int, ShippedToolFacts> tools = shipped_tool_facts(gcode, config.option<ConfigOptionFloats>("filament_diameter")->get_at(0));
+    CHECK(facts.placeholders == ";BED_CHAMBER 65 80 220 255");
+    CHECK(above_zero(facts.bed_wait) == std::set<int>{80});
+    CHECK(tools[0].print_temperature == 220);
+    CHECK(tools[1].print_temperature == 255);
 }

@@ -200,18 +200,18 @@ TEST_CASE("A fine sphere yields two reduced meshes inside its bounding box", "[M
     const LodMeshes lod = build_lod_meshes(src, params, nullptr);
 
     REQUIRE_FALSE(lod.middle.indices.empty());
-    REQUIRE_FALSE(lod.small.indices.empty());
+    REQUIRE_FALSE(lod.small_mesh.indices.empty());
     CHECK(lod.middle.indices.size() < src.indices.size());
-    CHECK(lod.small.indices.size() < lod.middle.indices.size());
+    CHECK(lod.small_mesh.indices.size() < lod.middle.indices.size());
     CHECK(float(lod.middle.indices.size()) <= params.min_reduction * float(src.indices.size()));
-    CHECK(float(lod.small.indices.size()) <= params.min_reduction * float(lod.middle.indices.size()));
+    CHECK(float(lod.small_mesh.indices.size()) <= params.min_reduction * float(lod.middle.indices.size()));
     CHECK(lod.middle_error > 0.f);
     CHECK(lod.middle_error <= params.middle_err[1]);
     CHECK(lod.small_error > 0.f);
     CHECK(lod.small_error <= params.small_err[1]);
 
     const float limit = 20.f + params.aabb_epsilon;
-    for (const indexed_triangle_set *its : {&lod.middle, &lod.small}) {
+    for (const indexed_triangle_set *its : {&lod.middle, &lod.small_mesh}) {
         for (const stl_vertex &v : its->vertices)
             REQUIRE(v.cwiseAbs().maxCoeff() < limit);
         for (const stl_triangle_vertex_indices &t : its->indices)
@@ -231,13 +231,13 @@ TEST_CASE("Both reduced meshes are simplified from the source", "[MeshLod]")
     REQUIRE(src.indices.size() <= params.large_faces); // the "normal" size class
 
     const LodMeshes lod = build_lod_meshes(src, params, nullptr);
-    REQUIRE_FALSE(lod.small.indices.empty());
+    REQUIRE_FALSE(lod.small_mesh.indices.empty());
 
     indexed_triangle_set direct = src;
     float                error  = params.small_err[0];
     its_quadric_edge_collapse(direct, 0, &error);
-    CHECK(direct.indices.size() == lod.small.indices.size());
-    CHECK(direct.vertices.size() == lod.small.vertices.size());
+    CHECK(direct.indices.size() == lod.small_mesh.indices.size());
+    CHECK(direct.vertices.size() == lod.small_mesh.vertices.size());
     CHECK_THAT(error, Catch::Matchers::WithinRel(lod.small_error, 1e-6f));
 
     // Middle likewise, with its own budget.
@@ -251,7 +251,7 @@ TEST_CASE("Both reduced meshes are simplified from the source", "[MeshLod]")
 TEST_CASE("A mesh that does not reduce well gets no reduced copy", "[MeshLod]")
 {
     auto is_empty = [](const LodMeshes &lod) {
-        return lod.middle.indices.size() + lod.middle.vertices.size() + lod.small.indices.size() + lod.small.vertices.size() == 0;
+        return lod.middle.indices.size() + lod.middle.vertices.size() + lod.small_mesh.indices.size() + lod.small_mesh.vertices.size() == 0;
     };
     LodParams no_minimum;
     no_minimum.min_faces = 0;

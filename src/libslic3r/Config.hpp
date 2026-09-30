@@ -580,7 +580,8 @@ public:
                 throw ConfigurationError("ConfigOptionVector::set_only_diff(): Assigning from an vector with invalid diff_index size");
 
             for (size_t i = 0; i < diff_index.size(); i++) {
-                if (diff_index[i] != -1) {
+                // Snapmaker Orca: an index past the values of rhs keeps the value of this vector.
+                if (diff_index[i] != -1 && size_t(diff_index[i] + 1) * size_t(stride) <= other->values.size()) {
                     for (size_t j = 0; j < stride; j++) {
                         if (!other->is_nil(diff_index[i] * stride))
                             this->values[i * stride + j] = other->values[diff_index[i] * stride + j];

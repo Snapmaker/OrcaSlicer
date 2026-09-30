@@ -15,3 +15,11 @@ set_tests_properties(cli_strict_mode PROPERTIES
     LABELS "CLI;RequiresApp"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)
+
+# --uptodate keeps the High Flow column of a project filament whose refreshing file has none.
+add_test(NAME cli_uptodate_high_flow
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_cli_uptodate_high_flow.sh $<TARGET_FILE:Snapmaker_Orca> ${ORCA_CLI_TEST_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/../..)
+set_tests_properties(cli_uptodate_high_flow PROPERTIES
+    LABELS "CLI;RequiresApp"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)

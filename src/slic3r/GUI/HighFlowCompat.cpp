@@ -107,4 +107,13 @@ CompatibilityResult check(const std::string &filament_type, const std::string &p
     return {};
 }
 
+CompatibilityResult check(const std::string &filament_type, const std::string &preset_name, const std::string &ancestor_name)
+{
+    const CompatibilityResult own = check(filament_type, preset_name);
+    if (ancestor_name.empty() || ancestor_name == preset_name)
+        return own;
+    const CompatibilityResult inherited = check(filament_type, ancestor_name);
+    return int(inherited.level) > int(own.level) ? inherited : own;
+}
+
 }}} // namespace Slic3r::GUI::HighFlowCompat

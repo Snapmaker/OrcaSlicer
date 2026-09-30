@@ -17,6 +17,7 @@
 #include <utility>
 #include <wx/bookctrl.h>
 #include <wx/numformatter.h>
+#include <wx/textwrapper.h>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include "libslic3r/Exception.hpp"
@@ -1798,7 +1799,7 @@ ogStaticText::ogStaticText(wxWindow* parent, const wxString& text, long style) :
 {
     m_full_text = text;
     if (!text.IsEmpty()) {
-        Wrap(60 * wxGetApp().em_unit());
+        set_wrapped_label(60 * wxGetApp().em_unit());
         GetParent()->Layout();
     }
 }
@@ -1811,8 +1812,27 @@ void ogStaticText::SetText(const wxString& value, bool wrap /* = true*/)
         m_wrapped_width = -1;
         wrap_to_current_width();
     } else if (wrap)
-        Wrap(60 * wxGetApp().em_unit());
+        set_wrapped_label(60 * wxGetApp().em_unit());
     GetParent()->Layout();
+}
+
+// Snapmaker Orca: wxStaticText::Wrap skips a call with the width of its previous call, even after
+// SetLabel, which leaves a new text on one line (its best size one line high, the rest cut).
+void ogStaticText::set_wrapped_label(int width)
+{
+    class LineWrapper : public wxTextWrapper
+    {
+    public:
+        wxString text;
+
+    protected:
+        void OnOutputLine(const wxString &line) override { text += line; }
+        void OnNewLine() override { text += '\n'; }
+    };
+    LineWrapper wrapper;
+    wrapper.Wrap(this, m_full_text, width);
+    SetLabel(wrapper.text);
+    InvalidateBestSize();
 }
 
 void ogStaticText::WrapToWidth(std::function<void()> after_wrap)
@@ -1848,9 +1868,7 @@ bool ogStaticText::wrap_to_current_width()
     if (width <= 0 || width == m_wrapped_width)
         return false;
     m_wrapped_width = width;
-    SetLabel(m_full_text);
-    Wrap(width);
-    InvalidateBestSize();
+    set_wrapped_label(width);
     return true;
 }
 

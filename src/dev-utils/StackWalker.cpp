@@ -364,8 +364,8 @@ void CStackWalker::GetModuleInformation(LPMODULE_INFO pmi)
 
 	if (dwInfoSize > 0)
 	{
-		byte *lpData = new byte[dwInfoSize];
-		ZeroMemory(lpData, dwInfoSize * sizeof(byte));
+		BYTE *lpData = new BYTE[dwInfoSize];
+		ZeroMemory(lpData, dwInfoSize * sizeof(BYTE));
 
 		if (GetFileVersionInfo(pmi->szModulePath, dwHandle, dwInfoSize, lpData) > 0 )
 		{

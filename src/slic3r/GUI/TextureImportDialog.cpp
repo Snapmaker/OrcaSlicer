@@ -2647,9 +2647,10 @@ void TextureImportDialog::on_mesh_repair_decision_required(wxCommandEvent&)
         m_progress_dlg = nullptr;
     }
 
+    // "Repair and import" runs the CGAL repair set in start_computation; HAS_WIN10SDK is not defined in this build.
 #ifdef HAS_WIN10SDK
     Slic3r::GUI::MessageDialog dlg(initial ? GetParent() : this,
-        _L("The mesh has non-manifold geometry or open boundaries. You can import it as-is or repair it with Windows 3D repair service before importing."),
+        _L("The mesh has non-manifold geometry or open boundaries. You can import it as-is or repair it before importing."),
         _L("Mesh repair"), wxYES_NO | wxICON_WARNING | wxYES_DEFAULT);
     dlg.SetButtonLabel(wxID_YES, _L("Import without repair"));
     dlg.SetButtonLabel(wxID_NO, _L("Repair and import"), true);

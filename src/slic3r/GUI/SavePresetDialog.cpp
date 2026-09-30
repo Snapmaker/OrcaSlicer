@@ -101,6 +101,14 @@ SavePresetDialog::Item::Item(Preset::Type type, const std::string &suffix, wxBox
     sizer->Add(input_sizer_h, 0, wxALIGN_CENTER|wxLEFT|wxRIGHT, BORDER_W);
     sizer->Add(m_valid_label, 0, wxEXPAND | wxLEFT | wxRIGHT, BORDER_W);
 
+    // Snapmaker Orca: what saving does with High Flow values added or changed in the Filament tab.
+    if (auto *filament_tab = dynamic_cast<TabFilament *>(tab); filament_tab != nullptr)
+        if (const wxString info = filament_tab->high_flow_save_info(); !info.empty()) {
+            auto *info_label = new wxStaticText(m_parent, wxID_ANY, info);
+            info_label->Wrap(m_parent->FromDIP(400));
+            sizer->Add(info_label, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, BORDER_W);
+        }
+
     if (m_type == Preset::TYPE_PRINTER) m_parent->add_info_for_edit_ph_printer(sizer);
 
     // ORCA RadioGroup

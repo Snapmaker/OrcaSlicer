@@ -19,6 +19,7 @@ add_executable(${_TEST_NAME}_tests
     test_preset_bundle_loading.cpp
     test_preset_setting_id.cpp
     test_preset_diff.cpp
+    test_filament_flow_columns.cpp # Snapmaker Orca: Standard / High Flow columns of a filament preset
     test_vendor_cache.cpp
     test_profile_load_util.cpp
     test_preset_options.cpp
@@ -54,6 +55,7 @@ add_executable(${_TEST_NAME}_tests
     test_utils.cpp
     test_timeutils.cpp
     test_voronoi.cpp
+    test_used_filaments.cpp # Snapmaker Orca: the filaments a plate counts before slicing
     test_wipe_tower_estimate.cpp
     test_wipe_tower.cpp
     test_wipe_path.cpp

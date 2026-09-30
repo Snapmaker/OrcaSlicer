@@ -44,9 +44,9 @@ DynamicPrintConfig three_filament_config(double third_height = 0.6, double first
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210, 210}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
-    // flush_volumes_matrix must be filament_count^2 entries.
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(9, 0.)));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1., 1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(27, 0.)));
     config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
     config.set_key_value("use_relative_e_distances", new ConfigOptionBool(false));
     return config;

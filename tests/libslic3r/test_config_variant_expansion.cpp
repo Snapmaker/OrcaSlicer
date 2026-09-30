@@ -956,3 +956,61 @@ TEST_CASE("The first variant column of a filament is found through the self inde
         CHECK(first_filament_variant_column({}, 2) == 2);
     }
 }
+
+// A printer preset that declares Standard only (the 0.6 mm U1 preset) with a High Flow tool head of
+// another size: the head reads its own Standard column, which holds the values of its size.
+TEST_CASE("A High Flow extruder of a printer table without High Flow columns reads its own Standard column", "[Config][HighFlow][hf_offsize_printer_column]")
+{
+    DynamicPrintConfig config;
+    config.option<ConfigOptionEnumsGeneric>("extruder_type", true)->values      = std::vector<int>(4, int(etDirectDrive));
+    config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true)->values = {int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard)};
+    config.option<ConfigOptionStrings>("extruder_variant_list", true)->values   = std::vector<std::string>(4, DD_STANDARD);
+    config.option<ConfigOptionInts>("printer_extruder_id", true)->values        = {1, 2, 3, 4};
+    config.option<ConfigOptionStrings>("printer_extruder_variant", true)->values = std::vector<std::string>(4, DD_STANDARD);
+    // Tool head 2 carries the retraction of the 0.4 mm preset (1.5), the others the 0.6 mm one (1.4).
+    config.option<ConfigOptionFloats>("retraction_length", true)->values = {1.4, 1.5, 1.4, 1.4};
+    config.option<ConfigOptionFloats>("machine_max_speed_x", true)->values = {100., 50., 110., 55., 120., 60., 130., 65.};
+
+    SECTION("the lookup falls back to the Standard column of the same extruder") {
+        CHECK(config.get_index_for_extruder(2, "printer_extruder_id", etDirectDrive, nvtHighFlow, "printer_extruder_variant") == 1);
+        CHECK(config.get_index_for_extruder(2, "printer_extruder_id", etDirectDrive, nvtHighFlow, "printer_extruder_variant", 2) == 2);
+        CHECK(config.get_index_for_extruder(4, "printer_extruder_id", etDirectDrive, nvtStandard, "printer_extruder_variant") == 3);
+        // An extruder the table does not name still misses.
+        CHECK(config.get_index_for_extruder(5, "printer_extruder_id", etDirectDrive, nvtHighFlow, "printer_extruder_variant") == -1);
+    }
+
+    SECTION("a declared High Flow column is read as before") {
+        DynamicPrintConfig declared = config;
+        declared.option<ConfigOptionInts>("printer_extruder_id")->values        = {1, 2, 2, 3, 4};
+        declared.option<ConfigOptionStrings>("printer_extruder_variant")->values = {DD_STANDARD, DD_STANDARD, DD_HIGH_FLOW, DD_STANDARD, DD_STANDARD};
+        CHECK(declared.get_index_for_extruder(2, "printer_extruder_id", etDirectDrive, nvtHighFlow, "printer_extruder_variant") == 2);
+        CHECK(declared.get_index_for_extruder(2, "printer_extruder_id", etDirectDrive, nvtStandard, "printer_extruder_variant") == 1);
+    }
+
+    SECTION("filament and process tables keep missing") {
+        DynamicPrintConfig tables;
+        tables.option<ConfigOptionInts>("filament_self_index", true)->values         = {1, 2};
+        tables.option<ConfigOptionStrings>("filament_extruder_variant", true)->values = {DD_STANDARD, DD_STANDARD};
+        tables.option<ConfigOptionInts>("print_extruder_id", true)->values            = {1, 2};
+        tables.option<ConfigOptionStrings>("print_extruder_variant", true)->values     = {DD_STANDARD, DD_STANDARD};
+        CHECK(tables.get_index_for_extruder(2, "filament_self_index", etDirectDrive, nvtHighFlow, "filament_extruder_variant") == -1);
+        CHECK(tables.get_index_for_extruder(2, "print_extruder_id", etDirectDrive, nvtHighFlow, "print_extruder_variant") == -1);
+    }
+
+    SECTION("narrowing keeps the values of the head and names its slot by the flow it prints") {
+        std::vector<std::vector<NozzleVolumeType>> nozzle_volume_types;
+        const int count = config.get_extruder_nozzle_volume_count(4, nozzle_volume_types);
+        // In the order of Print::apply: the stride-2 keys first.
+        std::vector<int> index_2 = config.update_values_to_printer_extruders(config, 4, count, nozzle_volume_types, printer_options_with_variant_2,
+                                                                             "printer_extruder_id", "printer_extruder_variant", 2);
+        CHECK(index_2 == std::vector<int>({0, 1, 2, 3}));
+        CHECK(config.option<ConfigOptionFloats>("machine_max_speed_x")->values == std::vector<double>({100., 50., 110., 55., 120., 60., 130., 65.}));
+        std::vector<int> index_1 = config.update_values_to_printer_extruders(config, 4, count, nozzle_volume_types, printer_options_with_variant_1,
+                                                                             "printer_extruder_id", "printer_extruder_variant");
+        CHECK(index_1 == std::vector<int>({0, 1, 2, 3}));
+        CHECK(config.option<ConfigOptionFloats>("retraction_length")->values == std::vector<double>({1.4, 1.5, 1.4, 1.4}));
+        CHECK(config.option<ConfigOptionInts>("printer_extruder_id")->values == std::vector<int>({1, 2, 3, 4}));
+        CHECK(config.option<ConfigOptionStrings>("printer_extruder_variant")->values ==
+              std::vector<std::string>({DD_STANDARD, DD_HIGH_FLOW, DD_STANDARD, DD_STANDARD}));
+    }
+}

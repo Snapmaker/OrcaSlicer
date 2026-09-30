@@ -411,13 +411,16 @@ TEST_CASE("On the shipped U1 presets each off-size tool head follows the process
         CHECK(stored.option(PerHeadProcess::source_column_key) == nullptr);
         CHECK(floats_of(stored, "outer_wall_speed") == std::vector<double>{200., 500.});
 
-        // With the preference off the print config is the plain full config.
+        // With the preference off the print config is the plain full config with the preferred
+        // layer heights planned for slicing (0.12 and 0.30 mm do not land on the 0.20 mm process).
         bundle->process_follows_nozzle = false;
         CHECK(PerHeadProcess::head_sources(*bundle)[1].reason == PerHeadProcess::Reason::Off);
         const DynamicPrintConfig plain = bundle->full_config_for_print(false);
         CHECK(plain.option<ConfigOptionInts>("print_extruder_id")->values == std::vector<int>{1, 1});
         CHECK(plain.option(PerHeadProcess::source_column_key) == nullptr);
-        CHECK(plain.equals(bundle->full_config(false)));
+        DynamicPrintConfig plain_planned = bundle->full_config(false);
+        CHECK(apply_extruder_layer_height_plan(plain_planned));
+        CHECK(plain.equals(plain_planned));
     }
 
     SECTION("a preferred layer height that only a preset of another class has, and no preferred height") {
@@ -623,7 +626,7 @@ TEST_CASE("On the shipped U1 presets every tool head of another size prints with
 
     SECTION("the edited layer height does not move the source; a preferred height on one tool head leaves the others") {
         select_u1(*bundle, sizes, {0., 0., 0., 0.});
-        // The layer height planner writes its grid into the edited preset: the rule reads the saved 0.20.
+        // An unsaved edit of the layer height: the rule reads the saved 0.20.
         bundle->prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height", true)->value = 0.28;
         std::vector<PerHeadProcess::Source> sources = PerHeadProcess::head_sources(*bundle);
         REQUIRE(sources.size() == 4);
@@ -3496,4 +3499,33 @@ TEST_CASE("A line width added to an object is seeded with the value the object p
         CHECK(PerHeadProcess::override_seed(*bundle, key, {1, 4}, &heads) == "112.5%");
         CHECK(heads.empty());
     }
+}
+
+TEST_CASE("Preferred layer heights stay as entered in the presets and the config for slicing carries the planned grid", "[PerHeadProcess][Profiles][EnteredHeights]")
+{
+    using Catch::Matchers::WithinAbs;
+    auto bundle = load_snapmaker_bundle();
+    // Extruders of 0.6 / 0.8 / 0.4 / 0.2 mm on a 0.40 mm process, 0.32 mm entered on the 0.6 mm one.
+    select_u1(*bundle, {0.6, 0.8, 0.4, 0.2}, {0.32, 0., 0., 0.});
+    bundle->prints.get_edited_preset().config.option<ConfigOptionFloat>("layer_height", true)->value = 0.4;
+
+    const DynamicPrintConfig sliced = bundle->full_config_for_print(false);
+    CHECK_THAT(sliced.opt_float("layer_height"), WithinAbs(0.11, 1e-9));
+    const std::vector<double> planned  = floats_of(sliced, "extruder_layer_height");
+    const std::vector<double> expected = {0.33, 0.44, 0.33, 0.11};
+    REQUIRE(planned.size() == expected.size());
+    for (size_t i = 0; i < expected.size(); ++i)
+        CHECK_THAT(planned[i], WithinAbs(expected[i], 1e-9));
+    CHECK(sliced.has(extruder_layer_height_planned_key));
+
+    // The edited presets and the full config a project is saved from keep the entered values.
+    CHECK_THAT(bundle->prints.get_edited_preset().config.opt_float("layer_height"), WithinAbs(0.4, 1e-9));
+    CHECK(bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("extruder_layer_height")->values == std::vector<double>{0.32, 0., 0., 0.});
+    const DynamicPrintConfig project = bundle->full_config();
+    CHECK_THAT(project.opt_float("layer_height"), WithinAbs(0.4, 1e-9));
+    const std::vector<double> entered = floats_of(project, "extruder_layer_height");
+    REQUIRE(entered.size() == 4);
+    CHECK_THAT(entered[0], WithinAbs(0.32, 1e-9));
+    CHECK_THAT(entered[1] + entered[2] + entered[3], WithinAbs(0., 1e-9));
+    CHECK_FALSE(project.has(extruder_layer_height_planned_key));
 }

@@ -101,11 +101,32 @@ double preset_nozzle_size(const PresetBundle &bundle, const Preset &filament);
 // Combo label with the size first ("0.6 mm · Generic PLA") so a narrow combo cuts the name, not
 // the size. `label` unchanged when `size_text` is empty. Display only.
 std::string size_marked_label(const std::string &label, const std::string &size_text);
+// The marker of size_marked_label() in a slot on a High Flow extruder: "HF" after the size text
+// ("0.4 mm · HF") for a preset with High Flow values, "HF" alone without a size; `size_text`
+// unchanged for a preset without them.
+std::string high_flow_marker(const std::string &size_text, bool has_high_flow_values);
 
 // `filament` may print on a tool head that `machine` stands for: compatible with that machine
 // preset, not excluded from the edited printer preset (the arm of the filament library) and
 // compatible with the edited process preset.
 bool fits(const PresetBundle &bundle, const Preset &filament, const Preset &machine);
+
+// The visible user presets made from system preset `system` (system_ancestor()) that may print
+// on a tool head `machine` stands for (fits()); the preset named `exclude` is left out.
+std::vector<const Preset*> user_children(const PresetBundle &bundle, const Preset &system, const Preset &machine, const std::string &exclude = {});
+
+// Printer a user filament saved from an unrestricted system filament is pinned to ("compatible_printers"):
+// the machine preset of slot `slot`'s head when its nozzle size differs, else the printer preset's parent.
+std::string printer_to_pin(const PresetBundle &bundle, int slot);
+
+// `filament` may print on an extruder set to High Flow ("nozzle_volume_type" of the project): fits() with
+// the machine preset of that extruder (head_state()), the edited printer preset for one without.
+bool fits_high_flow_extruder(const PresetBundle &bundle, const Preset &filament);
+
+// The filament slots holding preset `from` whose tool head `to` may print on (fits() with the machine
+// preset of the head, head_state(); the edited printer preset for a slot without one): the slots a
+// preset saved from `from` under a new name takes over.
+std::vector<size_t> slots_to_switch(const PresetBundle &bundle, const std::string &from, const Preset &to);
 
 // The family of `preset` as one string (parent and alias of its system ancestor); empty for a
 // preset without a family. The first half of a key of PresetBundle::nozzle_filament_memory.

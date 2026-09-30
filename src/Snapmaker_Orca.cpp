@@ -60,6 +60,7 @@ using namespace nlohmann;
 #include "libslic3r/Config.hpp"
 #include "libslic3r/FilamentMixer.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/PerHeadProcess.hpp"
 #include "libslic3r/SnapmakerFlowCompat.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -68,6 +69,7 @@ using namespace nlohmann;
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/Platform.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Format/AMF.hpp"
@@ -3598,6 +3600,12 @@ int CLI::run(int argc, char **argv)
                 filament_variants.resize(filament_count, get_extruder_variant_string(etDirectDrive, nvtStandard));
             }
             const ConfigOptionStrings *new_variant_opt = dynamic_cast<const ConfigOptionStrings*>(config.option("filament_extruder_variant", true));
+            // Snapmaker Orca: a refresh from a system file keeps the High Flow column of a project filament whose
+            // system preset has none: the file gains the project's columns first, as copies of its column 0.
+            if (load_filament_count == 0 && up_config_to_date)
+                for (int j = old_start_indice[filament_index - 1]; j < old_start_indice[filament_index - 1] + old_variant_counts[filament_index - 1] && j < int(curr_variant_opt->values.size()); j++)
+                    if (is_known_filament_variant(curr_variant_opt->values[j]))
+                        filament_add_variant_column(config, curr_variant_opt->values[j]);
 
             std::vector<int> new_variant_indice;
             int new_variant_count = new_variant_opt->size(), old_variant_count = old_variant_counts[filament_index - 1];
@@ -3613,6 +3621,12 @@ int CLI::run(int argc, char **argv)
                     }
                 }
             }
+            // Snapmaker Orca: with --load-filaments, a column of the project filament that the loaded preset lacks
+            // (a High Flow column, the preset holding Standard values only) is not carried over; the Standard values are.
+            for (int j = old_start_indice[filament_index - 1]; j < old_start_indice[filament_index - 1] + old_variant_count && j < int(curr_variant_opt->values.size()); j++)
+                if (std::find(new_variant_opt->values.begin(), new_variant_opt->values.end(), curr_variant_opt->values[j]) == new_variant_opt->values.end())
+                    BOOST_LOG_TRIVIAL(warning) << boost::format("filament %1% (%2%): column \"%3%\" is not in the loaded preset and is dropped")
+                        % filament_index % load_filaments_name[index] % curr_variant_opt->values[j];
 
             //parse the filament value to index th
             //loop through options and apply them
@@ -3714,6 +3728,10 @@ int CLI::run(int argc, char **argv)
                 }
             }
 
+            // Snapmaker Orca: every per-column key of this filament now has the width of the loaded list, whichever
+            // branch above wrote it.
+            new_variant_counts[filament_index - 1] = new_variant_count;
+
             //update the old index
             if (old_variant_count != new_variant_count)
             {
@@ -3736,13 +3754,13 @@ int CLI::run(int argc, char **argv)
 
         if (m_print_config.option<ConfigOptionStrings>("filament_extruder_variant")) {
             std::vector<int>& filament_self_indice = m_print_config.option<ConfigOptionInts>("filament_self_index", true)->values;
-            int index_size = m_print_config.option<ConfigOptionStrings>("filament_extruder_variant")->size();
-            filament_self_indice.resize(index_size, 1);
-            int k = 0;
-            for (size_t i = 0; i < filament_count; i++) {
-                for (size_t j = 0; j < new_variant_counts[i]; j++) {
-                    filament_self_indice[k++] = i + 1;
-                }
+            const size_t index_size = m_print_config.option<ConfigOptionStrings>("filament_extruder_variant")->size();
+            // Snapmaker Orca: rebuilt only when the column counts add up to the joined list; a mismatch would
+            // write past its end or give one filament the values of another.
+            if (!filament_self_index_from_counts(new_variant_counts, index_size, filament_self_indice)) {
+                BOOST_LOG_TRIVIAL(error) << boost::format("the filament column counts do not add up to the %1% entries of filament_extruder_variant") % index_size;
+                record_exit_reson(outfile_dir, CLI_CONFIG_FILE_ERROR, 0, cli_errors[CLI_CONFIG_FILE_ERROR], sliced_info);
+                flush_and_exit(CLI_CONFIG_FILE_ERROR);
             }
         }
     }
@@ -6867,6 +6885,8 @@ int CLI::run(int argc, char **argv)
                             ConfigOptionEnumsGeneric* final_nozzle_volume_type_opt = new_print_config.option<ConfigOptionEnumsGeneric>("nozzle_volume_type", true);
                             final_nozzle_volume_type_opt->values.resize(new_extruder_count, nvtStandard);
                         }
+                        // Snapmaker Orca: the preferred layer heights are planned as the GUI plans them for slicing.
+                        apply_extruder_layer_height_plan(new_print_config);
                         print->apply(model, new_print_config);
                         BOOST_LOG_TRIVIAL(info) << boost::format("set no_check to %1%:")%no_check;
                         print->set_no_check_flag(no_check);//BBS

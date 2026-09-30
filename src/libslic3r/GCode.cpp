@@ -2944,7 +2944,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
         const ConfigOptionInts *bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(m_config.curr_bed_type));
         std::vector<int> conflict_filament;
         for(auto extruder_id : m_initial_layer_extruders){
-            int cur_bed_temp = bed_temp_opt->get_at(extruder_id);
+            int cur_bed_temp = bed_temp_opt->get_at(get_filament_config_index(int(extruder_id)));
             if (cur_bed_temp == 0) {
                 conflict_filament.push_back(extruder_id);
             }
@@ -3969,9 +3969,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     }
     bool activate_chamber_temp_control = false;
     auto max_chamber_temp              = 0;
+    // The chamber keys hold one value per filament variant column: each filament counts with the
+    // column of the extruder that prints it.
     for (const auto& extruder : m_writer.extruders()) {
-        activate_chamber_temp_control |= m_config.activate_chamber_temp_control.get_at(extruder.id());
-        max_chamber_temp = std::max(max_chamber_temp, m_config.chamber_temperature.get_at(extruder.id()));
+        const size_t fi = get_filament_config_index((int)extruder.id());
+        activate_chamber_temp_control |= m_config.activate_chamber_temp_control.get_at(fi);
+        max_chamber_temp = std::max(max_chamber_temp, m_config.chamber_temperature.get_at(fi));
     }
     {
         BedType curr_bed_type = m_config.curr_bed_type;
@@ -5150,7 +5153,8 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
     if (bed_temp_key.empty())
         bed_temp_key = is_first_layer ? get_bed_temp_1st_layer_key(btPEI) : get_bed_temp_key(btPEI);
     const ConfigOptionInts* bed_temp_opt = m_config.option<ConfigOptionInts>(bed_temp_key);
-    return bed_temp_opt->get_at(extruder_id);
+    // One value per filament variant column: the column of the extruder that prints the filament.
+    return bed_temp_opt->get_at(get_filament_config_index(extruder_id));
 }
 
 int GCode::get_highest_bed_temperature(const bool is_first_layer, const Print& print) const
@@ -9349,6 +9353,7 @@ void GCode::append_full_config(const Print& print, std::string& str)
     cfg.erase("print_extruder_source_column");
     cfg.erase("print_extruder_source_flow");
     cfg.erase("print_extruder_flow_count");
+    cfg.erase("extruder_layer_height_planned");
     { // correct the flush_volumes_matrix with flush_multiplier values
         // Fast purge mode uses flush_multiplier_fast; Default is inert.
         std::vector<double> temp_cfg_flush_multiplier = (print.config().prime_volume_mode == PrimeVolumeMode::pvmFast)
@@ -11663,6 +11668,31 @@ void GCode::update_placeholder_parser_with_variant_params()
     this->placeholder_parser().set("nozzle_temperature",                  new ConfigOptionInts(remap_ints_by_filament(m_config.nozzle_temperature)));
     // first_layer_temperature is a legacy alias of nozzle_temperature_initial_layer
     this->placeholder_parser().set("first_layer_temperature",             new ConfigOptionInts(remap_ints_by_filament(m_config.nozzle_temperature_initial_layer)));
+
+    // Snapmaker: the per-variant bed and chamber temperatures, indexed by filament id in custom G-code.
+    for (const char *key : {"supertack_plate_temp", "supertack_plate_temp_initial_layer", "cool_plate_temp", "cool_plate_temp_initial_layer",
+                            "textured_cool_plate_temp", "textured_cool_plate_temp_initial_layer", "eng_plate_temp", "eng_plate_temp_initial_layer",
+                            "hot_plate_temp", "hot_plate_temp_initial_layer", "textured_plate_temp", "textured_plate_temp_initial_layer",
+                            "graphic_effect_plate_temp", "graphic_effect_plate_temp_initial_layer", "chamber_temperature", "chamber_minimal_temperature"})
+        if (const auto *temperatures = m_config.option<ConfigOptionInts>(key); temperatures != nullptr && !temperatures->values.empty())
+            this->placeholder_parser().set(key, new ConfigOptionInts(remap_ints_by_filament(*temperatures)));
+    {
+        std::vector<unsigned char> chamber_control(num_filaments);
+        for (size_t i = 0; i < num_filaments; ++i)
+            chamber_control[i] = m_config.activate_chamber_temp_control.get_at(get_filament_config_index(i));
+        this->placeholder_parser().set("activate_chamber_temp_control", new ConfigOptionBools(chamber_control));
+    }
+    // The aliases of the current plate's bed temperatures, as _do_export sets them.
+    {
+        const BedType bed_type = get_bed_temp_key(m_config.curr_bed_type).empty() ? btPEI : BedType(m_config.curr_bed_type.value);
+        if (const auto *first = m_config.option<ConfigOptionInts>(get_bed_temp_1st_layer_key(bed_type)); first != nullptr && !first->values.empty()) {
+            const std::vector<int> first_layer = remap_ints_by_filament(*first);
+            this->placeholder_parser().set("bed_temperature_initial_layer", new ConfigOptionInts(first_layer));
+            this->placeholder_parser().set("first_layer_bed_temperature", new ConfigOptionInts(first_layer));
+        }
+        if (const auto *other = m_config.option<ConfigOptionInts>(get_bed_temp_key(bed_type)); other != nullptr && !other->values.empty())
+            this->placeholder_parser().set("bed_temperature", new ConfigOptionInts(remap_ints_by_filament(*other)));
+    }
 
     // Snapmaker: the per-variant fan and pressure advance values, which custom G-code indexes by filament id.
     this->placeholder_parser().set("pressure_advance",                    new ConfigOptionFloats(remap_floats_by_filament(m_config.pressure_advance)));

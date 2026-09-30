@@ -3511,7 +3511,9 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
 	    for (unsigned int extruder_id : extruders) {
 	        const ConfigOptionInts* bed_temp_opt = m_config.option<ConfigOptionInts>(get_bed_temp_key(m_config.curr_bed_type));
 	        for (unsigned int extruder_id : extruders) {
-	            int curr_bed_temp = bed_temp_opt->get_at(extruder_id);
+	            // One value per filament variant column; the first column of the filament is the one
+	            // of the extruder that prints it once the columns are resolved per filament.
+	            int curr_bed_temp = bed_temp_opt->get_at(first_filament_variant_column(m_config.filament_self_index.values, extruder_id));
 	            if (curr_bed_temp == 0 && bed_type_keys_map != nullptr) {
 	                std::string bed_type_name;
 	                for (auto item : *bed_type_keys_map) {
@@ -5661,6 +5663,10 @@ int Print::get_config_index(int filament_id, int layer_id, const std::vector<std
     auto             iter = index_map.find(key);
     if (iter == index_map.end()) {
         int index = get_config_index_base(nozzle_volume_type, extruder_type, filament_id + 1, variant_list, self_index_list);
+        // Snapmaker Orca: a filament without a column of the nozzle's flow type (no High Flow values on
+        // a High Flow nozzle) prints its own first column, not column 0, which belongs to filament 1.
+        if (index < 0 || size_t(index) >= self_index_list.size() || self_index_list[size_t(index)] != filament_id + 1)
+            index = int(first_filament_variant_column(self_index_list, size_t(std::max(filament_id, 0))));
         index_map[key] = index;
         return index;
     } else {

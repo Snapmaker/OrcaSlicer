@@ -178,7 +178,8 @@ public:
     void update_presets(Slic3r::Preset::Type preset_type);
     //BBS
     const std::vector<BedType>& get_cur_combox_bed_types() { return m_cur_combox_bed_types; }
-    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to);
+    // `slots`: only these filament slots (0-based) switch; nullptr: every slot holding `from`.
+    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to, const std::vector<size_t> *slots = nullptr);
     BedType get_cur_select_bed_type();
     std::string get_cur_select_bed_image();
     void set_bed_type_accord_combox(BedType bed_type);
@@ -249,15 +250,9 @@ public:
     // Sets only nozzle `nozzle_idx`'s diameter (`variant` as the profiles name it, "0.4"),
     // keeping the printer preset; see Plater.cpp.
     void apply_nozzle_diameter(size_t nozzle_idx, const wxString &diameter_label);
-    // Re-derives the object layer height from the per-extruder layer heights (see Plater.cpp).
-    void derive_object_layer_height();
-    // Fixes a configuration whose preferred layer heights are no whole multiples of the object
-    // layer height (after a project load, preset switch or nozzle change); no-op when it conforms.
-    void reconcile_layer_heights();
-    void schedule_layer_height_reconcile();
-    // After the user edited the object layer height: offers to adjust the preferred layer heights
-    // to whole multiples of it or to use the derived value instead. Returns true if it changed anything.
-    bool confirm_object_layer_height_edit();
+    // The line under each preferred layer height: the height the extruder prints for slicing when
+    // it differs, a warning for an entered height off the layer grid (see Plater.cpp).
+    void update_nozzle_layer_height_hints();
     // Refresh the nozzle tabs' combo values in place; rebuilds (deferred) on extruder count change.
     void update_nozzle_values();
     // Refresh the Flow row of the nozzle tabs: which types a tool head offers, whether it may be

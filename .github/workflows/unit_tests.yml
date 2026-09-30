@@ -37,6 +37,7 @@ jobs:
             scripts
             tests
             resources
+            src/slic3r/GUI
       - name: Apt-Install Dependencies
         if: runner.os == 'Linux' && !vars.SELF_HOSTED
         uses: ./.github/actions/apt-install-deps

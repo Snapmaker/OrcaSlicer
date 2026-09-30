@@ -17,6 +17,12 @@ for later syncs with the 2.4 profiles; the slicer ignores them.
 `default_nozzle_volume_type` is `Standard` for every tool head, so nothing changes until a tool
 head is switched to High Flow. A preset with one column is used for both nozzle types.
 
+High Flow follows the nozzle size of the tool head, not the size of the printer preset: a 0.4 mm
+tool head on the 0.2 / 0.6 / 0.8 mm preset may run High Flow because the 0.4 mm machine preset
+declares it. Such a head reads its own Standard machine column, which holds the values of the 0.4 mm
+preset once the sidebar set its size (M1: they equal the High Flow ones), and the High Flow columns
+of its filament and process presets, as it would on the 0.4 mm preset.
+
 In the machine preset every key of `printer_options_with_variant_1` (`src/libslic3r/PrintConfig.cpp`)
 holds 8 values and every key of `printer_options_with_variant_2` (normal, silent pairs) holds 16.
 They are written out in full, including the values that come from `fdm_U1` and its parents: the

@@ -1,5 +1,6 @@
 #include "PrintConfig.hpp"
 #include "PerHeadProcess.hpp"
+#include "FilamentFlowColumns.hpp"
 #include "ProjectSchemaVersion.hpp"
 #include "PrintConfigConstants.hpp"
 #include "ClipperUtils.hpp"
@@ -5562,10 +5563,11 @@ void PrintConfigDef::init_fff_params()
     def = this->add("extruder_layer_height", coFloats);
     def->label = L("Preferred layer height");
     def->tooltip = L("Layer height this extruder should print with, used for printers whose extruders have "
-                     "different nozzle sizes. Any value can be entered: the object layer height becomes the coarsest "
-                     "height on which every preferred layer height lands within 0.01 mm of a whole multiple (from the "
-                     "finest preferred height down to a quarter of it), and the preferred heights are rounded to those "
-                     "multiples; with \"Exact preferred layer heights\" enabled every entered value is kept instead. "
+                     "different nozzle sizes. Any value can be entered and is kept as entered. For slicing, the object "
+                     "layer height becomes the coarsest height on which every preferred layer height lands within 0.01 mm "
+                     "of a whole multiple (from the finest preferred height down to a quarter of it), and the preferred "
+                     "heights print rounded to those multiples; with \"Exact preferred layer heights\" enabled every "
+                     "entered value prints exactly instead. "
                      "A part whose features all follow this extruder prints only on every Nth layer with "
                      "correspondingly thicker extrusions, wherever its geometry allows it; elsewhere it "
                      "falls back to the object layer height. When the rest of the part cannot follow, "
@@ -5589,7 +5591,7 @@ void PrintConfigDef::init_fff_params()
                      "and the areas that cannot follow an extruder's height print at that grid, so slicing and "
                      "printing can take much longer. The prime tower prints one slab per tool change on that grid in "
                      "either mode; a coarse extruder purging on a slab of a fine grid extrudes below its minimum "
-                     "layer height there, which slicing reports. Off: the preferred heights are rounded to the "
+                     "layer height there, which slicing reports. Off: the preferred heights print rounded to the "
                      "coarsest grid on which they land within 0.01 mm.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
@@ -6593,6 +6595,14 @@ void PrintConfigDef::init_fff_params()
     def->label = "Process shared column count";
     def->tooltip = "Process shared column count.";
     def->set_default_value(new ConfigOptionInt(0));
+    def->cli = ConfigOptionDef::nocli;
+
+    // Snapmaker Orca: transient, set on a config whose preferred layer heights were planned for
+    // slicing (apply_extruder_layer_height_plan in Slicing.hpp). Internal use only, no translation.
+    def = this->add("extruder_layer_height_planned", coBool);
+    def->label = "Preferred layer heights planned";
+    def->tooltip = "Preferred layer heights planned.";
+    def->set_default_value(new ConfigOptionBool(false));
     def->cli = ConfigOptionDef::nocli;
 
     def = this->add("retract_restart_extra", coFloats);
@@ -10179,7 +10189,26 @@ std::set<std::string> filament_options_with_variant = {
     "filament_multitool_ramming",
     "filament_multitool_ramming_volume",
     "filament_multitool_ramming_flow",
-    "filament_minimal_purge_on_wipe_tower"
+    "filament_minimal_purge_on_wipe_tower",
+    // Snapmaker: the bed temperatures of every plate and the chamber temperature, which a High Flow
+    // nozzle may need other values for; per filament in mainline, rebuilt like the keys above.
+    "supertack_plate_temp",
+    "supertack_plate_temp_initial_layer",
+    "cool_plate_temp",
+    "cool_plate_temp_initial_layer",
+    "textured_cool_plate_temp",
+    "textured_cool_plate_temp_initial_layer",
+    "eng_plate_temp",
+    "eng_plate_temp_initial_layer",
+    "hot_plate_temp",
+    "hot_plate_temp_initial_layer",
+    "textured_plate_temp",
+    "textured_plate_temp_initial_layer",
+    "graphic_effect_plate_temp",
+    "graphic_effect_plate_temp_initial_layer",
+    "activate_chamber_temp_control",
+    "chamber_temperature",
+    "chamber_minimal_temperature"
 };
 
 const std::vector<std::string>& promoted_filament_variant_keys()
@@ -10193,7 +10222,24 @@ const std::vector<std::string>& promoted_filament_variant_keys()
         "filament_multitool_ramming",
         "filament_multitool_ramming_volume",
         "filament_multitool_ramming_flow",
-        "filament_minimal_purge_on_wipe_tower"
+        "filament_minimal_purge_on_wipe_tower",
+        "supertack_plate_temp",
+        "supertack_plate_temp_initial_layer",
+        "cool_plate_temp",
+        "cool_plate_temp_initial_layer",
+        "textured_cool_plate_temp",
+        "textured_cool_plate_temp_initial_layer",
+        "eng_plate_temp",
+        "eng_plate_temp_initial_layer",
+        "hot_plate_temp",
+        "hot_plate_temp_initial_layer",
+        "textured_plate_temp",
+        "textured_plate_temp_initial_layer",
+        "graphic_effect_plate_temp",
+        "graphic_effect_plate_temp_initial_layer",
+        "activate_chamber_temp_control",
+        "chamber_temperature",
+        "chamber_minimal_temperature"
     };
     return keys;
 }
@@ -10978,6 +11024,11 @@ int DynamicPrintConfig::get_index_for_extruder(int extruder_or_filament_id, std:
             }
         }
     }
+    // Snapmaker Orca: a printer table without a High Flow or TPU High Flow column for the extruder (a
+    // 0.4 mm High Flow head on the 0.6 mm U1 preset) reads the extruder's Standard column; for a head of
+    // another size that column holds the values of its size's machine preset (Sidebar::apply_nozzle_diameter).
+    if (ret < 0 && id_name == "printer_extruder_id" && nozzle_volume_type != nvtStandard)
+        ret = get_index_for_extruder(extruder_or_filament_id, id_name, extruder_type, nvtStandard, variant_name, stride);
     return ret;
 }
 
@@ -11701,6 +11752,9 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
     // Snapmaker Orca: 1-based extruder of every slot the multi-slot branch emits, 0 where the lookup
     // missed (see rewrite_slot_ids).
     std::vector<int> slot_extruders;
+    // Snapmaker Orca: the variant name each emitted slot takes over the one of its source column;
+    // empty keeps the source column's name.
+    std::vector<std::string> slot_variants;
     int variant_count = extruder_count;
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: extruder_count %2%, extruder_nozzle_volume_count %3%")%__LINE__ %extruder_count %extruder_nozzle_volume_count;
@@ -11769,6 +11823,15 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
                 //variant index
                 int slot_index = get_index_for_extruder(e_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
                 slot_extruders.push_back(slot_index < 0 ? 0 : e_index + 1);
+                // Snapmaker Orca: a printer slot resolved to the Standard column of a High Flow or TPU High
+                // Flow extruder (get_index_for_extruder) is named by the flow it prints, as a declared column would be.
+                std::string slot_variant;
+                if (id_name == "printer_extruder_id" && slot_index >= 0 && nozzle_volume_type != nvtHybrid)
+                    if (const auto *variants = dynamic_cast<const ConfigOptionStrings*>(this->option(variant_name));
+                        variants != nullptr && size_t(slot_index) < variants->values.size() &&
+                        variants->values[size_t(slot_index)] != get_extruder_variant_string(extruder_type, nozzle_volume_type))
+                        slot_variant = get_extruder_variant_string(extruder_type, nozzle_volume_type);
+                slot_variants.push_back(slot_variant);
                 if (slot_index < 0) {
                     // Snapmaker Orca: a process table composed per tool head (PerHeadProcess) holds
                     // one column per slot; a miss means a head reads another head's values.
@@ -11921,6 +11984,11 @@ std::vector<int> DynamicPrintConfig::update_values_to_printer_extruders(DynamicP
     // filament preset and has no id table to keep aligned.
     if (!slot_extruders.empty() && key_set.count(id_name) > 0)
         rewrite_slot_ids(*this, id_name, slot_extruders);
+    if (key_set.count(variant_name) > 0)
+        if (auto *variants = this->option<ConfigOptionStrings>(variant_name); variants != nullptr && variants->values.size() == slot_variants.size())
+            for (size_t slot = 0; slot < slot_variants.size(); ++slot)
+                if (!slot_variants[slot].empty())
+                    variants->values[slot] = slot_variants[slot];
 
     return variant_index;
 }
@@ -12418,6 +12486,26 @@ void DynamicPrintConfig::update_diff_values_to_child_config(DynamicPrintConfig& 
         cur_extruder_ids      = this->option<ConfigOptionInts>(extruder_id_name)->values;
         cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
         cur_variant_count     = cur_extruder_variants.size();
+    }
+
+    // Snapmaker Orca: a user filament preset with a column its parent lacks (High Flow values added
+    // in the Filament tab). The parent gets that column as a copy of its column 0 first, so the match
+    // below maps every column of the child; a key the child does not write follows the parent.
+    if (extruder_variant_name == "filament_extruder_variant" && cur_variant_count > 0 && target_variant_count > 0) {
+        bool widened = false;
+        for (const std::string &variant : target_extruder_variants) {
+            if (std::find(cur_extruder_variants.begin(), cur_extruder_variants.end(), variant) != cur_extruder_variants.end())
+                continue;
+            if (!is_known_filament_variant(variant)) {
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament column \"%1%\" is no known variant and is left out") % variant;
+                continue;
+            }
+            widened = filament_add_variant_column(*this, variant) || widened;
+        }
+        if (widened) {
+            cur_extruder_variants = this->option<ConfigOptionStrings>(extruder_variant_name, true)->values;
+            cur_variant_count     = cur_extruder_variants.size();
+        }
     }
 
     if (cur_variant_count > 0)

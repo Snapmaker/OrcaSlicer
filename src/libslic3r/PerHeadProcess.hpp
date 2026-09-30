@@ -101,8 +101,8 @@ std::string quality_class(const std::string &preset_name);
 std::string plate_quality_class(const PresetBundle &bundle);
 
 // The layer height the rule matches for tool head `head`: extruder_layer_height of the edited printer
-// when set, else the saved selected preset's layer_height (the edited one holds the planner's grid).
-// `preferred` tells which.
+// when set, else the saved selected preset's layer_height, so an unsaved edit does not move the
+// source. `preferred` tells which.
 double target_layer_height(const PresetBundle &bundle, size_t head, bool *preferred = nullptr);
 
 // The composed keys the selected process preset changes against its system parent, compared in the

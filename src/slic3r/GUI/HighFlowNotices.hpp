@@ -41,8 +41,15 @@ using SizeOffersHighFlow = std::function<bool(double nozzle_size, size_t head)>;
 // to `bundle`.
 SizeOffersHighFlow size_offers_high_flow(const PresetBundle &bundle);
 
-// The tool head declares High Flow and carries a nozzle size the vendor data has High Flow values
-// for: the size the preset was made for ("printer_variant"), or one `size_offers` answers for.
+// The volume types the Flow row of tool head `head` offers: the declared ones, plus High Flow for a
+// head whose nozzle size differs from the preset's and that `size_offers` answers for (a 0.4 mm head
+// on the 0.6 mm U1 preset offers what the 0.4 mm preset declares). In enum order, never empty.
+std::vector<int> offered_volume_types(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
+bool head_offers_high_flow(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
+
+// The tool head carries a nozzle size the vendor data has High Flow values for: the size the preset
+// was made for ("printer_variant") when the preset declares High Flow for the head, another size when
+// `size_offers` answers for it, whatever the printer preset declares.
 bool head_can_use_high_flow(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
 
 // Resets every High Flow entry of `nozzle_volume_types` whose tool head cannot use High Flow to
@@ -151,21 +158,21 @@ VariantName variant_column_label(const std::vector<std::string> &variants, size_
 // every tool head, so naming "Extruder 1" next to such a column would mislead.
 bool ids_name_tool_heads(const std::vector<int> &ids);
 
-// The choice of a tool head can be changed: it declares no High Flow, or it may use it.
+// The choice of a tool head can be changed: it offers no High Flow, or it may use it.
 bool flow_choice_usable(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
 
 // What the Flow row of a tool head looks like (sidebar nozzle tabs, "Nozzle flow" line). A
-// head with one declared volume type shows it ruled out when another size of the model offers
+// head with one offered volume type shows it ruled out when another size of the model offers
 // High Flow (U1 0.2 / 0.6 / 0.8 mm: "Standard", disabled); without High Flow at any size, no row.
 enum class FlowRowState {
-    Hidden,     // one declared volume type and no size of the model offers High Flow: nothing to choose
+    Hidden,     // one offered volume type and no size of the model offers High Flow: nothing to choose
     Choice,     // several types, the stored one is shown and can be changed
-    RuledOut    // no High Flow values for the head's nozzle size: the first declared type is shown, disabled
+    RuledOut    // no High Flow values for the head's nozzle size: the first offered type is shown, disabled
 };
 FlowRowState flow_row_state(const DynamicPrintConfig &printer_config, size_t head, const SizeOffersHighFlow &size_offers = {});
 
-// The type the row shows for `stored_type`: the stored one where it is declared and the choice is
-// usable (Standard always is), the first declared one otherwise. The sanitizer corrects the stored value.
+// The type the row shows for `stored_type`: the stored one where it is offered and the choice is
+// usable (Standard always is), the first offered one otherwise. The sanitizer corrects the stored value.
 int shown_volume_type(const DynamicPrintConfig &printer_config, size_t head, int stored_type, const SizeOffersHighFlow &size_offers = {});
 
 // The nozzle size of tool head `head` as the sidebar spells it ("0.6"); empty when the preset has
@@ -181,7 +188,7 @@ enum class SelectorFit {
 };
 SelectorFit head_selector_fit(const std::vector<int> &long_widths, const std::vector<int> &short_widths, int available);
 
-// Fills a read-only Flow combo with the declared types of `head` (type as client data), shown_volume_type()
+// Fills a read-only Flow combo with the offered types of `head` (type as client data), shown_volume_type()
 // selected; disabled with the reason as tooltip when High Flow is ruled out. Items are rebuilt only
 // when they differ, so the combo may be refreshed from its own selection event.
 void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config, size_t head, int current_type, const SizeOffersHighFlow &size_offers = {});

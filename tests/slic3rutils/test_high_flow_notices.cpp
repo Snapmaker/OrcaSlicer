@@ -7,6 +7,7 @@
 #include "slic3r/GUI/HighFlowNotices.hpp"
 
 #include "libslic3r/AllowlistManager.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/NozzleFilamentPresets.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -519,6 +520,55 @@ TEST_CASE("A Flow row is hidden, a choice, or ruled out by the nozzle size", "[H
     }
 }
 
+TEST_CASE("A tool head of another size than the printer preset offers High Flow when the machine preset of its size declares it", "[HighFlow][FlowRow][hf_offsize_row]")
+{
+    using HighFlowNotices::FlowRowState;
+    // Shaped like the 0.6 mm U1 preset: Standard only; tool heads of 0.6, 0.4, 0.2 and 0.8 mm.
+    DynamicPrintConfig printer = u1_like_printer({ 0.6, 0.4, 0.2, 0.8 }, "Direct Drive Standard");
+    printer.set_key_value("printer_variant", new ConfigOptionString("0.6"));
+    const std::vector<int> standard_only{ int(nvtStandard) };
+    const std::vector<int> both{ int(nvtStandard), int(nvtHighFlow) };
+
+    SECTION("the 0.4 mm head offers and may use High Flow, the other sizes are ruled out") {
+        const auto vendor = offers({ 0.4 });
+        CHECK(HighFlowNotices::offered_volume_types(printer, 1, vendor) == both);
+        CHECK(HighFlowNotices::head_offers_high_flow(printer, 1, vendor));
+        CHECK(HighFlowNotices::head_can_use_high_flow(printer, 1, vendor));
+        CHECK(HighFlowNotices::flow_choice_usable(printer, 1, vendor));
+        CHECK(HighFlowNotices::shown_volume_type(printer, 1, int(nvtHighFlow), vendor) == int(nvtHighFlow));
+        for (size_t head : { size_t(0), size_t(2), size_t(3) }) {
+            INFO("tool head " << head + 1);
+            CHECK(HighFlowNotices::offered_volume_types(printer, head, vendor) == standard_only);
+            CHECK_FALSE(HighFlowNotices::head_can_use_high_flow(printer, head, vendor));
+            CHECK(HighFlowNotices::shown_volume_type(printer, head, int(nvtHighFlow), vendor) == int(nvtStandard));
+        }
+        // The row: the "any size" question of a Standard-only head is answered for the 0.4 mm size.
+        const HighFlowNotices::SizeOffersHighFlow with_any = [](double nozzle_size, size_t) {
+            return nozzle_size <= 0. || std::abs(nozzle_size - 0.4) < EPSILON;
+        };
+        CHECK(HighFlowNotices::flow_row_state(printer, 1, with_any) == FlowRowState::Choice);
+        CHECK(HighFlowNotices::flow_row_state(printer, 0, with_any) == FlowRowState::RuledOut);
+        CHECK(HighFlowNotices::flow_row_state(printer, 2, with_any) == FlowRowState::RuledOut);
+        CHECK(HighFlowNotices::flow_row_state(printer, 3, with_any) == FlowRowState::RuledOut);
+    }
+    SECTION("the sanitizer keeps the 0.4 mm head on High Flow and resets the others") {
+        std::vector<int> types(4, int(nvtHighFlow));
+        CHECK(HighFlowNotices::sanitize(printer, types, offers({ 0.4 })) == std::vector<size_t>{ 0, 2, 3 });
+        CHECK(types == std::vector<int>{ int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard) });
+    }
+    SECTION("without the vendor data only the preset's declared columns count") {
+        CHECK(HighFlowNotices::offered_volume_types(printer, 1) == standard_only);
+        CHECK_FALSE(HighFlowNotices::head_can_use_high_flow(printer, 1));
+        CHECK(HighFlowNotices::flow_row_state(printer, 1) == FlowRowState::Hidden);
+        CHECK(HighFlowNotices::flow_row_state(printer, 1, offers({ 0.6 })) == FlowRowState::Hidden);
+    }
+    SECTION("the preset's own size asks its declared columns, not the function") {
+        // A 0.6 mm head on this preset stays Standard even where the function would answer for 0.6 mm.
+        CHECK(HighFlowNotices::offered_volume_types(printer, 0, offers({ 0.4, 0.6 })) == standard_only);
+        CHECK_FALSE(HighFlowNotices::head_can_use_high_flow(printer, 0, offers({ 0.4, 0.6 })));
+    }
+}
+
 TEST_CASE("A ruled out tool head shows the first declared type", "[HighFlow][FlowRow]")
 {
     const DynamicPrintConfig printer = u1_like_printer({ 0.4, 0.6 });
@@ -780,6 +830,43 @@ TEST_CASE("Every tool head of a U1 shows its Flow row", "[FirstRun][HighFlow][Fl
     }
 }
 
+TEST_CASE("A 0.4 mm tool head offers High Flow on the 0.2, 0.6 and 0.8 mm U1 presets", "[HighFlow][FlowRow][Profiles][hf_offsize_row]")
+{
+    const auto loaded = load_snapmaker_bundle();
+    const HighFlowNotices::SizeOffersHighFlow shipped = HighFlowNotices::size_offers_high_flow(*loaded);
+    const std::vector<int> both{ int(nvtStandard), int(nvtHighFlow) };
+
+    for (const auto &[name, size] : std::vector<std::pair<std::string, double>>{
+             { "Snapmaker U1 (0.2 nozzle)", 0.2 }, { "Snapmaker U1 (0.6 nozzle)", 0.6 }, { "Snapmaker U1 (0.8 nozzle)", 0.8 } }) {
+        REQUIRE(loaded->printers.select_preset_by_name(name, true));
+        DynamicPrintConfig &printer = loaded->printers.get_edited_preset().config;
+        // As the sidebar sets it: tool head 2 at 0.4 mm, tool head 4 at a third size without High Flow.
+        const double third = size < 0.3 ? 0.6 : 0.2;
+        printer.set_key_value("nozzle_diameter", new ConfigOptionFloats({ size, 0.4, size, third }));
+        INFO(name);
+        CHECK(HighFlowNotices::offered_volume_types(printer, 1, shipped) == both);
+        CHECK(HighFlowNotices::head_can_use_high_flow(printer, 1, shipped));
+        CHECK(HighFlowNotices::flow_row_state(printer, 1, shipped) == HighFlowNotices::FlowRowState::Choice);
+        CHECK(HighFlowNotices::shown_volume_type(printer, 1, int(nvtHighFlow), shipped) == int(nvtHighFlow));
+        for (size_t head : { size_t(0), size_t(2), size_t(3) }) {
+            INFO("tool head " << head + 1);
+            CHECK(HighFlowNotices::flow_row_state(printer, head, shipped) == HighFlowNotices::FlowRowState::RuledOut);
+            CHECK_FALSE(HighFlowNotices::head_can_use_high_flow(printer, head, shipped));
+        }
+        std::vector<int> types(4, int(nvtHighFlow));
+        CHECK(HighFlowNotices::sanitize(printer, types, shipped) == std::vector<size_t>{ 0, 2, 3 });
+        CHECK(types == std::vector<int>{ int(nvtStandard), int(nvtHighFlow), int(nvtStandard), int(nvtStandard) });
+    }
+
+    // The 0.4 mm preset: every 0.4 mm head a choice, as before.
+    REQUIRE(loaded->printers.select_preset_by_name("Snapmaker U1 (0.4 nozzle)", true));
+    const DynamicPrintConfig &printer = loaded->printers.get_edited_preset().config;
+    for (size_t head = 0; head < 4; ++head) {
+        CHECK(HighFlowNotices::offered_volume_types(printer, head, shipped) == both);
+        CHECK(HighFlowNotices::head_can_use_high_flow(printer, head, shipped));
+    }
+}
+
 // The speed picker: the sentence that says why the quality rule gave a tool head its preset, per
 // step of PerHeadProcess::source_for_head.
 TEST_CASE("The automatic reason names the step of the quality rule and the layer height it matched", "[HighFlow][SpeedPicker][phs_picker]")
@@ -935,4 +1022,65 @@ TEST_CASE("The notice of a line width added to an object names the tool heads th
     const wxString one = HighFlowNotices::object_width_notice({2});
     CHECK(one.Contains("extruder 3 printed it with the line widths of its own nozzle size"));
     CHECK_FALSE(one.Contains("extruders"));
+}
+
+TEST_CASE("A filament given High Flow values is not reported as printing Standard values", "[HighFlow][Notices][FilamentFlow]")
+{
+    load_shipped_allow_list();
+    // Generic PETG with the High Flow column the Filament tab adds, not yet saved: the report is
+    // built from the edited config.
+    DynamicPrintConfig edited;
+    edited.set_key_value("filament_extruder_variant", new ConfigOptionStrings({ "Direct Drive Standard" }));
+    edited.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({ 12. }));
+    CHECK_FALSE(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant"));
+    REQUIRE(filament_add_flow_column(edited, nvtHighFlow));
+    CHECK(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant"));
+
+    auto report_for = [](bool has_column) {
+        const std::vector<HighFlowNotices::HeadFilament> loaded{
+            { "PLA", "Snapmaker PLA SnapSpeed @U1", true },
+            { "PETG", "Generic PETG", has_column },
+        };
+        const auto filaments = HighFlowNotices::group_by_head(loaded, HighFlowNotices::filament_heads(loaded.size(), 4, {}, false), 4);
+        return HighFlowNotices::evaluate({ 0, 1, 0, 0 }, filaments, true);
+    };
+    const auto without = report_for(false);
+    REQUIRE(without.standard_values_used.size() == 1);
+    CHECK(without.standard_values_used.front().head == 1);
+    CHECK(report_for(HighFlowNotices::has_high_flow_column(edited, "filament_extruder_variant")).standard_values_used.empty());
+}
+
+TEST_CASE("High Flow values added over a parent without them are named when a Standard value leaves them behind", "[HighFlow][Notices][FilamentFlow]")
+{
+    const std::set<std::string> keys{ "filament_max_volumetric_speed", "nozzle_temperature" };
+    DynamicPrintConfig parent;
+    parent.set_key_value("filament_extruder_variant", new ConfigOptionStrings({ "Direct Drive Standard" }));
+    parent.set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats({ 12. }));
+    parent.set_key_value("nozzle_temperature", new ConfigOptionInts({ 255 }));
+    DynamicPrintConfig child = parent;
+    REQUIRE(filament_add_flow_column(child, nvtHighFlow));
+    // A High Flow speed of its own, and a Standard temperature changed after the copy: the High Flow
+    // temperature still holds the copied 255.
+    child.option<ConfigOptionFloats>("filament_max_volumetric_speed")->values = { 10., 22. };
+    child.option<ConfigOptionInts>("nozzle_temperature")->values = { 250, 255 };
+    // The notice compares with the parent widened by a copy of its Standard column.
+    DynamicPrintConfig storage;
+    CHECK(HighFlowNotices::standard_only_edits(child, filament_reference_in_layout_of(child, parent, storage), keys, "filament_extruder_variant") ==
+          std::vector<std::string>{ "nozzle_temperature" });
+    // The parent as it is has no High Flow column to compare with.
+    CHECK(HighFlowNotices::standard_only_edits(child, parent, keys, "filament_extruder_variant").empty());
+}
+
+TEST_CASE("A user preset made from a filament High Flow nozzles cannot print is rated by its system preset", "[HighFlow][Notices][FilamentFlow]")
+{
+    load_shipped_allow_list();
+    // "Flex 85" alone names no listed material.
+    CHECK(HighFlowCompat::check("TPU", "Flex 85").level == CompatibilityLevel::Compatible);
+    const auto result = HighFlowCompat::check("TPU", "Flex 85", "Snapmaker TPU 85A @U1 0.4 nozzle");
+    CHECK(result.level == CompatibilityLevel::Unsupported);
+    CHECK(result.material == "TPU 85A");
+    // Without another ancestor, or with a compatible one, the preset's own rating stands.
+    CHECK(HighFlowCompat::check("PLA", "Snapmaker PLA Wood @U1 0.4 nozzle", "").level == CompatibilityLevel::NotRecommended);
+    CHECK(HighFlowCompat::check("PLA", "Snapmaker PLA Wood @U1 0.4 nozzle", "Generic PLA").level == CompatibilityLevel::NotRecommended);
+    CHECK(HighFlowCompat::check("PETG", "My PETG", "Generic PETG").level == CompatibilityLevel::Compatible);
 }

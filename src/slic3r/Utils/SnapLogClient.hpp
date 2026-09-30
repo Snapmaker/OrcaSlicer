@@ -443,6 +443,9 @@ public:
     bool auth_known_dead_for_test() const;
     void set_auth_known_dead_for_test(bool v);
 
+    // Whether the last shutdown stopped the uploads, as a request was running; its sealed file stays.
+    bool shutdown_stopped_uploads_for_test() const;
+
     // Test-only: override the nonce generator used by the worker so X-Sign is
     // deterministic in tests. Pass an empty function to restore the default
     // (RAND_bytes). No-op when un-init'd.
@@ -615,6 +618,7 @@ private:
     mutable std::mutex         m_state_mu;
     mutable std::mutex         m_lifecycle_mu;
     std::shared_ptr<Internals> m_int;
+    bool                       m_shutdown_stopped_uploads = false; // under m_lifecycle_mu
     // The spool path is stable after init, so one pending purge is sufficient.
     boost::filesystem::path    m_purge_spool_dir;
     std::shared_ptr<std::promise<bool>> m_purge_promise;

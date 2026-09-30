@@ -299,6 +299,21 @@ static t_config_option_keys print_config_diffs(
     return print_diff;
 }
 
+// Snapmaker Orca: an object's own layer height fitted to the planned preferred layer heights of a
+// config marked by apply_extruder_layer_height_plan(); unmarked configs are left as they are.
+static void fit_object_layer_height(PrintObjectConfig &object_config, const ModelObject &model_object, const DynamicPrintConfig &full_config)
+{
+    if (! full_config.has(extruder_layer_height_planned_key) || ! model_object.config.has("layer_height"))
+        return;
+    const auto *heights = full_config.option<ConfigOptionFloats>("extruder_layer_height");
+    const auto *nozzles = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (heights == nullptr || nozzles == nullptr)
+        return;
+    const double fitted = effective_object_layer_height(heights->values, nozzles->values, object_config.layer_height.value);
+    if (std::abs(fitted - object_config.layer_height.value) > EPSILON)
+        object_config.layer_height.value = fitted;
+}
+
 // Prepare for storing of the full print config into new_full_config to be exported into the G-code and to be used by the PlaceholderParser.
 //BBS: add plate index
 static t_config_option_keys full_print_config_diffs(const DynamicPrintConfig &current_full_config, const DynamicPrintConfig &new_full_config, int plate_index)
@@ -1586,6 +1601,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // Collect changes to object and region configs.
     t_config_option_keys object_diff      = m_default_object_config.diff(new_full_config);
     t_config_option_keys region_diff      = m_default_region_config.diff(new_full_config);
+    // Snapmaker Orca: objects with their own layer height follow a change of the planned heights.
+    const bool extruder_heights_changed =
+        std::any_of(print_diff.begin(), print_diff.end(), [](const std::string &key) { return key == "extruder_layer_height" || key == "nozzle_diameter"; }) ||
+        std::find(full_config_diff.begin(), full_config_diff.end(), extruder_layer_height_planned_key) != full_config_diff.end();
 
     //BBS: process the filament_map related logic
     std::unordered_set<std::string> print_diff_set(print_diff.begin(), print_diff.end());
@@ -2025,10 +2044,11 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             bool object_config_changed = ! model_object.config.timestamp_matches(model_object_new.config);
 			if (object_config_changed)
 				model_object.config.assign_config(model_object_new.config);
-            if (! object_diff.empty() || object_config_changed || num_extruders_changed ) {
+            if (! object_diff.empty() || object_config_changed || num_extruders_changed || extruder_heights_changed) {
                 // Orca's variant-index signature, fed with this fork's total filament count
                 // (physical + virtual mixed filaments) so mixed-filament ids are not clamped.
                 PrintObjectConfig new_config = PrintObject::object_config_from_model_object(m_default_object_config, model_object, num_total_filaments, print_variant_index, print_variant_rule);
+                fit_object_layer_height(new_config, model_object, new_full_config);
                 for (const PrintObjectStatus &print_object_status : print_object_status_db.get_range(model_object)) {
                     t_config_option_keys diff = print_object_status.print_object->config().diff(new_config);
                     if (! diff.empty()) {
@@ -2094,10 +2114,14 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
             // Generate a list of trafos and XY offsets for instances of a ModelObject
             // Producing the config for PrintObject on demand, caching it at print_object_last.
             const PrintObject *print_object_last = nullptr;
-            auto print_object_apply_config = [this, &print_object_last, model_object, num_total_filaments, &print_variant_index, &print_variant_rule](PrintObject *print_object) {
-                print_object->config_apply(print_object_last ?
-                    print_object_last->config() :
-                    PrintObject::object_config_from_model_object(m_default_object_config, *model_object, num_total_filaments, print_variant_index, print_variant_rule));
+            auto print_object_apply_config = [this, &print_object_last, model_object, num_total_filaments, &print_variant_index, &print_variant_rule, &new_full_config](PrintObject *print_object) {
+                if (print_object_last != nullptr)
+                    print_object->config_apply(print_object_last->config());
+                else {
+                    PrintObjectConfig config = PrintObject::object_config_from_model_object(m_default_object_config, *model_object, num_total_filaments, print_variant_index, print_variant_rule);
+                    fit_object_layer_height(config, *model_object, new_full_config);
+                    print_object->config_apply(config);
+                }
                 print_object_last = print_object;
             };
             if (old.empty()) {

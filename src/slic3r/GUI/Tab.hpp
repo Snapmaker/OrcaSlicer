@@ -20,6 +20,7 @@
 #include <wx/listbook.h>
 #include <wx/scrolwin.h>
 #include <wx/sizer.h>
+#include <wx/stattext.h>
 #include <wx/bmpcbox.h>
 #include <wx/bmpbuttn.h>
 #include <wx/treectrl.h>
@@ -48,6 +49,7 @@ class SwitchButton;
 class MultiSwitchButton;
 
 class ComboBox;
+class Button;
 
 namespace Slic3r {
 
@@ -294,6 +296,9 @@ protected:
     // marker and variant keys), so that rows of a preset with values per tool head are transferred
     // by (id, variant) and not by index (PerHeadProcess::transfer_columns).
     DynamicPrintConfig  m_cache_process_source;
+    // Snapmaker Orca: the variant list and variant keys of a filament source, so that its columns
+    // are transferred by variant name (filament_transfer_columns).
+    DynamicPrintConfig  m_cache_filament_source;
 
 
 	bool				m_page_switch_running = false;
@@ -324,6 +329,15 @@ public:
     wxSizer *       m_variant_sizer   = nullptr;
     MultiSwitchButton *  m_extruder_switch = nullptr;
     MultiSwitchButton *  m_variant_combo   = nullptr;
+    // Snapmaker Orca, Filament tab: m_variant_combo may end with a High Flow entry that has no column yet;
+    // the first write under it adds the column (TabFilament::before_flow_change).
+    // m_flow_entries_updating mutes the selection handler while the entries are rebuilt.
+    bool                 m_virtual_flow_entry { false };
+    bool                 m_flow_entries_updating { false };
+    // The line under the Filament tab's selector (TabFilament::update_flow_hint).
+    wxBoxSizer *         m_flow_hint_sizer   = nullptr;
+    ogStaticText *       m_flow_hint_text    = nullptr;
+    ::Button *           m_flow_hint_button  = nullptr;
     ScalableButton *m_extruder_sync   = nullptr;
 	wxPanel *       m_extruder_sync_box  = nullptr;
     std::vector<NozzleVolumeType> m_actual_nozzle_volumes;
@@ -514,6 +528,15 @@ public:
     // variant list (HighFlowNotices::variant_column_for_type) or the process tab's flow selector.
     // No-op when the preset has no such column or the tab has no such control.
     void                   select_flow_column(NozzleVolumeType type);
+    // Snapmaker Orca, Filament tab: the column of the filament preset the fields show and edit,
+    // 0 without a variant selector (and under the High Flow entry without a column).
+    int                    filament_column() const;
+    // Filament tab: the selected entry is the High Flow entry without a column.
+    bool                   filament_virtual_high_flow() const;
+    // Filament tab: the edited preset may get High Flow values here: an extruder of the project is
+    // set to High Flow, the material may be printed with it, column 0 is Standard and there is no
+    // High Flow column yet.
+    bool                   flow_entry_offered() const;
     // Snapmaker Orca: the sidebar's nozzle tab of `head` was clicked: the speed selector selects
     // that head, the flow selector the column of `type`.
     void                   select_tool_head(size_t head, NozzleVolumeType type);
@@ -608,6 +631,8 @@ protected:
 	// ("" = automatic) and refreshes page, entries, sidebar hint and plate. Keys: arrows move the highlight only,
 	// Enter commits, Escape cancels.
 	void		update_speed_source_picker();
+	// The page is laid out again for the lines its wrapped description lines take, scroll range included.
+	void		fit_page_to_lines();
 	void		choose_speed_source(const std::string &name);
 	void		on_speed_source_key(wxKeyEvent &event);
 
@@ -756,6 +781,35 @@ public:
 
     const std::string&	get_custom_gcode(const t_config_option_key& opt_key) override;
     void				set_custom_gcode(const t_config_option_key& opt_key, const std::string& value) override;
+
+    // Snapmaker Orca: High Flow values for any filament (FilamentFlowColumns.hpp).
+    // The selector shows a High Flow entry, with or without its column.
+    bool        high_flow_selected() const;
+    // Adds the High Flow column as a copy of Standard and selects it; false when there is none to add.
+    bool        create_high_flow_column();
+    // The hint line under the selector and its button.
+    void        update_flow_hint();
+    void        on_flow_hint_button();
+    // The Save dialog's lines about the High Flow values; empty when the edit touches none.
+    wxString    high_flow_save_info() const;
+
+private:
+    // m_before_change of every option group but those of the Dependencies and Notes pages.
+    bool        before_flow_change(const std::string &key, int &index);
+    // The filament slot the tab was opened from sits on a High Flow extruder.
+    bool        slot_on_high_flow() const;
+    // Under a High Flow entry the lines shared by both columns are read-only (last pass of
+    // toggle_options); unlock_shared_lines() undoes it before the enable rules run again.
+    void        lock_shared_lines();
+    void        unlock_shared_lines();
+    // The name of a per-column setting in the hint: its line and, on a line of several fields, the
+    // field ("Textured PEI Plate (First layer)").
+    wxString    flow_hint_label(const std::string &key) const;
+
+    enum class FlowHintAction { None, Create, ApplyToHighFlow };
+    FlowHintAction                   m_flow_hint_action { FlowHintAction::None };
+    std::vector<std::string>         m_flow_hint_keys;
+    std::vector<std::pair<std::weak_ptr<ConfigOptionsGroup>, std::string>> m_locked_fields;
 };
 
 class TabPrinter : public Tab

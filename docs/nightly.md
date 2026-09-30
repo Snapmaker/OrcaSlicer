@@ -7,7 +7,7 @@ pre-release, is never marked Latest, and the app's normal update check never off
 
 ## What a nightly is
 
-- **When:** `.github/workflows/nightly.yml` runs daily at 18:00 UTC (GitHub may start it later).
+- **When:** `.github/workflows/nightly.yml` runs weekly, on Sundays at 18:00 UTC (GitHub may start it later), and can be started by hand (Run workflow).
   It first compares `main` with the commit recorded in the current nightly's release body
   (`<!-- nightly-commit: ... -->`). If they are the same it stops: no build, no new files.
 - **What:** the same packages as a release, built by `build_all.yml` on GitHub's hosted runners:

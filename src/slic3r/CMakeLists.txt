@@ -462,8 +462,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/StreamPanel.hpp
     GUI/HomePanel.cpp
     GUI/HomePanel.hpp
-    GUI/HubHomeView.cpp
-    GUI/HubHomeView.hpp
     GUI/BambuCamRelay.cpp
     GUI/BambuCamRelay.hpp
     GUI/RemoteAccess.cpp
@@ -869,6 +867,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/LoginUserAgent.hpp
     Utils/HubHomeLogic.cpp
     Utils/HubHomeLogic.hpp
+    Utils/HomeTabLogic.cpp
+    Utils/HomeTabLogic.hpp
     Utils/MainThreadGate.cpp
     Utils/MainThreadGate.hpp
     Utils/ServerLifetime.cpp

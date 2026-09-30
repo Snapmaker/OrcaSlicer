@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home</title>
+<link rel="stylesheet" href="home.css">
+</head>
+<body>
+<div id="app">
+  <nav id="rail" aria-label="Home sections">
+    <button class="rail-item" data-section="recent" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-2.05-4.95L14 10h7V3l-2.64 2.64A8.97 8.97 0 0 0 12 3zm-1 5v5l4.25 2.52.77-1.28-3.52-2.09V8z"/></svg>
+      <span data-i18n="recent">Recent</span>
+    </button>
+    <button class="rail-item" data-section="history" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8H5a3 3 0 0 0-3 3v6h4v4h12v-4h4v-6a3 3 0 0 0-3-3zm-3 11H8v-5h8zm3-7a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm-1-9H6v4h12z"/></svg>
+      <span data-i18n="history">Print History</span>
+    </button>
+  </nav>
+
+  <main id="main">
+    <header id="bar">
+      <h1 id="title"></h1>
+      <div id="tools">
+        <input id="search" type="search" autocomplete="off" spellcheck="false">
+        <select id="sort">
+          <option value="newest" data-i18n="sort_newest">Newest first</option>
+          <option value="oldest" data-i18n="sort_oldest">Oldest first</option>
+          <option value="name" data-i18n="sort_name">Name</option>
+        </select>
+        <button id="refresh" class="icon-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section id="recent" class="section" hidden>
+      <div class="actions-row">
+        <button id="new-project" class="btn primary" type="button" data-i18n="new_project">New Project</button>
+        <button id="open-project" class="btn" type="button" data-i18n="open_project">Open Project</button>
+      </div>
+      <div class="grid" id="recent-grid"></div>
+      <p class="empty" id="recent-empty" hidden></p>
+    </section>
+
+    <section id="history" class="section" hidden>
+      <div class="notice" id="history-off" hidden>
+        <span id="history-off-text"></span>
+        <button id="history-settings" class="btn" type="button" data-i18n="open_preferences">Open Preferences</button>
+      </div>
+      <div class="chips" id="printer-chips"></div>
+      <div class="grid" id="history-grid"></div>
+      <p class="empty" id="history-empty" hidden></p>
+    </section>
+  </main>
+</div>
+
+<div id="menu" class="menu" hidden role="menu"></div>
+
+<script src="home.js"></script>
+</body>
+</html>

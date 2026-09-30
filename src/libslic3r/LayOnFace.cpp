@@ -11,18 +11,11 @@
 
 namespace Slic3r {
 
-std::vector<LayOnFacePlane> lay_on_face_planes(const ModelObject &object, const Transform3d &inst_matrix)
+namespace {
+
+// Candidate faces of `ch`, a convex hull in object coordinates.
+std::vector<LayOnFacePlane> hull_planes(const TriangleMesh &ch, const Transform3d &inst_matrix)
 {
-    // An object can only rest on its convex hull, so candidate faces are taken from the hull of all model parts.
-    TriangleMesh ch;
-    for (const ModelVolume* vol : object.volumes) {
-        if (vol->type() != ModelVolumeType::MODEL_PART)
-            continue;
-        TriangleMesh vol_ch = vol->get_convex_hull();
-        vol_ch.transform(vol->get_matrix());
-        ch.merge(vol_ch);
-    }
-    ch = ch.convex_hull_3d();
     std::vector<LayOnFacePlane> planes;
 
     // Following constants are used for discarding too small polygons.
@@ -150,6 +143,31 @@ std::vector<LayOnFacePlane> lay_on_face_planes(const ModelObject &object, const 
     return planes;
 }
 
+// The part's convex hull in object coordinates.
+TriangleMesh part_hull(const ModelVolume &volume)
+{
+    TriangleMesh ch = volume.get_convex_hull();
+    ch.transform(volume.get_matrix());
+    return ch;
+}
+
+} // namespace
+
+std::vector<LayOnFacePlane> lay_on_face_planes(const ModelObject &object, const Transform3d &inst_matrix)
+{
+    // An object can only rest on its convex hull, so candidate faces are taken from the hull of all model parts.
+    TriangleMesh ch;
+    for (const ModelVolume* vol : object.volumes)
+        if (vol->type() == ModelVolumeType::MODEL_PART)
+            ch.merge(part_hull(*vol));
+    return hull_planes(ch.convex_hull_3d(), inst_matrix);
+}
+
+std::vector<LayOnFacePlane> lay_on_face_planes(const ModelVolume &volume, const Transform3d &inst_matrix)
+{
+    return hull_planes(part_hull(volume).convex_hull_3d(), inst_matrix);
+}
+
 int find_largest_plane(const std::vector<LayOnFacePlane> &planes)
 {
     // The plane frame maps the instance normal to +Z, so the normal's z in instance coordinates is element (2, 2).
@@ -216,6 +234,31 @@ void lay_on_face(ModelObject &object, size_t instance_idx, const Vec3d &normal)
     instance.set_transformation(Geometry::Transformation(trafo.get_offset_matrix() * rotation * trafo.get_matrix_no_offset()));
     // Drop this instance only: ensure_on_bed() skips instances without auto_drop and measures the first instance.
     object.translate_instance(instance_idx, -object.instance_bounding_box(instance_idx).min.z() * Vec3d::UnitZ());
+}
+
+Transform3d lay_part_on_face_matrix(const ModelVolume &volume, const Transform3d &volume_matrix, const Transform3d &instance_matrix,
+                                    const Vec3d &normal)
+{
+    // Normals go from object to world coordinates through the inverse transpose, so the object direction whose
+    // world normal points down is the transpose applied to -Z. The rotation happens in object coordinates, which
+    // keeps the part rigid even under a non-uniform instance scale.
+    const Matrix3d    inst_linear = instance_matrix.matrix().block(0, 0, 3, 3);
+    const Vec3d       down        = (inst_linear.transpose() * -Vec3d::UnitZ()).normalized();
+    const Transform3d rotation    = Transform3d(Eigen::Quaterniond().setFromTwoVectors(normal, down));
+    // Pivot about the part's center so it turns in place instead of swinging around the object origin.
+    const Vec3d       center      = volume.get_convex_hull().transformed_bounding_box(volume_matrix).center();
+    return Geometry::translation_transform(center) * rotation * Geometry::translation_transform(-center) * volume_matrix;
+}
+
+void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_idx, const Vec3d &normal)
+{
+    ModelVolume &volume = *object.volumes[volume_idx];
+    volume.set_transformation(Geometry::Transformation(
+        lay_part_on_face_matrix(volume, volume.get_matrix(), object.instances[instance_idx]->get_matrix(), normal)));
+    object.invalidate_bounding_box();
+    // Parts share one instance transformation, so every instance moves with the part: drop each of them.
+    for (size_t i = 0; i < object.instances.size(); ++i)
+        object.translate_instance(i, -object.instance_bounding_box(i).min.z() * Vec3d::UnitZ());
 }
 
 } // namespace Slic3r

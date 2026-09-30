@@ -7,6 +7,7 @@
 namespace Slic3r {
 
 class ModelObject;
+class ModelVolume;
 
 // A face of an object's convex hull that the object can rest on. These are the faces the
 // "Lay on Face" gizmo offers and the ones the CLI --ground-* options choose from.
@@ -28,6 +29,10 @@ struct LayOnFacePlane
 // by their printed size: under 5 mm², a side under 1 mm, or an inner angle under 1°.
 std::vector<LayOnFacePlane> lay_on_face_planes(const ModelObject &object, const Transform3d &instance_matrix_no_offset);
 
+// Candidate faces of a single model part, measured the same way. Normals are still in object coordinates,
+// so the planes can be passed to the functions below like the object's.
+std::vector<LayOnFacePlane> lay_on_face_planes(const ModelVolume &volume, const Transform3d &instance_matrix_no_offset);
+
 // Index of the largest plane, or -1 if `planes` is empty. Of planes with the same area, such as
 // the top and bottom of a box, the one already facing down the most wins, so flat parts stay put.
 int find_largest_plane(const std::vector<LayOnFacePlane> &planes);
@@ -44,5 +49,15 @@ int find_plane_at_point(const std::vector<LayOnFacePlane> &planes, const Transfo
 // Rotates the instance so that `normal` (object coordinates) points down, the same rotation as
 // the gizmo applies, then drops the instance so its lowest point is at z = 0.
 void lay_on_face(ModelObject &object, size_t instance_idx, const Vec3d &normal);
+
+// The part's new volume matrix after turning it about its own center so that `normal` (object coordinates,
+// from the part's planes) points down in the world. `volume_matrix` is the part's current volume matrix;
+// only the part moves, `instance_matrix` is not changed.
+Transform3d lay_part_on_face_matrix(const ModelVolume &volume, const Transform3d &volume_matrix, const Transform3d &instance_matrix,
+                                    const Vec3d &normal);
+
+// Rotates one part of the object with lay_part_on_face_matrix(), then drops the object so its lowest point is
+// at z = 0 again. The other parts and the instance rotation stay as they were.
+void lay_part_on_face(ModelObject &object, size_t instance_idx, size_t volume_idx, const Vec3d &normal);
 
 } // namespace Slic3r

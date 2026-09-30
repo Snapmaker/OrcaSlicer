@@ -335,6 +335,8 @@ public:
     void move_to_center(const Vec3d& displacement, bool local = false);
     void rotate(const Vec3d& rotation, TransformationType transformation_type);
     void flattening_rotate(const Vec3d& normal);
+    // Lay on face for a single selected part: turns only that part so `normal` (object coordinates) points down.
+    void flattening_rotate_part(const Vec3d& normal);
     void scale(const Vec3d& scale, TransformationType transformation_type);
     // True when every selected instance is square to the bed (each Euler angle a multiple of 90
     // degrees). A non-uniform world-frame scale shears anything else; the dialog warns on it.

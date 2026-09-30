@@ -37,14 +37,19 @@ private:
     std::vector<std::shared_ptr<SceneRaycasterItem>> m_planes_casters;
     const ModelObject* m_old_model_object = nullptr;
     int                m_old_instance_id{ -1 };
+    // The part the planes were computed for, or -1 when they belong to the whole object.
+    int                m_old_volume_id{ -1 };
 
+    // The selected part when a single part of a multi-part object is selected, otherwise -1.
+    int selected_part_idx() const;
+    bool is_selection_supported() const;
     void update_planes();
     bool is_plane_update_necessary() const;
 
 public:
     GLGizmoFlatten(GLCanvas3D& parent, const std::string& icon_filename, unsigned int sprite_id);
 
-    void set_flattening_data(const ModelObject* model_object, int instance_id);
+    void set_flattening_data(const ModelObject* model_object, int instance_id, int volume_id = -1);
         
     /// <summary>
     /// Apply rotation on select plane

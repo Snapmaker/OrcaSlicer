@@ -7,6 +7,10 @@ endif()
 get_filename_component(_TEST_NAME ${CMAKE_CURRENT_LIST_DIR} NAME)
 add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
+    test_partplate_cli.cpp
+    ${CMAKE_SOURCE_DIR}/src/common_func/common_func.cpp
+    ${CMAKE_SOURCE_DIR}/src/bury_cfg/bury_point.cpp
+    ${CMAKE_SOURCE_DIR}/src/sentry_wrapper/SentryWrapper.cpp
     SnapLogClient_test.cpp
     )
 
@@ -27,13 +31,22 @@ if(UNIX AND NOT APPLE)
     target_link_options(${_TEST_NAME}_tests PRIVATE "-Wl,--no-as-needed")
 endif()
 if(TARGET libslic3r_gui)
-    target_link_libraries(${_TEST_NAME}_tests PRIVATE libslic3r_gui ${TEST_LINK_LIBS})
+    # GUI BitmapCache already supplies NanoSVG's implementation.
+    set(_gui_test_link_libs ${TEST_LINK_LIBS})
+    list(REMOVE_ITEM _gui_test_link_libs test_nanosvg_impl)
+    target_link_libraries(${_TEST_NAME}_tests PRIVATE libslic3r_gui ${_gui_test_link_libs})
 else()
     target_link_libraries(${_TEST_NAME}_tests PRIVATE ${TEST_LINK_LIBS})
 endif()
 if (MSVC)
     target_link_libraries(${_TEST_NAME}_tests PRIVATE Setupapi.lib)
 endif ()
+# These application support objects are normally linked by the main executable.
+# The headless PartPlate regression pulls in GUI_App's references to them too.
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE BURY_EXPORTS)
+if (SLIC3R_SENTRY)
+    target_link_libraries(${_TEST_NAME}_tests PRIVATE sentry::sentry)
+endif()
 set_property(TARGET ${_TEST_NAME}_tests PROPERTY FOLDER "tests")
 
 if (WIN32)

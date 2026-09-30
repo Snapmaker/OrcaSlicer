@@ -899,7 +899,7 @@ void ThemesPage::offer_restart()
     const wxString question = chosen != running
                                   ? wxString::Format(_L("Restart EdgeSlicer now to apply the \"%s\" theme?"), name)
                                   : wxString::Format(_L("Restart EdgeSlicer now to see your changes to the \"%s\" theme?"), name);
-    MessageDialog ask(this, question + "\n" + _L("If the project has unsaved changes you will be asked to save it first."), _L("Theme"),
+    RichMessageDialog ask(this, question + "\n" + _L("If the project has unsaved changes you will be asked to save it first."), _L("Theme"),
                       wxYES_NO | wxICON_QUESTION);
     ask.SetYesNoLabels(_L("Restart now"), _L("Later"));
     if (ask.ShowModal() != wxID_YES)

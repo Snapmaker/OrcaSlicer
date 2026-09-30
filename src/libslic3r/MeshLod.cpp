@@ -119,9 +119,9 @@ LodMeshes build_lod_meshes(const indexed_triangle_set &src, const LodParams &par
     };
 
     const size_t cls = size_class(src_faces, params);
-    out.middle = simplify(params.middle_err[cls], src_faces, out.middle_error);
-    out.small  = simplify(params.small_err[cls], out.middle.indices.empty() ? src_faces : out.middle.indices.size(),
-                          out.small_error);
+    out.middle     = simplify(params.middle_err[cls], src_faces, out.middle_error);
+    out.small_mesh = simplify(params.small_err[cls], out.middle.indices.empty() ? src_faces : out.middle.indices.size(),
+                              out.small_error);
     return out;
 }
 

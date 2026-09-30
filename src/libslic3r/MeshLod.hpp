@@ -54,7 +54,7 @@ LodLevel select_lod_level(const BoundingBoxf3 &world_aabb, const Transform3d &vi
 
 struct LodMeshes
 {
-    indexed_triangle_set middle, small;
+    indexed_triangle_set middle, small_mesh;
     // Error of the last collapsed edge, as reported back by its_quadric_edge_collapse.
     float                middle_error{0.f}, small_error{0.f};
 };

@@ -158,7 +158,7 @@ TEST_CASE("Cancelled jobs never publish a result and the pool shuts down promptl
 TEST_CASE("A single worker builds the largest mesh first and respects the admission", "[MeshLodPool]")
 {
     const std::shared_ptr<const TriangleMesh> gate_mesh = sphere_mesh(150);
-    const std::shared_ptr<const TriangleMesh> small     = sphere_mesh(170);
+    const std::shared_ptr<const TriangleMesh> little    = sphere_mesh(170);
     const std::shared_ptr<const TriangleMesh> medium    = sphere_mesh(200);
     const std::shared_ptr<const TriangleMesh> refused   = sphere_mesh(220);
     const std::shared_ptr<const TriangleMesh> large     = sphere_mesh(240);
@@ -180,7 +180,7 @@ TEST_CASE("A single worker builds the largest mesh first and respects the admiss
     // The only worker is held inside the admission of the first job while the others queue up.
     pool.submit(job_for(gate_mesh, gate_slot));
     admission.wait_entered();
-    pool.submit(job_for(small, small_slot));
+    pool.submit(job_for(little, small_slot));
     pool.submit(job_for(large, large_slot));
     pool.submit(job_for(refused, refused_slot));
     pool.submit(job_for(medium, medium_slot));
@@ -195,7 +195,7 @@ TEST_CASE("A single worker builds the largest mesh first and respects the admiss
     }));
     pool.shutdown();
 
-    const std::vector<size_t> expected{bytes_of(gate_mesh), bytes_of(large), bytes_of(refused), bytes_of(medium), bytes_of(small)};
+    const std::vector<size_t> expected{bytes_of(gate_mesh), bytes_of(large), bytes_of(refused), bytes_of(medium), bytes_of(little)};
     CHECK(admission.order == expected);
 
     CHECK(refused_slot->state() == MeshLodSlot::RejectedMemory);
@@ -210,12 +210,12 @@ TEST_CASE("Huge meshes are built one at a time while smaller ones keep flowing",
 {
     const std::shared_ptr<const TriangleMesh> huge_a = sphere_mesh(240);
     const std::shared_ptr<const TriangleMesh> huge_b = sphere_mesh(220);
-    const std::shared_ptr<const TriangleMesh> small  = sphere_mesh(150);
+    const std::shared_ptr<const TriangleMesh> little = sphere_mesh(150);
 
     MeshLodPoolLimits limits;
     limits.huge_mesh_faces = 30000;
     REQUIRE(huge_b->its.indices.size() > limits.huge_mesh_faces);
-    REQUIRE(small->its.indices.size() <= limits.huge_mesh_faces);
+    REQUIRE(little->its.indices.size() <= limits.huge_mesh_faces);
 
     auto bytes_of = [](const std::shared_ptr<const TriangleMesh>& mesh) {
         return estimate_lod_job_bytes(mesh->its.indices.size(), mesh->its.vertices.size());
@@ -227,7 +227,7 @@ TEST_CASE("Huge meshes are built one at a time while smaller ones keep flowing",
     pool.submit(job_for(huge_a, slot_a));
     admission.wait_entered(1);
     pool.submit(job_for(huge_b, slot_b));
-    pool.submit(job_for(small, slot_small));
+    pool.submit(job_for(little, slot_small));
     // The second worker passes the larger job over, because a huge one is being built.
     admission.wait_entered(2);
     const MeshLodSlot::State state_b_while_a_runs = slot_b->state();
@@ -236,7 +236,7 @@ TEST_CASE("Huge meshes are built one at a time while smaller ones keep flowing",
     REQUIRE(wait_until([&] { return is_final(slot_a->state()) && is_final(slot_b->state()) && is_final(slot_small->state()); }));
     pool.shutdown();
     CHECK(state_b_while_a_runs == MeshLodSlot::Queued);
-    const std::vector<size_t> expected{bytes_of(huge_a), bytes_of(small), bytes_of(huge_b)};
+    const std::vector<size_t> expected{bytes_of(huge_a), bytes_of(little), bytes_of(huge_b)};
     CHECK(admission.order == expected);
     CHECK(slot_a->state() == MeshLodSlot::Built);
     CHECK(slot_b->state() == MeshLodSlot::Built);
@@ -416,12 +416,12 @@ TEST_CASE("Volumes of one mesh share the reduced models and the budget gets its 
 
     CHECK(first->model(LodLevel::High) == nullptr);
     GLModel* middle = first->model(LodLevel::Middle);
-    GLModel* small  = first->model(LodLevel::Small);
+    GLModel* coarse = first->model(LodLevel::Small);
     REQUIRE(middle != nullptr);
-    REQUIRE(small != nullptr);
+    REQUIRE(coarse != nullptr);
     CHECK(middle->indices_count() < mesh->its.indices.size() * 3);
-    CHECK(small->indices_count() < middle->indices_count());
-    CHECK(first->promoted_faces() == (middle->indices_count() + small->indices_count()) / 3);
+    CHECK(coarse->indices_count() < middle->indices_count());
+    CHECK(first->promoted_faces() == (middle->indices_count() + coarse->indices_count()) / 3);
 
     first.reset();
     CHECK(cache.budget().used > 0);

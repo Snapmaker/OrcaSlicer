@@ -1,3 +1,9 @@
+// libslic3r's SVG code needs the header-only nanosvg implementation, which every executable linking
+// libslic3r provides once (as the test mains do); it comes before any libslic3r header, whose include
+// of nanosvg.h would otherwise suppress it.
+#define NANOSVG_IMPLEMENTATION
+#include "nanosvg/nanosvg.h"
+
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/Utils.hpp"

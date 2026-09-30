@@ -204,10 +204,62 @@ RealtimeRequest build_realtime_request(
     return r;
 }
 
-std::string redact_path(const std::string& home, const std::string& p)
+namespace {
+// libstdc++'s std::regex recurses per character: longer values overflow the stack.
+constexpr std::size_t kMaxSanitizedBytes = 4096;
+
+std::string sanitized_head(const std::string& value)
 {
-    if (home.empty() || p.empty())
-        return p;
+    if (value.size() <= kMaxSanitizedBytes)
+        return value;
+    std::size_t cut = kMaxSanitizedBytes;
+    while (cut > 0 && (static_cast<unsigned char>(value[cut]) & 0xC0) == 0x80)
+        --cut; // UTF-8 boundary
+    return value.substr(0, cut) + u8"…[truncated]";
+}
+
+bool ascii_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+bool ascii_alnum(char c) { return ascii_alpha(c) || (c >= '0' && c <= '9'); }
+
+// Masks what [A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,} matches, found from each '@': as a std::regex
+// the pattern backtracks quadratically on long runs, which MSVC stops with error_complexity.
+std::string mask_emails(const std::string& v)
+{
+    auto local  = [](char c) { return ascii_alnum(c) || c == '.' || c == '_' || c == '%' || c == '+' || c == '-'; };
+    auto domain = [](char c) { return ascii_alnum(c) || c == '.' || c == '-'; };
+    std::string out;
+    std::size_t copied = 0;
+    for (std::size_t at = v.find('@'); at != std::string::npos; at = v.find('@', at + 1)) {
+        std::size_t begin = at;
+        while (begin > copied && local(v[begin - 1]))
+            --begin;
+        std::size_t run = at + 1;
+        while (run < v.size() && domain(v[run]))
+            ++run;
+        // The domain ends at the last '.' followed by two letters, and the letters after it.
+        std::size_t end = std::string::npos;
+        for (std::size_t dot = run; dot-- > at + 2;)
+            if (v[dot] == '.' && dot + 2 < run && ascii_alpha(v[dot + 1]) && ascii_alpha(v[dot + 2])) {
+                end = dot + 1;
+                while (end < run && ascii_alpha(v[end]))
+                    ++end;
+                break;
+            }
+        if (begin == at || end == std::string::npos)
+            continue;
+        out.append(v, copied, begin - copied).append("***");
+        copied = end;
+        at     = end - 1;
+    }
+    return copied == 0 ? v : out.append(v, copied, std::string::npos);
+}
+} // namespace
+
+std::string redact_path(const std::string& home, const std::string& path)
+{
+    if (home.empty() || path.empty())
+        return path;
+    const std::string p = sanitized_head(path);
     auto norm = [](std::string s) {
         for (auto& c : s)
             if (c == '\\')
@@ -232,6 +284,7 @@ std::string redact_path(const std::string& home, const std::string& p)
 
 std::string mask_secret_in_value(std::string v)
 {
+    v = sanitized_head(v);
     // Value-level denylist — operates on individual string values, never on
     // serialized JSON. Each pattern consumes the secret token/value and
     // replaces it wholesale with "***".
@@ -249,12 +302,10 @@ std::string mask_secret_in_value(std::string v)
                                                  // set intentionally omits "tok" (it caused false positives on words
                                                  // like "tokenize", "tokens", "tok-model").
                                                  std::regex(R"((password|secret|token|authorization|refresh_token)\s*[=:]\s*\S+)",
-                                                            std::regex::icase),
-                                                 // Email addresses
-                                                 std::regex(R"([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})")};
+                                                            std::regex::icase)};
     for (const auto& re : deny)
         v = std::regex_replace(v, re, "***");
-    return v;
+    return mask_emails(v);
 }
 
 std::string hash_pii(const std::string& clientId, const std::string& serial)
@@ -1290,6 +1341,19 @@ void SnapLogClient::shutdown()
     if (!in)
         return;
     const bool deferred_consent_purge = purge_completion_active(m_purge_completion) && m_purge_spool_dir == in->spool_dir_resolved;
+
+    // The batch flush is armed before stop_receiving: in between, the flusher would exit without it.
+    bool batch_request_active = in->batch_requests_in_progress.load(std::memory_order_acquire) > 0;
+    // Cancelling an in-progress upload must not cause the flusher to issue a
+    // fresh create request before the synchronous do_request call unwinds.
+    if (batch_request_active)
+        in->stop_uploads.store(true, std::memory_order_release);
+    m_shutdown_stopped_uploads = batch_request_active;
+    cancel_current(in, SnapLogPolicy::Buffered); // abort any in-flight PUT
+    // Set drain_and_flush so bt_worker drains the remaining bt_queue to
+    // active.log, rotates to sealed, uploads, then exits.
+    in->drain_and_flush.store(true);
+
     in->stop_receiving.store(true);
     cancel_current(in, SnapLogPolicy::Realtime); // abort in-flight so worker's done() trips
 
@@ -1337,19 +1401,7 @@ void SnapLogClient::shutdown()
         }
     }
 
-    bool batch_request_active = in->batch_requests_in_progress.load(std::memory_order_acquire) > 0;
-    // Cancelling an in-progress upload must not cause the flusher to issue a
-    // fresh create request before the synchronous do_request call unwinds.
-    if (batch_request_active)
-        in->stop_uploads.store(true, std::memory_order_release);
-    cancel_current(in, SnapLogPolicy::Buffered);
-
     if (in->bt_worker.joinable()) {
-        // Set drain_and_flush so bt_worker drains the remaining bt_queue to
-        // active.log, rotates to sealed, uploads, then exits.
-        in->drain_and_flush.store(true);
-        cancel_current(in, SnapLogPolicy::Buffered); // abort any in-flight PUT
-
         // Bounded join on bt_worker: same promise/future + detach + pin pattern
         // as rt_worker. Reuses batch_join_deadline_sec.
         auto                       bt_join_promise = std::make_shared<std::promise<void>>();
@@ -1650,6 +1702,12 @@ bool SnapLogClient::batch_worker_joinable_for_test() const
     std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
     auto                        in = internals();
     return in && in->bt_worker.joinable();
+}
+
+bool SnapLogClient::shutdown_stopped_uploads_for_test() const
+{
+    std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+    return m_shutdown_stopped_uploads;
 }
 
 bool SnapLogClient::auth_known_dead_for_test() const

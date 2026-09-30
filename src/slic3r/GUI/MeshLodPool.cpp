@@ -319,9 +319,9 @@ void MeshLodPool::run_job(const MeshLodJob& job)
                 built[0] = GLModel::make_geometry(meshes.middle, job.smooth_normals);
             meshes.middle = indexed_triangle_set();
             throw_on_cancel();
-            if (!meshes.small.indices.empty())
-                built[1] = GLModel::make_geometry(meshes.small, job.smooth_normals);
-            meshes.small = indexed_triangle_set();
+            if (!meshes.small_mesh.indices.empty())
+                built[1] = GLModel::make_geometry(meshes.small_mesh, job.smooth_normals);
+            meshes.small_mesh = indexed_triangle_set();
 
             if (!built[0].is_empty() || !built[1].is_empty())
                 result = MeshLodSlot::Built;

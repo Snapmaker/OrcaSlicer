@@ -109,9 +109,9 @@ static DynamicPrintConfig two_extruder_config(double second_extruder_layer_heigh
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240}));
-    // flush_volumes_matrix must be filament_count^2 entries.
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 0, 0, 0}));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(8, 0.)));
     // Print::validate() reports motion-ability diagnostics by overwriting the single warning
     // out-param; raise the machine limit so the default print accelerations do not clobber the
     // layer height warnings under test.
@@ -823,7 +823,8 @@ SCENARIO("Per-extruder layer height honors feature filaments", "[MultiNozzleLaye
         config.set_key_value("nozzle_temperature",    new ConfigOptionInts({210, 210, 210}));
         config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
         config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
-        config.set_key_value("flush_volumes_matrix",  new ConfigOptionFloats(std::vector<double>(9, 0.)));
+        config.set_key_value("flush_multiplier",      new ConfigOptionFloats({1., 1., 1.}));
+        config.set_key_value("flush_volumes_matrix",  new ConfigOptionFloats(std::vector<double>(27, 0.)));
         config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
         config.set_key_value("top_surface_filament_id",    new ConfigOptionInt(2));
         config.set_key_value("bottom_surface_filament_id", new ConfigOptionInt(3));
@@ -1340,8 +1341,8 @@ static DynamicPrintConfig four_nozzle_config()
     config.set_key_value("nozzle_temperature",       new ConfigOptionInts({240, 240, 240, 240}));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({220, 220, 220, 220}));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({270, 270, 270, 270}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(16, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1., 1., 1.}));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(64, 0.)));
     config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000.}));
     config.set_key_value("use_relative_e_distances", new ConfigOptionBool(false));
     return config;
@@ -2440,7 +2441,8 @@ SCENARIO("The prime tower prints one slab per tool change with per-extruder laye
         config.set_key_value("nozzle_temperature",       new ConfigOptionInts({210, 210, 210}));
         config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts({190, 190, 190}));
         config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240, 240}));
-        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(9, 0.)));
+        config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1., 1., 1.}));
+        config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(27, 0.)));
         config.set_key_value("machine_max_acceleration_extruding", new ConfigOptionFloats({100000., 100000., 100000.}));
         Print print;
         Model model;

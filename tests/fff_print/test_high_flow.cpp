@@ -140,8 +140,9 @@ DynamicPrintConfig u1_shaped_config(ColumnLayout layout, const std::vector<Nozzl
     config.set_key_value("default_filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
     config.set_key_value("filament_type",           new ConfigOptionStrings(std::vector<std::string>(HEADS, "PLA")));
     config.set_key_value("filament_map",            new ConfigOptionInts({1, 2, 3, 4}));
-    config.set_key_value("flush_multiplier",        new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",        new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts(std::vector<int>(HEADS, 190)));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts(std::vector<int>(HEADS, 240)));
     // The cooling slowdown would rewrite the feed rates under test.
@@ -680,8 +681,8 @@ DynamicPrintConfig u1_plate_config(PresetBundle &bundle, const U1Plate &plate, c
     // The application sizes the colours and the flush volumes with the filament list; nothing is
     // flushed here.
     config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("enable_support", new ConfigOptionBool(false));
     config.set_key_value("skirt_loops",    new ConfigOptionInt(0));
     // The cooling slowdown would rewrite the feed rates under test.

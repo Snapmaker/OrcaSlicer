@@ -85,8 +85,9 @@ DynamicPrintConfig four_head_config()
     config.set_key_value("default_filament_colour", new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
     config.set_key_value("filament_type",           new ConfigOptionStrings(std::vector<std::string>(HEADS, "PLA")));
     config.set_key_value("filament_map",            new ConfigOptionInts({1, 2, 3, 4}));
-    config.set_key_value("flush_multiplier",        new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    // Per nozzle: a flush multiplier and a filaments x filaments block.
+    config.set_key_value("flush_multiplier",        new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix",    new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("nozzle_temperature_range_low",  new ConfigOptionInts(std::vector<int>(HEADS, 190)));
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts(std::vector<int>(HEADS, 240)));
     config.set_key_value("nozzle_temperature",               new ConfigOptionInts(std::vector<int>(HEADS, 215)));
@@ -1227,8 +1228,8 @@ std::unique_ptr<OwnerPlateSlice> owner_plate_slice(const std::function<void(Pres
     // The application sizes the colours and the flush volumes with the filament list; nothing is
     // flushed here.
     config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("enable_support",       new ConfigOptionBool(false));
     config.set_key_value("enable_prime_tower",   new ConfigOptionBool(false));
     config.set_key_value("skirt_loops",          new ConfigOptionInt(0));
@@ -1414,8 +1415,8 @@ std::unique_ptr<OwnerPlateSlice> offsize_plate_slice(const char *machine, const 
     DynamicPrintConfig &config = slice->config;
     config = bundle.full_config_for_print(false, std::nullopt, std::nullopt, &slice->sources);
     config.set_key_value("filament_colour",      new ConfigOptionStrings({"#FF0000", "#00FF00", "#0000FF", "#FFFF00"}));
-    config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1.}));
-    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS, 0.)));
+    config.set_key_value("flush_multiplier",     new ConfigOptionFloats(std::vector<double>(HEADS, 1.)));
+    config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats(std::vector<double>(HEADS * HEADS * HEADS, 0.)));
     config.set_key_value("enable_support",       new ConfigOptionBool(false));
     config.set_key_value("enable_prime_tower",   new ConfigOptionBool(false));
     config.set_key_value("skirt_loops",          new ConfigOptionInt(0));

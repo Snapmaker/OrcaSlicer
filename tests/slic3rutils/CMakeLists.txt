@@ -46,6 +46,7 @@ add_executable(${_TEST_NAME}_tests
 if (MSVC)
     target_link_libraries(${_TEST_NAME}_tests Setupapi.lib)
 endif ()
+target_compile_definitions(${_TEST_NAME}_tests PRIVATE BURY_EXPORTS) # bury_point.cpp is compiled in
 
 # Snapmaker Orca: the upstream test file is a byte-identical copy and is never edited here, so its
 # warnings stay warnings instead of failing the -Werror build.

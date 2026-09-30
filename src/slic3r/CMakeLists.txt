@@ -1174,6 +1174,7 @@ if (ORCA_BUILD_PYTHON_STUBGEN_MODULE)
 
     target_compile_definitions(orca_stubgen PRIVATE
         ORCA_PYTHON_STUBGEN_MODULE
+        BURY_EXPORTS
     )
 
     target_include_directories(orca_stubgen PRIVATE

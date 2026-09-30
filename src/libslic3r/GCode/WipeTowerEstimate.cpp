@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <sstream>
 
 namespace Slic3r {
 
@@ -160,11 +161,13 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
     const double min_depth      = WipeTower::get_limit_depth_by_height(float(max_object_height));
     const float  perimeter_width = float(nozzle_diameter) * 1.25f; // Width_To_Nozzle_Ratio
 
-    // Type2 without the flush matrix: a layer's depth is the sum of what set_toolchange() reserves per
+    // Type2 (flush matrix: rib wall only): a layer's depth is the sum of what set_toolchange() reserves per
     // change - the old tool's ram band and the new tool's whole purge rows, each at its own line width -
     // plus the wall. One change per further filament and layer, in id order; nozzle changes add none.
     const size_t planned_changes = filaments_cnt > 1 ? filaments_cnt - 1 : 0;
-    const bool   type2_planned   = !type1 && !semm_flush && planned_changes > 0;
+    const bool   type2_planned   = !type1 && planned_changes > 0 && (!semm_flush || rib_wall);
+    const std::vector<std::vector<float>> flush_volumes = type2_planned && semm_flush ? WipeTower2::extract_wipe_volumes(config)
+                                                                                      : std::vector<std::vector<float>>();
     const float widest_line   = float((nozzle_opt != nullptr && !nozzle_opt->values.empty()
                                        ? *std::max_element(nozzle_opt->values.begin(), nozzle_opt->values.end()) : nozzle_diameter) * 1.25);
     auto type2_depth = [&](double tower_width) {
@@ -194,9 +197,23 @@ WipeTowerFootprint estimate_wipe_tower_footprint(const ConfigBase &config, WipeT
             g.ramming                          = !semm && ramming_on != nullptr && !ramming_on->values.empty() &&
                                                  ramming_on->get_at(column) && ramming_volume > 0. && ramming_flow > 0.;
             g.ramming_volume                   = g.ramming ? float(ramming_volume) : 0.f;
-            g.boundary_wipe_start              = g.ramming && gap_wall;
+            if (semm) {
+                // filament_ramming_parameters: line width %, step %, speeds per 0.25 s.
+                const auto *parameters = dynamic_cast<const ConfigOptionStrings *>(option_of(config, "filament_ramming_parameters"));
+                std::istringstream stream(parameters != nullptr && !parameters->values.empty() ? parameters->get_at(old_id) : std::string());
+                float line_width = 100.f, step = 100.f, speed = 0.f, speeds = 0.f;
+                stream >> line_width >> step;
+                while (stream >> speed)
+                    speeds += speed;
+                g.ramming                          = opt_bool("enable_filament_ramming");
+                g.ramming_line_width_multiplicator = line_width / 100.f;
+                g.ramming_step_multiplicator       = step / 100.f;
+                g.ramming_volume                   = 0.25f * speeds;
+            }
+            g.boundary_wipe_start              = g.ramming && gap_wall && !semm;
             g.new_line_width                   = line_width_of(new_id);
-            g.wipe_volume                      = float(prime_volume);
+            g.wipe_volume = old_id < flush_volumes.size() && new_id < flush_volumes[old_id].size() ? flush_volumes[old_id][new_id]
+                                                                                                    : float(prime_volume);
             g.extra_flow                       = float(extra_flow);
             g.extra_spacing_wipe               = float(extra_spacing * extra_flow);
             g.extra_spacing_ramming            = float(extra_spacing);

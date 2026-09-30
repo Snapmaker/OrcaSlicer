@@ -164,8 +164,11 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
     // We set it to 5mm because that's how much a normal support will grow by default.
     // normal support 5mm, other support 22mm, no support 0mm
     auto supp_type_ptr = obj->get_config_value<ConfigOptionBool>(config, "enable_support");
-    auto support_type_ptr = obj->get_config_value<ConfigOptionEnum<SupportType>>(config, "support_type");
-    auto support_type = support_type_ptr->value;
+    // Read the enum through the base option + virtual getInt(): DynamicConfig stores
+    // enums as ConfigOptionEnumGeneric, so a typed downcast would be UB.
+    const ConfigOption* support_type_ptr = obj->config.has("support_type") ?
+        obj->config.option("support_type") : config.option("support_type");
+    auto support_type = static_cast<SupportType>(support_type_ptr->getInt());
     auto enable_support = supp_type_ptr->getBool();
     int support_int = support_type_ptr->getInt();
 

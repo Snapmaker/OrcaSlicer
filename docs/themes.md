@@ -13,13 +13,18 @@ Everything is in **Preferences > Themes**:
   window that follows every change: name, author and the look it is built on (light, dark, or
   following the dark mode setting); a colour picker per palette role (**reset** puts a role back to
   stock); a font list for text, headings and buttons, with every installed font plus **From
-  file...** for a `.ttf` or `.otf`; corner sizes for buttons and boxes; and the title bar banner,
+  file...** for a `.ttf` or `.otf`, and a line of sample text under each list set in the chosen
+  font (a theme's own font files are loaded for it too); corner sizes for buttons and boxes; and the title bar banner,
   chosen with a file dialog, with its placement.
 - **Save** writes your own themes in place. Default and the themes that come with EdgeSlicer are
   read-only, so saving a change to one asks for a name and makes your own copy; **Save as new...**
   does the same for one of yours. Picked font and image files are copied into the theme's folder.
 
-A theme takes effect the next time EdgeSlicer starts; the page says when a restart is needed.
+A theme takes effect the next time EdgeSlicer starts. When you pick a different theme, or save a
+change to the one in use, EdgeSlicer asks whether to **Restart now** or **Later**. Restarting closes
+EdgeSlicer the way File > Quit does (an unsaved project is offered for saving, and cancelling that
+cancels the restart) and starts it again with the same command line. **Later** leaves a highlighted
+note on the page saying a restart is needed; the question is asked once per pending change.
 Parts the page has no control for (`overrides`, `home`) are kept as they are when a theme is saved.
 
 EdgeSlicer ships two sample themes with original art: **Ember Forge** (dark, charcoal and oxblood

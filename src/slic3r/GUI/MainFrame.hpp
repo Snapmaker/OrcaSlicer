@@ -227,7 +227,8 @@ public:
 
     // Ultra: the only way a hub-managed (hidden-launch) instance really closes; a plain
     // close just hides it. discard = skip the unsaved-project handling (Close(true)).
-    void request_quit(bool discard = false);
+    // Returns false when the close was cancelled (the unsaved-project prompt, say).
+    bool request_quit(bool discard = false);
 
     //BBS GUI refactor
     enum TabPosition

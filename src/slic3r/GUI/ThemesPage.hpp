@@ -49,6 +49,7 @@ private:
     {
         ThemePack::Font ThemePack::Spec::*member;
         ComboBox*                          combo = nullptr;
+        wxStaticText*                      sample = nullptr; // a line of text in the chosen font
         std::vector<ThemePack::Font>       options;
     };
 
@@ -65,6 +66,10 @@ private:
     void load(const std::string& id);
     void show_spec();
     void fill_font_slot(FontSlot& slot, const ThemePack::Font& current);
+    // Hands the theme's own font files to the system, so the fonts can be drawn here even when
+    // this theme is not the one running.
+    void register_fonts();
+    void update_font_sample(FontSlot& slot);
     void update_colour_row(ColourRow& row);
     void update_state();
     void changed();
@@ -76,6 +81,9 @@ private:
     void on_banner_file();
     bool save(bool as_new);
     bool confirm_discard();
+    // After the theme in use changed, or a different one was chosen: themes load at startup, so
+    // ask whether to restart EdgeSlicer now. "Later" leaves the note on the page.
+    void offer_restart();
 
     // A file the user picked, as the path it gets inside the pack ("fonts/Name.ttf").
     std::string import_path(const std::string& folder, const boost::filesystem::path& file) const;

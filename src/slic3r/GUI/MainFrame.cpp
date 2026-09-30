@@ -1095,10 +1095,10 @@ void MainFrame::update_autosave_timer()
 }
 
 // Called when closing the application and when switching the application language.
-void MainFrame::request_quit(bool discard)
+bool MainFrame::request_quit(bool discard)
 {
     m_quit_requested = true;
-    Close(discard); // discard -> CanVeto() == false -> no prompts at all
+    return Close(discard); // discard -> CanVeto() == false -> no prompts at all; false: the user cancelled
 }
 
 void MainFrame::shutdown(bool isRecreate)

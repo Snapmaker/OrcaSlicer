@@ -3235,6 +3235,13 @@ int GUI_App::OnExit()
         BOOST_LOG_TRIVIAL(error) << "Failed to clean up encrypt bbl network log file";
     }
 
+    // A restart was asked for (request_relaunch): start the new one now that this one is down to
+    // its last steps. The single-instance lock goes first, or the new one would hand over to us.
+    if (m_relaunch_pending && init_params != nullptr) {
+        m_single_instance_checker.reset();
+        relaunch_slicer(init_params->argc, init_params->argv, init_params->input_files);
+    }
+
     return wxApp::OnExit();
 }
 
@@ -4873,6 +4880,33 @@ void GUI_App::schedule_recreate_gui_when_no_modal(const wxString &msg_name)
             return;
         recreate_GUI(msg_name);
     });
+}
+
+void GUI_App::request_relaunch()
+{
+    if (m_relaunch_pending || mainframe == nullptr)
+        return;
+    m_relaunch_pending = true;
+    CallAfter([this]() { relaunch_when_idle(0); });
+}
+
+void GUI_App::relaunch_when_idle(int attempt)
+{
+    if (mainframe == nullptr) {
+        m_relaunch_pending = false;
+        return;
+    }
+    // The dialog that asked is closing; closing the main window under a modal one is asking for trouble.
+    if (!mainframe->IsEnabled() && attempt < 40) {
+        wxMilliSleep(25);
+        CallAfter([this, attempt]() { relaunch_when_idle(attempt + 1); });
+        return;
+    }
+    // The same close File > Quit does: it asks about the unsaved project and can be cancelled.
+    if (!mainframe->request_quit(false)) {
+        BOOST_LOG_TRIVIAL(info) << "relaunch cancelled: the close was vetoed";
+        m_relaunch_pending = false;
+    }
 }
 
 void GUI_App::start_remote_access()

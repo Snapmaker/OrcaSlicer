@@ -81,6 +81,15 @@ static wxString face_name(const ThemePack::Font& font) { return from_u8(font.fac
 
 static bool same_font(const ThemePack::Font& a, const ThemePack::Font& b) { return a.face == b.face && a.files == b.files; }
 
+// Font files already handed to wxFont::AddPrivateFont, and the faces they brought, for the whole
+// run: the Preferences dialog is built anew each time it opens.
+static std::set<std::string> g_private_files;
+static std::set<std::string> g_private_faces;
+
+// What the user was already asked about this run ("switch:<id>", "saved:<id>"): one question per
+// pending change, however often the page is reopened.
+static std::set<std::string> g_offered_restart;
+
 // A section heading with a rule after it, as on the other Preferences pages.
 static wxSizer* section_title(wxWindow* parent, const wxString& title)
 {
@@ -494,6 +503,7 @@ void ThemesPage::build_fonts(wxSizer* sizer)
             const int sel = e.GetSelection();
             if (!m_filling && sel >= 0 && size_t(sel) < sl.options.size()) {
                 m_spec.*(sl.member) = sl.options[sel];
+                update_font_sample(sl);
                 changed();
             }
             e.Skip();
@@ -505,6 +515,14 @@ void ThemesPage::build_fonts(wxSizer* sizer)
         grid->Add(label, 0, wxALIGN_CENTER_VERTICAL);
         grid->Add(slot.combo, 0, wxALIGN_CENTER_VERTICAL);
         grid->Add(file, 0, wxALIGN_CENTER_VERTICAL);
+
+        // What the choice looks like, in that font, under the selector.
+        slot.sample = new wxStaticText(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(200), FromDIP(28)),
+                                       wxST_NO_AUTORESIZE | wxST_ELLIPSIZE_END);
+        slot.sample->SetForegroundColour(TEXT_COLOUR);
+        grid->AddSpacer(0);
+        grid->Add(slot.sample, 0, wxALIGN_CENTER_VERTICAL);
+        grid->AddSpacer(0);
     }
     sizer->Add(grid, 0, wxLEFT | wxTOP, FromDIP(23) / 2 + FromDIP(3));
 }
@@ -649,6 +667,7 @@ void ThemesPage::load(const std::string& id)
 
 void ThemesPage::show_spec()
 {
+    register_fonts();
     m_filling = true;
     m_name->GetTextCtrl()->ChangeValue(from_u8(m_spec.name));
     m_author->GetTextCtrl()->ChangeValue(from_u8(m_spec.author));
@@ -696,6 +715,59 @@ void ThemesPage::fill_font_slot(FontSlot& slot, const ThemePack::Font& current)
     }
     slot.combo->SetSelection(selected);
     m_filling = was_filling;
+    update_font_sample(slot);
+}
+
+void ThemesPage::register_fonts()
+{
+    for (ThemePack::Font ThemePack::Spec::*member : {&ThemePack::Spec::body, &ThemePack::Spec::heading, &ThemePack::Spec::button}) {
+        const ThemePack::Font& font = m_spec.*member;
+        bool                   ok   = false;
+        for (const std::string& rel : font.files) {
+            fs::path path;
+            if (auto it = m_imports.find(rel); it != m_imports.end())
+                path = it->second;
+            else if (!m_dir.empty() && ThemePack::safe_relative_path(rel))
+                path = m_dir / fs::path(rel).make_preferred();
+            else
+                continue;
+            const std::string ext = boost::algorithm::to_lower_copy(path.extension().string());
+            boost::system::error_code ec;
+            if ((ext != ".ttf" && ext != ".otf") || !fs::is_regular_file(path, ec) || fs::file_size(path, ec) > MAX_FONT_FILE)
+                continue;
+            if (g_private_files.count(path.string()) || wxFont::AddPrivateFont(from_path(path))) {
+                g_private_files.insert(path.string());
+                ok = true;
+            }
+        }
+        if (ok)
+            g_private_faces.insert(font.face);
+    }
+}
+
+void ThemesPage::update_font_sample(FontSlot& slot)
+{
+    if (slot.sample == nullptr)
+        return;
+    const ThemePack::Font& themed = m_spec.*(slot.member);
+    wxFont                 f      = wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+    f.SetPointSize(12);
+    f.SetWeight(slot.member == &ThemePack::Spec::heading ? wxFONTWEIGHT_BOLD : wxFONTWEIGHT_NORMAL);
+    bool missing = false;
+    if (!themed.empty()) {
+        // A face from the theme's files counts once those files loaded; a system face must be installed.
+        const bool available = themed.files.empty() ? std::find(m_faces.begin(), m_faces.end(), face_name(themed)) != m_faces.end()
+                                                    : g_private_faces.count(themed.face) > 0;
+        wxFont t = f;
+        if (available && t.SetFaceName(face_name(themed)) && t.IsOk())
+            f = t;
+        else
+            missing = true;
+    }
+    slot.sample->SetFont(f);
+    slot.sample->SetLabel(missing ? _L("This font is not available here") : wxString("AaBb 0.2mm Standard 0123"));
+    slot.sample->SetToolTip(missing ? _L("The font is not installed or its file is missing, so the stock font is used.") : wxString());
+    slot.sample->Refresh();
 }
 
 wxColour ThemesPage::role_colour(const std::string& role) const
@@ -775,6 +847,10 @@ void ThemesPage::update_state()
         note += " " + _L("Default is the stock look: change anything below and save it as a theme of your own.");
     else if (!m_installed)
         note += " " + _L("This theme comes with EdgeSlicer; saving a change makes your own copy.");
+    // A restart still to do stands out; the plain "In use now" stays quiet.
+    const bool restart_needed = m_id != running || (m_saved_running == m_id && !m_id.empty());
+    m_note->SetFont(restart_needed ? ::Label::Head_13 : ::Label::Body_12);
+    m_note->SetForegroundColour(restart_needed ? LINK_COLOUR : MUTED_COLOUR);
     m_note->SetLabel(note);
     m_note->Wrap(FromDIP(460));
 
@@ -802,6 +878,37 @@ bool ThemesPage::confirm_discard()
     return ask.ShowModal() == wxID_YES;
 }
 
+void ThemesPage::offer_restart()
+{
+    // What the next start loads (the choice is saved as it is made) against what is running.
+    const std::string chosen  = wxGetApp().app_config->get("ui_theme");
+    const std::string running = Theme::active_id();
+    std::string       key;
+    if (chosen != running)
+        key = "switch:" + chosen;
+    else if (!chosen.empty() && m_saved_running == chosen)
+        key = "saved:" + chosen;
+    else
+        return; // nothing to restart for
+    if (!g_offered_restart.insert(key).second)
+        return; // already asked about this one; the note on the page still says so
+
+    const wxString name = chosen.empty() ? _L("Default") : (m_id == chosen && !m_spec.name.empty() ? from_u8(m_spec.name) : from_u8(chosen));
+    const wxString question = chosen != running
+                                  ? wxString::Format(_L("Restart EdgeSlicer now to apply the \"%s\" theme?"), name)
+                                  : wxString::Format(_L("Restart EdgeSlicer now to see your changes to the \"%s\" theme?"), name);
+    MessageDialog ask(this, question + "\n" + _L("If the project has unsaved changes you will be asked to save it first."), _L("Theme"),
+                      wxYES_NO | wxICON_QUESTION);
+    ask.SetYesNoLabels(_L("Restart now"), _L("Later"));
+    if (ask.ShowModal() != wxID_YES)
+        return;
+    // Preferences is modal: close it, then the app closes the main window the normal way (saving
+    // prompt included; cancelling that cancels the restart) and starts itself again.
+    if (wxWindow* top = wxGetTopLevelParent(this))
+        top->Close();
+    wxGetApp().request_relaunch();
+}
+
 // ---------------------------------------------------------------------------- actions ----
 
 void ThemesPage::on_pick(int selection)
@@ -824,6 +931,7 @@ void ThemesPage::on_pick(int selection)
     wxGetApp().app_config->set("ui_theme", id);
     wxGetApp().app_config->save();
     load(id);
+    offer_restart();
 }
 
 void ThemesPage::on_install()
@@ -854,6 +962,7 @@ void ThemesPage::on_install()
     m_id = id;
     fill_list();
     load(id);
+    offer_restart();
 }
 
 void ThemesPage::on_delete()
@@ -880,6 +989,7 @@ void ThemesPage::on_delete()
     m_id = next;
     fill_list();
     load(next);
+    offer_restart();
 }
 
 std::string ThemesPage::import_path(const std::string& folder, const fs::path& file) const
@@ -992,6 +1102,7 @@ bool ThemesPage::save(bool as_new)
     m_id = id;
     fill_list();
     load(id);
+    offer_restart();
     return true;
 }
 

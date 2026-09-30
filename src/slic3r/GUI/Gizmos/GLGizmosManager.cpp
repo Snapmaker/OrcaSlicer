@@ -864,6 +864,14 @@ bool GLGizmosManager::on_char(wxKeyEvent& evt)
         }
     }
 
+    // Move gizmo: Esc cancels "pick target surface" mode before it would close the gizmo.
+    if (m_current == Move && keyCode == WXK_ESCAPE && !evt.HasModifiers()) {
+        if (auto *move = dynamic_cast<GLGizmoMove3D *>(m_gizmos[Move].get()); move != nullptr && move->on_snap_escape()) {
+            m_parent.set_as_dirty();
+            return true;
+        }
+    }
+
     if ((evt.GetModifiers() & ctrlMask) != 0) {
         switch (keyCode)
         {

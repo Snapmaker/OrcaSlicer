@@ -6,6 +6,7 @@
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/ImGuiWrapper.hpp"
 #include "slic3r/GUI/Camera.hpp"
+#include "slic3r/GUI/CameraUtils.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -63,7 +64,10 @@ void GLGizmoMove3D::data_changed(bool is_serializing) {
     change_cs_by_selection();
     // A face picked on an object that is no longer the selection is meaningless.
     if (m_snap_state == SnapState::Idle && (m_snap_face.valid || m_snap_hover.valid) && (!snap_available() || snap_face_volume() == nullptr))
-        snap_reset();
+        snap_reset_face();
+    // The target surface goes when its object is deleted or has become part of the selection.
+    if (m_snap_target.valid && snap_target_volume() == nullptr)
+        snap_clear_target();
 }
 
 bool GLGizmoMove3D::on_init()
@@ -396,6 +400,34 @@ Transform3d snap_delta(const Vec3d& face_point, const Vec3d& face_normal, const 
     return delta;
 }
 
+// Closest point to `p` on triangle abc (Ericson, Real-Time Collision Detection 5.1.5).
+Vec3d closest_point_on_triangle(const Vec3d& p, const Vec3d& a, const Vec3d& b, const Vec3d& c)
+{
+    const Vec3d ab = b - a, ac = c - a, ap = p - a;
+    const double d1 = ab.dot(ap), d2 = ac.dot(ap);
+    if (d1 <= 0. && d2 <= 0.)
+        return a;
+    const Vec3d bp = p - b;
+    const double d3 = ab.dot(bp), d4 = ac.dot(bp);
+    if (d3 >= 0. && d4 <= d3)
+        return b;
+    const double vc = d1 * d4 - d3 * d2;
+    if (vc <= 0. && d1 >= 0. && d3 <= 0.)
+        return a + ab * (d1 / (d1 - d3));
+    const Vec3d cp = p - c;
+    const double d5 = ab.dot(cp), d6 = ac.dot(cp);
+    if (d6 >= 0. && d5 <= d6)
+        return c;
+    const double vb = d5 * d2 - d1 * d6;
+    if (vb <= 0. && d2 >= 0. && d6 <= 0.)
+        return a + ac * (d2 / (d2 - d6));
+    const double va = d3 * d6 - d5 * d4;
+    if (va <= 0. && (d4 - d3) >= 0. && (d5 - d6) >= 0.)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const double denom = 1.0 / (va + vb + vc);
+    return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
 } // namespace
 
 bool GLGizmoMove3D::snap_available() const
@@ -479,7 +511,7 @@ bool GLGizmoMove3D::snap_face_world(Vec3d& point, Vec3d& normal) const
     return true;
 }
 
-void GLGizmoMove3D::snap_set_face(SnapFace& face, const SurfaceHit& hit)
+void GLGizmoMove3D::snap_set_face(SnapFace& face, const SurfaceHit& hit, std::vector<size_t>* region_out)
 {
     const GLVolumePtrs& volumes = m_parent.get_volumes().volumes;
     if (hit.volume_idx < 0 || hit.volume_idx >= int(volumes.size()))
@@ -492,10 +524,26 @@ void GLGizmoMove3D::snap_set_face(SnapFace& face, const SurfaceHit& hit)
     face.mesh_point   = hit.mesh_point;
     face.mesh_normal  = hit.mesh_normal;
     face.region.reset();
+    face.object_id    = ObjectID();
+    face.instance_id  = ObjectID();
+    face.volume_id    = ObjectID();
+    {
+        const Model& model = wxGetApp().plater()->model();
+        if (face.object_idx >= 0 && face.object_idx < int(model.objects.size())) {
+            const ModelObject* mo = model.objects[face.object_idx];
+            face.object_id = mo->id();
+            if (face.instance_idx >= 0 && face.instance_idx < int(mo->instances.size()))
+                face.instance_id = mo->instances[face.instance_idx]->id();
+            if (face.volume_idx >= 0 && face.volume_idx < int(mo->volumes.size()))
+                face.volume_id = mo->volumes[face.volume_idx]->id();
+        }
+    }
+    face.facet_count = 0;
 
     std::vector<size_t> region;
     const indexed_triangle_set* its = v->mesh_raycaster->get_aabb_mesh().get_triangle_mesh();
     if (its != nullptr && hit.facet < its->indices.size()) {
+        face.facet_count = its->indices.size();
         std::vector<Vec3i32>& neighbors = m_snap_neighbors[its];
         if (neighbors.size() != its->indices.size())
             neighbors = its_face_neighbors(*its);
@@ -518,7 +566,174 @@ void GLGizmoMove3D::snap_set_face(SnapFace& face, const SurfaceHit& hit)
         m_snap_hover_facet = hit.facet;
         m_snap_hover_region_facets = std::move(region);
         std::sort(m_snap_hover_region_facets.begin(), m_snap_hover_region_facets.end());
+    } else if (region_out != nullptr) {
+        *region_out = std::move(region);
+        std::sort(region_out->begin(), region_out->end());
     }
+}
+
+// The GLVolume carrying the target surface, found through the model ids. Null when the object was
+// deleted or its mesh changed, or when the volume is now part of the selection (a surface of the
+// moving object itself cannot be a target).
+const GLVolume* GLGizmoMove3D::snap_target_volume() const
+{
+    if (!m_snap_target.valid)
+        return nullptr;
+    const Model&        model     = wxGetApp().plater()->model();
+    const Selection&    selection = m_parent.get_selection();
+    const GLVolume*     first     = selection.get_first_volume();
+    const bool          volume_mode = selection.is_single_volume_or_modifier();
+    const GLVolumePtrs& volumes   = m_parent.get_volumes().volumes;
+    for (size_t i = 0; i < volumes.size(); ++i) {
+        const GLVolume* v = volumes[i];
+        if (v == nullptr || !v->mesh_raycaster || v->is_wipe_tower || v->object_idx() < 0 || v->instance_idx() < 0 || v->volume_idx() < 0 ||
+            v->object_idx() >= int(model.objects.size()))
+            continue;
+        const ModelObject* mo = model.objects[v->object_idx()];
+        if (mo->id() != m_snap_target.object_id || v->instance_idx() >= int(mo->instances.size()) || v->volume_idx() >= int(mo->volumes.size()) ||
+            mo->instances[v->instance_idx()]->id() != m_snap_target.instance_id || mo->volumes[v->volume_idx()]->id() != m_snap_target.volume_id)
+            continue;
+        const indexed_triangle_set* its = v->mesh_raycaster->get_aabb_mesh().get_triangle_mesh();
+        if (its == nullptr || its->indices.size() != m_snap_target.facet_count)
+            return nullptr; // mesh edited since the pick
+        if (first != nullptr) {
+            const bool in_selection = volume_mode ? selection.contains_volume((unsigned int) i) :
+                                                    (v->object_idx() == first->object_idx() && v->instance_idx() == first->instance_idx());
+            if (in_selection)
+                return nullptr;
+        }
+        return v;
+    }
+    return nullptr;
+}
+
+// Where the cursor puts the contact face while a target surface is set. The cursor ray is
+// intersected with the target's plane; the point is then clamped to the nearest point of the
+// target region (its coplanar facets), so the selection keeps sliding on that face, and stops at
+// its edge, instead of jumping onto other geometry. Inside the region this is exactly the ray hit.
+bool GLGizmoMove3D::snap_target_hit(SurfaceHit& hit) const
+{
+    const GLVolume* tv = snap_target_volume();
+    if (tv == nullptr)
+        return false;
+    const indexed_triangle_set* its = tv->mesh_raycaster->get_aabb_mesh().get_triangle_mesh();
+    if (its == nullptr || m_snap_target_facets.empty())
+        return false;
+
+    const Camera& camera = wxGetApp().plater()->get_camera();
+    Vec3d origin, dir;
+    CameraUtils::ray_from_screen_pos(camera, m_parent.get_local_mouse_position(), origin, dir);
+    if (dir.norm() <= 0.)
+        return false;
+    dir.normalize();
+
+    const Transform3d trafo        = tv->world_matrix();
+    const Vec3d       plane_point  = trafo * m_snap_target.mesh_point;
+    const Vec3d       plane_normal = transform_normal(trafo, m_snap_target.mesh_normal);
+    const double      denom        = dir.dot(plane_normal);
+    if (std::abs(denom) < 1e-6)
+        return false; // looking along the surface
+    const double t = (plane_point - origin).dot(plane_normal) / denom;
+    if (t < 0. && camera.get_type() == Camera::EType::Perspective)
+        return false; // the plane is behind the camera
+    const Vec3d on_plane = origin + t * dir;
+
+    const Vec3d p = trafo.inverse() * on_plane;
+    Vec3d  best    = p;
+    double best_d2 = std::numeric_limits<double>::max();
+    for (size_t f : m_snap_target_facets) {
+        if (f >= its->indices.size())
+            continue;
+        const Vec3i32& tri = its->indices[f];
+        const Vec3d c = closest_point_on_triangle(p, its->vertices[tri[0]].cast<double>(), its->vertices[tri[1]].cast<double>(),
+                                                  its->vertices[tri[2]].cast<double>());
+        const double d2 = (c - p).squaredNorm();
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best    = c;
+            if (d2 < 1e-12)
+                break; // inside the region
+        }
+    }
+    if (best_d2 == std::numeric_limits<double>::max())
+        return false;
+
+    hit             = SurfaceHit();
+    hit.mesh_point  = best;
+    hit.mesh_normal = m_snap_target.mesh_normal;
+    hit.point       = trafo * best;
+    hit.normal      = plane_normal;
+    return true;
+}
+
+void GLGizmoMove3D::snap_set_target(const SurfaceHit& hit)
+{
+    snap_set_face(m_snap_target, hit, &m_snap_target_facets);
+    m_snap_target_name.clear();
+    const GLVolumePtrs& volumes = m_parent.get_volumes().volumes;
+    const Model&        model   = wxGetApp().plater()->model();
+    if (m_snap_target.valid && hit.volume_idx >= 0 && hit.volume_idx < int(volumes.size())) {
+        const GLVolume* v = volumes[hit.volume_idx];
+        if (v->object_idx() >= 0 && v->object_idx() < int(model.objects.size())) {
+            const ModelObject* mo = model.objects[v->object_idx()];
+            m_snap_target_name    = mo->name;
+            if (mo->volumes.size() > 1 && v->volume_idx() >= 0 && v->volume_idx() < int(mo->volumes.size()))
+                m_snap_target_name += " / " + mo->volumes[v->volume_idx()]->name;
+            if (m_snap_target_name.empty())
+                m_snap_target_name = "?";
+        }
+    }
+    m_snap_pick_target = false;
+    m_snap_target_hover.valid = false;
+    m_snap_target_hover.region.reset();
+    m_snap_target_hover_facets.clear();
+    m_parent.set_as_dirty();
+}
+
+void GLGizmoMove3D::snap_clear_target()
+{
+    m_snap_target.valid = false;
+    m_snap_target.region.reset();
+    m_snap_target_facets.clear();
+    m_snap_target_name.clear();
+    m_snap_pick_target = false;
+    m_snap_target_hover.valid = false;
+    m_snap_target_hover.region.reset();
+    m_snap_target_hover_facets.clear();
+    m_parent.set_as_dirty();
+}
+
+void GLGizmoMove3D::snap_update_target_hover()
+{
+    SurfaceHit hit;
+    if (m_hover_id != -1 || !snap_raycast(false, hit)) {
+        if (m_snap_target_hover.valid) {
+            m_snap_target_hover.valid = false;
+            m_snap_target_hover.region.reset();
+            m_parent.set_as_dirty();
+        }
+        return;
+    }
+    const GLVolume* v = m_parent.get_volumes().volumes[hit.volume_idx];
+    const bool same_region = m_snap_target_hover.valid && m_snap_target_hover.object_idx == v->object_idx() &&
+                             m_snap_target_hover.instance_idx == v->instance_idx() && m_snap_target_hover.volume_idx == v->volume_idx() &&
+                             std::binary_search(m_snap_target_hover_facets.begin(), m_snap_target_hover_facets.end(), hit.facet);
+    if (!same_region) {
+        snap_set_face(m_snap_target_hover, hit, &m_snap_target_hover_facets);
+        m_parent.set_as_dirty();
+    }
+}
+
+bool GLGizmoMove3D::on_snap_escape()
+{
+    if (!m_snap_enabled || !m_snap_pick_target)
+        return false;
+    m_snap_pick_target = false;
+    m_snap_target_hover.valid = false;
+    m_snap_target_hover.region.reset();
+    m_snap_target_hover_facets.clear();
+    m_parent.set_as_dirty();
+    return true;
 }
 
 void GLGizmoMove3D::snap_update_hover()
@@ -546,8 +761,27 @@ bool GLGizmoMove3D::on_mouse_snap(const wxMouseEvent& mouse_event)
 {
     if (!snap_available()) {
         if (m_snap_state != SnapState::Idle || m_snap_face.valid || m_snap_hover.valid)
-            snap_reset();
+            snap_reset_face();
+        if (m_snap_pick_target)
+            on_snap_escape();
         return false;
+    }
+
+    // Picking the target surface: the next click on another object's face sets it.
+    if (m_snap_pick_target && m_snap_state == SnapState::Idle) {
+        if (mouse_event.Moving()) {
+            snap_update_target_hover();
+            return false;
+        }
+        if (mouse_event.LeftDown()) {
+            // Shift/Alt/Ctrl clicks stay with the camera and the selection, as for the contact face.
+            if (m_hover_id != -1 || mouse_event.CmdDown() || mouse_event.ShiftDown() || mouse_event.AltDown())
+                return false;
+            SurfaceHit hit;
+            if (snap_raycast(false, hit))
+                snap_set_target(hit);
+            return true; // a click on empty space must not deselect while picking
+        }
     }
 
     if (mouse_event.Moving()) {
@@ -635,8 +869,8 @@ void GLGizmoMove3D::snap_apply(const Transform3d& world_delta)
 void GLGizmoMove3D::snap_update_drag()
 {
     SurfaceHit target;
-    if (!snap_raycast(false, target))
-        return; // off every other object: stay where the last surface put it
+    if (m_snap_target.valid ? !snap_target_hit(target) : !snap_raycast(false, target))
+        return; // off every other object (or no usable target): stay where the last surface put it
     m_snap_last_target = target;
     m_snap_has_target  = true;
     snap_apply(snap_delta(m_snap_start_point, m_snap_start_normal, target.point, target.normal, m_snap_spin));
@@ -766,6 +1000,12 @@ void GLGizmoMove3D::snap_spin_in_place(double angle)
 
 void GLGizmoMove3D::snap_reset()
 {
+    snap_reset_face();
+    snap_clear_target();
+}
+
+void GLGizmoMove3D::snap_reset_face()
+{
     m_snap_state = SnapState::Idle;
     m_snap_moved = false;
     m_snap_has_target = false;
@@ -801,11 +1041,8 @@ void GLGizmoMove3D::render_snap_faces()
     shader->start_using();
     shader->set_uniform("projection_matrix", camera.get_projection_matrix());
 
-    auto render_face = [&](SnapFace& face, const ColorRGBA& color) {
-        if (!face.valid || !face.region.is_initialized())
-            return;
-        const GLVolume* v = find_volume(face);
-        if (v == nullptr)
+    auto render_face = [&](SnapFace& face, const ColorRGBA& color, const GLVolume* v) {
+        if (!face.valid || !face.region.is_initialized() || v == nullptr)
             return;
         shader->set_uniform("view_model_matrix", camera.get_view_matrix() * v->world_matrix());
         face.region.set_color(color);
@@ -813,13 +1050,74 @@ void GLGizmoMove3D::render_snap_faces()
     };
     // While dragging the picked face is pressed against the target, so only the hover is useful before.
     if (m_snap_state != SnapState::Dragging)
-        render_face(m_snap_hover, GLGizmoBase::FLATTEN_HOVER_COLOR);
-    render_face(m_snap_face, ColorRGBA(0.92f, 0.50f, 0.26f, 0.8f));
+        render_face(m_snap_hover, GLGizmoBase::FLATTEN_HOVER_COLOR, find_volume(m_snap_hover));
+    render_face(m_snap_face, ColorRGBA(0.92f, 0.50f, 0.26f, 0.8f), find_volume(m_snap_face));
+    // Target surface in magenta (the Measure gizmo's second selection colour), kept while set.
+    const GLVolume* target_volume = snap_target_volume();
+    if (m_snap_pick_target)
+        render_face(m_snap_target_hover, ColorRGBA(0.75f, 0.25f, 0.75f, 0.4f), find_volume(m_snap_target_hover));
+    render_face(m_snap_target, ColorRGBA(0.75f, 0.25f, 0.75f, 0.8f), target_volume);
 
     shader->stop_using();
     glsafe(::glDisable(GL_POLYGON_OFFSET_FILL));
     glsafe(::glEnable(GL_CULL_FACE));
     glsafe(::glDisable(GL_BLEND));
+}
+
+void GLGizmoMove3D::render_snap_target_row(ImGuiWrapper* imgui, float wrap_width)
+{
+    if (m_snap_target.valid && snap_target_volume() == nullptr)
+        snap_clear_target(); // its object was deleted, edited, or is now the selection
+
+    const float em      = ImGui::GetFontSize();
+    const float gap     = em * 0.9f;
+    const float box_w   = em * 6.5f;
+    const float label_w = imgui->calc_text_size(_L("Target surface")).x;
+    const float x0      = ImGui::GetCursorPosX();
+
+    ImGui::AlignTextToFramePadding();
+    imgui->text(_L("Target surface"));
+    if (ImGui::IsItemHovered())
+        imgui->tooltip(_L("Optional. Pick a face of another object or part and the contact face is projected onto that face only, "
+                          "sliding along it and stopping at its edge, instead of following whatever is under the cursor. "
+                          "Leave it empty to snap to any other object."),
+                       wrap_width);
+    ImGui::SameLine(x0 + label_w + gap);
+
+    // Read-only name box, drawn like a frame so it lines up with the spin boxes.
+    const bool   dark = wxGetApp().dark_mode();
+    const float  h    = ImGui::GetFrameHeight();
+    const ImVec2 pos  = ImGui::GetCursorScreenPos();
+    const ImVec2 end(pos.x + box_w, pos.y + h);
+    const std::string shown = m_snap_pick_target ? into_u8(_L("Click a face...")) : (m_snap_target.valid ? m_snap_target_name : into_u8(_L("None")));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(pos, end, ImGui::GetColorU32(dark ? ImVec4(62 / 255.f, 62 / 255.f, 69 / 255.f, 1.f) : ImVec4(238 / 255.f, 238 / 255.f, 238 / 255.f, 1.f)),
+                      ImGui::GetStyle().FrameRounding);
+    dl->PushClipRect(pos, end, true);
+    dl->AddText(ImVec2(pos.x + ImGui::GetStyle().FramePadding.x, pos.y + ImGui::GetStyle().FramePadding.y),
+                ImGui::GetColorU32(ImGuiCol_Text, (m_snap_target.valid || m_snap_pick_target) ? 1.f : 0.6f), shown.c_str());
+    dl->PopClipRect();
+    ImGui::Dummy(ImVec2(box_w, h));
+    if (m_snap_target.valid && ImGui::IsItemHovered())
+        imgui->tooltip(wxString::FromUTF8(m_snap_target_name), wrap_width);
+
+    ImGui::SameLine(0, gap);
+    if (imgui->button(m_snap_pick_target ? _L("Cancel") : _L("Pick"))) {
+        m_snap_pick_target = !m_snap_pick_target;
+        if (m_snap_pick_target) {
+            m_snap_hover.valid = false;
+            m_snap_hover.region.reset();
+        } else {
+            m_snap_target_hover.valid = false;
+            m_snap_target_hover.region.reset();
+        }
+        m_parent.set_as_dirty();
+    }
+    if (ImGui::IsItemHovered())
+        imgui->tooltip(_L("Then click a face of another object or part. Esc cancels."), wrap_width);
+    ImGui::SameLine(0, gap * 0.6f);
+    if (imgui->button(_L("Clear")))
+        snap_clear_target();
 }
 
 void GLGizmoMove3D::render_snap_to_surface_ui(ImGuiWrapper* imgui, float wrap_width)
@@ -845,11 +1143,13 @@ void GLGizmoMove3D::render_snap_to_surface_ui(ImGuiWrapper* imgui, float wrap_wi
     }
     if (!m_snap_face.valid) {
         imgui->text_wrapped(_L("Click a face of the selected object to use as the contact face."), wrap_width);
+        render_snap_target_row(imgui, wrap_width);
         return;
     }
-    imgui->text_wrapped(_L("Drag onto another object's surface. Scroll while dragging to spin by the Coarse amount "
-                           "(hold Shift for the Fine amount). Click another face to change the contact face."),
+    imgui->text_wrapped(_L("Drag onto another object's surface, or onto the target surface if one is set. Scroll while dragging "
+                           "to spin by the Coarse amount (hold Shift for the Fine amount). Click another face to change the contact face."),
                         wrap_width);
+    render_snap_target_row(imgui, wrap_width);
 
     snap_load_prefs();
 

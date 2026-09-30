@@ -668,7 +668,9 @@ static const t_config_enum_values s_keys_map_NozzleVolumeType = {
     { "Standard",  nvtStandard },
     { "High Flow", nvtHighFlow },
     { "TPU High Flow", nvtTPUHighFlow },
-    { "Hybrid", nvtHybrid }
+    { "Hybrid", nvtHybrid },
+    { "E3D High Flow", nvtE3DHighFlow },
+    { "Extra High Flow", nvtExtraHighFlow }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(NozzleVolumeType)
 
@@ -718,7 +720,32 @@ int get_config_index_base(NozzleVolumeType volume_type, ExtruderType extruder_ty
     for (int index = 0; index < int(variant_list.size()); ++index) {
         if (extruder_variant == variant_list[index] && variant_ids_1based[index] == variant_id_1based) { return index; }
     }
+    // Without this variant, use the id's own first variant (usually Standard), not variant index 0,
+    // which belongs to the first filament or extruder.
+    for (int index = 0; index < int(variant_list.size()); ++index) {
+        if (variant_ids_1based[index] == variant_id_1based) { return index; }
+    }
     return 0;
+}
+
+std::set<NozzleVolumeType> get_extruder_supported_nozzle_volume_types(const DynamicPrintConfig &printer_config, int extruder_id)
+{
+    std::set<NozzleVolumeType> supported_types;
+
+    auto *variant_list   = printer_config.option<ConfigOptionStrings>("extruder_variant_list");
+    auto *extruder_types = printer_config.option<ConfigOptionEnumsGeneric>("extruder_type");
+    if (!variant_list || !extruder_types || extruder_id < 0 ||
+        extruder_id >= (int) variant_list->values.size() || extruder_id >= (int) extruder_types->values.size())
+        return supported_types;
+
+    const ExtruderType extruder_type = ExtruderType(extruder_types->values[extruder_id]);
+    for (NozzleVolumeType volume_type : get_valid_nozzle_volume_type()) {
+        // An unsupported extruder type yields an empty name, which would match any list.
+        const std::string variant = get_extruder_variant_string(extruder_type, volume_type);
+        if (!variant.empty() && variant_list->values[extruder_id].find(variant) != std::string::npos)
+            supported_types.insert(volume_type);
+    }
+    return supported_types;
 }
 
 std::string get_nozzle_volume_type_string(NozzleVolumeType nozzle_volume_type)
@@ -1432,6 +1459,15 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    // Default must not exceed the bottom_shell_layers default (3); the engine treats 0 as 1.
+    def = this->add("bottom_color_penetration_layers", coInt);
+    def->label = L("Bottom paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("This is the number of layers of bottom paint penetration.");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(3));
+
     def = this->add("gap_fill_target", coEnum);
     def->label = L("Apply gap fill");
     def->category = L("Strength");
@@ -1624,7 +1660,7 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1));
 
-    def = this->add("top_solid_infill_flow_ratio", coFloat);
+    def = this->add("top_solid_infill_flow_ratio", coFloats);
     def->label = L("Top surface flow ratio");
     def->category = L("Advanced");
     def->tooltip = L("This factor affects the amount of material for top solid infill. "
@@ -1633,7 +1669,8 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = 2;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(1));
+    def->nullable = true;
+    def->set_default_value(new ConfigOptionFloatsNullable{1});
 
     def = this->add("bottom_solid_infill_flow_ratio", coFloat);
     def->label = L("Bottom surface flow ratio");
@@ -6179,9 +6216,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("raft_first_layer_expansion", coFloat);
     def->label = L("First layer expansion");
     def->category = L("Support");
-    def->tooltip = L("This expands the first raft or support layer to improve bed adhesion.");
+    def->tooltip = L("Expand the first raft or support layer to improve bed plate adhesion, -1 means auto");
     def->sidetext = L("mm");	// millimeters, CIS languages need translation
-    def->min = 0;
+    def->min = -1;
     def->mode = comAdvanced;
     //BBS: change from 3.0 to 2.0
     def->set_default_value(new ConfigOptionFloat(2.0));
@@ -6388,15 +6425,20 @@ void PrintConfigDef::init_fff_params()
     def->label = "Nozzle Volume Type";
     def->tooltip = "Nozzle volume type for extruders.";
     def->enum_keys_map = &ConfigOptionEnum<NozzleVolumeType>::get_enum_values();
-    // Order must match the NozzleVolumeType enum values (Standard=0, High Flow=1, Hybrid=2, TPU High Flow=3).
+    // Listed in display order. A position is not the enum value (E3D High Flow is 5, after the reserved 4),
+    // so map a position to its NozzleVolumeType through enum_keys_map.
     def->enum_values.push_back(L("Standard"));
     def->enum_values.push_back(L("High Flow"));
     def->enum_values.push_back(L("Hybrid"));
     def->enum_values.push_back(L("TPU High Flow"));
+    def->enum_values.push_back(L("E3D High Flow"));
+    def->enum_values.push_back(L("Extra High Flow"));
     def->enum_labels.push_back(L("Standard"));
     def->enum_labels.push_back(L("High Flow"));
     def->enum_labels.push_back(L("Hybrid"));
     def->enum_labels.push_back(L("TPU High Flow"));
+    def->enum_labels.push_back(L("E3D High Flow"));
+    def->enum_labels.push_back(L("Extra High Flow"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnumsGeneric{ NozzleVolumeType::nvtStandard });
 
@@ -6409,10 +6451,14 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back(L("High Flow"));
     def->enum_values.push_back(L("Hybrid"));
     def->enum_values.push_back(L("TPU High Flow"));
+    def->enum_values.push_back(L("E3D High Flow"));
+    def->enum_values.push_back(L("Extra High Flow"));
     def->enum_labels.push_back(L("Standard"));
     def->enum_labels.push_back(L("High Flow"));
     def->enum_labels.push_back(L("Hybrid"));
     def->enum_labels.push_back(L("TPU High Flow"));
+    def->enum_labels.push_back(L("E3D High Flow"));
+    def->enum_labels.push_back(L("Extra High Flow"));
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionEnumsGeneric{ NozzleVolumeType::nvtStandard });
 
@@ -6483,7 +6529,7 @@ void PrintConfigDef::init_fff_params()
     // Per-nozzle volume type. Forward-compat-only registration with no slicing consumer — nothing in
     // src/ reads it; the engine resolves per-nozzle volume types from `extruder_nozzle_stats` tokens
     // instead. Kept registered so a project/config carrying it loads without an unknown-option
-    // substitution warning. Registers Standard/High Flow/TPU High Flow only (no Hybrid).
+    // substitution warning. Registers the physical types only (no Hybrid).
     // Internal use only, no translation.
     def = this->add("extruder_nozzle_volume_type", coEnums);
     def->label = "Extruder nozzle volume type";
@@ -6492,9 +6538,13 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("Standard");
     def->enum_values.push_back("High Flow");
     def->enum_values.push_back("TPU High Flow");
+    def->enum_values.push_back("E3D High Flow");
+    def->enum_values.push_back("Extra High Flow");
     def->enum_labels.push_back("Standard");
     def->enum_labels.push_back("High Flow");
     def->enum_labels.push_back("TPU High Flow");
+    def->enum_labels.push_back("E3D High Flow");
+    def->enum_labels.push_back("Extra High Flow");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionEnumsGeneric{ NozzleVolumeType::nvtStandard });
 
@@ -7278,6 +7328,20 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("wipe_tower_sparse_layers_combination", coBool);
+    def->label = L("Combine sparse layers");
+    def->tooltip = L("If enabled, consecutive layers on which the prime tower has no filament change are printed as a single "
+                     "thicker tower layer instead of one thin layer each, the same way infill combination merges sparse infill. "
+                     "The merged layer is printed at the top of the run, at the height of everything it covers.\n\n"
+                     "Only whole layers are merged, and never past the maximum layer height of the nozzle printing the tower "
+                     "(three quarters of the nozzle diameter when that is left at 0). Two or more layers therefore have to fit "
+                     "under that limit before anything changes at all: at a 0.2 mm layer height under a 0.3 mm maximum nothing "
+                     "is merged, while at 0.1 mm three layers become one.\n\n"
+                     "Unlike \"No sparse layers\" the tower keeps following the model, so the toolhead never has to reach down to it. "
+                     "Has no effect with \"No sparse layers\", smooth timelapse or clumping detection, which need a tower on every layer.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("single_extruder_multi_material_priming", coBool);
     def->label = L("Prime all printing extruders");
     def->tooltip = L("If enabled, all printing extruders will be primed at the front edge of the print bed at the start of the print.");
@@ -7614,6 +7678,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.5));
 
+    def = this->add("support_interface_min_area", coFloat);
+    def->gui_type = ConfigOptionDef::GUIType::f_enum_open;
+    def->label    = L("Minimum Support Contact Area");
+    def->category = L("Support");
+    def->tooltip  = L("Lower values generate more support contact surfaces.");
+    def->sidetext = "mm²";	// square milimeters, don't need translation
+    def->min      = 0;
+    def->enum_values.push_back("0");
+    def->enum_values.push_back("0.25");
+    def->enum_values.push_back("0.64");
+    def->enum_values.push_back("1");
+    def->enum_labels.push_back("0");
+    def->enum_labels.push_back("0.25");
+    def->enum_labels.push_back("0.64");
+    def->enum_labels.push_back("1");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.25));
+
     //BBS
     def = this->add("support_bottom_interface_spacing", coFloat);
     def->label = L("Bottom interface spacing");
@@ -7824,6 +7906,43 @@ void PrintConfigDef::init_fff_params()
     def->max = 60;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(40.));
+
+    // Transition layers between the support interface and the support body.
+    def = this->add("tree_support_transition_layers", coInt);
+    def->label = L("Tree support transition layers");
+    def->category = L("Support");
+    def->tooltip = L("Number of transition layers between tree support interface and support body. 0 disables transition layers. Bambu Studio uses 1 layer by default; Snapmaker recommends 2 layers for better adhesion with high-shrinkage materials like ABS/PC/PA.");
+    def->sidetext = L("layers");
+    def->min = 0;
+    def->max = 3;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
+    def = this->add("support_transition_perimeter", coBool);
+    def->label = L("Support transition perimeter");
+    def->category = L("Support");
+    def->tooltip = L("Generate a perimeter loop before transition layer infill for better surface connection. Recommended to keep enabled.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def = this->add("support_transition_speed", coFloats);
+    def->label = L("Support transition speed");
+    def->category = L("Speed");
+    def->tooltip = L("Independent printing speed for support transition layers. Lower speed improves layer adhesion. Different from bridge_speed which is for bridging over gaps.");
+    def->sidetext = L("mm/s");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats { 50. });
+
+    def = this->add("support_transition_flow_ratio", coFloatOrPercent);
+    def->label = L("Support transition flow ratio");
+    def->category = L("Support");
+    def->tooltip = L("Flow ratio for support transition layers relative to normal support flow. Slightly lower than interface flow for a more natural transition. 0.85 = 85% of normal support flow.");
+    def->sidetext = L("%");
+    def->min = 0.1;
+    def->max = 2.0;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloatOrPercent(1.0, false));
 
     def = this->add("tree_support_angle_slow", coFloat);
     def->label = L("Preferred Branch Angle");
@@ -8147,6 +8266,15 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(0.6));
 
+    // Default must not exceed the top_shell_layers default (4); the engine treats 0 as 1.
+    def = this->add("top_color_penetration_layers", coInt);
+    def->label = L("Top paint penetration layers");
+    def->category = L("Strength");
+    def->sidetext = L("layers");
+    def->tooltip = L("This is  the number of layers of top paint penetration.");
+    def->min = 0;
+    def->set_default_value(new ConfigOptionInt(4));
+
     def           = this->add("separated_infills", coBool);
     def->label    = L("Separated infills");
     def->category = L("Strength");
@@ -8365,8 +8493,8 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(30.0));
     
     def = this->add("wipe_tower_max_purge_speed", coFloat);
-    def->label = L("Maximum wipe tower print speed of out wall");
-    def->tooltip = L("Maximum wipe tower print speed of out wall.");
+    def->label = L("Max speed");
+    def->tooltip = L("The maximum printing speed on the prime tower excluding ramming.");
     def->sidetext = L("mm/s");	// millimeters per second, CIS languages need translation
     def->mode = comAdvanced;
     def->min = 10;
@@ -9835,6 +9963,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         value = "tree(auto)";
     } else if (opt_key == "support_base_pattern" && value == "none") {
         value = "hollow";
+    } else if (opt_key == "tree_support_wall_count" && value == "-1") {
+        value = "0";
     } else if (opt_key == "different_settings_to_system") {
         std::string copy_value = value;
         copy_value.erase(std::remove(copy_value.begin(), copy_value.end(), '\"'), copy_value.end()); // remove '"' in string
@@ -9905,6 +10035,11 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "infill_anchor";
     } else if (opt_key == "sparse_infill_anchor_max") {
         opt_key = "infill_anchor_max";
+    } else if (opt_key == "first_layer_travel_acceleration") {
+        // Upstream Snapmaker Orca name of the first layer travel acceleration and jerk.
+        opt_key = "initial_layer_travel_acceleration";
+    } else if (opt_key == "first_layer_travel_jerk") {
+        opt_key = "initial_layer_travel_jerk";
     } else if (opt_key == "chamber_temperatures") {
         opt_key = "chamber_temperature";
     } else if (opt_key == "thumbnail_size") {
@@ -9988,7 +10123,7 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "max_volumetric_speed", "max_print_speed",
         "support_closing_radius",
         "remove_freq_sweep", "remove_bed_leveling", "remove_extrusion_calibration",
-        "support_transition_line_width", "support_transition_speed", "bed_temperature", "bed_temperature_initial_layer",
+        "support_transition_line_width", "bed_temperature", "bed_temperature_initial_layer",
         "can_switch_nozzle_type", "can_add_auxiliary_fan", "extra_flush_volume", "spaghetti_detector", "adaptive_layer_height",
         "z_hop_type", "z_lift_type", "bed_temperature_difference","long_retraction_when_cut",
         "retraction_distance_when_cut",
@@ -10061,6 +10196,10 @@ void PrintConfigDef::handle_legacy_composite(DynamicPrintConfig &config)
         }
         config.set_key_value("wiping_volumes_use_custom_matrix", new ConfigOptionBool(custom));
     }
+
+    // Orca: a config saved before a key joined filament_options_with_variant stores it once per filament
+    // rather than once per filament variant, and one exported by an older CLI may store a single value.
+    normalize_filament_values_to_variants(config);
 }
 
 const PrintConfigDef print_config_def;
@@ -10122,7 +10261,8 @@ std::set<std::string> print_options_with_variant = {
     "bridge_line_width",
     "print_extruder_id", //coInts
     "print_extruder_variant", //coStrings
-    "print_extruder_override" //coStrings, Snapmaker Orca: the marker of the values set per tool head
+    "print_extruder_override", //coStrings, Snapmaker Orca: the marker of the values set per extruder
+    "top_solid_infill_flow_ratio"
 };
 
 std::set<std::string> filament_options_with_variant = {
@@ -10174,15 +10314,20 @@ std::set<std::string> filament_options_with_variant = {
     "filament_ironing_spacing",
     "filament_ironing_inset",
     "filament_ironing_speed",
+    // Orca: pressure advance
+    "enable_pressure_advance",
+    "pressure_advance",
+    "adaptive_pressure_advance",
+    "adaptive_pressure_advance_model",
+    "adaptive_pressure_advance_overhangs",
+    "adaptive_pressure_advance_bridges",
     "activate_air_filtration",
     "activate_air_filtration_during_print",
     "activate_air_filtration_on_completion",
     "during_print_exhaust_fan_speed",
     "complete_print_exhaust_fan_speed",
-    // Snapmaker: tuned per nozzle flow type, so one value per filament_extruder_variant column (mainline:
-    // per filament); normalize_promoted_filament_keys() rebuilds per-filament project files.
-    "enable_pressure_advance",
-    "pressure_advance",
+    // Snapmaker: tuned per nozzle flow type, one value per filament_extruder_variant column;
+    // normalize_filament_values_to_variants() spreads per-filament values of a project over its columns.
     "fan_min_speed",
     "fan_max_speed",
     "additional_cooling_fan_speed",
@@ -10191,7 +10336,7 @@ std::set<std::string> filament_options_with_variant = {
     "filament_multitool_ramming_flow",
     "filament_minimal_purge_on_wipe_tower",
     // Snapmaker: the bed temperatures of every plate and the chamber temperature, which a High Flow
-    // nozzle may need other values for; per filament in mainline, rebuilt like the keys above.
+    // nozzle may need other values for; spread over the columns like the keys above.
     "supertack_plate_temp",
     "supertack_plate_temp_initial_layer",
     "cool_plate_temp",
@@ -10929,6 +11074,13 @@ bool DynamicPrintConfig::is_using_different_extruders()
     return ret;
 }
 
+bool DynamicPrintConfig::has_multi_variant_filament() const
+{
+    auto variants  = dynamic_cast<const ConfigOptionStrings*>(this->option("filament_extruder_variant"));
+    auto diameters = dynamic_cast<const ConfigOptionFloats*>(this->option("filament_diameter"));
+    return variants && diameters && variants->size() > diameters->size();
+}
+
 bool DynamicPrintConfig::support_different_extruders(int& extruder_count) const
 {
     std::set<std::string> variant_set;
@@ -11561,6 +11713,25 @@ void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVect
     target.set_to_index(&source, indices, stride);
 }
 
+void normalize_filament_values_to_variants(DynamicPrintConfig &config)
+{
+    const auto *self_index = config.option<ConfigOptionInts>("filament_self_index");
+    if (self_index == nullptr || self_index->empty())
+        return;
+    const int filament_count = *std::max_element(self_index->values.begin(), self_index->values.end());
+    if (filament_count <= 0 || size_t(filament_count) >= self_index->size())
+        return;
+    for (const std::string &key : filament_options_with_variant) {
+        auto *opt = dynamic_cast<ConfigOptionVectorBase *>(config.option(key));
+        if (opt == nullptr || (opt->size() != size_t(filament_count) && opt->size() != 1))
+            continue;
+        std::unique_ptr<ConfigOption> per_filament(opt->clone());
+        // set_at() takes the first value for a filament past the end of a single-value vector
+        for (size_t variant = 0; variant < self_index->size(); ++variant)
+            opt->set_at(per_filament.get(), variant, self_index->values[variant] - 1);
+    }
+}
+
 
 //used for object/region config
 //use the smallest of multiple to single
@@ -12026,6 +12197,11 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
             return;
         }
         std::vector<int> filament_maps = opt_filament_map->values;
+        auto opt_ids = id_name.empty()? nullptr: dynamic_cast<const ConfigOptionInts*>(this->option(id_name));
+        // Orca: a map shorter than the filament count must not drop the filaments past its end;
+        // they take the first extruder.
+        if (opt_ids && !opt_ids->values.empty())
+            filament_maps.resize(std::max<size_t>(filament_maps.size(), *std::max_element(opt_ids->values.begin(), opt_ids->values.end())), 1);
         size_t filament_count = filament_maps.size();
         //apply process settings
         auto opt_extruder_type = dynamic_cast<const ConfigOptionEnumsGeneric*>(printer_config.option("extruder_type"));
@@ -12044,7 +12220,6 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
         // indexed out of bounds.
         if (opt_filament_volume_maps && opt_filament_volume_maps->values.size() == filament_count)
             filament_volume_maps = opt_filament_volume_maps->values;
-        auto opt_ids = id_name.empty()? nullptr: dynamic_cast<const ConfigOptionInts*>(this->option(id_name));
         std::vector<int> variant_index;
 
         variant_index.resize(filament_count, -1);
@@ -12061,16 +12236,10 @@ void DynamicPrintConfig::update_values_to_printer_extruders_for_multiple_filamen
             //variant index
             variant_index[f_index] = get_index_for_extruder(f_index+1, id_name, extruder_type, nozzle_volume_type, variant_name);
             if (variant_index[f_index] < 0) {
-                // Snapmaker Orca: a filament that owns exactly one column (no High Flow values) on a
-                // head of another flow type is ordinary use and resolves to that column below; only
-                // a filament with several columns, or none, that still misses is an error.
-                const bool single_column = opt_ids != nullptr && std::count(opt_ids->values.begin(), opt_ids->values.end(), f_index + 1) == 1;
-                if (single_column)
-                    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(", Line %1%: filament %4% has a single column, used for extruder_type %2%, nozzle_volume_type %3%, extruder index %5%")
-                        %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
-                else
-                    BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, filament_index %4%, extruder index %5%")
-                        %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
+                // Orca: a filament need not define every extruder variant (a Direct Drive filament on a
+                // Bowden printer), so this is not an invalid state: the filament's first variant is used.
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", Line %1%: could not found extruder_type %2%, nozzle_volume_type %3%, filament_index %4%, extruder index %5%")
+                    %__LINE__ %s_keys_names_ExtruderType[extruder_type] % s_keys_names_NozzleVolumeType[nozzle_volume_type] % (f_index+1) %filament_maps[f_index];
                 //for some updates happens in a invalid state(caused by popup window)
                 //we need to avoid crash (recovery below is the intended behavior; no debug abort)
                 variant_index[f_index] = 0;
@@ -12708,6 +12877,13 @@ std::map<std::string, std::string> validate(const FullPrintConfig &cfg, bool und
     }
     if (cfg.bottom_shell_layers < 0) {
         error_message.emplace("bottom_shell_layers", L("invalid value ") + std::to_string(cfg.bottom_shell_layers));
+    }
+    // Negative penetration wraps to SIZE_MAX in the MMU loop; reject like the shell keys.
+    if (cfg.top_color_penetration_layers < 0) {
+        error_message.emplace("top_color_penetration_layers", L("invalid value ") + std::to_string(cfg.top_color_penetration_layers));
+    }
+    if (cfg.bottom_color_penetration_layers < 0) {
+        error_message.emplace("bottom_color_penetration_layers", L("invalid value ") + std::to_string(cfg.bottom_color_penetration_layers));
     }
 
     if (cfg.use_firmware_retraction.value &&
@@ -13601,6 +13777,7 @@ OtherSlicingStatesConfigDef::OtherSlicingStatesConfigDef()
 
     new_def("initial_no_support_extruder", coInt, "Initial no support extruder", "Zero-based index of the first extruder used for printing without support. Same as initial_no_support_tool.");
     new_def("in_head_wrap_detect_zone", coBool, "In head wrap detect zone", "Indicates if the first layer overlaps with the head wrap zone.");
+    new_def("curr_bed_type", coString, "Current bed type", "Name of the currently selected bed plate type (e.g. 'Textured PEI Plate', 'Smooth High Temp Plate').");
 }
 
 PrintStatisticsConfigDef::PrintStatisticsConfigDef()

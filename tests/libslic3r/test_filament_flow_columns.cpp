@@ -749,14 +749,14 @@ TEST_CASE("The filament index of a project is rebuilt only from column counts th
 
 TEST_CASE("Filament fields outside the per-column keys are shared by Standard and High Flow", "[FilamentFlow]")
 {
-    // The time fields of the two fan speed threshold lines, the overhang fan, adaptive pressure advance.
-    for (const char *key : {"fan_cooling_layer_time", "slow_down_layer_time", "overhang_fan_speed", "adaptive_pressure_advance"}) {
+    // The time fields of the two fan speed threshold lines, the overhang fan.
+    for (const char *key : {"fan_cooling_layer_time", "slow_down_layer_time", "overhang_fan_speed"}) {
         INFO(key);
         CHECK(filament_field_shared_under_high_flow(key));
     }
     // The fan speeds of those lines and the values tuned per nozzle flow type, the bed and chamber
-    // temperatures included.
-    for (const char *key : {"fan_min_speed", "fan_max_speed", "nozzle_temperature", "filament_max_volumetric_speed", "hot_plate_temp",
+    // temperatures and adaptive pressure advance included.
+    for (const char *key : {"fan_min_speed", "fan_max_speed", "nozzle_temperature", "filament_max_volumetric_speed", "hot_plate_temp", "adaptive_pressure_advance",
                             "textured_plate_temp_initial_layer", "graphic_effect_plate_temp", "activate_chamber_temp_control",
                             "chamber_temperature", "chamber_minimal_temperature"}) {
         INFO(key);

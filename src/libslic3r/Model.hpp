@@ -347,7 +347,21 @@ enum class ModelVolumeType : int {
     PARAMETER_MODIFIER,
     SUPPORT_BLOCKER,
     SUPPORT_ENFORCER,
+    // Precise seam modifiers (6 subtypes for seam placement control).
+    // Order is critical: strong types first, then weak. Range checks in is_precise_seam*() depend on it.
+    PRECISE_SEAM_CENTER,
+    PRECISE_SEAM_LEFT,
+    PRECISE_SEAM_RIGHT,
+    PRECISE_SEAM_ENFORCED,
+    PRECISE_SEAM_BLOCKED,
+    PRECISE_SEAM_NEUTRAL,
 };
+
+// Free functions for checking ModelVolumeType without a ModelVolume object.
+// Keep in sync with ModelVolume::is_precise_seam*() methods below.
+inline bool is_precise_seam(ModelVolumeType t)       { return t >= ModelVolumeType::PRECISE_SEAM_CENTER && t <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
+inline bool is_precise_seam_strong(ModelVolumeType t) { return t >= ModelVolumeType::PRECISE_SEAM_CENTER && t <= ModelVolumeType::PRECISE_SEAM_RIGHT; }
+inline bool is_precise_seam_weak(ModelVolumeType t)   { return t >= ModelVolumeType::PRECISE_SEAM_ENFORCED && t <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
 
 // A printable object, possibly having multiple print volumes (each with its own set of parameters and materials),
 // and possibly having multiple modifier volumes, each modifier volume with its set of parameters and materials.
@@ -927,6 +941,14 @@ public:
 	bool                is_support_enforcer()   const { return m_type == ModelVolumeType::SUPPORT_ENFORCER; }
 	bool                is_support_blocker()    const { return m_type == ModelVolumeType::SUPPORT_BLOCKER; }
 	bool                is_support_modifier()   const { return m_type == ModelVolumeType::SUPPORT_BLOCKER || m_type == ModelVolumeType::SUPPORT_ENFORCER; }
+	// Check if this volume is any of the precise seam modifier subtypes
+	bool                is_precise_seam()       const { return m_type >= ModelVolumeType::PRECISE_SEAM_CENTER && m_type <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
+	// Helper to check if volume is a "strong" Precise Seam type (center, left, right)
+	// Strong modifiers have priority and always appear above weak modifiers in UI
+	bool                is_precise_seam_strong() const { return m_type >= ModelVolumeType::PRECISE_SEAM_CENTER && m_type <= ModelVolumeType::PRECISE_SEAM_RIGHT; }
+	// Helper to check if volume is a "weak" Precise Seam type (enforced, blocked, neutral)
+	// Weak modifiers always appear below strong modifiers in UI
+	bool                is_precise_seam_weak()   const { return m_type >= ModelVolumeType::PRECISE_SEAM_ENFORCED && m_type <= ModelVolumeType::PRECISE_SEAM_NEUTRAL; }
     bool                is_text()               const { return text_configuration.has_value(); }
     bool                is_svg() const { return emboss_shape.has_value()  && !text_configuration.has_value(); }
     bool                is_the_only_one_part() const; // behave like an object
@@ -1042,7 +1064,12 @@ public:
     bool is_mm_painted() const { return !this->mmu_segmentation_facets.empty(); }
     bool is_fuzzy_skin_painted() const { return !this->fuzzy_skin_facets.empty(); }
     bool is_any_painted() const { return is_fdm_support_painted() || is_seam_painted() || is_mm_painted() || is_fuzzy_skin_painted(); }
-    
+
+    // Id of the object this volume came from when objects were assembled into one; compared for
+    // equality by ModelObject::split() to return non-solid volumes to their source object.
+    void     set_merged_group_id(ObjectID id) { m_merged_group_id = id; }
+    ObjectID merged_group_id() const { return m_merged_group_id; }
+
     // Orca: Implement prusa's filament shrink compensation approach
     // Returns 0-based indices of extruders painted by multi-material painting gizmo.
      std::vector<size_t> get_extruders_from_multi_material_painting() const;
@@ -1052,7 +1079,7 @@ protected:
     friend class SLAPrint;
     friend class Model;
 	friend class ModelObject;
-    friend void model_volume_list_update_supports(ModelObject& model_object_dst, const ModelObject& model_object_new);
+    friend void model_volume_list_update_supports_and_seams(ModelObject& model_object_dst, const ModelObject& model_object_new);
 
 	// Copies IDs of both the ModelVolume and its config.
 	explicit ModelVolume(const ModelVolume &rhs) = default;
@@ -1069,6 +1096,7 @@ private:
     // Is it an object to be printed, or a modifier volume?
     ModelVolumeType                 	m_type;
     t_model_material_id             	m_material_id;
+    mutable bool m_mmuseg_extruders_has_0_extruder{ true };
     // The convex hull of this model's mesh.
     std::shared_ptr<const TriangleMesh> m_convex_hull;
     //BBS: add convex hull 2d related logic
@@ -1085,6 +1113,9 @@ private:
     //      0   ->   is not splittable
     //      1   ->   is splittable
     mutable int               		m_is_splittable{ -1 };
+    // See set_merged_group_id(). Invalid (0) when the volume did not come
+    // from an "Assemble" merge.
+    ObjectID                        m_merged_group_id{};
 
 	ModelVolume(ModelObject *object, const TriangleMesh &mesh, ModelVolumeType type = ModelVolumeType::MODEL_PART) : m_mesh(new TriangleMesh(mesh)), m_type(type), object(object)
     {
@@ -1137,7 +1168,8 @@ private:
         name(other.name), source(other.source), m_mesh(other.m_mesh), m_convex_hull(other.m_convex_hull),
         config(other.config), m_type(other.m_type), object(object), m_transformation(other.m_transformation),
         supported_facets(other.supported_facets), seam_facets(other.seam_facets), mmu_segmentation_facets(other.mmu_segmentation_facets),
-        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration),
+        emboss_shape(other.emboss_shape), m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1160,7 +1192,8 @@ private:
     // Providing a new mesh, therefore this volume will get a new unique ID assigned.
     ModelVolume(ModelObject *object, const ModelVolume &other, TriangleMesh &&mesh) :
         name(other.name), source(other.source), config(other.config), object(object), m_mesh(new TriangleMesh(std::move(mesh))), m_type(other.m_type), m_transformation(other.m_transformation),
-        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape),
+        m_merged_group_id(other.m_merged_group_id)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1210,7 +1243,8 @@ private:
         // BBS: add backup, check modify
         bool mesh_changed = false;
         auto tr = m_transformation;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         mesh_changed |= !(tr == m_transformation);
         auto t = supported_facets.timestamp();
         cereal::load_by_value(ar, supported_facets);
@@ -1239,7 +1273,8 @@ private:
 	}
 	template<class Archive> void save(Archive &ar) const {
 		bool has_convex_hull = m_convex_hull.get() != nullptr;
-        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info);
+        ar(name, source, m_mesh, m_type, m_material_id, m_transformation, m_is_splittable, has_convex_hull, cut_info,
+            m_merged_group_id);
         cereal::save_by_value(ar, supported_facets);
         cereal::save_by_value(ar, seam_facets);
         cereal::save_by_value(ar, mmu_segmentation_facets);

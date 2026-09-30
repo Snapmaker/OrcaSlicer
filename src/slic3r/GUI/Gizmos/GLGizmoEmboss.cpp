@@ -505,6 +505,7 @@ bool GLGizmoEmboss::init_create(ModelVolumeType volume_type)
 
 bool GLGizmoEmboss::on_mouse_for_rotation(const wxMouseEvent &mouse_event)
 {
+    if (m_keep_up) return false;
     if (mouse_event.Moving()) return false;
 
     bool used = use_grabbers(mouse_event);
@@ -745,6 +746,7 @@ bool GLGizmoEmboss::on_init()
 std::string GLGizmoEmboss::on_get_name() const { return _u8L("Emboss"); }
 
 void GLGizmoEmboss::on_render() {
+
     // no volume selected
     const Selection &selection = m_parent.get_selection();
     if (m_volume == nullptr ||
@@ -772,8 +774,8 @@ void GLGizmoEmboss::on_render() {
     bool is_parent_dragging = m_parent.is_mouse_dragging();
     // Do NOT render rotation grabbers when dragging object
     bool is_rotate_by_grabbers = m_dragging;
-    if (is_rotate_by_grabbers || 
-        (!is_surface_dragging && !is_parent_dragging)) {
+    if (!m_keep_up && (is_rotate_by_grabbers || 
+        (!is_surface_dragging && !is_parent_dragging))) {
         glsafe(::glClear(GL_DEPTH_BUFFER_BIT));
         m_rotate_gizmo.render();
     }
@@ -1322,6 +1324,17 @@ void GLGizmoEmboss::reset_to_default_style()
         ::fix_transformation(cur_s, new_s, m_parent);
         process();
     }
+}
+
+void GLGizmoEmboss::set_keep_up(bool keep_up) 
+{
+    if (m_keep_up == keep_up)
+        return;
+    m_keep_up = keep_up;
+    if (keep_up)
+        m_rotate_gizmo.unregister_raycasters_for_picking();
+    else
+        m_rotate_gizmo.register_raycasters_for_picking();
 }
 
 void GLGizmoEmboss::calculate_scale() {
@@ -2000,7 +2013,7 @@ void GLGizmoEmboss::draw_model_type()
         if ((is_volume_move_inside || is_volume_move_outside))
             process();
 
-        // inspiration in ObjectList::change_part_type()
+        // inspiration in ObjectList::set_volume_type()
         // how to view correct side panel with objects
         ObjectList *obj_list = app.obj_list();
         wxDataViewItemArray sel = obj_list->reorder_volumes_and_get_selection(
@@ -2992,6 +3005,7 @@ void GLGizmoEmboss::draw_advanced()
         0.f : (*stored_style->angle * -180 / M_PI);
     float* def_angle_deg = stored_style ?
         &def_angle_deg_val : nullptr;
+    m_imgui->disabled_begin(m_keep_up);
     if (rev_slider(tr.rotation, angle_deg, def_angle_deg, _u8L("Undo rotation"), 
         limits.angle.min, limits.angle.max, u8"%.2f °",
                    _L("Rotate text Clockwise."))) {
@@ -3026,6 +3040,7 @@ void GLGizmoEmboss::draw_advanced()
         if (use_surface || font_prop.per_glyph)
             process();
     }
+    m_imgui->disabled_end();
 
     // Keep up - lock button icon
     if (!m_volume->is_the_only_one_part()) {
@@ -3033,8 +3048,9 @@ void GLGizmoEmboss::draw_advanced()
         const IconManager::Icon &icon = get_icon(m_icons, m_keep_up ? IconType::lock : IconType::unlock, IconState::activable);
         const IconManager::Icon &icon_hover = get_icon(m_icons, m_keep_up ? IconType::lock_bold : IconType::unlock_bold, IconState::activable);
         const IconManager::Icon &icon_disable = get_icon(m_icons, m_keep_up ? IconType::lock : IconType::unlock, IconState::disabled);
-        if (button(icon, icon_hover, icon_disable))
-            m_keep_up = !m_keep_up;
+        if (button(icon, icon_hover, icon_disable)) {
+            set_keep_up(!m_keep_up);
+        }
     
         if (ImGui::IsItemHovered())
             m_imgui->tooltip(m_keep_up?
@@ -3042,6 +3058,8 @@ void GLGizmoEmboss::draw_advanced()
                 _u8L("Lock the text's rotation when moving text along the object's surface.")
             , m_gui_cfg->max_tooltip_width);
     }
+    else
+        set_keep_up(false);
 
     // when more collection add selector
     if (ff.font_file->infos.size() > 1) {

@@ -250,6 +250,8 @@ public:
         float               infill_speed = 0.f;
         float               perimeter_speed = 0.f;
         float               first_layer_speed = 0.f;
+        // Tallest layer this filament's nozzle can lay down; caps the sparse layer combination.
+        float               max_layer_height = 0.f;
     };
 
     const std::map<float, Polylines>& get_outer_wall() const { return m_outer_wall; }
@@ -338,6 +340,7 @@ private:
     float           m_extra_loading_move        = 0.f;
     float           m_bridging                  = 0.f;
     bool            m_sparse_layers_skipped     = false;
+    bool            m_sparse_layers_combined    = false;
     bool            m_set_extruder_trimpot      = false;
     bool            m_adhesion                  = true;
     GCodeFlavor     m_gcode_flavor;
@@ -441,6 +444,8 @@ private:
 		float z;		// z position of the layer
 		float height;	// layer height
 		float depth;	// depth of the layer based on all layers above
+		// Folded into a later, thicker layer, so this one prints nothing at all.
+		bool  combined_away{false};
         float normal_toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
         float local_z_toolchanges_depth() const { float sum = 0.f; for (const auto &a : local_z_tool_changes) sum += a.required_depth; return sum; }
 		float toolchanges_depth() const { return normal_toolchanges_depth() + local_z_toolchanges_depth(); }

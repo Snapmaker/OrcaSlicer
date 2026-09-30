@@ -698,7 +698,8 @@ public:
                 }
             } else {
                 // Resize by duplicating the last value.
-                this->values.resize(n, this->values./*back*/front());
+                T v = this->values./*back*/front();
+                this->values.resize(n, v);
             }
         }
     }
@@ -773,8 +774,10 @@ public:
 
         if (this->values.empty())
             this->values.resize(rhs_vec->size());
-        else
-            this->values.resize(rhs_vec->size(), this->values.front());
+        else {
+            T v = this->values.front();
+            this->values.resize(rhs_vec->size(), v);
+        }
 
         assert(default_index.size() == rhs_vec->size());
 

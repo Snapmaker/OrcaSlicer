@@ -450,11 +450,17 @@ void fill_flow_combo(::ComboBox *combo, const DynamicPrintConfig &printer_config
         same_items = intptr_t(combo->GetClientData(int(item))) == intptr_t(offered[item]);
     if (!same_items) {
         const ConfigOptionDef *def = print_config_def.get("nozzle_volume_type");
+        // Labels are listed by position, which differs from the enum value from E3D High Flow on.
+        auto label_of = [def](int type) -> wxString {
+            if (def != nullptr && def->enum_keys_map != nullptr)
+                for (size_t pos = 0; pos < def->enum_values.size() && pos < def->enum_labels.size(); ++pos)
+                    if (auto it = def->enum_keys_map->find(def->enum_values[pos]); it != def->enum_keys_map->end() && it->second == type)
+                        return _L(def->enum_labels[pos]);
+            return from_u8(get_nozzle_volume_type_string(NozzleVolumeType(type)));
+        };
         combo->Clear();
         for (int type : offered)
-            combo->Append(def != nullptr && size_t(type) < def->enum_labels.size() ? _L(def->enum_labels[size_t(type)]) :
-                                                                                      from_u8(get_nozzle_volume_type_string(NozzleVolumeType(type))),
-                          {}, (void*)intptr_t(type));
+            combo->Append(label_of(type), {}, (void*)intptr_t(type));
     }
 
     // A head that cannot run High Flow shows its first offered type whatever is stored; the

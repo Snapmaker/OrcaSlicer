@@ -8,7 +8,7 @@
     "printer_model": "Snapmaker U1",
     "printer_variant": "0.8",
     "auxiliary_fan": "1",
-    "change_filament_gcode": ";===== date: 20251213 =====================\n\n; Change Tool[previous_extruder] -> Tool[next_extruder] (layer [layer_num])\n{\nlocal max_speed_toolchange = 350.0;\nlocal wait_for_extruder_temp = true;\nposition[2] = position[2] + 2.0;\nlocal speed_toolchange = max_speed_toolchange;\nif travel_speed < max_speed_toolchange then\n      speed_toolchange = travel_speed;\nendif\n\"G91\nG1 Z1.5 F1800\nG90\n\";\n\"G1 F\" + (speed_toolchange * 60) + \"\n\";\nif wait_for_extruder_temp and not((layer_num < 0) and (next_extruder == initial_tool)) then\n      \"\n\";\n      \"; \" + layer_num + \"\n\";\n      if layer_num == 0 then\n            \"M109 S\" + first_layer_temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      else\n            \"M109 S\" + temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      endif\nendif\n\"M400\" + \"\n\";\n\"T\" + next_extruder + \"\n\";\nif filament_type[next_extruder] == \"PVA\" then\n\"SET_VELOCITY_LIMIT ACCEL=3000\n\";\nelse\nendif\nif previous_extruder != next_extruder and initial_extruder != next_extruder then\n\"SM_PRINT_PREEXTRUDE_FILAMENT INDEX=\" + next_extruder + \"\n\";\nendif\n\"G90\n\";\n}\n",
+    "change_filament_gcode": ";===== date: 20260605 =====================\n; Change Tool[previous_extruder] -> Tool[next_extruder] (layer [layer_num])\n; max_layer_z [max_layer_z]\n; max_print_height [max_print_height]\n; print_sequence [print_sequence]\n\n{\nlocal move_z = 1.5;\nlocal max_speed_toolchange = 350.0;\nlocal wait_for_extruder_temp = true;\nposition[2] = position[2] + 2.0;\nlocal speed_toolchange = max_speed_toolchange;\n\nif travel_speed < max_speed_toolchange then\n      speed_toolchange = travel_speed;\nendif\n\nif print_sequence == \"by object\" then\n\n    if max_layer_z < ((max_print_height - z_offset) - 2) then\n        move_z = z_offset + min(((max_layer_z - z_offset) + 2), max_print_height);\n    endif\n\nendif\n\n\"G91\nG1 Z\" + move_z + \" F600\nG90\n\";\n\"G1 F\" + (speed_toolchange * 60) + \"\n\";\nif wait_for_extruder_temp and not((layer_num < 0) and (next_extruder == initial_tool)) then\n      \"\n\";\n      \"; \" + layer_num + \"\n\";\n      if layer_num == 0 then\n            \"M109 S\" + first_layer_temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      else\n            \"M109 S\" + temperature[next_extruder] + \" T\" + next_extruder + \"\n\";\n      endif\nendif\n\"M400\" + \"\n\";\n\"T\" + next_extruder + \"\n\";\nif filament_type[next_extruder] == \"PVA\" then\n\"SET_VELOCITY_LIMIT ACCEL=3000\n\";\nelse\nendif\nif previous_extruder != next_extruder and initial_extruder != next_extruder then\n\"SM_PRINT_PREEXTRUDE_FILAMENT INDEX=\" + next_extruder + \"\n\";\nendif\n\"G90\n\";\n}\n",
     "deretraction_speed": [
         "30",
         "30",
@@ -38,13 +38,31 @@
     "machine_end_gcode": "{if print_sequence == \\\"by object\\\"}\\nG91\\nG1 X2 Y2 Z1 F24000\\nG90\\nG1 Z{max_layer_z+2} F600\\n{endif}\\nPRINT_END\\nTIMELAPSE_STOP",
     "machine_max_jerk_z": [
         "3",
+        "0.4",
+        "3",
+        "0.4",
+        "3",
+        "0.4",
+        "3",
         "0.4"
     ],
     "machine_max_speed_e": [
         "30",
+        "25",
+        "30",
+        "25",
+        "30",
+        "25",
+        "30",
         "25"
     ],
     "machine_max_speed_z": [
+        "20",
+        "12",
+        "20",
+        "12",
+        "20",
+        "12",
         "20",
         "12"
     ],
@@ -68,7 +86,12 @@
         "0.8",
         "0.8"
     ],
-    "nozzle_type": "hardened_steel",
+    "nozzle_type": [
+        "hardened_steel",
+        "hardened_steel",
+        "hardened_steel",
+        "hardened_steel"
+    ],
     "printable_area": [
         "0.5x1",
         "270.5x1",
@@ -198,7 +221,12 @@
     "printer_notes": "",
     "machine_pause_gcode": "M600",
     "layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]\nSET_PRINT_STATS_INFO TOTAL_LAYER={total_layer_count} CURRENT_LAYER={layer_num+1}",
-    "nozzle_volume": "143",
+    "nozzle_volume": [
+        "143",
+        "143",
+        "143",
+        "143"
+    ],
     "support_multi_bed_types": "0",
     "default_print_profile": "0.40mm Standard @Snapmaker U1 (0.8 nozzle)"
 }

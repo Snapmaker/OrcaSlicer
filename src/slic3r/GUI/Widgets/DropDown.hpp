@@ -125,6 +125,7 @@ public:
 protected:
     void Dismiss() override;
 
+    bool ProcessLeftDown(wxMouseEvent& event) override;
     void OnDismiss() override;
 
     bool ShouldDismissOnTopWindowDeactivate() override;
@@ -142,6 +143,7 @@ private:
     friend class ComboBox;
     void messureSize();
     void autoPosition();
+    bool PointInAnchorGap(const wxPoint& screen_point) const;
 
     // some useful events
     void mouseDown(wxMouseEvent& event);

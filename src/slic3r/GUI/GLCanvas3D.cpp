@@ -1141,8 +1141,6 @@ wxDEFINE_EVENT(EVT_GLCANVAS_MOUSE_DRAGGING_FINISHED, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_UPDATE_BED_SHAPE, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_TAB, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_RESETGIZMOS, SimpleEvent);
-wxDEFINE_EVENT(EVT_GLCANVAS_MOVE_SLIDERS, wxKeyEvent);
-wxDEFINE_EVENT(EVT_GLCANVAS_JUMP_TO, wxKeyEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_UNDO, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_REDO, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLCANVAS_SWITCH_TO_OBJECT, SimpleEvent);
@@ -2139,6 +2137,8 @@ void GLCanvas3D::_render_frame(bool scene_dirty, bool only_init)
     if (only_init)
         return;
 
+    _update_pla_petg_mix_warning();
+
 #if ENABLE_ENVIRONMENT_MAP
     if (wxGetApp().is_editor())
         wxGetApp().plater()->init_environment_texture();
@@ -2541,6 +2541,13 @@ void GLCanvas3D::render_thumbnail(ThumbnailData &         thumbnail_data,
     render_thumbnail(thumbnail_data, w, h, thumbnail_params, model_objects, m_volumes, camera_type, camera_view_angle_type, for_picking, ban_light);
 }
 
+bool GLCanvas3D::_set_shown_canvas_current()
+{
+    // Thumbnails also render outside render(), where another library's GL context (e.g. WebKitGTK's) can be current.
+    // Inside render(), the shown canvas is the one already bound.
+    return wxGetApp().plater()->get_current_canvas3D()->_set_current();
+}
+
 void GLCanvas3D::render_thumbnail(ThumbnailData &           thumbnail_data,
                                   unsigned int              w,
                                   unsigned int              h,
@@ -2552,6 +2559,9 @@ void GLCanvas3D::render_thumbnail(ThumbnailData &           thumbnail_data,
                                   bool                      for_picking,
                                   bool                      ban_light)
 {
+    if (!_set_shown_canvas_current())
+        return;
+
     GLShaderProgram* shader = nullptr;
     if (for_picking)
         shader = wxGetApp().get_shader("flat");
@@ -2645,6 +2655,9 @@ void GLCanvas3D::render_thumbnail(ThumbnailData &                    thumbnail_d
                                   bool                               for_picking,
                                   bool                               ban_light)
 {
+    if (!_set_shown_canvas_current())
+        return;
+
     GLShaderProgram *shader = wxGetApp().get_shader("thumbnail");
     switch (OpenGLManager::get_framebuffers_type()) {
         case OpenGLManager::EFramebufferType::Arb: {
@@ -2800,8 +2813,14 @@ void GLCanvas3D::mirror_selection(Axis axis)
 // 3) SLA support meshes for their respective ModelObjects / ModelInstances
 // 4) Wipe tower preview
 // 5) Out of bed collision status & message overlay (texture)
+// Used filaments of the plate the PLA/PETG check last read, shared by the canvases (the preview has
+// no scene reload); any reload_scene marks them stale.
+static std::vector<int> s_pla_petg_used_filaments;
+static int              s_pla_petg_used_plate = -1;
+
 void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_refresh)
 {
+    s_pla_petg_used_plate = -1;
     if (m_canvas == nullptr || m_config == nullptr || m_model == nullptr)
         return;
 
@@ -3329,7 +3348,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
             //if (printer_technology != ptSLA || !contained_min_one)
             //    _set_warning_notification(EWarning::SlaSupportsOutside, false);
 
-            // Snapmaker: 螺旋抬升边界警告 - 无论模型是否超出边界都检测
+            // Spiral lift boundary warning: checked while any volume is on the bed, even if others are outside.
             if (contained_min_one) {
                 _set_warning_notification(EWarning::SpiralLiftNearBoundary, _is_any_volume_near_boundary_for_spiral_lift());
             } else {
@@ -3342,9 +3361,6 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
 
             bool filament_printable = cur_plate->check_filament_printable(full_config_temp, filament_printable_error_msg);
             _set_warning_notification(EWarning::FilamentPrintableError, !filament_printable);
-
-            bool mix_pla_and_petg = cur_plate->check_mixture_of_pla_and_petg(full_config_temp);
-            _set_warning_notification(EWarning::MixUsePLAAndPETG, !mix_pla_and_petg);
 
             bool single_extruder_mixed_risk = cur_plate->check_single_extruder_mixed_filament_risk(full_config_temp, get_single_extruder_mixed_filament_warning_text());
             _set_warning_notification(EWarning::SingleExtruderMixedFilament, single_extruder_mixed_risk);
@@ -3368,7 +3384,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
             _set_warning_notification(EWarning::ObjectOutside, false);
             _set_warning_notification(EWarning::FlushingVolumeZero, false);
             _set_warning_notification(EWarning::ObjectClashed, false);
-            _set_warning_notification(EWarning::SpiralLiftNearBoundary, false);  // Snapmaker: 清空警告
+            _set_warning_notification(EWarning::SpiralLiftNearBoundary, false);
             _set_warning_notification(EWarning::LeftExtruderPrintableError, false);
             _set_warning_notification(EWarning::RightExtruderPrintableError, false);
             //_set_warning_notification(EWarning::ObjectLimited, false);
@@ -6873,8 +6889,11 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
     //    glsafe(::glClearColor(1.0f, 1.0f, 1.0f, 1.0f));
     BOOST_LOG_TRIVIAL(info) << boost::format("render_thumbnail: finished");
 
-    // Puts the canvas viewport back in place of the thumbnail one set above.
-    wxGetApp().plater()->get_camera().apply_viewport();
+    // Puts the canvas viewport back in place of the thumbnail one set above. The CLI renders
+    // thumbnails with no application and no plater, so there is no canvas viewport to restore.
+    if (wxTheApp != nullptr)
+        if (Plater *plater = wxGetApp().plater(); plater != nullptr)
+            plater->get_camera().apply_viewport();
 }
 
 void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h, const ThumbnailsParams& thumbnail_params,
@@ -7614,6 +7633,16 @@ void GLCanvas3D::_resize(unsigned int w, unsigned int h)
     m_last_w = w;
     m_last_h = h;
 
+    set_imgui_scaling();
+
+    this->request_extra_frame();
+
+    // ensures that this canvas is current
+    _set_current();
+}
+
+void GLCanvas3D::set_imgui_scaling()
+{
     float font_size = wxGetApp().em_unit();
 
 #ifdef _WIN32
@@ -7626,15 +7655,10 @@ void GLCanvas3D::_resize(unsigned int w, unsigned int h)
 #endif
 
 #if ENABLE_RETINA_GL
-    imgui->set_scaling(font_size, 1.0f, m_retina_helper->get_scale_factor());
+    wxGetApp().imgui()->set_scaling(font_size, 1.0f, m_retina_helper->get_scale_factor());
 #else
-    imgui->set_scaling(font_size, m_canvas->GetContentScaleFactor(), 1.0f);
+    wxGetApp().imgui()->set_scaling(font_size, m_canvas->GetContentScaleFactor(), 1.0f);
 #endif
-
-    this->request_extra_frame();
-
-    // ensures that this canvas is current
-    _set_current();
 }
 
 BoundingBoxf3 GLCanvas3D::_max_bounding_box(bool include_gizmos, bool include_bed_model, bool include_plates) const
@@ -11274,6 +11298,65 @@ void GLCanvas3D::_set_warning_notification_if_needed(EWarning warning)
     _set_warning_notification(warning, show);
 }
 
+// Per-frame PLA/PETG mix check. Reads filament types from the slot presets
+// directly -- full_config() is expensive per-frame and can crash on a
+// half-updated preset state while a printer switch is in flight.
+// Slot semantics mirror PresetBundle::full_fff_config().
+void GLCanvas3D::_update_pla_petg_mix_warning()
+{
+    bool has_pla = false;
+    bool has_petg = false;
+    if (wxGetApp().is_editor() && wxGetApp().plater() != nullptr && wxGetApp().preset_bundle != nullptr) {
+        const PresetBundle &bundle = *wxGetApp().preset_bundle;
+        if (bundle.printers.get_edited_preset().printer_technology() == ptFFF) {
+            std::vector<std::string> filament_types;
+            const size_t num_filaments = bundle.filament_presets.size();
+            if (num_filaments <= 1) {
+                const DynamicPrintConfig &filament_cfg = bundle.filaments.get_edited_preset().config;
+                const ConfigOptionStrings *ft_opt = filament_cfg.option<ConfigOptionStrings>("filament_type");
+                if (ft_opt != nullptr)
+                    filament_types = ft_opt->values;
+            } else {
+                filament_types.reserve(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    const Preset *preset = bundle.filaments.find_preset(bundle.filament_presets[i], true);
+                    const ConfigOptionStrings *ft_opt = nullptr;
+                    if (preset != nullptr) {
+                        const DynamicPrintConfig &slot_cfg = preset->config;
+                        ft_opt = slot_cfg.option<ConfigOptionStrings>("filament_type");
+                    }
+                    // Slots with no value keep the FullPrintConfig default ("PLA"),
+                    // same as the defaults-backed vector in full_fff_config().
+                    bool has_type = (ft_opt != nullptr && !ft_opt->values.empty());
+                    filament_types.push_back(has_type ? ft_opt->values.front() : std::string("PLA"));
+                }
+            }
+            // The plate is asked only when both types are loaded, and once per scene reload or plate switch:
+            // get_extruders can build a full config for objects with restricted support filaments.
+            const bool both_loaded = std::count(filament_types.begin(), filament_types.end(), "PLA") > 0 &&
+                                     std::count(filament_types.begin(), filament_types.end(), "PETG") > 0;
+            PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+            if (both_loaded && cur_plate != nullptr) {
+                if (s_pla_petg_used_plate != cur_plate->get_index()) {
+                    s_pla_petg_used_filaments = cur_plate->get_extruders(true);
+                    s_pla_petg_used_plate     = cur_plate->get_index();
+                }
+                for (int filament_idx : s_pla_petg_used_filaments) {
+                    int filament_id = filament_idx - 1;
+                    if (filament_id >= 0 && filament_id < static_cast<int>(filament_types.size())) {
+                        const std::string &filament_type = filament_types[filament_id];
+                        if (filament_type == "PLA")
+                            has_pla = true;
+                        else if (filament_type == "PETG")
+                            has_petg = true;
+                    }
+                }
+            }
+        }
+    }
+    _set_warning_notification(EWarning::MixUsePLAAndPETG, has_pla && has_petg);
+}
+
 void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
 {
     // Skip on shutdown: Plater's pImpl is already freed, so get_notification_manager() would use-after-free.
@@ -11450,7 +11533,7 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     case EWarning::ObjectClashed:
         error = ErrorType::PLATER_ERROR;
         break;
-    // Snapmaker: 螺旋抬升靠近边界警告
+    // Model too close to the bed boundary for spiral lift.
     case EWarning::SpiralLiftNearBoundary:
         text = _u8L("Model too close to bed boundary. Disable spiral lifting or keep at least 3.5mm gap to avoid collision.");
         error = ErrorType::SLICING_SERIOUS_WARNING;
@@ -11471,7 +11554,8 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
         break;
     }
     case EWarning::MixUsePLAAndPETG:
-        text = _u8L("PLA and PETG filaments detected in the mixture. Adjust parameters according to the Wiki to ensure print quality.");
+        text = _u8L("PLA and PETG filaments detected on the same plate. When used as mutual support materials, parameter adjustment is recommended.");
+        error = ErrorType::PLATER_WARNING;
         break;
     case EWarning::SingleExtruderMixedFilament:
         text = get_single_extruder_mixed_filament_warning_text();
@@ -11507,21 +11591,13 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
     switch (error)
     {
     case PLATER_WARNING:
+        // The PLA/PETG mix warning is a SlicingWarning: it stays visible in Preview and
+        // does not block slicing.
         if (warning == EWarning::MixUsePLAAndPETG) {
-            if (state) {
-                notification_manager.push_slicing_customize_error_notification(NotificationType::BBLMixUsePLAAndPETG, NotificationLevel::WarningNotificationLevel, text, _u8L("Click Wiki for help."),
-                    [](wxEvtHandler*) {
-                        std::string language = wxGetApp().app_config->get("language");
-                        wxString    region = L"en";
-                        if (language.find("zh") == 0)
-                        	region = L"zh";
-                        // Although this link looks like it's only for the H2D, its guidance is generic.
-                        wxGetApp().open_browser_with_warning_dialog(wxString::Format(L"https://wiki.bambulab.com/%s/filament-acc/filament/h2d-pla-and-petg-mutual-support", region));
-                        return false;
-                    });
-            }
+            if (state)
+                notification_manager.push_pla_petg_mix_warning(text);
             else
-                notification_manager.close_slicing_customize_error_notification(NotificationType::BBLMixUsePLAAndPETG, NotificationLevel::WarningNotificationLevel);
+                notification_manager.close_pla_petg_mix_warning(text);
         }
         else if (warning == EWarning::NozzleFilamentIncompatible){
             if(state){
@@ -11678,7 +11754,7 @@ bool GLCanvas3D::_is_any_volume_outside() const
     return false;
 }
 
-// Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）
+// Whether any volume is close enough to the bed boundary to risk a spiral-lift collision.
 bool GLCanvas3D::_is_any_volume_near_boundary_for_spiral_lift() const
 {
     return m_volumes.is_any_volume_near_boundary_for_spiral_lift();

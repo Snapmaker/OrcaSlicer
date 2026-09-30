@@ -449,6 +449,11 @@ void OptionsGroup::activate_line(Line& line)
         line.get_extra_widgets().size() == 0) {
         const auto& option = option_set.front();
         const auto& field  = build_field(option);
+        // Label widget kept on the field so cross-field validation can recolor it
+        if (label != nullptr)
+            field->set_label_window(label);
+        // Validation highlight derived from the group's config, since pages build lazily and get rebuilt
+        field->init_invalid_highlight_from_config(get_config(), option.opt_id);
 
         if (!custom_ctrl) {
             int flags = option.opt.full_width ? wxEXPAND : wxALIGN_CENTER_VERTICAL;
@@ -469,6 +474,7 @@ void OptionsGroup::activate_line(Line& line)
         ConfigOptionDef option = opt.opt;
         wxSizer* sizer_tmp     = sizer;
         // add label if any
+        wxStaticText* opt_label = nullptr;
         if ((is_multioption_line || line.label.IsEmpty()) && !option.label.empty() && !custom_ctrl) {
             //!			To correct translation by context have to use wxGETTEXT_IN_CONTEXT macro from wxWidget 3.1.1
             wxString str_label = (option.label == L_CONTEXT("Top", "Layers") || option.label == L_CONTEXT("Bottom", "Layers")) ?
@@ -479,11 +485,17 @@ void OptionsGroup::activate_line(Line& line)
             label->SetBackgroundStyle(wxBG_STYLE_PAINT);
             label->SetFont(wxGetApp().normal_font());
             sizer_tmp->Add(label, 0, wxALIGN_CENTER_VERTICAL, 0);
+            opt_label = label;
         }
 
         // add field
         const Option& opt_ref = opt;
         auto& field           = build_field(opt_ref);
+        // Label widget kept on the field so cross-field validation can recolor it
+        if (opt_label != nullptr)
+            field->set_label_window(opt_label);
+        // Validation highlight derived from the group's config, since pages build lazily and get rebuilt
+        field->init_invalid_highlight_from_config(get_config(), opt_ref.opt_id);
         if (!custom_ctrl) {
             if (option_set.size() == 1 && option_set.front().opt.full_width) {
                 const auto v_sizer = new wxBoxSizer(wxVERTICAL);

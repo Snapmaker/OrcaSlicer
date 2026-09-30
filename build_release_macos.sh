@@ -53,7 +53,7 @@ while getopts ":dpa:snt:xbc:i:j:Tuh" opt; do
         echo "   -s: Build slicer only"
         echo "   -u: Build universal app only (requires existing arm64 and x86_64 app bundles)"
         echo "   -n: Nightly build"
-        echo "   -t: Specify minimum version of the target platform, default is 11.3"
+        echo "   -t: Specify minimum version of the target platform, default is 12.0"
         echo "   -x: Use Ninja Multi-Config CMake generator, default is Xcode"
         echo "   -b: Build without reconfiguring CMake"
         echo "   -c: Set CMake build configuration, default is Release"

@@ -3,6 +3,8 @@
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
+#include <algorithm>
+
 using namespace Slic3r;
 
 // A sphere gives well over ExtruderMax original facets, so every extruder state can be assigned
@@ -152,11 +154,95 @@ TEST_CASE("Triangle selector round-trips painted states above sixteen", "[Triang
     CHECK(data.used_states[painted_state]);
 
     data.reset_used_states();
-    data.update_used_states(size_t(data.triangles_to_split.front().bitstream_start_idx));
+    REQUIRE(data.update_used_states(size_t(data.triangles_to_split.front().bitstream_start_idx)));
     CHECK(data.used_states[painted_state]);
     CHECK(TriangleSelector::has_facets(data, static_cast<EnforcerBlockerType>(painted_state)));
 
     TriangleSelector restored(mesh);
     restored.deserialize(data, true, static_cast<EnforcerBlockerType>(painted_state));
     CHECK(restored.has_facets(static_cast<EnforcerBlockerType>(painted_state)));
+}
+
+// Pack 4-bit codes into a bitstream, least significant bit first, in the order the decoder reads them.
+static std::vector<bool> pack_nibbles(const std::vector<int> &nibbles)
+{
+    std::vector<bool> bitstream;
+    for (const int nibble : nibbles)
+        for (int bit = 0; bit < 4; ++bit)
+            bitstream.push_back((nibble >> bit) & 1);
+    return bitstream;
+}
+
+// A leaf whose chained 0b1111 state nibbles run past ExtruderMax before a closing zero nibble.
+static std::vector<int> leaf_chained_past_extruder_max()
+{
+    std::vector<int> nibbles = {0b1100};
+    nibbles.insert(nibbles.end(), size_t((int(EnforcerBlockerType::ExtruderMax) - 3) / 15 + 1), 0b1111);
+    nibbles.push_back(0b0000);
+    return nibbles;
+}
+
+TEST_CASE("A valid paint stream with nested splits round-trips bit for bit", "[TriangleSelector]")
+{
+    const TriangleMesh mesh = test_mesh();
+
+    TriangleSelector::TriangleSplittingData data;
+    data.triangles_to_split.emplace_back(0, 0);
+    // A three-side split whose children, in stream order, are: a one-side split (side 2) into two
+    // leaves, a two-side split (side 1) into leaves of states 20, 0 and 8, then two plain leaves.
+    const std::vector<int> triangle_0 = {0b0011,
+                                         0b1001, 0b1000, 0b0100,
+                                         0b0110, 0b1100, 0b1111, 20 - 18, 0b0000, 0b1100, 8 - 3,
+                                         0b1000,
+                                         0b0100};
+    data.bitstream = pack_nibbles(triangle_0);
+    data.triangles_to_split.emplace_back(5, int(data.bitstream.size()));
+    const std::vector<bool> triangle_5 = pack_nibbles({0b1100, 3 - 3});
+    data.bitstream.insert(data.bitstream.end(), triangle_5.begin(), triangle_5.end());
+    data.reset_used_states();
+    REQUIRE(data.update_used_states(0));
+
+    TriangleSelector restored(mesh);
+    restored.deserialize(data);
+
+    REQUIRE(restored.num_facets(EnforcerBlockerType::Extruder20) == 1);
+    REQUIRE(restored.num_facets(EnforcerBlockerType::Extruder3) == 1);
+    REQUIRE(restored.serialize() == data);
+}
+
+TEST_CASE("A truncated or malformed paint stream drops only the damaged triangle", "[TriangleSelector][Regression]")
+{
+    struct Case { const char *name; std::vector<int> nibbles; };
+    const auto c = GENERATE(values<Case>({
+        {"three-side split missing two children", {0b0011, 0b1000, 0b1000}},
+        {"leaf missing its state nibble",         {0b1100}},
+        {"leaf missing its second state nibble",  {0b1100, 0b1111}},
+        {"splits nested past the end",            {0b0011, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF,
+                                                    0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF, 0xF}},
+        {"one-side split of the nonexistent side 3", {0b1101, 0b1000, 0b1000}},
+        {"leaf state chained past ExtruderMax",    leaf_chained_past_extruder_max()},
+    }));
+    INFO(c.name);
+
+    const TriangleMesh mesh = test_mesh();
+    TriangleSelector   intact(mesh);
+    intact.set_facet(0, EnforcerBlockerType::Extruder2);
+
+    // Triangle 0 stays intact, triangle 1 carries the damaged stream.
+    TriangleSelector::TriangleSplittingData data = intact.serialize();
+    data.triangles_to_split.emplace_back(1, int(data.bitstream.size()));
+    const std::vector<bool> damaged = pack_nibbles(c.nibbles);
+    data.bitstream.insert(data.bitstream.end(), damaged.begin(), damaged.end());
+
+    TriangleSelector restored(mesh);
+    REQUIRE_NOTHROW(restored.deserialize(data));
+    // Triangle 1 unwinds completely, so the selector holds exactly the intact paint.
+    REQUIRE(restored.serialize() == intact.serialize());
+
+    REQUIRE_NOTHROW(TriangleSelector::has_facets(data, EnforcerBlockerType::Extruder3));
+
+    TriangleSelector::TriangleSplittingData recomputed = data;
+    recomputed.reset_used_states();
+    REQUIRE_FALSE(recomputed.update_used_states(0));
+    REQUIRE(std::none_of(recomputed.used_states.begin(), recomputed.used_states.end(), [](bool used) { return used; }));
 }

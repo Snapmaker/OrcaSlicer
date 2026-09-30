@@ -184,6 +184,10 @@ const std::string BBS_MODEL_CONFIG_RELS_FILE = "Metadata/_rels/model_settings.co
 const std::string SLICE_INFO_CONFIG_FILE = "Metadata/slice_info.config";
 const std::string FILAMENT_SEQUENCE_FILE = "Metadata/filament_sequence.json";
 const std::string BBS_LAYER_HEIGHTS_PROFILE_FILE = "Metadata/layer_heights_profile.txt";
+// Keys of BBS_LAYER_HEIGHTS_PROFILE_FILE entries ("object_id=N|..."): without a header line N is a
+// 1 based Model::objects index; format version 2 makes N the 3MF object id its <build> item references.
+const std::string LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY = "layer_heights_profile_format_version";
+const int LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS = 2;
 const std::string ORCA_CAD_RECIPE_FILE = "Metadata/orca_cad.bin";
 // Read-only: the recipe entry's pre-rename name. A reader that knows only the new one drops the
 // feature tree of every project written before the move, without a word. Never written.
@@ -363,6 +367,10 @@ static constexpr const char* PART_TYPE = "part";
 static constexpr const char* NAME_KEY = "name";
 static constexpr const char* VOLUME_TYPE_KEY = "volume_type";
 static constexpr const char* PART_TYPE_KEY = "part_type";
+// Keep seam modes separate from the base type so older readers see a non-printing modifier.
+static constexpr const char* PRECISE_SEAM_TYPE_KEY = "precise_seam_type";
+// Preserve dormant settings without turning an older reader's modifier into an active override.
+static constexpr char PRECISE_SEAM_CONFIG_PREFIX[] = "precise_seam_config:";
 static constexpr const char* MATRIX_KEY = "matrix";
 static constexpr const char* SOURCE_FILE_KEY = "source_file";
 static constexpr const char* SOURCE_OBJECT_ID_KEY = "source_object_id";
@@ -372,6 +380,9 @@ static constexpr const char* SOURCE_OFFSET_Y_KEY = "source_offset_y";
 static constexpr const char* SOURCE_OFFSET_Z_KEY = "source_offset_z";
 static constexpr const char* SOURCE_IN_INCHES    = "source_in_inches";
 static constexpr const char* SOURCE_IN_METERS    = "source_in_meters";
+// Merge group id of a volume cloned by "Assemble"; consumed by "Split to objects"
+// to restore non-solid volumes (e.g. negative volumes) to the object they belonged to.
+static constexpr const char* MERGED_GROUP_ID_KEY = "merged_group_id";
 
 static constexpr const char* MESH_SHARED_KEY = "mesh_shared";
 
@@ -1199,6 +1210,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         IdToMetadataMap m_objects_metadata;
         IdToCutObjectInfoMap       m_cut_object_infos;
         IdToLayerHeightsProfileMap m_layer_heights_profiles;
+        // True when BBS_LAYER_HEIGHTS_PROFILE_FILE declares format version >= 2, i.e. the entries
+        // are keyed by 3MF object ids instead of 1 based Model::objects indexes.
+        bool m_layer_heights_profiles_keyed_by_object_id{false};
         IdToLayerConfigRangesMap m_layer_config_ranges;
         IdToBrimPointsMap m_brim_ear_points;
         /*IdToSlaSupportPointsMap m_sla_support_points;
@@ -1487,6 +1501,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         m_curr_config.volume_id = -1;
         m_objects_metadata.clear();
         m_layer_heights_profiles.clear();
+        m_layer_heights_profiles_keyed_by_object_id = false;
         m_layer_config_ranges.clear();
         m_brim_ear_points.clear();
         //m_sla_support_points.clear();
@@ -1699,7 +1714,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         while (it != m_plater_data.end())
         {
-            if (it->first > m_plater_data.size())
+            if (it->first <= 0 || static_cast<size_t>(it->first) > m_plater_data.size())
             {
                 add_error("invalid plate index");
                 return false;
@@ -2193,8 +2208,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return false;
             }*/
 
-            // m_layer_heights_profiles are indexed by a 1 based model object index.
-            IdToLayerHeightsProfileMap::iterator obj_layer_heights_profile = m_layer_heights_profiles.find(object.second + 1);
+            // Layer height profiles are keyed by 3MF object id (format version >= 2) or by 1 based model
+            // object index (legacy files); the file header alone picks the mode.
+            IdToLayerHeightsProfileMap::iterator obj_layer_heights_profile = m_layer_heights_profiles.find(
+                m_layer_heights_profiles_keyed_by_object_id ? object.first.second : object.second + 1);
             if (obj_layer_heights_profile != m_layer_heights_profiles.end())
                 model_object->layer_height_profile.set(std::move(obj_layer_heights_profile->second));
 
@@ -2381,7 +2398,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         while (it != m_plater_data.end())
         {
-            if (it->first > m_plater_data.size())
+            if (it->first <= 0 || static_cast<size_t>(it->first) > m_plater_data.size())
             {
                 add_error("invalid plate index");
                 return false;
@@ -2577,19 +2594,26 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         XML_SetEntityDeclHandler(m_xml_parser, nullptr);
         XML_SetExternalEntityRefHandler(m_xml_parser, nullptr);
 
-        void* parser_buffer = XML_GetBuffer(m_xml_parser, (int)stat.m_uncomp_size);
+        // expat sizes its buffer with an int, so a larger entry cannot be parsed in one piece.
+        if (stat.m_uncomp_size > static_cast<mz_uint64>(std::numeric_limits<int>::max())) {
+            add_error("Found invalid size");
+            return false;
+        }
+        const int xml_size = static_cast<int>(stat.m_uncomp_size);
+
+        void* parser_buffer = XML_GetBuffer(m_xml_parser, xml_size);
         if (parser_buffer == nullptr) {
             add_error("Unable to create buffer");
             return false;
         }
 
-        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, (size_t)stat.m_uncomp_size, 0);
+        mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, parser_buffer, static_cast<size_t>(xml_size), 0);
         if (res == 0) {
             add_error("Error while reading config data to buffer");
             return false;
         }
 
-        if (!XML_ParseBuffer(m_xml_parser, (int)stat.m_uncomp_size, 1)) {
+        if (!XML_ParseBuffer(m_xml_parser, xml_size, 1)) {
             char error_buf[1024];
             ::snprintf(error_buf, 1024, "Error (%s) while parsing xml file at line %d", XML_ErrorString(XML_GetErrorCode(m_xml_parser)), (int)XML_GetCurrentLineNumber(m_xml_parser));
             add_error(error_buf);
@@ -2955,7 +2979,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             std::vector<std::string> objects;
             boost::split(objects, buffer, boost::is_any_of("\n"), boost::token_compress_off);
 
-            for (const std::string& object : objects)             {
+            // Newer files carry a format version header line ("layer_heights_profile_format_version=N")
+            // telling whether the object_id keys below are 3MF object ids (>= 2) or legacy 1 based
+            // Model::objects indexes. Legacy files start with an "object_id=" entry right away.
+            if (!objects.empty() && boost::algorithm::starts_with(objects.front(), LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY + "=")) {
+                std::vector<std::string> header_data;
+                boost::split(header_data, objects.front(), boost::is_any_of("="), boost::token_compress_off);
+                int format_version = (header_data.size() == 2) ? std::atoi(header_data[1].c_str()) : 0;
+                m_layer_heights_profiles_keyed_by_object_id = (format_version >= LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS);
+                objects.erase(objects.begin());
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", layer heights profile format version %1%, keyed by 3mf object id: %2%\n")%format_version %m_layer_heights_profiles_keyed_by_object_id;
+            }
+
+            for (const std::string& object : objects) {
                 std::vector<std::string> object_data;
                 boost::split(object_data, object, boost::is_any_of("|"), boost::token_compress_off);
                 if (object_data.size() != 2) {
@@ -5281,6 +5317,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             if (auto &tc = volume_data->text_configuration; tc.has_value())
                 volume->text_configuration = std::move(tc);
 
+            // Apply the seam mode after all base-type metadata, regardless of XML key order.
+            ModelVolumeType precise_seam_type = ModelVolumeType::INVALID;
             // apply the remaining volume's metadata
             for (const Metadata& metadata : volume_data->metadata) {
                 if (metadata.key == NAME_KEY)
@@ -5290,6 +5328,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
 				//for old format
                 else if ((metadata.key == VOLUME_TYPE_KEY) || (metadata.key == PART_TYPE_KEY))
                     volume->set_type(ModelVolume::type_from_string(metadata.value));
+                else if (metadata.key == PRECISE_SEAM_TYPE_KEY)
+                    precise_seam_type = ModelVolume::type_from_string(metadata.value);
+                else if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX))
+                    continue; // Restore dormant settings only after the final volume type is known.
                 else if (metadata.key == SOURCE_FILE_KEY)
                     volume->source.input_file = metadata.value;
                 else if (metadata.key == SOURCE_OBJECT_ID_KEY)
@@ -5306,10 +5348,28 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else if ((metadata.key == MATRIX_KEY) || (metadata.key == MESH_SHARED_KEY))
                     continue;
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
+            }
+
+            // Missing or unknown seam modes retain the ordinary modifier fallback.
+            // Ignore seam metadata on other base types; legacy inline seam types still load above.
+            if (volume->is_modifier() && is_precise_seam(precise_seam_type))
+                volume->set_type(precise_seam_type);
+
+            // Unknown seam modes must remain inert modifiers, even when dormant settings are present.
+            if (volume->is_precise_seam()) {
+                for (const Metadata& metadata : volume_data->metadata) {
+                    if (boost::starts_with(metadata.key, PRECISE_SEAM_CONFIG_PREFIX)) {
+                        const std::string key = metadata.key.substr(sizeof(PRECISE_SEAM_CONFIG_PREFIX) - 1);
+                        if (!key.empty())
+                            volume->config.set_deserialize(key, metadata.value, config_substitutions);
+                    }
+                }
             }
 
             // this may happen for 3mf saved by 3rd part softwares
@@ -5456,6 +5516,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     volume->source.is_converted_from_inches = metadata.value == "1";
                 else if (metadata.key == SOURCE_IN_METERS)
                     volume->source.is_converted_from_meters = metadata.value == "1";
+                else if (metadata.key == MERGED_GROUP_ID_KEY)
+                    volume->set_merged_group_id(ObjectID((size_t) ::atoi(metadata.value.c_str())));
                 else
                     volume->config.set_deserialize(metadata.key, metadata.value, config_substitutions);
             }
@@ -6089,7 +6151,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         //BBS: change volume to seperate objects
         bool _add_mesh_to_object_stream(std::function<bool(std::string &, bool)> const &flush, ObjectData const &object_data) const;
         bool _add_build_to_model_stream(std::stringstream& stream, const BuildItemsList& build_items) const;
-        bool _add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model);
+        bool _add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model, const ObjectToObjectDataMap& objects_data);
         bool _add_cad_recipe_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_layer_config_ranges_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_brim_ear_points_file_to_archive(mz_zip_archive& archive, Model& model);
@@ -6479,10 +6541,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         {
             if (!_add_model_file_to_archive(filename, archive, model, objects_data, proFn, project)) { return false; }
 
-            // Adds layer height profile file ("Metadata/Slic3r_PE_layer_heights_profile.txt").
-            // All layer height profiles of all ModelObjects are stored here, indexed by 1 based index of the ModelObject in Model.
-            // The index differes from the index of an object ID of an object instance of a 3MF file!
-            if (!_add_layer_height_profile_file_to_archive(archive, model)) {
+            // Adds the layer height profile file ("Metadata/layer_heights_profile.txt"), keyed by the
+            // 3MF object id each ModelObject's <build> item references.
+            if (!_add_layer_height_profile_file_to_archive(archive, model, objects_data)) {
                 close_zip_writer(&archive);
                 return false;
             }
@@ -7723,7 +7784,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         return true;
     }
 
-    bool _BBS_3MF_Exporter::_add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model)
+    bool _BBS_3MF_Exporter::_add_layer_height_profile_file_to_archive(mz_zip_archive& archive, Model& model, const ObjectToObjectDataMap& objects_data)
     {
         assert(is_decimal_separator_point());
         std::string out = "";
@@ -7734,7 +7795,11 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             ++count;
             const std::vector<double>& layer_height_profile = object->layer_height_profile.get();
             if (layer_height_profile.size() >= 4 && layer_height_profile.size() % 2 == 0) {
-                snprintf(buffer, 1024, "object_id=%d|", count);
+                // Keyed by the 3MF object id its <build> item references (filled by
+                // _add_model_file_to_archive()), which stays valid for plate exports and multi-volume objects.
+                auto object_data = objects_data.find(object);
+                int object_id = object_data != objects_data.end() ? object_data->second.object_id : count;
+                snprintf(buffer, 1024, "object_id=%d|", object_id);
                 out += buffer;
 
                 // Store the layer height profile as a single semicolon separated list.
@@ -7748,6 +7813,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
 
         if (!out.empty()) {
+            // Prepend the format version header: the object_id keys below are 3MF object ids
+            // (the ids referenced by the <build> items), not 1 based Model::objects indexes.
+            out = LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_KEY + "=" + std::to_string(LAYER_HEIGHTS_PROFILE_FORMAT_VERSION_OBJECT_IDS) + "\n" + out;
             if (!mz_zip_writer_add_mem(&archive, BBS_LAYER_HEIGHTS_PROFILE_FILE.c_str(), (const void*)out.data(), out.length(), MZ_DEFAULT_COMPRESSION)) {
                 add_error("Unable to add layer heights profile file to archive");
                 BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" << __LINE__ << boost::format("Unable to add layer heights profile file to archive\n");
@@ -8089,7 +8157,12 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                 volume_id = m_volume_paths.find(volume)->second.second;
                             stream << ID_ATTR << "=\"" << volume_id << "\" ";
 
-                            stream << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(volume->type()) << "\">\n";
+                            // Older slicers must recognize the base type even when they ignore seam metadata.
+                            const ModelVolumeType stored_type = volume->is_precise_seam() ? ModelVolumeType::PARAMETER_MODIFIER : volume->type();
+                            stream << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(stored_type) << "\">\n";
+                            if (volume->is_precise_seam())
+                                stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PRECISE_SEAM_TYPE_KEY << "\" " << VALUE_ATTR << "=\"" <<
+                                    ModelVolume::type_to_string(volume->type()) << "\"/>\n";
                             //stream << "    <" << PART_TAG << " " << ID_ATTR << "=\"" << it->second << "\" " << SUBTYPE_ATTR << "=\"" << ModelVolume::type_to_string(volume->type()) << "\">\n";
 
                             // stores volume's name
@@ -8137,9 +8210,19 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                                     stream << prefix << SOURCE_IN_METERS << "\" " << VALUE_ATTR << "=\"1\"/>\n";
                             }
 
+                            // stores the merge group id (set by "Assemble", consumed by "Split to objects")
+                            if (volume->merged_group_id().valid())
+                                stream << "      <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << MERGED_GROUP_ID_KEY
+                                       << "\" " << VALUE_ATTR << "=\"" << volume->merged_group_id().id << "\"/>\n";
+
                             // stores volume's config data
                             for (const std::string& key : volume->config.keys()) {
-                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << volume->config.opt_serialize(key) << "\"/>\n";
+                                // Seam settings are inactive but must survive changing the helper back into a part/modifier.
+                                const bool dormant = volume->is_precise_seam();
+                                const std::string stored_key = dormant ? PRECISE_SEAM_CONFIG_PREFIX + key : key;
+                                const std::string value = volume->config.opt_serialize(key);
+                                // Config serialization is C-style, not XML: escape active settings too, including tabs.
+                                stream << "      <" << METADATA_TAG << " "<< KEY_ATTR << "=\"" << stored_key << "\" " << VALUE_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(value) << "\"/>\n";
                             }
 
                             if (const std::optional<EmbossShape> &es = volume->emboss_shape; es.has_value()) {

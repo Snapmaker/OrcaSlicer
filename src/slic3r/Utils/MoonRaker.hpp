@@ -2,6 +2,7 @@
 #define slic3r_Moonraker_hpp_
 
 #include <string>
+#include <mutex>
 #include <wx/string.h>
 #include <boost/optional.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -160,8 +161,19 @@ protected:
     std::string m_cafile;
     bool        m_ssl_revoke_best_effort;
 
-    // Time synchronization manager
+    // Time synchronization manager.
+    // The member itself is guarded: disconnect() (any thread) resets it while
+    // Paho receive-thread callbacks and async_* APIs on arbitrary threads
+    // read it. Always access through time_sync_manager_snapshot(); never
+    // touch the member directly outside the mutex.
     std::shared_ptr<TimeSyncManager> time_sync_manager_;
+    mutable std::mutex               m_time_sync_manager_mtx;
+
+    std::shared_ptr<TimeSyncManager> time_sync_manager_snapshot() const
+    {
+        std::lock_guard<std::mutex> lock(m_time_sync_manager_mtx);
+        return time_sync_manager_;
+    }
 
     // Helper methods
     virtual void set_auth(Http &http) const;
@@ -384,6 +396,19 @@ private:
     static TimeoutMap<int64_t, RequestCallback> m_request_cb_map;
     static std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> m_status_cbs;
     static std::unordered_map<std::string, std::function<void(const nlohmann::json&)>> m_notification_cbs;
+
+    // Serializes lifecycle changes of the static MQTT clients (connect /
+    // disconnect / engine swap). Readers must copy the shared_ptr under this
+    // lock (get_mqtt_client_tls()) and use the copy, so a concurrent
+    // disconnect can never destroy a client that is still being used.
+    static std::mutex m_client_mtx;
+    // Guards m_status_cbs / m_notification_cbs: they are inserted/erased from
+    // UI threads, iterated on the Paho receive thread and cleared on disconnect.
+    static std::mutex m_cbs_mtx;
+
+    // Snapshot helpers: return a copy of the static client under the lock.
+    static std::shared_ptr<MqttClient> get_mqtt_client();
+    static std::shared_ptr<MqttClient> get_mqtt_client_tls();
 
     // MQTT topics
     static std::string m_auth_topic;

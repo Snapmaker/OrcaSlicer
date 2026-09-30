@@ -460,6 +460,7 @@ private:
     EAppMode get_app_mode() const { return m_app_mode; }
     Slic3r::DeviceManager* getDeviceManager() { return m_device_manager; }
     bool                   is_blocking_printing(MachineObject *obj_ = nullptr);
+    bool                   is_blocking_printing(MachineObject *obj_, const std::string& source_model);
     Slic3r::TaskManager*   getTaskManager() { return m_task_manager; }
     HMSQuery* get_hms_query() { return hms_query; }
     NetworkAgent* getAgent() { return m_agent; }
@@ -467,7 +468,7 @@ private:
     // Reconcile the live printer agent with the stored preset selection.
     void switch_printer_agent();
 
-    std::string resolve_printer_agent_id(const std::string& stored_id);
+    std::string resolve_printer_agent_id(const std::string& stored_id) const;
     // ORCA TODO: in the future, bbl presets should specify "bbl" printer agent id
     // then, all resolve and canonical would just be ORCA<->""
     std::string canonical_printer_agent_id(const std::string& picked_id);
@@ -476,7 +477,7 @@ private:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
-    // Milliseconds since the last mouse or keyboard event the app processed.
+    // Milliseconds since the last mouse or keyboard event the app processed, or main window resize.
     int  input_idle_ms() const;
     int  FilterEvent(wxEvent& event) override;
     // The Preferences "Default page" choice, stored as its index: 0 Home, 1 Prepare.
@@ -617,7 +618,7 @@ private:
     bool            check_login(const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            get_login_info(const std::string& provider = ORCA_CLOUD_PROVIDER);
     bool            is_user_login(const std::string& provider = ORCA_CLOUD_PROVIDER);
-    const std::string& get_printer_cloud_provider() const;
+    std::string      get_printer_cloud_provider() const;
 
     void            request_user_login(int online_login = 0, const std::string& provider = ORCA_CLOUD_PROVIDER);
     void            request_user_handle(int online_login = 0, const std::string& provider = ORCA_CLOUD_PROVIDER);
@@ -718,6 +719,8 @@ private:
     void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, int by_user = 0);
+    // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
+    void            request_version_from_config(bool show_tips = false, int by_user = 0);
     bool            process_network_msg(std::string dev_id, std::string msg);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);
@@ -1182,8 +1185,10 @@ wxDECLARE_EVENT(EVT_UPDATE_BUNDLE_COMPLETE, wxCommandEvent);
 
 bool is_support_filament(int extruder_id, bool strict_check = true);
 bool is_soluble_filament(int extruder_id);
-// check if the filament for model is in the list
-bool has_filaments(const std::vector<std::string>& model_filaments);
+// Whether any model volume prints with one of the given filament types (mixed slots expanded).
+bool has_filaments(const std::vector<std::string>& filament_types);
+// Whether the 0-based support interface filament forms a PLA/PETG pair with a model material.
+bool check_pla_petg_support_pair(int extruder_id);
 } // namespace GUI
 } // Slic3r
 

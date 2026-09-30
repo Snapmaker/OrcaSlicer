@@ -4348,7 +4348,8 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                 auto self = weak_self.lock();
                 if (!self)
                     return;   // timed out before the UI thread got here
-                auto mqtt_client = std::make_shared<MqttClient>("mqtt://" + ip + ":" + std::to_string(port), "Snapmaker Orca");
+                // The factory records the client's own weak reference, which its reconnect checker needs.
+                std::shared_ptr<MqttClient> mqtt_client = MqttClient::create("mqtt://" + ip + ":" + std::to_string(port), "Snapmaker Orca");
                 // Every early return below hands the client to dispose_async, so a failed Connect,
                 // Subscribe or Publish does not leak it with its connection or reconnect loop.
                 std::string connect_msg = "";
@@ -6999,9 +7000,9 @@ void SSWCP_MqttAgent_Instance::sw_create_mqtt_client()
         std::string type = "mqtt";
         if (ca != "" && cert != "" && key != "") {
             type = "mqtts";
-            client.reset(new MqttClient(server_address, clientId, ca, cert, key, username, password, clean_session));
+            client = MqttClient::create(server_address, clientId, ca, cert, key, username, password, clean_session);
         }else{
-            client.reset(new MqttClient(server_address, clientId, username, password, clean_session));
+            client = MqttClient::create(server_address, clientId, username, password, clean_session);
         }
 
         if (client == nullptr) {
@@ -7081,7 +7082,14 @@ void SSWCP_MqttAgent_Instance::sw_mqtt_connect()
             auto self = std::dynamic_pointer_cast<SSWCP_MqttAgent_Instance>(weak_ptr.lock());
             const std::string session_id = self ? self->get_connect_session_id() : std::string{};
 
-            engine->SetConnectionFailureCallback([engine, session_id]() {
+            // The callback is stored inside the engine, so it captures the engine weakly: a strong
+            // capture would keep the client alive forever and leak its Paho handles.
+            std::weak_ptr<MqttClient> weak_engine = engine;
+            engine->SetConnectionFailureCallback([weak_engine, session_id]() {
+                auto engine = weak_engine.lock();
+                if (!engine) {
+                    return;
+                }
                 SNAP_LOG_BATCH(Error, "mqtt connection failure callback",
                     {"eventName", "mqtt_connect_failure"}, {"source", "cpp"},
                     {"connectSessionId", session_id});

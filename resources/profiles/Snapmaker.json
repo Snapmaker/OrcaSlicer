@@ -1,6 +1,6 @@
 {
   "name": "Snapmaker",
-  "version": "02.03.03.09",
+  "version": "02.03.03.11",
   "force_update": "0",
   "description": "Snapmaker configurations",
   "machine_model_list": [
@@ -285,6 +285,10 @@
     {
       "name": "0.24 Standard @Snapmaker (0.6 nozzle)",
       "sub_path": "process/0.24 Standard @Snapmaker (0.6 nozzle).json"
+    },
+    {
+      "name": "0.24 Standard @Snapmaker (0.8 nozzle)",
+      "sub_path": "process/0.24 Standard @Snapmaker (0.8 nozzle).json"
     },
     {
       "name": "0.24 Standard @Snapmaker J1 (0.6 nozzle)",

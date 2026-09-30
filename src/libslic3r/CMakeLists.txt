@@ -265,6 +265,8 @@ set(lisbslic3r_sources
     GCode/RetractWhenCrossingPerimeters.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
+    GCode/PreciseSeam.cpp
+    GCode/PreciseSeam.hpp
     #GCodeSender.cpp
     #GCodeSender.hpp
     GCode/SmallAreaInfillFlowCompensator.cpp
@@ -334,6 +336,7 @@ set(lisbslic3r_sources
     MinimumSpanningTree.hpp
     MixedFilament.cpp
     MixedFilament.hpp
+    MixedFilamentConfigRemap.hpp
     # SM Orca: filament_mixer.cpp / filament_mixer_model.h were upstreamed as
     # FilamentMixer.cpp / FilamentMixerModel.hpp (listed above), which define the
     # identical Slic3r::filament_mixer_lerp* symbols. Only the declaration header
@@ -367,6 +370,7 @@ set(lisbslic3r_sources
     Optimize/Optimizer.hpp
     Orient.cpp
     Orient.hpp
+    ParallelResolve.hpp
     ParameterUtils.cpp
     ParameterUtils.hpp
     pchheader.cpp
@@ -712,6 +716,7 @@ target_link_libraries(libslic3r
         libigl
         libnest2d
         miniz
+        nanosvg
         opencv_world
         assimp::assimp
     PRIVATE

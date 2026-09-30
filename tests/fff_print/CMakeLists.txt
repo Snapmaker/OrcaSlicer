@@ -19,9 +19,12 @@ add_executable(${_TEST_NAME}_tests
 	test_per_head_process.cpp # Snapmaker Orca: process speeds per tool head, what only a slice shows
 	test_painted_segmentation.cpp # Snapmaker Orca: painted segmentation with outer-wall overrides and layer runs
 	test_perimeters.cpp
+	# Seam geometry and pipeline regressions share the existing Print fixtures.
+	test_precise_seam.cpp
 	test_print.cpp
 	test_printobject.cpp
 	test_mixed_filament.cpp
+	test_seam_placer.cpp
 	test_skirt_brim.cpp
 	test_slicing_pipeline_hook.cpp
 	test_support_material.cpp

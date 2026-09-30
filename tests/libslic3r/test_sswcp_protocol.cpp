@@ -1,4 +1,4 @@
-#include <catch2/catch_all.hpp>
+#include <catch2/catch_test_macros.hpp>
 
 #include "libslic3r/SSWCPProtocol.hpp"
 
@@ -115,8 +115,7 @@ TEST_CASE("Complete cached slots override direct nozzle data atomically", "[SSWC
     REQUIRE(SSWCPProtocol::select_complete_cached_nozzle_info(
         {{"0.4", "standard"}, {"0.4", ""}}, diameters, flows));
     CHECK(diameters == std::vector<std::string>{"0.4", "0.4"});
-    // Snapmaker Orca fork: an incomplete cache leaves the caller's flows alone, as the header
-    // documents and the printer sync relies on (upstream's case expects flows.empty()).
+    // Incomplete cached flows must not wipe freshly resolved direct values (see SSWCPProtocol.hpp).
     CHECK(flows == std::vector<std::string>{"high_flow"});
 }
 

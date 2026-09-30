@@ -457,18 +457,24 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     fs::path base_path = parent_path.lexically_normal();
 
     mz_zip_archive_file_stat stat;
-    // we first loop the entries to read from the archive the .amf file only, in order to extract the version from it
+    // Every entry is validated first (as extract_archive_confined does), so an archive with one entry
+    // resolving outside the target is rejected whole and leaves no partial output behind.
+    for (mz_uint i = 0; i < num_entries; ++i) {
+        if (mz_zip_reader_file_stat(&archive, i, &stat) && !is_path_within_root(stat.m_filename, base_path)) {
+            BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Unzip: rejecting " << file_path << ", entry " << stat.m_filename
+                                     << " resolves outside " << base_path.string();
+            close_zip_reader(&archive);
+            return false;
+        }
+    }
+
+    // Unlike extract_archive_confined, the parent directory of every file is created (a Snapmaker OTA
+    // archive may hold no directory entries) and Windows falls back to a wide path.
     for (mz_uint i = 0; i < num_entries; ++i)
     {
         if (mz_zip_reader_file_stat(&archive, i, &stat))
         {
             fs::path full_dest = (base_path / stat.m_filename).lexically_normal();
-            // Reject paths that escape base (e.g. ".." in zip entry)
-            std::string rel_str = full_dest.lexically_relative(base_path).generic_string();
-            if (rel_str.empty() || rel_str.find("..") == 0) {
-                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: skip invalid path "<<stat.m_filename;
-                continue;
-            }
             if (stat.m_is_directory) {
                 if (!fs::exists(full_dest))
                     fs::create_directories(full_dest);
@@ -484,6 +490,9 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
                 fs::path parent_dir = full_dest.parent_path();
                 if (!parent_dir.empty() && !fs::exists(parent_dir))
                     fs::create_directories(parent_dir);
+                // Replace a symlink at the destination rather than writing through it.
+                if (fs::is_symlink(fs::symlink_status(full_dest)))
+                    fs::remove(full_dest);
 
                 std::string dest_file_encoded = encode_path(full_dest.string().c_str());
                 res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_file_encoded.c_str(), 0);
@@ -1820,36 +1829,32 @@ void PresetUpdater::priv::check_installed_vendor_profiles() const
     const auto enabled_vendors = app_config->vendors();
 
     std::set<std::string> bundles;
-    // Orca: always install filament library
-    bundles.insert(PresetBundle::ORCA_FILAMENT_LIBRARY);
     // A vendor is named by its profile or, where the build ships preset caches
     // instead of the raw profile JSONs, by its cache alone.
     for (const std::string &vendor_name : vendor_names_in(rsrc_path)) {
-        if (bundles.find(vendor_name) != bundles.end())continue;
-
-        // Snapmaker Orca: the fork's own bundle is the one always refreshed from resources.
+        // enabled_vendors lists the vendors whose printer models the user picked, and neither of
+        // these two is ever in it. Snapmaker Orca: the Snapmaker bundle is the one refreshed always.
         const auto is_vendor_enabled = (vendor_name == PresetBundle::SM_BUNDLE)
+                                       || (vendor_name == PresetBundle::ORCA_FILAMENT_LIBRARY)
                                        || (enabled_vendors.find(vendor_name) != enabled_vendors.end());
         if (is_vendor_installed(vendor_name)) {
-            if (enabled_config_update) {
-                if (is_vendor_enabled) {
-                    // Orca: whichever form of the vendor resources ships at the newer
-                    // version is the one installing lays down, and the one to judge
-                    // what is installed against.
-                    Semver resource_ver = resource_vendor_version(vendor_name);
-                    // Orca: a vendor installed as a preset cache has no profile
-                    // beside it; the version it was installed at is in the cache.
-                    Semver vendor_ver = installed_vendor_version(vendor_name);
+            if (is_vendor_enabled) {
+                // Orca: whichever form of the vendor resources ships at the newer
+                // version is the one installing lays down, and the one to judge
+                // what is installed against.
+                Semver resource_ver = resource_vendor_version(vendor_name);
+                // Orca: a vendor installed as a preset cache has no profile
+                // beside it; the version it was installed at is in the cache.
+                Semver vendor_ver = installed_vendor_version(vendor_name);
 
-                    if (vendor_ver < resource_ver) {
-                        BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:found vendor " << vendor_name << " newer version "
-                                                << resource_ver.to_string() << " from resource, old version " << vendor_ver.to_string();
-                        bundles.insert(vendor_name);
-                    }
-                } else {
-                    // need to be removed because not installed
-                    remove_installed_vendor(vendor_name);
+                if (vendor_ver < resource_ver) {
+                    BOOST_LOG_TRIVIAL(info) << "[Orca Updater]:found vendor " << vendor_name << " newer version "
+                                            << resource_ver.to_string() << " from resource, old version " << vendor_ver.to_string();
+                    bundles.insert(vendor_name);
                 }
+            } else {
+                // need to be removed because not installed
+                remove_installed_vendor(vendor_name);
             }
         } else if (is_vendor_enabled) {
             bundles.insert(vendor_name);

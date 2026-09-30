@@ -1326,8 +1326,9 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
     int granularity = 1;
     for (size_t i = 0; i < print_object.num_printing_regions(); ++ i) {
         const PrintRegionConfig &config = print_object.printing_region(i).config();
-        int top_layers    = config.top_shell_layers.value;
-        int bottom_layers = config.bottom_shell_layers.value;
+        // Clamp to >= 1: 0 means "surface layer only"; negatives would wrap to SIZE_MAX.
+        int top_layers    = std::max(1, config.top_color_penetration_layers.value);
+        int bottom_layers = std::max(1, config.bottom_color_penetration_layers.value);
         for (size_t color_idx = 1; color_idx < num_facets_states; ++ color_idx) {
             top_layers    = shell_depth_for_color(color_idx, top_layers);
             bottom_layers = shell_depth_for_color(color_idx, bottom_layers);
@@ -1537,10 +1538,10 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
         float   extrusion_width         { 0.f };
         // Minimum radius of a region to be printable. Used to filter regions by morphological opening.
         float   small_region_threshold  { 0.f };
-        // Maximum number of top layers for a queried color.
-        int     top_shell_layers        { 0 };
-        // Maximum number of bottom layers for a queried color.
-        int     bottom_shell_layers     { 0 };
+        // Maximum number of top paint penetration layers for a queried color.
+        int     top_color_penetration_layers    { 0 };
+        // Maximum number of bottom paint penetration layers for a queried color.
+        int     bottom_color_penetration_layers { 0 };
         //BBS: spacing according to width and layer height
         float   extrusion_spacing{ 0.f };
         // ORCA: per-extruder layer height: the colour's extruder prints runs of several layers.
@@ -1557,8 +1558,8 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                 //BBS: the extrusion line width is outer wall rather than inner wall
                 double outer_wall_line_width = resolve_outer_wall_line_width(config, print_object.config(), print_object.print()->config());
                 out.extrusion_width     = std::max<float>(out.extrusion_width, outer_wall_line_width);
-                out.top_shell_layers    = std::max<int>(out.top_shell_layers, config.top_shell_layers);
-                out.bottom_shell_layers = std::max<int>(out.bottom_shell_layers, config.bottom_shell_layers);
+                out.top_color_penetration_layers    = std::max<int>(out.top_color_penetration_layers, std::max(1, config.top_color_penetration_layers.value));
+                out.bottom_color_penetration_layers = std::max<int>(out.bottom_color_penetration_layers, std::max(1, config.bottom_color_penetration_layers.value));
                 out.small_region_threshold = config.gap_infill_speed.get_at(print_object.print()->get_extruder_id(config.outer_wall_filament_id - 1)) > 0 ?
                                              // Gap fill enabled. Enable a single line of 1/2 extrusion width.
                                              0.5f * outer_wall_line_width :
@@ -1577,8 +1578,8 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
             out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
             return out;
         }
-        out.top_shell_layers    = shell_depth_for_color(color_idx, out.top_shell_layers);
-        out.bottom_shell_layers = shell_depth_for_color(color_idx, out.bottom_shell_layers);
+        out.top_color_penetration_layers    = shell_depth_for_color(color_idx, out.top_color_penetration_layers);
+        out.bottom_color_penetration_layers = shell_depth_for_color(color_idx, out.bottom_color_penetration_layers);
         out.pitch_colour        = color_idx > 0 && colour_multipliers[color_idx] > 1;
         out.extrusion_width = scaled<float>(out.extrusion_width);
         out.extrusion_spacing = scaled<float>(out.extrusion_spacing);
@@ -1621,7 +1622,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                             ExPolygons layer_slices_trimmed = input_expolygons[stat.pitch_colour && layer_idx > 0 ? layer_idx - 1 : layer_idx];
                             // ORCA: this colour's own face strips between the shell row and the face row (see pitch_shell_row).
                             Polygons own_face;
-                            for (int last_idx = int(layer_idx) - 1; last_idx > std::max(int(layer_idx - stat.top_shell_layers), int(0)); --last_idx) {
+                            for (int last_idx = int(layer_idx) - 1; last_idx > std::max(int(layer_idx - stat.top_color_penetration_layers), int(0)); --last_idx) {
                                 if (stat.pitch_colour && size_t(last_idx) < top.size())
                                     append(own_face, top[last_idx]);
                                 //BBS: offset width should be 2*spacing to avoid too narrow area which has overlap of wall line
@@ -1655,7 +1656,7 @@ static inline std::vector<std::vector<ExPolygons>> segmentation_top_and_bottom_l
                             float offset = 0.f;
                             ExPolygons layer_slices_trimmed = input_expolygons[stat.pitch_colour && layer_idx + 1 < num_layers ? layer_idx + 1 : layer_idx]; // ORCA: see the top shell loop
                             Polygons own_face; // ORCA: see the top shell loop
-                            for (size_t last_idx = layer_idx + 1; last_idx < std::min(layer_idx + stat.bottom_shell_layers, num_layers); ++last_idx) {
+                            for (size_t last_idx = layer_idx + 1; last_idx < std::min(layer_idx + stat.bottom_color_penetration_layers, num_layers); ++last_idx) {
                                 if (stat.pitch_colour && last_idx < bottom.size())
                                     append(own_face, bottom[last_idx]);
                                 //BBS: offset width should be 2*spacing to avoid too narrow area which has overlap of wall line

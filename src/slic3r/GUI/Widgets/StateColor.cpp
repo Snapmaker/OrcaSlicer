@@ -4,7 +4,6 @@
 
 static bool gDarkMode = false;
 
-static bool operator<(wxColour const &l, wxColour const &r) { return l.GetRGBA() < r.GetRGBA(); }
 
 static std::map<wxColour, wxColour> gDarkColors{
     {"#009688", "#00675b"}, // rgb(0, 150, 136)    ORCA color

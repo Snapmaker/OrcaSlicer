@@ -5,6 +5,10 @@
 
 #include <map>
 
+// Ordering for the std::map / std::set of colours used by the theme and dark-mode maps.
+// It has to be visible in every file that builds one (StateColor.cpp, Theme.cpp).
+inline bool operator<(wxColour const &l, wxColour const &r) { return l.GetRGBA() < r.GetRGBA(); }
+
 class StateColor
 {
 public:

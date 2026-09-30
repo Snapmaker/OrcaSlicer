@@ -130,6 +130,26 @@ public:
         return -1;
     }
 
+    /**
+     * @brief Maps a selected item to the row drawn as selected, hiding one folded into a group header.
+     * @param items Preset entries this popup owns, in display order.
+     * @param group Non-empty while this popup is the submenu of one group.
+     * @param item_index Selected item, or a negative value when nothing is selected.
+     * @return Visible row to highlight, or -1 when the selection must not be drawn.
+     */
+    static int drawn_row_for_item(const std::vector<Item> &items, const wxString &group, int item_index)
+    {
+        if (item_index < 0 || static_cast<size_t>(item_index) >= items.size())
+            return -1;
+
+        const Item &item = items[static_cast<size_t>(item_index)];
+        // Load-bearing: selected_row_for_item() also returns a header row for the first item of a group.
+        if (group.IsEmpty() && !item.group.IsEmpty())
+            return -1;
+
+        return selected_row_for_item(items, group, item_index);
+    }
+
     /** @brief Removes a redundant vendor/group prefix, matching only at a word boundary and ignoring case. */
     static wxString strip_group_prefix(const wxString &text, const wxString &group)
     {

@@ -10452,13 +10452,17 @@ CLIMiscConfigDef::CLIMiscConfigDef()
     /*def = this->add("output", coString);
     def->label = L("Output File");
     def->tooltip = L("The file where the output will be written (if not specified, it will be based on the input file).");
-    def->cli = "output|o";
+    def->cli = "output|o";*/
 
+    // Re-enabled: InstanceCheck reads --single-instance / --no-single-instance, and the Blender bridge
+    // (and anything else handing files to a running EdgeSlicer) passes it. With it commented out the
+    // CLI parser rejected the flag as an invalid option and the process exited before the hand-off.
     def = this->add("single_instance", coBool);
     def->label = L("Single instance mode");
     def->tooltip = L("If enabled, the command line arguments are sent to an existing instance of GUI OrcaSlicer, "
                      "or an existing EdgeSlicer window is activated. "
-                     "Overrides the \"single_instance\" configuration value from application preferences.");*/
+                     "Overrides the \"single_instance\" configuration value from application preferences.");
+    def->set_default_value(new ConfigOptionBool(false));
 
 /*
     def = this->add("autosave", coString);

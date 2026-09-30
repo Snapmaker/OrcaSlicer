@@ -107,7 +107,7 @@ void HomePanel::ensure_browser()
 {
     if (m_browser != nullptr)
         return;
-    wxString url = wxString::Format("file://%s/web/home/index.html", from_u8(resources_dir()));
+    const wxString url = file_url_from_path(boost::filesystem::path(resources_dir()) / "web" / "home" / "index.html");
     BOOST_LOG_TRIVIAL(info) << "HomePanel: building the Home page";
     m_browser = WebView::CreateWebView(this, url);
     if (m_browser == nullptr) {

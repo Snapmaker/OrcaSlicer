@@ -621,6 +621,102 @@ TEST_CASE("vendors: CSV export", "[Vendors]")
     CHECK(csv.find("secret.example") == std::string::npos); // download links never
 }
 
+TEST_CASE("vendors: redirects never carry credentials to another site", "[Vendors]")
+{
+    const Spec            s = spec_from_json(cpl3d_spec_json());
+    std::vector<Request>  log;
+    std::map<std::string, Response> answers;
+    auto redirect = [](const std::string& to, int status = 302) {
+        Response r;
+        r.status              = status;
+        r.headers["location"] = to;
+        return r;
+    };
+    Response ok;
+    ok.status = 200;
+    ok.body   = "file";
+    HttpFn http = [&](const Request& q) {
+        log.push_back(q);
+        auto it = answers.find(q.url);
+        return it == answers.end() ? ok : it->second;
+    };
+    auto has_secret = [](const Request& q) {
+        for (const auto& [k, v] : q.headers)
+            if (v.find(KEY) != std::string::npos || v == APP_KEY)
+                return true;
+        return q.url.find(KEY) != std::string::npos;
+    };
+
+    SECTION("to another host: a bare request")
+    {
+        answers["https://www.cpl3d.com/api/v1/library"] = redirect("https://evil.example/steal");
+        const Response r = fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/api/v1/library", true);
+        CHECK(r.status == 200);
+        REQUIRE(log.size() == 2);
+        CHECK(has_secret(log[0]));
+        CHECK(log[1].url == "https://evil.example/steal");
+        CHECK_FALSE(has_secret(log[1]));
+        CHECK(log[1].headers.empty());
+    }
+    SECTION("on the API's own site: credentials again")
+    {
+        answers["https://www.cpl3d.com/api/v1/library"] = redirect("/api/v2/library", 301);
+        fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/api/v1/library", true);
+        REQUIRE(log.size() == 2);
+        CHECK(log[1].url == "https://www.cpl3d.com/api/v2/library");
+        CHECK(has_secret(log[1]));
+    }
+    SECTION("away and back: the credentials stay home only")
+    {
+        answers["https://cdn.example/a"] = redirect("https://www.cpl3d.com/api/v1/b");
+        fetch(s, cpl3d_secrets(), http, "https://cdn.example/a", true);
+        REQUIRE(log.size() == 2);
+        CHECK_FALSE(has_secret(log[0]));
+        CHECK(has_secret(log[1]));
+        log.clear();
+        fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/api/v1/c", false); // a request that never had them
+        CHECK_FALSE(has_secret(log[0]));
+    }
+    SECTION("to plain http, or other schemes: refused")
+    {
+        answers["https://www.cpl3d.com/x"] = redirect("http://www.cpl3d.com/x");
+        const Response r = fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/x", true);
+        CHECK(r.status == 0);
+        CHECK_FALSE(r.error.empty());
+        CHECK(log.size() == 1);
+        answers["https://www.cpl3d.com/y"] = redirect("file:///etc/passwd");
+        CHECK(fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/y", true).status == 0);
+    }
+    SECTION("a loop ends")
+    {
+        answers["https://www.cpl3d.com/loop"] = redirect("https://www.cpl3d.com/loop");
+        const Response r = fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/loop", true);
+        CHECK(r.status == 0);
+        CHECK(log.size() == 6); // the first request and 5 redirects
+    }
+    SECTION("a sink is passed on to every hop")
+    {
+        answers["https://www.cpl3d.com/f"] = redirect("https://files.example/f");
+        size_t got = 0;
+        fetch(s, cpl3d_secrets(), http, "https://www.cpl3d.com/f", true, [&got](const char*, size_t n) { got += n; return true; });
+        REQUIRE(log.size() == 2);
+        CHECK(log[0].sink);
+        CHECK(log[1].sink);
+    }
+    SECTION("sync and test follow the same rule")
+    {
+        std::atomic<bool> cancel { false };
+        HttpFn            list = [&](const Request& q) {
+            log.push_back(q);
+            return q.url.find("https://www.cpl3d.com/api/v1/library?") == 0 ? redirect("https://evil.example/list") : ok;
+        };
+        sync(s, cpl3d_secrets(), Cache(), list, cancel, 1);
+        REQUIRE(log.size() >= 2);
+        CHECK(log[1].url == "https://evil.example/list");
+        CHECK_FALSE(has_secret(log[1]));
+    }
+}
+
 TEST_CASE("vendors: the cache round-trips", "[Vendors]")
 {
     const Spec        s = spec_from_json(cpl3d_spec_json());

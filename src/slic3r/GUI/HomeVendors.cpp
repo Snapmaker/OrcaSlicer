@@ -25,6 +25,7 @@
 #include <wx/clipbrd.h>
 #include <wx/filedlg.h>
 #include <wx/secretstore.h>
+#include <wx/stdpaths.h>
 #include <wx/textdlg.h>
 #include <wx/utils.h>
 
@@ -47,8 +48,11 @@ static std::string lower(std::string s)
     return s;
 }
 
-// The HTTP call the engine asks for, with the slicer's own client (TLS checked for internet hosts).
-// None of the app's own headers go along: a vendor gets only what its connector says.
+// One HTTP request for the engine, with the slicer's own client (TLS checked for internet hosts).
+// None of the app's own headers go along: a vendor gets only what its connector says. Redirects are
+// not followed here: Vendors::fetch() follows them and decides, per hop, whether the connector's
+// credentials go along (curl would pass custom headers to any host). A request with a sink streams
+// its 2xx body there instead of into memory.
 static Vendors::Response http_call(const Vendors::Request& req, size_t limit)
 {
     Vendors::Response out;
@@ -58,17 +62,27 @@ static Vendors::Response http_call(const Vendors::Request& req, size_t limit)
     }
     std::string raw_headers;
     auto        http = Http::get(req.url);
-    http.clear_headers().timeout_connect(15).timeout_max(limit > LIST_LIMIT ? 1800 : 120).size_limit(limit);
+    http.clear_headers().follow_redirects(false).timeout_connect(15).timeout_max(limit > LIST_LIMIT ? 1800 : 120).size_limit(limit);
     for (const auto& [k, v] : req.headers)
         http.header(k, v);
+    if (req.sink)
+        http.on_body([&req, &out](unsigned status, const char* data, size_t size) {
+            if (status >= 200 && status < 300)
+                return req.sink(data, size);
+            if (out.body.size() < 64 * 1024) // an error page: kept for the message
+                out.body.append(data, std::min(size, 64 * 1024 - out.body.size()));
+            return true;
+        });
     http.on_header_callback([&raw_headers](std::string h) { raw_headers = std::move(h); })
         .on_complete([&out](std::string body, unsigned status) {
             out.status = int(status);
-            out.body   = std::move(body);
+            if (!body.empty())
+                out.body = std::move(body);
         })
         .on_error([&out](std::string body, std::string error, unsigned status) {
             out.status = int(status);
-            out.body   = std::move(body);
+            if (!body.empty())
+                out.body = std::move(body);
             if (status == 0)
                 out.error = error;
         })
@@ -254,56 +268,65 @@ static wxString service_of(const std::string& id, const std::string& key)
 bool HomeVendors::secure_store() const
 {
 #if wxUSE_SECRETSTORE
-    wxString why;
-    return wxSecretStore::GetDefault().IsOk(&why);
+    if (m_secure_store < 0) {
+        wxString why;
+        m_secure_store = wxSecretStore::GetDefault().IsOk(&why) ? 1 : 0;
+    }
+    return m_secure_store == 1;
 #else
     return false;
 #endif
 }
 
+// A slot's value: the session's, else the credential store's. The store is asked once per slot and
+// the answer kept (set_secret() keeps it current), so redrawing the page does not go back to the
+// Keychain / Credential Manager / libsecret each time.
+const std::string* HomeVendors::secret(const std::string& id, const std::string& key) const
+{
+    const std::string name = id + "/" + key;
+    auto s = m_session_secrets.find(name);
+    if (s != m_session_secrets.end())
+        return &s->second;
+    auto c = m_secret_cache.find(name);
+    if (c == m_secret_cache.end()) {
+        std::string value;
+#if wxUSE_SECRETSTORE
+        if (secure_store()) {
+            wxString      user;
+            wxSecretValue v;
+            if (wxSecretStore::GetDefault().Load(service_of(id, key), user, v) && v.GetSize() > 0)
+                value.assign(static_cast<const char*>(v.GetData()), v.GetSize());
+        }
+#endif
+        c = m_secret_cache.emplace(name, std::move(value)).first;
+    }
+    return c->second.empty() ? nullptr : &c->second;
+}
+
 bool HomeVendors::has_secret(const std::string& id, const std::string& key) const
 {
-    if (m_session_secrets.count(id + "/" + key))
-        return true;
-#if wxUSE_SECRETSTORE
-    if (secure_store()) {
-        wxString      user;
-        wxSecretValue value;
-        return wxSecretStore::GetDefault().Load(service_of(id, key), user, value) && value.GetSize() > 0;
-    }
-#endif
-    return false;
+    return secret(id, key) != nullptr;
 }
 
 Vendors::Secrets HomeVendors::secrets_of(const Vendors::Spec& spec) const
 {
     Vendors::Secrets out;
-    for (const auto& slot : Vendors::secret_slots(spec)) {
-        auto s = m_session_secrets.find(spec.id + "/" + slot.first);
-        if (s != m_session_secrets.end()) {
-            out[slot.first] = s->second;
-            continue;
-        }
-#if wxUSE_SECRETSTORE
-        if (secure_store()) {
-            wxString      user;
-            wxSecretValue value;
-            if (wxSecretStore::GetDefault().Load(service_of(spec.id, slot.first), user, value) && value.GetSize() > 0)
-                out[slot.first] = std::string(static_cast<const char*>(value.GetData()), value.GetSize());
-        }
-#endif
-    }
+    for (const auto& slot : Vendors::secret_slots(spec))
+        if (const std::string* v = secret(spec.id, slot.first))
+            out[slot.first] = *v;
     return out;
 }
 
 void HomeVendors::set_secret(const std::string& id, const std::string& key, const std::string& value)
 {
+    m_secret_cache.erase(id + "/" + key); // read again from wherever it ends up
 #if wxUSE_SECRETSTORE
     if (secure_store()) {
         if (value.empty())
             wxSecretStore::GetDefault().Delete(service_of(id, key));
         else if (wxSecretStore::GetDefault().Save(service_of(id, key), wxString::FromUTF8(key), wxSecretValue(value.size(), value.data()))) {
             m_session_secrets.erase(id + "/" + key);
+            m_secret_cache[id + "/" + key] = value;
             return;
         } else
             BOOST_LOG_TRIVIAL(warning) << "HomeVendors: the credential store refused a secret; keeping it for this session only";
@@ -322,6 +345,8 @@ void HomeVendors::forget_secrets(const Vendors::Spec& spec)
     // Also any the session holds for slots the spec no longer has.
     for (auto it = m_session_secrets.begin(); it != m_session_secrets.end();)
         it = it->first.rfind(spec.id + "/", 0) == 0 ? m_session_secrets.erase(it) : std::next(it);
+    for (auto it = m_secret_cache.begin(); it != m_secret_cache.end();)
+        it = it->first.rfind(spec.id + "/", 0) == 0 ? m_secret_cache.erase(it) : std::next(it);
 }
 
 void HomeVendors::ask_secret(const std::string& id, const std::string& key)
@@ -699,7 +724,8 @@ void HomeVendors::send_thumbnails(const std::vector<std::string>& keys)
     struct Job
     {
         std::string      key, url, dir;
-        Vendors::Request request;
+        Vendors::Spec    spec;
+        Vendors::Secrets secrets;
     };
     std::vector<Job> jobs;
     for (const std::string& key : keys) {
@@ -713,9 +739,8 @@ void HomeVendors::send_thumbnails(const std::vector<std::string>& keys)
         job.key = key;
         job.url = i->thumbnail;
         job.dir = cache_dir(c->spec.id);
-        // Credentials only to the API's own site; a CDN gets a bare request.
-        job.request = Vendors::same_origin(i->thumbnail, c->spec.base_url) ? Vendors::authorize(c->spec, secrets_of(c->spec), i->thumbnail)
-                                                                           : Vendors::Request { i->thumbnail, {} };
+        job.spec    = c->spec;
+        job.secrets = secrets_of(c->spec);
         jobs.push_back(std::move(job));
     }
     if (jobs.empty())
@@ -723,6 +748,7 @@ void HomeVendors::send_thumbnails(const std::vector<std::string>& keys)
     std::weak_ptr<bool> alive  = m_alive;
     auto                cancel = m_cancel;
     std::thread([this, alive, cancel, jobs = std::move(jobs)]() {
+        const Vendors::HttpFn thumb_http = [](const Vendors::Request& q) { return http_call(q, THUMB_LIMIT); };
         json images = json::object();
         auto flush  = [&]() {
             if (images.empty())
@@ -739,7 +765,8 @@ void HomeVendors::send_thumbnails(const std::vector<std::string>& keys)
             const fs::path file = fs::path(job.dir) / "thumbs" / Library::entry_id(job.url);
             std::string    bytes = read_file(file, THUMB_LIMIT);
             if (bytes.empty()) {
-                const Vendors::Response r = http_call(job.request, THUMB_LIMIT);
+                // Credentials only to the API's own site; a CDN gets a bare request, redirects included.
+                const Vendors::Response r = Vendors::fetch(job.spec, job.secrets, thumb_http, job.url, true);
                 if (r.status >= 200 && r.status < 300 && !image_data_uri(r.body).empty()) {
                     bytes = r.body;
                     write_atomic(file, bytes);
@@ -767,10 +794,9 @@ void HomeVendors::download(const std::string& key, const std::string& sub_id)
         if (sub == nullptr)
             return;
     }
-    Vendors::Request request;
-    bool             direct = false;
-    const Vendors::Secrets secrets = secrets_of(c->spec);
-    if (!Vendors::build_download_request(c->spec, secrets, *i, sub, request, direct)) {
+    bool              direct = false;
+    const std::string url    = Vendors::download_url(c->spec, *i, sub, direct);
+    if (url.empty()) {
         notice(_u8L("This connector has no way to download files."), true);
         return;
     }
@@ -783,18 +809,16 @@ void HomeVendors::download(const std::string& key, const std::string& sub_id)
         if (dlg.ShowModal() != wxID_YES)
             return;
     }
-    // Into a Library folder by default, so it shows up there.
-    wxString dir;
-    for (const Library::Folder& f : Library::folders_from_json(wxGetApp().app_config->get("home_library_folders"))) {
-        boost::system::error_code ec;
-        if (fs::is_directory(fs::path(f.path), ec)) {
-            dir = wxString::FromUTF8(f.path);
-            break;
-        }
-    }
+    // Into the first Library folder by default, so it shows up there; else the system's Downloads.
+    // (Not checked for being reachable: that could block on an offline network drive, and the file
+    // dialog copes with a folder that is not there.)
+    wxString dir = wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads);
+    const std::vector<Library::Folder> folders = Library::folders_from_json(wxGetApp().app_config->get("home_library_folders"));
+    if (!folders.empty())
+        dir = wxString::FromUTF8(folders.front().path);
     std::string ext = ".3mf";
     if (direct) {
-        const std::string path = lower(request.url.substr(0, request.url.find_first_of("?#")));
+        const std::string path = lower(url.substr(0, url.find_first_of("?#")));
         for (const char* e : {".3mf", ".stl", ".step", ".stp", ".obj", ".amf", ".zip"})
             if (path.size() > strlen(e) && path.compare(path.size() - strlen(e), strlen(e), e) == 0)
                 ext = e;
@@ -808,24 +832,45 @@ void HomeVendors::download(const std::string& key, const std::string& sub_id)
 
     std::weak_ptr<bool> alive = m_alive;
     auto                cancel = m_cancel;
-    std::thread([this, alive, cancel, spec = c->spec, secrets, request, direct, target, label]() {
+    std::thread([this, alive, cancel, spec = c->spec, secrets = secrets_of(c->spec), url, direct, target, label]() {
+        const Vendors::HttpFn list_http = [](const Vendors::Request& q) { return http_call(q, LIST_LIMIT); };
+        const Vendors::HttpFn file_http = [](const Vendors::Request& q) { return http_call(q, FILE_LIMIT); };
         std::string error;
-        Vendors::Request file_request = request;
-        if (!direct) {
-            // The endpoint answers with a short-lived link to the file.
-            const std::string url = Vendors::resolve_download(spec, secrets, http_call(request, LIST_LIMIT), error);
-            if (!url.empty())
-                file_request = Vendors::same_origin(url, spec.base_url) ? Vendors::authorize(spec, secrets, url) : Vendors::Request { url, {} };
-        }
+        std::string file_url = url;
+        if (!direct) // the endpoint answers with a short-lived link to the file
+            file_url = Vendors::resolve_download(spec, secrets, Vendors::fetch(spec, secrets, list_http, url, true), error);
         bool saved = false;
         if (error.empty() && !*cancel) {
-            const Vendors::Response r = http_call(file_request, FILE_LIMIT);
-            if (r.status >= 200 && r.status < 300 && !r.body.empty())
-                saved = write_atomic(target, r.body);
-            if (!saved)
-                error = r.status == 0 ? _u8L("The download failed:") + " " + r.error.substr(0, 200)
+            // Straight to disk as it arrives (a model can be hundreds of MB), then into place.
+            const fs::path part = target.string() + ".part";
+            bool           wrote = false, write_failed = false;
+            Vendors::Response r;
+            {
+                boost::nowide::ofstream f(part.string().c_str(), std::ios::binary | std::ios::trunc);
+                if (!f)
+                    write_failed = true;
+                else
+                    r = Vendors::fetch(spec, secrets, file_http, file_url, true, [&](const char* data, size_t size) {
+                        if (*cancel)
+                            return false;
+                        f.write(data, std::streamsize(size));
+                        wrote = true;
+                        return bool(f) || !(write_failed = true);
+                    });
+            }
+            boost::system::error_code ec;
+            if (!write_failed && r.status >= 200 && r.status < 300 && wrote) {
+                fs::rename(part, target, ec);
+                saved = !ec;
+                write_failed = !!ec;
+            }
+            if (!saved) {
+                fs::remove(part, ec);
+                error = write_failed ? _u8L("The file could not be written.")
+                        : r.status == 0 ? _u8L("The download failed:") + " " + r.error.substr(0, 200)
                         : r.status >= 300 ? _u8L("The download failed with HTTP") + " " + std::to_string(r.status)
-                                          : _u8L("The file could not be written.");
+                                          : _u8L("The download was empty.");
+            }
         }
         wxGetApp().CallAfter([this, alive, saved, error, target, label]() {
             if (alive.expired())

@@ -59,6 +59,7 @@ private:
     bool             secure_store() const;
     Vendors::Secrets secrets_of(const Vendors::Spec& spec) const;
     bool             has_secret(const std::string& id, const std::string& key) const;
+    const std::string* secret(const std::string& id, const std::string& key) const; // nullptr when not set
     void             set_secret(const std::string& id, const std::string& key, const std::string& value);
     void             forget_secrets(const Vendors::Spec& spec);
 
@@ -84,6 +85,9 @@ private:
     std::vector<Connector>             m_connectors;
     // Secrets kept for this session when the system has no credential store.
     std::map<std::string, std::string> m_session_secrets;
+    // What the credential store holds, by "<id>/<slot>" ("" = nothing), read once per slot.
+    mutable std::map<std::string, std::string> m_secret_cache;
+    mutable int                                m_secure_store { -1 }; // not asked yet
     std::shared_ptr<bool>              m_alive { std::make_shared<bool>(true) };
     std::shared_ptr<std::atomic<bool>> m_cancel { std::make_shared<std::atomic<bool>>(false) };
     std::set<std::string>              m_thumbs_asked;

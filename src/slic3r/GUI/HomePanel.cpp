@@ -32,7 +32,6 @@
 
 #include <wx/dirdlg.h>
 #include <wx/sizer.h>
-#include <wx/stdpaths.h>
 #include <wx/utils.h>
 #include <wx/stattext.h>
 #include <wx/webview.h>
@@ -45,7 +44,6 @@ using json   = nlohmann::json;
 
 static constexpr const char* SECTION_KEY = "home_tab_section";
 static constexpr const char* LIBRARY_FOLDERS_KEY = "home_library_folders";
-static constexpr const char* LIBRARY_SEEDED_KEY  = "home_library_seeded"; // Downloads was added once
 static constexpr const char* LIBRARY_HIDDEN_KEY  = "home_library_hidden";
 // Coming back to Home rescans the Library when the last scan is older than this; Refresh always does.
 static constexpr int64_t LIBRARY_STALE_S = 120;
@@ -525,19 +523,35 @@ void HomePanel::send_recent()
         const std::string path = r.value("path", std::string());
         if (path.empty())
             continue;
-        boost::system::error_code ec;
-        const bool                exists = fs::is_regular_file(fs::path(path), ec);
         json item;
         item["path"]   = path;
         item["name"]   = r.value("project_name", std::string());
         item["folder"] = fs::path(path).parent_path().string();
-        item["exists"] = exists;
-        item["time"]   = exists ? (long long) fs::last_write_time(fs::path(path), ec) : 0LL;
+        item["exists"] = true; // until the check below says otherwise
+        item["time"]   = 0LL;
         item["image"]  = r.value("image", std::string());
         items.push_back(std::move(item));
         m_recent_paths.push_back(path);
     }
     send({{"type", "recent"}, {"items", items}});
+
+    // Whether each file is still there, and its date: off the GUI thread, since a project on a network
+    // drive that is offline can block a file check for a long time. The cards come back updated.
+    const unsigned      generation = ++m_recent_generation;
+    std::weak_ptr<bool> alive      = m_alive;
+    std::thread([this, alive, generation, items = std::move(items)]() mutable {
+        for (json& item : items) {
+            const fs::path            p(item["path"].get<std::string>());
+            boost::system::error_code ec;
+            const bool                exists = fs::is_regular_file(p, ec);
+            item["exists"] = exists;
+            item["time"]   = exists ? (long long) fs::last_write_time(p, ec) : 0LL;
+        }
+        wxGetApp().CallAfter([this, alive, generation, items = std::move(items)]() {
+            if (!alive.expired() && generation == m_recent_generation)
+                send({{"type", "recent"}, {"items", items}});
+        });
+    }).detach();
 }
 
 void HomePanel::send_history()
@@ -693,21 +707,8 @@ void HomePanel::delete_archived(const std::string& id)
 
 std::vector<Library::Folder> HomePanel::library_folders() const
 {
-    AppConfig* cfg = wxGetApp().app_config;
-    if (cfg->get(LIBRARY_SEEDED_KEY) != "1") {
-        // The Library starts with the Downloads folder, once: removing it later sticks.
-        std::vector<Library::Folder> folders = Library::folders_from_json(cfg->get(LIBRARY_FOLDERS_KEY));
-        const std::string downloads = into_u8(wxStandardPaths::Get().GetUserDir(wxStandardPaths::Dir_Downloads));
-        boost::system::error_code ec;
-        if (!downloads.empty() && fs::is_directory(fs::path(downloads), ec)) {
-            Library::Folder f;
-            f.path = downloads;
-            folders.insert(folders.begin(), f);
-        }
-        cfg->set(LIBRARY_FOLDERS_KEY, Library::folders_to_json(folders));
-        cfg->set(LIBRARY_SEEDED_KEY, "1");
-    }
-    return Library::folders_from_json(cfg->get(LIBRARY_FOLDERS_KEY));
+    // No folder by default: indexing a big Downloads or home folder unasked could take a long time.
+    return Library::folders_from_json(wxGetApp().app_config->get(LIBRARY_FOLDERS_KEY));
 }
 
 void HomePanel::save_library_folders(const std::vector<Library::Folder>& folders)

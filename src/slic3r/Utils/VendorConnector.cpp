@@ -506,6 +506,31 @@ Request authorize(const Spec& spec, const Secrets& secrets, const std::string& u
     return r;
 }
 
+Response fetch(const Spec& spec, const Secrets& secrets, const HttpFn& http, const std::string& url, bool credentials,
+               const std::function<bool(const char*, size_t)>& sink, int max_redirects)
+{
+    std::string current = url;
+    for (int hop = 0;; ++hop) {
+        Response error;
+        if (!is_allowed_url(current)) {
+            error.error = hop == 0 ? "address not allowed" : "redirected to an address that is not allowed";
+            return error;
+        }
+        Request req = credentials && same_origin(current, spec.base_url) ? authorize(spec, secrets, current) : Request { current, {} };
+        req.sink    = sink;
+        Response resp = http(req);
+        const bool redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308;
+        auto       location = resp.headers.find("location");
+        if (!redirect || location == resp.headers.end() || location->second.empty())
+            return resp;
+        if (hop >= max_redirects) {
+            error.error = "too many redirects";
+            return error;
+        }
+        current = join_url(current, location->second);
+    }
+}
+
 // What went wrong, for the user: the status and the API's own message, never the URL (it may carry
 // a key in its query) nor anything we sent.
 static std::string http_error(const Spec& spec, const Response& resp, const Secrets& secrets)
@@ -863,7 +888,7 @@ SyncResult sync(const Spec& spec, const Secrets& secrets, const Cache& previous,
             result.error = "The API address is not allowed.";
             break;
         }
-        const Response resp = http(authorize(spec, secrets, url));
+        const Response resp = fetch(spec, secrets, http, url, true);
         ++result.requests;
         read_quota(spec, resp, result.cache.quota);
         if (resp.status < 200 || resp.status >= 300) {
@@ -947,7 +972,7 @@ TestResult test_connection(const Spec& spec, const Secrets& secrets, const HttpF
 {
     TestResult r;
     Pager      pager(spec);
-    const Response resp = http(authorize(spec, secrets, pager.url(std::string(), std::min(spec.page_size, 5))));
+    const Response resp = fetch(spec, secrets, http, pager.url(std::string(), std::min(spec.page_size, 5)), true);
     read_quota(spec, resp, r.quota);
     if (resp.status < 200 || resp.status >= 300) {
         r.error = http_error(spec, resp, secrets);
@@ -974,24 +999,31 @@ TestResult test_connection(const Spec& spec, const Secrets& secrets, const HttpF
 
 // ------------------------------------------------------------------------------ download ----
 
-bool build_download_request(const Spec& spec, const Secrets& secrets, const Item& item, const SubItem* sub, Request& out, bool& is_direct)
+std::string download_url(const Spec& spec, const Item& item, const SubItem* sub, bool& is_direct)
 {
     const std::string direct = sub != nullptr ? sub->download : item.download;
     if (!direct.empty() && is_allowed_url(direct)) {
-        // Credentials go only to the API's own site.
-        out       = same_origin(direct, spec.base_url) ? authorize(spec, secrets, direct) : Request { direct, {} };
         is_direct = true;
-        return true;
+        return direct;
     }
     if (spec.download_path.empty())
-        return false;
+        return std::string();
     const json i = {{"id", item.id}, {"name", item.name}};
     const json s = sub != nullptr ? json{{"id", sub->id}, {"name", sub->name}, {"variant", sub->variant}} : json::object();
     const std::string url = spec.base_url + fill_template(spec.download_path, i, s, true);
     if (!is_allowed_url(url))
-        return false;
-    out       = authorize(spec, secrets, url);
+        return std::string();
     is_direct = false;
+    return url;
+}
+
+bool build_download_request(const Spec& spec, const Secrets& secrets, const Item& item, const SubItem* sub, Request& out, bool& is_direct)
+{
+    const std::string url = download_url(spec, item, sub, is_direct);
+    if (url.empty())
+        return false;
+    // Credentials go only to the API's own site.
+    out = same_origin(url, spec.base_url) ? authorize(spec, secrets, url) : Request { url, {} };
     return true;
 }
 

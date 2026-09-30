@@ -101,6 +101,9 @@ struct Request
 {
     std::string                                      url;
     std::vector<std::pair<std::string, std::string>> headers;
+    // Optional: a successful (2xx) body goes here in pieces instead of into Response::body, so a big
+    // file never sits in memory. false stops the transfer.
+    std::function<bool(const char* data, size_t size)> sink;
 };
 struct Response
 {
@@ -109,7 +112,16 @@ struct Response
     std::string                        body;
     std::string                        error;          // transport error
 };
+// Makes one request and must NOT follow redirects: fetch() follows them, so that credentials never
+// go to another site.
 using HttpFn = std::function<Response(const Request&)>;
+
+// GET `url` through `http`, following up to `max_redirects` redirects. With `credentials`, the
+// connector's credentials are added to each request for the API's own origin (scheme, host and port
+// of base_url) and to no other: a redirect to another site gets a bare request. A redirect to an
+// address that is_allowed_url() refuses, or too many of them, ends with an error (status 0).
+Response fetch(const Spec& spec, const Secrets& secrets, const HttpFn& http, const std::string& url, bool credentials,
+               const std::function<bool(const char*, size_t)>& sink = nullptr, int max_redirects = 5);
 
 struct SubItem
 {
@@ -191,6 +203,8 @@ TestResult test_connection(const Spec& spec, const Secrets& secrets, const HttpF
 // false when the spec has no way to download it.
 bool build_download_request(const Spec& spec, const Secrets& secrets, const Item& item, const SubItem* sub, Request& out,
                             bool& is_direct);
+// The same address without credentials ("" when there is no way to download), for fetch().
+std::string download_url(const Spec& spec, const Item& item, const SubItem* sub, bool& is_direct);
 // The file URL in the download endpoint's answer, or "" with `error` set.
 std::string resolve_download(const Spec& spec, const Secrets& secrets, const Response& response, std::string& error);
 

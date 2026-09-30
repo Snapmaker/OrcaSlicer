@@ -106,6 +106,7 @@ private:
     std::vector<std::string> m_recent_paths;
     std::set<std::string>    m_history_ids;
     unsigned                 m_history_generation { 0 };
+    unsigned                 m_recent_generation { 0 };
     std::map<std::string, std::string> m_library_paths; // id -> path
 
     Library::Index m_library;

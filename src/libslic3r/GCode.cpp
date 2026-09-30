@@ -2958,8 +2958,23 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
             // No object to print was found, cancel the G-code export.
             throw Slic3r::SlicingError(_(L("No object can be printed. Maybe too small")));
         // We don't allow switching of extruders per layer by Model::custom_gcode_per_print_z in sequential mode.
-        // Use the extruder IDs collected from Regions.
-        this->set_extruders(print.extruders());
+        // Print::extruders() expands mixed virtual IDs (including manual_pattern tokens) to
+        // physical components via MixedFilamentManager. Union every object's ToolOrdering as
+        // well — the first-object ordering above is not enough: later objects get a fresh
+        // ToolOrdering in the per-instance loop, and collect_extruders can register extra
+        // physical IDs (image-row candidates, grouped patterns) that Print::extruders() misses.
+        std::vector<unsigned int> extruder_ids = print.extruders();
+        {
+            const PrintObject *prev = nullptr;
+            for (const PrintInstance *inst : print_object_instances_ordering) {
+                if (inst->print_object == prev)
+                    continue;
+                prev = inst->print_object;
+                append(extruder_ids, ToolOrdering(*inst->print_object, (unsigned int) -1).all_extruders());
+            }
+        }
+        sort_remove_duplicates(extruder_ids);
+        this->set_extruders(extruder_ids);
 
         has_wipe_tower = print.has_wipe_tower() && tool_ordering.has_wipe_tower();
     } else {
@@ -6416,11 +6431,25 @@ LayerResult GCode::process_layer(const Print& print,
                 // it in lock-step with ToolOrdering.cpp's copy regardless.
                 bool          has_interface = support_role_needs_interface_extruder(role);
                 // Extruder ID of the support base. -1 if "don't care".
-                unsigned int support_extruder = object.config().support_filament.value - 1;
+                // Mixed virtual IDs must be resolved the same way ToolOrdering::collect_extruders
+                // does (LayerTools::resolve_mixed_1based_at → resolve_mixed_with_layer_heights),
+                // including the auto-row A/B layer-height cycle. mixed_mgr->resolve() alone
+                // files support under a tool that is not in layer_tools.extruders, and
+                // process_layer skips it.
+                auto resolve_mixed_filament_0based = [&](int filament_1based) -> unsigned int {
+                    if (filament_1based <= 0)
+                        return (unsigned int) -1;
+                    const unsigned int id1 = layer_tools.resolve_mixed_1based_at(unsigned(filament_1based),
+                                                                                 float(support_layer.print_z),
+                                                                                 float(support_layer.height),
+                                                                                 &object);
+                    return id1 >= 1 ? id1 - 1 : (unsigned int) -1;
+                };
+                unsigned int support_extruder = resolve_mixed_filament_0based(object.config().support_filament.value);
                 // Shall the support be printed with the active extruder, preferably with non-soluble, to avoid tool changes?
                 bool support_dontcare = object.config().support_filament.value == 0;
                 // Extruder ID of the support interface. -1 if "don't care".
-                unsigned int interface_extruder = object.config().support_interface_filament.value - 1;
+                unsigned int interface_extruder = resolve_mixed_filament_0based(object.config().support_interface_filament.value);
                 // Shall the support interface be printed with the active extruder, preferably with non-soluble, to avoid tool changes?
                 bool interface_dontcare = object.config().support_interface_filament.value == 0;
 
@@ -10227,6 +10256,9 @@ LiftType GCode::to_lift_type(ZHopType z_hop_types)
 
 bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftType& lift_type)
 {
+    assert(this->writer().extruder() != nullptr);
+    if (this->writer().extruder() == nullptr)
+        return false;
     if (travel.length() < scale_(EXTRUDER_CONFIG(retraction_minimum_travel))) {
         // skip retraction if the move is shorter than the configured threshold
         return false;

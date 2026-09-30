@@ -4137,6 +4137,7 @@ std::vector<unsigned int> PrintObject::object_extruders() const
         }
     }
     sort_remove_duplicates(extruders);
+    this->print()->mixed_filament_manager().expand_0based_extruder_ids(extruders, this->print()->config().filament_diameter.size());
     return extruders;
 }
 

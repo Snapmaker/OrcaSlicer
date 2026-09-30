@@ -933,12 +933,39 @@ void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, si
             const MixedFilament *mf = mixed_filament_from_id(
                 static_cast<unsigned int>(id), num_physical);
             if (mf != nullptr && mf->enabled) {
-                expanded.push_back(static_cast<int>(mf->component_a));
-                expanded.push_back(static_cast<int>(mf->component_b));
-                auto gradient_ids = decode_gradient_component_ids(
-                    mf->gradient_component_ids, num_physical);
-                for (unsigned int gid : gradient_ids)
-                    expanded.push_back(static_cast<int>(gid));
+                // Mirror MixedFilamentManager::resolve: a pattern is exclusive (tokens, else
+                // component_a); a 3+ id gradient is exclusive when the mode is not Simple;
+                // otherwise only the A/B pair is reachable. resolve() falls back to
+                // component_a for any unmapped token, so expansion must register it too.
+                if (!mf->manual_pattern.empty()) {
+                    bool any_mapped   = false;
+                    bool any_unmapped = false;
+                    const std::string flattened = flatten_manual_pattern_groups(mf->manual_pattern);
+                    if (!flattened.empty()) {
+                        for (const auto &token : split_pattern_group_to_tokens(flattened, num_physical)) {
+                            const unsigned int phys = physical_filament_from_token(token, *mf, num_physical);
+                            if (phys >= 1) {
+                                expanded.push_back(static_cast<int>(phys));
+                                any_mapped = true;
+                            } else {
+                                any_unmapped = true;
+                            }
+                        }
+                    }
+                    if (!any_mapped || any_unmapped)
+                        expanded.push_back(static_cast<int>(mf->component_a));
+                } else {
+                    const bool use_simple_mode = mf->distribution_mode == int(MixedFilament::Simple);
+                    const std::vector<unsigned int> gradient_ids =
+                        decode_gradient_component_ids(mf->gradient_component_ids, num_physical);
+                    if (!use_simple_mode && gradient_ids.size() >= 3) {
+                        for (unsigned int gid : gradient_ids)
+                            expanded.push_back(static_cast<int>(gid));
+                    } else {
+                        expanded.push_back(static_cast<int>(mf->component_a));
+                        expanded.push_back(static_cast<int>(mf->component_b));
+                    }
+                }
             } else {
                 expanded.push_back(id);
             }
@@ -947,6 +974,22 @@ void MixedFilamentManager::expand_virtual_extruder_ids(std::vector<int> &ids, si
         }
     }
     ids = std::move(expanded);
+}
+
+void MixedFilamentManager::expand_0based_extruder_ids(std::vector<unsigned int> &ids, size_t num_physical) const
+{
+    std::vector<int> ids_1based;
+    ids_1based.reserve(ids.size());
+    for (unsigned int id : ids)
+        ids_1based.push_back(int(id) + 1);
+    expand_virtual_extruder_ids(ids_1based, num_physical);
+    std::vector<unsigned int> physical;
+    physical.reserve(ids_1based.size());
+    for (int id1 : ids_1based)
+        if (id1 >= 1 && size_t(id1) <= num_physical)
+            physical.push_back(unsigned(id1 - 1));
+    sort_remove_duplicates(physical);
+    ids = std::move(physical);
 }
 
 static int normalize_distribution_mode_without_pointillism(int distribution_mode, const std::string &gradient_component_ids)

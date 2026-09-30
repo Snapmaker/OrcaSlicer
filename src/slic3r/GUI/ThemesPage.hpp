@@ -9,6 +9,7 @@
 #include <wx/image.h>
 #include <wx/window.h>
 
+#include "GUI_Utils.hpp"
 #include "slic3r/Utils/ThemePack.hpp"
 
 class Button;
@@ -22,7 +23,7 @@ namespace GUI {
 
 class ThemePreview;
 
-// Preferences > Themes: pick the theme EdgeSlicer starts with, and change a theme's parts one by
+// Menu > Themes... (ThemesDialog): pick the theme EdgeSlicer starts with, and change a theme's parts one by
 // one (colours, fonts, corners, title bar banner) with a picture of the result, instead of editing
 // theme.json by hand (docs/themes.md). "Default" is the stock look; it cannot be changed or
 // deleted, so there is always a clean theme to go back to. Shipped themes cannot be changed
@@ -83,7 +84,11 @@ private:
     bool confirm_discard();
     // After the theme in use changed, or a different one was chosen: themes load at startup, so
     // ask whether to restart EdgeSlicer now. "Later" leaves the note on the page.
-    void offer_restart();
+    void offer_restart(bool after_save = false);
+    // A different theme is chosen than the one running, or the running one was saved since start.
+    bool restart_pending() const;
+    // Closes Preferences and restarts EdgeSlicer (GUI_App::request_relaunch).
+    void restart_now();
 
     // A file the user picked, as the path it gets inside the pack ("fonts/Name.ttf").
     std::string import_path(const std::string& folder, const boost::filesystem::path& file) const;
@@ -98,7 +103,6 @@ private:
     std::map<std::string, boost::filesystem::path> m_imports;      // picked files, by path in the pack
     bool                                           m_dirty   = false;
     bool                                           m_filling = false; // the controls are being set, not changed
-    std::string                                    m_saved_running; // the running theme was saved over
 
     std::vector<std::string>  m_ids;   // the pick list, [0] = "" for Default
     std::vector<wxString>     m_faces; // installed font faces, sorted
@@ -123,6 +127,17 @@ private:
     Button*        m_save       = nullptr;
     Button*        m_save_as    = nullptr;
     Button*        m_discard    = nullptr;
+    Button*        m_relaunch   = nullptr;
+};
+
+// Menu > Themes...: the themes page in a window of its own. The page (scan of the theme packs, the
+// list of installed fonts, the preview) is built when this opens, not at startup and not with
+// Preferences.
+class ThemesDialog : public DPIDialog
+{
+public:
+    explicit ThemesDialog(wxWindow* parent);
+    void on_dpi_changed(const wxRect& suggested_rect) override { Refresh(); }
 };
 
 } // namespace GUI

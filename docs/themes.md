@@ -3,7 +3,8 @@
 A theme recolours EdgeSlicer beyond light and dark, and can change its fonts, the corners of its
 buttons and boxes, the title bar (colour and a banner image) and the 3D view background.
 
-Everything is in **Preferences > Themes**:
+Everything is in the **Themes...** window, right under **Preferences** in the main menu (it is a window of its
+own, so Preferences stays quick to open and nothing theme-related is built until you open it):
 
 - **Theme** picks the theme EdgeSlicer starts with. **Default (clean)** is the stock look; it
   cannot be changed or deleted, so **Back to Default** always gets you back to it. **Install...**
@@ -24,7 +25,9 @@ A theme takes effect the next time EdgeSlicer starts. When you pick a different 
 change to the one in use, EdgeSlicer asks whether to **Restart now** or **Later**. Restarting closes
 EdgeSlicer the way File > Quit does (an unsaved project is offered for saving, and cancelling that
 cancels the restart) and starts it again with the same command line. **Later** leaves a highlighted
-note on the page saying a restart is needed; the question is asked once per pending change.
+note on the page saying a restart is needed, and **Restart to apply** at the bottom of the page
+stays available whenever one is pending. Every save is a new change and asks again; picking the
+same theme twice asks once.
 Parts the page has no control for (`overrides`, `home`) are kept as they are when a theme is saved.
 
 EdgeSlicer ships two sample themes with original art: **Ember Forge** (dark, charcoal and oxblood

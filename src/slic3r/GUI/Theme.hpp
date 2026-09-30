@@ -64,7 +64,7 @@ bool shipped(const std::string& id);
 // Writes `spec` as the installed theme `id`, replacing it if it is there. The files of the theme
 // being edited are carried over from `source_dir` (empty for none), then `imports` (a path inside
 // the pack -> a file on disk the user picked, a font or an image) are copied in. Nothing is changed
-// when it fails. The Themes page of Preferences saves with this.
+// when it fails. The Themes window saves with this.
 bool save(const std::string& id, const ThemePack::Spec& spec, const boost::filesystem::path& source_dir,
           const std::map<std::string, boost::filesystem::path>& imports, std::string& error);
 

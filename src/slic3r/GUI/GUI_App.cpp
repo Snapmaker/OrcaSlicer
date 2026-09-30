@@ -114,6 +114,7 @@
 #include "../Utils/UndoRedo.hpp"
 #include "slic3r/Config/Snapshot.hpp"
 #include "Preferences.hpp"
+#include "ThemesPage.hpp"
 #include "PluginGuard.hpp"
 #include "PresetMirror.hpp"
 #include "Tab.hpp"
@@ -3235,11 +3236,12 @@ int GUI_App::OnExit()
         BOOST_LOG_TRIVIAL(error) << "Failed to clean up encrypt bbl network log file";
     }
 
-    // A restart was asked for (request_relaunch): start the new one now that this one is down to
-    // its last steps. The single-instance lock goes first, or the new one would hand over to us.
-    if (m_relaunch_pending && init_params != nullptr) {
-        m_single_instance_checker.reset();
-        relaunch_slicer(init_params->argc, init_params->argv, init_params->input_files);
+    // A restart was asked for (request_relaunch). It was started once the window closed; if that
+    // did not happen (the window went some other way), start it now.
+    if (m_relaunch_pending) {
+        BOOST_LOG_TRIVIAL(warning) << "OnExit: relaunch " << (m_relaunch_started ? "already started" : "starting now");
+        m_single_instance_checker.reset(); // the lock is let go before the process is gone
+        relaunch_now();
     }
 
     return wxApp::OnExit();
@@ -3269,6 +3271,15 @@ bool GUI_App::on_init_inner()
     std::setlocale(LC_ALL, "");
 #endif
     StartupProfiler profiler("GUI_App::on_init_inner");
+
+    // Started by GUI_App::request_relaunch of the instance it replaces (main() already waited for it).
+    {
+        wxString note;
+        if (wxGetEnv("EDGESLICER_RELAUNCH_NOTE", &note)) {
+            BOOST_LOG_TRIVIAL(warning) << "Relaunch: this process replaces another (" << note.ToUTF8().data() << ")";
+            wxUnsetEnv("EDGESLICER_RELAUNCH_NOTE");
+        }
+    }
 
     // Ultra: hidden launch. Precedence: SNORCA_HIDDEN (1/0, lets the hub or a test force
     // either way) > --hidden on the command line > app_config "start_hidden".
@@ -4887,6 +4898,7 @@ void GUI_App::request_relaunch()
     if (m_relaunch_pending || mainframe == nullptr)
         return;
     m_relaunch_pending = true;
+    BOOST_LOG_TRIVIAL(warning) << "Relaunch: requested (process " << wxGetProcessId() << "), closing the main window first";
     CallAfter([this]() { relaunch_when_idle(0); });
 }
 
@@ -4904,9 +4916,28 @@ void GUI_App::relaunch_when_idle(int attempt)
     }
     // The same close File > Quit does: it asks about the unsaved project and can be cancelled.
     if (!mainframe->request_quit(false)) {
-        BOOST_LOG_TRIVIAL(info) << "relaunch cancelled: the close was vetoed";
+        BOOST_LOG_TRIVIAL(warning) << "Relaunch: cancelled, the close was vetoed (unsaved-project prompt, say)";
         m_relaunch_pending = false;
+        return;
     }
+    // The window is closed and the project dealt with. Start the new process now: it waits for this
+    // one to exit (--relaunch-after), so it cannot collide with it, and it is not lost if the
+    // teardown that follows hangs or crashes. The window tear-down of a big project can take a
+    // while; the new process has its own start-up to do in the meantime.
+    BOOST_LOG_TRIVIAL(warning) << "Relaunch: the main window is closed";
+    relaunch_now();
+}
+
+void GUI_App::relaunch_now()
+{
+    if (!m_relaunch_pending || m_relaunch_started)
+        return;
+    if (init_params == nullptr) {
+        BOOST_LOG_TRIVIAL(error) << "Relaunch: no command line to start again with, not relaunching";
+        return;
+    }
+    m_relaunch_started = true;
+    relaunch_slicer(init_params->argc, init_params->argv, init_params->input_files);
 }
 
 void GUI_App::start_remote_access()
@@ -7763,6 +7794,19 @@ void  GUI_App::show_ip_address_enter_dialog_handler(wxCommandEvent& evt)
 {
     wxString title = evt.GetString();
     show_modal_ip_address_enter_dialog(title);
+}
+
+void GUI_App::open_themes()
+{
+    if (mainframe == nullptr)
+        return;
+    {
+        ThemesDialog dlg(mainframe);
+        dlg.ShowModal();
+    }
+    if (plater_ != nullptr)
+        if (GLCanvas3D* canvas = plater_->get_current_canvas3D())
+            canvas->force_set_focus();
 }
 
 void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_option)

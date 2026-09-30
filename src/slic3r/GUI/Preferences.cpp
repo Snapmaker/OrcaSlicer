@@ -6,7 +6,6 @@
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
 #include "Theme.hpp"
-#include "ThemesPage.hpp"
 #include "PresetMirror.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -1571,13 +1570,12 @@ void PreferencesDialog::create()
 
     auto general_page = create_general_page();
     auto ultra_page   = create_ultra_page();
-    auto themes_page  = new ThemesPage(m_scrolledWindow);
 #if !BBL_RELEASE_TO_PUBLIC
     auto debug_page   = create_debug_page();
 #endif
 
     // Tab bar switching between the pages (BambuStudio-style tabbed preferences).
-    std::vector<std::pair<wxString, wxWindow*>> pages = { { _L("General"), general_page }, { _L("Extras"), ultra_page }, { _L("Themes"), themes_page } };
+    std::vector<std::pair<wxString, wxWindow*>> pages = { { _L("General"), general_page }, { _L("Extras"), ultra_page } };
 #if !BBL_RELEASE_TO_PUBLIC
     pages.emplace_back(_L("Develop"), debug_page);
 #endif
@@ -1607,7 +1605,6 @@ void PreferencesDialog::create()
     m_sizer_body->Add(0, 0, 0, wxTOP, FromDIP(14));
     m_sizer_body->Add(general_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
     m_sizer_body->Add(ultra_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
-    m_sizer_body->Add(themes_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
 #if !BBL_RELEASE_TO_PUBLIC
     m_sizer_body->Add(debug_page, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(38));
 #endif
@@ -1875,7 +1872,7 @@ wxWindow* PreferencesDialog::create_general_page()
     if (Theme::base_dark() >= 0 && m_dark_mode_ckeckbox != nullptr) {
         // The running theme picks light or dark itself.
         m_dark_mode_ckeckbox->Enable(false);
-        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark (Preferences > Themes)."));
+        m_dark_mode_ckeckbox->SetToolTip(_L("The current theme chooses light or dark (main menu > Themes...)."));
     }
 #endif
 

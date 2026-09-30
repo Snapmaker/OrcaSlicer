@@ -320,7 +320,9 @@ private:
     // and only an explicit quit (tray, hub page, POST /api/quit, File > Quit) ends it.
     bool m_hub_managed { false };
     bool m_relaunch_pending { false };
+    bool m_relaunch_started { false }; // the new process has been started (relaunch_now)
     void relaunch_when_idle(int attempt);
+    void relaunch_now();
     Slic3r::DeviceManager* m_device_manager { nullptr };
     Slic3r::UserManager* m_user_manager { nullptr };
     Slic3r::TaskManager* m_task_manager { nullptr };
@@ -799,6 +801,8 @@ private:
     bool            is_localized() const { return m_wxLocale->GetLocale() != "English"; }
 
     void            open_preferences(size_t open_on_tab = 0, const std::string& highlight_option = std::string());
+    // Menu > Themes...: the themes window, built when it opens.
+    void            open_themes();
 
     virtual bool OnExceptionInMainLoop() override;
     // Calls wxLaunchDefaultBrowser if user confirms in dialog.

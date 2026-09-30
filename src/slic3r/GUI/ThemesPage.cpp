@@ -5,8 +5,10 @@
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/filesystem/operations.hpp>
+#include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <wx/clrpicker.h>
+#include <wx/display.h>
 #include <wx/dcbuffer.h>
 #include <wx/dcgraph.h>
 #include <wx/filedlg.h>
@@ -18,6 +20,7 @@
 #include <wx/textdlg.h>
 
 #include "libslic3r/AppConfig.hpp"
+#include <boost/format.hpp>
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
@@ -86,9 +89,13 @@ static bool same_font(const ThemePack::Font& a, const ThemePack::Font& b) { retu
 static std::set<std::string> g_private_files;
 static std::set<std::string> g_private_faces;
 
-// What the user was already asked about this run ("switch:<id>", "saved:<id>"): one question per
-// pending change, however often the page is reopened.
+// What the user was already asked about this run ("switch:<id>[:<n>]"): one question per pending
+// change, however often the page is reopened. Every save is a new change (g_save_serial), so it
+// asks again.
 static std::set<std::string> g_offered_restart;
+// The running theme was saved over since start (its id), and how many saves that took.
+static std::string g_saved_running;
+static int         g_save_serial = 0;
 
 // A section heading with a rule after it, as on the other Preferences pages.
 static wxSizer* section_title(wxWindow* parent, const wxString& title)
@@ -612,6 +619,18 @@ void ThemesPage::build_actions(wxSizer* sizer)
     row->Add(m_save_as, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
     row->Add(m_discard, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(6));
     sizer->Add(row, 0, wxTOP, FromDIP(6));
+
+    // Themes load at startup; this is the way to restart whenever one is waiting, even after "Later".
+    auto row2  = new wxBoxSizer(wxHORIZONTAL);
+    m_relaunch = button(this, _L("Restart to apply"), _L("Restart EdgeSlicer now so the chosen theme, or your saved changes to the one in use, take effect."));
+    m_relaunch->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        // Edits that were not saved would be lost with the restart.
+        if (confirm_discard())
+            restart_now();
+    });
+    row2->Add(0, 0, 0, wxLEFT, FromDIP(23) / 2 + FromDIP(3));
+    row2->Add(m_relaunch, 0, wxALIGN_CENTER_VERTICAL);
+    sizer->Add(row2, 0, wxTOP, FromDIP(6));
 }
 
 // ------------------------------------------------------------------------------ state ----
@@ -841,7 +860,7 @@ void ThemesPage::update_state()
     const std::string running = Theme::active_id();
     if (m_id != running)
         note = _L("Restart EdgeSlicer to switch to this theme.");
-    else if (m_saved_running == m_id && !m_id.empty())
+    else if (g_saved_running == m_id && !m_id.empty())
         note = _L("Saved. Restart EdgeSlicer to see the changes.");
     else
         note = _L("In use now.");
@@ -850,7 +869,8 @@ void ThemesPage::update_state()
     else if (!m_installed)
         note += " " + _L("This theme comes with EdgeSlicer; saving a change makes your own copy.");
     // A restart still to do stands out; the plain "In use now" stays quiet.
-    const bool restart_needed = m_id != running || (m_saved_running == m_id && !m_id.empty());
+    const bool restart_needed = restart_pending();
+    m_relaunch->Enable(restart_needed);
     m_note->SetFont(restart_needed ? ::Label::Head_13 : ::Label::Body_12);
     m_note->SetForegroundColour(restart_needed ? LINK_COLOUR : MUTED_COLOUR);
     m_note->SetLabel(note);
@@ -880,16 +900,33 @@ bool ThemesPage::confirm_discard()
     return ask.ShowModal() == wxID_YES;
 }
 
-void ThemesPage::offer_restart()
+bool ThemesPage::restart_pending() const
+{
+    const std::string chosen = wxGetApp().app_config->get("ui_theme"); // what the next start loads
+    return chosen != Theme::active_id() || (!chosen.empty() && chosen == g_saved_running);
+}
+
+void ThemesPage::restart_now()
+{
+    BOOST_LOG_TRIVIAL(warning) << "Themes: restart requested from the Themes page (chosen \"" << wxGetApp().app_config->get("ui_theme")
+                               << "\", running \"" << Theme::active_id() << "\")";
+    // Preferences is modal: close it, then the app closes the main window the normal way (saving
+    // prompt included; cancelling that cancels the restart) and starts itself again.
+    if (wxWindow* top = wxGetTopLevelParent(this))
+        top->Close();
+    wxGetApp().request_relaunch();
+}
+
+void ThemesPage::offer_restart(bool after_save)
 {
     // What the next start loads (the choice is saved as it is made) against what is running.
     const std::string chosen  = wxGetApp().app_config->get("ui_theme");
     const std::string running = Theme::active_id();
     std::string       key;
     if (chosen != running)
-        key = "switch:" + chosen;
-    else if (!chosen.empty() && m_saved_running == chosen)
-        key = "saved:" + chosen;
+        key = "switch:" + chosen + (after_save ? ":" + std::to_string(g_save_serial) : std::string());
+    else if (!chosen.empty() && g_saved_running == chosen)
+        key = "saved:" + chosen + ":" + std::to_string(g_save_serial);
     else
         return; // nothing to restart for
     if (!g_offered_restart.insert(key).second)
@@ -904,11 +941,44 @@ void ThemesPage::offer_restart()
     ask.SetYesNoLabels(_L("Restart now"), _L("Later"));
     if (ask.ShowModal() != wxID_YES)
         return;
-    // Preferences is modal: close it, then the app closes the main window the normal way (saving
-    // prompt included; cancelling that cancels the restart) and starts itself again.
-    if (wxWindow* top = wxGetTopLevelParent(this))
-        top->Close();
-    wxGetApp().request_relaunch();
+    restart_now();
+}
+
+// ---------------------------------------------------------------------------- dialog ----
+
+ThemesDialog::ThemesDialog(wxWindow* parent)
+    : DPIDialog(parent, wxID_ANY, _L("Themes"), wxDefaultPosition, wxDefaultSize, wxSYSTEM_MENU | wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
+{
+    SetBackgroundColour(*wxWHITE);
+    const std::string icon_path = (boost::format("%1%/images/EdgeSlicerTitle.ico") % resources_dir()).str();
+    SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
+    SetSizeHints(wxDefaultSize, wxDefaultSize);
+
+    wxBusyCursor busy; // building the page takes a moment
+
+    auto scroller = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);
+    scroller->SetScrollRate(5, 5);
+    auto body = new wxBoxSizer(wxVERTICAL);
+    auto line = new wxPanel(scroller, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(540), 1), wxTAB_TRAVERSAL);
+    line->SetBackgroundColour(LINE_COLOUR);
+    body->Add(line, 0, wxEXPAND);
+    body->Add(new ThemesPage(scroller), 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(38));
+    body->Add(0, 0, 0, wxBOTTOM, FromDIP(28));
+    scroller->SetSizerAndFit(body);
+
+    auto main_sizer = new wxBoxSizer(wxVERTICAL);
+    main_sizer->Add(scroller, 1, wxEXPAND);
+    SetSizer(main_sizer);
+    Layout();
+    Fit();
+    const int screen_height = wxDisplay(parent).GetClientArea().GetHeight();
+    if (GetSize().GetY() > screen_height)
+        SetSize(GetSize().GetX() + FromDIP(40), screen_height * 4 / 5);
+    CenterOnParent();
+    const wxPoint start_pos = GetPosition();
+    if (start_pos.y < 0)
+        SetPosition(wxPoint(start_pos.x, 0));
+    wxGetApp().UpdateDlgDarkUI(this);
 }
 
 // ---------------------------------------------------------------------------- actions ----
@@ -1097,14 +1167,15 @@ bool ThemesPage::save(bool as_new)
         MessageDialog(this, _L("The theme could not be saved:") + "\n" + from_u8(error), _L("Theme"), wxOK | wxICON_WARNING).ShowModal();
         return false;
     }
+    ++g_save_serial; // a new change, asked about again
     if (id == Theme::active_id())
-        m_saved_running = id;
+        g_saved_running = id;
     wxGetApp().app_config->set("ui_theme", id);
     wxGetApp().app_config->save();
     m_id = id;
     fill_list();
     load(id);
-    offer_restart();
+    offer_restart(true);
     return true;
 }
 

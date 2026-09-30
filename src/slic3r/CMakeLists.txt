@@ -1180,16 +1180,50 @@ if (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     find_package(GTK${SLIC3R_GTK} REQUIRED)
     pkg_check_modules(LIBSECRET REQUIRED libsecret-1)
-    if (FLATPAK)
-        # I don't know why this is needed, but for whatever reason slic3r isn't
-        # linking to X11 and webkit2gtk. force it.
-        find_package(X11 REQUIRED)
-        find_package(PkgConfig REQUIRED)
-        pkg_check_modules(webkit2gtk REQUIRED webkit2gtk-4.1)
-        target_link_libraries (libslic3r_gui ${X11_LIBRARIES} ${webkit2gtk_LIBRARIES})
+    # Direct webkit_* (WebView.cpp) and XInitThreads() (Snapmaker_Orca.cpp)
+    # need a link on every Linux build, not only Flatpak (Orca #13135 + #15972).
+    # Prefer 4.1 then 4.0, matching wxWidgets (configure.ac and
+    # build/cmake/init.cmake: find_package(WEBKIT2 4.1) then 4.0). Distro
+    # scripts still install 4.0 on Ubuntu 22.04 / Debian 12 / Fedora.
+    pkg_search_module(webkit2gtk REQUIRED webkit2gtk-4.1 webkit2gtk-4.0)
+    if (webkit2gtk_MODULE_NAME)
+        set(_slic3r_webkit_mod "${webkit2gtk_MODULE_NAME}")
+    elseif (webkit2gtk_LIBRARIES MATCHES "webkit2gtk-4\\.1" OR webkit2gtk_INCLUDE_DIRS MATCHES "webkitgtk-4\\.1")
+        set(_slic3r_webkit_mod "webkit2gtk-4.1")
+    else()
+        set(_slic3r_webkit_mod "webkit2gtk-4.0")
     endif()
-    target_include_directories(libslic3r_gui SYSTEM PRIVATE ${GTK${SLIC3R_GTK}_INCLUDE_DIRS} ${LIBSECRET_INCLUDE_DIRS})
-    target_link_libraries(libslic3r_gui ${GTK${SLIC3R_GTK}_LIBRARIES} fontconfig ${LIBSECRET_LIBRARIES})
+    message(STATUS "libslic3r_gui: using ${_slic3r_webkit_mod} ${webkit2gtk_VERSION}")
+
+    # Best-effort ABI check. Static wx-config --libs lists webkit2gtk-4.x; shared
+    # wx (Flatpak) and some cmake-built wx trees do not, so a miss is not a mismatch.
+    set(_slic3r_wx_webkit_mod "")
+    if (wxWidgets_LIBRARIES MATCHES "webkit2gtk-4\\.1")
+        set(_slic3r_wx_webkit_mod "webkit2gtk-4.1")
+    elseif (wxWidgets_LIBRARIES MATCHES "webkit2gtk-4\\.0")
+        set(_slic3r_wx_webkit_mod "webkit2gtk-4.0")
+    elseif (wxWidgets_CONFIG_EXECUTABLE)
+        execute_process(
+            COMMAND ${wxWidgets_CONFIG_EXECUTABLE} --libs webview
+            OUTPUT_VARIABLE _slic3r_wx_webview_libs
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if (_slic3r_wx_webview_libs MATCHES "webkit2gtk-4\\.1")
+            set(_slic3r_wx_webkit_mod "webkit2gtk-4.1")
+        elseif (_slic3r_wx_webview_libs MATCHES "webkit2gtk-4\\.0")
+            set(_slic3r_wx_webkit_mod "webkit2gtk-4.0")
+        endif()
+    endif()
+    if (_slic3r_wx_webkit_mod AND NOT _slic3r_wx_webkit_mod STREQUAL _slic3r_webkit_mod)
+        message(WARNING
+            "libslic3r_gui is linking ${_slic3r_webkit_mod} but wxWidgets appears to have been built against ${_slic3r_wx_webkit_mod}. "
+            "Mixing WebKitGTK ABIs in one process is undefined.")
+    endif()
+
+    find_package(X11 REQUIRED)
+    target_include_directories(libslic3r_gui SYSTEM PRIVATE ${GTK${SLIC3R_GTK}_INCLUDE_DIRS} ${LIBSECRET_INCLUDE_DIRS} ${webkit2gtk_INCLUDE_DIRS} ${X11_INCLUDE_DIR})
+    target_link_libraries(libslic3r_gui ${GTK${SLIC3R_GTK}_LIBRARIES} fontconfig ${LIBSECRET_LIBRARIES} ${webkit2gtk_LIBRARIES} ${X11_LIBRARIES})
 
 
     # We add GStreamer for bambu:/// support.

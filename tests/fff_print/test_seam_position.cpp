@@ -25,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -36,6 +37,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 #include "test_data.hpp"
 
@@ -59,19 +61,22 @@ struct SeamCloud
 
     double spread(int axis) const { return extreme(axis, true) - extreme(axis, false); }
 
-    // Fraction of seams whose X coordinate lies on the given side of the object's centre.
-    double fraction_with_x(bool positive_side) const
+    // Fraction of seams whose coordinate on `axis` lies on the given side of the object's centre.
+    double fraction_with_x(bool positive_side) const { return fraction_with_axis(0, positive_side); }
+    double fraction_with_y(bool positive_side) const { return fraction_with_axis(1, positive_side); }
+
+private:
+    double fraction_with_axis(int axis, bool positive_side) const
     {
         if (points.empty())
             return 0.0;
         size_t n = 0;
         for (const Vec2d &p : points)
-            if ((p.x() > 0.0) == positive_side)
+            if ((p[axis] > 0.0) == positive_side)
                 ++n;
         return double(n) / double(points.size());
     }
 
-private:
     double extreme(int axis, bool largest) const
     {
         double best = largest ? -std::numeric_limits<double>::max() : std::numeric_limits<double>::max();
@@ -442,5 +447,100 @@ SCENARIO("The Left and Right seam keys survive a round trip through the config",
             REQUIRE(int(spLeft) == 5);
             REQUIRE(int(spRight) == 6);
         }
+    }
+}
+
+TEST_CASE("Enforced patch length counts wrapping patches without over-counting", "[seam][patch_len]")
+{
+    using SeamPlacerImpl::enforced_patch_length;
+
+    SECTION("non-wrapping (2,7,10) gives 5")
+    {
+        REQUIRE(enforced_patch_length(2, 7, 10) == 5);
+    }
+
+    SECTION("wrapping (7,2,10) gives 5 (the old code gave 15)")
+    {
+        REQUIRE(enforced_patch_length(7, 2, 10) == 5);
+        // Old wrapping formula: first + (perimeter_size - second) = 7 + (10 - 2) = 15.
+        REQUIRE(size_t(7) + (size_t(10) - size_t(2)) == 15);
+    }
+
+    SECTION("layer-offset indices (107,102,10) give 5")
+    {
+        REQUIRE(enforced_patch_length(107, 102, 10) == 5);
+    }
+
+    SECTION("a longer non-wrapping patch must beat a shorter wrapping one")
+    {
+        const std::pair<size_t, size_t> wrapping{7, 2};            // true length 5; old formula 15
+        const std::pair<size_t, size_t> longer_nonwrapping{1, 8}; // length 7
+        const size_t                    perimeter_size = 10;
+
+        std::pair<size_t, size_t> longest{0, 0};
+        const auto                longer_of = [perimeter_size](std::pair<size_t, size_t> a, std::pair<size_t, size_t> b) {
+            return enforced_patch_length(a.first, a.second, perimeter_size) <
+                           enforced_patch_length(b.first, b.second, perimeter_size) ?
+                       b :
+                       a;
+        };
+        longest = longer_of(longest, wrapping);
+        longest = longer_of(longest, longer_nonwrapping);
+
+        REQUIRE(enforced_patch_length(wrapping.first, wrapping.second, perimeter_size) == 5);
+        REQUIRE(enforced_patch_length(longer_nonwrapping.first, longer_nonwrapping.second, perimeter_size) == 7);
+        REQUIRE(longest.first == longer_nonwrapping.first);
+        REQUIRE(longest.second == longer_nonwrapping.second);
+    }
+}
+
+// Orca #12028 / Edge 7A2: mirroring inverts winding unless its_transform(..., true).
+// A cube's four walls are equally visible, so aligned_back's front-facing penalty is what
+// puts the seam on +Y. After a Y-mirror that penalty sees inward normals and picks -Y
+// unless the four occlusion/enforcer its_transform sites pass fix_left_handed.
+// Painting the local front (-Y) maps to world +Y after the mirror; AABB still finds those
+// facets (winding-agnostic), so the painted seam must sit on that painted world-back face.
+TEST_CASE("A mirrored cube with a painted enforcer puts the seam on the painted side", "[Seam][SeamMirror]")
+{
+    auto cube = [](bool paint_local_front) {
+        Model        model;
+        ModelObject *object = model.add_object();
+        object->name        = paint_local_front ? "mirrored_painted_cube" : "mirrored_cube";
+        ModelVolume *volume = object->add_volume(make_cube(20., 20., 20.));
+        if (paint_local_front) {
+            const indexed_triangle_set &its = volume->mesh().its;
+            TriangleSelector            selector(volume->mesh());
+            int                         painted = 0;
+            for (int f = 0; f < int(its.indices.size()); ++f)
+                if (its_face_normal(its, f).y() < -0.9f) {
+                    selector.set_facet(f, EnforcerBlockerType::ENFORCER);
+                    ++painted;
+                }
+            REQUIRE(painted >= 2);
+            REQUIRE(volume->seam_facets.set(selector));
+        }
+        ModelInstance *instance = object->add_instance();
+        instance->set_mirror(Vec3d(1., -1., 1.));
+        return seams_for_object(object, model, "aligned_back");
+    };
+
+    SECTION("aligned_back on a Y-mirrored cube stays on the world back")
+    {
+        const SeamCloud cloud = cube(false);
+        REQUIRE(cloud.points.size() >= 40);
+        INFO("x in [" << cloud.min_x() << ", " << cloud.max_x() << "], y in [" << cloud.min_y() << ", " << cloud.max_y()
+                      << "]");
+        CHECK(cloud.fraction_with_y(true) > 0.8);
+        CHECK(cloud.spread(1) < 5.0);
+    }
+
+    SECTION("painted local front (world back after the Y-mirror) keeps the seam on that face")
+    {
+        const SeamCloud cloud = cube(true);
+        REQUIRE(cloud.points.size() >= 40);
+        INFO("x in [" << cloud.min_x() << ", " << cloud.max_x() << "], y in [" << cloud.min_y() << ", " << cloud.max_y()
+                      << "]");
+        CHECK(cloud.fraction_with_y(true) > 0.8);
+        CHECK(cloud.spread(1) < 5.0);
     }
 }

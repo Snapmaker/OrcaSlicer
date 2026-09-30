@@ -5,6 +5,7 @@
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "sentry_wrapper/SentryWrapper.hpp"
 
@@ -280,18 +281,14 @@ wxString WebPresetDialog::SetStartPage(GuidePage startpage, bool load)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" enter, load=%1%, start_page=%2%") % load % int(startpage);
     // wxLogMessage("GUIDE: webpage_1  %s", (boost::filesystem::path(resources_dir()) /
     // "web\\guide\\1\\index.html").make_preferred().string().c_str() );
-    wxString TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/1/index.html").make_preferred().string());
-    // wxLogMessage("GUIDE: webpage_2  %s", TargetUrl.mb_str());
-
-    TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/preset_bind/24/index.html").make_preferred().string());
+    wxString TargetUrl = file_url_from_path((boost::filesystem::path(resources_dir()) / "web/preset_bind/24/index.html").make_preferred());
     // TargetUrl = from_u8((boost::filesystem::path(resources_dir()) / "web/guide/24/index.html").make_preferred().string());
 
     wxString strlang = wxGetApp().current_language_code_safe();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", strlang=%1%") % into_u8(strlang);
     if (strlang != "")
-        TargetUrl = wxString::Format("%s?lang=%s", w2s(TargetUrl), strlang);
+        TargetUrl += "?lang=" + strlang;
 
-    TargetUrl = "file://" + TargetUrl;
     if (load)
         load_url(TargetUrl);
 
@@ -1414,7 +1411,7 @@ int WebPresetDialog::LoadProfileFamily(std::string strVendor, std::string strFil
                     cover_path = (boost::filesystem::absolute(boost::filesystem::path(resources_dir()) / "/web/image/printer/") / cover_file)
                                      .make_preferred();
                 }
-                OneModel["cover"] = cover_path.string();
+                OneModel["cover"] = into_u8(file_url_from_path(cover_path));
 
                 OneModel["nozzle_selected"] = "";
 

@@ -1,5 +1,6 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "GUI_App.hpp"
+#include "GUI.hpp"
 #include "BitmapCache.hpp"
 #include <wx/dcgraph.h>
 #include <slic3r/GUI/I18N.hpp>
@@ -59,9 +60,7 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
 
     fs::path ph(resources_dir());
     ph /= "tooltip/privacyupdate.html";
-    m_host_url = ph.string();
-    std::replace(m_host_url.begin(), m_host_url.end(), '\\', '/');
-    m_host_url = "file:///" + m_host_url;
+    m_host_url = into_u8(file_url_from_path(ph));
     m_vebview_release_note->LoadURL(from_u8(m_host_url));
     m_sizer_right->Add(m_vebview_release_note, 0, wxEXPAND | wxRIGHT | wxLEFT, FromDIP(15));
 

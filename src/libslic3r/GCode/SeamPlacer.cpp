@@ -660,17 +660,11 @@ void process_perimeter_polygon(const Polygon &orig_polygon, float z_coord, const
       }
       //now pick the longest patch
       std::pair<size_t, size_t> longest_patch { 0, 0 };
-      auto patch_len = [perimeter_size](const std::pair<size_t, size_t> &start_end) {
-        if (start_end.second < start_end.first) {
-          return start_end.first + (perimeter_size - start_end.second);
-        } else {
-          return start_end.second - start_end.first;
-        }
-      };
       for (size_t patch_idx = start_on_second ? 1 : 0; patch_idx < patches_starts_ends.size(); patch_idx += 2) {
         std::pair<size_t, size_t> current_patch { patches_starts_ends[patch_idx], patches_starts_ends[patch_idx
                                                                                                     + 1] };
-        if (patch_len(longest_patch) < patch_len(current_patch)) {
+        if (enforced_patch_length(longest_patch.first, longest_patch.second, perimeter_size) <
+            enforced_patch_length(current_patch.first, current_patch.second, perimeter_size)) {
           longest_patch = current_patch;
         }
       }
@@ -1091,7 +1085,9 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
         || model_volume->type() == ModelVolumeType::NEGATIVE_VOLUME) {
       auto model_transformation = model_volume->get_matrix();
       indexed_triangle_set model_its = model_volume->mesh().its;
-      its_transform(model_its, model_transformation);
+      // Keep outward winding when the volume is mirrored, otherwise occlusion rays
+      // see the inside of the shell as the front face.
+      its_transform(model_its, model_transformation, true);
       if (model_volume->type() == ModelVolumeType::MODEL_PART) {
         its_merge(triangle_set, model_its);
       } else {
@@ -1111,7 +1107,7 @@ void compute_global_occlusion(GlobalModelInfo &result, const PrintObject *po,
 
   size_t negative_volumes_start_index = triangle_set.indices.size();
   its_merge(triangle_set, negative_volumes_set);
-  its_transform(triangle_set, obj_transform);
+  its_transform(triangle_set, obj_transform, true);
   BOOST_LOG_TRIVIAL(debug)
       << "SeamPlacer: decimate: end";
 
@@ -1174,11 +1170,13 @@ void gather_enforcers_blockers(GlobalModelInfo &result, const PrintObject *po, b
       auto model_transformation = obj_transform * mv->get_matrix();
 
       indexed_triangle_set enforcers = mv->seam_facets.get_facets(*mv, EnforcerBlockerType::ENFORCER);
-      its_transform(enforcers, model_transformation);
+      // Painted enforcer/blocker facets on a mirrored volume must keep outward winding
+      // so raycasts hit the painted side.
+      its_transform(enforcers, model_transformation, true);
       its_merge(result.enforcers, enforcers);
 
       indexed_triangle_set blockers = mv->seam_facets.get_facets(*mv, EnforcerBlockerType::BLOCKER);
-      its_transform(blockers, model_transformation);
+      its_transform(blockers, model_transformation, true);
       its_merge(result.blockers, blockers);
     }
   }

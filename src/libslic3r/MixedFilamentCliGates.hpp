@@ -17,6 +17,8 @@
 namespace Slic3r {
 
 class Model;
+class ModelObject;
+class ModelVolume;
 
 // Verdict returned by the CLI mixed-filament gates below. `ok == true` means the
 // slice may proceed; otherwise `message` explains why (already formatted for
@@ -60,13 +62,55 @@ void zero_mixed_flush_rows_and_cols(std::vector<double>        &flush_vol_matrix
 bool mixed_definitions_have_slot_without_filament(const std::string &serialized, size_t num_physical);
 
 // Appends every filament id (1-based) referenced by print_config's per-feature
-// filament options (wall/sparse-infill/solid-infill/support/support-interface) to
-// `ids`. IDs <= 0 (meaning "use default") are skipped.
+// filament options (wall/outer-wall/sparse-infill/solid-infill/support/support-interface)
+// to `ids`. IDs <= 0 (meaning "use default" / "follow walls") are skipped.
 void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> &ids);
 
-// Same as append_config_filament_ids, but scans every model's object-level config,
-// each volume's get_extruders(), and each layer-height-range's "extruder" option too
-// - i.e. every place a CLI-loaded 3mf can pin a filament id, mixed slots included.
+// Per-feature filament ids (>0) set directly on a modifier / model-part / height-range
+// config: wall_filament, outer_wall_filament, sparse_infill_filament, solid_infill_filament.
+// Disabled features are skipped (same gates as PrintRegion::collect_object_printing_extruders):
+// walls when wall_loops==0 (unless brim), sparse when density==0, solid when both shell counts
+// are 0. Support keys are object-level and are not collected here.
+void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids);
+
+// True for volumes whose own config can pin a per-feature filament (MODEL_PART and
+// PARAMETER_MODIFIER). Precise Seam helpers, negatives, and support volumes are
+// excluded here so that work can add a clause in one place.
+bool volume_contributes_feature_filaments(const ModelVolume &volume);
+
+// Bound passed to region_config_from_model_volume. Print-options presets have no
+// filament_diameter / filament_colour; INT_MAX means "do not clamp" so object/part
+// extruder ids and outer_wall_filament survive on the GUI path.
+size_t plate_filament_bound(const DynamicPrintConfig &cfg_with_filaments, const MixedFilamentManager *mixed = nullptr);
+
+PrintRegionConfig plate_default_region_config(const DynamicPrintConfig &global);
+
+// Shared by PartPlate::get_extruders, get_extruders_under_cli, and collect_cli_filament_ids.
+// Builds each MODEL_PART region the way slicing does (region_config_from_model_volume per
+// LayerRanges interval, including default-config gaps below ModelObject::max_z()), applies
+// modifiers that intersect the parent part/range, then the unclamped four-gate check.
+// Painted MMU states are appended as 1-based ids. Support filaments only when support/raft is on.
+// Objects with no contributing volumes fall back to object-level feature keys (slot-gate tests).
+// Callers that already know the plate's default region and filament bound (once per plate)
+// should pass them; the 3-argument overload derives both from global_config.
+void append_object_plate_filament_ids(const ModelObject        &object,
+                                      const DynamicPrintConfig &global_config,
+                                      std::vector<int>         &ids,
+                                      const PrintRegionConfig  &default_region,
+                                      size_t                    num_total);
+void append_object_plate_filament_ids(const ModelObject &object, const DynamicPrintConfig &global_config, std::vector<int> &ids);
+
+// 1-based filament printing the outer wall of an object whose own config is `object_config`
+// (may be null) over `global_config`, or 0 when it follows wall_filament (already counted)
+// or no walls are printed. Mirrors PrintRegion::extruder(frExternalPerimeter) and the
+// wall_loops gate in PrintRegion::collect_object_printing_extruders. An object key of 0
+// wins over a global outer filament (explicit "follow walls").
+int resolve_outer_wall_filament(const ConfigBase *object_config, const ConfigBase &global_config);
+
+// Same as append_config_filament_ids, then append_object_plate_filament_ids for every
+// object in the loaded models - i.e. every place a CLI-loaded 3mf can pin a filament id,
+// mixed slots included. `extruder` is applied the same way slicing does (overrides
+// wall/sparse/solid, zeroes outer wall, ignores feature values of 0).
 void collect_cli_filament_ids(const std::vector<Model> &models, const DynamicPrintConfig &print_config, std::vector<int> &ids);
 
 // Resolves a MixedFilament's components (manual pattern tokens, or component_a/b

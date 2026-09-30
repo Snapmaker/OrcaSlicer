@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/MixedFilamentCliGates.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -166,4 +167,19 @@ TEST_CASE("get_extruders excludes Precise Seam helper volumes", "[Model][Precise
     CHECK(helper->get_extruders().empty());
     CHECK(helper->is_precise_seam());
     CHECK_FALSE(helper->is_modifier());
+    CHECK_FALSE(volume_contributes_feature_filaments(*helper));
+    CHECK(volume_contributes_feature_filaments(*part));
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_num_filaments(4);
+    cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value           = 0;
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    std::sort(plate_ids.begin(), plate_ids.end());
+    plate_ids.erase(std::unique(plate_ids.begin(), plate_ids.end()), plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 3) == plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 4) == plate_ids.end());
 }

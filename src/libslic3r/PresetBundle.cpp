@@ -2749,6 +2749,14 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
         std::string key = std::string(keys[i]);
         auto *opt = dynamic_cast<ConfigOptionInt*>(out.option(key, false));
         assert(opt != nullptr);
+        if (opt == nullptr) {
+            // Defensive: a type-mismatched entry must not be left in the merged
+            // config -- Print::apply would throw ConfigurationError on it with no
+            // catcher. Re-cast to the option default instead of crashing.
+            out.erase(key);
+            out.set_key_value(key, new ConfigOptionInt(0));
+            continue;
+        }
         opt->value = boost::algorithm::clamp<int>(opt->value, 0, int(num_filaments));
     }
 
@@ -2757,6 +2765,12 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
         std::string key = std::string(keys_1based[i]);
         auto *opt = dynamic_cast<ConfigOptionInt*>(out.option(key, false));
         assert(opt != nullptr);
+        if (opt == nullptr) {
+            // Same defensive re-cast as above; these keys are 1-based.
+            out.erase(key);
+            out.set_key_value(key, new ConfigOptionInt(1));
+            continue;
+        }
         if(opt->value < 1 || opt->value > int(num_filaments))
             opt->value = 1;
     }

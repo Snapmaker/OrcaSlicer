@@ -49,6 +49,7 @@
     "fan_cooling_layer_time": [
         "30"
     ],
+    "filament_adhesiveness_category": ["300"],
     "filament_deretraction_speed": [
         "nil"
     ],

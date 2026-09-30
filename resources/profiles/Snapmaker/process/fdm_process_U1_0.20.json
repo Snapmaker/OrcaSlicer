@@ -3,6 +3,8 @@
     "name": "fdm_process_U1_0.20",
     "inherits": "fdm_process_U1_common",
     "from": "system",
+    "bottom_color_penetration_layers": "3",
+    "top_color_penetration_layers": "5",
     "instantiation": "false",
     "elefant_foot_compensation": "0.15",
     "top_shell_thickness": "1.0",

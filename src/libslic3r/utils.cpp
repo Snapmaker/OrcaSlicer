@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <locale>
+#include <memory>
 #include <mutex>
 #include <ctime>
 #include <cstdarg>
@@ -313,7 +314,11 @@ void set_data_dir(const std::string &dir)
 {
     g_data_dir = dir;
     if (!g_data_dir.empty() && !boost::filesystem::exists(g_data_dir)) {
-       boost::filesystem::create_directory(g_data_dir);
+        try {
+            boost::filesystem::create_directories(g_data_dir);
+        } catch (const boost::filesystem::filesystem_error &ex) {
+            BOOST_LOG_TRIVIAL(error) << "set_data_dir: failed to create data directory " << g_data_dir << ": " << ex.what();
+        }
     }
 }
 
@@ -960,7 +965,7 @@ CopyFileResult copy_file(const std::string &from, const std::string &to, std::st
     BOOL result = CopyFileW(src_wstr, dst_wstr, FALSE);
     if (!result) {
         DWORD errCode = GetLastError();
-        error_message = "Error: " + errCode;
+        error_message = "Error: " + std::to_string(errCode);
         ret = FAIL_COPY_FILE;
         goto __finished;
     }
@@ -1085,6 +1090,30 @@ bool is_gcode_file(const std::string &path)
 bool is_json_file(const std::string& path)
 {
 	return boost::iends_with(path, ".json");
+}
+
+bool is_path_within_root(const std::string &rel_path, const boost::filesystem::path &root)
+{
+    auto is_separator = [](char c) { return c == '/' || c == '\\'; };
+    if (rel_path.empty() || is_separator(rel_path.front()) || (rel_path.size() > 1 && rel_path[1] == ':'))
+        return false;
+    for (size_t start = 0; start <= rel_path.size();) {
+        size_t end = start;
+        while (end < rel_path.size() && !is_separator(rel_path[end]))
+            ++end;
+        if (rel_path.compare(start, end - start, "..") == 0)
+            return false;
+        start = end + 1;
+    }
+    // Resolve against the canonical root so a symlink inside it cannot lead back out.
+    try {
+        const std::string root_str = boost::filesystem::weakly_canonical(root).string();
+        const std::string full_str = boost::filesystem::weakly_canonical(root / rel_path).string();
+        return full_str.compare(0, root_str.size(), root_str) == 0 &&
+               (full_str.size() == root_str.size() || full_str[root_str.size()] == boost::filesystem::path::preferred_separator);
+    } catch (const boost::filesystem::filesystem_error &) {
+        return false;
+    }
 }
 
 bool is_img_file(const std::string &path)
@@ -1313,6 +1342,19 @@ std::string per_user_temp_dir(const std::string &base, const std::string &user_i
     // Keep the id at the top level so each user's dir sits directly in the world-writable temp
     // root; a shared parent dir would be owned by whichever user created it first.
     return base + "/orcaslicer_" + user_id;
+}
+
+std::string resolve_cli_input_path(const std::string &path)
+{
+    const boost::filesystem::path input(path);
+    if (path.empty() || is_supported_open_protocol(path) || input.is_absolute())
+        return path;
+
+    boost::system::error_code ec;
+    const boost::filesystem::path resolved = boost::filesystem::system_complete(input, ec);
+    if (ec)
+        return path;
+    return resolved.lexically_normal().make_preferred().string();
 }
 
 // BBS: backup & restore
@@ -1744,24 +1786,78 @@ bool makedir(const std::string path) {
 	return true;  // dir already exists
 }
 
-bool bbl_calc_md5(std::string &filename, std::string &md5_out)
+bool bbl_calc_md5(const std::string& filename, std::string& md5_out)
 {
-    unsigned char digest[16];
-    MD5_CTX       ctx;
-    MD5_Init(&ctx);
+    md5_out.clear();
+
+    boost::system::error_code error_code;
+    if (!boost::filesystem::is_regular_file(filename, error_code) || error_code)
+        return false;
+
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (!mdctx || EVP_DigestInit_ex(mdctx.get(), EVP_md5(), nullptr) != 1)
+        return false;
+
     boost::nowide::ifstream ifs(filename, std::ios::binary);
-    std::string                 buf(64 * 1024, 0);
-    const std::size_t &         size      = boost::filesystem::file_size(filename);
-    std::size_t                 left_size = size;
+    if (!ifs)
+        return false;
+
+    std::string buffer(64 * 1024, 0);
     while (ifs) {
-        ifs.read(buf.data(), buf.size());
-        int read_bytes = ifs.gcount();
-        MD5_Update(&ctx, (unsigned char *) buf.data(), read_bytes);
+        ifs.read(buffer.data(), buffer.size());
+        const std::streamsize read_bytes = ifs.gcount();
+        if (read_bytes > 0 && EVP_DigestUpdate(mdctx.get(), buffer.data(), static_cast<std::size_t>(read_bytes)) != 1)
+            return false;
     }
-    MD5_Final(digest, &ctx);
+    if (!ifs.eof())
+        return false;
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  digest_size = 0;
+    if (EVP_DigestFinal_ex(mdctx.get(), digest, &digest_size) != 1 || digest_size != 16)
+        return false;
+
     char md5_str[33];
-    for (int j = 0; j < 16; j++) { sprintf(&md5_str[j * 2], "%02X", (unsigned int) digest[j]); }
+    for (unsigned int byte_index = 0; byte_index < digest_size; ++byte_index) {
+        sprintf(&md5_str[byte_index * 2], "%02X", static_cast<unsigned int>(digest[byte_index]));
+    }
     md5_out = std::string(md5_str);
+    return true;
+}
+
+bool calc_file_sha256(const std::string& filename, std::array<unsigned char, 32>& digest_out)
+{
+    digest_out.fill(0);
+
+    boost::system::error_code error_code;
+    if (!boost::filesystem::is_regular_file(filename, error_code) || error_code)
+        return false;
+
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> mdctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    if (!mdctx || EVP_DigestInit_ex(mdctx.get(), EVP_sha256(), nullptr) != 1)
+        return false;
+
+    // nowide: the path is UTF-8, which std::ifstream does not understand on Windows.
+    boost::nowide::ifstream ifs(filename, std::ios::binary);
+    if (!ifs)
+        return false;
+
+    std::string buffer(64 * 1024, 0);
+    while (ifs) {
+        ifs.read(buffer.data(), buffer.size());
+        const std::streamsize read_bytes = ifs.gcount();
+        if (read_bytes > 0 && EVP_DigestUpdate(mdctx.get(), buffer.data(), static_cast<std::size_t>(read_bytes)) != 1)
+            return false;
+    }
+    if (!ifs.eof())
+        return false;
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int  digest_size = 0;
+    if (EVP_DigestFinal_ex(mdctx.get(), digest, &digest_size) != 1 || digest_size != digest_out.size())
+        return false;
+
+    std::copy(digest, digest + digest_size, digest_out.begin());
     return true;
 }
 
@@ -1950,7 +2046,7 @@ std::set<std::string> vendor_names_in(const boost::filesystem::path& dir)
 // be read is no installation at all — and the vendor is installed the way it was
 // before caches existed, as its profile and the preset JSONs it points at. Returns
 // the version the cache is stamped with, invalid when it is not the form to install.
-static Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor)
+Semver installable_cache_version(const boost::filesystem::path& dir, const std::string& vendor)
 {
     const auto cache_ver = Semver::parse(VendorCacheFile::peek_version((dir / (vendor + ".opc")).string(), vendor));
     if (! cache_ver)

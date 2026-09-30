@@ -214,7 +214,9 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
     const coordf_t radius_sample_resolution = g_config_tree_support_collision_resolution;
 
     // calc the extrudable expolygons of each layer
-    const coordf_t extrusion_width = config.line_width.value;
+    // Snapmaker Orca: the width is a column per tool head, read at the support head; the raw
+    // number as the scalar read (a percent read as a number, the pre-existing quirk).
+    const coordf_t extrusion_width = Flow::width_at(config.line_width, support_head(&print_object, config.support_filament, false)).value;
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     tbb::parallel_for(tbb::blocked_range<size_t>(0, print_object.layer_count()),
         [&](const tbb::blocked_range<size_t>& range) {
@@ -2382,13 +2384,10 @@ static void merge_influence_areas(
     size_t num_buckets_initial;
     {
         // How many buckets per first merge iteration?
-        const size_t num_threads     = tbb::this_task_arena::max_concurrency();
-        // 4 buckets per thread if possible,
-        const size_t num_buckets_min = (input_size + 2) / 4;
-        // 2 buckets per thread otherwise.
-        const size_t num_buckets_max = input_size / 2;
-        num_buckets_initial          = num_buckets_min >= num_threads ? num_buckets_min : num_buckets_max;
-        const size_t bucket_size     = num_buckets_min >= num_threads ? 4 : 2;
+        // Fixed at 4: merging is not associative, so sizing buckets off max_concurrency() made
+        // results depend on the core count of the slicing machine.
+        const size_t bucket_size     = 4;
+        num_buckets_initial          = (input_size + 2) / 4;
         // Fill in the buckets.
         SupportElementMerging *it = influence_areas.data();
         // Reserve one more bucket to keep a single influence area which will not be merged in the first iteration.

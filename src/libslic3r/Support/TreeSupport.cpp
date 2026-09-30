@@ -656,7 +656,17 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
     // align with the centered object in current plate (may not be the 1st plate, so need to add the plate offset)
     m_machine_border.translate(Point(scale_(plate_offset(0)), scale_(plate_offset(1))) - m_object->instances().front().shift);
     top_z_distance                            = m_object_config->support_top_z_distance.value;
-    if (top_z_distance > EPSILON) top_z_distance = std::max(top_z_distance, float(m_slicing_params.min_layer_height));
+    if (top_z_distance > EPSILON) {
+        if (m_support_params.grid_aligned_layer_height) {
+            // Under the prime tower the gap is a whole number of object layers (as
+            // SlicingParameters rounds it): a gap on a sub-position would force a piece boundary
+            // between object layers under every contact, and where contacts follow on consecutive
+            // layers that fragments the whole support into half or quarter layers.
+            const float h  = float(m_object_config->layer_height.value);
+            top_z_distance = std::max(h, float(std::round(top_z_distance / h)) * h);
+        } else
+            top_z_distance = std::max(top_z_distance, float(m_slicing_params.min_layer_height));
+    }
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
     SVG svg(debug_out_path("machine_boarder.svg"), m_object->bounding_box());
     if (svg.is_opened()) svg.draw(m_machine_border, "yellow");
@@ -681,7 +691,9 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
     SupportType stype = support_type;
     const coordf_t radius_sample_resolution = g_config_tree_support_collision_resolution;
     const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
-    const coordf_t extrusion_width = config.get_abs_value("line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle,
+    // as the scalar read (the support head is not resolved here, the pre-existing rule).
+    const coordf_t extrusion_width = config.get_abs_value_at("line_width", 0, nozzle_diameter);
     const coordf_t extrusion_width_scaled = scale_(extrusion_width);
     const coordf_t max_bridge_length = scale_(config.max_bridge_length.value);
     const bool bridge_no_support = max_bridge_length > 0;
@@ -805,11 +817,10 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
             }
         });
 
-    typedef std::chrono::high_resolution_clock clock_;
-    typedef std::chrono::duration<double, std::ratio<1> > second_;
-    std::chrono::time_point<clock_> t0{ clock_::now() };
     // main part of overhang detection can be parallel
     tbb::concurrent_vector<ExPolygons> overhangs_all_layers(m_object->layer_count());
+    // ORCA: the lower layer offset by the overhang threshold, kept for the second pass below.
+    std::vector<ExPolygons> lower_layers_offseted(m_object->layer_count());
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
         [&](const tbb::blocked_range<size_t>& range) {
             for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
@@ -843,14 +854,50 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                 // normal overhang
                 ExPolygons lower_layer_offseted = offset_ex(lower_polys, support_offset_scaled, SUPPORT_SURFACES_OFFSET_PARAMETERS);
                 overhangs_all_layers[layer_nr] = diff_ex(curr_polys, lower_layer_offseted);
+                lower_layers_offseted[layer_nr] = std::move(lower_layer_offseted);
+            }
+        }
+    ); // end tbb::parallel_for
 
-                double duration{ std::chrono::duration_cast<second_>(clock_::now() - t0).count() };
-                if (duration > 30 || overhangs_all_layers[layer_nr].size() > 100) {
-                    BOOST_LOG_TRIVIAL(info) << "detect_overhangs takes more than 30 secs, skip cantilever and sharp tails detection: layer_nr=" << layer_nr << " duration=" << duration;
-                    config_detect_sharp_tails = false;
-                    config_remove_small_overhangs = false;
+    // ORCA: the too-many-overhangs fallback is decided once, before sharp tail detection, so the
+    // result does not depend on the thread schedule or machine load. The layer with the many
+    // overhangs still skips its own sharp tail and cantilever checks.
+    {
+        bool too_many_overhangs = false;
+        for (size_t layer_nr = 0; layer_nr < m_object->layer_count() && ! too_many_overhangs; layer_nr++)
+            if (overhangs_all_layers[layer_nr].size() > 100) {
+                BOOST_LOG_TRIVIAL(info) << "detect_overhangs: more than 100 overhangs on a layer, skip cantilever and sharp tails detection: layer_nr=" << layer_nr;
+                too_many_overhangs = true;
+            }
+        if (too_many_overhangs) {
+            config_detect_sharp_tails = false;
+            config_remove_small_overhangs = false;
+        }
+    }
+
+    // ORCA: per layer, reduced in layer order after the loop, so worker threads share no state.
+    std::vector<double> cantilever_dist_by_layer(m_object->layer_count(), 0.);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, m_object->layer_count()),
+        [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
+                if (m_object->print()->canceled())
+                    break;
+
+                if (!is_auto(stype) && layer_nr > enforce_support_layers)
                     continue;
-                }
+
+                Layer* layer = m_object->get_layer(layer_nr);
+                if (layer->lower_layer == nullptr)
+                    continue;
+                if (overhangs_all_layers[layer_nr].size() > 100)
+                    continue;
+
+                Layer* lower_layer = layer->lower_layer;
+                coordf_t lower_layer_offset = layer_nr < enforce_support_layers ? -0.15 * extrusion_width : (float)lower_layer->height / tan(threshold_rad);
+                ExPolygons& curr_polys = layer->lslices_extrudable;
+                ExPolygons& lower_polys = lower_layer->lslices_extrudable;
+                ExPolygons lower_layer_offseted = std::move(lower_layers_offseted[layer_nr]);
+
                 if (is_auto(stype) && config_detect_sharp_tails)
                 {
                     // BBS detect sharp tail
@@ -892,16 +939,20 @@ void TreeSupport::detect_overhangs(bool check_support_necessity/* = false*/)
                         dist_max = std::max(dist_max, dist_pt);
                     }
                     if (dist_max > scale_(3)) {  // is cantilever if the farmost point is larger than 3mm away from base
-                        max_cantilever_dist = std::max(max_cantilever_dist, dist_max);
+                        cantilever_dist_by_layer[layer_nr] = std::max(cantilever_dist_by_layer[layer_nr], dist_max);
                         layer->cantilevers.emplace_back(poly);
                         BOOST_LOG_TRIVIAL(debug) << "found a cantilever cluster. layer_nr=" << layer_nr << dist_max;
-                        has_cantilever = true;
                     }
                 }
             }
         }
     ); // end tbb::parallel_for
 
+    for (size_t layer_nr = 0; layer_nr < m_object->layer_count(); layer_nr++) {
+        max_cantilever_dist = std::max(max_cantilever_dist, cantilever_dist_by_layer[layer_nr]);
+        if (! m_object->get_layer(layer_nr)->cantilevers.empty())
+            has_cantilever = true;
+    }
     BOOST_LOG_TRIVIAL(info) << "max_cantilever_dist=" << max_cantilever_dist;
     if (check_support_necessity)
         return;
@@ -1356,7 +1407,7 @@ void TreeSupport::generate_toolpaths()
 {
     const PrintObjectConfig &object_config = m_object->config();
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
-    coordf_t nozzle_diameter = m_print_config->nozzle_diameter.get_at(object_config.support_filament - 1);
+    coordf_t nozzle_diameter = support_material_nozzle_diameter(m_object, object_config.support_filament);
     coordf_t layer_height = object_config.layer_height.value;
     const size_t wall_count = object_config.tree_support_wall_count.value;
 
@@ -2010,7 +2061,9 @@ void TreeSupport::draw_circles()
         top_interface_layers > 0 ? int(top_interface_layers) - 1 : 0);
     const size_t bottom_interface_layers = number_of_support_interface_bottom_layers(config);
     const double nozzle_diameter = m_object->print()->config().nozzle_diameter.get_at(0);
-    const coordf_t line_width = config.get_abs_value("support_line_width", nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head; the first column with the first nozzle,
+    // as the scalar read (the support head is not resolved here, the pre-existing rule).
+    const coordf_t line_width = config.get_abs_value_at("support_line_width", 0, nozzle_diameter);
     const coordf_t line_width_scaled           = scale_(line_width);
     const bool with_lightning_infill = m_support_params.base_fill_pattern == ipLightning;
     coordf_t support_extrusion_width = m_support_params.support_extrusion_width;
@@ -2667,7 +2720,7 @@ void TreeSupport::drop_nodes()
     SupportNode::diameter_angle_scale_factor = diameter_angle_scale_factor;
     float        DO_NOT_MOVER_UNDER_MM       = is_slim ? 0 : 5;                     // do not move contact points under 5mm
 
-    auto get_max_move_dist = [this, &config, tan_angle, wall_count, support_extrusion_width](const SupportNode *node, int power = 1) {
+    auto get_max_move_dist = [this, tan_angle, support_extrusion_width](const SupportNode *node, int power = 1) {
         if (node->max_move_dist == 0) {
             node->radius        = get_radius(node);
             node->max_move_dist = std::min(tan_angle * node->height, support_extrusion_width);
@@ -2846,7 +2899,9 @@ void TreeSupport::drop_nodes()
             const MinimumSpanningTree& mst = spanning_trees[group_index];
             //In the first pass, merge all nodes that are close together.
             std::vector<std::pair<const Point, SupportNode*>> nodes_vec(nodes_this_part.begin(), nodes_this_part.end());
-            tbb::parallel_for_each(nodes_vec.begin(), nodes_vec.end(), [&](const std::pair<const Point, SupportNode*>& entry) {
+            // Sequential: nodes merge into and invalidate each other in place, so parallel execution
+            // makes the merge order (and thus the result) depend on thread scheduling.
+            std::for_each(nodes_vec.begin(), nodes_vec.end(), [&](const std::pair<const Point, SupportNode*>& entry) {
                 SupportNode* p_node = entry.second;
                 SupportNode& node = *p_node;
                 if (!p_node->valid)
@@ -2934,7 +2989,32 @@ void TreeSupport::drop_nodes()
             );
 
             //In the second pass, move all middle nodes.
-            tbb::parallel_for_each(nodes_vec.begin(), nodes_vec.end(), [&](const std::pair<const Point, SupportNode*>& entry) {
+            // Still parallel: this pass only reads other nodes. Side effects (invalidation, new
+            // nodes, contact_nodes/unsupported_branch_leaves updates) are recorded per node and
+            // applied afterwards in node order. Node creation must be deferred too, since
+            // SupportNode's constructor writes `parent->child = this` on other nodes.
+            struct PendingNode {
+                Point        position;
+                int          distance_to_top           = 0;
+                int          support_roof_layers_below = 0;
+                bool         to_buildplate             = false;
+                SupportNode *parent                    = nullptr;
+                bool         zero_max_move             = false;
+                bool         has_overhang              = false;
+                ExPolygon    overhang;
+                bool         clamp_radius              = false;
+                coordf_t     parent_radius             = 0;
+                double       dist_to_outer             = 0;
+            };
+            struct PassTwoResult {
+                bool                     invalidate       = false;
+                bool                     unsupported_leaf = false;
+                std::vector<PendingNode> pending;
+            };
+            std::vector<PassTwoResult> pass2_results(nodes_vec.size());
+            auto pass2_body = [&](size_t node_idx) {
+                const std::pair<const Point, SupportNode*>& entry = nodes_vec[node_idx];
+                PassTwoResult& pass2_out = pass2_results[node_idx];
 
                 SupportNode* p_node = entry.second;
                 const SupportNode& node = *p_node;
@@ -2949,14 +3029,16 @@ void TreeSupport::drop_nodes()
                     ExPolygons overhangs_next = diff_clipped({ node.overhang }, get_collision(0, obj_layer_nr_next));
                     for(auto& overhang:overhangs_next) {
                         Point        next_pt     = overhang.contour.centroid();
-                        SupportNode *next_node   = m_ts_data->create_node(next_pt, p_node->distance_to_top + 1, obj_layer_nr_next,
-                                                                          p_node->support_roof_layers_below - (p_node->distance_to_top >= 0 ? 1 : 0),
-                                                                          to_buildplate, p_node, print_z_next, height_next);
-                        next_node->max_move_dist = 0;
-                        next_node->overhang = std::move(overhang);
-                        m_ts_data->m_mutex.lock();
-                        contact_nodes[layer_nr_next].emplace_back(next_node);
-                        m_ts_data->m_mutex.unlock();
+                        PendingNode pending;
+                        pending.position                  = next_pt;
+                        pending.distance_to_top           = p_node->distance_to_top + 1;
+                        pending.support_roof_layers_below = p_node->support_roof_layers_below - (p_node->distance_to_top >= 0 ? 1 : 0);
+                        pending.to_buildplate             = to_buildplate;
+                        pending.parent                    = p_node;
+                        pending.zero_max_move             = true;
+                        pending.has_overhang              = true;
+                        pending.overhang                  = std::move(overhang);
+                        pass2_out.pending.emplace_back(std::move(pending));
 
                     }
                     return;
@@ -2973,17 +3055,17 @@ void TreeSupport::drop_nodes()
                     {
                         if (support_on_buildplate_only)
                         {
-                            unsupported_branch_leaves.push_front({ layer_nr, p_node });
+                            pass2_out.unsupported_leaf = true;
                         }
                         else {
-                            p_node->valid = false;
+                            pass2_out.invalidate = true;
                         }
                         return;
                     }
                     // if the link between parent and current is cut by contours, mark current as bottom contact node
                     if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
                     {
-                        p_node->valid = false;
+                        pass2_out.invalidate = true;
                         return;
                     }
                 }
@@ -3096,20 +3178,47 @@ void TreeSupport::drop_nodes()
                 }
                 auto              next_collision = get_collision(0, obj_layer_nr_next);
                 const bool   to_buildplate  = !is_inside_ex(m_ts_data->m_layer_outlines[obj_layer_nr_next], next_layer_vertex);
-                SupportNode *     next_node     = m_ts_data->create_node(next_layer_vertex, node.distance_to_top + 1, obj_layer_nr_next,
-                    node.support_roof_layers_below - (node.distance_to_top >= 0 ? 1 : 0),
-                    to_buildplate, p_node, print_z_next, height_next);
                 // don't increase radius if next node will collide partially with the object (STUDIO-7883)
-                to_outside             = projection_onto(next_collision, next_node->position);
+                to_outside             = projection_onto(next_collision, next_layer_vertex);
                 direction_to_outer     = to_outside - node.position;
                 double dist_to_outer   = unscale_(direction_to_outer.cast<double>().norm());
-                next_node->radius      = std::max(node.radius, std::min(next_node->radius, dist_to_outer));
-                get_max_move_dist(next_node);
-                m_ts_data->m_mutex.lock();
-                contact_nodes[layer_nr_next].push_back(next_node);
-                m_ts_data->m_mutex.unlock();
+                PendingNode pending;
+                pending.position                  = next_layer_vertex;
+                pending.distance_to_top           = node.distance_to_top + 1;
+                pending.support_roof_layers_below = node.support_roof_layers_below - (node.distance_to_top >= 0 ? 1 : 0);
+                pending.to_buildplate             = to_buildplate;
+                pending.parent                    = p_node;
+                pending.clamp_radius              = true;
+                pending.parent_radius             = node.radius;
+                pending.dist_to_outer             = dist_to_outer;
+                pass2_out.pending.emplace_back(std::move(pending));
+            };
+            tbb::parallel_for(tbb::blocked_range<size_t>(0, nodes_vec.size()),
+                [&pass2_body](const tbb::blocked_range<size_t>& node_range) {
+                    for (size_t node_idx = node_range.begin(); node_idx < node_range.end(); ++ node_idx)
+                        pass2_body(node_idx);
+                });
+            // Apply the recorded side effects in node order.
+            for (size_t node_idx = 0; node_idx < nodes_vec.size(); ++ node_idx) {
+                PassTwoResult& pass2_out = pass2_results[node_idx];
+                for (PendingNode& pending : pass2_out.pending) {
+                    SupportNode* next_node = m_ts_data->create_node(pending.position, pending.distance_to_top, obj_layer_nr_next,
+                        pending.support_roof_layers_below, pending.to_buildplate, pending.parent, print_z_next, height_next);
+                    if (pending.zero_max_move)
+                        next_node->max_move_dist = 0;
+                    if (pending.has_overhang)
+                        next_node->overhang = std::move(pending.overhang);
+                    if (pending.clamp_radius) {
+                        next_node->radius = std::max(pending.parent_radius, std::min(next_node->radius, pending.dist_to_outer));
+                        get_max_move_dist(next_node);
+                    }
+                    contact_nodes[layer_nr_next].push_back(next_node);
+                }
+                if (pass2_out.unsupported_leaf)
+                    unsupported_branch_leaves.push_front({ layer_nr, nodes_vec[node_idx].second });
+                if (pass2_out.invalidate)
+                    nodes_vec[node_idx].second->valid = false;
             }
-            );
         }
 
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
@@ -3180,7 +3289,9 @@ void TreeSupport::smooth_nodes()
         }
     }
     
-    float max_move = scale_(m_object_config->support_line_width / 2);
+    // Snapmaker Orca: the width is a column per tool head, read at the support head; the raw
+    // number as the scalar read (a percent read as a number, the pre-existing quirk).
+    float max_move = scale_(Flow::width_at(m_object_config->support_line_width, support_head(m_object, m_object_config->support_filament, false)).value / 2);
     // if the branch is very tall, the tip also needs extra wall
     float thresh_tall_branch = 100;
     float thresh_dist_to_top = 30;
@@ -3258,6 +3369,158 @@ std::vector<LayerHeightData> TreeSupport::plan_layer_heights()
         for (int layer_nr = 0; layer_nr < m_object->layer_count(); layer_nr++) {
             z_heights[m_object->get_layer(layer_nr)->print_z] = m_object->get_layer(layer_nr)->height;
             layer_heights[layer_nr] = {m_object->get_layer(layer_nr)->print_z, m_object->get_layer(layer_nr)->height, size_t(layer_nr)};
+        }
+    } else if (m_support_params.grid_aligned_layer_height) {
+        // Grid-aligned independent heights: support boundaries land on object layers or,
+        // with a finer configured step, on half/quarter subdivisions of them. Boundaries
+        // on the object grid keep every toolchange on an existing prime tower layer;
+        // sub-layer boundaries get their own (thinner) tower layers, which costs extra
+        // purge there but lets support heights exceed whole multiples (e.g. 1.5x) when
+        // the support nozzle's maximum lies between two whole multiples.
+        const int      height_step      = std::max(1, m_support_params.grid_height_step);
+        // The support extruder's own minimum is not clamped to the object layer height: a
+        // coarse support nozzle under a fine object grid must not get sub-minimum tails.
+        const coordf_t min_layer_height = std::max(m_slicing_params.min_layer_height, m_slicing_params.min_suport_layer_height);
+        // Floor the maximum at one sub-step: a support nozzle with a maximum below the object
+        // pitch then closes its pieces on sub-grid positions instead of whole object layers.
+        const coordf_t max_layer_height = std::max({m_slicing_params.max_suport_layer_height, m_object->config().layer_height.value / height_step, min_layer_height});
+        const size_t   n = m_object->layer_count();
+        // Fractional support-only layers normally get no prime tower layer (their
+        // toolchange goes straight to the support filament), so they impose nothing on
+        // the tower. Smooth timelapse is the exception: it needs a tower layer on every
+        // print layer, so there a fractional boundary splits an object layer into two
+        // tower slabs and both must stay printable by every filament - gate sub-positions
+        // on the strictest configured minimum layer height (0 = the 0.07 mm default).
+        coordf_t tower_min_slab = 0.;
+        if (m_object->print()->config().timelapse_type.value == TimelapseType::tlSmooth)
+            for (unsigned int extruder_id : m_object->print()->extruders()) {
+                coordf_t min_h = m_object->print()->config().min_layer_height.get_at(m_object->print()->extruder_index_of(extruder_id));
+                tower_min_slab = std::max(tower_min_slab, min_h == 0. ? 0.07 : min_h);
+            }
+        // Sub-positions of an object layer usable as piece boundaries. Fractional positions
+        // keep a quantum comfortably above the tower plan's 1e-3 mm Z-merge epsilon, or the
+        // layer is left unsplittable.
+        auto sub_positions = [&](const Layer *layer, std::vector<coordf_t> &out) {
+            out.clear();
+            const coordf_t h     = layer->height;
+            const int      steps = h / height_step > 0.002 ? height_step : 1;
+            for (int k = 1; k < steps; ++k) {
+                const coordf_t below = h * k / steps;
+                if (below < tower_min_slab - EPSILON || h - below < tower_min_slab - EPSILON)
+                    continue; // a tower slab on either side of this boundary would be too thin
+                out.push_back(layer->print_z - h + below);
+            }
+        };
+        // A run must end exactly at a top-contact layer so the support tops keep their
+        // contact Z (mirrors the boundaries the free-form planner inserts), and the contact
+        // layer itself prints at the object layer height for interface quality.
+        std::vector<char>     boundary(n + 1, 0);
+        std::vector<coordf_t> forced_close_zs; // exact support tops between object layers
+        std::vector<coordf_t> layer_subs;
+        // With maximum height priority the pieces run through the contact layers: each contact
+        // is re-assigned to the nearest planned layer (see the redistribution at the end) and its
+        // gap becomes a whole number of support layers - within half a layer of the configured
+        // value - instead of splitting the support under every contact.
+        for (size_t layer_nr = 1; !m_support_params.grid_max_height_priority && layer_nr < contact_nodes.size() && layer_nr < n; ++layer_nr)
+            if (!contact_nodes[layer_nr].empty()) {
+                boundary[layer_nr]     = 1;
+                boundary[layer_nr + 1] = 1;
+                // The support top sits support_top_z_distance below the contact (the contact
+                // node's height is that gap, as the free-form planner uses it). Close a piece
+                // exactly there: on a sub-position of the object layer containing it when the
+                // step allows, otherwise at the nearest object layer below - or the gap rounds
+                // up to a whole support piece.
+                const SupportNode *node = contact_nodes[layer_nr].front();
+                if (node->height > EPSILON) {
+                    const coordf_t gap_bottom = node->print_z - node->height;
+                    for (size_t j = layer_nr; j-- > 0;)
+                        if (m_object->get_layer(j)->print_z <= gap_bottom + EPSILON) {
+                            bool on_sub_position = false;
+                            if (j + 1 < n) {
+                                sub_positions(m_object->get_layer(j + 1), layer_subs);
+                                for (coordf_t z : layer_subs)
+                                    if (std::abs(z - gap_bottom) < EPSILON) { on_sub_position = true; break; }
+                            }
+                            if (on_sub_position)
+                                forced_close_zs.push_back(gap_bottom);
+                            else
+                                boundary[j + 1] = 1;
+                            break;
+                        }
+                }
+            }
+        auto forced_close = [&forced_close_zs](coordf_t z) {
+            for (coordf_t f : forced_close_zs)
+                if (std::abs(f - z) < EPSILON)
+                    return true;
+            return false;
+        };
+        layer_heights.reserve(n);
+        layer_heights.push_back({m_object->get_layer(0)->print_z, m_object->get_layer(0)->height, 0});
+        // A candidate boundary: a sub-position of an object layer.
+        struct SubPos { coordf_t z; size_t obj_layer_nr; };
+        std::vector<SubPos> subs;
+        size_t i = 1;
+        while (i < n) {
+            size_t span_end = i + 1;
+            while (span_end < n && !boundary[span_end]) ++span_end;
+            // Sub-position ladder over object layers i..span_end-1. Grid positions use the
+            // layer's print_z verbatim so they stay bit-exact.
+            subs.clear();
+            for (size_t l = i; l < span_end; ++l) {
+                const Layer *layer = m_object->get_layer(l);
+                sub_positions(layer, layer_subs);
+                for (coordf_t z : layer_subs)
+                    subs.push_back({z, l});
+                subs.push_back({layer->print_z, l});
+            }
+            // Pieces are laid out per segment: the ladder up to each forced close (an exact
+            // support top) and the remainder get the same closing and rebalancing.
+            coordf_t piece_start = m_object->get_layer(i)->print_z - m_object->get_layer(i)->height;
+            size_t   seg_begin   = 0;
+            while (seg_begin < subs.size()) {
+                size_t seg_end = seg_begin; // index of the last ladder position of this segment
+                while (seg_end + 1 < subs.size() && !forced_close(subs[seg_end].z)) ++seg_end;
+                const size_t pieces_begin = layer_heights.size();
+                for (size_t s = seg_begin; s <= seg_end; ++s) {
+                    // Close the piece at the segment end, or right before the sub-position that
+                    // would push it past the maximum support layer height.
+                    if (s == seg_end || subs[s + 1].z - piece_start > max_layer_height + EPSILON) {
+                        layer_heights.push_back({subs[s].z, subs[s].z - piece_start, subs[s].obj_layer_nr});
+                        piece_start = subs[s].z;
+                    }
+                }
+                // Rebalance a trailing piece thinner than the support minimum.
+                if (layer_heights.size() - pieces_begin >= 2 && layer_heights.back().height < min_layer_height - EPSILON) {
+                    LayerHeightData tail = layer_heights.back(); layer_heights.pop_back();
+                    LayerHeightData prev = layer_heights.back(); layer_heights.pop_back();
+                    const coordf_t combined_start = prev.print_z - prev.height;
+                    const coordf_t combined       = tail.print_z - combined_start;
+                    if (combined <= max_layer_height + EPSILON) {
+                        layer_heights.push_back({tail.print_z, combined, tail.obj_layer_nr});
+                    } else {
+                        // Cannot merge: split the two pieces as evenly as the sub-grid allows.
+                        const coordf_t ideal = combined_start + combined / 2.;
+                        size_t         best  = subs.size();
+                        // Both halves must respect the support minimum, or the split just moves
+                        // the thin piece.
+                        for (size_t s = seg_begin; s <= seg_end; ++s)
+                            if (subs[s].z - combined_start >= min_layer_height - EPSILON && tail.print_z - subs[s].z >= min_layer_height - EPSILON &&
+                                (best == subs.size() || std::abs(subs[s].z - ideal) < std::abs(subs[best].z - ideal)))
+                                best = s;
+                        if (best < subs.size()) {
+                            layer_heights.push_back({subs[best].z, subs[best].z - combined_start, subs[best].obj_layer_nr});
+                            layer_heights.push_back({tail.print_z, tail.print_z - subs[best].z, tail.obj_layer_nr});
+                        } else {
+                            // No usable split point: keep the original pieces, thin tail and all.
+                            layer_heights.push_back(prev);
+                            layer_heights.push_back(tail);
+                        }
+                    }
+                }
+                seg_begin = seg_end + 1;
+            }
+            i = span_end;
         }
     } else {
         const coordf_t               max_layer_height = m_slicing_params.max_suport_layer_height;
@@ -3458,8 +3721,6 @@ void TreeSupport::generate_contact_points()
         }
     }
 
-    int      nonempty_layers = 0;
-    tbb::concurrent_vector<Slic3r::Vec3f> all_nodes;
     tbb::parallel_for(tbb::blocked_range<size_t>(1, m_object->layers().size()), [&](const tbb::blocked_range<size_t>& range) {
         for (size_t layer_nr = range.begin(); layer_nr < range.end(); layer_nr++) {
             if (m_object->print()->canceled())
@@ -3585,8 +3846,6 @@ void TreeSupport::generate_contact_points()
                 if (node)
                     node->skin_direction = pt_and_normal.second;
             }
-            if (!curr_nodes.empty()) nonempty_layers++;
-            for (auto node : curr_nodes) { all_nodes.emplace_back(node->position(0), node->position(1), scale_(node->print_z)); }
 #ifdef SUPPORT_TREE_DEBUG_TO_SVG
             if (!curr_nodes.empty())
             draw_contours_and_nodes_to_svg(debug_out_path("init_contact_points_%.2f.svg", bottom_z), layer->loverhangs,layer->lslices_extrudable, m_ts_data->m_layer_outlines_below[layer_nr],
@@ -3597,23 +3856,32 @@ void TreeSupport::generate_contact_points()
 
 
 
-    int nNodes = all_nodes.size();
-    avg_node_per_layer = nodes_angle = 0;
-    if (nNodes > 0) {
-        avg_node_per_layer = nNodes / nonempty_layers;
-        // get orientation of nodes by line fitting
-        // line: y=kx+b, where
-        //       k=tan(nodes_angle)=(n\sum{xy}-\sum{x}\sum{y})/(n\sum{x^2}-\sum{x}^2)
-        float mx = 0, my = 0, mxy = 0, mx2 = 0;
-        for (auto &pt : all_nodes) {
-            float x = unscale_(pt(0));
-            float y = unscale_(pt(1));
+    // ORCA: node statistics are gathered after the loop, in layer order and in double, so the
+    // fitted angle (it rotates every branch polygon of square support) is deterministic.
+    int    nonempty_layers = 0;
+    size_t nNodes          = 0;
+    double mx = 0., my = 0., mxy = 0., mx2 = 0.;
+    for (size_t layer_nr = 1; layer_nr < m_object->layers().size(); layer_nr++) {
+        const auto& curr_nodes = contact_nodes[layer_nr - 1];
+        if (!curr_nodes.empty()) nonempty_layers++;
+        for (const SupportNode* node : curr_nodes) {
+            // get orientation of nodes by line fitting
+            // line: y=kx+b, where
+            //       k=tan(nodes_angle)=(n\sum{xy}-\sum{x}\sum{y})/(n\sum{x^2}-\sum{x}^2)
+            const double x = unscale<double>(node->position.x());
+            const double y = unscale<double>(node->position.y());
             mx += x;
             my += y;
             mxy += x * y;
             mx2 += x * x;
+            ++nNodes;
         }
-        nodes_angle = atan2(nNodes * mxy - mx * my, nNodes * mx2 - SQ(mx));
+    }
+    avg_node_per_layer = nodes_angle = 0;
+    if (nNodes > 0) {
+        avg_node_per_layer = int(nNodes / size_t(nonempty_layers));
+        const double n = double(nNodes);
+        nodes_angle = float(atan2(n * mxy - mx * my, n * mx2 - mx * mx));
 
         BOOST_LOG_TRIVIAL(info) << "avg_node_per_layer=" << avg_node_per_layer << ", nodes_angle=" << nodes_angle;
     }

@@ -46,6 +46,7 @@ class Button;
 namespace Slic3r {
 
 class BuildVolume;
+class MachineObject;
 enum class BuildVolume_Type : char;
 class Model;
 class ModelObject;
@@ -177,7 +178,8 @@ public:
     void update_presets(Slic3r::Preset::Type preset_type);
     //BBS
     const std::vector<BedType>& get_cur_combox_bed_types() { return m_cur_combox_bed_types; }
-    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to);
+    // `slots`: only these filament slots (0-based) switch; nullptr: every slot holding `from`.
+    void update_presets_from_to(Slic3r::Preset::Type preset_type, std::string from, std::string to, const std::vector<size_t> *slots = nullptr);
     BedType get_cur_select_bed_type();
     std::string get_cur_select_bed_image();
     void set_bed_type_accord_combox(BedType bed_type);
@@ -189,7 +191,9 @@ public:
     void sys_color_changed();
     void search();
     void jump_to_option(size_t selected);
-    void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category);
+    // Snapmaker Orca: `tool_head` (0-based) selects that tool head on the process tab after the
+    // page is shown (a validation message about a value set per tool head); -1 selects none.
+    void jump_to_option(const std::string& opt_key, Preset::Type type, const std::wstring& category, int tool_head = -1);
     // BBS. Add on_filaments_change() method.
     void on_filaments_change(size_t num_filaments);
     // Orca-named alias for on_filaments_change(); kept so upstream call sites compile.
@@ -243,6 +247,29 @@ public:
     void update_dynamic_filament_list();
 
     void update_nozzle_settings(bool switch_machine = false);
+    // Sets only nozzle `nozzle_idx`'s diameter (`variant` as the profiles name it, "0.4"),
+    // keeping the printer preset; see Plater.cpp.
+    void apply_nozzle_diameter(size_t nozzle_idx, const wxString &diameter_label);
+    // The line under each preferred layer height: the height the extruder prints for slicing when
+    // it differs, a warning for an entered height off the layer grid (see Plater.cpp).
+    void update_nozzle_layer_height_hints();
+    // Refresh the nozzle tabs' combo values in place; rebuilds (deferred) on extruder count change.
+    void update_nozzle_values();
+    // Refresh the Flow row of the nozzle tabs: which types a tool head offers, whether it may be
+    // changed, and the selected type (project config "nozzle_volume_type").
+    void update_nozzle_flow_values();
+    // Snapmaker Orca: refresh the hint under the rows of the nozzle tabs that names the process
+    // preset a tool head of another nozzle size prints with (libslic3r/PerHeadProcess.hpp).
+    void update_nozzle_process_hints();
+    // Shows the nozzle tab of tool head `head` (0-based) with the printer section unfolded.
+    void select_nozzle_tab(size_t head);
+    // Snapmaker Orca: the page of tool head `head` alone, for the speed selector of the Process
+    // tab that follows a click on a tool head: no unfolding of a folded printer section, no focus,
+    // no scroll; nothing when the tab is shown already.
+    void show_nozzle_tab(size_t head);
+    // The tool head (0-based) whose nozzle tab is shown; 0 without the tabs. The flow selector
+    // of the Process tab opens on the flow type of this tool head.
+    size_t selected_nozzle_tab() const;
 
     PlaterPresetComboBox *  printer_combox();
     ObjectList*             obj_list();
@@ -276,6 +303,10 @@ public:
     void                    update_ui_from_settings();
 	bool                    show_object_list(bool show) const;
     void                    finish_param_edit();
+    // Snapmaker Orca: the filament slot the Filament tab edits, -1 for none. While it is set,
+    // update_presets(TYPE_FILAMENT) writes the preset selected in the tab into that slot.
+    int                     editing_filament() const;
+    void                    set_editing_filament(int filament_idx);
 
     /**
      * @brief Automatically calculates flushing volumes
@@ -305,6 +336,7 @@ public:
                                         std::vector<std::string>& types,
                                         std::vector<size_t>* config_indices = nullptr);
     Search::OptionsSearcher&        get_searcher();
+    Search::SettingsIndex&          settings_index();
     std::string&                    get_search_line();
     void                            update_printer_thumbnail();
     const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
@@ -415,7 +447,7 @@ public:
     // Helper: returns config indices where filament_is_mixed == false
     std::vector<size_t> physical_filament_config_indices() const;
 
-    int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString());
+    int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString(), bool reload_presets = true);
     // BBS: save & backup
     void load_project(wxString const & filename = "", wxString const & originfile = "-");
     int save_project(bool saveAs = false);
@@ -487,9 +519,7 @@ public:
     bool preview_zip_archive(const boost::filesystem::path& archive_path);
 
     // BBS: restore
-    std::vector<size_t> load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
-    // To be called when providing a list of files to the GUI slic3r on command line.
-    std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
+    std::vector<size_t> load_files(const std::vector<boost::filesystem::path>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false, bool* published_out = nullptr);
     // to be called on drag and drop
     bool load_files(const wxArrayString& filenames);
 
@@ -556,6 +586,17 @@ public:
 
     void reset_window_layout();
 
+    // Dock panes sit alongside the sidebar; `window` must be a child of the Plater. `dock` is
+    // "left", "right", "bottom" or "float", and `size` is in DIPs. A pane closed from its own close
+    // button is destroyed after on_close runs; remove_dock_pane() destroys it without calling on_close.
+    void add_dock_pane(wxWindow* window, const std::string& name, const wxString& caption, const std::string& dock,
+                       const wxSize& size, std::function<void()> on_close);
+    void remove_dock_pane(wxWindow* window);
+    void show_dock_pane(wxWindow* window, bool show);
+    // Removes every dock pane without calling on_close, for MainFrame::shutdown() (app exit and a
+    // language switch), while the Plater and any floating frames still exist.
+    void remove_dock_panes();
+
     // Called after the Preferences dialog is closed and the program settings are saved.
     // Update the UI based on the current preferences.
     void update_ui_from_settings();
@@ -568,7 +609,7 @@ public:
     void deselect_all();
     void exit_gizmo();
     void remove(size_t obj_idx);
-    void reset(bool apply_presets_change = false);
+    void reset(bool apply_presets_change = false, bool reload_presets = true);
     void reset_with_confirm();
     //BBS: return int for various result
     int close_with_confirm(std::function<bool(bool yes_or_no)> second_check = nullptr); // BBS close project
@@ -599,6 +640,13 @@ public:
     void export_gcode_3mf(bool export_all = false);
     void send_gcode_finish(wxString name);
     void export_core_3mf();
+    // Export a "published" 3MF embedding the author-selected settings in the file metadata; a
+    // pure export that leaves the in-memory project untouched.
+    int  export_published_3mf(const std::vector<std::string>& published_keys, const std::vector<Slic3r::PublishedMaterialEntry>& material_keys);
+    // Session-level stash of the last published selection, seeded into the Publish dialog on
+    // open and written on publish or on loading a published 3MF
+    bool get_pending_published(std::vector<std::string>& out_keys, std::vector<Slic3r::PublishedMaterialEntry>& out_material) const;
+    void set_pending_published(const std::vector<std::string>& published_keys, const std::vector<Slic3r::PublishedMaterialEntry>& material_keys);
     static TriangleMesh combine_mesh_fff(const ModelObject& mo, int instance_id, std::function<void(const std::string&)> notify_func = {});
     void export_stl(bool extended = false, bool selection_only = false, bool multi_stls = false, FileType file_type = FT_STL);
     //BBS: remove amf
@@ -767,6 +815,14 @@ public:
     /// @brief Confirm warning-level high/low temperature material mixing before slicing all plates.
     /// @return True if slice-all can continue; otherwise false.
     bool confirm_filament_temp_mixing_before_slice_all();
+    /// @brief ORCA: ask before slicing the current plate when that would take very long (see
+    /// long_slice_layer_threshold in Plater.cpp). explicit_request = the user pressed Slice (or
+    /// selected the plate): always ask; otherwise (preview switch) a decline that was given for the
+    /// same estimate is honoured silently.
+    /// @return True if slicing can proceed; false if the user aborted.
+    bool confirm_long_slice_before_slice(bool explicit_request);
+    /// @brief ORCA: the same question for every plate a slice-all would slice.
+    bool confirm_long_slice_before_slice_all();
     /// Queue a single UI sync after filament preset/assignment/plate usage changes.
     void notify_filament_usage_changed();
     void force_filament_colors_update();
@@ -946,6 +1002,9 @@ public:
     void apply_background_progress();
     //BBS: select the plate by hover_id
     int select_plate_by_hover_id(int hover_id, bool right_click = false, bool isModidyPlateName = false);
+    //BBS: add an empty plate and switch to it (the toolbar's Add Plate). Returns the new
+    // plate index, or -1 when the plate cap is reached.
+    int add_plate();
     //BBS: delete the plate, index= -1 means the current plate
     int delete_plate(int plate_index = -1);
     int duplicate_plate(int plate_index = -1);
@@ -975,6 +1034,89 @@ public:
     // extruder after its Flow type changed (Hybrid resets them to Standard so the user
     // re-assigns concrete volumes in the grouping dialog).
     void update_filament_volume_map(int extruder_id, int volume_type);
+
+    // Snapmaker Orca: High Flow nozzles.
+    // Resets to Standard every High Flow tool head whose nozzle size has no High Flow values in the
+    // printer preset. Returns the reset heads (0-based); `notify` also shows a notice.
+    std::vector<size_t> sanitize_nozzle_flow_types(bool notify = true);
+    // The sentence that reports tool heads reset by sanitize_nozzle_flow_types().
+    static std::string nozzle_flow_reset_text(const std::vector<size_t> &heads);
+    // Rates the filament of every High Flow tool head and the process preset, and keeps the
+    // notices of the Prepare view in step. Returns false when a filament that cannot be printed
+    // with a High Flow nozzle blocks slicing.
+    bool check_high_flow_filaments();
+    // Result of the last check_high_flow_filaments().
+    bool is_blocked_by_high_flow_filament() const;
+    // The tool head (0-based) that prints each of `filament_count` filaments on the current
+    // plate, the way the engine decides it (HighFlowNotices::filament_heads()).
+    std::vector<size_t> filament_tool_heads(size_t filament_count, size_t head_count) const;
+    // The same for the filament map of `plate`; nullptr reads the map of the project, the one the
+    // filament presets follow (NozzleFilament::state()).
+    std::vector<size_t> filament_tool_heads(size_t filament_count, size_t head_count, const PartPlate *plate) const;
+
+    // Snapmaker Orca: filament presets follow the nozzle size of the tool head that prints them
+    // (libslic3r/NozzleFilamentPresets.hpp).
+    enum class FollowReason {
+        SidebarNozzle,      // the nozzle size row of the sidebar
+        PrinterTab,         // "nozzle_diameter" edited in the printer settings
+        PrinterPreset,      // another printer preset was selected
+        PrinterSync,        // the nozzle sizes the printer reports were taken over (NozzleFollowScope)
+        SlotsMoved,         // filament slots were removed, merged or renumbered
+        SlotsWritten,       // presets were written into the slots without regard to the tool heads
+        UserAction,         // the action of the persistent notice
+        Preference,         // the option "filament_follows_nozzle" was turned on
+        FlowType            // the Standard / High Flow choice of a tool head was changed by the user
+    };
+    struct NozzleFollowResult
+    {
+        std::vector<std::string> lines;             // translated sentences, at most one per kind and nozzle size
+        bool                     warning { false }; // a user preset or unsaved changes were kept
+        bool                     review { false };  // a material has no preset for the size of its tool head
+        size_t                   switching { 0 };   // slots that get another preset
+        std::string              text() const;      // the lines, one per row
+    };
+    // Moves the filament slots printed by `heads` (0-based, empty: all) to the presets for their
+    // tool head's nozzle size. Computes targets and sentences without touching windows (safe in any
+    // event handler); writing the slots and refreshing the UI is deferred. The caller shows the sentences.
+    NozzleFollowResult follow_nozzle_sizes(const std::vector<size_t> &heads, FollowReason reason);
+    // Shows the sentences of a pass as one notice of the Prepare view; the warning level when a
+    // user preset or unsaved changes were kept. Nothing for a pass without sentences.
+    void show_nozzle_follow_notice(const NozzleFollowResult &result);
+    // Persistent, non-blocking warnings, refreshed at every apply and pass: filaments on a preset for
+    // another nozzle size although one for their head exists (action: run the pass), and filaments the
+    // plate map sends to a head of another size than the project map. Replaced only on text change.
+    void check_nozzle_filament_versions();
+    // Snapmaker Orca: after a project load (pending flag set by load_files), notifies where the per-head
+    // process presets recorded in the project differ from the current ones; nothing is switched.
+    // See libslic3r/PerHeadProcess.hpp.
+    void check_per_head_process_record();
+    // Both in one: a pass over all tool heads with its own notice, for the events that concern
+    // every slot (slots removed, merged, renumbered or written without regard to the tool heads).
+    void follow_nozzle_sizes_and_notify(FollowReason reason) { show_nozzle_follow_notice(follow_nozzle_sizes({}, reason)); }
+    // While alive, follow_nozzle_sizes() only collects tool heads. finish() runs one pass over them,
+    // writes the slots immediately without dialogs and returns its sentences, so the printer sync
+    // shows one notice instead of one per step. Leaving without finish() drops the collection.
+    class NozzleFollowScope
+    {
+    public:
+        explicit NozzleFollowScope(Plater *plater);
+        ~NozzleFollowScope();
+        NozzleFollowScope(const NozzleFollowScope &)            = delete;
+        NozzleFollowScope &operator=(const NozzleFollowScope &) = delete;
+        NozzleFollowResult finish();
+
+    private:
+        Plater *m_plater { nullptr };
+        bool    m_finished { false };
+    };
+    // Printer sync: applies the reported flow types (SSWCPProtocol wire spelling, one per tool head);
+    // heads without a valid entry keep their type. High Flow without preset values stays Standard
+    // and is noted like a sanitizer reset; then the sanitizer and the filament check run.
+    void apply_reported_nozzle_flow_types(const std::vector<std::string> &flows);
+    // Device page requested another filament flow type (sw_FinishFilamentMapping, event 1): shows
+    // the sidebar Flow row on the first tool head whose type differs from the printer's, since a
+    // filament takes its tool head's flow type. No-op without High Flow values in the preset.
+    void show_tool_head_flow_types();
 
 #if ENABLE_ENVIRONMENT_MAP
     void init_environment_texture();
@@ -1137,6 +1279,9 @@ public:
     bool is_show_wireframe() const;
     void enable_wireframe(bool status);
     bool is_wireframe_enabled() const;
+
+    void toggle_show_xray();
+    bool is_show_xray() const;
 
 	// Wrapper around wxWindow::PopupMenu to suppress error messages popping out while tracking the popup menu.
 	bool PopupMenu(wxMenu *menu, const wxPoint& pos = wxDefaultPosition);

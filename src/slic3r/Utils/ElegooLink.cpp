@@ -796,7 +796,11 @@ namespace Slic3r {
         std::string                    uuid_string = to_string(uuid);
 
         std::string md5;
-        bbl_calc_md5(source_path, md5);
+        if (!bbl_calc_md5(source_path, md5)) {
+            BOOST_LOG_TRIVIAL(error) << name << ": Failed to calculate upload file MD5: " << source_path;
+            error_fn(_L("Failed to calculate the upload file checksum."));
+            return false;
+        }
 
         auto        http   = Http::post(url);
 #ifdef WIN32
@@ -959,7 +963,11 @@ namespace Slic3r {
         const auto  upload_filename = filename_to_utf8(upload_data.upload_path);
         std::string source_path     = path_to_utf8(upload_data.source_path);
         std::string md5;
-        bbl_calc_md5(source_path, md5);
+        if (!bbl_calc_md5(source_path, md5)) {
+            BOOST_LOG_TRIVIAL(error) << get_name() << ": Failed to calculate upload file MD5: " << source_path;
+            error_fn(_L("Failed to calculate the upload file checksum."));
+            return false;
+        }
         std::transform(md5.begin(), md5.end(), md5.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
         boost::nowide::ifstream file(source_path, std::ios::binary | std::ios::ate);

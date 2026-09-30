@@ -41,6 +41,8 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     // wxString url = wxString::Format("file://%s/web/homepage/index.html?path=homepage.html", from_u8(resources_dir()));
     // wxString url     = wxString("http://127.0.0.1:") + wxString(std::to_string(PAGE_HTTP_PORT)) + wxString("/web/flutter_web/index.html?path=1");
     url = wxGetApp().get_international_url(url);
+    // Snapmaker upstream 5970fea62d: arms the app-wide Flutter run-result watch.
+    wxGetApp().start_flutter_wcp_timeout_watch();
 
     // test
     // url = "http://localhost:13619/web/flutter_web/1.html";
@@ -225,6 +227,7 @@ WebViewPanel::WebViewPanel(wxWindow *parent)
     Bind(wxEVT_CLOSE_WINDOW, &WebViewPanel::OnClose, this);
 
     m_LoginUpdateTimer = nullptr;
+    update_mode();
  }
 
 WebViewPanel::~WebViewPanel()
@@ -428,10 +431,9 @@ void WebViewPanel::OnClose(wxCloseEvent& evt)
 void WebViewPanel::OnFreshLoginStatus(wxTimerEvent &event)
 {
     // Snapmaker: this panel hosts the Snapmaker Flutter web UI, whose login state is driven by
-    // SSWCP, not by the Orca/BBL cloud pollers. The upstream polling below stays disabled so we
-    // do not issue Orca-cloud / Bambu-cloud login requests from the fork's home panel.
-    /*auto mainframe = Slic3r::GUI::wxGetApp().mainframe;
-    if (mainframe && mainframe->m_webview == this) {
+    // SSWCP, not by the Orca/BBL cloud pollers. The upstream polling below stays disabled so the
+    // fork's home panel issues no Orca-cloud / Bambu-cloud login requests.
+    /*if (WebViewPanel::if_built() == this) {
         auto* app_config = Slic3r::GUI::wxGetApp().app_config;
         if (app_config && app_config->get_stealth_mode()) return;
         Slic3r::GUI::wxGetApp().get_login_info(ORCA_CLOUD_PROVIDER);
@@ -699,6 +701,8 @@ void WebViewPanel::OnScriptMessage(wxWebViewEvent& evt)
     // update login status
     if (m_LoginUpdateTimer == nullptr) {
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Create Timer";
+        // Snapmaker upstream 5970fea62d: the first script message of the home view.
+        wxGetApp().on_flutter_wcp_received();
         m_LoginUpdateTimer = new wxTimer(this, LOGIN_INFO_UPDATE_TIMER_ID);
         m_LoginUpdateTimer->Start(2000);
     }

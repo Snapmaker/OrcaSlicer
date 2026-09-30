@@ -201,6 +201,11 @@ bool CloudPluginService::download_cloud_plugin(PluginDescriptor& entry,
             error = std::move(err);
             if (!response_body.empty())
                 error += " — " + response_body;
+            // Snapmaker Orca: a final status outside 200-299 arrives here without a transfer error
+            // and often without a body; an empty text would let the code below carry on as if the
+            // download had succeeded.
+            if (error.empty())
+                error = "HTTP " + std::to_string(status);
         })
         .perform_sync();
 

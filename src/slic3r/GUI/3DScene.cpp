@@ -7,6 +7,7 @@
 #include "Plater.hpp"
 #include "BitmapCache.hpp"
 #include "Camera.hpp"
+#include "MeshLodCache.hpp"
 #include "../Utils/Frustum.hpp"
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -20,6 +21,8 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/GCode/WipeTower.hpp"
+#include "libslic3r/GCode/WipeTowerEstimate.hpp"
 #include "libslic3r/Tesselate.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
@@ -27,6 +30,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <chrono>
+#include <cstdint>
 
 #include <boost/log/trivial.hpp>
 
@@ -410,7 +415,21 @@ BoundingBoxf3 GLVolume::transformed_convex_hull_bounding_box(const Transform3d& 
 
 BoundingBoxf3 GLVolume::transformed_non_sinking_bounding_box(const Transform3d& trafo) const
 {
-    return GUI::wxGetApp().plater()->model().objects[object_idx()]->volumes[volume_idx()]->mesh().transformed_bounding_box(trafo, 0.0);
+    auto* plater = GUI::wxGetApp().plater();
+    if (!plater)
+        return bounding_box().transformed(trafo);
+
+    const auto& objects = plater->model().objects;
+    int         obj_idx = object_idx();
+    if (obj_idx < 0 || obj_idx >= (int) objects.size() || !objects[obj_idx])
+        return bounding_box().transformed(trafo);
+
+    const auto& volumes = objects[obj_idx]->volumes;
+    int         vol_idx = volume_idx();
+    if (vol_idx < 0 || vol_idx >= (int) volumes.size())
+        return bounding_box().transformed(trafo);
+
+    return volumes[vol_idx]->mesh().transformed_bounding_box(trafo, 0.0);
 }
 
 const BoundingBoxf3& GLVolume::transformed_non_sinking_bounding_box() const
@@ -495,10 +514,10 @@ void GLVolume::render_with_outline(const GUI::Size& cnv_size)
     glsafe(::glClearStencil(0));
     glsafe(::glClear(GL_STENCIL_BUFFER_BIT));
     glsafe(::glStencilFunc(GL_ALWAYS, 0xFF, 0xFF));
-    if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-        model.render(shader);
-    else
-        model.render(this->tverts_range, shader);
+    // This pass paints the visible surface, so it must go through simple_render() to keep
+    // per-triangle MMU paint colors; the later is_outline passes only draw the flat silhouette
+    // highlight and are fine using the single-color model.
+    simple_render(shader, model_objects, colors);
     glsafe(::glStencilFunc(GL_NOTEQUAL, 0xFF, 0xFF));
     glsafe(::glStencilMask(0x00));
     shader->set_uniform("is_outline", true);
@@ -633,35 +652,25 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         glFrontFace(GL_CW);
     glsafe(::glCullFace(GL_BACK));
 
-    bool         color_volume = false;
-    ModelObject* model_object = nullptr;
     ModelVolume* model_volume = nullptr;
-    do {
-        if ((!printable) || object_idx() >= model_objects.size())
-            break;
-        model_object = model_objects[object_idx()];
-
-        if (volume_idx() >= model_object->volumes.size())
-            break;
-        model_volume = model_object->volumes[volume_idx()];
-        if (model_volume->mmu_segmentation_facets.empty())
-            break;
-
-        color_volume = true;
-        if (model_volume->mmu_segmentation_facets.timestamp() != mmuseg_ts) {
-            mmuseg_models.clear();
-            std::vector<indexed_triangle_set> its_per_color;
-            model_volume->mmu_segmentation_facets.get_facets(*model_volume, its_per_color);
-            mmuseg_models.resize(its_per_color.size());
-            for (int idx = 0; idx < its_per_color.size(); idx++) {
-                mmuseg_models[idx].init_from(its_per_color[idx]);
-            }
-
-            mmuseg_ts = model_volume->mmu_segmentation_facets.timestamp();
+    // Snapmaker Orca: the rule is shared with GLVolumeCollection::update_lod(), which keeps a
+    // painted volume at full detail, so that the two cannot drift apart.
+    const bool   color_volume = is_mmu_painted_for_render(model_objects, &model_volume);
+    if (color_volume && model_volume->mmu_segmentation_facets.timestamp() != mmuseg_ts) {
+        mmuseg_models.clear();
+        std::vector<indexed_triangle_set> its_per_color;
+        model_volume->mmu_segmentation_facets.get_facets(*model_volume, its_per_color);
+        mmuseg_models.resize(its_per_color.size());
+        for (int idx = 0; idx < its_per_color.size(); idx++) {
+            mmuseg_models[idx].init_from(its_per_color[idx]);
         }
-    } while (0);
+
+        mmuseg_ts = model_volume->mmu_segmentation_facets.timestamp();
+    }
 
     if (color_volume && !picking) {
+        const bool brighten_selected = selected && !disabled && !force_native_color && !force_neutral_color;
+
         // when force_transparent, we need to keep the alpha
         if (force_native_color && render_color.is_transparent()) {
             for (auto& extruder_color : extruder_colors)
@@ -683,6 +692,8 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                         int color_idx = std::clamp(extruder_id - 1, 0, int(extruder_colors.size()) - 1);
                         // to make black not too hard too see
                         ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[color_idx]);
+                        if (brighten_selected)
+                            new_color = brighten_color(new_color, 1.25f);
                         if (ban_light) {
                             new_color[3] = (255 - color_idx) / 255.0f;
                         }
@@ -693,6 +704,8 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                     if (idx <= extruder_colors.size()) {
                         // to make black not too hard too see
                         ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[idx - 1]);
+                        if (brighten_selected)
+                            new_color = brighten_color(new_color, 1.25f);
                         if (ban_light) {
                             new_color[3] = (255 - (idx - 1)) / 255.0f;
                         }
@@ -701,6 +714,8 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                     } else {
                         // to make black not too hard too see
                         ColorRGBA new_color = adjust_color_for_rendering(extruder_colors[0]);
+                        if (brighten_selected)
+                            new_color = brighten_color(new_color, 1.25f);
                         if (ban_light) {
                             new_color[3] = (255 - 0) / 255.0f;
                         }
@@ -716,12 +731,44 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         }
     } else {
         if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-            model.render(shader);
+            // Snapmaker Orca: the one draw of the render LOD. The reduced model only under the
+            // grant of GLVolumeCollection::render(); a painted volume never gets here.
+            draw_model().render(shader);
         else
             model.render(this->tverts_range, shader);
     }
     if (this->is_left_handed())
         glFrontFace(GL_CCW);
+}
+
+bool GLVolume::is_mmu_painted_for_render(const ModelObjectPtrs& model_objects, ModelVolume** painted_volume) const
+{
+    if (!printable || object_idx() < 0 || size_t(object_idx()) >= model_objects.size())
+        return false;
+    const ModelObject* model_object = model_objects[object_idx()];
+    if (volume_idx() < 0 || size_t(volume_idx()) >= model_object->volumes.size())
+        return false;
+    ModelVolume* model_volume = model_object->volumes[volume_idx()];
+    if (model_volume->mmu_segmentation_facets.empty())
+        return false;
+    if (painted_volume != nullptr)
+        *painted_volume = model_volume;
+    return true;
+}
+
+GUI::GLModel& GLVolume::draw_model()
+{
+    if (!m_lod_draw || picking)
+        return model;
+    return shadow_model();
+}
+
+GUI::GLModel& GLVolume::shadow_model()
+{
+    if (m_lod && m_lod_level != LodLevel::High && tverts_range == std::make_pair<size_t, size_t>(0, -1))
+        if (GUI::GLModel* reduced = m_lod->model(m_lod_level); reduced != nullptr)
+            return *reduced;
+    return model;
 }
 
 bool GLVolume::is_sla_support() const { return this->composite_id.volume_id == -int(slaposSupportTree); }
@@ -815,6 +862,11 @@ int GLVolumeCollection::load_object_volume(const ModelObject* model_object,
     v.name = model_volume->name;
 
     v.model.init_from(*mesh);
+    // Snapmaker Orca: render LOD for every volume type (the minimum face count skips primitives),
+    // built from the same mesh and owned by this GLVolume. No cache exists without the GUI.
+    if (m_lod_enabled)
+        if (GUI::MeshLodCache* lod_cache = GUI::MeshLodCache::instance(); lod_cache != nullptr)
+            v.m_lod = lod_cache->acquire(mesh);
     if (need_raycaster) { v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(mesh); }
     v.composite_id = GLVolume::CompositeID(obj_idx, volume_idx, instance_idx);
 
@@ -896,6 +948,21 @@ int GLVolumeCollection::load_wipe_tower_preview(
     GUI::PartPlateList&    ppl              = GUI::wxGetApp().plater()->get_partplate_list();
     std::vector<int>       plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
     TriangleMesh           wipe_tower_shell = make_cube(width, depth, height);
+    // The brim is part of the printed footprint: draw it and fold it into the shell so the
+    // outside-bed shader and the drag clamp react to the true first-layer extent.
+    const bool   show_brim   = brim_width > 0.f;
+    const float  brim_height = 0.2f; // one first layer, visual only
+    TriangleMesh brim_slab;
+    if (show_brim) {
+        // The brim follows the real first-layer outline: a Type2 cone-wall tower's base bulges
+        // past the body box. The wall type and angle are print settings, the planner a printer one.
+        const DynamicPrintConfig &print_cfg   = GUI::wxGetApp().preset_bundle->prints.get_edited_preset().config;
+        const DynamicPrintConfig &printer_cfg = GUI::wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        const Polygon  outline      = estimate_wipe_tower_first_layer_outline(print_cfg, resolve_wipe_tower_type(printer_cfg), width, depth, height);
+        const Polygons brim_outline = offset(outline, scaled(brim_width));
+        brim_slab                   = WipeTower::its_make_rib_brim(brim_outline.empty() ? outline : brim_outline.front(), brim_height);
+        wipe_tower_shell.merge(brim_slab);
+    }
     for (int extruder_id : plate_extruders) {
         if (extruder_id <= extruder_colors.size())
             colors.push_back(extruder_colors[extruder_id - 1]);
@@ -906,14 +973,19 @@ int GLVolumeCollection::load_wipe_tower_preview(
     // Orca: make it transparent
     for (auto& color : colors)
         color.a(0.66f);
+    const size_t slab_count = colors.size(); // per-filament body slabs; the brim part comes after
+    if (show_brim && !colors.empty())
+        colors.push_back(colors.front());
     volumes.emplace_back(new GLWipeTowerVolume(colors));
     GLWipeTowerVolume& v = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
     v.model_per_colors.resize(colors.size());
-    for (int i = 0; i < colors.size(); i++) {
-        TriangleMesh color_part = make_cube(width, depth / colors.size(), height);
-        color_part.translate({0.f, depth * i / colors.size(), 0.});
+    for (size_t i = 0; i < slab_count; i++) {
+        TriangleMesh color_part = make_cube(width, depth / slab_count, height);
+        color_part.translate({0.f, depth * i / slab_count, 0.});
         v.model_per_colors[i].init_from(color_part);
     }
+    if (show_brim && !colors.empty())
+        v.model_per_colors[slab_count].init_from(brim_slab);
     v.model.init_from(wipe_tower_shell);
     v.mesh_raycaster = std::make_unique<GUI::MeshRaycaster>(std::make_shared<const TriangleMesh>(wipe_tower_shell));
     v.set_convex_hull(wipe_tower_shell);
@@ -1051,9 +1123,11 @@ float GLVolumeCollection::get_selection_support_normal_z() const
         // which is more relevant to overhang printing than the default nozzle diameter.
         const double nozzle_diameter = nozzle_diameter_opt->values[wall_extruder_idx];
 
-        double external_perimeter_width = full_cfg.get_abs_value("outer_wall_line_width", nozzle_diameter);
+        // Snapmaker Orca: the widths are columns per tool head; the full config is narrowed to one
+        // column per head, read at the wall extruder.
+        double external_perimeter_width = full_cfg.get_abs_value_at("outer_wall_line_width", wall_extruder_idx, nozzle_diameter);
         if (external_perimeter_width <= 0.0) {
-            external_perimeter_width = full_cfg.get_abs_value("line_width", nozzle_diameter);
+            external_perimeter_width = full_cfg.get_abs_value_at("line_width", wall_extruder_idx, nozzle_diameter);
 
             if (external_perimeter_width <= 0.0)
                 external_perimeter_width = nozzle_diameter;
@@ -1118,9 +1192,24 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
 
     const float support_normal_z = get_selection_support_normal_z();
 
+    // The outline passes below are driven by is_outline, which only the object shaders have; with an
+    // overlay one (wireframe, x-ray) bound they would just draw the volume again.
+    const bool shader_can_outline = shader->get_uniform_location("is_outline") >= 0;
+
     // Prime depth_tex on every frame so non-outline draws do not keep the
     // default sampler unit 0, which can conflict with other sampler types.
     shader->set_uniform("depth_tex", OUTLINE_DEPTH_TEX_UNIT);
+
+    // Snapmaker Orca: the grant of the render LOD for the draws of one volume, see
+    // GLVolume::m_lod_draw. RAII, so no way out of the loop body can leave the flag set.
+    struct LodDrawGrant
+    {
+        GLVolume& volume;
+        LodDrawGrant(GLVolume& v, bool granted) : volume(v) { volume.m_lod_draw = granted; }
+        ~LodDrawGrant() { volume.m_lod_draw = false; }
+        LodDrawGrant(const LodDrawGrant&) = delete;
+        LodDrawGrant& operator=(const LodDrawGrant&) = delete;
+    };
 
     for (GLVolumeWithIdAndZ& volume : to_render) {
         // Snapmaker: CPU frustum culling (only possible when the caller handed us the camera)
@@ -1129,6 +1218,10 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
             if (!camera->GetFrustum().Intersects(world_aabb))
                 continue;
         }
+        // Independent of the camera: the wireframe overlay of GLCanvas3D comes through here
+        // without one and stays at full detail because GLCanvas3D::_is_lod_allowed() keeps every
+        // level at High while wireframe is on.
+        const LodDrawGrant lod_draw_grant(*volume.first, m_lod_enabled);
 #if ENABLE_MODIFIERS_ALWAYS_TRANSPARENT
         if (type == ERenderType::Transparent) {
             volume.first->force_transparent = true;
@@ -1216,15 +1309,18 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType       type,
         glcheck();
 
 		auto red_color = ColorRGBA{1.0f, 0.0f, 0.0f, 1.0f};//slice_error
-        volume.first->model.set_color(volume.first->slice_error ? red_color : volume.first->render_color);
+        // Snapmaker Orca: a reduced model is shared by the instances of its mesh and by the
+        // canvases, so its colour is set right before its draw, inside the grant: the last writer
+        // is always the volume that draws.
+        volume.first->draw_model().set_color(volume.first->slice_error ? red_color : volume.first->render_color);
         const Transform3d model_matrix = volume.first->world_matrix();
         shader->set_uniform("view_model_matrix", view_matrix * model_matrix);
         shader->set_uniform("projection_matrix", projection_matrix);
         const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) *
                                             model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
         shader->set_uniform("view_normal_matrix", view_normal_matrix);
-        // BBS: add outline related logic
-        if (volume.first->selected && GUI::wxGetApp().show_outline())
+		//BBS: add outline related logic
+        if (volume.first->selected && shader_can_outline && GUI::wxGetApp().show_outline())
             volume.first->render_with_outline(cnv_size);
         else
             volume.first->render();
@@ -1299,7 +1395,7 @@ bool GLVolumeCollection::check_wipe_tower_outside_state(const Slic3r::BuildVolum
 
 bool GLVolumeCollection::check_outside_state(const BuildVolume &build_volume, ModelInstanceEPrintVolumeState *out_state, ObjectFilamentResults* object_results) const
 {
-    if (GUI::wxGetApp().plater() == NULL)
+    if (GUI::wxGetApp().plater() == NULL || GUI::wxGetApp().is_recreating_gui())
     {
         if (out_state != nullptr)
             *out_state = ModelInstancePVS_Inside;
@@ -1599,6 +1695,106 @@ bool GLVolumeCollection::check_outside_state(const BuildVolume &build_volume, Mo
         *out_state = overall_state;
 
     return contained_min_one;
+}
+
+void GLVolumeCollection::release_lod()
+{
+    for (GLVolume* volume : volumes) {
+        volume->m_lod.reset();
+        volume->m_lod_level = LodLevel::High;
+    }
+    m_lod_stats = {};
+    m_lod_stats[size_t(LodLevel::High)] = unsigned(volumes.size());
+}
+
+void GLVolumeCollection::update_lod(const GUI::Camera& camera, bool allowed, float pixel_scale, double pin_above_z)
+{
+    m_lod_stats = {};
+    GUI::MeshLodCache* cache = GUI::MeshLodCache::instance();
+    if (!m_lod_enabled || cache == nullptr)
+        allowed = false;
+
+    LodParams params;
+    if (cache != nullptr)
+        params = cache->params();
+    params.pixel_scale = pixel_scale > 0.f ? pixel_scale : 1.f;
+
+    // Both matrices are affine Eigen transforms; their product as Transform3d would drop the
+    // projective row of a perspective camera, so the 4x4 matrices are multiplied.
+    Transform3d view_projection;
+    view_projection.matrix() = camera.get_projection_matrix().matrix() * camera.get_view_matrix().matrix();
+    const std::array<int, 4>& viewport = camera.get_viewport();
+
+    const ModelObjectPtrs* model_objects = wxTheApp != nullptr ? &GUI::wxGetApp().model().objects : nullptr;
+
+    // Taking a mesh over sends its two models to the GPU at their first draw. The limit keeps a
+    // plate of hundreds of parts from stalling one frame, the "at least one" keeps a mesh above
+    // the limit from starving.
+    constexpr size_t max_promoted_faces = 500000;
+    size_t           promoted_faces     = 0;
+    size_t           promoted_meshes    = 0;
+    bool             promotions_left    = false;
+
+    // Volumes kept by reload_scene() keep a MeshLod whose job may have been cancelled or refused;
+    // only acquire() resubmits, so this pass retries them. Rate limited with backoff (LodRetryTimer),
+    // skipped while the cache is disabled, independent of `allowed`.
+    const int64_t now_ms     = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const bool    retry_pass = m_lod_enabled && cache != nullptr && m_lod_retry.due(cache->enabled(), now_ms);
+    size_t        resubmitted = 0;
+
+    for (GLVolume* volume : volumes) {
+        if (volume == nullptr)
+            continue;
+        if (!volume->m_lod) {
+            ++m_lod_stats[size_t(LodLevel::High)];
+            continue;
+        }
+
+        if (retry_pass && volume->m_lod->needs_retry()) {
+            // The entry of the mesh is this very object while it is alive, so this submits its
+            // job again; the volumes that share it see the new job through the same pointer.
+            if (std::shared_ptr<GUI::MeshLod> lod = cache->acquire(volume->m_lod->mesh()); lod != nullptr) {
+                volume->m_lod = std::move(lod);
+                ++resubmitted;
+            }
+        }
+
+        if (promoted_faces < max_promoted_faces) {
+            if (volume->m_lod->try_promote()) {
+                promoted_faces += volume->m_lod->promoted_faces();
+                ++promoted_meshes;
+            }
+        } else if (volume->m_lod->state() == GUI::MeshLodSlot::Built)
+            promotions_left = true;
+
+        const bool pinned =
+            !allowed || volume->selected || volume->partly_inside || volume->is_wipe_tower ||
+            volume->tverts_range != std::make_pair<size_t, size_t>(0, -1) ||
+            // Without the list of objects the painted state is unknown: full detail.
+            model_objects == nullptr || volume->is_mmu_painted_for_render(*model_objects) ||
+            (pin_above_z != DBL_MAX && volume->transformed_bounding_box().max.z() > pin_above_z - double(params.aabb_epsilon));
+        volume->m_lod_level = pinned ? LodLevel::High :
+            select_lod_level(volume->transformed_bounding_box(), view_projection, viewport[2], viewport[3], volume->m_lod_level, params);
+        ++m_lod_stats[size_t(volume->m_lod_level)];
+    }
+
+    if (retry_pass) {
+        m_lod_retry.passed(now_ms, resubmitted);
+        if (resubmitted > 0)
+            BOOST_LOG_TRIVIAL(info) << "render LOD: " << resubmitted << " job(s) of kept volumes submitted again, the next look is in "
+                                    << m_lod_retry.interval_ms() << " ms";
+    }
+
+    // The limit above left finished models behind. Nothing else would draw an idle canvas again,
+    // so the cache is asked for one more scene pass, an interval from now. Every pass takes at
+    // least one mesh over, so this ends; a pass that leaves nothing behind asks for nothing.
+    if (promotions_left && cache != nullptr)
+        cache->request_canvas_wake(true);
+
+    if (promoted_meshes > 0)
+        BOOST_LOG_TRIVIAL(info) << "render LOD: " << promoted_meshes << " mesh(es) with " << promoted_faces
+                                << " reduced faces taken over in this scene pass, volumes at full / middle / small detail: "
+                                << m_lod_stats[0] << " / " << m_lod_stats[1] << " / " << m_lod_stats[2];
 }
 
 void GLVolumeCollection::reset_outside_state()

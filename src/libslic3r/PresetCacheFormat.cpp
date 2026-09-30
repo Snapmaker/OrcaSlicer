@@ -65,6 +65,25 @@ void CacheDictionary::collect(const DynamicPrintConfig& config)
     }
 }
 
+void CacheDictionary::collect_schema(const ConfigDef& schema)
+{
+    for (const auto& kvp : schema.options)
+        if (m_key_index.try_emplace(kvp.first, uint16_t(m_keys.size())).second) {
+            m_keys.push_back(kvp.first);
+            m_types.push_back(uint16_t(kvp.second.type));
+        }
+}
+
+bool CacheDictionary::covers(const ConfigDef& schema) const
+{
+    for (const auto& kvp : schema.options) {
+        auto it = m_key_index.find(kvp.first);
+        if (it == m_key_index.end() || m_types[it->second] != uint16_t(kvp.second.type))
+            return false;
+    }
+    return true;
+}
+
 uint16_t CacheDictionary::key_index(const t_config_option_key& key) const
 {
     auto it = m_key_index.find(key);
@@ -101,9 +120,11 @@ void CacheDictionary::load(cereal::BinaryInputArchive& ar)
         throw std::runtime_error("preset cache: dictionary is missing its unnamed-enum slot");
     // Resolved once per file: every option read after this is a vector index.
     m_defs.resize(m_keys.size());
+    m_key_index.clear();
     for (size_t i = 0; i < m_keys.size(); ++ i) {
         const ConfigOptionDef* def = print_config_def.get(m_keys[i]);
         m_defs[i] = (def != nullptr && uint16_t(def->type) == m_types[i]) ? def : nullptr;
+        m_key_index.try_emplace(m_keys[i], uint16_t(i));   // for covers()
     }
 }
 
@@ -448,15 +469,18 @@ bool write_cache_blob(const std::string& path, const std::string& blob)
 
 // static
 bool VendorCacheFile::save(const std::string& path, const std::string& vendor_name,
-                           const std::string& vendor_version, const VendorCacheData& data)
+                           const std::string& vendor_version, const VendorCacheData& data,
+                           const ConfigDef* schema)
 {
     try {
         // Collected before anything is written: the dictionary sits ahead of the
-        // entries so a reader resolves it once and then indexes.
+        // entries so a reader resolves it once and then indexes. The writer's whole
+        // option schema goes in with the used keys (see collect_schema).
         CacheDictionary dict;
         for (const std::vector<CachedPreset>* entries : { &data.process_entries, &data.filament_entries, &data.machine_entries })
             for (const CachedPreset& e : *entries)
                 dict.collect(e.config_src);
+        dict.collect_schema(schema != nullptr ? *schema : print_config_def);
 
         std::ostringstream body(std::ios::binary);
         {
@@ -494,6 +518,14 @@ bool VendorCacheFile::load(const std::string& path, const std::string& expected_
             return false;
         CacheDictionary dict;
         dict.load(ar);
+        if (! dict.covers(print_config_def)) {
+            // Written by a build that lacked options of this one: the vendor's values
+            // of those options are not in it. A miss, so the vendor is parsed from its
+            // JSONs (and cached afresh) where they are installed beside the cache.
+            BOOST_LOG_TRIVIAL(info) << "VendorCacheFile: vendor cache " << path
+                                    << " was written by a build without every option of this one; not served";
+            return false;
+        }
         ar(data.vendors);
         load_entries(ar, data.process_entries, dict);
         load_entries(ar, data.filament_entries, dict);
@@ -541,9 +573,32 @@ Semver VendorCacheFile::usable_version(const std::string& path, const std::strin
         boost::iostreams::stream<boost::iostreams::array_source> body(blob.data(), blob.size());
         cereal::BinaryInputArchive ar(body);
         const auto ver = Semver::parse(read_cache_stamps(ar, expected_vendor_name));
-        return ver ? *ver : Semver::invalid();
+        if (! ver)
+            return Semver::invalid();
+        CacheDictionary dict;
+        dict.load(ar);
+        return dict.covers(print_config_def) ? *ver : Semver::invalid();
     } catch (const std::exception&) {
         return Semver::invalid();
+    }
+}
+
+// static
+bool VendorCacheFile::lacks_options_of_this_build(const std::string& path, const std::string& expected_vendor_name)
+{
+    std::string blob;
+    if (! read_cache_blob(path, blob))
+        return false;
+    try {
+        boost::iostreams::stream<boost::iostreams::array_source> body(blob.data(), blob.size());
+        cereal::BinaryInputArchive ar(body);
+        if (read_cache_stamps(ar, expected_vendor_name).empty())
+            return false;
+        CacheDictionary dict;
+        dict.load(ar);
+        return ! dict.covers(print_config_def);
+    } catch (const std::exception&) {
+        return false;
     }
 }
 
@@ -561,6 +616,8 @@ bool VendorCacheFile::carries_preset(const std::string& path, const std::string&
             return false;
         CacheDictionary dict;
         dict.load(ar);
+        if (! dict.covers(print_config_def))
+            return false;   // not served, so it carries nothing this build can use
         VendorMap vendors;
         ar(vendors);
         // Reused: every entry overwrites it, and only its name is ever looked at.

@@ -50,6 +50,10 @@ public:
     // Record every key and enum value `config` uses. Call for every config that
     // will be written, before writing the dictionary.
     void collect(const DynamicPrintConfig& config);
+    // Record every option `schema` (the writer's print_config_def) defines, used or
+    // not, so a reader can detect options the writer lacked, whose vendor values
+    // would fall back to defaults. A key set, not a hash: newer caches still serve.
+    void collect_schema(const ConfigDef& schema);
 
     uint16_t key_index(const t_config_option_key& key) const;
     // ENUM_UNNAMED for an empty name or one that was never collected.
@@ -69,6 +73,10 @@ public:
     // on a dictionary that was collected rather than read.
     bool valid_key_index(uint16_t idx) const { return size_t(idx) < m_defs.size(); }
     bool valid_enum_index(uint16_t idx) const { return size_t(idx) < m_enum_values.size(); }
+    // After load(): true when every option of `schema` (this build's print_config_def)
+    // is in the dictionary with the same type; otherwise the cache may lack vendor
+    // values and is not served (see collect_schema).
+    bool covers(const ConfigDef& schema) const;
 
     // The layout these two agree on is covered by CACHE_VERSION (PresetCacheFormat.cpp);
     // bump it when they change.
@@ -149,14 +157,18 @@ class VendorCacheFile
 {
 public:
     // Save one vendor (vendor_name at vendor_version). False when the file
-    // could not be written whole.
+    // could not be written whole. `schema` is the option set recorded as the
+    // writer's (CacheDictionary::collect_schema): this build's print_config_def
+    // unless a test stands in for another build.
     static bool save(const std::string& path, const std::string& vendor_name,
-                     const std::string& vendor_version, const VendorCacheData& data);
+                     const std::string& vendor_version, const VendorCacheData& data,
+                     const ConfigDef* schema = nullptr);
 
     // Read a whole cache into `data`. False — with `data` in an unspecified
     // state — unless the file is a cache this build wrote, its CRC holds, it
     // names this vendor, it was built from a vendor profile at least as new as
-    // `expected_vendor_version`, and it carries its own vendor profile. An
+    // `expected_vendor_version`, its writer knew every option of this build
+    // (CacheDictionary::covers), and it carries its own vendor profile. An
     // invalid expected version (a profile whose version
     // cannot be judged) is never served from cache; Semver::inf() (no profile
     // beside the cache at all) accepts whatever is cached.
@@ -170,12 +182,16 @@ public:
     static std::string peek_version(const std::string& path, const std::string& expected_vendor_name);
 
     // The profile version an installed cache can actually be served at, or an
-    // invalid Semver when the file is not a cache this build can read. Unlike
-    // peek_version this verifies the body's CRC, at the cost of reading the
-    // whole file: where the cache is the vendor's whole installation, "a file
-    // is there" is not enough to call it installed, and a vendor wrongly
+    // invalid Semver when this build cannot read or serve it. Unlike peek_version
+    // it reads the whole file (CRC, option dictionary): a cache that is the
+    // vendor's whole installation must be servable to count, as a vendor wrongly
     // believed installed is never repaired.
     static Semver usable_version(const std::string& path, const std::string& expected_vendor_name);
+
+    // True when a well-formed cache of this vendor is not served because its
+    // writer lacked options of this build (or typed one differently); false for
+    // a servable or unreadable file. Lets an updater name the reason.
+    static bool lacks_options_of_this_build(const std::string& path, const std::string& expected_vendor_name);
 
     // Whether a cache carries a preset of `type` under `preset_name`, without
     // installing any of them. False when the file is not a cache this build can

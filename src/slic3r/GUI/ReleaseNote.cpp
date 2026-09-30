@@ -351,10 +351,8 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 
     m_cb_stable_only = new CheckBox(this);
     m_cb_stable_only->SetValue(wxGetApp().app_config->get_bool("check_stable_update_only"));
-    m_cb_stable_only->Bind(wxEVT_TOGGLEBUTTON, [this](wxCommandEvent& e) {
-        wxGetApp().app_config->set_bool("check_stable_update_only", m_cb_stable_only->GetValue());
-        e.Skip();
-    });
+    // Snapmaker Orca: the key is not written from here. AppConfig::set_defaults() forces it true
+    // at every start, and the control is hidden below.
     // SM prerelease does not update
     m_cb_stable_only->Show(false);
 
@@ -1284,7 +1282,7 @@ void ConfirmBeforeSendDialog::update_text(std::vector<ConfirmBeforeSendInfo> tex
         else
         {
             label_item = new Label(m_vebview_release_note, text.text + " " + _L("Please refer to Wiki before use->"), LB_AUTO_WRAP);
-            label_item->Bind(wxEVT_LEFT_DOWN, [this, text](wxMouseEvent& e) { wxLaunchDefaultBrowser(text.wiki_url);});
+            label_item->Bind(wxEVT_LEFT_DOWN, [text](wxMouseEvent& e) { wxLaunchDefaultBrowser(text.wiki_url);});
             label_item->Bind(wxEVT_ENTER_WINDOW, [this](auto& e) { SetCursor(wxCURSOR_HAND); });
             label_item->Bind(wxEVT_LEAVE_WINDOW, [this](auto& e) { SetCursor(wxCURSOR_ARROW); });
         }

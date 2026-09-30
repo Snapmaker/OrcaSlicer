@@ -9,9 +9,13 @@
 #include <wx/tokenzr.h>
 
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/PerHeadProcess.hpp"
+#include "libslic3r/FilamentFlowColumns.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Color.hpp"
 #include "format.hpp"
+#include "ConfigValueFormatter.hpp"
+#include "HighFlowNotices.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
 #include "Tab.hpp"
@@ -22,7 +26,6 @@
 #include "MsgDialog.hpp"
 
 #include "PresetComboBoxes.hpp"
-#include "Widgets/RoundedRectangle.hpp"
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/DialogButtons.hpp"
 #include "Widgets/HyperLink.hpp"
@@ -141,8 +144,10 @@ wxBitmap ModelNode::get_bitmap(const wxString& color)
 // option node
 ModelNode::ModelNode(ModelNode* parent, const wxString& text, const wxString& old_value, const wxString& new_value) :
     m_parent(parent),
-    m_old_color(old_value.StartsWith("#") ? old_value : ""),
-    m_new_color(new_value.StartsWith("#") ? new_value : ""),
+    // A joined multi-value string ("#FF0000, #00FF00") starts with '#' too,
+    // so only take the color-swatch path when the value decodes as one color.
+    m_old_color(old_value.StartsWith("#") && can_decode_color(into_u8(old_value)) ? old_value : ""),
+    m_new_color(new_value.StartsWith("#") && can_decode_color(into_u8(new_value)) ? new_value : ""),
     m_icon_name("empty"),
     m_text(text),
     m_old_value(old_value),
@@ -570,14 +575,6 @@ void DiffModel::Clear()
         Delete(wxDataViewItem(m_preset_nodes.back().get()));
 }
 
-
-static std::string get_pure_opt_key(std::string opt_key)
-{
-    const int pos = opt_key.find("#");
-    if (pos > 0)
-        boost::erase_tail(opt_key, opt_key.size() - pos);
-    return opt_key;
-}
 
 // ----------------------------------------------------------------------------
 //                  DiffViewCtrl
@@ -1215,32 +1212,6 @@ bool UnsavedChangesDialog::save(PresetCollection* dependent_presets, bool show_s
     return true;
 }
 
-wxString get_string_from_enum(const std::string& opt_key, const DynamicPrintConfig& config, bool is_infill = false, int idx = -1)
-{
-    const ConfigOptionDef& def = config.def()->options.at(opt_key);
-    const std::vector<std::string>& names = def.enum_labels;//ConfigOptionEnum<T>::get_enum_names();
-    int val = 0;
-
-    if (idx >= 0)
-        val = dynamic_cast<const ConfigOptionInts*>(config.option(opt_key))->get_at(idx);
-    else
-        val = config.option(opt_key)->getInt();
-
-    // Each infill doesn't use all list of infill declared in PrintConfig.hpp.
-    // So we should "convert" val to the correct one
-    if (is_infill) {
-        for (auto key_val : *def.enum_keys_map)
-            if (int(key_val.second) == val) {
-                auto it = std::find(def.enum_values.begin(), def.enum_values.end(), key_val.first);
-                if (it == def.enum_values.end())
-                    return "";
-                return from_u8(_utf8(names[it - def.enum_values.begin()]));
-            }
-        return _L("Undefined");
-    }
-    return from_u8(_utf8(names[val]));
-}
-
 // BBS
 #if 0
 static size_t get_id_from_opt_key(std::string opt_key)
@@ -1253,202 +1224,6 @@ static size_t get_id_from_opt_key(std::string opt_key)
     return 0;
 }
 #endif
-
-static wxString get_full_label(std::string opt_key, const DynamicPrintConfig& config)
-{
-    opt_key = get_pure_opt_key(opt_key);
-    auto option = config.option(opt_key);
-
-    if (!option || option->is_nil())
-        return _L("N/A");
-
-    const ConfigOptionDef* opt = config.def()->get(opt_key);
-    if (opt == nullptr)
-        return from_u8(opt_key);
-    return opt->full_label.empty() ? opt->label : opt->full_label;
-}
-
-static wxString get_string_value(std::string opt_key, const DynamicPrintConfig& config)
-{
-    int orig_opt_idx = -1;
-    int opt_idx = -1;
-    int pos = opt_key.find("#");
-    std::string temp_str = opt_key;
-    if (pos > 0) {
-        boost::erase_head(temp_str, pos + 1);
-        orig_opt_idx = static_cast<size_t>(atoi(temp_str.c_str()));
-    }
-    opt_idx = orig_opt_idx >= 0 ? orig_opt_idx : 0;
-    opt_key = get_pure_opt_key(opt_key);
-    auto option = config.option(opt_key);
-    if (!option) {
-        return _L("N/A");
-    }
-    auto opt_vector = dynamic_cast<const ConfigOptionVectorBase *>(option);
-
-    // Snapmaker: keep a raw_opt alias - it backs the serialize() fallbacks below.
-    const ConfigOption *raw_opt = option;
-    if ((option->is_scalar() && raw_opt->is_nil()) ||
-        (option->is_vector() && opt_vector && opt_idx >= 0 && opt_idx < (int) opt_vector->size() && opt_vector->is_nil(opt_idx)))
-        return _L("N/A");
-
-    wxString out;
-
-    const ConfigOptionDef* opt = config.def()->get(opt_key);
-    if (opt == nullptr)
-        return from_u8(raw_opt->serialize());
-    if (raw_opt->type() != opt->type)
-        return from_u8(raw_opt->serialize());
-    bool is_nullable = opt->nullable;
-
-    switch (opt->type) {
-    case coInt:
-        return from_u8((boost::format("%1%") % config.opt_int(opt_key)).str());
-    case coInts: {
-        if (is_nullable) {
-            auto values = config.opt<ConfigOptionIntsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%") % values->get_at(opt_idx)).str());
-        }
-        else {
-            auto values = config.opt<ConfigOptionInts>(opt_key);
-            if (orig_opt_idx >= 0 && orig_opt_idx < values->size()) {
-                return from_u8((boost::format("%1%") % values->get_at(opt_idx)).str());
-            }
-            else {
-                std::string value_str;
-                for (int i = 0; i < values->size(); i++) {
-                    value_str += std::to_string(values->get_at(i));
-                    if (i != values->size() - 1) {
-                        value_str += ",";
-                    }
-                }
-                return from_u8(value_str);
-            }
-        }
-        return _L("Undefined");
-    }
-    case coBool:
-        return config.opt_bool(opt_key) ? "true" : "false";
-    case coBools: {
-        if (is_nullable) {
-            auto values = config.opt<ConfigOptionBoolsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return values->get_at(opt_idx) ? "true" : "false";
-        }
-        else {
-            auto values = config.opt<ConfigOptionBools>(opt_key);
-            if (opt_idx < values->size())
-                return values->get_at(opt_idx) ? "true" : "false";
-        }
-        return _L("Undefined");
-    }
-    case coPercent:
-        return from_u8((boost::format("%1%%%") % int(config.optptr(opt_key)->getFloat())).str());
-    case coPercents: {
-        if (is_nullable) {
-            auto values = config.opt<ConfigOptionPercentsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%%%") % values->get_at(opt_idx)).str());
-        }
-        else {
-            auto values = config.opt<ConfigOptionPercents>(opt_key);
-            if (opt_idx < values->size())
-                return from_u8((boost::format("%1%%%") % values->get_at(opt_idx)).str());
-        }
-        return _L("Undefined");
-    }
-    case coFloat:
-        return double_to_string(config.opt_float(opt_key));
-    case coFloats: {
-        if (is_nullable) {
-            auto values = config.opt<ConfigOptionFloatsNullable>(opt_key);
-            if (opt_idx < values->size())
-                return double_to_string(values->get_at(opt_idx));
-        }
-        else {
-            auto values = config.opt<ConfigOptionFloats>(opt_key);
-            if (values && opt_idx < values->size())
-                return double_to_string(values->get_at(opt_idx));
-        }
-        return _L("Undefined");
-    }
-    case coString:
-        return from_u8(config.opt_string(opt_key));
-    case coStrings: {
-        const ConfigOptionStrings* strings = config.opt<ConfigOptionStrings>(opt_key);
-        if (strings) {
-            if (opt_key == "compatible_printers" || opt_key == "compatible_prints") {
-                if (strings->empty())
-                    return _L("All");
-                for (size_t id = 0; id < strings->size(); id++)
-                    out += from_u8(strings->get_at(id)) + "\n";
-                out.RemoveLast(1);
-                return out;
-            }
-            if (!strings->empty() && opt_idx < strings->values.size())
-                return from_u8(strings->get_at(opt_idx));
-        }
-        break;
-        }
-    case coFloatOrPercent: {
-        const ConfigOptionFloatOrPercent* opt = config.opt<ConfigOptionFloatOrPercent>(opt_key);
-        if (opt)
-            out = double_to_string(opt->value) + (opt->percent ? "%" : "");
-        return out;
-    }
-    case coEnum: {
-        return get_string_from_enum(opt_key, config,
-            opt_key == "top_surface_pattern" ||
-            opt_key == "bottom_surface_pattern" ||
-            opt_key == "internal_solid_infill_pattern" ||
-            opt_key == "sparse_infill_pattern" ||
-            opt_key == "ironing_pattern" ||
-            opt_key == "support_ironing_pattern" ||
-            opt_key == "support_pattern" ||
-            opt_key == "support_interface_pattern")
-            ;
-    }
-    case coEnums: {
-        return get_string_from_enum(opt_key, config,
-            opt_key == "top_surface_pattern" ||
-            opt_key == "bottom_surface_pattern" ||
-            opt_key == "internal_solid_infill_pattern" ||
-            opt_key == "sparse_infill_pattern" ||
-            opt_key == "ironing_pattern" ||
-            opt_key == "support_ironing_pattern" ||
-            opt_key == "support_pattern" ||
-            opt_key == "support_interface_pattern"
-            , opt_idx);
-    }
-    case coPoint: {
-        Vec2d val = config.opt<ConfigOptionPoint>(opt_key)->value;
-        return from_u8((boost::format("[%1%]") % ConfigOptionPoint(val).serialize()).str());
-    }
-    case coPoints: {
-        //BBS: add bed_exclude_area
-        if (opt_key == "printable_area" || opt_key == "thumbnails") {
-            ConfigOptionPoints points = *config.option<ConfigOptionPoints>(opt_key);
-            //BuildVolume build_volume = {points.values, 0.};
-            return get_thumbnails_string(points.values);
-        }
-        else if (opt_key == "bed_exclude_area") {
-            return get_thumbnails_string(config.option<ConfigOptionPoints>(opt_key)->values);
-        }
-        else if (opt_key == "head_wrap_detect_zone") {
-            return get_thumbnails_string(config.option<ConfigOptionPoints>(opt_key)->values);
-        }
-        else if (opt_key == "wrapping_exclude_area") {
-            return get_thumbnails_string(config.option<ConfigOptionPoints>(opt_key)->values);
-        }
-        Vec2d val = config.opt<ConfigOptionPoints>(opt_key)->get_at(opt_idx);
-        return from_u8((boost::format("[%1%]") % ConfigOptionPoint(val).serialize()).str());
-    }
-    default:
-        break;
-    }
-    return out;
-}
 
 void UnsavedChangesDialog::update(Preset::Type type, PresetCollection* dependent_presets, const std::string& new_selected_preset, const wxString& header)
 {
@@ -1718,12 +1493,20 @@ std::string UnsavedChangesDialog::subreplace(std::string resource_str, std::stri
 
 void UnsavedChangesDialog::update_tree(Preset::Type type, DynamicConfig * config, int from, int to)
 {
-    Search::OptionsSearcher &searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex &index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     for (const std::string &opt_key : config->keys()) {
         int                   variant_index = -2;
-        const Search::Option &option        = searcher.get_option(opt_key, type, variant_index);
+        Search::Option        option        = index.get_option(opt_key, type, variant_index);
+        if (variant_index == -2) {
+            // Orca: Every transferred setting must remain visible even when it is absent from the search index.
+            const ConfigOptionDef* def = print_config_def.get(opt_key);
+            const std::string label = def ? (def->full_label.empty() ? def->label : def->full_label) : std::string();
+            option.label_local = (label.empty() ? from_u8(opt_key) : _L(label)).ToStdWstring();
+            option.category_local = (def && !def->category.empty() ?
+                Tab::translate_category(from_u8(def->category), type) : _L("Others")).ToStdWstring();
+        }
         auto category = option.category_local;
         auto opt = dynamic_cast<ConfigOptionVectorBase*>(config->option(opt_key));
         std::string           value_from    = opt->vserialize()[from];
@@ -1733,10 +1516,20 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, DynamicConfig * config
     }
 }
 
+// Snapmaker Orca: the name of a variant column as the selector of the tab shows it: "Standard" /
+// "High Flow" when every column of the preset shares the drive, "Direct Drive Standard" otherwise.
+static wxString variant_column_text(const std::vector<std::string> &variants, size_t column)
+{
+    const HighFlowNotices::VariantName name = HighFlowNotices::variant_column_label(variants, column);
+    if (name.drive.empty() || name.volume_type.empty())
+        return _L(name.drive.empty() ? name.volume_type : name.drive);
+    return _L(name.drive) + " " + _L(name.volume_type);
+}
+
 void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* presets_)
 {
-    Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     // list of the presets with unsaved changes
     std::vector<PresetCollection*> presets_list;
@@ -1751,13 +1544,22 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
     else
         presets_list.emplace_back(presets_);
 
+    const bool multiple_extruders = wxGetApp().preset_bundle->get_printer_extruder_count() > 1;
+
     // Display a dialog showing the dirty options in a human readable form.
     for (PresetCollection* presets : presets_list)
     {
-        const DynamicPrintConfig& old_config = presets->get_selected_preset().config;
+        const DynamicPrintConfig& saved_config = presets->get_selected_preset().config;
         const PrinterTechnology&  old_pt     = presets->get_selected_preset().printer_technology();
         const DynamicPrintConfig& new_config = presets->get_edited_preset().config;
         type = presets->type();
+        // Snapmaker Orca: old values come from the saved preset laid out like the edited one
+        // (PerHeadProcess::reference_in_layout_of), so a per-head column shows its value, not "Undefined".
+        // A filament with a column the saved preset lacks compares with the saved preset widened by it.
+        DynamicPrintConfig        old_storage;
+        const DynamicPrintConfig& old_config = type == Preset::TYPE_PRINT ? PerHeadProcess::reference_in_layout_of(new_config, saved_config, old_storage) :
+                                               type == Preset::TYPE_FILAMENT ? filament_reference_in_layout_of(new_config, saved_config, old_storage) :
+                                                                              saved_config;
 
         const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
 
@@ -1784,50 +1586,85 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
             }
         }
 
+        // Snapmaker Orca: High Flow values added without a value change have no row of their own
+        // (filament_extruder_variant is on no page); one row names them.
+        if (type == Preset::TYPE_FILAMENT) {
+            const std::vector<std::string> saved_variants = filament_variants(saved_config);
+            for (const std::string &variant : filament_variants(new_config))
+                if (std::find(saved_variants.begin(), saved_variants.end(), variant) == saved_variants.end()) {
+                    PresetItem pi = {type, "filament_extruder_variant", _L("Filament"), wxEmptyString, _L("High Flow values"), _L("None"), _L("Added")};
+                    m_presetitems.push_back(pi);
+                    break;
+                }
+        }
+
         auto variant_key      = Preset::get_iot_type_string(type) + "_extruder_variant";
         auto id_key           = Preset::get_iot_type_string(type) + "_extruder_id";
-        auto extruder_variant = dynamic_cast<ConfigOptionStrings const *>(old_config.option(variant_key));
-        auto extruder_id      = dynamic_cast<ConfigOptionInts const *>(old_config.option(id_key));
+        // Orca: Dirty indices belong to the edited config, which may contain newly added variants.
+        auto extruder_variant = dynamic_cast<ConfigOptionStrings const *>(new_config.option(variant_key));
+        auto extruder_id      = dynamic_cast<ConfigOptionInts const *>(new_config.option(id_key));
 
         for (const std::string& opt_key : dirty_options) {
             int variant_index = -2;
-            const Search::Option &option = searcher.get_option(opt_key, type, variant_index);
-            if (option.opt_key() != opt_key && variant_index < -1) {
+            const Search::Option &option = index.get_option(opt_key, type, variant_index);
+            if (variant_index == -2) {
                 // When founded option isn't the correct one.
                 // It can be for dirty_options: "default_print_profile", "printer_model", "printer_settings_id",
-                // because of they don't exist in searcher.
-                // Snapmaker: instead of silently dropping every such key, still list the
-                // user-facing ones (bool/float/int/enum) under an "Other" category.
-                // Internal keys like IDs and serialized blobs are coString - skip those.
-                const ConfigOption* o = old_config.option(opt_key);
-                if (!o) o = new_config.option(opt_key);
+                // because of they don't exist in the index
+                // Snapmaker: such bool/float/int/enum keys are still listed (as in the other update_tree()
+                // overload), coString/coStrings keys are skipped. A per extruder key ("nozzle_diameter#0")
+                // is looked up by its pure key and listed under its extruder's category.
+                const std::string pure_key = get_pure_opt_key(opt_key);
+                const ConfigOption* o = old_config.option(pure_key);
+                if (!o) o = new_config.option(pure_key);
                 if (!o || o->type() == coString || o->type() == coStrings)
                     continue;
-                wxString label = from_u8(opt_key);
-                if (old_config.def()) {
-                    const ConfigOptionDef* def = old_config.def()->get(opt_key);
-                    if (def && !def->label.empty())
-                        label = def->label;
+                const ConfigOptionDef* def = print_config_def.get(pure_key);
+                const std::string def_label = def ? (def->full_label.empty() ? def->label : def->full_label) : std::string();
+                const wxString other_label = def_label.empty() ? from_u8(pure_key) : _L(def_label);
+                wxString other_category = (def && !def->category.empty()) ?
+                    Tab::translate_category(from_u8(def->category), type) : _L("Others");
+                if (pure_key != opt_key && type == Preset::TYPE_PRINTER && multiple_extruders &&
+                    printer_options_with_variant_2.count(pure_key) == 0) {
+                    const int extruder = std::atoi(opt_key.c_str() + pure_key.size() + 1);
+                    other_category = Tab::translate_category(wxString::Format("Extruder %d", extruder + 1), Preset::TYPE_PRINTER) +
+                                     ": " + other_category;
                 }
                 PresetItem pi = {type, opt_key,
-                    _L("Other"), wxEmptyString,
-                    label,
+                    other_category, wxEmptyString,
+                    other_label,
                     get_string_value(opt_key, old_config),
                     get_string_value(opt_key, new_config)};
                 m_presetitems.push_back(pi);
                 continue;
             }
-            auto category = option.category_local;
-            if (variant_index >= 0) {
-                if (printer_options_with_variant_2.count(opt_key.substr(0, opt_key.find_last_of('#'))) > 0)
-                    variant_index /= 2;
-                if (boost::nowide::narrow(category).find("Extruder ") == 0)
-                    category = category.substr(0, 8);
-                if (extruder_id)
-                    category = category + (wxString(" {") + (extruder_id->values[variant_index] == 1 ? _L("Left: ") : _L("Right: "))
-                            + L(extruder_variant->values[variant_index]) + "}");
-                else
-                    category = category + (wxString(" {") + L(extruder_variant->values[variant_index]) + "}");
+            wxString category = option.category_local;
+            wxString label = option.label_local;
+            if (type == Preset::TYPE_PRINTER && variant_index >= 0 &&
+                printer_options_with_variant_2.count(get_pure_opt_key(opt_key)) > 0) {
+                // Orca: silent_mode is obsolete on import, but its option and two-column UI still exist.
+                // Keep mode labels for configs that explicitly enable it; omit them in the default single-mode UI.
+                if (new_config.opt_bool("silent_mode"))
+                    label += " (" + (variant_index % 2 == 0 ? _L("Normal") : _L("Silent")) + ")";
+                variant_index /= 2;
+            }
+            if (variant_index >= 0 && extruder_variant && variant_index < extruder_variant->size()) {
+                // Orca: Match the untranslated category and use the same extruder names as the printer tabs.
+                if (option.category.compare(0, 9, L"Extruder ") == 0)
+                    category = _L("Extruder");
+                // Snapmaker Orca: the same column names as the selector of the tab ("Standard" / "High Flow"
+                // when every column shares the drive).
+                wxString variant_label = variant_column_text(extruder_variant->values, size_t(variant_index));
+                // Orca: An extruder name only disambiguates variants on printers with multiple extruders.
+                // Snapmaker Orca: and only where the ids tell tool heads apart. A single column and the
+                // flow-only columns of a process preset (ids [1,1]) hold the values of every tool head.
+                if (multiple_extruders && extruder_id && HighFlowNotices::ids_name_tool_heads(extruder_id->values) &&
+                    variant_index < extruder_id->size() && extruder_id->values[variant_index] > 0) {
+                    const wxString extruder_name = Tab::translate_category(
+                        wxString::Format("Extruder %d", extruder_id->values[variant_index]), Preset::TYPE_PRINTER);
+                    variant_label = extruder_name + " (" + variant_label + ")";
+                }
+                category = variant_label + ": " + category;
             }
 
             /*m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
@@ -1836,14 +1673,14 @@ void UnsavedChangesDialog::update_tree(Preset::Type type, PresetCollection* pres
 
             //PresetItem pi = {opt_key, type, 1983};
             //m_presetitems.push_back()
-            PresetItem pi = {type, opt_key, category, option.group_local, option.label_local, get_string_value(opt_key, old_config), get_string_value(opt_key, new_config)};
+            PresetItem pi = {type, opt_key, category, option.group_local, label, get_string_value(opt_key, old_config), get_string_value(opt_key, new_config)};
             m_presetitems.push_back(pi);
 
         }
     }
 
-    // Revert sort of searcher back
-    searcher.sort_options_by_label();
+    // Revert sort of index back
+    index.sort_options_by_label();
 }
 
 void UnsavedChangesDialog::on_dpi_changed(const wxRect& suggested_rect)
@@ -2192,8 +2029,9 @@ DiffPresetDialog::DiffPresetDialog(MainFrame* mainframe)
 
     assert(wxGetApp().preset_bundle);
 
-    m_preset_bundle_left  = std::make_unique<PresetBundle>(*wxGetApp().preset_bundle);
-    m_preset_bundle_right = std::make_unique<PresetBundle>(*wxGetApp().preset_bundle);
+    // show() copies the app's bundle into both before anything is displayed.
+    m_preset_bundle_left  = std::make_unique<PresetBundle>();
+    m_preset_bundle_right = std::make_unique<PresetBundle>();
 
     // Create UI items
 
@@ -2295,8 +2133,8 @@ void DiffPresetDialog::update_bottom_info(wxString bottom_info)
 
 void DiffPresetDialog::update_tree()
 {
-    Search::OptionsSearcher& searcher = wxGetApp().sidebar().get_searcher();
-    searcher.sort_options_by_key();
+    Search::SettingsIndex& index = wxGetApp().sidebar().settings_index();
+    index.sort_options_by_key();
 
     m_tree->Clear();
     wxString bottom_info = "";
@@ -2318,9 +2156,18 @@ void DiffPresetDialog::update_tree()
             continue;
         }
 
-        const DynamicPrintConfig& left_config   = left_preset->config;
+        // Snapmaker Orca: when one process preset holds values per tool head, the narrower one is laid out like it
+        // (PerHeadProcess::reference_in_layout_of), so columns compare by (id, variant) instead of showing "Undefined".
+        Preset left_in_layout  = *left_preset;
+        Preset right_in_layout = *right_preset;
+        if (type == Preset::TYPE_PRINT) {
+            DynamicPrintConfig storage;
+            left_in_layout.config  = PerHeadProcess::reference_in_layout_of(right_preset->config, left_preset->config, storage);
+            right_in_layout.config = PerHeadProcess::reference_in_layout_of(left_preset->config, right_preset->config, storage);
+        }
+        const DynamicPrintConfig& left_config   = left_in_layout.config;
         const PrinterTechnology&  left_pt       = left_preset->printer_technology();
-        const DynamicPrintConfig& right_congig  = right_preset->config;
+        const DynamicPrintConfig& right_congig  = right_in_layout.config;
 
         if (left_pt != right_preset->printer_technology()) {
             bottom_info = _L("Compared presets has different printer technology");
@@ -2334,8 +2181,8 @@ void DiffPresetDialog::update_tree()
                                    type == Preset::TYPE_FILAMENT || type == Preset::TYPE_SLA_MATERIAL);
         auto dirty_options = type == Preset::TYPE_PRINTER && left_pt == ptFFF &&
                              left_config.opt<ConfigOptionStrings>("extruder_colour")->values.size() < right_congig.opt<ConfigOptionStrings>("extruder_colour")->values.size() ?
-                             presets->dirty_options(right_preset, left_preset, deep_compare) :
-                             presets->dirty_options(left_preset, right_preset, deep_compare);
+                             presets->dirty_options(&right_in_layout, &left_in_layout, deep_compare) :
+                             presets->dirty_options(&left_in_layout, &right_in_layout, deep_compare);
 
         if (dirty_options.empty()) {
             //bottom_info = _L("Presets are the same");
@@ -2354,7 +2201,11 @@ void DiffPresetDialog::update_tree()
 
         m_tree->model->AddPreset(type, "\"" + from_u8(left_preset->name) + "\" vs \"" + from_u8(right_preset->name) + "\"", left_pt);
 
-        const std::map<wxString, std::string>& category_icon_map = wxGetApp().get_tab(type)->get_category_icon_map();
+        // No tab is registered for some preset types (SLA is not built in this fork) -
+        // the map may not exist at all.
+        static const std::map<wxString, std::string> no_category_icons;
+        Tab* type_tab = wxGetApp().get_tab(type);
+        const std::map<wxString, std::string>& category_icon_map = type_tab ? type_tab->get_category_icon_map() : no_category_icons;
         auto get_category_icon = [&category_icon_map](const wxString& key) {
             auto it = category_icon_map.find(key);
             return it != category_icon_map.end() ? it->second : std::string();
@@ -2376,17 +2227,37 @@ void DiffPresetDialog::update_tree()
             wxString right_val = get_string_value(opt_key, right_congig);
 
             const std::string lookup_key = get_pure_opt_key(opt_key);
-            Search::Option option = searcher.get_option(lookup_key, get_full_label(lookup_key, left_config), type);
+            Search::Option option = index.get_option(lookup_key, get_full_label(lookup_key, left_config), type);
             if (get_pure_opt_key(option.opt_key()) != lookup_key)
-                option = searcher.get_option(opt_key, get_full_label(opt_key, left_config), type);
+                option = index.get_option(opt_key, get_full_label(opt_key, left_config), type);
             if (get_pure_opt_key(option.opt_key()) != lookup_key) {
                 // When the found option is not the requested one.
                 // This can happen for dirty_options such as:
                 // "default_print_profile", "printer_model", "printer_settings_id",
-                // because they do not exist in the searcher.
+                // because they do not exist in the index.
                 continue;
             }
-            m_tree->Append(opt_key, type, option.category_local, option.group_local, option.label_local,
+            // Snapmaker Orca: a key changed in several variant columns (Standard / High Flow) is listed per
+            // column, so the category names the column, taken from the side that has it.
+            wxString category = option.category_local;
+            if (const size_t index_pos = opt_key.find('#'); index_pos != std::string::npos) {
+                const bool has_mode    = type == Preset::TYPE_PRINTER && printer_options_with_variant_2.count(lookup_key) > 0;
+                const bool has_variant = has_mode ||
+                    (type == Preset::TYPE_PRINT && print_options_with_variant.count(lookup_key) > 0) ||
+                    (type == Preset::TYPE_FILAMENT && filament_options_with_variant.count(lookup_key) > 0) ||
+                    (type == Preset::TYPE_PRINTER && printer_options_with_variant_1.count(lookup_key) > 0);
+                const std::string variant_key = Preset::get_iot_type_string(type) + "_extruder_variant";
+                const auto *left_variants  = dynamic_cast<const ConfigOptionStrings*>(left_config.option(variant_key));
+                const auto *right_variants = dynamic_cast<const ConfigOptionStrings*>(right_congig.option(variant_key));
+                const int   column         = std::atoi(opt_key.c_str() + index_pos + 1) / (has_mode ? 2 : 1);
+                if (has_variant && column >= 0) {
+                    const auto *variants = left_variants != nullptr && size_t(column) < left_variants->values.size() ? left_variants : right_variants;
+                    const bool  several  = (left_variants != nullptr && left_variants->values.size() > 1) || (right_variants != nullptr && right_variants->values.size() > 1);
+                    if (several && variants != nullptr && size_t(column) < variants->values.size())
+                        category = variant_column_text(variants->values, size_t(column)) + ": " + category;
+                }
+            }
+            m_tree->Append(opt_key, type, category, option.group_local, option.label_local,
                 left_val, right_val, get_category_icon(option.category));
         }
     }
@@ -2407,8 +2278,8 @@ void DiffPresetDialog::update_tree()
         Refresh();
     }
 
-    // Revert sort of searcher back
-    searcher.sort_options_by_label();
+    // Revert sort of index back
+    index.sort_options_by_label();
 }
 
 void DiffPresetDialog::on_dpi_changed(const wxRect&)

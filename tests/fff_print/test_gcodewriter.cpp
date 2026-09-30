@@ -198,7 +198,7 @@ TEST_CASE("Machine envelope emits max limit among used extruders", "[GCodeWriter
         config.set_key_value("machine_start_gcode",          new ConfigOptionString(""));
         config.set_key_value("layer_height",                 new ConfigOptionFloat(0.2));
         config.set_key_value("initial_layer_print_height",   new ConfigOptionFloat(0.2));
-        config.set_key_value("initial_layer_line_width",     new ConfigOptionFloatOrPercent(0, false));
+        config.set_key_value("initial_layer_line_width",     new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
         config.set_key_value("z_hop",                        new ConfigOptionFloats({0}));
         // Print objects sequentially so each uses its own extruder without
         // wipe-tower / tool-change complexity.
@@ -312,7 +312,7 @@ TEST_CASE("EXTRUDER_LIMIT per-extruder clamping and max fallback", "[GCodeWriter
     config.set_key_value("machine_start_gcode",          new ConfigOptionString(""));
     config.set_key_value("layer_height",                 new ConfigOptionFloat(0.2));
     config.set_key_value("initial_layer_print_height",   new ConfigOptionFloat(0.2));
-    config.set_key_value("initial_layer_line_width",     new ConfigOptionFloatOrPercent(0, false));
+    config.set_key_value("initial_layer_line_width",     new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
     config.set_key_value("z_hop",                        new ConfigOptionFloats({0}));
     config.set_key_value("print_sequence",               new ConfigOptionEnum<PrintSequence>(PrintSequence::ByObject));
 
@@ -556,7 +556,7 @@ static DynamicPrintConfig dual_extruder_toolchange_config()
     config.set_key_value("machine_start_gcode",        new ConfigOptionString(""));
     config.set_key_value("layer_height",               new ConfigOptionFloat(0.2));
     config.set_key_value("initial_layer_print_height", new ConfigOptionFloat(0.2));
-    config.set_key_value("initial_layer_line_width",   new ConfigOptionFloatOrPercent(0, false));
+    config.set_key_value("initial_layer_line_width",   new ConfigOptionFloatsOrPercentsNullable{FloatOrPercent(0., false)});
     config.set_key_value("z_hop",                      new ConfigOptionFloats({0., 0.}));
     // The change block carries both a real toolchange command and the ordinal
     // placeholder the stock profiles feed to the firmware.
@@ -578,6 +578,9 @@ static DynamicPrintConfig dual_extruder_toolchange_config()
     config.set_key_value("nozzle_temperature_range_high", new ConfigOptionInts({240, 240}));
     config.set_key_value("flush_multiplier",     new ConfigOptionFloats({1}));
     config.set_key_value("flush_volumes_matrix", new ConfigOptionFloats({0, 140, 140, 0}));
+    // Inside the 200x200 test bed; the default y, 220, is not, and generation rejects that.
+    config.set_key_value("wipe_tower_x",         new ConfigOptionFloats({50.}));
+    config.set_key_value("wipe_tower_y",         new ConfigOptionFloats({50.}));
     return config;
 }
 

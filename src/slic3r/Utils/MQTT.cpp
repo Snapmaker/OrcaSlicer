@@ -590,6 +590,17 @@ void MqttClient::remove_topic_from_resubscribe(const std::string& topic) {
     }
 }
 
+// static
+void MqttClient::dispose_async(std::shared_ptr<MqttClient> client)
+{
+    if (!client)
+        return;
+    std::thread([client = std::move(client)]() mutable {
+        BOOST_LOG_TRIVIAL(debug) << "[MQTT_INFO] releasing client " << client->client_id_ << " off the caller's thread";
+        client.reset();
+    }).detach();
+}
+
 MqttClient::~MqttClient()
 {
     {        

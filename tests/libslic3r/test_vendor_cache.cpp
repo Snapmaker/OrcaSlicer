@@ -324,7 +324,7 @@ static bool preset_deep_equal(const Preset& a, const Preset& b)
         && a.is_compatible == b.is_compatible && a.is_project_embedded == b.is_project_embedded
         && a.name == b.name && a.file == b.file && a.loaded == b.loaded
         && a.config.equals(b.config)
-        && a.alias == b.alias && a.renamed_from == b.renamed_from
+        && a.alias == b.alias && a.system_inherits == b.system_inherits && a.renamed_from == b.renamed_from
         && a.m_excluded_from == b.m_excluded_from && a.m_from_orca_filament_lib == b.m_from_orca_filament_lib
         && a.bundle_id == b.bundle_id && a.version == b.version && a.ini_str == b.ini_str
         && a.setting_id == b.setting_id && a.filament_id == b.filament_id && a.user_id == b.user_id
@@ -1618,3 +1618,113 @@ TEST_CASE("a stamp string with an absurd length is rejected, not allocated", "[V
     CHECK(VendorCacheFile::peek_version(cache, "Evil").empty());
 }
 
+// The option schema another build would record: every option of this build except `dropped`,
+// with `retyped` (when set) carried under another type, plus `extra` (when set) as an option
+// this build does not have. CacheDictionary::covers looks at keys and types only.
+static ConfigDef schema_of_another_build(const std::string& dropped, const std::string& retyped = "",
+                                         const std::string& extra = "")
+{
+    ConfigDef schema;
+    for (const auto& kvp : print_config_def.options) {
+        if (kvp.first == dropped)
+            continue;
+        ConfigOptionDef& def = schema.options[kvp.first];
+        def.opt_key = kvp.first;
+        def.type    = kvp.first == retyped ? (kvp.second.type == coInt ? coFloat : coInt) : kvp.second.type;
+    }
+    if (! extra.empty()) {
+        ConfigOptionDef& def = schema.options[extra];
+        def.opt_key = extra;
+        def.type    = coFloat;
+    }
+    return schema;
+}
+
+TEST_CASE("a cache written by a build without an option of this one is not served", "[VendorCache]")
+{
+    TempDir           tmp;
+    const std::string vid   = "Acme";
+    const fs::path     cache = tmp.path / (vid + ".opc");
+    VendorCacheData   data;
+    data.vendors          = one_vendor(vid);
+    data.filament_entries = {filament_entry(vid + " PLA")};
+
+    const ConfigDef older = schema_of_another_build("layer_height");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &older));
+
+    // The stamps are still readable: the file is a cache of this vendor, just not one to serve.
+    CHECK(VendorCacheFile::peek_version(cache.string(), vid) == "1.0.0");
+    CHECK(! VendorCacheFile::usable_version(cache.string(), vid).valid());
+    CHECK(VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+    CHECK(! VendorCacheFile::carries_preset(cache.string(), vid, Preset::TYPE_FILAMENT, vid + " PLA"));
+    PresetBundle out;
+    CHECK(! out.load_vendor_cache(cache.string(), vid, Semver("1.0.0")));
+
+    // The same option under another type counts as missing too.
+    const ConfigDef retyped = schema_of_another_build("", "layer_height");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &retyped));
+    CHECK(! VendorCacheFile::usable_version(cache.string(), vid).valid());
+    CHECK(VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+}
+
+TEST_CASE("a cache written by a build with more options than this one is served", "[VendorCache]")
+{
+    TempDir           tmp;
+    const std::string vid   = "Acme";
+    const fs::path     cache = tmp.path / (vid + ".opc");
+    VendorCacheData   data;
+    data.vendors          = one_vendor(vid);
+    data.filament_entries = {filament_entry(vid + " PLA")};
+
+    const ConfigDef newer = schema_of_another_build("", "", "a_setting_of_a_later_build");
+    REQUIRE(VendorCacheFile::save(cache.string(), vid, "1.0.0", data, &newer));
+
+    CHECK(VendorCacheFile::usable_version(cache.string(), vid) == Semver("1.0.0"));
+    CHECK(! VendorCacheFile::lacks_options_of_this_build(cache.string(), vid));
+    CHECK(VendorCacheFile::carries_preset(cache.string(), vid, Preset::TYPE_FILAMENT, vid + " PLA"));
+    PresetBundle out;
+    REQUIRE(out.load_vendor_cache(cache.string(), vid, Semver("1.0.0")));
+    CHECK(presets_for(out.filaments, vid).size() == 1);
+
+    // A file that is no cache at all lacks nothing: the answer is about a readable cache only.
+    CHECK(! VendorCacheFile::lacks_options_of_this_build((tmp.path / "missing.opc").string(), vid));
+}
+
+// Snapmaker Orca: line widths are coFloatsOrPercents (one column per tool head). covers() refuses a
+// cache holding the scalar coFloatOrPercent type, so the vendor is parsed from JSON instead.
+TEST_CASE("a cache dictionary written with the scalar line width type is refused", "[VendorCache][PerHeadWidth]")
+{
+    ConfigDef old_schema;
+    old_schema.options = print_config_def.options;
+    REQUIRE(old_schema.options.count("line_width") == 1);
+    old_schema.options["line_width"].type = coFloatOrPercent;
+
+    std::stringstream buffer(std::ios::in | std::ios::out | std::ios::binary);
+    {
+        CacheDictionary written;
+        written.collect_schema(old_schema);
+        cereal::BinaryOutputArchive ar(buffer);
+        written.save(ar);
+    }
+    CacheDictionary loaded;
+    {
+        cereal::BinaryInputArchive ar(buffer);
+        loaded.load(ar);
+    }
+    CHECK(! loaded.covers(print_config_def));
+
+    // The control: a dictionary written by this build covers this build.
+    std::stringstream current(std::ios::in | std::ios::out | std::ios::binary);
+    {
+        CacheDictionary written;
+        written.collect_schema(print_config_def);
+        cereal::BinaryOutputArchive ar(current);
+        written.save(ar);
+    }
+    CacheDictionary loaded_current;
+    {
+        cereal::BinaryInputArchive ar(current);
+        loaded_current.load(ar);
+    }
+    CHECK(loaded_current.covers(print_config_def));
+}

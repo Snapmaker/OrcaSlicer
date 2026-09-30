@@ -9,9 +9,15 @@ add_executable(${_TEST_NAME}_tests
 	test_fill.cpp
 	test_flow.cpp
 	test_gcode_timing.cpp
+	test_gcodeprocessor.cpp
 	test_gcodewriter.cpp
 	test_model.cpp
 	test_multifilament.cpp
+	test_multi_nozzle_layer_height.cpp
+	test_high_flow.cpp # Snapmaker Orca: High Flow columns per tool head
+	test_nozzle_filament.cpp # Snapmaker Orca: filament presets per nozzle size of the tool head
+	test_per_head_process.cpp # Snapmaker Orca: process speeds per tool head, what only a slice shows
+	test_painted_segmentation.cpp # Snapmaker Orca: painted segmentation with outer-wall overrides and layer runs
 	test_perimeters.cpp
 	test_print.cpp
 	test_printobject.cpp
@@ -20,7 +26,9 @@ add_executable(${_TEST_NAME}_tests
 	test_slicing_pipeline_hook.cpp
 	test_support_material.cpp
 	test_bed_temperature.cpp
+	test_tree_support.cpp
 	test_trianglemesh.cpp
+	test_wipe.cpp
 	test_wipe_tower.cpp
 	)
 # libslic3r_cgal links CGAL privately, so the GMP/MPFR libraries are needed at link time.

@@ -42,9 +42,36 @@ public:
 	static const std::map<float, float> min_depth_per_height;
     static float get_limit_depth_by_height(float max_height);
     static float get_auto_brim_by_height(float max_height);
+    // Both generators lay the brim in whole loops one line spacing apart, so the printed width
+    // differs from the configured one. WipeTower reports it with half a spacing of line width
+    // added, WipeTower2 reports the loops alone; an estimate has to round like the generator
+    // whose G-code it stands in for.
+    static float estimate_brim_real_width(float brim_width, float nozzle_diameter, float first_layer_height, bool type2);
+    // Depth a Type1 tower reserves once nothing but wrapping detection asks for one.
+    static float get_wrapping_detection_depth();
+    // Line width of the nozzle-change purge lines at this nozzle diameter.
+    static float nozzle_change_perimeter_width(float nozzle_diameter);
     static TriangleMesh                 its_make_rib_tower(float width, float depth, float height, float rib_length, float rib_width, bool fillet_wall);
     static TriangleMesh                 its_make_rib_brim(const Polygon& brim, float layer_height);
     static Polygon                      rib_section(float width, float depth, float rib_length, float rib_width, bool fillet_wall);
+    // One filament's share of a Type1 tower layer, as plan_tower_new() reserves it.
+    struct PurgeEstimate
+    {
+        float prime_volume           = 0.f;   // mm3 wiped after changing to this filament
+        int   category               = 0;     // filament_adhesiveness_category; one purge block per category
+        float filament_change_length = 0.f;   // mm of filament rammed when it leaves its nozzle; 0 when no nozzle change is planned
+        float filament_diameter      = 1.75f;
+    };
+    // Depth of the Type1 purge stack at the given width (also the rectangle-wall depth): each
+    // purge is whole lines at the block infill gap, one block per adhesiveness category sized by
+    // its worst layer, stacked behind one perimeter width.
+    static float estimate_tower_blocks_depth(const std::vector<PurgeEstimate> &purges, float width, float layer_height, float nozzle_diameter, float extra_spacing);
+    // Side of the square bounding a rib-wall tower's first layer, brim excluded: the body plus the
+    // rib bulge, with the ribs extended to the height-based minimum as both generators do.
+    static float rib_footprint_side(float width, float depth, float rib_width, float extra_rib_length, float max_height);
+    // Type1 rib tower: plan_tower_new() squares the tower from the depth at the configured width,
+    // then re-plans the depth at the squared width.
+    static float estimate_rib_tower_bbox_side(const std::vector<PurgeEstimate> &purges, float width, float layer_height, float nozzle_diameter, float extra_spacing, float rib_width, float extra_rib_length, float max_height);
     // Translation that brings a footprint inside the printable outline, padded by offset. The prime
     // tower is validated against the real outline (see layered_print_cleareance_valid), so clamping
     // against the bounding box alone would leave it off a delta or hexagonal bed. box and polygons
@@ -205,6 +232,13 @@ public:
 	// Appends into internal structure m_plan containing info about the future wipe tower
 	// to be used before building begins. The entries must be added ordered in z.
     void plan_toolchange(float z_par, float layer_height_par, unsigned int old_tool, unsigned int new_tool, float wipe_volume_ec = 0.f, float wipe_volume_nc = 0.f, float prime_volume = 0.f);
+    // Records the ToolOrdering layer index of the last planned layer (see WipeTowerInfo::ordering_layer_idx).
+    void set_plan_layer_ordering_index(int ordering_layer_idx) { if (!m_plan.empty()) m_plan.back().ordering_layer_idx = ordering_layer_idx; }
+    // Maps a plan layer index to the ToolOrdering layer index the per-layer nozzle maps use.
+    int  nozzle_layer_id(int plan_layer_id) const {
+        return plan_layer_id >= 0 && size_t(plan_layer_id) < m_plan.size() && m_plan[plan_layer_id].ordering_layer_idx >= 0 ?
+               m_plan[plan_layer_id].ordering_layer_idx : plan_layer_id;
+    }
 
 
 	// Iterates through prepared m_plan, generates ToolChangeResults and appends them to "result"
@@ -494,7 +528,7 @@ private:
     //float           m_parking_pos_retraction    = 0.f;
     //float           m_extra_loading_move        = 0.f;
     float           m_bridging                  = 0.f;
-    bool            m_no_sparse_layers          = false;
+    bool            m_sparse_layers_skipped     = false;
     // BBS: remove useless config
     //bool            m_set_extruder_trimpot      = false;
     bool            m_adhesion                  = true;
@@ -610,6 +644,11 @@ private:
 		float toolchanges_depth() const { float sum = 0.f; for (const auto &a : tool_changes) sum += a.required_depth; return sum; }
 
 		std::vector<ToolChange> tool_changes;
+		// Tool loaded when this layer starts (-1 = unknown); toolchanges may happen off the tower.
+		int start_tool = -1;
+		// Index of this layer in the ToolOrdering that planned it (-1 = same as the plan index).
+		// Per-layer nozzle maps are indexed by it; the plan skips layers without a slab.
+		int ordering_layer_idx = -1;
 
 		WipeTowerInfo(float z_par, float layer_height_par)
 			: z{z_par}, height{layer_height_par}, depth{0}, extra_spacing{1.f} {}
@@ -653,6 +692,24 @@ private:
 };
 
 
+// Compaction rule for wipe_tower_no_sparse_layers. Shared by the G-code emitter and by the
+// clearance validator so that both agree on where the compacted tower actually sits; a drift
+// between the two would either let a real nozzle collision through or reject a safe plate.
+
+// Whether sparse layers are really skipped, i.e. whether the tower is compacted at all. Smooth
+// timelapse and wrapping detection put a tower on every layer, so no layer is ever dropped and the
+// tower keeps following the object even though the option is on. Tower planning, G-code emission and
+// the clearance validator all ask this single question, so none of them can compact on its own.
+bool wipe_tower_sparse_layers_skipped(const PrintConfig &config);
+
+// A planned layer prints no tower at all when its only toolchange keeps the same filament.
+bool wipe_tower_layer_is_sparse(const std::vector<WipeTower::ToolChangeResult> &layer_tool_changes);
+
+// Print z the compacted tower reaches on every planned layer. Sparse layers carry over the
+// previous value, so the tower falls one layer height behind the object for each of them. base_z is
+// the z the tower starts from, which Orca offsets by z_offset.
+std::vector<float> compute_compacted_wipe_tower_z(const std::vector<std::vector<WipeTower::ToolChangeResult>> &tool_changes,
+                                                  float base_z = 0.f);
 
 
 } // namespace Slic3r

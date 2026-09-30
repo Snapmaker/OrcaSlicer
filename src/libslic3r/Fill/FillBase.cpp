@@ -15,6 +15,7 @@
 
 #include "FillBase.hpp"
 #include "FillConcentric.hpp"
+#include "FillSpiralInset.hpp"
 #include "FillHoneycomb.hpp"
 #include "Fill3DHoneycomb.hpp"
 #include "FillGyroid.hpp"
@@ -41,6 +42,7 @@ Fill* Fill::new_from_type(const InfillPattern type)
 {
     switch (type) {
     case ipConcentric:          return new FillConcentric();
+    case ipSpiralInset:    return new FillSpiralInset();
     case ipHoneycomb:           return new FillHoneycomb();
     case ipLateralHoneycomb:         return new FillLateralHoneycomb();
     case ip3DHoneycomb:         return new Fill3DHoneycomb();
@@ -313,7 +315,12 @@ std::pair<float, Point> Fill::_infill_direction(const Surface *surface) const
         // alternate fill direction
         //Orca: Do not alternate direction if Fill.fixed_angle is true
         if (!this->dont_alternate_fill_direction) {
-            out_angle += this->_layer_angle(this->layer_id / surface->thickness_layers);
+            // Combined internal groups (thickness_layers > 1) alternate per group. External
+            // surfaces alternate per layer even when combined: an absorbed thick top surface
+            // (see PrintObject::combine_top_surfaces()) must fill in the same direction as the
+            // same layer's uncombined remainder of that top face.
+            out_angle += this->_layer_angle(surface->is_external() ? this->layer_id :
+                                            this->layer_id / surface->thickness_layers);
         }
     } else {
 //    	printf("Layer_ID undefined!\n");
@@ -2465,9 +2472,11 @@ void Fill::connect_base_support(Polylines &&infill_ordered, const std::vector<co
 #endif // INFILL_DEBUG_OUTPUT
 
     const std::vector<SupportArcCost> arches = evaluate_support_arches(infill_ordered, graph, spacing, params);
-    static const double cost_low      = line_spacing * 1.3;
-    static const double cost_high     = line_spacing * 2.;
-    static const double cost_veryhigh = line_spacing * 3.;
+    // Must not be static: line_spacing varies per call (base vs interface fills differ),
+    // and a static here would fix these to whichever call ran first, order depending on thread count.
+    const double cost_low      = line_spacing * 1.3;
+    const double cost_high     = line_spacing * 2.;
+    const double cost_veryhigh = line_spacing * 3.;
 
     {
         std::vector<const SupportArcCost*> selected;

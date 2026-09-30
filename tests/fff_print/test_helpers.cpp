@@ -7,7 +7,9 @@
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/STL.hpp"
 
+#include <algorithm>
 #include <cstdlib>
+#include <memory>
 #include <string>
 
 #include <boost/filesystem.hpp>
@@ -247,20 +249,32 @@ void init_print(std::vector<TriangleMesh> &&meshes, Slic3r::Print &print, Slic3r
         const auto *filament_diameters = config.option<ConfigOptionFloats>("filament_diameter");
         const size_t num_filaments = filament_diameters ? std::max<size_t>(filament_diameters->size(), 1) : 1;
         auto *self_index = config.option<ConfigOptionInts>("filament_self_index", true);
-        if (self_index->values.size() != num_filaments) {
-            self_index->values.resize(num_filaments);
-            for (size_t i = 0; i < num_filaments; ++ i)
-                self_index->values[i] = int(i + 1);
-        }
         auto *fil_variant = config.option<ConfigOptionStrings>("filament_extruder_variant", true);
-        if (fil_variant->values.size() != num_filaments)
-            fil_variant->values.assign(num_filaments, "Direct Drive Standard");
+        // Keeps declared multi-column filaments (filament_self_index {1,1,2,2} with filament_extruder_variant
+        // {Standard, High Flow, ...}); anything else gets one Standard column per filament.
+        bool declared_columns = fil_variant->values.size() > num_filaments && self_index->values.size() == fil_variant->values.size();
+        for (size_t i = 0; declared_columns && i < num_filaments; ++ i)
+            declared_columns = std::count(self_index->values.begin(), self_index->values.end(), int(i + 1)) > 0;
+        for (size_t i = 0; declared_columns && i < self_index->values.size(); ++ i)
+            declared_columns = self_index->values[i] >= 1 && size_t(self_index->values[i]) <= num_filaments;
+        if (!declared_columns) {
+            if (self_index->values.size() != num_filaments) {
+                self_index->values.resize(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++ i)
+                    self_index->values[i] = int(i + 1);
+            }
+            if (fil_variant->values.size() != num_filaments)
+                fil_variant->values.assign(num_filaments, "Direct Drive Standard");
+        }
+        const size_t num_columns = fil_variant->values.size();
         // filament_extruder_variant now names one variant column per filament, and
         // update_values_to_printer_extruders_for_multiple_filaments() resolves filament i to column i.
         // Every per-variant filament key therefore has to carry that many columns: a column it cannot
         // reach is filled with 0 - a silent 0 C nozzle temperature for the second filament - and not
         // skipped as its log line claims. set_num_filaments() only sizes filament_option_keys(), so
         // size the remaining per-variant keys here, the way PresetBundle does for a real profile.
+        // With declared columns a key that holds one value per filament is spread over the columns
+        // of each filament; a key that already holds one value per column is left alone.
         const auto &variant_defaults = FullPrintConfig::defaults();
         for (const std::string &key : filament_options_with_variant) {
             auto *opt = config.option(key, false);
@@ -269,6 +283,12 @@ void init_print(std::vector<TriangleMesh> &&meshes, Slic3r::Print &print, Slic3r
             auto *vec = static_cast<ConfigOptionVectorBase *>(opt);
             if (vec->size() > 0 && vec->size() < num_filaments)
                 vec->resize(num_filaments, variant_defaults.option(key));
+            if (declared_columns && vec->size() == num_filaments) {
+                const std::unique_ptr<ConfigOption> per_filament(vec->clone());
+                vec->resize(num_columns, variant_defaults.option(key));
+                for (size_t column = 0; column < num_columns; ++ column)
+                    vec->set_at(per_filament.get(), column, size_t(self_index->values[column] - 1));
+            }
         }
     }
 

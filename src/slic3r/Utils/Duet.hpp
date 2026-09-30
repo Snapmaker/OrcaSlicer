@@ -27,6 +27,10 @@ public:
 	bool can_test() const override { return true; }
     PrintHostPostUploadActions get_post_upload_actions() const override { return PrintHostPostUploadAction::StartPrint | PrintHostPostUploadAction::StartSimulation; }
 	std::string get_host() const override { return host; }
+	// Snapmaker Orca: PrintHost declares the virtual connect()/disconnect() of the device
+	// session API; the private helpers of the same name below would hide them.
+	using PrintHost::connect;
+	using PrintHost::disconnect;
    
 private:
 	enum class ConnectionType { rrf, dsf, error };

@@ -197,10 +197,14 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
             // outside the grown lower slices (thus where the distance between
             // the loop centerline and original lower slices is >= half nozzle diameter
             if (remain_polines.size() != 0) {
-                extrusion_paths_append(paths, std::move(remain_polines),
-                                       erOverhangPerimeter, perimeter_generator.mm3_per_mm_overhang(),
-                                       perimeter_generator.overhang_flow.width(),
-                                       perimeter_generator.overhang_flow.height());
+                // External / fully overhanging loops (no supported path at all) dispatch to the outer wall filament (GCode::process_layer()); their overhangs use that filament's flow.
+                const bool  overhang_external = is_external || paths.empty();
+                const Flow &loop_overhang_flow = overhang_external ? perimeter_generator.ext_overhang_flow :
+                                                                     perimeter_generator.overhang_flow;
+                extrusion_paths_append(paths, std::move(remain_polines), erOverhangPerimeter,
+                                       overhang_external ? perimeter_generator.ext_mm3_per_mm_overhang() :
+                                                           perimeter_generator.mm3_per_mm_overhang(),
+                                       loop_overhang_flow.width(), loop_overhang_flow.height());
             }
 
             // Reapply the nearest point search for starting point.
@@ -481,8 +485,13 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
             // get overhang paths by checking what parts of this loop fall
             // outside the grown lower slices (thus where the distance between
             // the loop centerline and original lower slices is >= half nozzle diameter
+            // External / fully overhanging extrusions (no supported path at all) dispatch to the outer
+            // wall filament (GCode::process_layer()); their overhangs use that filament's flow. Known
+            // corner: a fully overhanging fragment of the ExtrusionMultiPath split below keeps the inner
+            // flow, but widths come from the Arachne junctions either way; only thick-bridge height differs.
+            const bool overhang_external = is_external || paths.empty();
             extrusion_paths_append(paths, clip_extrusion(extrusion_path, lower_slices_paths, ClipperLib_Z::ctDifference), erOverhangPerimeter,
-                perimeter_generator.overhang_flow);
+                overhang_external ? perimeter_generator.ext_overhang_flow : perimeter_generator.overhang_flow);
 
             // Reapply the nearest point search for starting point.
             // We allow polyline reversal because Clipper may have randomly reversed polylines during clipping.
@@ -834,7 +843,9 @@ void PerimeterGenerator::split_top_surfaces(const ExPolygons &orig_polygons, ExP
     // increase by half peri the inner space to fill the frontier between last and stored.
     top_fills = union_ex(top_fills, top_polygons);
     //set the clip to the external wall but go back inside by infill_extrusion_width/2 to be sure the extrusion won't go outside even with a 100% overlap.
-    double infill_spacing_unscaled = this->config->sparse_infill_line_width.get_abs_value(nozzle_diameter);
+    // Snapmaker Orca: the width is a column per tool head, read at the outer wall's head whose
+    // nozzle is used here (the sparse infill of another head is the pre-existing mismatch).
+    double infill_spacing_unscaled = Flow::width_at(this->config->sparse_infill_line_width, Print::width_slot(*this->print_config, this->config->outer_wall_filament_id)).get_abs_value(nozzle_diameter);
     if (infill_spacing_unscaled == 0) infill_spacing_unscaled = Flow::auto_extrusion_width(frInfill, nozzle_diameter);
     fill_clip = offset_ex(orig_polygons, double(ext_perimeter_spacing / 2.) - scale_(infill_spacing_unscaled / 2.));
     // ExPolygons oldLast = last;
@@ -1274,8 +1285,9 @@ void PerimeterGenerator::apply_extra_perimeters(ExPolygons &infill_area)
     if (!m_spiral_vase && this->lower_slices != nullptr && this->config->detect_overhang_wall && this->config->extra_perimeters_on_overhangs &&
         this->config->wall_loops > 0 && this->layer_id > this->object_config->raft_layers) {
         // Generate extra perimeters on overhang areas, and cut them to these parts only, to save print time and material
+        // Pure erOverhangPerimeter entities dispatch to the outer wall filament, so use its flow.
         auto [extra_perimeters, filled_area] = generate_extra_perimeters_over_overhangs(infill_area, this->lower_slices_polygons(),
-                                                                                        this->config->wall_loops, this->overhang_flow,
+                                                                                        this->config->wall_loops, this->ext_overhang_flow,
                                                                                         this->m_scaled_resolution, *this->object_config,
                                                                                         *this->print_config);
         if (!extra_perimeters.empty()) {
@@ -1326,6 +1338,73 @@ static void reorient_perimeters(ExtrusionEntityCollection &entities, bool steep_
     }
 }
 
+// A loop made of nothing but overhang paths lies entirely off the lower layer.
+static bool is_unsupported_loop(const ExtrusionEntity *entity)
+{
+    if (!entity->is_loop())
+        return false;
+    const ExtrusionPaths &paths = static_cast<const ExtrusionLoop *>(entity)->paths;
+    return !paths.empty() && std::all_of(paths.begin(), paths.end(),
+                                         [](const ExtrusionPath &path) { return path.role() == erOverhangPerimeter; });
+}
+
+// ORCA: A wall loop with nothing under it has nothing to lean on, so whatever the configured wall
+// sequence it is extruded after the loops that anchor it, innermost first. A loop that runs alongside
+// an anchored one belongs to the same wall stack and keeps its place ahead of the infill, which needs
+// it as an anchor; one that touches nothing has only that infill to rest on, so it is flagged for the
+// G-code writer to hold it back until the infill is down.
+static void defer_unsupported_loops(const PerimeterGenerator &perimeter_generator, ExtrusionEntityCollection &entities)
+{
+    if (!perimeter_generator.config->unsupported_wall_last)
+        return;
+
+    ExtrusionEntitiesPtr &src = entities.entities;
+    auto first_deferred = std::stable_partition(src.begin(), src.end(),
+                                                [](const ExtrusionEntity *entity) { return !is_unsupported_loop(entity); });
+    if (first_deferred == src.end())
+        return;
+
+    std::stable_sort(first_deferred, src.end(),
+                     [](const ExtrusionEntity *lhs, const ExtrusionEntity *rhs) { return lhs->inset_idx > rhs->inset_idx; });
+
+    auto collect_lines = [](const ExtrusionEntity *entity, Lines &out) {
+        Polylines polylines;
+        entity->collect_polylines(polylines);
+        append(out, to_lines(polylines));
+    };
+
+    Lines anchored;
+    for (auto it = src.begin(); it != first_deferred; ++it)
+        collect_lines(*it, anchored);
+
+    std::vector<ExtrusionLoop *> unattached;
+    for (auto it = first_deferred; it != src.end(); ++it)
+        unattached.emplace_back(static_cast<ExtrusionLoop *>(*it));
+
+    // A loop leaning on a loop that is itself anchored is anchored as well, so spread outwards from
+    // the anchored loops until no unsupported loop is left touching what was reached.
+    const double touch_distance = 1.5 * std::max(perimeter_generator.ext_perimeter_flow.scaled_spacing(),
+                                                 perimeter_generator.perimeter_flow.scaled_spacing());
+    while (!anchored.empty()) {
+        AABBTreeLines::LinesDistancer<Line> distancer{std::move(anchored)};
+        anchored.clear();
+        for (ExtrusionLoop *&loop : unattached) {
+            if (loop == nullptr)
+                continue;
+            const Points points = loop->as_polyline().points;
+            if (std::any_of(points.begin(), points.end(),
+                            [&distancer, touch_distance](const Point &point) { return distancer.distance_from_lines<false>(point) < touch_distance; })) {
+                collect_lines(loop, anchored);
+                loop = nullptr;
+            }
+        }
+    }
+
+    for (ExtrusionLoop *loop : unattached)
+        if (loop != nullptr)
+            loop->print_after_infill = true;
+}
+
 void PerimeterGenerator::process_classic()
 {
     group_region_by_fuzzify(*this);
@@ -1349,6 +1428,7 @@ void PerimeterGenerator::process_classic()
 
     // overhang perimeters
     m_mm3_per_mm_overhang      		= this->overhang_flow.mm3_per_mm();
+    m_ext_mm3_per_mm_overhang  		= this->ext_overhang_flow.mm3_per_mm();
 
     // solid infill
     coord_t solid_infill_spacing    = this->solid_infill_flow.scaled_spacing();
@@ -1811,6 +1891,9 @@ void PerimeterGenerator::process_classic()
                     }
                 }
             }
+
+            defer_unsupported_loops(*this, entities);
+
             // append perimeters for this slice as a collection
             if (! entities.empty())
                 this->loops->append(entities);
@@ -1857,7 +1940,8 @@ void PerimeterGenerator::process_classic()
 
             if (! polylines.empty()) {
 				ExtrusionEntityCollection gap_fill;
-				variable_width(polylines, erGapFill, this->solid_infill_flow, gap_fill.entities);
+				// Gap fill prints with the outer wall filament (LayerTools::extruder()).
+				variable_width(polylines, erGapFill, this->gap_fill_flow, gap_fill.entities);
                 /*  Make sure we don't infill narrow parts that are already gap-filled
                     (we only consider this surface's gaps to reduce the diff() complexity).
                     Growing actual extrusions ensures that gaps not filled by medial axis
@@ -1898,6 +1982,15 @@ void PerimeterGenerator::process_classic()
                 top_infill_peri_overlap = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset + solid_infill_spacing / 2))));
             }
             inset -= infill_peri_overlap;
+        }
+        // ORCA: an infill bead wider than the wall band (a coarse infill nozzle behind the walls of
+        // a fine one) would poke through the walls out of the part; keep the boundary at least
+        // half the widest infill bead inside the outline.
+        {
+            const coord_t wall_band        = loop_number < 0 ? 0 : ext_perimeter_width + coord_t(loop_number) * perimeter_spacing - infill_peri_overlap;
+            const coord_t half_infill_bead = std::max(this->sparse_infill_flow.scaled_width(), this->solid_infill_flow.scaled_width()) / 2;
+            if (loop_number >= 0 && wall_band < half_infill_bead)
+                inset += half_infill_bead - wall_band;
         }
         // simplify infill contours according to resolution
         Polygons pp;
@@ -2134,7 +2227,7 @@ void PerimeterGenerator::process_no_bridge(Surfaces& all_surfaces, coord_t perim
                                 bridgeable_filtered = union_ex(offset_ex(remaining, perimeter_spacing), bridgeable_filtered);
                                 bridgeable_filtered = offset_ex(bridgeable_filtered, -perimeter_spacing);
                                 bridgeable_filtered = diff_ex(bridgeable_filtered, remaining, ApplySafetyOffset::Yes);
-                                bridgeable_filtered = opening_ex(bridgeable_filtered, perimeter_spacing); // filter noise from the diff_ex
+                                bridgeable_filtered = opening_ex(bridgeable_filtered, ext_perimeter_width / 2); // filter noise from the diff_ex
                                 bridgeable_filtered = offset_ex(bridgeable_filtered, perimeter_spacing);  // restore the size to the original bridgeable area
                                 // Safety measure: Keep the bridge mask from intruding deeper into the
                                 // supported anchor region than the explicit anchor overlap.
@@ -2368,6 +2461,7 @@ void PerimeterGenerator::process_arachne()
     coord_t ext_perimeter_spacing2 = scaled<coord_t>(0.5f * (this->ext_perimeter_flow.spacing() + this->perimeter_flow.spacing()));
     // overhang perimeters
     m_mm3_per_mm_overhang = this->overhang_flow.mm3_per_mm();
+    m_ext_mm3_per_mm_overhang = this->ext_overhang_flow.mm3_per_mm();
 
     // solid infill
     coord_t solid_infill_spacing = this->solid_infill_flow.scaled_spacing();
@@ -2749,6 +2843,7 @@ void PerimeterGenerator::process_arachne()
                 reorient_perimeters(extrusion_coll, steep_overhang_contour, steep_overhang_hole,
                                     this->config->overhang_reverse_internal_only);
             }
+            defer_unsupported_loops(*this, extrusion_coll);
             this->loops->append(extrusion_coll);
         }
 
@@ -2775,6 +2870,13 @@ void PerimeterGenerator::process_arachne()
             inset = coord_t(scale_(this->config->top_bottom_infill_wall_overlap.get_abs_value(unscale<double>(inset))));
         else
             inset = coord_t(scale_(this->config->infill_wall_overlap.get_abs_value(unscale<double>(inset))));
+        // ORCA: keep an infill bead wider than the wall band inside the walls (see the classic path).
+        {
+            const coord_t wall_band        = loop_number < 0 ? 0 : ext_perimeter_width + coord_t(loop_number) * perimeter_spacing;
+            const coord_t half_infill_bead = std::max(this->sparse_infill_flow.scaled_width(), this->solid_infill_flow.scaled_width()) / 2;
+            if (loop_number >= 0 && wall_band - half_infill_bead < inset)
+                inset = wall_band - half_infill_bead;
+        }
         
         // simplify infill contours according to resolution
         Polygons pp;
@@ -2819,6 +2921,21 @@ bool PerimeterGeneratorLoop::is_internal_contour() const
         if (loop.is_contour)
             return false;
     return true;
+}
+
+// ORCA: Arachne drops features below min_feature_size, classic builds nothing thinner than a third of the
+// nozzle. Both describe the layer below, a union of regions sharing neither nozzle nor generator, so every
+// ambiguity resolves low: it may keep a sliver that was never printed, but it never drops one that was.
+ExPolygons PerimeterGenerator::printable_slices(const ExPolygons &slices) const
+{
+    double min_width = *std::min_element(print_config->nozzle_diameter.values.begin(),
+                                         print_config->nozzle_diameter.values.end()) / 3.;
+    if (object_config->wall_generator.value == PerimeterGeneratorType::Arachne) {
+        const double min_feature_size = Arachne::make_paths_params(layer_id, *object_config, *print_config).min_feature_size;
+        // Spiral vase can put a classic layer under an Arachne one, so there both limits apply.
+        min_width = print_config->spiral_mode ? std::min(min_width, min_feature_size) : min_feature_size;
+    }
+    return min_width > EPSILON ? opening_ex(slices, float(scale_(min_width / 2.))) : slices;
 }
 
 std::vector<Polygons> PerimeterGenerator::generate_lower_polygons_series(float width)

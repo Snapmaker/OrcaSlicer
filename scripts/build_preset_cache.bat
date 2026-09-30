@@ -123,8 +123,15 @@ for %%c in ("%PROFILES%\*.opc") do (
         set /a PRUNED+=1
     )
     if exist "%TARGET%\!VENDOR!\" (
-        for /f %%n in ('dir /s /b "%TARGET%\!VENDOR!\*.json" 2^>nul ^| find /c /v ""') do set /a PRUNED+=%%n
-        del /s /q "%TARGET%\!VENDOR!\*.json" >nul 2>&1
+        rem The filament rules files (FilamentHotBedNozzleRules, AllowlistManager, PresetUpdater) and
+        rem the colour library (FilamentColorLibrary) are not presets: the cache does not carry them,
+        rem so they stay.
+        for /f "delims=" %%j in ('dir /s /b "%TARGET%\!VENDOR!\*.json" 2^>nul') do (
+            if /i not "%%~nxj"=="filament_hot_bed_nozzles.json" if /i not "%%~nxj"=="filament_compatibility.json" if /i not "%%~nxj"=="filament_allow_list.json" if /i not "%%~nxj"=="filaments_colours.json" (
+                del /q "%%j" >nul 2>&1
+                set /a PRUNED+=1
+            )
+        )
         rem Deepest first, so a directory the delete above emptied goes too; rd
         rem refuses the ones still holding covers or meshes.
         for /f "delims=" %%d in ('dir /s /b /ad "%TARGET%\!VENDOR!" 2^>nul ^| sort /r') do rd "%%d" 2>nul

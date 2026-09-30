@@ -1177,7 +1177,10 @@ private:
     {
         if (m_selectedIndex != -1 && m_tabs[m_selectedIndex].page) {
             wxSize size = GetSize();
-            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, size.x - 4, size.y - m_tabHeight - 4);
+            // Clamp to 0: during construction / first OnSize the notebook can still
+            // report a zero height, making the page height negative. GTK rejects the
+            // size request (assertion) and the page keeps a stale geometry.
+            m_tabs[m_selectedIndex].page->SetSize(2, m_tabHeight + 1, wxMax(size.x - 4, 0), wxMax(size.y - m_tabHeight - 4, 0));
             m_tabs[m_selectedIndex].page->Layout();
         }
     }
@@ -10240,7 +10243,7 @@ struct Plater::priv
     void reset_canvas_volumes();
 
     // BBS
-    bool init_collapse_toolbar();
+    bool init_collapse_toolbar(const GLTexture* shared_background_texture = nullptr);
 
     // BBS
     void hide_select_machine_dlg()
@@ -16500,13 +16503,9 @@ void Plater::priv::reset_canvas_volumes()
         preview->get_canvas3d()->reset_volumes();
 }
 
-bool Plater::priv::init_collapse_toolbar()
+bool Plater::priv::init_collapse_toolbar(const GLTexture* shared_background_texture)
 {
     if (wxGetApp().is_gcode_viewer())
-        return true;
-
-    if (collapse_toolbar.get_items_count() > 0)
-        // already initialized
         return true;
 
     BackgroundTexture::Metadata background_data;
@@ -16516,8 +16515,17 @@ bool Plater::priv::init_collapse_toolbar()
     background_data.right = 16;
     background_data.bottom = 16;
 
-    if (!collapse_toolbar.init(background_data))
-        return false;
+    if (collapse_toolbar.get_items_count() > 0) {
+        if (shared_background_texture != nullptr)
+            collapse_toolbar.init_shared_background(background_data, shared_background_texture);
+        // already initialized
+        return true;
+    }
+
+    if (shared_background_texture == nullptr || !collapse_toolbar.init_shared_background(background_data, shared_background_texture)) {
+        if (!collapse_toolbar.init(background_data))
+            return false;
+    }
 
     collapse_toolbar.set_layout_type(GLToolbar::Layout::Vertical);
     collapse_toolbar.set_horizontal_orientation(GLToolbar::Layout::HO_Right);
@@ -23633,9 +23641,9 @@ void Plater::enable_view_toolbar(bool enable)
 }
 #endif
 
-bool Plater::init_collapse_toolbar()
+bool Plater::init_collapse_toolbar(const GLTexture* shared_background_texture)
 {
-    return p->init_collapse_toolbar();
+    return p->init_collapse_toolbar(shared_background_texture);
 }
 
 const Camera& Plater::get_camera() const

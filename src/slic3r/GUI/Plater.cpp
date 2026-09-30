@@ -181,6 +181,8 @@
 #include "Gizmos/GLGizmosManager.hpp"
 #endif // __APPLE__
 
+#include "Gizmos/GLGizmoMmuSegmentation.hpp"
+
 #include <libslic3r/CutUtils.hpp>
 #include <wx/glcanvas.h>    // Needs to be last because reasons :-/
 #include <libslic3r/miniz_extension.hpp>
@@ -3034,6 +3036,25 @@ Sidebar::Sidebar(Plater *parent)
                 const int span = (total > 0) ? (90 * current / total) : 0;
                 set_progress(5 + span);
             });
+
+        // The painting gizmo keeps an in-memory editing copy of the painting
+        // (m_triangle_selectors) and data_changed() only reloads it when the
+        // extruder count changes; a same-count palette rewrite leaves it stale.
+        // The match just rewrote mmu_segmentation_facets in the model, so force a
+        // re-deserialize on every canvas where the gizmo is active (each canvas
+        // owns its own gizmo manager). A stale copy would keep rendering the old
+        // mapping and its next update_model_object() would write that stale copy
+        // back over the applied match.
+        {
+            Plater* batch_plater = wxGetApp().plater();
+            for (GLCanvas3D* cnv : { batch_plater->get_view3D_canvas3D(), batch_plater->get_assmeble_canvas3D() }) {
+                if (cnv == nullptr) continue;
+                GLGizmosManager& gizmos_mgr = cnv->get_gizmos_manager();
+                if (gizmos_mgr.get_current_type() != GLGizmosManager::EType::MmSegmentation) continue;
+                if (auto* mmu_gizmo = dynamic_cast<GLGizmoMmuSegmentation*>(gizmos_mgr.get_gizmo(GLGizmosManager::EType::MmSegmentation)))
+                    mmu_gizmo->refresh_from_model();
+            }
+        }
 
         // cleanup already serializes; only panel refresh needed.
         set_progress(95);

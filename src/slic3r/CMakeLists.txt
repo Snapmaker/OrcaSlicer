@@ -875,6 +875,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/LibraryIndex.hpp
     Utils/MeshThumbnail.cpp
     Utils/MeshThumbnail.hpp
+    Utils/StepMesh.cpp
+    Utils/StepMesh.hpp
     Utils/VendorConnector.cpp
     Utils/VendorConnector.hpp
     Utils/MainThreadGate.cpp
@@ -1071,6 +1073,7 @@ slic3r_unity_build(libslic3r_gui SKIP
     GUI/UnsavedChangesDialog.cpp                  # uses ::CheckBox, a neighbour's Field.hpp brings GUI::CheckBox
     GUI/FlashForge/PrintDevLocalFileDlg.cpp       # uses ::CheckBox, a neighbour's Field.hpp brings GUI::CheckBox
     GUI/Selection.cpp                             # CGAL must come before OCCT's Handle() macro (Model.hpp -> STEP.hpp)
+    Utils/StepMesh.cpp                            # OCCT's Handle() macro breaks CGAL headers in neighbours
     GUI/GLToolbar.cpp                             # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/GUI_Preview.cpp                           # includes wx/glcanvas.h (GL/gl.h) before a neighbour's glad
     GUI/MainFrame.cpp                             # wx/glcanvas.h before glad; Windows shell headers vs UserNotification

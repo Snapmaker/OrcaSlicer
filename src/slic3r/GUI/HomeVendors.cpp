@@ -399,6 +399,7 @@ void HomeVendors::send_state()
                              {"connector", c.spec.id},
                              {"name", i.name},
                              {"designer", i.designer},
+                             {"license", i.license},
                              {"description", i.description.substr(0, 600)},
                              {"tags", i.tags},
                              {"updated", i.updated},

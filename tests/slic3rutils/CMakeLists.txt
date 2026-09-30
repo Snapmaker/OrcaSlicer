@@ -12,6 +12,7 @@ add_executable(${_TEST_NAME}_tests
     home_tab_tests.cpp
     library_index_tests.cpp
     vendor_connector_tests.cpp
+    step_mesh_tests.cpp
     snapmaker_silent_login_tests.cpp
     ff_diagnostics_tests.cpp
     elegoo_canvas_tests.cpp

@@ -1,4 +1,5 @@
 #include "MeshThumbnail.hpp"
+#include "StepMesh.hpp"
 
 #include "libslic3r/miniz_extension.hpp"
 
@@ -441,7 +442,7 @@ std::string encode_png(const std::vector<unsigned char>& rgba, int size)
     return out;
 }
 
-std::string mesh_thumbnail_png(const std::string& path, const std::string& type, int size)
+std::string mesh_thumbnail_png(const std::string& path, const std::string& type, int size, const std::atomic<bool>* cancel)
 {
     Triangles tris;
     bool      ok = false;
@@ -451,6 +452,8 @@ std::string mesh_thumbnail_png(const std::string& path, const std::string& type,
         ok = read_obj(path, tris);
     else if (type == "amf")
         ok = read_amf(path, tris);
+    else if (type == "step")
+        ok = read_step(path, tris, step_limits(), cancel);
     if (!ok)
         return std::string();
     return encode_png(render_rgba(tris, size), size);

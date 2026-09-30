@@ -344,6 +344,9 @@ void HomePanel::handle(const json& msg)
                     ids.push_back(v.get<std::string>());
         if (!ids.empty())
             send_library_thumbnails(ids);
+    } else if (command == "library_plates") {
+        if (m_library_paths.count(id))
+            send_library_plates(id);
     } else if (command == "library_open") {
         if (m_library_paths.count(id))
             library_open(id, false);
@@ -420,6 +423,23 @@ void HomePanel::send_init()
     s["remove"]            = _u8L("Remove");
     s["done"]              = _u8L("Done");
     s["category"]          = _u8L("Category");
+    s["details"]           = _u8L("Details");
+    s["designer"]          = _u8L("Designer");
+    s["license"]           = _u8L("License");
+    s["license_commercial"] = _u8L("Commercial");
+    s["license_personal"]  = _u8L("Personal use only");
+    s["license_not_set"]   = _u8L("Not set");
+    s["folder"]            = _u8L("Folder");
+    s["added"]             = _u8L("Added");
+    s["added_week"]        = _u8L("Last 7 days");
+    s["added_month"]       = _u8L("Last 30 days");
+    s["added_year"]        = _u8L("Last 12 months");
+    s["added_older"]       = _u8L("Older");
+    s["unknown"]           = _u8L("Unknown");
+    s["more"]              = _u8L("more");
+    s["fewer"]             = _u8L("Fewer");
+    s["more_filters"]      = _u8L("More filters");
+    s["fewer_filters"]     = _u8L("Fewer filters");
     s["vendor"]            = _u8L("Vendor");
     s["type"]              = _u8L("Type");
     s["none"]              = _u8L("None");
@@ -813,6 +833,7 @@ void HomePanel::send_library()
                                {"recursive", f.recursive},
                                {"category", f.category},
                                {"vendor", f.vendor},
+                               {"license", f.license},
                                {"scanned", st != states.end()},
                                {"online", st == states.end() || st->second->online},
                                {"files", st == states.end() ? 0 : st->second->files}});
@@ -831,6 +852,8 @@ void HomePanel::send_library()
         json item        = Library::page_item(e);
         item["category"] = f->second->category;
         item["vendor"]   = f->second->vendor;
+        if (!f->second->license.empty())
+            item["license"] = f->second->license; // the user's own word wins over the file's
         items.push_back(std::move(item));
         m_library_paths[e.id] = e.path;
     }
@@ -860,6 +883,21 @@ void HomePanel::send_library_thumbnails(const std::vector<std::string>& ids)
         wxGetApp().CallAfter([this, alive, images = std::move(images)]() {
             if (!alive.expired())
                 send({{"type", "library_thumbs"}, {"images", images}});
+        });
+    }).detach();
+}
+
+void HomePanel::send_library_plates(const std::string& id)
+{
+    const std::string   path  = library_path(id);
+    std::weak_ptr<bool> alive = m_alive;
+    std::thread([this, alive, id, path]() {
+        json plates = json::array();
+        for (const Library::PlateImage& p : Library::read_3mf_plates(path))
+            plates.push_back({{"index", p.index}, {"name", p.name}, {"image", HomeTab::png_data_uri(p.png)}});
+        wxGetApp().CallAfter([this, alive, id, plates = std::move(plates)]() {
+            if (!alive.expired())
+                send({{"type", "library_plates"}, {"id", id}, {"plates", plates}});
         });
     }).detach();
 }
@@ -940,6 +978,7 @@ void HomePanel::library_update_folder(const json& msg)
     };
     it->category  = text("category", it->category);
     it->vendor    = text("vendor", it->vendor);
+    it->license   = text("license", it->license);
     it->recursive = msg.contains("recursive") && msg["recursive"].is_boolean() ? msg["recursive"].get<bool>() : it->recursive;
     save_library_folders(Library::folders_from_json(Library::folders_to_json(folders)));
     send_library();

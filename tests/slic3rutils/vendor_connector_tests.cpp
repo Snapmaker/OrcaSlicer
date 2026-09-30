@@ -308,6 +308,24 @@ TEST_CASE("vendors: items are mapped from the answer", "[Vendors]")
     CHECK(item_to_json(back) == item_to_json(i));
 }
 
+TEST_CASE("vendors: an item's licence, else the connector's", "[Vendors]")
+{
+    json j        = cpl3d_spec_json();
+    j["license"]  = "Commercial";
+    j["fields"]["license"] = "license.name";
+    const Spec s = spec_from_json(j);
+    CHECK(s.license == "Commercial");
+    CHECK(spec_from_json(spec_to_json(s)).license == "Commercial");
+    json own = FakeVendor::model(1, "2026-09-01T00:00:00Z");
+    own["license"] = {{"name", "Personal use"}};
+    const std::vector<Item> items = map_items(s, {{"models", {own, FakeVendor::model(2, "2026-09-02T00:00:00Z")}}});
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].license == "Personal use");
+    CHECK(items[1].license == "Commercial");
+    CHECK(item_from_json(item_to_json(items[0])).license == "Personal use");
+    CHECK(map_items(spec_from_json(cpl3d_spec_json()), {{"models", {own}}})[0].license.empty()); // not mapped, no default
+}
+
 TEST_CASE("vendors: sync pages through, then only asks for changes", "[Vendors]")
 {
     const Spec        s = spec_from_json(cpl3d_spec_json());
@@ -578,6 +596,7 @@ TEST_CASE("vendors: CSV export", "[Vendors]")
     a.name     = "=HYPERLINK(\"http://evil\")";
     a.designer = "Smith, J";
     a.tags     = {"x", "y"};
+    a.license  = "Commercial";
     SubItem s1;
     s1.id           = "10";
     s1.name         = "Standard";
@@ -595,10 +614,10 @@ TEST_CASE("vendors: CSV export", "[Vendors]")
 
     const std::string csv = to_csv("CPL3D", "CPL3D", {a, b});
     CHECK(csv.compare(0, 3, "\xEF\xBB\xBF") == 0);
-    CHECK(csv.find("connector,vendor,item_id,name,designer,tags,updated,page_url,thumbnail,file_id,file_name,variant,size_bytes,plates,print_time,colours\r\n") == 3);
-    CHECK(csv.find("CPL3D,CPL3D,1,\"'=HYPERLINK(\"\"http://evil\"\")\",\"Smith, J\",x; y,,,,10,Standard,,99,2,60,#FF0000 #00FF00\r\n") != std::string::npos);
+    CHECK(csv.find("connector,vendor,item_id,name,designer,license,tags,updated,page_url,thumbnail,file_id,file_name,variant,size_bytes,plates,print_time,colours\r\n") == 3);
+    CHECK(csv.find("CPL3D,CPL3D,1,\"'=HYPERLINK(\"\"http://evil\"\")\",\"Smith, J\",Commercial,x; y,,,,10,Standard,,99,2,60,#FF0000 #00FF00\r\n") != std::string::npos);
     CHECK(csv.find(",11,Standard,") != std::string::npos); // one row per file
-    CHECK(csv.find("CPL3D,CPL3D,2,\"Line\nbreak\",,,,,,,,,,,,\r\n") != std::string::npos);
+    CHECK(csv.find("CPL3D,CPL3D,2,\"Line\nbreak\",,,,,,,,,,,,,\r\n") != std::string::npos);
     CHECK(csv.find("secret.example") == std::string::npos); // download links never
 }
 

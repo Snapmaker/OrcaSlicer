@@ -140,6 +140,8 @@ std::vector<Folder> folders_from_json(const std::string& text)
             folder.category = trim(f["category"].get<std::string>());
         if (f.contains("vendor") && f["vendor"].is_string())
             folder.vendor = trim(f["vendor"].get<std::string>());
+        if (f.contains("license") && f["license"].is_string())
+            folder.license = trim(f["license"].get<std::string>());
         out.push_back(std::move(folder));
     }
     return out;
@@ -149,7 +151,8 @@ std::string folders_to_json(const std::vector<Folder>& folders)
 {
     json j = json::array();
     for (const Folder& f : folders)
-        j.push_back({{"path", f.path}, {"recursive", f.recursive}, {"category", f.category}, {"vendor", f.vendor}});
+        j.push_back({{"path", f.path}, {"recursive", f.recursive}, {"category", f.category}, {"vendor", f.vendor},
+                    {"license", f.license}});
     return j.dump();
 }
 
@@ -316,9 +319,49 @@ ThreeMfInfo read_3mf(const std::string& path)
     if (!head.empty()) {
         info.title    = model_metadata(head, "Title");
         info.designer = model_metadata(head, "Designer");
+        info.license  = model_metadata(head, "License");
     }
     close_zip_reader(&zip);
     return info;
+}
+
+std::vector<PlateImage> read_3mf_plates(const std::string& path, int max_plates)
+{
+    std::vector<PlateImage> out;
+    mz_zip_archive zip;
+    mz_zip_zero_struct(&zip);
+    if (!open_zip_reader(&zip, path))
+        return out;
+    std::map<std::string, int> names;
+    static const std::regex plate_png(R"(Metadata/plate_(\d+)\.png)");
+    int max_plate = 0;
+    const mz_uint count = mz_zip_reader_get_num_files(&zip);
+    for (mz_uint i = 0; i < count; ++i) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zip, i, &st))
+            continue;
+        std::string name = st.m_filename;
+        std::smatch m;
+        if (std::regex_match(name, m, plate_png))
+            try { max_plate = std::max(max_plate, std::stoi(m[1].str())); } catch (...) {}
+        names.emplace(std::move(name), int(i));
+    }
+    auto find = [&names](const std::string& n) { auto it = names.find(n); return it == names.end() ? -1 : it->second; };
+    std::vector<std::string> titles;
+    const std::string settings = extract(zip, find("Metadata/model_settings.config"), MAX_SETTINGS_BYTES);
+    if (!settings.empty())
+        titles = plate_names(settings);
+    const int plates = std::min(std::max<int>(max_plate, int(titles.size())), max_plates);
+    for (int k = 1; k <= plates; ++k) {
+        PlateImage p;
+        p.index = k;
+        if (size_t(k) <= titles.size())
+            p.name = titles[k - 1];
+        p.png = extract(zip, find("Metadata/plate_" + std::to_string(k) + ".png"), MAX_THUMBNAIL_BYTES);
+        out.push_back(std::move(p));
+    }
+    close_zip_reader(&zip);
+    return out;
 }
 
 // ------------------------------------------------------------------------------ entries ----
@@ -328,7 +371,8 @@ json entry_to_json(const Entry& e)
     return {{"id", e.id}, {"path", e.path}, {"name", e.name}, {"type", e.type}, {"root", e.root},
             {"rel_dir", e.rel_dir}, {"category", e.category}, {"vendor", e.vendor}, {"size", e.size},
             {"mtime", e.mtime}, {"added", e.added}, {"plates", e.plates}, {"plate_names", e.plate_names},
-            {"title", e.title}, {"designer", e.designer}, {"sliced", e.sliced}, {"has_thumbnail", e.has_thumbnail}};
+            {"title", e.title}, {"designer", e.designer}, {"license", e.license}, {"sliced", e.sliced},
+            {"has_thumbnail", e.has_thumbnail}};
 }
 
 json page_item(const Entry& e)
@@ -336,7 +380,7 @@ json page_item(const Entry& e)
     return {{"id", e.id}, {"name", e.name}, {"type", e.type}, {"root", e.root}, {"rel_dir", e.rel_dir},
             {"category", e.category}, {"vendor", e.vendor}, {"size", e.size}, {"mtime", e.mtime},
             {"added", e.added}, {"plates", e.plates}, {"plate_names", e.plate_names}, {"title", e.title},
-            {"designer", e.designer}, {"sliced", e.sliced}, {"has_thumbnail", e.has_thumbnail}};
+            {"designer", e.designer}, {"license", e.license}, {"sliced", e.sliced}, {"has_thumbnail", e.has_thumbnail}};
 }
 
 template<class T> static T get_or(const json& j, const char* key, T fallback)
@@ -368,6 +412,7 @@ Entry entry_from_json(const json& j)
     e.plate_names   = get_or<std::vector<std::string>>(j, "plate_names", {});
     e.title         = get_or<std::string>(j, "title", "");
     e.designer      = get_or<std::string>(j, "designer", "");
+    e.license       = get_or<std::string>(j, "license", "");
     e.sliced        = get_or<bool>(j, "sliced", false);
     e.has_thumbnail = get_or<bool>(j, "has_thumbnail", false);
     return e;
@@ -540,11 +585,12 @@ Index scan(const std::vector<Folder>& folders_in, const Index& previous, const s
                     e.plate_names   = std::move(info.plate_names);
                     e.title         = std::move(info.title);
                     e.designer      = std::move(info.designer);
+                    e.license       = std::move(info.license);
                     e.sliced        = info.sliced;
                     e.has_thumbnail = !info.thumbnail_png.empty() && write_file(thumb, info.thumbnail_png);
-                } else if (type == "stl" || type == "obj" || type == "amf") {
+                } else if (type == "stl" || type == "obj" || type == "amf" || type == "step") {
                     // No picture in the file: draw one (once; an unchanged file keeps it).
-                    const std::string png = mesh_thumbnail_png(path, type);
+                    const std::string png = mesh_thumbnail_png(path, type, 256, &cancel);
                     e.has_thumbnail       = !png.empty() && write_file(thumb, png);
                 }
             }

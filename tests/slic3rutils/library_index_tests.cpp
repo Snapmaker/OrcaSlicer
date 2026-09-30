@@ -76,6 +76,7 @@ const std::string MODEL_HEAD = R"(<?xml version="1.0" encoding="UTF-8"?>
  <metadata name="Application">BambuStudio-01.10</metadata>
  <metadata name="Title">Snorlax &amp; friends</metadata>
  <metadata name="Designer">Jane &#233;</metadata>
+ <metadata name="License">BY-NC-SA</metadata>
  <resources/>
 </model>)";
 
@@ -115,7 +116,7 @@ const Entry* find(const Index& index, const std::string& name)
 TEST_CASE("library: folder list round trip and cleanup", "[Library]")
 {
     const auto folders = folders_from_json(R"([
-        {"path": "/data/models/ ", "category": " Toys ", "vendor": "CPL3D"},
+        {"path": "/data/models/ ", "category": " Toys ", "vendor": "CPL3D", "license": " Commercial "},
         {"path": "/data/models", "category": "dup"},
         {"path": "/nas/prints", "recursive": false},
         {"path": ""}, {"nopath": 1}, 5, "x"
@@ -124,12 +125,15 @@ TEST_CASE("library: folder list round trip and cleanup", "[Library]")
     CHECK(folders[0].path == "/data/models");
     CHECK(folders[0].category == "Toys");
     CHECK(folders[0].vendor == "CPL3D");
+    CHECK(folders[0].license == "Commercial");
+    CHECK(folders[1].license.empty());
     CHECK(folders[0].recursive);
     CHECK(folders[1].path == "/nas/prints");
     CHECK_FALSE(folders[1].recursive);
     const auto again = folders_from_json(folders_to_json(folders));
     REQUIRE(again.size() == 2);
     CHECK(again[0].vendor == "CPL3D");
+    CHECK(again[0].license == "Commercial");
     CHECK(folders_from_json("not json").empty());
     CHECK(folders_from_json("{}").empty());
 }
@@ -167,7 +171,8 @@ TEST_CASE("library: pieces of a 3MF read from text", "[Library]")
 
     CHECK(model_metadata(MODEL_HEAD, "Title") == "Snorlax & friends");
     CHECK(model_metadata(MODEL_HEAD, "Designer") == "Jane \xC3\xA9");
-    CHECK(model_metadata(MODEL_HEAD, "License").empty());
+    CHECK(model_metadata(MODEL_HEAD, "License") == "BY-NC-SA");
+    CHECK(model_metadata(MODEL_HEAD, "Copyright").empty());
 
     const auto names = plate_names(SETTINGS);
     REQUIRE(names.size() == 3);
@@ -190,6 +195,7 @@ TEST_CASE("library: reading a 3MF without loading it", "[Library]")
         CHECK(info.plates == 3);
         CHECK(info.title == "Snorlax & friends");
         CHECK(info.designer == "Jane \xC3\xA9");
+        CHECK(info.license == "BY-NC-SA");
         CHECK(info.thumbnail_png == PNG_A); // the package thumbnail wins
         CHECK_FALSE(info.sliced);
         REQUIRE(info.plate_names.size() == 3);
@@ -217,6 +223,37 @@ TEST_CASE("library: reading a 3MF without loading it", "[Library]")
         const ThreeMfInfo info = read_3mf(p.string());
         CHECK_FALSE(info.ok);
         CHECK(info.thumbnail_png.empty());
+    }
+}
+
+TEST_CASE("library: a 3MF's plates for the plate strip", "[Library]")
+{
+    TempDir tmp;
+    SECTION("pictures and names by plate")
+    {
+        const fs::path p = tmp.path / "snorlax.3mf";
+        auto entries = project_entries();
+        entries.erase("Metadata/plate_2.png");
+        write_zip(p, entries);
+        const std::vector<PlateImage> plates = read_3mf_plates(p.string());
+        REQUIRE(plates.size() == 3);
+        CHECK(plates[0].index == 1);
+        CHECK(plates[0].name == "Body");
+        CHECK(plates[0].png == PNG_B);
+        CHECK(plates[1].name.empty());
+        CHECK(plates[1].png.empty()); // no picture for plate 2
+        CHECK(plates[2].index == 3);
+        CHECK(plates[2].name == "Ears \"L\"");
+        CHECK(read_3mf_plates(p.string(), 2).size() == 2);
+    }
+    SECTION("no plates, or not a 3MF")
+    {
+        const fs::path p = tmp.path / "prusa.3mf";
+        write_zip(p, {{"3D/3dmodel.model", "<model/>"}, {"Metadata/thumbnail.png", PNG_A}});
+        CHECK(read_3mf_plates(p.string()).empty());
+        const fs::path junk = tmp.path / "junk.3mf";
+        write(junk, "not a zip");
+        CHECK(read_3mf_plates(junk.string()).empty());
     }
 }
 
@@ -264,6 +301,8 @@ TEST_CASE("library: scanning folders", "[Library]")
     CHECK_FALSE(item.contains("path"));
     CHECK(item["rel_dir"] == "toys");
     CHECK(item["plates"] == 3);
+    CHECK(item["license"] == "BY-NC-SA");
+    CHECK(entry_from_json(entry_to_json(*snorlax)).license == "BY-NC-SA");
 
     SECTION("an unchanged file is not read again; tags follow the folder")
     {
@@ -514,6 +553,6 @@ TEST_CASE("library: the scan draws covers for meshes", "[Library]")
     CHECK(fs::is_regular_file(thumbnail_path(cache.string(), entry("cube.obj")->id)));
     CHECK(entry("tri.stl")->has_thumbnail);
     CHECK_FALSE(entry("broken.stl")->has_thumbnail);
-    CHECK_FALSE(entry("part.step")->has_thumbnail); // not drawn yet
+    CHECK_FALSE(entry("part.step")->has_thumbnail); // not a readable STEP file
     CHECK(mesh_thumbnail_png((lib / "cube.obj").string(), "step").empty());
 }

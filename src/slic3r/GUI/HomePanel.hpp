@@ -84,6 +84,7 @@ private:
     void                         library_scan();
     void                         send_library();
     void                         send_library_thumbnails(const std::vector<std::string>& ids);
+    void                         send_library_plates(const std::string& id);
     std::string                  library_path(const std::string& id) const; // "" unless listed and present
     void                         library_open(const std::string& id, bool import);
     void                         library_hide(const std::string& id);

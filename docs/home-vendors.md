@@ -29,6 +29,7 @@ Remove a connector's stored credentials with **Forget credentials**.
 {
   "format": "edgeslicer-vendor-connector", "version": 1,
   "name": "Shown on the card", "vendor": "Vendor tag (same as the Library's)",
+  "license": "Your license for this vendor's models, used when a model gives none",
   "base_url": "https://api.vendor.example/v1",
   "auth": {"type": "none | bearer | header | query | basic", "name": "header or query name"},
   "headers": [{"name": "X-Fixed", "value": "..."}, {"name": "X-Secret", "secret": true}],
@@ -41,7 +42,7 @@ Remove a connector's stored credentials with **Forget credentials**.
   },
   "fields": {"id": "id", "name": "name", "thumbnail": "images.0.url",
              "page_url": "https://vendor.example/models/{slug}", "designer": "creator.name",
-             "tags": "tags", "updated": "updated_at", "description": "summary"},
+             "license": "license.name", "tags": "tags", "updated": "updated_at", "description": "summary"},
   "files": {"path": "files", "fields": {"id": "id", "name": "name", "variant": "variant",
             "size": "bytes", "plates": "plates", "print_time": "seconds",
             "colours": "colours", "colour": "hex"}},
@@ -65,6 +66,9 @@ Remove a connector's stored credentials with **Forget credentials**.
 - **Downloads.** `download.path` is an endpoint whose JSON answer has the file URL at
   `url_field`. Alternatively, `direct_field` names a field of the file (or item) that holds its
   URL. Set `limited` when the vendor counts downloads; the app then asks before each one.
+- **License.** A model's `license` field, when mapped, is shown and filtered on. Otherwise the
+  connector's own `license` is used, such as "Commercial" when your membership lets you sell
+  prints. It is also a column in the CSV export.
 - **Quota.** `quota` names the response headers that report API usage. The connector card shows
   them, and a sync stops when the quota is spent.
 
@@ -72,14 +76,15 @@ Remove a connector's stored credentials with **Forget credentials**.
 
 An example for [CPL3D's API](https://www.cpl3d.com/developers). EdgeSlicer does not include it.
 Save it as a `.json` file and use **Import**, then set the API key (`pk_...`) and the X-App-Key
-on the connector card. CPL3D counts API calls (100 per 30 days for members), so the list is
+on the connector card. Change `license` to match your membership (for example "Commercial"),
+since CPL3D's API does not report it per model. CPL3D counts API calls (100 per 30 days for members), so the list is
 fetched only when you press **Refresh list**, 100 models per request, and later refreshes ask
 only for changes.
 
 ```json
 {
   "format": "edgeslicer-vendor-connector", "version": 1,
-  "name": "CPL3D", "vendor": "CPL3D",
+  "name": "CPL3D", "vendor": "CPL3D", "license": "Personal use only",
   "base_url": "https://www.cpl3d.com/api/v1",
   "auth": {"type": "bearer"},
   "headers": [{"name": "X-App-Key", "secret": true}],

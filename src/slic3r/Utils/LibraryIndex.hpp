@@ -30,6 +30,7 @@ struct Folder
     bool        recursive { true };
     std::string category;
     std::string vendor;
+    std::string license;   // what the files may be used for ("Commercial", "Personal"...); overrides a file's own
 };
 
 // The app_config value (a JSON array) <-> folders. Bad entries are dropped, paths are trimmed and a
@@ -52,10 +53,20 @@ struct ThreeMfInfo
     std::vector<std::string> plate_names;      // by plate, "" where it has none; may be shorter than plates
     std::string              title;
     std::string              designer;
+    std::string              license;          // the model's License metadata ("BY-NC-SA", "Standard Digital File License"...)
     std::string              thumbnail_png;    // the cover, "" when there is none
     bool                     sliced { false }; // it carries G-code (a .gcode.3mf, or Metadata/plate_N.gcode)
 };
 ThreeMfInfo read_3mf(const std::string& path);
+// Each plate's picture (Metadata/plate_N.png, "" where there is none) and name, for the plate strip.
+// At most `max_plates`; empty when the file is not a 3MF or has no plates.
+struct PlateImage
+{
+    int         index { 0 }; // 1-based, as in the file
+    std::string name;
+    std::string png;
+};
+std::vector<PlateImage> read_3mf_plates(const std::string& path, int max_plates = 64);
 // The same pieces from the raw texts, for the tests: which file _rels/.rels names as the package
 // thumbnail ("" = none), and the title / designer in the head of 3D/3dmodel.model.
 std::string rels_thumbnail(const std::string& rels_xml);
@@ -79,6 +90,7 @@ struct Entry
     int         plates { 0 };
     std::vector<std::string> plate_names;
     std::string title, designer;
+    std::string license;    // the file's own (3MF metadata); the page gets the folder's when it has one
     bool        sliced { false };
     bool        has_thumbnail { false };
 };

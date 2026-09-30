@@ -37,6 +37,7 @@ struct Spec
     std::string id;        // [a-z0-9-], made when the connector is created
     std::string name;      // shown to the user
     std::string vendor;    // the Vendor tag (the same one the Library's folders use)
+    std::string license;   // the licence the user has for this vendor's models ("Commercial"...), when an item gives none
     std::string base_url;  // https://... (http only for localhost, for testing)
 
     // Auth: "none", "bearer" (Authorization: Bearer <key>), "header" (<auth_name>: <key>),
@@ -65,7 +66,7 @@ struct Spec
 
     // Item fields, as paths into each item ("a.b.0.c"). page_url may instead be a template on the
     // item's fields: "https://vendor.example/models/{slug}".
-    std::map<std::string, std::string> fields; // id name thumbnail page_url designer tags updated description
+    std::map<std::string, std::string> fields; // id name thumbnail page_url designer license tags updated description
 
     // Files or variants of an item (optional).
     std::string                        subs_path;
@@ -124,6 +125,7 @@ struct SubItem
 struct Item
 {
     std::string              id, name, thumbnail, page_url, designer, description, updated;
+    std::string              license;         // the item's field, else the spec's
     std::vector<std::string> tags;
     std::vector<SubItem>     subs;
     std::string              download;        // as for SubItem

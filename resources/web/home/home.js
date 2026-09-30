@@ -12,6 +12,7 @@
 //                                          of files: the page acts on ids)
 //   library_progress {scanning, files}     a scan is running
 //   library_thumbs {images: {id: dataUri}} Library covers, asked for as cards scroll in
+//   library_plates {id, plates: [{index, name, image}]}  a 3MF's plates, for its detail view
 //   vendors {connectors: [...], items: [...]}  HomeVendors.cpp send_state(): connector specs (never
 //                                          a secret), and items keyed by opaque keys
 //   vendor_thumbs {images: {key: dataUri}} vendor thumbnails (PNG, JPEG, GIF or WebP)
@@ -35,14 +36,16 @@
     lib: null,          // the last 'library' message
     libThumbs: {},
     libAsked: new Set(),
-    libFilter: { category: new Set(), vendor: new Set(), type: new Set() },
+    libFilter: { category: new Set(), vendor: new Set(), license: new Set(), designer: new Set(), type: new Set(), folder: new Set(), added: new Set() },
+    libExpanded: new Set(), // filter groups showing all their values
+    libMoreFilters: false,  // show the groups past the first three
     libShown: [],
     libRendered: 0,
     libSeen: 0,
     ven: null,          // the last 'vendors' message
     venThumbs: {},
     venAsked: new Set(),
-    venFilter: { connector: new Set(), tag: new Set() },
+    venFilter: { connector: new Set(), tag: new Set(), license: new Set() },
     venShown: [],
     venRendered: 0,
   };
@@ -457,12 +460,35 @@
     return leaf(i.root) + (i.rel_dir ? '/' + i.rel_dir : '');
   }
 
+  // When a file was added to the Library, in buckets for the Added filter.
+  const ADDED_BUCKETS = [['week', 7], ['month', 30], ['year', 365]];
+  function addedBucket(i) {
+    const days = (Date.now() / 1000 - (i.added || 0)) / 86400;
+    for (const [key, n] of ADDED_BUCKETS) if (days < n) return key;
+    return 'older';
+  }
+  // The Library's filter groups, in the order they show: `value` gives a file's value in the group.
+  function libGroups() {
+    const none = (v) => v || t('none', 'None');
+    const ADDED = { week: t('added_week', 'Last 7 days'), month: t('added_month', 'Last 30 days'),
+      year: t('added_year', 'Last 12 months'), older: t('added_older', 'Older') };
+    return [
+      { key: 'category', label: t('category', 'Category'), value: (i) => i.category || '', name: none },
+      { key: 'vendor', label: t('vendor', 'Vendor'), value: (i) => i.vendor || '', name: none },
+      { key: 'license', label: t('license', 'License'), value: (i) => i.license || '', name: (v) => v || t('license_not_set', 'Not set') },
+      { key: 'designer', label: t('designer', 'Designer'), value: (i) => i.designer || '', name: (v) => v || t('unknown', 'Unknown') },
+      { key: 'type', label: t('type', 'Type'), value: (i) => i.type, name: (v) => TYPE_LABELS[v] || v },
+      { key: 'folder', label: t('folder', 'Folder'), value: (i) => i.root || '', name: (v) => leaf(v) || v, title: (v) => v },
+      { key: 'added', label: t('added', 'Added'), value: addedBucket, name: (v) => ADDED[v] || v, order: ['week', 'month', 'year', 'older'] },
+    ];
+  }
+  let LIB_GROUPS = null;
+
   function libMatchesExcept(i, skip) {
     const f = state.libFilter;
-    if (skip !== 'category' && f.category.size && !f.category.has(i.category || '')) return false;
-    if (skip !== 'vendor' && f.vendor.size && !f.vendor.has(i.vendor || '')) return false;
-    if (skip !== 'type' && f.type.size && !f.type.has(i.type)) return false;
-    return matches([i.name, i.title, i.designer, i.category, i.vendor, folderLabel(i)].concat(i.plate_names || []), state.search);
+    if (!LIB_GROUPS) LIB_GROUPS = libGroups();
+    for (const g of LIB_GROUPS) if (skip !== g.key && f[g.key].size && !f[g.key].has(g.value(i))) return false;
+    return matches([i.name, i.title, i.designer, i.category, i.vendor, i.license, folderLabel(i)].concat(i.plate_names || []), state.search);
   }
 
   function renderLibraryStatus() {
@@ -497,26 +523,31 @@
     const box = $('lib-filters');
     box.textContent = '';
     const items = state.lib ? state.lib.items : [];
-    const groups = [
-      { key: 'category', label: t('category', 'Category'), value: (i) => i.category || '', name: (v) => v || t('none', 'None') },
-      { key: 'vendor', label: t('vendor', 'Vendor'), value: (i) => i.vendor || '', name: (v) => v || t('none', 'None') },
-      { key: 'type', label: t('type', 'Type'), value: (i) => i.type, name: (v) => TYPE_LABELS[v] || v },
-    ];
-    let any = false;
-    for (const g of groups) {
+    LIB_GROUPS = libGroups();
+    let any = false, shownRows = 0, folded = 0;
+    for (const g of LIB_GROUPS) {
       const all = new Set(items.map(g.value));
       const sel = state.libFilter[g.key];
       for (const v of [...sel]) if (!all.has(v)) sel.delete(v);
       // A group is worth showing when it can tell files apart.
       if (all.size < 2) continue;
+      // Past the first three, a group waits behind "More filters" unless something in it is picked.
+      if (shownRows >= 3 && !state.libMoreFilters && !sel.size) { ++folded; continue; }
+      ++shownRows;
       const counts = new Map();
       for (const i of items) if (libMatchesExcept(i, g.key)) counts.set(g.value(i), (counts.get(g.value(i)) || 0) + 1);
       const row = el('div', 'filter-row');
       row.appendChild(el('span', 'label', g.label));
-      const values = [...all].sort((a, b) => (a === '') - (b === '') || String(g.name(a)).localeCompare(String(g.name(b)), undefined, { sensitivity: 'base' }));
-      for (const v of values) {
+      const values = g.order ? g.order.filter((v) => all.has(v))
+        : [...all].sort((a, b) => (a === '') - (b === '') || String(g.name(a)).localeCompare(String(g.name(b)), undefined, { sensitivity: 'base' }));
+      // A long group shows its first values (and any picked) until "more" is pressed.
+      const MAX_CHIPS = 12;
+      const open = state.libExpanded.has(g.key) || values.length <= MAX_CHIPS + 2;
+      const shown = open ? values : values.filter((v, k) => k < MAX_CHIPS || sel.has(v));
+      for (const v of shown) {
         const c = el('button', 'chip' + (sel.has(v) ? ' active' : ''), g.name(v));
         c.type = 'button';
+        if (g.title) c.title = g.title(v);
         c.setAttribute('aria-pressed', sel.has(v) ? 'true' : 'false');
         c.appendChild(el('span', 'count', counts.get(v) || 0));
         c.addEventListener('click', () => {
@@ -525,17 +556,34 @@
         });
         row.appendChild(c);
       }
+      if (values.length > MAX_CHIPS + 2) {
+        const m = el('button', 'chip clear', open ? t('fewer', 'Fewer') : '+' + (values.length - shown.length) + ' ' + t('more', 'more'));
+        m.type = 'button';
+        m.addEventListener('click', () => {
+          if (open) state.libExpanded.delete(g.key); else state.libExpanded.add(g.key);
+          renderLibraryFilters();
+        });
+        row.appendChild(m);
+      }
       box.appendChild(row);
       any = true;
     }
     const active = Object.values(state.libFilter).some((f) => f.size);
-    if (any && active) {
+    if (any && (active || folded || state.libMoreFilters)) {
       const row = el('div', 'filter-row');
       row.appendChild(el('span', 'label', ''));
-      const c = el('button', 'chip clear', t('clear_filters', 'Clear filters'));
-      c.type = 'button';
-      c.addEventListener('click', () => { for (const f of Object.values(state.libFilter)) f.clear(); renderLibrary(); });
-      row.appendChild(c);
+      if (folded || state.libMoreFilters) {
+        const m = el('button', 'chip clear', folded ? t('more_filters', 'More filters') : t('fewer_filters', 'Fewer filters'));
+        m.type = 'button';
+        m.addEventListener('click', () => { state.libMoreFilters = !!folded; renderLibraryFilters(); });
+        row.appendChild(m);
+      }
+      if (active) {
+        const c = el('button', 'chip clear', t('clear_filters', 'Clear filters'));
+        c.type = 'button';
+        c.addEventListener('click', () => { for (const f of Object.values(state.libFilter)) f.clear(); renderLibrary(); });
+        row.appendChild(c);
+      }
       box.appendChild(row);
     }
   }
@@ -544,16 +592,13 @@
     const badges = [{ text: TYPE_LABELS[i.type] || i.type }];
     if (i.sliced) badges.push({ text: t('sliced', 'Sliced'), cls: 'accent' });
     if (i.plates > 1) badges.push({ text: i.plates + ' ' + t('plates', 'plates') });
-    const is3mf = i.type === '3mf';
-    const menu = [];
-    if (is3mf) menu.push({ label: t('open', 'Open'), run: () => post('library_open', { id: i.id }) });
-    menu.push({ label: t('add_to_plate', 'Add to current project'), run: () => post('library_import', { id: i.id }) });
-    menu.push({ label: t('show_in_folder', 'Show in folder'), run: () => post('library_reveal', { id: i.id }) });
+    const menu = [{ label: t('details', 'Details'), run: () => openLibDetail(i) }];
+    for (const m of libActions(i)) menu.push(m);
     menu.push('-');
     menu.push({ label: t('hide', 'Hide from Library'), run: () => post('library_hide', { id: i.id }) });
     const meta = el('div', 'meta');
     for (const x of [fmtDate(i.mtime), fmtSize(i.size)]) if (x) meta.appendChild(el('span', '', x));
-    const tags = [i.category, i.vendor].filter(Boolean).join(' · ');
+    const tags = [i.category, i.vendor, i.license].filter(Boolean).join(' · ');
     const c = card({
       name: i.title || stem(i.name),
       image: state.libThumbs[i.id] || '',
@@ -624,6 +669,79 @@
     }
   }
 
+  function libActions(i) {
+    const a = [];
+    if (i.type === '3mf') a.push({ label: t('open', 'Open'), run: () => post('library_open', { id: i.id }) });
+    a.push({ label: t('add_to_plate', 'Add to current project'), run: () => post('library_import', { id: i.id }) });
+    a.push({ label: t('show_in_folder', 'Show in folder'), run: () => post('library_reveal', { id: i.id }) });
+    return a;
+  }
+
+  // ---- Library detail, with the plate strip ----
+  let libDetailId = '';
+  let libDetailCover = ''; // the cover, shown again when the picked plate is picked a second time
+  function setLibDetailThumb(uri) {
+    const box = $('lib-detail-thumb');
+    box.textContent = '';
+    if (uri) { const img = el('img'); img.alt = ''; img.src = uri; box.appendChild(img); } else box.appendChild(svg(ICON_CUBE_BIG));
+  }
+  function openLibDetail(i) {
+    closeMenu();
+    libDetailId = i.id;
+    libDetailCover = state.libThumbs[i.id] || '';
+    setLibDetailThumb(libDetailCover);
+    if (i.has_thumbnail && !libDetailCover) askLibThumb(i.id);
+    $('lib-detail-name').textContent = i.title || stem(i.name);
+    $('lib-detail-sub').textContent = [i.designer ? t('by', 'by') + ' ' + i.designer : '', TYPE_LABELS[i.type] || i.type,
+      fmtSize(i.size), fmtDate(i.mtime), i.sliced ? t('sliced', 'Sliced') : ''].filter(Boolean).join(' · ');
+    const where = $('lib-detail-where');
+    where.textContent = [i.name, folderLabel(i), i.category, i.vendor, i.license ? t('license', 'License') + ': ' + i.license : ''].filter(Boolean).join(' · ');
+    where.title = i.root + (i.rel_dir ? '/' + i.rel_dir : '');
+    const actions = $('lib-detail-actions');
+    actions.textContent = '';
+    libActions(i).forEach((m, k) => {
+      const b = el('button', 'btn' + (k === 0 ? ' primary' : ''), m.label);
+      b.type = 'button';
+      b.addEventListener('click', () => { closeLibDetail(); m.run(); });
+      actions.appendChild(b);
+    });
+    const strip = $('lib-detail-plates');
+    strip.textContent = '';
+    $('lib-detail-plates-wrap').hidden = !(i.type === '3mf' && i.plates > 0);
+    if (i.type === '3mf' && i.plates > 0) {
+      strip.appendChild(el('div', 'hint', t('loading', 'Loading...')));
+      post('library_plates', { id: i.id });
+    }
+    $('lib-detail').hidden = false;
+  }
+  function closeLibDetail() { $('lib-detail').hidden = true; libDetailId = ''; }
+  function receiveLibPlates(msg) {
+    if (msg.id !== libDetailId || $('lib-detail').hidden) return;
+    const strip = $('lib-detail-plates');
+    strip.textContent = '';
+    const plates = Array.isArray(msg.plates) ? msg.plates : [];
+    if (!plates.length) { $('lib-detail-plates-wrap').hidden = true; return; }
+    for (const p of plates) {
+      const img = typeof p.image === 'string' && p.image.indexOf('data:image/png;base64,') === 0 ? p.image : '';
+      const b = el('button', 'plate');
+      b.type = 'button';
+      const th = el('div', 'pthumb');
+      if (img) { const im = el('img'); im.alt = ''; im.src = img; th.appendChild(im); } else th.appendChild(svg(ICON_CUBE));
+      b.appendChild(th);
+      const nm = el('div', 'pname');
+      nm.appendChild(el('b', '', t('plate', 'Plate') + ' ' + (Number(p.index) || '')));
+      if (p.name) nm.appendChild(document.createTextNode(' · ' + p.name));
+      b.title = nm.textContent;
+      b.appendChild(nm);
+      b.addEventListener('click', () => {
+        const on = !b.classList.contains('active');
+        for (const x of strip.querySelectorAll('.plate.active')) x.classList.remove('active');
+        b.classList.toggle('active', on);
+        setLibDetailThumb(on && img ? img : libDetailCover);
+      });
+      strip.appendChild(b);
+    }
+  }
 
   // ---- toast ----
   let toastTimer = 0;
@@ -683,8 +801,9 @@
     const f = state.venFilter;
     if (skip !== 'connector' && f.connector.size && !f.connector.has(i.connector)) return false;
     if (skip !== 'tag' && f.tag.size && !(i.tags || []).some((x) => f.tag.has(x))) return false;
+    if (skip !== 'license' && f.license.size && !f.license.has(i.license || '')) return false;
     const c = connectorOf(i.connector);
-    return matches([i.name, i.designer, i.description, c && c.name, c && c.vendor].concat(i.tags || [])
+    return matches([i.name, i.designer, i.description, i.license, c && c.name, c && c.vendor].concat(i.tags || [])
       .concat((i.subs || []).map((s) => s.name + ' ' + s.variant)), state.search);
   }
 
@@ -749,6 +868,7 @@
     const groups = [
       { key: 'connector', label: t('connector', 'Connector'), values: (i) => [i.connector], name: (v) => (connectorOf(v) || { name: v }).name },
       { key: 'tag', label: t('category', 'Category'), values: (i) => i.tags || [], name: (v) => v },
+      { key: 'license', label: t('license', 'License'), values: (i) => [i.license || ''], name: (v) => v || t('license_not_set', 'Not set') },
     ];
     let any = false;
     for (const g of groups) {
@@ -806,7 +926,7 @@
       name: i.name,
       image: state.venThumbs[i.key] || '',
       badges: badges,
-      lines: [i.designer ? t('by', 'by') + ' ' + i.designer : '', [c0 && c0.name].concat((i.tags || []).slice(0, 3)).filter(Boolean).join(' · ')],
+      lines: [i.designer ? t('by', 'by') + ' ' + i.designer : '', [c0 && c0.name].concat((i.tags || []).slice(0, 3)).filter(Boolean).join(' · '), i.license || ''],
       meta: meta,
       onOpen: () => openDetail(i),
       menu: itemMenu(i),
@@ -878,7 +998,7 @@
     if (i.has_thumb && !state.venThumbs[i.key]) askVenThumb(i.key);
     $('ven-detail-name').textContent = i.name;
     $('ven-detail-sub').textContent = [i.designer ? t('by', 'by') + ' ' + i.designer : '', c && c.name, fmtDate(isoSeconds(i.updated))]
-      .concat(i.tags || []).filter(Boolean).join(' · ');
+      .concat(i.tags || []).concat(i.license ? [t('license', 'License') + ': ' + i.license] : []).filter(Boolean).join(' · ');
     $('ven-detail-desc').textContent = i.description || '';
     const actions = $('ven-detail-actions');
     actions.textContent = '';
@@ -936,6 +1056,7 @@
     { group: 'Basics', fields: [
       { path: 'name', label: 'Name' },
       { path: 'vendor', label: 'Vendor tag', list: 'dl-vendor' },
+      { path: 'license', label: 'Your license for its models (when a model gives none)', list: 'dl-license', hint: 'Commercial' },
       { path: 'base_url', label: 'API address', wide: true, hint: 'https://api.vendor.example/v1' },
     ] },
     { group: 'Sign-in', headers: true, fields: [
@@ -963,7 +1084,8 @@
       { path: 'fields.id', label: 'Id' }, { path: 'fields.name', label: 'Name' },
       { path: 'fields.thumbnail', label: 'Thumbnail URL' },
       { path: 'fields.page_url', label: 'Page URL (field, or template like https://site/m/{slug})' },
-      { path: 'fields.designer', label: 'Designer' }, { path: 'fields.tags', label: 'Tags or category' },
+      { path: 'fields.designer', label: 'Designer' }, { path: 'fields.license', label: 'License' },
+      { path: 'fields.tags', label: 'Tags or category' },
       { path: 'fields.updated', label: 'Updated' }, { path: 'fields.description', label: 'Description' },
     ] },
     { group: 'Files of an item (optional)', fields: [
@@ -986,10 +1108,10 @@
     ] },
   ];
   const NEW_SPEC = {
-    name: '', vendor: '', base_url: 'https://', auth: { type: 'bearer', name: '' }, headers: [],
+    name: '', vendor: '', license: '', base_url: 'https://', auth: { type: 'bearer', name: '' }, headers: [],
     list: { path: '/', items: '', query: {}, paging: { type: 'page', param: 'page', start: 1, size_param: 'limit', size: 100, has_more: '', total: '', cursor: '' },
       since: { param: '', field: '' } },
-    fields: { id: 'id', name: 'name', thumbnail: 'thumbnail', page_url: '', designer: '', tags: '', updated: '', description: '' },
+    fields: { id: 'id', name: 'name', thumbnail: 'thumbnail', page_url: '', designer: '', license: '', tags: '', updated: '', description: '' },
     files: { path: '', fields: {} }, download: { path: '', url_field: '', direct_field: '', limited: false },
     quota: { used: '', limit: '', resets: '' },
   };
@@ -1006,6 +1128,7 @@
   function openEditor(c) {
     closeMenu();
     editor.id = c ? c.id : '';
+    fillLicenses();
     editor.spec = JSON.parse(JSON.stringify(c ? c.spec : NEW_SPEC));
     editor.json = false;
     $('ven-editor-error').hidden = true;
@@ -1170,6 +1293,14 @@
     }
   }
 
+  // Licence names to pick from: the common kinds, then any already in use.
+  function fillLicenses() {
+    const used = (state.lib ? state.lib.folders.map((f) => f.license).concat(state.lib.items.map((i) => i.license)) : [])
+      .concat(state.ven ? state.ven.connectors.map((c) => c.spec && c.spec.license) : []);
+    fillDatalist('dl-license', [t('license_commercial', 'Commercial'), t('license_personal', 'Personal use only'),
+      'CC BY', 'CC BY-SA', 'CC BY-NC', 'CC BY-NC-SA', 'CC0'].concat(used));
+  }
+
   function renderFolders() {
     const list = $('folder-list');
     // Re-rendering under a field being typed in would lose the text: wait for its change event.
@@ -1178,6 +1309,7 @@
     const folders = state.lib ? state.lib.folders : [];
     fillDatalist('dl-category', folders.map((f) => f.category));
     fillDatalist('dl-vendor', folders.map((f) => f.vendor).concat(state.ven ? state.ven.connectors.map((c) => c.vendor) : []));
+    fillLicenses();
     if (!folders.length) list.appendChild(el('p', 'hint', t('library_no_folders', 'Add the folders where you keep your models to browse them here.')));
     for (const f of folders) {
       const row = el('div', 'folder');
@@ -1210,6 +1342,7 @@
       };
       row.appendChild(field('category', t('category', 'Category'), 'dl-category'));
       row.appendChild(field('vendor', t('vendor', 'Vendor'), 'dl-vendor'));
+      row.appendChild(field('license', t('license', 'License'), 'dl-license'));
       const end = el('div', 'row-end');
       const chk = el('label', 'check');
       const cb = el('input');
@@ -1263,6 +1396,13 @@
           break;
         case 'library_thumbs':
           applyThumbs(msg.images || {}, state.libThumbs, 'library-grid');
+          if (libDetailId && state.libThumbs[libDetailId] && !libDetailCover) {
+            libDetailCover = state.libThumbs[libDetailId];
+            if (!$('lib-detail-plates').querySelector('.plate.active')) setLibDetailThumb(libDetailCover);
+          }
+          break;
+        case 'library_plates':
+          receiveLibPlates(msg);
           break;
         case 'vendors':
           receiveVendors(msg);
@@ -1314,7 +1454,10 @@
     if (e.key !== 'Escape') return;
     if (!$('ven-editor').hidden) closeEditor();
     else if (!$('ven-detail').hidden) closeDetail();
+    else if (!$('lib-detail').hidden) closeLibDetail();
   });
+  $('lib-detail-close').addEventListener('click', closeLibDetail);
+  $('lib-detail').addEventListener('click', (e) => { if (e.target === $('lib-detail')) closeLibDetail(); });
   $('lib-empty-add').addEventListener('click', () => post('library_add_folder'));
   $('folder-add').addEventListener('click', () => post('library_add_folder'));
   $('folders-done').addEventListener('click', closeFolders);

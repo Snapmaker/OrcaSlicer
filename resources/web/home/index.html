@@ -103,6 +103,24 @@
     </div>
   </div>
 </div>
+<div id="lib-detail" class="overlay" hidden>
+  <div class="dialog detail" role="dialog" aria-modal="true" aria-labelledby="lib-detail-name">
+    <div class="detail-head">
+      <div class="detail-thumb" id="lib-detail-thumb"></div>
+      <div class="detail-info">
+        <h2 id="lib-detail-name"></h2>
+        <div class="sub" id="lib-detail-sub"></div>
+        <div class="sub" id="lib-detail-where"></div>
+        <div class="dialog-actions" id="lib-detail-actions"></div>
+      </div>
+    </div>
+    <div id="lib-detail-plates-wrap" hidden>
+      <h3 id="lib-detail-plates-title" data-i18n="plates_label">Plates</h3>
+      <div id="lib-detail-plates" class="plate-strip"></div>
+    </div>
+    <div class="dialog-actions"><span class="grow"></span><button id="lib-detail-close" class="btn primary" type="button" data-i18n="done">Done</button></div>
+  </div>
+</div>
 <div id="ven-detail" class="overlay" hidden>
   <div class="dialog detail" role="dialog" aria-modal="true" aria-labelledby="ven-detail-name">
     <div class="detail-head">
@@ -137,6 +155,7 @@
 <div id="toast" class="toast" hidden role="status"></div>
 <datalist id="dl-category"></datalist>
 <datalist id="dl-vendor"></datalist>
+<datalist id="dl-license"></datalist>
 
 <script src="home.js"></script>
 </body>

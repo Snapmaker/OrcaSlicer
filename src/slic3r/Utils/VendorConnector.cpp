@@ -3,6 +3,7 @@
 #include "HomeTabLogic.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -280,7 +281,7 @@ std::string fill_template(const std::string& templ, const json& item, const json
 
 // ------------------------------------------------------------------------------ spec ----
 
-static const std::set<std::string> ITEM_FIELDS { "id", "name", "thumbnail", "page_url", "designer", "tags", "updated", "description" };
+static const std::set<std::string> ITEM_FIELDS { "id", "name", "thumbnail", "page_url", "designer", "license", "tags", "updated", "description" };
 static const std::set<std::string> SUB_FIELDS { "id", "name", "variant", "size", "plates", "print_time", "colours", "colour" };
 
 static std::string check_path(const std::string& p, const char* what)
@@ -304,6 +305,7 @@ Spec spec_from_json(const json& j)
     if (s.name.empty())
         throw std::runtime_error("Give the connector a name.");
     s.vendor = text_of(j, "vendor", 80);
+    s.license = text_of(j, "license", 80);
     s.base_url = text_of(j, "base_url", 400);
     while (!s.base_url.empty() && s.base_url.back() == '/')
         s.base_url.pop_back();
@@ -425,6 +427,7 @@ json spec_to_json(const Spec& s)
             {"id", s.id},
             {"name", s.name},
             {"vendor", s.vendor},
+            {"license", s.license},
             {"base_url", s.base_url},
             {"auth", {{"type", s.auth_type}, {"name", s.auth_name}}},
             {"headers", headers},
@@ -624,6 +627,9 @@ std::vector<Item> map_items(const Spec& spec, const json& page)
             it.page_url = clean_url(spec, pu->second.find('{') != std::string::npos ? fill_template(pu->second, raw, json(), true)
                                                                                       : scalar_text(at_path(raw, pu->second)));
         it.designer    = field(spec, raw, "designer", 200);
+        it.license     = field(spec, raw, "license", 80);
+        if (it.license.empty())
+            it.license = spec.license;
         it.description = field(spec, raw, "description", 2000);
         it.updated     = field(spec, raw, "updated", 64);
         auto tg = spec.fields.find("tags");
@@ -691,7 +697,7 @@ json item_to_json(const Item& i)
                         {"print_time_s", s.print_time_s}, {"print_time_text", s.print_time_text}, {"colours", s.colours},
                         {"download", s.download}});
     return {{"id", i.id}, {"name", i.name}, {"thumbnail", i.thumbnail}, {"page_url", i.page_url}, {"designer", i.designer},
-            {"description", i.description}, {"updated", i.updated}, {"tags", i.tags}, {"subs", subs}, {"download", i.download}};
+            {"license", i.license}, {"description", i.description}, {"updated", i.updated}, {"tags", i.tags}, {"subs", subs}, {"download", i.download}};
 }
 
 template<class T> static T get_or(const json& j, const char* key, T fallback)
@@ -713,6 +719,7 @@ Item item_from_json(const json& j)
     i.thumbnail   = get_or<std::string>(j, "thumbnail", "");
     i.page_url    = get_or<std::string>(j, "page_url", "");
     i.designer    = get_or<std::string>(j, "designer", "");
+    i.license     = get_or<std::string>(j, "license", "");
     i.description = get_or<std::string>(j, "description", "");
     i.updated     = get_or<std::string>(j, "updated", "");
     i.tags        = get_or<std::vector<std::string>>(j, "tags", {});
@@ -1025,9 +1032,9 @@ static std::string csv_cell(std::string v)
 
 std::string to_csv(const std::string& connector, const std::string& vendor, const std::vector<Item>& items)
 {
-    static const char* const header[] = {"connector", "vendor",   "item_id",   "name",       "designer", "tags",
-                                         "updated",   "page_url", "thumbnail", "file_id",    "file_name", "variant",
-                                         "size_bytes", "plates",  "print_time", "colours"};
+    static const char* const header[] = {"connector", "vendor",    "item_id",   "name",       "designer", "license",
+                                         "tags",      "updated",   "page_url",  "thumbnail",  "file_id",  "file_name",
+                                         "variant",   "size_bytes", "plates",   "print_time", "colours"};
     std::string out = "\xEF\xBB\xBF"; // a UTF-8 mark, so spreadsheets read names right
     auto row = [&out](const std::vector<std::string>& cells) {
         for (size_t i = 0; i < cells.size(); ++i) {
@@ -1041,10 +1048,11 @@ std::string to_csv(const std::string& connector, const std::string& vendor, cons
         std::string tags;
         for (const std::string& t : i.tags)
             tags += (tags.empty() ? "" : "; ") + t;
-        const std::vector<std::string> head = {connector, vendor, i.id, i.name, i.designer, tags, i.updated, i.page_url, i.thumbnail};
+        const std::vector<std::string> head = {connector, vendor, i.id, i.name, i.designer, i.license, tags, i.updated, i.page_url,
+                                               i.thumbnail};
         if (i.subs.empty()) {
             std::vector<std::string> cells = head;
-            cells.resize(16);
+            cells.resize(std::size(header));
             row(cells);
             continue;
         }

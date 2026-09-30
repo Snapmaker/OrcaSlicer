@@ -1,12 +1,15 @@
 #include "FlowTypeHelper.hpp"
 
+#include "FilamentGroupDialog.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "RemoteAccess.hpp"
 
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 #include <boost/algorithm/string.hpp>
+#include <boost/log/trivial.hpp>
 
 #include <algorithm>
 
@@ -178,6 +181,9 @@ void apply_custom_mapping(const std::vector<FilamentVolumeType> &mapping)
 
 void sync_filament_volume_types_for_slice()
 {
+    // Custom + mixed nozzles: the dialog mapping is the source of truth.
+    if (filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count()))
+        return;
     // Flow type every filament should use when the custom per-filament mapping does
     // not apply: follow the single nozzle type when the nozzles are not mixing types
     // (all standard -> standard, all high flow -> high flow); in standard mode with
@@ -193,6 +199,26 @@ void sync_filament_volume_types_for_slice()
         return; // already uniform at the target type
     const size_t n = wxGetApp().preset_bundle->filament_presets.size();
     apply_custom_mapping(std::vector<FilamentVolumeType>(std::max<size_t>(n, size_t(1)), type));
+}
+
+bool confirm_grouping_before_slice(wxWindow* parent)
+{
+    const bool required    = filament_group_dialog_required(grouping_mode(), distinct_nozzle_flow_type_count());
+    const bool interactive = RemoteAccess::dialog_mode() == RemoteAccess::Mode::Interactive;
+    const auto decision    = filament_group_slice_decision(required, interactive);
+    switch (decision) {
+    case FilamentGroupSliceDecision::Sync: sync_filament_volume_types_for_slice(); return true;
+    case FilamentGroupSliceDecision::SkipAndProceed:
+        // N2: phone / agent / hidden instance. Keep the current mapping and slice.
+        BOOST_LOG_TRIVIAL(warning) << "FilamentGroupDialog skipped (non-interactive slice); keeping current mapping";
+        RemoteAccess::get().note_attention("FilamentGroupDialog", "skipped");
+        return true;
+    case FilamentGroupSliceDecision::Prompt: {
+        FilamentGroupDialog dlg(parent);
+        return dlg.ShowModal() == wxID_OK;
+    }
+    }
+    return true;
 }
 
 }}} // namespace Slic3r::GUI::FlowType

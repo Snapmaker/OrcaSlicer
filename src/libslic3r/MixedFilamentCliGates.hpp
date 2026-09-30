@@ -74,8 +74,8 @@ void append_config_filament_ids(const DynamicPrintConfig &cfg, std::vector<int> 
 void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids);
 
 // True for volumes whose own config can pin a per-feature filament (MODEL_PART and
-// PARAMETER_MODIFIER). Precise Seam / negative / support volumes are excluded here so
-// that work can add a clause in one place.
+// PARAMETER_MODIFIER). Precise Seam helpers, negatives, and support volumes are
+// excluded here so that work can add a clause in one place.
 bool volume_contributes_feature_filaments(const ModelVolume &volume);
 
 // Bound passed to region_config_from_model_volume. Print-options presets have no

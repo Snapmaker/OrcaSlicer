@@ -309,10 +309,7 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 	}
 	// Make absolute to get proper "C:/..." prefix for file:// URL
 	ph = fs::absolute(ph);
-	auto url = ph.string();
-	std::replace(url.begin(), url.end(), '\\', '/');
-	url = "file:///" + url;
-    m_vebview_release_note->LoadURL(from_u8(url));
+    m_vebview_release_note->LoadURL(file_url_from_path(ph));
 
     m_simplebook_release_note->AddPage(m_scrollwindows_release_note, wxEmptyString, false);
     m_simplebook_release_note->AddPage(m_vebview_release_note, wxEmptyString, false);

@@ -900,3 +900,32 @@ TEST_CASE("U1 CLI smoke: non-intersecting modifier with wall_filament=3 does not
     CHECK(fp.depth == 0.);
     REQUIRE_FALSE(print.has_wipe_tower());
 }
+
+TEST_CASE("Precise Seam helper does not count as a plate filament or turn the tower on", "[MixedFilamentCli][PreciseSeam]")
+{
+    DynamicPrintConfig cfg = u1_cli_config();
+    Print              print;
+    Model              model;
+    Slic3r::Test::init_print({Slic3r::Test::TestMesh::cube_20x20x20}, print, model, cfg);
+    ModelVolume *helper = model.objects.front()->add_volume(make_cube(2., 2., 2.));
+    helper->set_type(ModelVolumeType::PRECISE_SEAM_LEFT);
+    helper->config.set("extruder", 3);
+    helper->config.set("wall_filament", 4);
+    print.apply(model, cfg);
+
+    REQUIRE(helper->is_precise_seam());
+    CHECK_FALSE(volume_contributes_feature_filaments(*helper));
+
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*model.objects.front(), cfg, plate_ids);
+    plate_ids = unique_positive(plate_ids);
+    CHECK_FALSE(contains_id(plate_ids, 3));
+    CHECK_FALSE(contains_id(plate_ids, 4));
+
+    std::vector<unsigned int> filament_ids;
+    for (int id : plate_ids)
+        filament_ids.push_back(static_cast<unsigned int>(id - 1));
+    const WipeTowerFootprint fp = estimate_wipe_tower_footprint(cfg, WipeTowerType::Type2, filament_ids, 0.2, 20.);
+    CHECK(fp.depth == 0.);
+    REQUIRE_FALSE(print.has_wipe_tower());
+}

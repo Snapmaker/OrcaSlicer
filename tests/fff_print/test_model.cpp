@@ -1,13 +1,18 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/libslic3r.h"
+#include "libslic3r/MixedFilamentCliGates.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"
+#include "libslic3r/PrintConfig.hpp"
 
 #include <boost/nowide/cstdio.hpp>
 #include <boost/filesystem.hpp>
 
 #include "test_data.hpp"
+
+#include <algorithm>
+#include <vector>
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
@@ -60,4 +65,121 @@ SCENARIO("Model construction", "[Model]") {
 			}
         }
     }
+}
+
+TEST_CASE("Precise Seam volume types round-trip through type_to/from_string", "[Model][PreciseSeam]")
+{
+    const ModelVolumeType types[] = {
+        ModelVolumeType::PRECISE_SEAM_CENTER, ModelVolumeType::PRECISE_SEAM_LEFT,
+        ModelVolumeType::PRECISE_SEAM_RIGHT,  ModelVolumeType::PRECISE_SEAM_ENFORCED,
+        ModelVolumeType::PRECISE_SEAM_BLOCKED, ModelVolumeType::PRECISE_SEAM_NEUTRAL
+    };
+    for (ModelVolumeType t : types) {
+        CAPTURE(int(t));
+        CHECK(ModelVolume::type_from_string(ModelVolume::type_to_string(t)) == t);
+        CHECK(is_precise_seam(t));
+    }
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_CENTER));
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_LEFT));
+    CHECK(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_RIGHT));
+    CHECK_FALSE(is_precise_seam_strong(ModelVolumeType::PRECISE_SEAM_ENFORCED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_ENFORCED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_BLOCKED));
+    CHECK(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_NEUTRAL));
+    CHECK_FALSE(is_precise_seam_weak(ModelVolumeType::PRECISE_SEAM_CENTER));
+    CHECK_FALSE(is_precise_seam(ModelVolumeType::PARAMETER_MODIFIER));
+    CHECK(ModelVolume::type_from_string("unknown_future_seam") == ModelVolumeType::MODEL_PART);
+}
+
+TEST_CASE("Change Type dialog index mapping is bounds-safe for Precise Seam subtypes", "[Model][PreciseSeam]")
+{
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::INVALID) == -1);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::MODEL_PART) == 0);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::NEGATIVE_VOLUME) == 1);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::PARAMETER_MODIFIER) == 2);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::SUPPORT_BLOCKER) == 3);
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::SUPPORT_ENFORCER) == 4);
+
+    const ModelVolumeType ps_types[] = {
+        ModelVolumeType::PRECISE_SEAM_CENTER, ModelVolumeType::PRECISE_SEAM_LEFT,
+        ModelVolumeType::PRECISE_SEAM_RIGHT,  ModelVolumeType::PRECISE_SEAM_ENFORCED,
+        ModelVolumeType::PRECISE_SEAM_BLOCKED, ModelVolumeType::PRECISE_SEAM_NEUTRAL
+    };
+    for (ModelVolumeType t : ps_types) {
+        CAPTURE(int(t));
+        CHECK(model_volume_type_to_choice_index(t) == int(ModelVolumeType::PRECISE_SEAM_CENTER));
+        CHECK(model_volume_type_to_choice_index(t) == 5);
+    }
+
+    CHECK(model_volume_type_from_choice_index(-1) == ModelVolumeType::INVALID);
+    CHECK(model_volume_type_from_choice_index(0) == ModelVolumeType::MODEL_PART);
+    CHECK(model_volume_type_from_choice_index(4) == ModelVolumeType::SUPPORT_ENFORCER);
+    CHECK(model_volume_type_from_choice_index(5) == ModelVolumeType::PRECISE_SEAM_CENTER);
+    CHECK(model_volume_type_from_choice_index(6) == ModelVolumeType::INVALID);
+    CHECK(model_volume_type_from_choice_index(10) == ModelVolumeType::INVALID);
+
+    // SVG/text hide helper entries, leaving only indices 0..2. Mapping 5 must not
+    // be treated as a valid selection into that shortened list by the caller.
+    CHECK(model_volume_type_to_choice_index(ModelVolumeType::PRECISE_SEAM_LEFT) >= 3);
+}
+
+TEST_CASE("sort_volumes keeps strong Precise Seam helpers above weak ones", "[Model][PreciseSeam]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    auto *part = object->add_volume(make_cube(10, 10, 10));
+    part->name = "part";
+    auto *weak = object->add_volume(make_cube(2, 2, 2));
+    weak->set_type(ModelVolumeType::PRECISE_SEAM_BLOCKED);
+    weak->name = "weak";
+    auto *strong = object->add_volume(make_cube(2, 2, 2));
+    strong->set_type(ModelVolumeType::PRECISE_SEAM_CENTER);
+    strong->name = "strong";
+    auto *weak2 = object->add_volume(make_cube(2, 2, 2));
+    weak2->set_type(ModelVolumeType::PRECISE_SEAM_NEUTRAL);
+    weak2->name = "weak2";
+
+    object->sort_volumes(true);
+    REQUIRE(object->volumes.size() == 4);
+    CHECK(object->volumes[0]->is_model_part());
+    CHECK(object->volumes[1]->is_precise_seam_strong());
+    CHECK(object->volumes[1]->name == "strong");
+    CHECK(object->volumes[2]->is_precise_seam_weak());
+    CHECK(object->volumes[2]->name == "weak");
+    CHECK(object->volumes[3]->is_precise_seam_weak());
+    CHECK(object->volumes[3]->name == "weak2");
+}
+
+TEST_CASE("get_extruders excludes Precise Seam helper volumes", "[Model][PreciseSeam]")
+{
+    Model        model;
+    ModelObject *object = model.add_object();
+    auto *part = object->add_volume(make_cube(10, 10, 10));
+    part->config.set_key_value("extruder", new ConfigOptionInt(2));
+    auto *helper = object->add_volume(make_cube(2, 2, 2));
+    helper->set_type(ModelVolumeType::PRECISE_SEAM_LEFT);
+    helper->config.set_key_value("extruder", new ConfigOptionInt(3));
+    helper->config.set_key_value("wall_filament", new ConfigOptionInt(4));
+
+    const std::vector<int> part_ids = part->get_extruders();
+    REQUIRE_FALSE(part_ids.empty());
+    CHECK(std::find(part_ids.begin(), part_ids.end(), 2) != part_ids.end());
+    CHECK(helper->get_extruders().empty());
+    CHECK(helper->is_precise_seam());
+    CHECK_FALSE(helper->is_modifier());
+    CHECK_FALSE(volume_contributes_feature_filaments(*helper));
+    CHECK(volume_contributes_feature_filaments(*part));
+
+    DynamicPrintConfig cfg = DynamicPrintConfig::full_print_config();
+    cfg.set_num_filaments(4);
+    cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    cfg.option<ConfigOptionBool>("enable_support")->value       = false;
+    cfg.option<ConfigOptionInt>("raft_layers")->value           = 0;
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*object, cfg, plate_ids);
+    std::sort(plate_ids.begin(), plate_ids.end());
+    plate_ids.erase(std::unique(plate_ids.begin(), plate_ids.end()), plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 3) == plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 4) == plate_ids.end());
 }

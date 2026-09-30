@@ -5,6 +5,7 @@
 #include <wx/dcclient.h>
 #include <wx/dcgraph.h>
 #include "libslic3r/Utils.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/FlashForge/MultiComMgr.hpp"
@@ -17,7 +18,7 @@ PrinterCameraPanel::PrinterCameraPanel(wxWindow *parent)
     , m_curComId(ComInvalidId)
     , m_popupDlg(nullptr)
 {
-    wxString url = wxString::Format("file://%s/web/orca/missing_connection.html", from_u8(resources_dir()));
+    wxString url = file_url_from_path(boost::filesystem::path(resources_dir()) / "web/orca/missing_connection.html");
     m_webView = WebView::CreateWebView(this, url);
     std::string homePageEnableDebug = wxGetApp().app_config->get("home_page_enable_debug");
     m_webView->EnableAccessToDevTools(homePageEnableDebug == "true" || homePageEnableDebug == "1");

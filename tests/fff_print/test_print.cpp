@@ -397,6 +397,46 @@ TEST_CASE("a single-filament plate still has no wipe tower after one apply", "[P
     REQUIRE_FALSE(print.config().enable_prime_tower.value);
 }
 
+TEST_CASE("Precise Seam helper does not turn the prime tower on", "[Print][PreciseSeam]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(4);
+    config.set_num_filaments(4);
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
+    config.option<ConfigOptionFloats>("nozzle_diameter")->values   = {0.4, 0.4, 0.4, 0.4};
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
+    config.option<ConfigOptionBool>("enable_prime_tower")->value   = true;
+    config.option<ConfigOptionBool>("enable_support")->value       = false;
+    config.option<ConfigOptionBool>("single_extruder_multi_material")->value = false;
+    config.option<ConfigOptionBool>("purge_in_prime_tower")->value           = false;
+    config.option<ConfigOptionFloats>("wipe_tower_x")->values      = {15.};
+    config.option<ConfigOptionFloats>("wipe_tower_y")->values      = {15.};
+    config.option<ConfigOptionFloat>("prime_tower_width")->value   = 35.;
+    config.set_key_value("printer_model", new ConfigOptionString("Snapmaker U1"));
+
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20}, print, model, config);
+    ModelVolume *helper = model.objects.front()->add_volume(make_cube(2., 2., 2.));
+    helper->set_type(ModelVolumeType::PRECISE_SEAM_LEFT);
+    helper->config.set("extruder", 3);
+    helper->config.set("wall_filament", 4);
+    print.apply(model, config);
+
+    REQUIRE(helper->is_precise_seam());
+    CHECK_FALSE(volume_contributes_feature_filaments(*helper));
+
+    std::vector<int> plate_ids;
+    append_object_plate_filament_ids(*model.objects.front(), config, plate_ids);
+    std::sort(plate_ids.begin(), plate_ids.end());
+    plate_ids.erase(std::unique(plate_ids.begin(), plate_ids.end()), plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 3) == plate_ids.end());
+    CHECK(std::find(plate_ids.begin(), plate_ids.end(), 4) == plate_ids.end());
+    REQUIRE(print.extruders().size() == 1);
+    REQUIRE_FALSE(print.has_wipe_tower());
+    REQUIRE_FALSE(print.config().enable_prime_tower.value);
+}
+
 TEST_CASE("BBL two-volume filament slice still has a tower after one apply", "[Print][WipeTower][BBLIdentity]")
 {
     // Volume extruders are visible as soon as objects exist, so a single apply of a 2-volume

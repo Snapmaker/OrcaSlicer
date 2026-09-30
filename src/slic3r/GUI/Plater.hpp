@@ -665,6 +665,10 @@ public:
     /// @brief Sync (close + re-push) cold-plate notifications for the current plate.
     /// @return True if slicing is allowed on current plate after sync.
     bool sync_cold_plate_notification();
+    /// Snap #930: grouping dialog (or volume-type sync) before an explicit slice.
+    /// On success the plate-list dirty flag is cleared so later slice entry
+    /// points do not re-prompt until the next valid-to-invalid transition.
+    bool confirm_filament_grouping_before_slice();
     /// Check and guard filament temp mixing before slicing current plate.
     bool guard_before_slice_plate();
     /// Live (non-slice) warning: yellow notification when the CURRENT plate's

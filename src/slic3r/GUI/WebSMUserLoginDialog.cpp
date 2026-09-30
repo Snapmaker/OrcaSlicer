@@ -5,6 +5,7 @@
 #include "libslic3r/AppConfig.hpp"
 #include "libslic3r/Utils.hpp"
 #include "slic3r/GUI/wxExtensions.hpp"
+#include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "common_func/common_func.hpp"
 
@@ -522,10 +523,10 @@ void SMUserLogin::OnScriptResponseMessage(wxCommandEvent &WXUNUSED(evt))
 
 bool  SMUserLogin::ShowErrorPage()
 {
-    wxString ErrorUrl = from_u8((boost::filesystem::path(resources_dir()) / "web\\login\\error.html").make_preferred().string());
+    wxString ErrorUrl = file_url_from_path((boost::filesystem::path(resources_dir()) / "web/login/error.html").make_preferred());
     wxString strlang   = wxGetApp().current_language_code_safe();
     if (strlang != "")
-        ErrorUrl = wxString::Format("file://%s/web/login/error.html?lang=%s", from_u8(resources_dir()), strlang);
+        ErrorUrl += "?lang=" + strlang;
     load_url(ErrorUrl);
 
     return true;

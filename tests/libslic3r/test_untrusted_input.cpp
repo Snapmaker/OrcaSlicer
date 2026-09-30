@@ -2,16 +2,19 @@
 
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/UntrustedInput.hpp"
 #include "libslic3r/Utils.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 
+#include <array>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -140,6 +143,10 @@ TEST_CASE("our own pages are recognised by origin", "[Untrusted][Bridge]")
 
     CHECK(local_path_from_file_url("file:///C:/Program%20Files/EdgeSlicer/resources/web/model/index.html?lang=en") ==
           "C:/Program Files/EdgeSlicer/resources/web/model/index.html");
+    CHECK(local_path_from_file_url("file:///C:/Users/a%20b/%23x/%25y/index.html?lang=en") ==
+          "C:/Users/a b/#x/%y/index.html");
+    CHECK(local_path_from_file_url("file:///home/a%20b/%23x/%25y/index.html?lang=en") ==
+          "/home/a b/#x/%y/index.html");
     CHECK(local_path_from_file_url("file:///usr/share/edgeslicer/web/x.html") == "/usr/share/edgeslicer/web/x.html");
     CHECK(local_path_from_file_url("file://localhost/C:/x.html") == "C:/x.html");
     CHECK(local_path_from_file_url("file://server/share/x.html").empty());
@@ -719,3 +726,133 @@ TEST_CASE("strip_network=false keeps print-host settings out of the ask list an 
             network_keys.push_back(s.key);
     CHECK(network_keys == std::vector<std::string>{"print_host", "printhost_apikey"});
 }
+
+// ---- OBJ texcoord hardening (Orca #15948, OBJ part; DRC N/A on Edge) ----------------------------
+//
+// Malformed or mixed-format OBJ texture coordinates used to OOB-read in load_obj, drop `vt u v w`
+// lines (shifting every later vt index), and resolve negative vt indices with /3 instead of /2.
+
+namespace {
+
+struct ObjScratch
+{
+    fs::path dir;
+    ObjScratch()
+    {
+        dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_obj_%%%%%%%%");
+        fs::create_directories(dir);
+    }
+    ~ObjScratch()
+    {
+        boost::system::error_code ec;
+        fs::remove_all(dir, ec);
+    }
+    fs::path write(const std::string &name, const std::string &contents) const
+    {
+        const fs::path path = dir / name;
+        boost::nowide::ofstream ofs(path.string());
+        ofs << contents;
+        ofs.close();
+        return path;
+    }
+};
+
+struct LoadedObj
+{
+    bool         ok{false};
+    TriangleMesh mesh;
+    ObjInfo      info;
+    std::string  message;
+};
+
+// A tetrahedron with a material and two texture coordinates, (0.25, 0.5) and (0.75, 1).
+// Only the first face and the vt lines are varied; the other three faces reference vt 1.
+LoadedObj load_textured_tetrahedron(const std::string &first_face, const std::string &vts = "vt 0.25 0.5\nvt 0.75 1\n")
+{
+    ObjScratch     scratch;
+    scratch.write("a.mtl", "newmtl a\nKd 1 0 0\n");
+    std::string body = "mtllib a.mtl\n"
+                       "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n";
+    body += vts;
+    body += "usemtl a\n";
+    body += first_face;
+    body += "\n";
+    body += "f 1/1 2/1 4/1\nf 1/1 4/1 3/1\nf 2/1 3/1 4/1\n";
+    const fs::path obj = scratch.write("mesh.obj", body);
+    LoadedObj      loaded;
+    loaded.ok = load_obj(obj.string().c_str(), &loaded.mesh, loaded.info, loaded.message);
+    return loaded;
+}
+
+void check_uv(const Vec2f &uv, float x, float y)
+{
+    CHECK(uv.x() == Approx(x).margin(1e-6f));
+    CHECK(uv.y() == Approx(y).margin(1e-6f));
+}
+
+} // namespace
+
+TEST_CASE("A face with a vt index beyond the table loads, and the UV falls back to (0,0)", "[obj][untrusted]")
+{
+    const LoadedObj loaded = load_textured_tetrahedron("f 1/1000000000 3/1 2/1");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.facets_count() == 4);
+    REQUIRE(loaded.info.uvs.size() == 4);
+    const std::array<Vec2f, 3> &uv = loaded.info.uvs.front();
+    check_uv(uv[0], 0.f, 0.f);
+    check_uv(uv[1], 0.25f, 0.5f);
+}
+
+TEST_CASE("A face without vt loads among faces that have them", "[obj][untrusted]")
+{
+    const LoadedObj loaded = load_textured_tetrahedron("f 1 2 3");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.facets_count() == 4);
+    // One UV entry per face, so later faces keep their own coordinates.
+    REQUIRE(loaded.info.uvs.size() == 4);
+    for (const Vec2f &uv : loaded.info.uvs.front())
+        check_uv(uv, 0.f, 0.f);
+    check_uv(loaded.info.uvs[1][0], 0.25f, 0.5f);
+}
+
+TEST_CASE("A negative vt index counts back from the last texture coordinate (/2, not /3)", "[obj][untrusted]")
+{
+    // -1 is the most recent vt (0.5, 0.6), -2 the one before it (0.3, 0.4), -3 the first (0.1, 0.2).
+    const LoadedObj loaded = load_textured_tetrahedron("f 1/-1 2/-2 3/-3", "vt 0.1 0.2\nvt 0.3 0.4\nvt 0.5 0.6\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.facets_count() == 4);
+    REQUIRE(loaded.info.uvs.size() == 4);
+    const std::array<Vec2f, 3> &uv = loaded.info.uvs.front();
+    check_uv(uv[0], 0.5f, 0.6f);
+    check_uv(uv[1], 0.3f, 0.4f);
+    check_uv(uv[2], 0.1f, 0.2f);
+}
+
+TEST_CASE("vt u v w is kept, and a later face's vt index still points at the right entry", "[obj][untrusted]")
+{
+    const LoadedObj loaded = load_textured_tetrahedron("f 1/1 3/2 2/2", "vt 0.5 0.25 0.0\nvt 0.75 1 0\n");
+
+    REQUIRE(loaded.ok);
+    CHECK(loaded.mesh.facets_count() == 4);
+    REQUIRE(loaded.info.uvs.size() == 4);
+    const std::array<Vec2f, 3> &uv = loaded.info.uvs.front();
+    check_uv(uv[0], 0.5f, 0.25f);
+    check_uv(uv[1], 0.75f, 1.f);
+}
+
+TEST_CASE("Mixed vt u v and vt u v w lines keep the indices stable", "[obj][untrusted]")
+{
+    // The w on the first vt used to drop that line, so vt 2 resolved to the third coordinate.
+    const LoadedObj loaded = load_textured_tetrahedron("f 1/2 3/3 2/-1", "vt 0.1 0.2 0\nvt 0.25 0.5\nvt 0.75 1\n");
+
+    REQUIRE(loaded.ok);
+    REQUIRE(loaded.info.uvs.size() == 4);
+    const std::array<Vec2f, 3> &uv = loaded.info.uvs.front();
+    check_uv(uv[0], 0.25f, 0.5f);
+    check_uv(uv[1], 0.75f, 1.f);
+    check_uv(uv[2], 0.75f, 1.f);
+}
+

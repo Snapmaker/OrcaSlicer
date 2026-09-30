@@ -295,7 +295,7 @@ size_t plate_filament_bound(const DynamicPrintConfig &cfg_with_filaments, const 
 
 bool volume_contributes_feature_filaments(const ModelVolume &volume)
 {
-    return volume.is_modifier() || volume.is_model_part();
+    return (volume.is_modifier() || volume.is_model_part()) && !volume.is_precise_seam();
 }
 
 void append_feature_filament_overrides(const ConfigBase &cfg, std::vector<int> &ids)

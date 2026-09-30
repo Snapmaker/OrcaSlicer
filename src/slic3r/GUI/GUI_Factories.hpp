@@ -161,10 +161,13 @@ private:
     wxMenu*     append_submenu_add_handy_model(wxMenu* menu, ModelVolumeType type);
     void        append_menu_item_add_text(wxMenu* menu, ModelVolumeType type, bool is_submenu_item = true);
     void        append_menu_item_add_svg(wxMenu *menu, ModelVolumeType type, bool is_submenu_item = true);    
+    void        append_menu_item_add_code(wxMenu *menu, ModelVolumeType type);
+    void        append_menu_item_add_shape(wxMenu *menu, ModelVolumeType type);
     void        append_menu_items_add_volume(wxMenu* menu);
     wxMenuItem* append_menu_item_layers_editing(wxMenu* menu);
     wxMenuItem* append_menu_item_settings(wxMenu* menu);
     wxMenuItem* append_menu_item_change_type(wxMenu* menu);
+    void        append_menu_item_precise_seam_submenu(wxMenu* menu);
     wxMenuItem* append_menu_item_instance_to_object(wxMenu* menu);
     wxMenuItem* append_menu_item_printable(wxMenu* menu);
     void        append_menu_item_rename(wxMenu* menu);

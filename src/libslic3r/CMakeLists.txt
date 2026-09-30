@@ -140,6 +140,12 @@ set(lisbslic3r_sources
     Emboss.cpp
     Emboss.hpp
     EmbossShape.hpp
+    Barcode.cpp
+    Barcode.hpp
+    CodeEmboss.cpp
+    CodeEmboss.hpp
+    SimpleShape.cpp
+    SimpleShape.hpp
     enum_bitmask.hpp
     Execution/Execution.hpp
     Execution/ExecutionSeq.hpp
@@ -283,6 +289,8 @@ set(lisbslic3r_sources
     GCodeReader.hpp
     GCode/RetractWhenCrossingPerimeters.cpp
     GCode/RetractWhenCrossingPerimeters.hpp
+    GCode/PreciseSeam.cpp
+    GCode/PreciseSeam.hpp
     GCode/SeamPlacer.cpp
     GCode/SeamPlacer.hpp
     GCode/SeamAutoPaint.cpp
@@ -598,6 +606,7 @@ slic3r_unity_build(libslic3r SKIP
     utils.cpp                       # needs <windows.h> without a neighbour's lean/extra macros
     Format/bbs_3mf.cpp              # file-local tag/version constants also defined in Format/3mf.cpp
     Emboss.cpp                      # defines STB_TRUETYPE_IMPLEMENTATION before its include
+    CodeEmboss.cpp                  # file-local rectangle()/circle()/to_svg() helpers with common names
     Format/GLTF.cpp                 # defines CGLTF_IMPLEMENTATION before its include
     FilamentGroup.cpp               # namespace-scope using namespace FilamentGroupUtils - FilamentInfo ambiguity
     Format/ZipperArchiveImport.cpp  # read_ini()/CONFIG_FNAME also in Format/SL1.cpp

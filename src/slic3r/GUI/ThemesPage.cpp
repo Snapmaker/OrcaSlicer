@@ -720,7 +720,9 @@ void ThemesPage::fill_font_slot(FontSlot& slot, const ThemePack::Font& current)
 
 void ThemesPage::register_fonts()
 {
-    for (ThemePack::Font ThemePack::Spec::*member : {&ThemePack::Spec::body, &ThemePack::Spec::heading, &ThemePack::Spec::button}) {
+    using FontMember                = ThemePack::Font ThemePack::Spec::*;
+    const FontMember slots_to_load[] = {&ThemePack::Spec::body, &ThemePack::Spec::heading, &ThemePack::Spec::button};
+    for (const FontMember member : slots_to_load) {
         const ThemePack::Font& font = m_spec.*member;
         bool                   ok   = false;
         for (const std::string& rel : font.files) {

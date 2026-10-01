@@ -586,8 +586,10 @@ boost::filesystem::path strip_trailing_separators_path(boost::filesystem::path p
 }
 
 // weakly_canonical follows a symlink at the last component. Extraction *replaces*
-// a destination symlink, so that last hop must stay the spelled path under root.
-// Intermediate symlinks are still followed, so root/out/lib.so (out -> outside) is rejected.
+// a destination file symlink, so that last hop of a *candidate* must stay the spelled
+// path. Intermediate symlinks are still followed, so root/out/lib.so (out -> outside)
+// is rejected. Do not use this on the extraction root: a symlink-to-dir root is a
+// valid dest and must be followed (plain weakly_canonical).
 boost::filesystem::path weakly_canonical_for_confine(const boost::filesystem::path &p)
 {
     const boost::filesystem::path stripped = strip_trailing_separators_path(p);
@@ -607,10 +609,10 @@ bool skip_dot_or_empty(const boost::filesystem::path &comp) { return comp.empty(
 
 bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
 {
-    if (has_embedded_nul(root) || has_embedded_nul(candidate))
-        return false;
     try {
-        const boost::filesystem::path root_c = weakly_canonical_for_confine(root);
+        if (has_embedded_nul(root) || has_embedded_nul(candidate))
+            return false;
+        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(strip_trailing_separators_path(root));
         const boost::filesystem::path cand_c = weakly_canonical_for_confine(candidate);
         if (has_embedded_nul(root_c) || has_embedded_nul(cand_c))
             return false;
@@ -632,23 +634,6 @@ bool is_path_within_root(const boost::filesystem::path &root, const boost::files
     } catch (...) {
         return false;
     }
-}
-
-bool is_symlink_target_within_root(const boost::filesystem::path &root,
-                                   const std::string             &link_rel_path,
-                                   const std::string             &target)
-{
-    if (target.empty() || has_embedded_nul(target) || has_embedded_nul(link_rel_path))
-        return false;
-    if (target.front() == '/' || target.front() == '\\')
-        return false;
-    if (target.size() > 1 && target[1] == ':')
-        return false;
-    const size_t      sep    = link_rel_path.find_last_of("/\\");
-    const std::string joined = (sep == std::string::npos ? std::string() : link_rel_path.substr(0, sep + 1)) + target;
-    if (has_embedded_nul(joined))
-        return false;
-    return is_path_within_root(root, root / joined);
 }
 
 // ---- settings --------------------------------------------------------------------------------

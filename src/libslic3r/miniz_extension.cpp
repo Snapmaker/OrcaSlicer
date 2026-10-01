@@ -1,4 +1,5 @@
 #include <exception>
+#include <vector>
 
 #include "miniz_extension.hpp"
 #include "UntrustedInput.hpp"
@@ -159,8 +160,17 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
     }
 
     // Pass 2: extract. A symlink already sitting at the destination is replaced, not followed.
+    // A mid-extract I/O failure rolls back files written in this call; dest itself is left
+    // (it may have pre-existed or hold other files).
+    std::vector<fs::path> written;
+    auto rollback_written = [&]() {
+        boost::system::error_code ec;
+        for (const fs::path &p : written)
+            fs::remove(p, ec);
+    };
     for (mz_uint i = 0; i < num_entries; ++i) {
         if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
+            rollback_written();
             err = "failed to read archive entry";
             return false;
         }
@@ -176,10 +186,14 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
                 BOOST_LOG_TRIVIAL(warning) << "Unzip: invalid size for file " << stat.m_filename;
                 continue;
             }
-            if (!extract_one_file(archive, stat, full_dest, err))
+            if (!extract_one_file(archive, stat, full_dest, err)) {
+                rollback_written();
                 return false;
+            }
+            written.push_back(full_dest);
             BOOST_LOG_TRIVIAL(info) << "Unzip: successfully extract file " << stat.m_file_index << " to " << full_dest.string();
         } catch (const std::exception &e) {
+            rollback_written();
             err = e.what();
             BOOST_LOG_TRIVIAL(error) << "Unzip: archive read exception: " << err;
             return false;

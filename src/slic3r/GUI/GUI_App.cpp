@@ -2110,22 +2110,21 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
         }
         return boost::filesystem::path(dest_file).filename().string();
     };
-    auto plugin_entry_ok = [&](const mz_zip_archive_file_stat &st, const std::string &dest_file, const boost::filesystem::path &dest_path) {
-        if (zip_entry_is_symlink(st)) {
-            BOOST_LOG_TRIVIAL(error) << "[install_plugin] symlink entry rejected: " << st.m_filename;
-            return false;
-        }
+    auto plugin_entry_ok = [&](const std::string &dest_file, const boost::filesystem::path &dest_path) {
         if (dest_file.empty() || !untrusted::is_safe_archive_relative_path(dest_file) ||
             !untrusted::is_path_within_root(plugin_folder, dest_path)) {
-            BOOST_LOG_TRIVIAL(error) << "[install_plugin] entry " << st.m_filename << " (as " << dest_file << ") resolves outside "
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] entry flattened name " << dest_file << " resolves outside "
                                      << plugin_folder.string();
             return false;
         }
         return true;
     };
 
-    // Pass 1: validate every extractable entry before writing anything. A hostile plugin zip
-    // with one escaping or symlink entry is refused as a whole (D3), matching extract_archive_confined.
+    // Pass 1: validate every extractable entry before writing anything. Traversal / absolute /
+    // escaping names still refuse the whole zip. Symlink entries are skipped (logged), not a
+    // whole-archive reject: names are flattened to the basename anyway, and macOS plugin
+    // packages ship dylib version symlinks. PresetUpdater / extract_archive_confined stays
+    // strict (D3).
     for (mz_uint i = 0; i < num_entries; i++) {
         if (m_networking_cancel_update || cancel) {
             BOOST_LOG_TRIVIAL(info) << boost::format("[install_plugin]: %1%, cancelled by user")%__LINE__;
@@ -2138,18 +2137,15 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
             if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
             return InstallStatusUnzipFailed;
         }
-        // Symlink entries are refused even when uncomp_size is 0 (D3 whole-archive reject).
         if (zip_entry_is_symlink(stat)) {
-            BOOST_LOG_TRIVIAL(error) << "[install_plugin] symlink entry rejected: " << stat.m_filename;
-            close_zip_reader(&archive);
-            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
-            return InstallStatusUnzipFailed;
+            BOOST_LOG_TRIVIAL(info) << "[install_plugin] skipping symlink entry: " << stat.m_filename;
+            continue;
         }
         if (stat.m_uncomp_size == 0)
             continue;
         const std::string dest_file = plugin_entry_basename(stat);
         const auto        dest_path = plugin_folder / dest_file;
-        if (!plugin_entry_ok(stat, dest_file, dest_path)) {
+        if (!plugin_entry_ok(dest_file, dest_path)) {
             close_zip_reader(&archive);
             if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
             return InstallStatusUnzipFailed;
@@ -2162,6 +2158,10 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
             return -1;
         }
         if (mz_zip_reader_file_stat(&archive, i, &stat)) {
+            if (zip_entry_is_symlink(stat)) {
+                BOOST_LOG_TRIVIAL(info) << "[install_plugin] skipping symlink entry: " << stat.m_filename;
+                continue;
+            }
             if (stat.m_uncomp_size > 0) {
                 const std::string dest_file = plugin_entry_basename(stat);
                 auto dest_path = plugin_folder / dest_file;

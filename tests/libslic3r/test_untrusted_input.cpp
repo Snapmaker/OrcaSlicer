@@ -1049,9 +1049,11 @@ TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[
 
 // ---- confined zip extraction (Orca #15957 / D3: reject the whole archive) -----------------------
 //
-// Profile updates and plugin install used to skip a bad entry and keep extracting. A hostile
-// bundle with one traversal, absolute, drive-letter, backslash, or symlink entry is now refused
-// as a whole, and a symlink already sitting at the destination is replaced rather than followed.
+// PresetUpdater / extract_archive_confined used to skip a bad entry and keep extracting. A
+// hostile bundle with one traversal, absolute, drive-letter, backslash, or symlink entry is
+// now refused as a whole (D3). install_plugin still flattens names to the basename and skips
+// symlink entries (macOS dylib version links) instead of refusing the zip. A dest-file symlink
+// is replaced rather than followed; a symlink-to-dir extraction root is followed.
 
 namespace {
 
@@ -1137,38 +1139,16 @@ TEST_CASE("is_path_within_root confines a candidate to the extraction root", "[U
     if (joined_nul.string().find('\0') != std::string::npos || joined_nul.generic_string().find('\0') != std::string::npos)
         CHECK_FALSE(is_path_within_root(root, joined_nul));
 
-    boost::system::error_code ec;
-    fs::remove_all(dir, ec);
-}
-
-TEST_CASE("is_symlink_target_within_root accepts in-bundle targets and rejects climbers", "[Untrusted][ZipSlip]")
-{
-    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_symlink_tgt_%%%%%%%%");
-    fs::create_directories(dir);
-
-    CHECK(is_symlink_target_within_root(dir, "Versions/Current", "A"));
-    CHECK(is_symlink_target_within_root(dir, "libfoo.so", "libfoo.so.1"));
-    CHECK(is_symlink_target_within_root(dir, "a/b/link", "c/d"));
-
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", "/etc/passwd"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", "\\\\outside"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", "C:/outside"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", "C:outside"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", ""));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "link", ".."));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "link", "../outside"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "sub/link", "../../outside"));
-    CHECK_FALSE(is_symlink_target_within_root(dir, "link", std::string("..\0", 3)));
-
 #ifndef _WIN32
     {
-        const fs::path root    = dir / "root";
-        const fs::path outside = dir / "outside";
-        fs::create_directories(root);
-        fs::create_directories(outside);
-        fs::create_symlink(outside, root / "out");
-        CHECK_FALSE(is_symlink_target_within_root(root, "link", "out/lib.so"));
-        CHECK(is_symlink_target_within_root(root, "link", "in/lib.so"));
+        const fs::path real_root = dir / "real_root";
+        const fs::path link_root = dir / "link_root";
+        fs::create_directories(real_root);
+        try {
+            fs::create_symlink(real_root, link_root);
+            CHECK(is_path_within_root(link_root, link_root / "a"));
+            CHECK(is_path_within_root(link_root, real_root / "a"));
+        } catch (const std::exception &) {}
     }
 #endif
 
@@ -1198,6 +1178,65 @@ TEST_CASE("extract_archive_confined writes a well-formed nested archive under th
     boost::system::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+#ifndef _WIN32
+TEST_CASE("extract_archive_confined into a symlink-to-dir root writes into the real target", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_rootlink_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path real_root = dir / "real";
+    const fs::path link_root = dir / "link";
+    const fs::path zip_file  = dir / "bundle.zip";
+    fs::create_directories(real_root);
+    try {
+        fs::create_symlink(real_root, link_root);
+    } catch (const std::exception &) {
+        boost::system::error_code ec;
+        fs::remove_all(dir, ec);
+        return;
+    }
+    write_zip_entries(zip_file, {{"vendor.json", "{\"a\":1}"}, {"vendor/machine/printer.json", "{\"b\":2}"}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, link_root, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(real_root / "vendor.json") == "{\"a\":1}");
+    CHECK(read_text_file(real_root / "vendor" / "machine" / "printer.json") == "{\"b\":2}");
+    CHECK(read_text_file(link_root / "vendor.json") == "{\"a\":1}");
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("extract_archive_confined rejects an intermediate directory symlink that escapes", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_midlink_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path root    = dir / "root";
+    const fs::path outside = dir / "outside";
+    const fs::path zip_file = dir / "bundle.zip";
+    fs::create_directories(root);
+    fs::create_directories(outside);
+    try {
+        fs::create_symlink(outside, root / "vendor");
+    } catch (const std::exception &) {
+        boost::system::error_code ec;
+        fs::remove_all(dir, ec);
+        return;
+    }
+    write_zip_entries(zip_file, {{"vendor/a.json", "escaped"}});
+
+    std::string err;
+    CHECK_FALSE(extract_archive_confined(zip_file, root, err));
+    CHECK_FALSE(err.empty());
+    CHECK_FALSE(fs::exists(outside / "a.json"));
+    CHECK(fs::is_empty(outside));
+    CHECK(fs::is_symlink(fs::symlink_status(root / "vendor")));
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+#endif
 
 TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing", "[Untrusted][ZipSlip]")
 {
@@ -1304,8 +1343,10 @@ TEST_CASE("extract_archive_confined replaces a destination symlink instead of wr
             return;
         }
         std::string err;
-        extract_archive_confined(zip_file, target, err);
+        CHECK(extract_archive_confined(zip_file, target, err));
         CHECK(read_text_file(outside / "vendor.json") == "original");
+        CHECK_FALSE(fs::is_symlink(fs::symlink_status(target / "vendor.json")));
+        CHECK(read_text_file(target / "vendor.json") == "{\"a\":1}");
     }
 
     boost::system::error_code ec;

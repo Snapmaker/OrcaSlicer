@@ -431,6 +431,9 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     if (!extract_archive_confined(source_path, parent_path, err)) {
         BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Unzip: extract " << source_path.string() << " to " << parent_path.string()
                                  << " failed: " << err;
+        // Validation-time rejects write nothing. A pass-2 I/O failure rolls back files
+        // written in that extract (extract_archive_confined). dest itself is not removed:
+        // callers often pass a shared cache or parent that already has other files.
         return false;
     }
     BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extracted " << source_path.string() << " to " << parent_path.string();

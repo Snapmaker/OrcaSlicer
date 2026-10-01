@@ -355,6 +355,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/KBShortcutsDialog.hpp
     GUI/MainFrame.cpp
     GUI/MainFrame.hpp
+    GUI/PrintSelectKeys.hpp
     GUI/LazyPanelHolder.hpp
     GUI/MarkdownTip.cpp
     GUI/MarkdownTip.hpp

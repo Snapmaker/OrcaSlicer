@@ -13,6 +13,7 @@
 
 #include <string>
 #include <map>
+#include <vector>
 
 #include "GUI_Utils.hpp"
 #include "Event.hpp"
@@ -362,6 +363,20 @@ public:
     // Propagate changed configuration from the Tab to the Plater and save changes to the AppConfig
     void        on_config_changed(DynamicPrintConfig* cfg) const ;
     void        set_print_button_to_default(PrintSelectType select_type);
+    // The print/export actions the current printer offers, in the order the dropdown lists them.
+    // The dropdown is built from this, and a remembered action is only restored if it appears here.
+    std::vector<PrintSelectType> available_print_actions() const;
+    // Apply an action picked from the print dropdown to the print button and remember it.
+    void        select_print_action(PrintSelectType select_type);
+    // Remember the user's preferred print/export action across sessions (see "remember_print_action").
+    void        remember_print_select(PrintSelectType select_type);
+    bool        get_remembered_print_select(PrintSelectType &out) const;
+
+private:
+    // Label + m_print_select + Edge's always-recompute enable rule (AND can_send_gcode for SendGcode/ExportGcode).
+    void        apply_print_select_state(PrintSelectType select_type);
+
+public:
 
     bool can_save() const;
     bool can_save_as() const;

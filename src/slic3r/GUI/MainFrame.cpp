@@ -1,4 +1,5 @@
 #include "MainFrame.hpp"
+#include "PrintSelectKeys.hpp"
 
 #include <wx/panel.h>
 #include <wx/notebook.h>
@@ -2001,6 +2002,126 @@ bool MainFrame::can_reslice() const
     return (m_plater != nullptr) && !m_plater->model().objects.empty();
 }
 
+namespace {
+// Static check: PrintSelectKeys integers must stay aligned with PrintSelectType.
+static_assert(static_cast<int>(MainFrame::ePrintAll) == PrintSelectKeys::ePrintAll);
+static_assert(static_cast<int>(MainFrame::ePrintPlate) == PrintSelectKeys::ePrintPlate);
+static_assert(static_cast<int>(MainFrame::eExportSlicedFile) == PrintSelectKeys::eExportSlicedFile);
+static_assert(static_cast<int>(MainFrame::eExportGcode) == PrintSelectKeys::eExportGcode);
+static_assert(static_cast<int>(MainFrame::eSendGcode) == PrintSelectKeys::eSendGcode);
+static_assert(static_cast<int>(MainFrame::eSendToPrinter) == PrintSelectKeys::eSendToPrinter);
+static_assert(static_cast<int>(MainFrame::eSendToPrinterAll) == PrintSelectKeys::eSendToPrinterAll);
+static_assert(static_cast<int>(MainFrame::eUploadGcode) == PrintSelectKeys::eUploadGcode);
+static_assert(static_cast<int>(MainFrame::eExportAllSlicedFile) == PrintSelectKeys::eExportAllSlicedFile);
+static_assert(static_cast<int>(MainFrame::ePrintMultiMachine) == PrintSelectKeys::ePrintMultiMachine);
+
+const char *print_select_type_key(MainFrame::PrintSelectType type)
+{
+    return PrintSelectKeys::key(static_cast<int>(type));
+}
+
+// Single source for the print button and print dropdown labels. Keep Edge's strings
+// (eSendGcode is _L("Print"), not upstream's _L_CONTEXT("Print","Verb")).
+wxString print_select_type_label(MainFrame::PrintSelectType type)
+{
+    switch (type) {
+    case MainFrame::ePrintAll:            return _L("Print all");
+    case MainFrame::ePrintPlate:          return _L("Print plate");
+    case MainFrame::eExportSlicedFile:    return _L("Export plate sliced file");
+    case MainFrame::eExportAllSlicedFile: return _L("Export all sliced file");
+    case MainFrame::eExportGcode:         return _L("Export G-code file");
+    case MainFrame::eSendGcode:           return _L("Print");
+    case MainFrame::eSendToPrinter:       return _L("Send");
+    case MainFrame::eSendToPrinterAll:    return _L("Send all");
+    case MainFrame::ePrintMultiMachine:   return _L("Send to Multi-device");
+    case MainFrame::eUploadGcode:         break; // no dropdown entry
+    }
+    return _L("Print plate");
+}
+} // namespace
+
+std::vector<MainFrame::PrintSelectType> MainFrame::available_print_actions() const
+{
+    std::vector<PrintSelectType> actions;
+    const auto                   preset_bundle = wxGetApp().preset_bundle;
+
+    if (preset_bundle && !preset_bundle->is_bbl_vendor()) {
+        // Third-party: Print (send gcode), both sliced-file exports, Export G-code.
+        // A plate-sliced file ("<name>.gcode.3mf") is not a Bambu-only artefact: the Flashforge
+        // Creator 5 and other third-party hosts consume it, and File > Export already offers it
+        // via can_export_gcode() (Ctrl+G). Upstream gates the sliced-file item on use_3mf; Edge
+        // offers both exports to every vendor.
+        actions.push_back(eSendGcode);
+        actions.push_back(eExportSlicedFile);
+        actions.push_back(eExportAllSlicedFile);
+        actions.push_back(eExportGcode);
+        return actions;
+    }
+
+    // BBL vendor (LAN or cloud): Print plate, optional Multi-device, both sliced-file exports,
+    // Export G-code. No Print all / Send / Send all on Edge. The native print flow is ePrintPlate
+    // / EVT_GLTOOLBAR_PRINT_PLATE (SelectMachineDialog). eSendGcode is the third-party print-host
+    // flow and additionally gates on can_send_gcode(); keep the label and the enum in sync with
+    // set_print_button_to_default(ePrintPlate) and the Ctrl+Shift+G shortcut.
+    actions.push_back(ePrintPlate);
+    if (enable_multi_machine)
+        actions.push_back(ePrintMultiMachine);
+    actions.push_back(eExportSlicedFile);
+    actions.push_back(eExportAllSlicedFile);
+    actions.push_back(eExportGcode);
+    return actions;
+}
+
+void MainFrame::apply_print_select_state(PrintSelectType select_type)
+{
+    // Every caller must: (1) set the label, (2) set m_print_select to the SAME enum the matching
+    // dropdown item uses, and (3) unconditionally recompute m_print_enable from the *new* selection.
+    //
+    // Recomputing only "if (m_print_enable)" meant that once the button had been left disabled
+    // a later call here could never re-enable it. Always recompute so the enabled state matches
+    // whatever mode is being switched to. AND can_send_gcode() for SendGcode/ExportGcode, matching
+    // Edge's previous set_print_button_to_default rule (get_enable_print_status already ANDs it
+    // for eSendGcode; eExportGcode still needs the extra gate here).
+    m_print_btn->SetLabel(print_select_type_label(select_type));
+    m_print_select = select_type;
+    m_print_enable = get_enable_print_status();
+    if (select_type == eSendGcode || select_type == eExportGcode)
+        m_print_enable = m_print_enable && can_send_gcode();
+    m_print_btn->Enable(m_print_enable);
+    this->Layout();
+}
+
+void MainFrame::select_print_action(PrintSelectType select_type)
+{
+    apply_print_select_state(select_type);
+    remember_print_select(select_type);
+}
+
+void MainFrame::remember_print_select(PrintSelectType select_type)
+{
+    if (!wxGetApp().app_config->get_bool("remember_print_action"))
+        return;
+    // AppConfig is marked dirty here and flushed by the regular autosave.
+    wxGetApp().app_config->set("last_print_action", print_select_type_key(select_type));
+}
+
+bool MainFrame::get_remembered_print_select(PrintSelectType &out) const
+{
+    if (!wxGetApp().app_config->get_bool("remember_print_action"))
+        return false;
+    const auto        offered = available_print_actions();
+    std::vector<int>  offered_ints;
+    offered_ints.reserve(offered.size());
+    for (PrintSelectType type : offered)
+        offered_ints.push_back(static_cast<int>(type));
+    const int resolved = PrintSelectKeys::resolve_or_default(wxGetApp().app_config->get("last_print_action"),
+                                                            offered_ints.data(), offered_ints.size(), -1);
+    if (resolved < 0)
+        return false;
+    out = static_cast<PrintSelectType>(resolved);
+    return true;
+}
+
 wxBoxSizer* MainFrame::create_side_tools()
 {
     enable_multi_machine = wxGetApp().is_enable_multi_machine();
@@ -2015,6 +2136,14 @@ wxBoxSizer* MainFrame::create_side_tools()
     m_slice_option_btn = new SideButton(this, "", "sidebutton_dropdown", 0, 14);
     m_print_btn = new SideButton(this, _L("Print plate"), "");
     m_print_option_btn = new SideButton(this, "", "sidebutton_dropdown", 0, 14);
+
+    // Restore the last used print/export action if the user opted to remember it.
+    // preset_bundle may not be final here; Plater's printer-switch calls re-validate.
+    PrintSelectType remembered_print_select;
+    if (get_remembered_print_select(remembered_print_select)) {
+        m_print_select = remembered_print_select;
+        m_print_btn->SetLabel(print_select_type_label(remembered_print_select));
+    }
 
     update_side_button_style();
     // m_publish_btn->Hide();
@@ -2152,165 +2281,15 @@ wxBoxSizer* MainFrame::create_side_tools()
     m_print_option_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& event)
         {
         SidePopup* p = new SidePopup(this);
-
-        if (wxGetApp().preset_bundle && !wxGetApp().preset_bundle->is_bbl_vendor())
-        //if (0)
-        {
-            // ThirdParty Buttons
-            SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
-            export_gcode_btn->SetCornerRadius(0);
-            export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export G-code file"));
-                m_print_select = eExportGcode;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
+        for (PrintSelectType type : available_print_actions()) {
+            SideButton* btn = new SideButton(p, print_select_type_label(type), "");
+            btn->SetCornerRadius(0);
+            btn->Bind(wxEVT_BUTTON, [this, p, type](wxCommandEvent&) {
+                select_print_action(type);
                 p->Dismiss();
             });
-
-            // upload and print
-            SideButton* send_gcode_btn = new SideButton(p, _L("Print"), "");
-            send_gcode_btn->SetCornerRadius(0);
-            send_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Print"));
-                m_print_select = eSendGcode;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            // A plate-sliced file ("<name>.gcode.3mf") is not a Bambu-only artefact: it is what
-            // the Flashforge Creator 5 and other third-party hosts consume, and File > Export
-            // already offers it to every vendor via can_export_gcode() (Ctrl+G). Only this
-            // dropdown withheld it, so a C5 owner had no way to reach it from the Print button.
-            // Both selections are vendor-neutral downstream: get_enable_print_status() gates
-            // them on is_slice_result_ready_for_export() alone and the events land on
-            // Plater::export_gcode_3mf(), which names the file ".gcode.3mf".
-            SideButton* export_sliced_file_btn = new SideButton(p, _L("Export plate sliced file"), "");
-            export_sliced_file_btn->SetCornerRadius(0);
-            export_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export plate sliced file"));
-                m_print_select = eExportSlicedFile;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            SideButton* export_all_sliced_file_btn = new SideButton(p, _L("Export all sliced file"), "");
-            export_all_sliced_file_btn->SetCornerRadius(0);
-            export_all_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export all sliced file"));
-                m_print_select = eExportAllSlicedFile;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            p->append_button(send_gcode_btn);
-            p->append_button(export_sliced_file_btn);
-            p->append_button(export_all_sliced_file_btn);
-            p->append_button(export_gcode_btn);
-        } else {
-            // BBL vendor (LAN or cloud): the native print flow is ePrintPlate /
-            // EVT_GLTOOLBAR_PRINT_PLATE, which on_action_print_plate() wires to
-            // SelectMachineDialog. eSendGcode/send_gcode_legacy() is the third-party
-            // print-host flow (bound above for !is_bbl_vendor()) and additionally gates
-            // on can_send_gcode(), i.e. PrintHostDevices::can_send_for() / a non-empty
-            // print_host - neither of which a native Bambu printer normally populates.
-            // This item used to set m_print_select = eSendGcode while showing the same
-            // "Print" label as the default ePrintPlate state, so re-selecting "Print"
-            // after e.g. "Export plate sliced file" would wrongly gate the button on
-            // can_send_gcode() and leave it greyed out even though the plate was
-            // print-ready. Keep the label and the enum in sync with
-            // set_print_button_to_default(ePrintPlate) and the Ctrl+Shift+G shortcut
-            // ("Print plate" in KBShortcutsDialog).
-            SideButton* print_plate_btn = new SideButton(p, _L("Print plate"), "");
-            print_plate_btn->SetCornerRadius(0);
-
-            SideButton* export_sliced_file_btn = new SideButton(p, _L("Export plate sliced file"), "");
-            export_sliced_file_btn->SetCornerRadius(0);
-
-            SideButton* export_all_sliced_file_btn = new SideButton(p, _L("Export all sliced file"), "");
-            export_all_sliced_file_btn->SetCornerRadius(0);
-
-            print_plate_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Print plate"));
-                m_print_select = ePrintPlate;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            export_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export plate sliced file"));
-                m_print_select = eExportSlicedFile;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            export_all_sliced_file_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export all sliced file"));
-                m_print_select = eExportAllSlicedFile;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-
-            bool support_send      = true;
-            bool support_print_all = true;
-
-            const auto preset_bundle = wxGetApp().preset_bundle;
-            if (preset_bundle) {
-                if (preset_bundle->use_bbl_network()) {
-                    // BBL network support everything
-                } else {
-                    support_send = false; // All 3rd print hosts do not have the send options
-
-                    auto       cfg       = preset_bundle->printers.get_edited_preset().config;
-                    const auto host_type = cfg.option<ConfigOptionEnum<PrintHostType>>("host_type")->value;
-
-                    // Only simply print support uploading all plates
-                    support_print_all = host_type == PrintHostType::htSimplyPrint;
-                }
-            }
-
-            p->append_button(print_plate_btn);
-
-            if (enable_multi_machine) {
-                SideButton* print_multi_machine_btn = new SideButton(p, _L("Send to Multi-device"), "");
-                print_multi_machine_btn->SetCornerRadius(0);
-                print_multi_machine_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Send to Multi-device"));
-                    m_print_select = ePrintMultiMachine;
-                    m_print_enable = get_enable_print_status();
-                    m_print_btn->Enable(m_print_enable);
-                    this->Layout();
-                    p->Dismiss();
-                });
-                p->append_button(print_multi_machine_btn);
-            }
-            p->append_button(export_sliced_file_btn);
-            p->append_button(export_all_sliced_file_btn);
-            SideButton* export_gcode_btn = new SideButton(p, _L("Export G-code file"), "");
-            export_gcode_btn->SetCornerRadius(0);
-            export_gcode_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                m_print_btn->SetLabel(_L("Export G-code file"));
-                m_print_select = eExportGcode;
-                m_print_enable = get_enable_print_status();
-                m_print_btn->Enable(m_print_enable);
-                this->Layout();
-                p->Dismiss();
-            });
-            p->append_button(export_gcode_btn);
+            p->append_button(btn);
         }
-
         p->Popup(m_print_btn);
          }
     );
@@ -4254,38 +4233,26 @@ void MainFrame::on_config_changed(DynamicPrintConfig* config) const
 
 void MainFrame::set_print_button_to_default(PrintSelectType select_type)
 {
-    // Every branch here must: (1) set the label callers see, (2) set m_print_select to
-    // the SAME enum the matching dropdown item in create_side_tools() uses for that
-    // label, and (3) unconditionally recompute m_print_enable from the *new* selection.
-    //
-    // Recomputing only "if (m_print_enable)" (the old code) meant that once the button
-    // had been left disabled - e.g. while m_print_select was some other mode that failed
-    // its own gate - a later call here could never re-enable it, even though the newly
-    // selected mode's own get_enable_print_status() would say it should be enabled. That
-    // left the button stuck grey until something else happened to flip m_print_enable
-    // true first. Always recompute so the button's enabled state matches whatever mode
-    // is being switched to, independent of whatever it was before.
-    wxString label;
+    // Keep the user's remembered print/export action instead of resetting it to the computed
+    // default. get_remembered_print_select() already rejects anything this printer does not offer.
+    PrintSelectType remembered;
+    if (get_remembered_print_select(remembered))
+        select_type = remembered;
+
     switch (select_type) {
-    case PrintSelectType::ePrintPlate:       label = _L("Print plate"); break;
-    case PrintSelectType::eSendGcode:        label = _L("Print"); break;
-    case PrintSelectType::eExportGcode:      label = _L("Export G-code file"); break;
-    case PrintSelectType::eExportSlicedFile: label = _L("Export plate sliced file"); break;
-    case PrintSelectType::eExportAllSlicedFile: label = _L("Export all sliced file"); break;
+    case ePrintPlate:
+    case eSendGcode:
+    case eExportGcode:
+    case eExportSlicedFile:
+    case eExportAllSlicedFile:
+    case ePrintMultiMachine:
+        apply_print_select_state(select_type);
+        break;
     default:
         // unsupported from this entry point (ePrintAll / eSendToPrinter / eSendToPrinterAll /
-        // eUploadGcode / ePrintMultiMachine are only reachable via the dropdown items
-        // themselves, which set their own label/select/enable directly).
+        // eUploadGcode are never offered on Edge).
         return;
     }
-
-    m_print_btn->SetLabel(label);
-    m_print_select = select_type;
-    m_print_enable = get_enable_print_status();
-    if (select_type == PrintSelectType::eSendGcode || select_type == PrintSelectType::eExportGcode)
-        m_print_enable = m_print_enable && can_send_gcode();
-    m_print_btn->Enable(m_print_enable);
-    this->Layout();
 }
 
 void MainFrame::add_to_recent_projects(const wxString& filename)

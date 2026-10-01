@@ -3825,6 +3825,7 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
 
     if (preset_bundle.use_bbl_network()) {
         ams_btn->Show();
+        // Honors remember_print_action when the current printer still offers that action.
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
     } else {
         // AMS sync is not tied to the Bambu cloud: a machine reached over LAN reports
@@ -3914,10 +3915,12 @@ void Sidebar::update_all_preset_comboboxes(bool reload_printer_view)
                 p_mainframe->m_printer_view->set_devices(ph_model_key, ph_devices, ph_pick);
             is_sm_page = false;
 
+            // Honors remember_print_action when the current printer still offers that action.
             p_mainframe->set_print_button_to_default(print_btn_type);
         } else {
             print_btn_type = preset_bundle.is_bbl_vendor() ? MainFrame::PrintSelectType::ePrintPlate :
                                                              MainFrame::PrintSelectType::eSendGcode;
+            // Honors remember_print_action when the current printer still offers that action.
             p_mainframe->set_print_button_to_default(print_btn_type);
 
             // The device picker belongs to the print-host row only: coming back from an Elegoo to a

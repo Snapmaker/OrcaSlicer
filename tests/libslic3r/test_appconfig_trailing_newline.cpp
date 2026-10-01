@@ -170,6 +170,16 @@ TEST_CASE("Print-action preference keys round-trip; unknown keys fall back to th
         }
     }
 
+    SECTION("only the print-host action needs a print host; export actions never do")
+    {
+        CHECK(requires_print_host(eSendGcode));
+        CHECK_FALSE(requires_print_host(eExportGcode));
+        CHECK_FALSE(requires_print_host(eExportSlicedFile));
+        CHECK_FALSE(requires_print_host(eExportAllSlicedFile));
+        CHECK_FALSE(requires_print_host(ePrintPlate));
+        CHECK_FALSE(requires_print_host(ePrintMultiMachine));
+    }
+
     SECTION("eUploadGcode has no dropdown entry and no persisted key")
     {
         CHECK(std::string(key(eUploadGcode)).empty());

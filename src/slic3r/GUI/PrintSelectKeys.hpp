@@ -22,6 +22,14 @@ constexpr int eUploadGcode         = 7;
 constexpr int eExportAllSlicedFile = 8;
 constexpr int ePrintMultiMachine   = 9;
 
+// Only the print-host flow depends on a configured print host. Exporting G-code (or a sliced
+// file) writes a file and never needs one, so a restored "Export G-code file" must not be greyed
+// out on a printer without a host. MainFrame::set_print_button_to_default gates on this.
+inline bool requires_print_host(int type)
+{
+    return type == eSendGcode;
+}
+
 // Empty string: no dropdown entry exists (eUploadGcode) or the type is unknown.
 inline const char *key(int type)
 {

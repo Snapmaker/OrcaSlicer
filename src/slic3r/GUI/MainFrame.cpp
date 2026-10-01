@@ -2077,9 +2077,9 @@ void MainFrame::apply_print_select_state(PrintSelectType select_type)
     // Dropdown path (and the shared setup for set_print_button_to_default): (1) set the label,
     // (2) set m_print_select to the SAME enum the matching dropdown item uses, and (3)
     // unconditionally recompute m_print_enable from get_enable_print_status() only — the same
-    // enable rule a dropdown pick used on main. The extra can_send_gcode() gate for eExportGcode
-    // lives only in set_print_button_to_default, so picking "Export G-code file" does not grey
-    // the button when no print host is configured.
+    // enable rule a dropdown pick used on main. The extra can_send_gcode() gate for eSendGcode
+    // lives only in set_print_button_to_default; export actions never depend on a print host, so
+    // "Export G-code file" is not greyed when no print host is configured.
     m_print_btn->SetLabel(print_select_type_label(select_type));
     m_print_select = select_type;
     m_print_enable = get_enable_print_status();
@@ -4247,9 +4247,11 @@ void MainFrame::set_print_button_to_default(PrintSelectType select_type)
     case eExportAllSlicedFile:
     case ePrintMultiMachine:
         apply_print_select_state(select_type);
-        // Same extra gate as main: only this entry point ANDs can_send_gcode() for
-        // eSendGcode / eExportGcode. The dropdown path (select_print_action) does not.
-        if (select_type == eSendGcode || select_type == eExportGcode) {
+        // Only the print-host flow (eSendGcode) needs a host. Export actions, eExportGcode
+        // included, never depend on one: with "remember last print action" on, a restored
+        // "Export G-code file" must stay enabled on a printer without a print host. The dropdown
+        // path (select_print_action) does not AND can_send_gcode() at all.
+        if (PrintSelectKeys::requires_print_host(static_cast<int>(select_type))) {
             m_print_enable = m_print_enable && can_send_gcode();
             m_print_btn->Enable(m_print_enable);
         }

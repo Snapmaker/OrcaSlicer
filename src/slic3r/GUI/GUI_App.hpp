@@ -631,6 +631,8 @@ private:
     void            check_web_version();
     void            check_preset_version();
     void            check_new_version_sf(bool show_tips = false, bool by_user = false);
+    // Gray release: POST /config/get (snapmaker-config) first, falls back to check_new_version_sf on failure
+    void            request_version_from_config(bool show_tips = false, bool by_user = false);
     void            process_network_msg(std::string dev_id, std::string msg);
     void            enter_force_upgrade();
     void            set_skip_version(bool skip = true);
@@ -1008,6 +1010,8 @@ DECLARE_APP(GUI_App)
 wxDECLARE_EVENT(EVT_CONNECT_LAN_MODE_PRINT, wxCommandEvent);
 
 bool is_support_filament(int extruder_id);
+bool has_filaments(const std::vector<std::string>& filament_types);
+bool check_pla_petg_support_pair(int extruder_id);
 } // namespace GUI
 } // Slic3r
 

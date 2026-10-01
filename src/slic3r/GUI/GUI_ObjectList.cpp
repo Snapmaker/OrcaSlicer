@@ -38,6 +38,9 @@
 #include "wx/uiaction.h"
 #include <wx/renderer.h>
 #endif /* __WXMSW__ */
+#ifdef __WXGTK__
+#include <gtk/gtk.h>
+#endif /* __WXGTK__ */
 #include "Gizmos/GLGizmoScale.hpp"
 
 namespace Slic3r
@@ -384,6 +387,47 @@ void ObjectList::update_min_height()
 }
 
 
+#ifdef __WXGTK__
+// Fix for the "Fit in all view" (Z) shortcut doing nothing while the object
+// list has keyboard focus on Linux/wxGTK.
+//
+// Root cause: wxGTK's wxDataViewCtrl never assigns m_wxwindow to its internal
+// GtkTreeView, so the wx key handler that dispatches wxEVT_CHAR_HOOK (the only
+// entry point of the Z shortcut, bound in MainFrame) is connected to the outer
+// GtkScrolledWindow only. GTK delivers key events to the focused GtkTreeView,
+// whose default handling consumes plain printable keys (type-ahead search)
+// before they could bubble up to the scrolled window, so MainFrame never sees
+// the key press.
+//
+// Workaround: forward unmodified z/Z presses from the tree view as a
+// wxEVT_CHAR_HOOK to the main frame, reusing its full guard chain
+// (ShouldSkipFitCameraShortcut / can_change_view). Inline renaming is
+// unaffected: while a cell editor is open, keys are consumed by the embedded
+// GtkEntry and never reach this handler. The long-term fix belongs in
+// Orca-deps-wxWidgets (connect the wx key handlers to the tree view as well).
+static gboolean objlist_treeview_key_press(GtkWidget* /*widget*/, GdkEventKey* event, ObjectList* /*self*/)
+{
+    // Lock modifiers (MOD2 = NumLock, MOD3 = ScrollLock on X11) must stay OUT of
+    // the mask: they must not suppress the shortcut, matching wx's own
+    // HasAnyModifiers(), which ignores them. MOD5 is AltGr on many layouts —
+    // wxGTK maps it to Ctrl+Alt elsewhere, so it must not pass as "plain".
+    static const guint modifier_mask = GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_MOD5_MASK | GDK_META_MASK | GDK_SUPER_MASK;
+    if (event->type == GDK_KEY_PRESS &&
+        (event->keyval == GDK_KEY_z || event->keyval == GDK_KEY_Z) &&
+        (event->state & modifier_mask) == 0 &&
+        wxGetApp().mainframe != nullptr)
+    {
+        // Same forwarding pattern as the "get_web_shortcut" handler in GUI_App.
+        wxKeyEvent key_event(wxEVT_CHAR_HOOK);
+        key_event.m_keyCode = 'Z';
+        key_event.SetEventObject(wxGetApp().mainframe);
+        wxPostEvent(wxGetApp().mainframe, key_event);
+        return TRUE; // consume the key, also suppressing the tree view type-ahead popup
+    }
+    return FALSE;     // let the tree view keep its normal key behavior
+}
+#endif // __WXGTK__
+
 void ObjectList::create_objects_ctrl()
 {
     // BBS
@@ -471,6 +515,25 @@ void ObjectList::create_objects_ctrl()
         for (int cn = colName; cn < colCount; cn++)
             GetColumn(cn)->SetWidth(m_columns_width[cn] * em);
 #endif
+
+#ifdef __WXGTK__
+    // The Z-shortcut fix above: wx connects its key handlers to the outer
+    // GtkScrolledWindow (GetHandle()), while focus and key events actually go
+    // to the internal GtkTreeView child. Hook our forwarder onto that view.
+    {
+        GtkWidget* container = (GtkWidget*) GetHandle();
+        GtkWidget* treeview = nullptr;
+        if (container != nullptr) {
+            if (GTK_IS_TREE_VIEW(container))
+                treeview = container;                       // GetHandle() already points at the view
+            else if (GTK_IS_BIN(container))
+                treeview = gtk_bin_get_child(GTK_BIN(container));
+        }
+        if (treeview != nullptr && GTK_IS_TREE_VIEW(treeview))
+            g_signal_connect(treeview, "key_press_event",
+                             G_CALLBACK(objlist_treeview_key_press), this);
+    }
+#endif // __WXGTK__
 }
 
 void ObjectList::get_selected_item_indexes(int& obj_idx, int& vol_idx, const wxDataViewItem& input_item/* = wxDataViewItem(nullptr)*/)
@@ -968,7 +1031,6 @@ void ObjectList::update_filament_values_for_items_when_delete_filament(const siz
     }
 }
 
-
 void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t filament_id,
                                                                           size_t filaments_count,
                                                                           int    replace_filament_id)
@@ -988,6 +1050,30 @@ void ObjectList::update_objects_list_filament_column_when_delete_filament(size_t
     GetColumn(colEditing)->SetWidth(25);
 
     m_prevent_update_filament_in_config = false;
+}
+
+void ObjectList::refresh_layer_range_filament_items()
+{
+    if (m_objects == nullptr || m_objects_model == nullptr)
+        return;
+
+    for (size_t obj_idx = 0; obj_idx < m_objects->size(); ++obj_idx) {
+        const ModelObject* object = (*m_objects)[obj_idx];
+        for (const auto& range : object->layer_config_ranges) {
+            const ModelConfig& config = range.second;
+            if (!config.has("extruder"))
+                continue;
+
+            wxDataViewItem layer_item =
+                m_objects_model->GetItemByLayerRange(int(obj_idx), range.first);
+            if (!layer_item)
+                continue;
+
+            m_objects_model->SetExtruder(
+                std::to_string(config.extruder()),
+                layer_item);
+        }
+    }
 }
 
 void ObjectList::update_objects_list_filament_column(size_t filaments_count)
@@ -2934,6 +3020,13 @@ void ObjectList::merge(bool to_multipart_object)
                 const Transform3d& volume_matrix = new_volume->get_matrix();
                 Transform3d new_matrix = transformation_matrix * volume_matrix;
                 new_volume->set_transformation(new_matrix);
+
+                // Remember which source object this volume came from, so that a later
+                // "split to objects" restores non-solid volumes (e.g. negative volumes)
+                // to the object they belonged to before the assembly. Keep an inherited label
+                // (re-assembly of an already assembled object) to preserve the original grouping.
+                if (!new_volume->merged_group_id().valid())
+                    new_volume->set_merged_group_id(object->id());
                 //set rotation
                 /*const Vec3d vol_rot = new_volume->get_rotation() + rotation;
                 new_volume->set_rotation(vol_rot);

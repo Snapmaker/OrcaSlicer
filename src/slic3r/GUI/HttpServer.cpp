@@ -490,6 +490,19 @@ boost::asio::ip::port_type HttpServer::find_available_port(boost::asio::ip::port
 
 void HttpServer::start()
 {
+    {
+        std::lock_guard<std::mutex> lock(m_server_mtx);
+        start_locked();
+    }
+
+    // Started with m_server_mtx released: start_health_check() may join a
+    // retired health-check thread that is blocked in is_healthy() waiting for
+    // that lock — joining it under the lock would deadlock.
+    start_health_check();
+}
+
+void HttpServer::start_locked()
+{
     BOOST_LOG_TRIVIAL(info) << "start_http_service...";
 
     try {
@@ -500,14 +513,22 @@ void HttpServer::start()
             port = new_port;
         }
 
-        start_http_server    = true;
-        m_http_server_thread = create_thread([this] {
+        start_http_server = true;
+        // Create the IOServer on the CALLING thread so the io thread never
+        // writes server_ (that write raced the locked readers in
+        // is_healthy()/stop()/restart()). Thread creation provides the
+        // happens-before, and stop()/restart() join the io thread before
+        // destroying the server, so the raw pointer below stays valid. If
+        // listen() throws, the next start() overwrites server_ (unique_ptr
+        // assignment destroys the stale server) — no cleanup needed here.
+        server_ = std::make_unique<IOServer>(*this);
+        server_->acceptor.listen();
+        server_->do_accept();
+        IOServer* srv = server_.get();
+        m_http_server_thread = create_thread([this, srv] {
             try {
                 set_current_thread_name("http_server");
-                server_ = std::make_unique<IOServer>(*this);
-                server_->acceptor.listen();
-                server_->do_accept();
-                server_->io_service.run();
+                srv->io_service.run();
             } catch (const std::exception& e) {
                 BOOST_LOG_TRIVIAL(error) << "HTTP server error: " << e.what();
                 Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,std::string("bury_point_HttpServer::start ") + e.what(), BP_LOCAL_SERVER);
@@ -524,13 +545,10 @@ void HttpServer::start()
         }
 
         BOOST_LOG_TRIVIAL(info) << "HTTP server started successfully on port " << port;
-        
-        // 启动健康检查
-        BOOST_LOG_TRIVIAL(debug) << "Starting health check for HTTP server...";
-        start_health_check();
-        
-        // 重启检查已集成到健康检查中，无需单独线程
-        
+
+        // The health check is started by start()/restart() AFTER m_server_mtx
+        // is released (see start_health_check's join path).
+
     } catch (const std::exception& e) {
         BOOST_LOG_TRIVIAL(error) << "Failed to start HTTP server: " << e.what();
         std::string error_msg = "bury_point_Failed to start HTTP server on port " + std::to_string(port) + ": " + e.what();
@@ -549,44 +567,67 @@ void HttpServer::stop()
     
     // 重启检查已集成到健康检查中，无需单独停止
     
+    // the io thread was still dispatching handlers, and handlers themselves
+    // call IOServer::stop(session) — mutating the same sessions set from two
+    // threads at once, which crashed with EXC_BAD_ACCESS / heap corruption.
+    std::lock_guard<std::mutex> lock(m_server_mtx);
     if (server_) {
-        server_->acceptor.close();
-        server_->stop_all();
+        boost::system::error_code ignored_ec;
+        server_->acceptor.close(ignored_ec);
         server_->io_service.stop();
     }
     if (m_http_server_thread.joinable())
         m_http_server_thread.join();
+    if (server_)
+        server_->stop_all();
     server_.reset();
 }
 
 void HttpServer::restart()
 {
     BOOST_LOG_TRIVIAL(info) << "Restarting HTTP server on port " << port << "...";
-    
+
     BOOST_LOG_TRIVIAL(debug) << "Stopping current HTTP server...";
     // 只停止HTTP服务器，不停止健康检查和重启检查线程
     start_http_server = false;
-    
-    if (server_) {
-        server_->acceptor.close();
-        server_->stop_all();
-        server_->io_service.stop();
+
+    {
+        // Hold the lock across teardown AND start_locked(): if is_healthy()
+        // ran in the gap between the two it would see server_ == nullptr and
+        // trigger another restart on top of this one.
+        std::lock_guard<std::mutex> lock(m_server_mtx);
+        if (server_) {
+            boost::system::error_code ignored_ec;
+            server_->acceptor.close(ignored_ec);
+            server_->io_service.stop();
+        }
+        if (m_http_server_thread.joinable())
+            m_http_server_thread.join();
+        if (server_)
+            server_->stop_all();
+        server_.reset();
+
+        BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
+        std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 等待资源释放
+
+        BOOST_LOG_TRIVIAL(debug) << "Starting new HTTP server...";
+        start_locked();
     }
-    if (m_http_server_thread.joinable())
-        m_http_server_thread.join();
-    server_.reset();
-    
-    BOOST_LOG_TRIVIAL(debug) << "Waiting for resources to be released...";
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // 等待资源释放
-    
-    BOOST_LOG_TRIVIAL(debug) << "Starting new HTTP server...";
-    start();
-    
+
+    // Must run with m_server_mtx released: a retired health-check thread can
+    // still be blocked in is_healthy() waiting for this lock, and
+    // start_health_check() joins it — joining under the lock deadlocks
+    // (T1 holds m_server_mtx waiting on join, T2 waits on m_server_mtx to
+    // finish is_healthy()).
+    start_health_check();
+
     BOOST_LOG_TRIVIAL(info) << "HTTP server restart completed";
 }
 
 bool HttpServer::is_healthy()
 {
+    // May run on the health-check thread concurrently with stop()/restart().
+    std::lock_guard<std::mutex> lock(m_server_mtx);
     if (!start_http_server || !server_) {
         BOOST_LOG_TRIVIAL(fatal) << "Health check failed: server not started or server object is null";
         return false;
@@ -629,13 +670,41 @@ bool HttpServer::is_healthy()
 
 void HttpServer::start_health_check()
 {
-    std::lock_guard<std::mutex> lock(m_health_check_mutex);
-    
-    if (m_health_check_enabled) {
-        BOOST_LOG_TRIVIAL(info) << "Health check is already running";
-        return; // 已经在运行
+    boost::thread retired;
+    {
+        std::lock_guard<std::mutex> lock(m_health_check_mutex);
+
+        if (m_health_check_enabled) {
+            BOOST_LOG_TRIVIAL(info) << "Health check is already running";
+            return; // 已经在运行
+        }
+
+        if (m_health_check_thread.joinable()) {
+            if (m_health_check_thread.get_id() == boost::this_thread::get_id()) {
+                // stop() disabled the check while THIS (health-check) thread
+                // was inside restart() -> start(). Assigning to our own
+                // joinable boost::thread handle calls std::terminate();
+                // detach the handle instead and leave the check disabled —
+                // our own loop exits on its next iteration.
+                m_health_check_thread.detach();
+                BOOST_LOG_TRIVIAL(warning) << "Health check was disabled during restart; leaving it stopped";
+                return;
+            }
+            retired = std::move(m_health_check_thread); // joined below, outside the lock
+        }
     }
-    
+
+    // Join outside m_health_check_mutex: to exit its loop the retired thread
+    // must take the same mutex.
+    if (retired.joinable())
+        retired.join();
+
+    std::lock_guard<std::mutex> lock(m_health_check_mutex);
+    if (m_health_check_enabled) {
+        // Another thread started the check while we were joining.
+        return;
+    }
+
     BOOST_LOG_TRIVIAL(info) << "Starting HTTP server health check with interval: " << m_health_check_interval << "ms";
     m_health_check_enabled = true;
     m_health_check_thread = create_thread([this] {

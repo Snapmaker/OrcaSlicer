@@ -38,6 +38,16 @@ public:
 		unsigned int    tool;
 	};
 
+    struct NozzleChangeResult
+    {
+        std::string gcode;
+        Vec2f start_pos;  // rotated
+        Vec2f end_pos;
+        Vec2f origin_start_pos;  // not rotated
+        std::vector<Vec2f> wipe_path;
+        bool is_extruder_change;
+    };
+
 	struct ToolChangeResult
 	{
 		// Print heigh of this tool change.
@@ -59,6 +69,8 @@ public:
 
         // Is this a priming extrusion? (If so, the wipe tower rotation & translation will not be applied later)
         bool                    priming;
+        bool is_tool_change{ false };
+        Vec2f tool_change_start_pos;
 
         // Pass a polyline so that normal G-code generator can do a wipe for us.
         // The wipe cannot be done by the wipe tower because it has to pass back
@@ -80,6 +92,8 @@ public:
         // But if finish_layer_tcr is before tool_change_tcr, we have to travel to the wipe tower before
         // executing the gcode finish_layer_tcr.
         bool is_finish_first = false;
+        bool is_contact = false;
+        NozzleChangeResult nozzle_change_result;
 
 		// Sum the total length of the extrusion.
 		float total_extrusion_length_in_plane() {

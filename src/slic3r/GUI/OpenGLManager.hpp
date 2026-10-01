@@ -87,6 +87,7 @@ private:
 
     static EMultisampleState s_multisample;
     static EFramebufferType s_framebuffers_type;
+    static bool _vertexArraysSupported;
 
 public:
     OpenGLManager() = default;
@@ -102,6 +103,13 @@ public:
     static bool can_multisample() { return s_multisample == EMultisampleState::Enabled; }
     static bool are_framebuffers_supported() { return (s_framebuffers_type != EFramebufferType::Unknown); }
     static EFramebufferType get_framebuffers_type() { return s_framebuffers_type; }
+
+    /**
+     * @brief Checks whether standard OpenGL vertex array objects are available.
+     * @return true when standard vertex array objects can be used; otherwise false.
+     */
+    static bool VertexArraysSupported() { return _vertexArraysSupported; }
+
     static wxGLCanvas* create_wxglcanvas(wxWindow& parent);
     static const GLInfo& get_gl_info() { return s_gl_info; }
     static bool force_power_of_two_textures() { return s_force_power_of_two_textures; }

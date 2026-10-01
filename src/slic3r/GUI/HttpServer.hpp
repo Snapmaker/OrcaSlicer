@@ -1,6 +1,7 @@
 #ifndef slic3r_Http_App_hpp_
 #define slic3r_Http_App_hpp_
 
+#include <atomic>
 #include <iostream>
 #include <mutex>
 #include <stack>
@@ -142,8 +143,11 @@ public:
     HttpServer(boost::asio::ip::port_type port = LOCALHOST_PORT);
     ~HttpServer();  // 添加析构函数
 
-    boost::thread m_http_server_thread;
-    bool          start_http_server = false;
+    boost::thread    m_http_server_thread;
+    // Written by the io thread's exception handler without holding m_server_mtx
+    // and read unlocked by is_started()/setPort() and the health-check loop,
+    // so it must be atomic.
+    std::atomic<bool> start_http_server = false;
     
     // 添加自动健康检查相关成员
     boost::thread m_health_check_thread;
@@ -204,6 +208,18 @@ private:
         void stop_all();
     };
     friend class session;
+
+    // Serializes server_ / m_http_server_thread lifecycle between stop(),
+    // restart() and is_healthy() (the latter runs on the health-check thread).
+    // The io thread never takes this lock; it only touches the IOServer, whose
+    // sessions set is joined before teardown (see HttpServer::stop).
+    std::mutex m_server_mtx;
+
+    // Body of start() that runs under m_server_mtx. Deliberately does NOT
+    // start the health check: start_health_check() may join a retired
+    // health-check thread that is itself blocked in is_healthy() waiting for
+    // m_server_mtx, so it must only be called after the lock is released.
+    void start_locked();
 
     std::unique_ptr<IOServer> server_{nullptr};
 

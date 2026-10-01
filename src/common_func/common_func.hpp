@@ -6,9 +6,9 @@
 #define SLIC3R_APP_NAME "Snapmaker Orca"
 #define SLIC3R_APP_KEY "Snapmaker_Orca"
 #define SLIC3R_VERSION "01.10.01.50"
-#define Snapmaker_VERSION "2.4.0"
+#define Snapmaker_VERSION "2.4.1"
 #define MIN_FIRM_VER "2.0.0"
-#define SLIC3R_BUILD_ID "2.4.0"
+#define SLIC3R_BUILD_ID "2.4.1"
 // #define SLIC3R_RC_VERSION "01.10.01.50"
 #define BBL_RELEASE_TO_PUBLIC 1
 #define BBL_INTERNAL_TESTING 0

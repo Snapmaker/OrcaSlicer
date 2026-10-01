@@ -222,6 +222,62 @@ void Field::on_edit_value()
 
 void Field::toggle(bool en) { en && !m_opt.readonly ? enable() : disable(); }
 
+void Field::init_invalid_highlight_from_config(const DynamicPrintConfig* config, const std::string& opt_id)
+{
+    if (config == nullptr)
+        return;
+    // Both fields of a pair highlight together, so resolve the pair from either side.
+    const bool is_top_pair    = opt_id == "top_color_penetration_layers" || opt_id == "top_shell_layers";
+    const bool is_bottom_pair = opt_id == "bottom_color_penetration_layers" || opt_id == "bottom_shell_layers";
+    if (!is_top_pair && !is_bottom_pair)
+        return;
+    const ConfigOptionInt* pen   = config->option<ConfigOptionInt>(is_top_pair ? "top_color_penetration_layers"
+                                                                              : "bottom_color_penetration_layers");
+    const ConfigOptionInt* shell = config->option<ConfigOptionInt>(is_top_pair ? "top_shell_layers"
+                                                                              : "bottom_shell_layers");
+    if (pen != nullptr && shell != nullptr && pen->value > shell->value)
+        set_invalid_highlight(true);
+}
+
+void Field::set_invalid_highlight(bool invalid)
+{
+    if (m_invalid_highlight == invalid)
+        return;
+    m_invalid_highlight = invalid;
+
+    // Red pair registered in StateColor's dark-mode map ("#D01B1B" / "#BB2A3A").
+    static const wxColour invalid_label_clr = StateColor::darkModeColorFor(wxColour("#D01B1B"));
+
+    if (wxWindow* input = getWindow()) {
+        if (auto spin = dynamic_cast<SpinInput*>(input)) {
+            // A single-entry StateColor applies to every widget state and is dark-mode-mapped on render.
+            if (invalid) {
+                m_input_border_clr = spin->borderColor();
+                spin->SetBorderColor(StateColor(wxColour("#D01B1B")));
+            } else {
+                spin->SetBorderColor(m_input_border_clr);
+            }
+        }
+        // In tab pages the label is painted by the owning OG_CustomCtrl; force a repaint.
+        for (wxWindow* parent = input->GetParent(); parent != nullptr; parent = parent->GetParent()) {
+            if (auto ctrl = dynamic_cast<OG_CustomCtrl*>(parent)) {
+                ctrl->Refresh();
+                break;
+            }
+        }
+    }
+
+    if (m_label_win != nullptr) {
+        if (invalid) {
+            m_label_win_fg_clr = m_label_win->GetForegroundColour();
+            m_label_win->SetForegroundColour(invalid_label_clr);
+        } else {
+            m_label_win->SetForegroundColour(m_label_win_fg_clr);
+        }
+        m_label_win->Refresh();
+    }
+}
+
 wxString Field::get_tooltip_text(const wxString &default_string)
 {
 	wxString tooltip_text("");
@@ -1332,7 +1388,7 @@ void Choice::BUILD()
         opt_height = (double) temp->GetTextCtrl()->GetSize().GetHeight() / m_em_unit;
 
     // BBS
-    temp->SetTextLabel(m_opt.sidetext);
+    temp->SetTextLabel(_L(m_opt.sidetext));
     m_combine_side_text = true;
 
 #ifdef __WXGTK3__
@@ -1546,7 +1602,23 @@ void Choice::set_value(const boost::any& value, bool change_event)
 			++idx;
 		}
         if (m_list)
-			field->SetSelection(m_list->index_of(text_value));
+        {
+            const int index      = m_list->index_of(text_value);
+            const int item_count = int(field->GetCount());
+
+            if (index >= 0 && index < item_count) {
+                field->SetSelection(index);
+            }
+            else {
+                // Mirror filament deletion: rebuild the dynamic choices, keep the
+                // combo box unselected with the default drop-down icon, and display
+                // the first item label as the placeholder text.
+                m_list->update();
+                field->SetSelection(-1);
+                if (field->GetCount() > 0)
+                    field->SetLabel(field->GetString(0));
+            }
+        }
         else if (idx == enums.size()) {
             // For editable Combobox under OSX is needed to set selection to -1 explicitly,
             // otherwise selection doesn't be changed

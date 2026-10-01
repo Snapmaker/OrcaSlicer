@@ -595,7 +595,7 @@ void GLGizmosManager::render_painter_assemble_view() const
         m_assemble_view_data->model_objects_clipper()->render_cut();
 }
 
-void GLGizmosManager::render_overlay()
+void GLGizmosManager::render_overlay(GLSubTextureBindRenderer* renderer)
 {
     if (!m_enabled)
         return;
@@ -603,7 +603,7 @@ void GLGizmosManager::render_overlay()
     if (m_icons_texture_dirty)
         generate_icons_texture();
 
-    do_render_overlay();
+    do_render_overlay(renderer);
 }
 
 std::string GLGizmosManager::get_tooltip() const
@@ -1158,11 +1158,20 @@ void GLGizmosManager::render_arrow(const GLCanvas3D& parent, EType highlighted_t
 
 //BBS: GUI refactor: GLToolbar&&Gizmo adjust
 //when rendering, {0, 0} is at the center, {-0.5, 0.5} at the left-top
-void GLGizmosManager::do_render_overlay() const
+void GLGizmosManager::do_render_overlay(GLSubTextureBindRenderer* renderer) const
 {
     const std::vector<size_t> selectable_idxs = get_selectable_idxs();
     if (selectable_idxs.empty())
         return;
+
+    struct PendingInputWindow
+    {
+        bool valid = false;
+        GLGizmosManager::EType gizmoType = GLGizmosManager::Undefined;
+        float x = 0.0f;
+        float y = 0.0f;
+        float bottomLimit = 0.0f;
+    };
 
     const Size cnv_size = m_parent.get_canvas_size();
     const float cnv_w = (float)cnv_size.get_width();
@@ -1197,6 +1206,9 @@ void GLGizmosManager::do_render_overlay() const
     }
     float top_y = 1.0f;
 
+    const bool bind_active = GLTexture::BeginSubTextureBind(renderer);
+    PendingInputWindow pending_input_window;
+
     render_background(top_x, top_y, top_x + width, top_y - height, border_w, border_h);
 
     top_x += border_w;
@@ -1211,8 +1223,11 @@ void GLGizmosManager::do_render_overlay() const
     const int tex_width = m_icons_texture.get_width();
     const int tex_height = m_icons_texture.get_height();
 
-    if (icons_texture_id == 0 || tex_width <= 1 || tex_height <= 1)
+    if (icons_texture_id == 0 || tex_width <= 1 || tex_height <= 1) {
+        if (bind_active)
+            GLTexture::EndSubTextureBind();
         return;
+    }
 
     const float du = (float)(tex_width - 1) / (6.0f * (float)tex_width); // 6 is the number of possible states if the icons
     const float dv = (float)(tex_height - 1) / (float)(m_gizmos.size() * tex_height);
@@ -1242,7 +1257,17 @@ void GLGizmosManager::do_render_overlay() const
             //render_input_window uses a different coordination(imgui)
             //1. no need to scale by camera zoom, set {0,0} at left-up corner for imgui
             //gizmo->render_input_window(width, 0.5f * cnv_h - zoomed_top_y * zoom, toolbar_top);
-            m_gizmos[m_current]->render_input_window(0.5 * cnv_w + 0.5f * top_x * cnv_w, get_scaled_total_height(), cnv_h);
+            const float input_x = 0.5f * cnv_w + 0.5f * top_x * cnv_w;
+            if (bind_active) {
+                pending_input_window.valid = true;
+                pending_input_window.gizmoType = m_current;
+                pending_input_window.x = input_x;
+                pending_input_window.y = get_scaled_total_height();
+                pending_input_window.bottomLimit = cnv_h;
+            }
+            else {
+                m_gizmos[m_current]->render_input_window(input_x, get_scaled_total_height(), cnv_h);
+            }
 
             is_render_current = true;
         }
@@ -1251,7 +1276,25 @@ void GLGizmosManager::do_render_overlay() const
 
     // BBS simplify gizmo is not a selected gizmo and need to render input window
     if (!is_render_current && m_current != Undefined) {
-        m_gizmos[m_current]->render_input_window(0.5 * cnv_w + 0.5f * top_x * cnv_w, get_scaled_total_height(), cnv_h);
+        const float input_x = 0.5f * cnv_w + 0.5f * top_x * cnv_w;
+        if (bind_active) {
+            pending_input_window.valid = true;
+            pending_input_window.gizmoType = m_current;
+            pending_input_window.x = input_x;
+            pending_input_window.y = get_scaled_total_height();
+            pending_input_window.bottomLimit = cnv_h;
+        }
+        else {
+            m_gizmos[m_current]->render_input_window(input_x, get_scaled_total_height(), cnv_h);
+        }
+    }
+
+    if (bind_active)
+        GLTexture::EndSubTextureBind();
+
+    if (pending_input_window.valid) {
+        m_gizmos[pending_input_window.gizmoType]->render_input_window(
+            pending_input_window.x, pending_input_window.y, pending_input_window.bottomLimit);
     }
 }
 

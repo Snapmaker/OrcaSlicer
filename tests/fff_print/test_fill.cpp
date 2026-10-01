@@ -734,3 +734,70 @@ TEST_CASE("Gyroid infill of an object matches the infill of a larger object with
         CHECK(farthest(paths, reference) < tolerance);
     }
 }
+
+TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[Fill]")
+{
+    // The same-center case above shrinks 1 mm inward, so it stays green on main and
+    // would miss a global phase shift or a dropped strip at the bbox edge. These
+    // pins are world-mm vertices of the phase-preserving generator (multiline 1,
+    // density 0.2, spacing 0.45, z = 0, angle = π/4 so CorrectionAngle cancels).
+    // A shifted origin moves them by millimetres; a missing +X strip drops the
+    // right-hand pin and fails the edge-coverage checks.
+    const double spacing = 0.45;
+    const float  density = 0.2f;
+    std::unique_ptr<Fill> filler(Fill::new_from_type(ipGyroid));
+    filler->spacing = spacing;
+    filler->angle   = float(M_PI / 4.);
+    filler->z       = 0.;
+
+    FillParams params;
+    params.density           = density;
+    params.multiline         = 1;
+    params.dont_adjust       = true;
+    params.anchor_length     = 0.f;
+    params.anchor_length_max = 0.f; // dont_connect: keep wave vertices unjoined
+
+    Polygon square{
+        Point::new_scale(10., 10.), Point::new_scale(50., 10.),
+        Point::new_scale(50., 50.), Point::new_scale(10., 50.)
+    };
+    Surface surface(stInternal, ExPolygon(square));
+    const Polylines paths = filler->fill_surface(&surface, params);
+    REQUIRE_FALSE(paths.empty());
+
+    const AABBTreeLines::LinesDistancer<Line> tree(to_lines(paths));
+    const double pin_tol = 0.02;
+    const double pins[][2] = {
+        {13.449314, 33.884724},
+        {15.211169, 13.606001},
+        {24.469603, 30.263524},
+        {30.263524, 30.263524},
+        {41.851366, 30.263524},
+        {46.921046, 31.712004},
+    };
+    for (const auto &xy : pins) {
+        const Point q = Point::new_scale(xy[0], xy[1]);
+        const double d = unscale<double>(tree.distance_from_lines<false>(q));
+        CAPTURE(xy[0], xy[1], d);
+        CHECK(d < pin_tol);
+    }
+
+    // Paths must reach every side of the 10..50 mm square. fill_surface insets
+    // by 0.5*spacing (~0.225 mm); a dropped edge strip leaves a ~period gap.
+    const double edge_tol = 1.0;
+    double min_left = 1e9, min_right = 1e9, min_bottom = 1e9, min_top = 1e9;
+    for (const Polyline &pl : paths)
+        for (const Point &p : pl.points) {
+            const double x = unscale<double>(p.x());
+            const double y = unscale<double>(p.y());
+            min_left   = std::min(min_left,   std::abs(x - 10.));
+            min_right  = std::min(min_right,  std::abs(x - 50.));
+            min_bottom = std::min(min_bottom, std::abs(y - 10.));
+            min_top    = std::min(min_top,    std::abs(y - 50.));
+        }
+    CAPTURE(min_left, min_right, min_bottom, min_top);
+    CHECK(min_left   < edge_tol);
+    CHECK(min_right  < edge_tol);
+    CHECK(min_bottom < edge_tol);
+    CHECK(min_top    < edge_tol);
+}

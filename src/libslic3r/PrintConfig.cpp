@@ -7262,7 +7262,8 @@ void PrintConfigDef::init_fff_params()
     def->category = L("Strength");
     def->tooltip = L("Print the part as a closed shell of even thickness with an empty cavity inside. The shell follows "
                      "the surface in 3D, so sloped and curved faces get the same thickness as walls, unlike top and bottom "
-                     "shell layers. The cavity's ceiling is bridged.");
+                     "shell layers. The cavity's ceiling is bridged. Can be set per part: a part's own setting "
+                     "overrides the object's.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -7270,7 +7271,8 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Hollow shell thickness");
     def->category = L("Strength");
     def->tooltip = L("Thickness of the shell left around the cavity, measured into the part from its surface. "
-                     "Sections thinner than about twice this stay solid.");
+                     "A part has to be thicker than about twice this plus 4 mm to leave a cavity; the slicer warns "
+                     "about parts it could not hollow. Can be set per part.");
     def->sidetext = "mm";
     def->min = 0.5;
     def->max = 50;

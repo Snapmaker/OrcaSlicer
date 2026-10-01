@@ -7224,6 +7224,17 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.8));
 
+    def = this->add("stabilizer_tip_gap", coFloat);
+    def->label = L("Stabilizer tip gap");
+    def->category = L("Support");
+    def->tooltip = L("Space left between each tip and the part. 0 makes the tips touch the part, which is what "
+                     "stabilizes it; a small gap leaves no mark but only catches the part once it starts to sway.");
+    def->sidetext = "mm";
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
     def = this->add("stabilizer_pillar_diameter", coFloat);
     def->label = L("Stabilizer pillar diameter");
     def->category = L("Support");
@@ -7243,6 +7254,27 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(20.));
+
+    // FDM hollowing: an even-thickness shell around an empty cavity (FDMHollowing.hpp).
+    def = this->add("hollow_interior", coBool);
+    def->label = L("Hollow interior");
+    def->category = L("Strength");
+    def->tooltip = L("Print the part as a closed shell of even thickness with an empty cavity inside. The shell follows "
+                     "the surface in 3D, so sloped and curved faces get the same thickness as walls, unlike top and bottom "
+                     "shell layers. The cavity's ceiling is bridged.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("hollow_shell_thickness", coFloat);
+    def->label = L("Hollow shell thickness");
+    def->category = L("Strength");
+    def->tooltip = L("Thickness of the shell left around the cavity, measured into the part from its surface. "
+                     "Sections thinner than about twice this stay solid.");
+    def->sidetext = "mm";
+    def->min = 0.5;
+    def->max = 50;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(3.));
 
     def = this->add("tree_support_with_infill", coBool);
     def->label = L("Tree support with infill");

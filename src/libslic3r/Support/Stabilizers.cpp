@@ -204,12 +204,14 @@ void generate_stabilizer_supports(PrintObject &object, const std::function<void(
     // Specks left by clipping at the wall, too small to print a line into.
     const double min_island_area = sqr(scaled<double>(0.2));
 
+    const float tip_gap = scaled<float>(cfg.stabilizer_tip_gap.value);
     bool inserted = false;
     for (size_t i = 0; i < object.layers().size() && i < slices.size(); ++i) {
         const Layer &layer = *object.layers()[i];
         // Touch, don't fuse: clip the struts at the part's outline, so the tip's footprint ends
-        // exactly where the outer wall begins.
-        ExPolygons islands = diff_ex(slices[i], layer.lslices);
+        // exactly where the outer wall begins - or stop short of it by the tip gap.
+        ExPolygons islands = tip_gap > 0.f ? diff_ex(slices[i], offset_ex(layer.lslices, tip_gap)) :
+                                             diff_ex(slices[i], layer.lslices);
         if (islands.empty())
             continue;
 

@@ -2853,6 +2853,11 @@ void TabPrint::build()
         optgroup->append_single_option_line("bottom_color_penetration_layers");
         optgroup->append_single_option_line("top_bottom_infill_wall_overlap");
 
+        // Hollowing: an even-thickness shell around an empty cavity (libslic3r/FDMHollowing.hpp).
+        optgroup = page->new_optgroup(L("Hollowing"), L"param_infill");
+        optgroup->append_single_option_line("hollow_interior");
+        optgroup->append_single_option_line("hollow_shell_thickness");
+
         optgroup = page->new_optgroup(L("Infill"), L"param_infill");
         optgroup->append_single_option_line("sparse_infill_density", "strength_settings_infill#sparse-infill-density");
         optgroup->append_single_option_line("fill_multiline", "strength_settings_infill#fill-multiline");
@@ -3087,6 +3092,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("stabilizer_ring_spacing");
         optgroup->append_single_option_line("stabilizer_points_per_ring");
         optgroup->append_single_option_line("stabilizer_tip_diameter");
+        optgroup->append_single_option_line("stabilizer_tip_gap");
         optgroup->append_single_option_line("stabilizer_pillar_diameter");
         optgroup->append_single_option_line("stabilizer_max_island_width");
 

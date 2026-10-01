@@ -29,6 +29,7 @@ add_executable(${_TEST_NAME}_tests
 	test_modifier_effect.cpp
 	test_tree_support_determinism.cpp
 	test_stabilizers.cpp
+	test_fdm_hollowing.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	test_wipe.cpp

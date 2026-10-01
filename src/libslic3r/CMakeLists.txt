@@ -192,6 +192,8 @@ set(lisbslic3r_sources
     Fill/FillConcentric.hpp
     Fill/FillConcentricInternal.cpp
     Fill/FillConcentricInternal.hpp
+    FDMHollowing.cpp
+    FDMHollowing.hpp
     Fill/Fill.cpp
     Fill/FillCrossHatch.cpp
     Fill/FillCrossHatch.hpp

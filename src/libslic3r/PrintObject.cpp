@@ -1277,9 +1277,14 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "stabilizer_ring_spacing"
             || opt_key == "stabilizer_points_per_ring"
             || opt_key == "stabilizer_tip_diameter"
+            || opt_key == "stabilizer_tip_gap"
             || opt_key == "stabilizer_pillar_diameter"
             || opt_key == "stabilizer_max_island_width") {
             steps.emplace_back(posSupportMaterial);
+        } else if (
+               opt_key == "hollow_interior"
+            || opt_key == "hollow_shell_thickness") {
+            steps.emplace_back(posSlice);
         } else if (
                opt_key == "bottom_shell_layers"
             || opt_key == "top_shell_layers") {

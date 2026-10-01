@@ -55,7 +55,7 @@ struct PinPrint
 
 // A 6 mm wide, 60 mm tall pin standing on the bed, with supports on and nothing to support - the
 // stabilizers are the only thing that can put support next to it.
-void slice_pin(PinPrint &p, bool stabilizers)
+void slice_pin(PinPrint &p, bool stabilizers, const char *tip_gap = "0")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.set_deserialize_strict({
@@ -67,6 +67,7 @@ void slice_pin(PinPrint &p, bool stabilizers)
         { "stabilizer_supports",         stabilizers ? "1" : "0" },
         { "stabilizer_ring_spacing",     "15" },
         { "stabilizer_points_per_ring",  "3" },
+        { "stabilizer_tip_gap",          tip_gap },
     });
     ModelObject *object = p.model.add_object();
     object->name = "pin";
@@ -193,6 +194,20 @@ TEST_CASE("Stabilizers touch a thin pin at the ring heights and stand on the bed
             // The tip ends at the wall: it touches (no visible gap) without printing into it.
             CHECK(at.min_gap < 0.05);
             CHECK(at.overlap < 0.01);
+        }
+    }
+
+    SECTION("with a tip gap: struts stop short of the wall by the gap")
+    {
+        PinPrint p;
+        slice_pin(p, true, "0.3");
+        const PrintObject &po = *p.print.objects().front();
+        for (double ring_z : { 15., 30., 45. }) {
+            const LayerCheck at = check_layer(po, ring_z);
+            INFO("ring at " << ring_z << " mm: area " << at.area << ", gap " << at.min_gap);
+            CHECK(at.area > 0.1);
+            CHECK(at.min_gap > 0.25);
+            CHECK(at.min_gap < 0.4);
         }
     }
 }

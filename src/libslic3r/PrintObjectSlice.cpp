@@ -15,6 +15,7 @@
 #include "format.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
+#include "FDMHollowing.hpp"
 #include "MixedFilament.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "Print.hpp"
@@ -5319,6 +5320,15 @@ void PrintObject::slice_volumes()
     std::vector<std::vector<ExPolygons>> region_slices =
         slices_to_regions(print->config(), *this, this->model_object()->volumes, *m_shared_regions, slice_zs,
                           std::move(objSliceByVolume), PrintObject::clip_multipart_objects, throw_on_cancel_callback);
+
+    // Hollowing: cut the cavity out of every region, like a negative volume.
+    if (std::vector<ExPolygons> cavity = hollow_cavity_slices(*this, slice_zs, throw_on_cancel_callback); ! cavity.empty()) {
+        BOOST_LOG_TRIVIAL(debug) << "Slicing volumes - hollowing";
+        for (std::vector<ExPolygons> &by_layer : region_slices)
+            for (size_t layer_id = 0; layer_id < by_layer.size() && layer_id < cavity.size(); ++ layer_id)
+                if (! cavity[layer_id].empty() && ! by_layer[layer_id].empty())
+                    by_layer[layer_id] = diff_ex(by_layer[layer_id], cavity[layer_id]);
+    }
 
     for (size_t region_id = 0; region_id < region_slices.size(); ++ region_id) {
         std::vector<ExPolygons> &by_layer = region_slices[region_id];

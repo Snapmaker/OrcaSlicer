@@ -431,9 +431,10 @@ bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::pa
     if (!extract_archive_confined(source_path, parent_path, err)) {
         BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Unzip: extract " << source_path.string() << " to " << parent_path.string()
                                  << " failed: " << err;
-        // Validation-time rejects write nothing. Pass-2 stages to sibling .part files and
-        // only then renames; on failure those .parts and directories created this call are
-        // removed. Pre-existing dest files are never deleted or truncated.
+        // Validation-time rejects write nothing. Pass-2 stages to unique sibling .part.%%%%%%%%
+        // files and only then renames; on failure those parts and directories created this call
+        // are removed. Pre-existing dest files are never deleted or truncated. A failure partway
+        // through the rename phase can leave a mix of old and new files (not atomic across files).
         return false;
     }
     BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extracted " << source_path.string() << " to " << parent_path.string();

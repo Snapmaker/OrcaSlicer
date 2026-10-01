@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <exception>
+#include <set>
 #include <vector>
 
 #include "miniz_extension.hpp"
@@ -98,6 +99,14 @@ std::string strip_trailing_separators(std::string name)
     return name;
 }
 
+boost::filesystem::path normalize_dir_path(boost::filesystem::path p)
+{
+    std::string s = p.generic_string();
+    while (s.size() > 1 && (s.back() == '/' || s.back() == '\\'))
+        s.pop_back();
+    return boost::filesystem::path(s).lexically_normal();
+}
+
 bool leaf_exists(const boost::filesystem::path &p)
 {
     boost::system::error_code ec;
@@ -126,12 +135,14 @@ bool ensure_dirs(const boost::filesystem::path &root,
                  std::string                         &err)
 {
     namespace fs = boost::filesystem;
-    if (dir.empty())
+    const fs::path root_n = normalize_dir_path(root);
+    const fs::path dir_n  = normalize_dir_path(dir);
+    if (dir_n.empty())
         return true;
     std::vector<fs::path> chain;
-    for (fs::path p = dir;; p = p.parent_path()) {
+    for (fs::path p = dir_n;; p = p.parent_path()) {
         chain.push_back(p);
-        if (p == root || p.parent_path() == p || p.empty())
+        if (p == root_n || p.parent_path() == p || p.empty())
             break;
     }
     std::reverse(chain.begin(), chain.end());
@@ -172,13 +183,19 @@ bool extract_to_path(mz_zip_archive &archive, const mz_zip_archive_file_stat &st
     return true;
 }
 
-boost::filesystem::path make_part_path(const boost::filesystem::path &full_dest)
+boost::filesystem::path make_part_path(const boost::filesystem::path              &full_dest,
+                                       const std::set<boost::filesystem::path>    &reserved)
 {
     namespace fs = boost::filesystem;
-    fs::path part = full_dest;
-    part += ".part";
-    if (!leaf_exists(part))
-        return part;
+    // Always a random suffix so an archive that itself contains "x.json.part" cannot steal
+    // the staging name of "x.json" (plain dest+".part" collided with that dest).
+    for (int attempt = 0; attempt < 64; ++attempt) {
+        fs::path unique = full_dest;
+        unique += ".part.%%%%%%%%";
+        unique = fs::unique_path(unique);
+        if (!leaf_exists(unique) && reserved.find(unique) == reserved.end())
+            return unique;
+    }
     fs::path unique = full_dest;
     unique += ".part.%%%%%%%%";
     return fs::unique_path(unique);
@@ -188,42 +205,14 @@ bool commit_part(const boost::filesystem::path &part, const boost::filesystem::p
 {
     namespace fs = boost::filesystem;
     boost::system::error_code ec;
-    if (!leaf_exists(dest)) {
-        fs::rename(part, dest, ec);
-        if (ec) {
-            err = "rename failed: " + part.string() + " -> " + dest.string() + " (" + ec.message() + ")";
-            return false;
-        }
-        return true;
-    }
-#ifdef _WIN32
-    // Windows rename does not replace. Park the dest, then restore it if the part rename fails
-    // so a pre-existing file is never left deleted.
-    fs::path backup = dest;
-    backup += ".bak-extract";
-    fs::rename(dest, backup, ec);
-    if (ec) {
-        err = "backup rename failed: " + dest.string() + " (" + ec.message() + ")";
-        return false;
-    }
-    fs::rename(part, dest, ec);
-    if (ec) {
-        boost::system::error_code rec;
-        fs::rename(backup, dest, rec);
-        err = "rename failed: " + part.string() + " -> " + dest.string() + " (" + ec.message() + ")";
-        return false;
-    }
-    fs::remove(backup, ec);
-    return true;
-#else
-    // POSIX rename replaces a file or dest-file symlink atomically.
+    // boost::filesystem::rename replaces an existing file (Windows: MoveFileEx REPLACE).
+    // A dest-file symlink is replaced rather than followed.
     fs::rename(part, dest, ec);
     if (ec) {
         err = "rename failed: " + part.string() + " -> " + dest.string() + " (" + ec.message() + ")";
         return false;
     }
     return true;
-#endif
 }
 
 struct StagedFile
@@ -259,32 +248,35 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
 {
     namespace fs = boost::filesystem;
     err.clear();
+    const fs::path dest_root = normalize_dir_path(dest);
 
     std::vector<fs::path> created_dirs;
-    if (!is_dir_or_dir_symlink(dest)) {
-        if (leaf_exists(dest)) {
-            err = dest.string() + " is not a directory";
+    if (!is_dir_or_dir_symlink(dest_root)) {
+        if (leaf_exists(dest_root)) {
+            err = dest_root.string() + " is not a directory";
             return false;
         }
         boost::system::error_code ec;
-        fs::create_directories(dest, ec);
+        fs::create_directories(dest_root, ec);
         if (ec) {
-            err = "create directory failed: " + dest.string() + " (" + ec.message() + ")";
+            err = "create directory failed: " + dest_root.string() + " (" + ec.message() + ")";
             return false;
         }
-        created_dirs.push_back(dest);
+        created_dirs.push_back(dest_root);
     }
 
     const mz_uint            num_entries = mz_zip_reader_get_num_files(&archive);
     mz_zip_archive_file_stat stat;
     std::vector<StagedFile>  staged;
+    std::set<fs::path>       reserved;
     auto                     fail = [&]() {
         rollback_extract(staged, created_dirs);
         return false;
     };
 
     // Pass 1: validate every entry. Any bad entry rejects the whole archive (D3) so a hostile
-    // bundle cannot leave a partial install behind.
+    // bundle cannot leave a partial install behind. Dest names are reserved so a staging
+    // filename cannot collide with another entry (x.json.part vs x.json).
     for (mz_uint i = 0; i < num_entries; ++i) {
         if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
             err = "failed to read archive entry";
@@ -296,25 +288,28 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
             return fail();
         }
         const std::string name = strip_trailing_separators(stat.m_filename);
-        if (name.empty() || !untrusted::is_safe_archive_relative_path(name) || !untrusted::is_path_within_root(dest, dest / name)) {
+        if (name.empty() || !untrusted::is_safe_archive_relative_path(name) ||
+            !untrusted::is_path_within_root(dest_root, dest_root / name)) {
             err = std::string("entry resolves outside the extraction root: ") + stat.m_filename;
             BOOST_LOG_TRIVIAL(error) << "Unzip: rejecting archive, " << err;
             return fail();
         }
+        reserved.insert(dest_root / name);
     }
 
-    // Pass 2: stage every file to a sibling .part. Dest files are not opened, truncated, or
-    // replaced until every entry has been staged. A dest-file symlink is left alone here.
+    // Pass 2: stage every file to a unique sibling .part.%%%%%%%%. Dest files are not opened,
+    // truncated, or replaced until every entry has been staged. A dest-file symlink is left
+    // alone here.
     for (mz_uint i = 0; i < num_entries; ++i) {
         if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
             err = "failed to read archive entry";
             return fail();
         }
         const std::string name      = strip_trailing_separators(stat.m_filename);
-        const fs::path    full_dest = dest / name;
+        const fs::path    full_dest = dest_root / name;
         try {
             if (stat.m_is_directory) {
-                if (!ensure_dirs(dest, full_dest, created_dirs, err))
+                if (!ensure_dirs(dest_root, full_dest, created_dirs, err))
                     return fail();
                 continue;
             }
@@ -323,13 +318,14 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
                 continue;
             }
             const fs::path parent = full_dest.parent_path();
-            if (!parent.empty() && !ensure_dirs(dest, parent, created_dirs, err))
+            if (!parent.empty() && !ensure_dirs(dest_root, parent, created_dirs, err))
                 return fail();
-            const fs::path part = make_part_path(full_dest);
-            if (!untrusted::is_path_within_root(dest, part)) {
+            const fs::path part = make_part_path(full_dest, reserved);
+            if (!untrusted::is_path_within_root(dest_root, part)) {
                 err = "part path resolves outside the extraction root: " + part.string();
                 return fail();
             }
+            reserved.insert(part);
             staged.push_back({full_dest, part, leaf_exists(full_dest)});
             if (!extract_to_path(archive, stat, part, err))
                 return fail();
@@ -341,7 +337,10 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
         }
     }
 
-    // Pass 3: rename each .part over its dest. Only now is a pre-existing dest replaced.
+    // Pass 3: rename each part over its dest. Only now is a pre-existing dest replaced.
+    // A failure here can leave a mix of old and new files (already-renamed dests stay;
+    // not-yet-renamed dests keep their previous content). Nothing is truncated or deleted,
+    // but the result is not atomic across files.
     for (StagedFile &s : staged) {
         if (!commit_part(s.part, s.dest, err))
             return fail();

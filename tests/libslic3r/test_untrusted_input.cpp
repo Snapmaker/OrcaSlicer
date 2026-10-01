@@ -1321,7 +1321,7 @@ TEST_CASE("extract_archive_confined pass-2 failure leaves pre-existing files int
         boost::nowide::ofstream blocker((cache / "blocker").string());
         blocker << "block";
     }
-    write_zip_entries(zip_file, {{"keep.json", "NEW"}, {"blocker/x.json", "x"}});
+    write_zip_entries(zip_file, {{"keep.json", "NEW"}, {"newdir/n.json", "n"}, {"blocker/x.json", "x"}});
 
     std::string err;
     CHECK_FALSE(extract_archive_confined(zip_file, cache, err));
@@ -1332,6 +1332,8 @@ TEST_CASE("extract_archive_confined pass-2 failure leaves pre-existing files int
     CHECK(read_text_file(cache / "blocker") == "block");
     CHECK_FALSE(fs::exists(cache / "blocker" / "x.json"));
     CHECK_FALSE(fs::is_directory(cache / "blocker"));
+    CHECK_FALSE(fs::exists(cache / "newdir"));
+    CHECK_FALSE(fs::exists(cache / "newdir" / "n.json"));
 
     for (fs::recursive_directory_iterator it(cache), end; it != end; ++it) {
         const std::string name = it->path().filename().string();
@@ -1342,6 +1344,95 @@ TEST_CASE("extract_archive_confined pass-2 failure leaves pre-existing files int
     boost::system::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+TEST_CASE("extract_archive_confined keeps x.json.part and x.json as distinct files", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_partname_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path target   = dir / "cache";
+    fs::create_directories(target);
+    write_zip_entries(zip_file, {{"x.json.part", "PART"}, {"x.json", "JSON"}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, target, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(target / "x.json.part") == "PART");
+    CHECK(read_text_file(target / "x.json") == "JSON");
+
+    for (fs::directory_iterator it(target), end; it != end; ++it) {
+        const std::string name = it->path().filename().string();
+        if (name != "x.json" && name != "x.json.part")
+            CHECK(name.find(".part") == std::string::npos);
+    }
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("extract_archive_confined accepts a dest path with a trailing slash", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_slash_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path cache    = dir / "cache";
+    fs::create_directories(cache);
+    write_zip_entries(zip_file, {{"vendor/", ""},
+                                 {"vendor/machine/", ""},
+                                 {"vendor.json", "{\"a\":1}"},
+                                 {"vendor/machine/printer.json", "{\"b\":2}"}});
+
+    const fs::path dest_slash(cache.string() + "/");
+    std::string    err;
+    REQUIRE(extract_archive_confined(zip_file, dest_slash, err));
+    CHECK(err.empty());
+    CHECK(read_text_file(cache / "vendor.json") == "{\"a\":1}");
+    CHECK(read_text_file(cache / "vendor" / "machine" / "printer.json") == "{\"b\":2}");
+
+    const fs::path dest_pref(cache.string() + std::string(1, static_cast<char>(fs::path::preferred_separator)));
+    write_zip_entries(zip_file, {{"extra.json", "e"}});
+    REQUIRE(extract_archive_confined(zip_file, dest_pref, err));
+    CHECK(read_text_file(cache / "extra.json") == "e");
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+#ifndef _WIN32
+TEST_CASE("extract_archive_confined does not write through a pre-existing .part symlink", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_partlink_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path target   = dir / "cache";
+    const fs::path outside  = dir / "outside";
+    fs::create_directories(target);
+    fs::create_directories(outside);
+    try {
+        fs::create_symlink(outside / "x.json", target / "x.json.part");
+    } catch (const std::exception &) {
+        boost::system::error_code ec;
+        fs::remove_all(dir, ec);
+        return;
+    }
+    write_zip_entries(zip_file, {{"x.json", "payload"}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, target, err));
+    CHECK(read_text_file(target / "x.json") == "payload");
+    CHECK_FALSE(fs::exists(outside / "x.json"));
+    CHECK(fs::is_symlink(fs::symlink_status(target / "x.json.part")));
+
+    for (fs::directory_iterator it(target), end; it != end; ++it) {
+        const std::string name = it->path().filename().string();
+        if (name != "x.json" && name != "x.json.part")
+            CHECK(name.find(".part") == std::string::npos);
+    }
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+#endif
 
 #ifndef _WIN32
 TEST_CASE("extract_archive_confined replaces a destination symlink instead of writing through it", "[Untrusted][ZipSlip]")

@@ -91,10 +91,6 @@
             "sub_path": "process/0.20mm Standard @FLSun S1.json"
         },
         {
-            "name": "0.20mm Standard @FLSun S1 Pro",
-            "sub_path": "process/0.20mm Standard @FLSun S1 Pro.json"
-        },
-        {
             "name": "0.20mm Standard @FLSun SR",
             "sub_path": "process/0.20mm Standard @FLSun SR.json"
         },
@@ -137,6 +133,26 @@
         {
             "name": "0.30mm Extra Draft @FLSun S1",
             "sub_path": "process/0.30mm Extra Draft @FLSun S1.json"
+        },
+        {
+            "name": "0.20mm Standard @FLSun S1 Pro",
+            "sub_path": "process/0.20mm Standard @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.12mm Fine @FLSun S1 Pro",
+            "sub_path": "process/0.12mm Fine @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.16mm Optimal @FLSun S1 Pro",
+            "sub_path": "process/0.16mm Optimal @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.24mm Draft @FLSun S1 Pro",
+            "sub_path": "process/0.24mm Draft @FLSun S1 Pro.json"
+        },
+        {
+            "name": "0.30mm Extra Draft @FLSun S1 Pro",
+            "sub_path": "process/0.30mm Extra Draft @FLSun S1 Pro.json"
         },
         {
             "name": "0.30mm Extra Draft @FLSun SR",

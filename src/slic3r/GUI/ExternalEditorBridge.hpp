@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,7 @@ namespace Slic3r {
 class Model;
 class ModelVolume;
 class TriangleMesh;
+namespace BRep { class CadBody; }
 
 namespace GUI {
 
@@ -84,8 +86,10 @@ protected:
     virtual std::string updated_message(const std::string &name) const     = 0;
     virtual std::string read_failed_message(const std::string &name) const = 0;
 
-    // Reads a file the program sent back: STL, or STEP tessellated like a normal STEP import.
-    virtual bool read_output(const boost::filesystem::path &file, TriangleMesh &mesh) const;
+    // Reads a file the program sent back: STL, or STEP tessellated like a normal STEP import. For
+    // STEP, `cad_body` also receives the exact solid behind the mesh (null for a surface or when
+    // it cannot be built), so the part stays exact for STEP export and the CAD tools.
+    virtual bool read_output(const boost::filesystem::path &file, TriangleMesh &mesh, std::shared_ptr<const BRep::CadBody> &cad_body) const;
 
     // Helpers for the derived bridges.
     static boost::filesystem::path to_path(const std::string &utf8);

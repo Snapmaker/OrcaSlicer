@@ -1,5 +1,6 @@
 #include <catch2/catch.hpp>
 
+#include "libslic3r/BRep/CadEdit.hpp"
 #include "libslic3r/BRep/MeshToBRep.hpp"
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/Format/STEPExport.hpp"
@@ -688,17 +689,40 @@ TEST_CASE("A part sent to a CAD program and back keeps its geometry and placemen
         TempFile edited(".step");
         write_occt_step(cut.Shape(), edited.str());
 
-        TriangleMesh back;
-        REQUIRE(load_step_mesh(edited.str().c_str(), back, 0.003, 0.5));
+        // Read back the way the bridge does: the tessellation plus the exact solid behind it.
+        indexed_triangle_set                 its;
+        std::shared_ptr<const BRep::CadBody> body;
+        std::string                          error;
+        REQUIRE(load_step_part(edited.str(), 0.003, 0.5, its, body, &error));
+        INFO(error);
+        REQUIRE(body);
         const double volume_before = double(its_volume(volume->mesh().its));
-        const double drilled       = double(its_volume(back.its));
+        const double drilled       = double(its_volume(its));
         CHECK_THAT(drilled, WithinRel(volume_before - PI * 4. * 5., 2e-3));
+        // The plain STEP import of the same file agrees.
+        TriangleMesh plain;
+        REQUIRE(load_step_mesh(edited.str().c_str(), plain, 0.003, 0.5));
+        CHECK_THAT(double(its_volume(plain.its)), WithinRel(drilled, 1e-4));
 
         // Painted data is per triangle of the old mesh: dropped, and reported.
         volume->seam_facets.set_triangle_from_string(0, "4");
         REQUIRE_FALSE(volume->seam_facets.empty());
-        CHECK(replace_part_mesh(*volume, std::move(back)));
+        CHECK(replace_part_mesh(*volume, TriangleMesh(std::move(its)), body));
         CHECK(volume->seam_facets.empty());
+
+        // The part now carries the exact drilled shape (#218's CAD body): the next STEP export and
+        // the next round trip are exact.
+        const std::shared_ptr<const BRep::CadBody> attached = BRep::attached_cad_body(*volume);
+        REQUIRE(attached);
+        const int drilled_faces = int(info_of_all(reread(edited.str())).faces);
+        TempFile again(".step");
+        REQUIRE(store_step_part(again.str(), *volume, {}, report, true));
+        CHECK(report.exact_parts == 1);
+        CHECK(int(info_of_all(reread(again.str())).faces) == drilled_faces);
+        require_bbox(info_of_all(reread(again.str())).bbox, volume->mesh().bounding_box(), 0.01);
+        TempFile world_step(".step");
+        REQUIRE(store_step(world_step.str(), model, {}, report));
+        CHECK(report.exact_parts == 1);
 
         CHECK(volume->get_matrix().isApprox(volume_matrix));
         CHECK(object->instances.front()->get_matrix().isApprox(instance_matrix));
@@ -756,11 +780,37 @@ TEST_CASE("An unedited STEP import goes to the CAD program exactly, in its mesh 
     // In the part's mesh frame: around the mesh, not where the source file had it.
     require_bbox(sent.bbox, volume->mesh().bounding_box(), 0.05);
 
-    TriangleMesh back;
-    REQUIRE(load_step_mesh(out.str().c_str(), back, 0.003, 0.5));
-    CHECK_FALSE(replace_part_mesh(*volume, std::move(back)));
+    // Back as the bridge reads it, with the solid attached as the part's CAD body.
+    indexed_triangle_set                 its;
+    std::shared_ptr<const BRep::CadBody> body;
+    REQUIRE(load_step_part(out.str(), 0.003, 0.5, its, body));
+    REQUIRE(body);
+    CHECK_FALSE(replace_part_mesh(*volume, TriangleMesh(std::move(its)), body));
     require_bbox(object->volume_mesh_in_world(0, 0).bounding_box(), world, 0.01);
+    const std::shared_ptr<const BRep::CadBody> attached = BRep::attached_cad_body(*volume);
+    REQUIRE(attached);
+    // The CAD tools take it: chamfer one edge of the returned solid.
+    const BRep::CadTopology topo = BRep::cad_topology(*attached, 0.05, 0.3);
+    std::vector<int>        one_edge;
+    for (int e = 0; e < topo.num_edges && one_edge.empty(); ++e)
+        if (topo.edge_selectable[e])
+            one_edge.push_back(e);
+    REQUIRE_FALSE(one_edge.empty());
+    CHECK(BRep::fillet_edges(*attached, BRep::EdgeFeature::Chamfer, 0.5, one_edge).ok());
 
+    SECTION("a mesh part with a CAD body attached goes out exactly")
+    {
+        Model                    other;
+        ModelObject             *plain = placed_object(other, make_cube(20., 10., 5.), "plain");
+        ModelVolume             *part  = plain->volumes.front();
+        BRep::MeshConversionReport conversion;
+        part->cad_body = BRep::cad_body_from_mesh(part->mesh().its, conversion);
+        REQUIRE(part->cad_body);
+        TempFile exact(".step");
+        REQUIRE(store_step_part(exact.str(), *part, {}, report, true));
+        CHECK(report.exact_parts == 1);
+        CHECK(info_of_all(reread(exact.str())).faces == 6); // the body, not the 12 triangles
+    }
     SECTION("a mesh part has no exact B-rep; exact_only says why and writes nothing")
     {
         Model        other;

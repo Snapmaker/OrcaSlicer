@@ -16,11 +16,13 @@
 // with coplanar triangles merged into planar faces. Negative volumes, modifiers and blockers
 // are not exported.
 
+#include "libslic3r/BRep/CadBody.hpp"
 #include "libslic3r/BRep/MeshToBRep.hpp"
 #include "libslic3r/Point.hpp"
 
 #include <TopoDS_Shape.hxx>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -69,10 +71,18 @@ bool store_step(const std::string &path, const Model &model, const StepExportPar
 // One part on its own, in its MESH coordinates (the frame ModelVolume::mesh() is in: before the
 // part's own and the instance's transforms), for a round trip through a CAD program (the FreeCAD
 // bridge). A shape whose geometry comes back in the same frame can replace the part's mesh while
-// the part keeps its placement. The exact B-rep is written when step_source_brep() finds it;
+// the part keeps its placement. The exact B-rep is written when the part has one: its attached CAD
+// body (BRep::attached_cad_body()) first, then step_source_brep();
 // otherwise the mesh is converted, or, with `exact_only`, nothing is written and report.error says
 // why the part has no exact B-rep.
 bool store_step_part(const std::string &path, const ModelVolume &volume, const StepExportParams &params, StepExportReport &report, bool exact_only = false);
+
+// The other half of that round trip: every shape of the STEP file a CAD program wrote back, in
+// the file's coordinates (millimetres; = the part's mesh frame), tessellated like STEP import
+// (BRep::tessellate_cad_shape) into `mesh`, and, when it holds solids, the exact CAD body behind
+// that mesh (fingerprinted to it), so the part stays exact for STEP export and the CAD tools.
+bool load_step_part(const std::string &path, double linear_deflection, double angular_deflection, indexed_triangle_set &mesh,
+                    std::shared_ptr<const BRep::CadBody> &body, std::string *error = nullptr);
 
 // The exact B-rep of a volume imported from STEP, in the volume's MESH coordinates (the
 // frame ModelVolume::mesh() is in), or a null shape when the source file is gone or

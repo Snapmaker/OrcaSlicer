@@ -13,7 +13,9 @@
 #include <wx/stdpaths.h>
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/BRep/CadBody.hpp"
 #include "libslic3r/Format/STEP.hpp"
+#include "libslic3r/Format/STEPExport.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PartMeshReplace.hpp"
@@ -233,8 +235,9 @@ void ExternalEditorBridge::on_timer(wxTimerEvent &)
         m_timer.Stop();
 }
 
-bool ExternalEditorBridge::read_output(const fs::path &file, TriangleMesh &mesh) const
+bool ExternalEditorBridge::read_output(const fs::path &file, TriangleMesh &mesh, std::shared_ptr<const BRep::CadBody> &cad_body) const
 {
+    cad_body.reset();
     const std::string path = u8(file);
     if (boost::iends_with(path, ".step") || boost::iends_with(path, ".stp")) {
         // The same tessellation a normal STEP import uses.
@@ -244,7 +247,16 @@ bool ExternalEditorBridge::read_output(const fs::path &file, TriangleMesh &mesh)
         double angle = string_to_double_decimal_point(wxGetApp().app_config->get("angle_defletion"));
         if (angle <= 0)
             angle = 0.5;
-        std::string error;
+        // The shapes with their exact CAD body; failing that, the plain STEP import tessellation.
+        std::string          error;
+        indexed_triangle_set its;
+        if (load_step_part(path, linear, angle, its, cad_body, &error) && !its.indices.empty()) {
+            mesh = TriangleMesh(std::move(its));
+            BOOST_LOG_TRIVIAL(info) << log_tag() << ": " << path << (cad_body ? " read with its CAD body" : " read as a mesh (no solid)");
+            return !mesh.empty();
+        }
+        BOOST_LOG_TRIVIAL(warning) << log_tag() << ": " << path << ": " << error << "; reading it as a plain STEP import";
+        cad_body.reset();
         if (!load_step_mesh(path.c_str(), mesh, linear, angle, &error)) {
             BOOST_LOG_TRIVIAL(error) << log_tag() << ": " << path << ": " << error;
             return false;
@@ -295,8 +307,9 @@ bool ExternalEditorBridge::poll(Session &session)
     session.last_write  = written;
     session.last_size   = size;
 
-    TriangleMesh mesh;
-    if (!read_output(output, mesh)) {
+    TriangleMesh                         mesh;
+    std::shared_ptr<const BRep::CadBody> cad_body;
+    if (!read_output(output, mesh, cad_body)) {
         BOOST_LOG_TRIVIAL(error) << log_tag() << ": could not read " << u8(output);
         m_plater->get_notification_manager()->push_notification(
             NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
@@ -305,7 +318,7 @@ bool ExternalEditorBridge::poll(Session &session)
     }
 
     m_plater->take_snapshot(snapshot_name(session.name));
-    const bool had_paint = replace_part_mesh(*volume, std::move(mesh));
+    const bool had_paint = replace_part_mesh(*volume, std::move(mesh), std::move(cad_body));
     session.volume_ids.push_back(volume->id());
 
     // Fixes hollowing and SLA points, refreshes the scene and restarts slicing.

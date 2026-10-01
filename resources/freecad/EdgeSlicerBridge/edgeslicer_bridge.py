@@ -16,10 +16,11 @@
 #    EdgeSlicer" writes the visible result to the file EdgeSlicer is watching, and EdgeSlicer swaps
 #    it into the part, keeping the part's placement and settings.
 #
-# Exchange formats: the part arrives as STEP when it is an unedited STEP import in EdgeSlicer
-# (exact B-rep) and as STL otherwise. It goes back as STEP when every visible result is a solid or
-# shape (EdgeSlicer tessellates it like a normal STEP import) and as STL when a result is still a
-# mesh. Coordinates are the part's own, in millimetres; nothing is moved or centred here.
+# Exchange formats: the part arrives as STEP when EdgeSlicer has its exact B-rep (a CAD body from
+# its CAD tools or an earlier round trip, or an unedited STEP import) and as STL otherwise. It goes
+# back as STEP when every visible result is a solid or shape (EdgeSlicer tessellates it like a
+# normal STEP import and keeps the solid as the part's CAD body) and as STL when a result is still
+# a mesh. Coordinates are the part's own, in millimetres; nothing is moved or centred here.
 
 import json
 import os

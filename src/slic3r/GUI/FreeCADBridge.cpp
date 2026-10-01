@@ -79,7 +79,8 @@ bool FreeCADBridge::start(const ModelVolume &volume, Session &session)
         return false;
     }
 
-    // An unedited STEP import goes over exactly; anything else as its mesh.
+    // A part with an exact B-rep (attached CAD body, or an unedited STEP import) goes over
+    // exactly; anything else as its mesh.
     std::string input_format = "stl";
     fs::path    input        = session.dir / to_path(stem + ".stl");
     {

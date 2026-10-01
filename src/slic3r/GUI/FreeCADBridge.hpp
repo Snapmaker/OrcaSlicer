@@ -5,11 +5,14 @@
 //
 // Exchange formats (in the part's own mesh coordinates, millimetres, so the part keeps its
 // placement):
-//  * to FreeCAD: STEP with the exact B-rep when the part is an unedited STEP import (the same check
-//    File > Export > Export as STEP uses, step_source_brep()), otherwise the mesh as binary STL,
-//    which FreeCAD opens as a mesh object;
+//  * to FreeCAD: STEP with the exact B-rep when the part has one - an attached CAD body (CAD
+//    fillet / chamfer / shell, or an earlier round trip) or an unedited STEP import, the same
+//    order File > Export > Export as STEP uses - otherwise the mesh as binary STL, which FreeCAD
+//    opens as a mesh object;
 //  * back: STEP (edited.step) when every visible result in FreeCAD is a solid or shape, tessellated
-//    the way a normal STEP import is; STL (edited.stl) when a result is still a mesh.
+//    the way a normal STEP import is, with the solid attached to the part as its CAD body (so it
+//    stays exact for STEP export, CAD fillets and the next round trip); STL (edited.stl) when a
+//    result is still a mesh.
 //
 // EdgeSlicer writes the part, a session.json describing the session and a small macro
 // (edgeslicer_edit.FCMacro) into the session folder, and starts FreeCAD on the macro. The macro

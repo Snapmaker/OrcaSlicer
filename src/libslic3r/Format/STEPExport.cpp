@@ -19,6 +19,8 @@
 
 #include <APIHeaderSection_MakeHeader.hxx>
 #include <BRepBndLib.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepGProp.hxx>
@@ -520,10 +522,22 @@ bool store_step_part(const std::string &path, const ModelVolume &volume, const S
     part.name = volume.name.empty() ? (volume.get_object() != nullptr && !volume.get_object()->name.empty() ? volume.get_object()->name : std::string("part")) : volume.name;
     try {
         std::string why_not;
-        if (params.use_source_brep && is_step_path(volume.source.input_file))
-            part.shape = step_source_brep(volume, &why_not);
-        else
-            why_not = "the part was not imported from STEP";
+        // The exact body an edit attached (CAD fillet / chamfer / shell, an earlier round trip
+        // through a CAD program) comes first, as in store_step(); then the source STEP.
+        if (params.use_source_brep)
+            if (const std::shared_ptr<const BRep::CadBody> body = BRep::attached_cad_body(volume)) {
+                try {
+                    part.shape = BRep::cad_body_shape(*body);
+                } catch (const std::exception &e) {
+                    why_not = std::string("its CAD body cannot be read: ") + e.what();
+                }
+            }
+        if (part.shape.IsNull()) {
+            if (params.use_source_brep && is_step_path(volume.source.input_file))
+                part.shape = step_source_brep(volume, &why_not);
+            else if (why_not.empty())
+                why_not = "the part has no CAD body and was not imported from STEP";
+        }
         if (!part.shape.IsNull())
             ++report.exact_parts;
         else if (exact_only) {
@@ -558,6 +572,46 @@ bool store_step_part(const std::string &path, const ModelVolume &volume, const S
     objects.emplace_back(name, std::vector<Part>{ std::move(part) });
     const double seconds_shapes = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return done(write_step_objects(path, objects, params, report, seconds_shapes));
+}
+
+bool load_step_part(const std::string &path, double linear_deflection, double angular_deflection, indexed_triangle_set &mesh,
+                    std::shared_ptr<const BRep::CadBody> &body, std::string *error)
+{
+    auto fail = [error](const std::string &why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    body.reset();
+    std::vector<NamedSolid> plain, split;
+    try {
+        if (!read_step_named_shapes(path.c_str(), plain, split) || plain.empty())
+            return fail("the STEP file cannot be read or has no shapes");
+        TopoDS_Shape shape;
+        if (plain.size() == 1)
+            shape = plain.front().solid;
+        else {
+            // Several bodies come back as one part (Split separates them again).
+            TopoDS_Compound compound;
+            BRep_Builder    builder;
+            builder.MakeCompound(compound);
+            for (const NamedSolid &ns : plain)
+                if (!ns.solid.IsNull())
+                    builder.Add(compound, ns.solid);
+            shape = compound;
+        }
+        mesh = BRep::tessellate_cad_shape(shape, linear_deflection, angular_deflection);
+        if (mesh.indices.empty())
+            return fail("the STEP file has no faces");
+        // Only solids make a useful CAD body (fillets, shells); a surface still comes back as a mesh.
+        if (TopExp_Explorer(shape, TopAbs_SOLID).More())
+            body = BRep::make_cad_body(shape, mesh, BRep::CadBodyOrigin::StepFile, 0);
+    } catch (const Standard_Failure &e) {
+        return fail(std::string("OCCT failed while reading STEP: ") + (e.GetMessageString() ? e.GetMessageString() : "unknown error"));
+    } catch (const std::exception &e) {
+        return fail(e.what());
+    }
+    return true;
 }
 
 } // namespace Slic3r

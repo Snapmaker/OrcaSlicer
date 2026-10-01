@@ -740,16 +740,13 @@ TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[F
     // The same-center case above shrinks 1 mm inward, so it stays green on main and
     // would miss a global phase shift or a dropped strip at the bbox edge. These
     // pins are world-mm vertices of the phase-preserving generator (multiline 1,
-    // density 0.2, spacing 0.45, z = 0, angle = π/4 so CorrectionAngle cancels).
-    // A shifted origin moves them by millimetres; a missing +X strip drops the
-    // right-hand pin and fails the edge-coverage checks.
+    // density 0.2, spacing 0.45, angle = π/4 so CorrectionAngle cancels).
+    // fill_surface insets the 10..50 mm square by 0.5*spacing first (overlap 0),
+    // so the filled region is 10.225..49.775. At z=0 the waves run along Y,
+    // ~2.90 mm apart; the last kept wave spans x=46.921..48.370 and the next
+    // (49.818..51.266) is clipped, so min_right is 1.6305 mm from x=50, not 0.225.
     const double spacing = 0.45;
     const float  density = 0.2f;
-    std::unique_ptr<Fill> filler(Fill::new_from_type(ipGyroid));
-    filler->spacing = spacing;
-    filler->angle   = float(M_PI / 4.);
-    filler->z       = 0.;
-
     FillParams params;
     params.density           = density;
     params.multiline         = 1;
@@ -761,13 +758,27 @@ TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[F
         Point::new_scale(10., 10.), Point::new_scale(50., 10.),
         Point::new_scale(50., 50.), Point::new_scale(10., 50.)
     };
-    Surface surface(stInternal, ExPolygon(square));
-    const Polylines paths = filler->fill_surface(&surface, params);
-    REQUIRE_FALSE(paths.empty());
+    auto fill_at = [&](double z) {
+        std::unique_ptr<Fill> filler(Fill::new_from_type(ipGyroid));
+        filler->spacing = spacing;
+        filler->angle   = float(M_PI / 4.);
+        filler->z       = z;
+        Surface surface(stInternal, ExPolygon(square));
+        return filler->fill_surface(&surface, params);
+    };
+    auto pin_ok = [](const Polylines &paths, double x, double y, double tol) {
+        const AABBTreeLines::LinesDistancer<Line> tree(to_lines(paths));
+        const Point q = Point::new_scale(x, y);
+        const double d = unscale<double>(tree.distance_from_lines<false>(q));
+        CAPTURE(x, y, d);
+        CHECK(d < tol);
+    };
 
-    const AABBTreeLines::LinesDistancer<Line> tree(to_lines(paths));
+    const Polylines paths0 = fill_at(0.);
+    REQUIRE_FALSE(paths0.empty());
     const double pin_tol = 0.02;
-    const double pins[][2] = {
+    // z=0: waves run along Y. A shifted origin moves these by millimetres.
+    const double pins_y[][2] = {
         {13.449314, 33.884724},
         {15.211169, 13.606001},
         {24.469603, 30.263524},
@@ -775,18 +786,14 @@ TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[F
         {41.851366, 30.263524},
         {46.921046, 31.712004},
     };
-    for (const auto &xy : pins) {
-        const Point q = Point::new_scale(xy[0], xy[1]);
-        const double d = unscale<double>(tree.distance_from_lines<false>(q));
-        CAPTURE(xy[0], xy[1], d);
-        CHECK(d < pin_tol);
-    }
+    for (const auto &xy : pins_y)
+        pin_ok(paths0, xy[0], xy[1], pin_tol);
 
-    // Paths must reach every side of the 10..50 mm square. fill_surface insets
-    // by 0.5*spacing (~0.225 mm); a dropped edge strip leaves a ~period gap.
-    const double edge_tol = 1.0;
+    // Reach to the original 10..50 mm sides after the 0.5*spacing inset + clip.
+    // Pin the four values (tol 0.02): a dropped strip or a looser 1 mm gate on
+    // the sparse +X side would miss the real 1.6305 mm right reach.
     double min_left = 1e9, min_right = 1e9, min_bottom = 1e9, min_top = 1e9;
-    for (const Polyline &pl : paths)
+    for (const Polyline &pl : paths0)
         for (const Point &p : pl.points) {
             const double x = unscale<double>(p.x());
             const double y = unscale<double>(p.y());
@@ -796,8 +803,22 @@ TEST_CASE("Gyroid multiline-1 waves stay pinned and cover the contour edge", "[F
             min_top    = std::min(min_top,    std::abs(y - 50.));
         }
     CAPTURE(min_left, min_right, min_bottom, min_top);
-    CHECK(min_left   < edge_tol);
-    CHECK(min_right  < edge_tol);
-    CHECK(min_bottom < edge_tol);
-    CHECK(min_top    < edge_tol);
+    CHECK(std::abs(min_left   - 0.225)  < 0.02);
+    CHECK(std::abs(min_right  - 1.6305) < 0.02);
+    CHECK(std::abs(min_bottom - 0.225)  < 0.02);
+    CHECK(std::abs(min_top    - 0.225)  < 0.02);
+
+    // Second pin set: z such that the pattern angle is π/2, so waves run along X.
+    // At z=0 some X shifts look identical; these Y-separated vertices would not.
+    const double z_along_x = (M_PI / 2.) * spacing / (density * FillGyroid::DensityAdjust);
+    const Polylines pathsX = fill_at(z_along_x);
+    REQUIRE_FALSE(pathsX.empty());
+    const double pins_x[][2] = {
+        {30.263524, 15.054482},
+        {30.263524, 29.539284},
+        {13.606001, 29.382597},
+        {30.263524, 41.127126},
+    };
+    for (const auto &xy : pins_x)
+        pin_ok(pathsX, xy[0], xy[1], pin_tol);
 }

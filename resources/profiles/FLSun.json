@@ -91,6 +91,10 @@
             "sub_path": "process/0.20mm Standard @FLSun S1.json"
         },
         {
+            "name": "0.20mm Standard @FLSun S1 Pro",
+            "sub_path": "process/0.20mm Standard @FLSun S1 Pro.json"
+        },
+        {
             "name": "0.20mm Standard @FLSun SR",
             "sub_path": "process/0.20mm Standard @FLSun SR.json"
         },
@@ -271,6 +275,62 @@
         {
             "name": "FLSun S1 TPU",
             "sub_path": "filament/FLSun S1 TPU.json"
+        },
+        {
+            "name": "FLSun S1 Pro FLSun PLA-HS",
+            "sub_path": "filament/FLSun S1 Pro FLSun PLA-HS.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA High Speed",
+            "sub_path": "filament/FLSun S1 Pro PLA High Speed.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA Generic",
+            "sub_path": "filament/FLSun S1 Pro PLA Generic.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA Silk",
+            "sub_path": "filament/FLSun S1 Pro PLA Silk.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA+",
+            "sub_path": "filament/FLSun S1 Pro PLA+.json"
+        },
+        {
+            "name": "FLSun S1 Pro PLA-CF",
+            "sub_path": "filament/FLSun S1 Pro PLA-CF.json"
+        },
+        {
+            "name": "FLSun S1 Pro eSUN ePLA-Lite",
+            "sub_path": "filament/FLSun S1 Pro eSUN ePLA-Lite.json"
+        },
+        {
+            "name": "FLSun S1 Pro PETG",
+            "sub_path": "filament/FLSun S1 Pro PETG.json"
+        },
+        {
+            "name": "FLSun S1 Pro PET",
+            "sub_path": "filament/FLSun S1 Pro PET.json"
+        },
+        {
+            "name": "FLSun S1 Pro ABS",
+            "sub_path": "filament/FLSun S1 Pro ABS.json"
+        },
+        {
+            "name": "FLSun S1 Pro ASA",
+            "sub_path": "filament/FLSun S1 Pro ASA.json"
+        },
+        {
+            "name": "FLSun S1 Pro PA",
+            "sub_path": "filament/FLSun S1 Pro PA.json"
+        },
+        {
+            "name": "FLSun S1 Pro PC",
+            "sub_path": "filament/FLSun S1 Pro PC.json"
+        },
+        {
+            "name": "FLSun S1 Pro TPU",
+            "sub_path": "filament/FLSun S1 Pro TPU.json"
         },
         {
             "name": "FLSun T1 TPU",

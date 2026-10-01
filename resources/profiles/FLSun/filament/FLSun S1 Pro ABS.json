@@ -1,0 +1,61 @@
+{
+    "type": "filament",
+    "name": "FLSun S1 Pro ABS",
+    "inherits": "FLSun Generic ABS",
+    "from": "system",
+    "setting_id": "GFSA04",
+    "filament_id": "GFB99",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "280"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "290"
+    ],
+    "nozzle_temperature_range_low": [
+        "240"
+    ],
+    "nozzle_temperature_range_high": [
+        "300"
+    ],
+    "hot_plate_temp": [
+        "120"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "120"
+    ],
+    "filament_max_volumetric_speed": [
+        "80"
+    ],
+    "fan_min_speed": [
+        "40"
+    ],
+    "fan_max_speed": [
+        "50"
+    ],
+    "close_fan_the_first_x_layers": [
+        "1"
+    ],
+    "full_fan_speed_layer": [
+        "6"
+    ],
+    "overhang_fan_speed": [
+        "50"
+    ],
+    "slow_down_layer_time": [
+        "2"
+    ],
+    "slow_down_min_speed": [
+        "60"
+    ],
+    "fan_cooling_layer_time": [
+        "30"
+    ],
+    "filament_flow_ratio": [
+        "1"
+    ],
+    "filament_density": "1.26",
+    "compatible_printers": [
+        "FLSun S1 Pro 0.4 nozzle"
+    ]
+}

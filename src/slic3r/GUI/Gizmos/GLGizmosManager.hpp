@@ -95,6 +95,9 @@ public:
         // chain selection). Appended AFTER Sculpt so the existing EType
         // values and the m_gizmos order they index are untouched.
         Edit,
+        // Exact B-rep fillet / chamfer / shell of a CAD part (GLGizmoCadFillet). Not in the
+        // toolbar: opened from the part's context menu and from the Edit gizmo.
+        CadFillet,
         //SlaSupports,
         // BBS
         //FaceRecognition,

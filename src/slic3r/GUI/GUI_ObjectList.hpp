@@ -470,6 +470,10 @@ public:
     // Ultra (support groups): resync every part row's group badge with ModelVolume::config.
     void update_support_group_badges();
     void simplify();
+    // Open the exact CAD fillet / chamfer / shell gizmo on the selected part. from_gizmo: switch
+    // over from another open gizmo (the Edit panel's button) instead of refusing.
+    void open_cad_fillet(bool from_gizmo = false);
+    static bool can_open_cad_fillet();
     void update_item_error_icon(const int obj_idx, int vol_idx) const ;
 
     void copy_layers_to_clipboard();

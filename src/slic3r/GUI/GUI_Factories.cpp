@@ -2179,6 +2179,12 @@ void MenuFactory::create_extra_object_menu()
         _L("Rebuild this object as the outer wall the slicer will actually print, so it can be re-sliced at another layer height"),
         [](wxCommandEvent&) { obj_list()->bake_slice_to_mesh(); }, "", &m_object_menu,
         []() { return ObjectList::can_bake_slice_to_mesh(); }, m_parent);
+    // Side stabilizers as real geometry, so they print in other slicers too. Enabled once the object is
+    // sliced with its side stabilizers on. tests/research_stabilizer_bake.md
+    append_menu_item(&m_object_menu, wxID_ANY, _L("Bake stabilizers..."),
+        _L("Turn this object's side stabilizers into real geometry, as a separate object or a part, so they print in any slicer"),
+        [](wxCommandEvent&) { obj_list()->bake_stabilizers(); }, "", &m_object_menu,
+        []() { return ObjectList::can_bake_stabilizers(); }, m_parent);
     // Image Fill (Phase 2): on the object menu too - a single-part object never opens the part menu.
     append_menu_item_image_fill(&m_object_menu);
     // merge to single part

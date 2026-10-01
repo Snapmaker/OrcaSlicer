@@ -21,6 +21,9 @@
 
 namespace Slic3r::GUI {
 
+// The colour of painted stabilizer points (EnforcerBlockerType::STABILIZER) in this gizmo.
+static const ColorRGBA STABILIZER_POINT_COLOR = { 0.62f, 0.36f, 0.90f, 1.f };
+
 GLGizmoFdmSupports::GLGizmoFdmSupports(GLCanvas3D& parent, const std::string& icon_filename, unsigned int sprite_id)
     : GLGizmoPainterBase(parent, icon_filename, sprite_id), m_current_tool(ImGui::CircleButtonIcon)
 {
@@ -106,6 +109,11 @@ bool GLGizmoFdmSupports::on_init()
     m_desc["smart_fill_angle_caption"] = ctrl + _L("Mouse wheel");
     m_desc["smart_fill_angle"]      = _L("Smart fill angle");
     m_desc["on_overhangs_only"] = _L("On overhangs only");
+    m_desc["stabilizer_points"]     = _L("Paint stabilizer points");
+    m_desc["stabilizer_caption"]    = _L("Left mouse button");
+    m_desc["stabilizer"]            = _L("Paint stabilizer points");
+    m_desc["unpaint_caption"]       = _L("Right mouse button");
+    m_desc["unpaint"]               = _L("Erase");
 
     memset(&m_print_instance, 0, sizeof(m_print_instance));
     return true;
@@ -286,6 +294,14 @@ void GLGizmoFdmSupports::on_render_input_window(float x, float y, float bottom_l
     m_imgui->bbl_checkbox(m_desc["on_overhangs_only"], m_paint_on_overhangs_only);
     if (ImGui::IsItemHovered())
         m_imgui->tooltip(format_wxstr(_L("Allows painting only on facets selected by: \"%1%\""), m_desc["highlight_by_angle"]), max_tooltip_width);
+    // Side stabilizers (Support/Stabilizers.hpp): the same brushes paint the spots where a stabilizer
+    // strut must always touch the part. Left paints them, right erases.
+    m_imgui->bbl_checkbox(m_desc["stabilizer_points"], m_paint_stabilizers);
+    if (ImGui::IsItemHovered())
+        m_imgui->tooltip(_L("Paint spots where a side stabilizer must touch the part. Left mouse button paints, right mouse "
+                            "button erases. Used when the object's side stabilizers are Auto (on top of the rings) or "
+                            "Manual (only these)."),
+                         max_tooltip_width);
     ImGui::Separator();
 
     if (m_current_tool != old_tool)
@@ -498,12 +514,14 @@ void GLGizmoFdmSupports::show_tooltip_information(float caption_max, float x, fl
         std::vector<std::string> tip_items;
         switch (m_tool_type) {
             case ToolType::BRUSH:
-                tip_items = {"enforce", "block", "remove", "cursor_size", "clipping_of_view"};
+                tip_items = m_paint_stabilizers ? std::vector<std::string>{"stabilizer", "unpaint", "remove", "cursor_size", "clipping_of_view"} :
+                                                  std::vector<std::string>{"enforce", "block", "remove", "cursor_size", "clipping_of_view"};
                 break;
             case ToolType::BUCKET_FILL:
                 break;
             case ToolType::SMART_FILL:
-                tip_items = {"enforce", "block", "remove", "smart_fill_angle", "clipping_of_view"};
+                tip_items = m_paint_stabilizers ? std::vector<std::string>{"stabilizer", "unpaint", "remove", "smart_fill_angle", "clipping_of_view"} :
+                                                  std::vector<std::string>{"enforce", "block", "remove", "smart_fill_angle", "clipping_of_view"};
                 break;
             case ToolType::GAP_FILL:
                 tip_items = {"gap_area"};
@@ -612,6 +630,7 @@ void GLGizmoFdmSupports::update_from_model_object(bool first_update)
     ebt_colors.push_back(GLVolume::NEUTRAL_COLOR);
     ebt_colors.push_back(TriangleSelectorGUI::enforcers_color);
     ebt_colors.push_back(TriangleSelectorGUI::blockers_color);
+    ebt_colors.push_back(STABILIZER_POINT_COLOR);
     for (const ModelVolume* mv : mo->volumes) {
         if (! mv->is_model_part())
             continue;
@@ -645,7 +664,9 @@ wxString GLGizmoFdmSupports::handle_snapshot_action_name(bool shift_down, GLGizm
     if (shift_down)
         action_name = ("Unselect all");
     else {
-        if (button_down == Button::Left)
+        if (m_paint_stabilizers)
+            action_name = button_down == Button::Left ? ("Paint stabilizer points") : ("Erase painting");
+        else if (button_down == Button::Left)
             action_name = ("Enforce supports");
         else
             action_name = ("Block supports");

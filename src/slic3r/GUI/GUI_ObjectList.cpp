@@ -19,6 +19,7 @@
 #include "libslic3r/MeshRemesh.hpp"
 #include "libslic3r/MeshRound.hpp"
 #include "libslic3r/SliceBake.hpp"
+#include "libslic3r/Support/StabilizerBake.hpp"
 #include "libslic3r/Print.hpp"
 #include "GLCanvas3D.hpp"
 #include "Selection.hpp"
@@ -35,6 +36,8 @@
 #include "SliceBakeDialog.hpp"
 #include "Jobs/QuadRemeshJob.hpp"
 #include "Jobs/SliceBakeJob.hpp"
+#include "Jobs/StabilizerBakeJob.hpp"
+#include "StabilizerBakeDialog.hpp"
 #include "Jobs/Worker.hpp"
 #include <wx/filedlg.h>
 #include "QuadRemeshDialog.hpp"
@@ -6708,8 +6711,9 @@ void ObjectList::quad_remesh(bool close_gizmos)
 
 // The sliced PrintObject behind the object at obj_idx, or nullptr when the plate has not been
 // sliced far enough for a bake (the bake reads LayerRegion::perimeters, so posPerimeters is the
-// step that has to be done - not the whole G-code export).
-static const PrintObject* baked_print_object_for(int obj_idx)
+// step that has to be done - not the whole G-code export). The stabilizer bake only needs the
+// layer outlines, so it asks for posSlice.
+static const PrintObject* baked_print_object_for(int obj_idx, PrintObjectStep step = posPerimeters)
 {
     Plater* plater = wxGetApp().plater();
     if (plater == nullptr || obj_idx < 0)
@@ -6732,7 +6736,7 @@ static const PrintObject* baked_print_object_for(int obj_idx)
             return nullptr;
         for (const PrintObject* po : print->objects())
             if (po != nullptr && po->model_object() != nullptr && po->model_object()->id() == mo->id() &&
-                po->is_step_done(posPerimeters) && po->layer_count() > 0)
+                po->is_step_done(step) && po->layer_count() > 0)
                 return po;
         return nullptr;
     };
@@ -6824,6 +6828,83 @@ void ObjectList::bake_slice_to_mesh()
     if (!worker.is_idle())
         return;
     replace_job(worker, std::make_unique<SliceBakeJob>(plater, po, mo->id(), settings, name, export_path));
+}
+
+// Side stabilizers baked into real geometry - libslic3r/Support/StabilizerBake.hpp does the work,
+// StabilizerBakeDialog collects the options and StabilizerBakeJob runs it off the UI thread.
+//
+// tests/research_stabilizer_bake.md
+
+bool ObjectList::can_bake_stabilizers()
+{
+    ObjectList* list = wxGetApp().obj_list();
+    if (list == nullptr)
+        return false;
+    std::vector<int> obj_idxs, vol_idxs;
+    list->get_selection_indexes(obj_idxs, vol_idxs);
+    if (obj_idxs.size() != 1)
+        return false;
+    // The struts are planned from the layer outlines, so a slice is all it takes.
+    const PrintObject* po = baked_print_object_for(obj_idxs.front(), posSlice);
+    return po != nullptr && po->config().stabilizer_supports.value != smOff;
+}
+
+void ObjectList::bake_stabilizers()
+{
+    if (!wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager().check_gizmos_closed_except(GLGizmosManager::Undefined))
+        return;
+
+    std::vector<int> obj_idxs, vol_idxs;
+    get_selection_indexes(obj_idxs, vol_idxs);
+    if (obj_idxs.size() != 1)
+        return;
+    const int obj_idx = obj_idxs.front();
+
+    const PrintObject* po = baked_print_object_for(obj_idx, posSlice);
+    if (po == nullptr || po->config().stabilizer_supports.value == smOff) {
+        // The menu gate should have caught this; say why, since the plate can go stale between the
+        // menu opening and the click.
+        wxGetApp().notification_manager()->push_plater_warning_notification(
+            _u8L("Turn on the object's side stabilizers (Auto or Manual) and slice the plate before baking them."));
+        return;
+    }
+
+    Plater* plater = wxGetApp().plater();
+    ModelObject* mo = object(obj_idx);
+    if (mo == nullptr)
+        return;
+    const std::string name = mo->name.empty() ? std::string("object") : mo->name;
+
+    // One part is shared by every instance, so it can only follow instances that share the sliced
+    // one's rotation and scale - those are exactly the PrintObject's own instances.
+    const bool part_allowed = po->instances().size() == mo->instances.size();
+    const bool by_object    = po->print() != nullptr && po->print()->config().print_sequence.value == PrintSequence::ByObject;
+    const wxString mode_label = po->config().stabilizer_supports.value == smManual ? _L("Manual") : _L("Auto");
+
+    StabilizerBakeOptions options;
+    {
+        StabilizerBakeDialog dlg(wxGetApp().mainframe, from_u8(name), mode_label, stabilizer_bake_defaults(po->config()),
+                                 by_object, part_allowed);
+        if (dlg.ShowModal() != wxID_OK)
+            return;
+        options = dlg.options();
+    }
+
+    Worker& worker = plater->get_ui_job_worker();
+    if (!worker.is_idle())
+        return;
+    replace_job(worker, std::make_unique<StabilizerBakeJob>(plater, po, mo->id(), options, name));
+}
+
+void ObjectList::refresh_object_settings(int obj_idx)
+{
+    ModelObject* mo = object(obj_idx);
+    if (mo == nullptr)
+        return;
+    const wxDataViewItem item = m_objects_model->GetItemById(obj_idx);
+    if (item.IsOk())
+        add_settings_item(item, &mo->config.get());
+    part_selection_changed();
 }
 
 void ObjectList::fix_through_netfabb()

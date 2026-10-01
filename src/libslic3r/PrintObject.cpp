@@ -19,6 +19,7 @@
 #include "Utils.hpp"
 #include "ContourZ.hpp"
 #include "SLA/IndexedMesh.hpp"
+#include "Support/Stabilizers.hpp"
 #include "Fill/FillAdaptive.hpp"
 #include "Fill/Fill.hpp"
 #include "Fill/FillLightning.hpp"
@@ -777,6 +778,12 @@ void PrintObject::generate_support_material()
 
             this->_generate_support_material();
             m_print->throw_if_canceled();
+
+            // Side stabilizers ride on the support layers the generator above just made.
+            if (m_config.stabilizer_supports.value && !m_shared_object) {
+                m_print->set_status(50, L("Generating side stabilizers"));
+                generate_stabilizer_supports(*this, [this]() { this->throw_if_canceled(); });
+            }
         }
         // Ultra (support groups, plan 2026-09-02 3.7): both this feature and support filament
         // matching (Chameleon) write SupportLayer::interface_by_extruder, so running both would
@@ -1265,7 +1272,13 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "tree_support_branch_angle"
             || opt_key == "tree_support_branch_angle_organic"
             || opt_key == "tree_support_angle_slow"
-            || opt_key == "tree_support_wall_count") {
+            || opt_key == "tree_support_wall_count"
+            || opt_key == "stabilizer_supports"
+            || opt_key == "stabilizer_ring_spacing"
+            || opt_key == "stabilizer_points_per_ring"
+            || opt_key == "stabilizer_tip_diameter"
+            || opt_key == "stabilizer_pillar_diameter"
+            || opt_key == "stabilizer_max_island_width") {
             steps.emplace_back(posSupportMaterial);
         } else if (
                opt_key == "bottom_shell_layers"

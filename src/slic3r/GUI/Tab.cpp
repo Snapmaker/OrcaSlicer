@@ -3080,6 +3080,16 @@ void TabPrint::build()
         optgroup->append_single_option_line("tree_support_auto_brim", "support_settings_tree");
         optgroup->append_single_option_line("tree_support_brim_width", "support_settings_tree");
 
+        // Side stabilizers: resin-style pinpoint struts on the sides of tall, thin parts
+        // (libslic3r/Support/Stabilizers.hpp).
+        optgroup = page->new_optgroup(L("Side stabilizers"), L"param_support_tree");
+        optgroup->append_single_option_line("stabilizer_supports");
+        optgroup->append_single_option_line("stabilizer_ring_spacing");
+        optgroup->append_single_option_line("stabilizer_points_per_ring");
+        optgroup->append_single_option_line("stabilizer_tip_diameter");
+        optgroup->append_single_option_line("stabilizer_pillar_diameter");
+        optgroup->append_single_option_line("stabilizer_max_island_width");
+
     page = add_options_page(L("Multimaterial"), "custom-gcode_multi_material"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Prime tower"), L"param_tower");
         optgroup->append_single_option_line("enable_prime_tower", "multimaterial_settings_prime_tower");

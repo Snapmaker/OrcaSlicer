@@ -72,6 +72,7 @@
         "1"
     ],
     "compatible_printers": [
-        "FLSun S1 0.4 nozzle"
+        "FLSun S1 0.4 nozzle",
+        "FLSun S1 Pro 0.4 nozzle"
     ]
 }

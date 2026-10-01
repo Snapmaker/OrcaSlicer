@@ -2214,6 +2214,17 @@ std::string nozzle_diameter_summary(const ConfigBase &config);
 // per-slot filament preset compatibility rule measures against.
 double nozzle_diameter_for_filament(const PrintConfig &config, unsigned int filament_id);
 
+// CLI --uptodate_settings / --downward_check: load_config_file() uses
+// ConfigBase::load_from_json()'s 4-arg form, which does not flatten inherits.
+// Un-guarded opt_float("printable_height") dereferences a null option when the
+// key lives only on the parent (typical BBL nozzle variants).
+inline int cli_printable_height_or_zero(const ConfigBase &config)
+{
+    if (const auto *opt = config.option<ConfigOptionFloat>("printable_height"))
+        return static_cast<int>(opt->value);
+    return 0;
+}
+
 class CLIActionsConfigDef : public ConfigDef
 {
 public:

@@ -525,19 +525,11 @@ TEST_CASE("PrintConfigDef and the CLI ConfigDefs never register the same option 
     CHECK(duplicates.empty());
 }
 
-// CLI --load-settings / --downward_check (Snapmaker_Orca.cpp) call
+// CLI --uptodate_settings / --downward_check (Snapmaker_Orca.cpp) call
 // ConfigBase::load_from_json()'s 4-arg form, which does not flatten inherits. opt_float()
 // then dereferences a null option<>() when printable_height lives only on the parent.
-// These cases exercise the same guard as L2199 / L2681 / L4190.
+// These cases call cli_printable_height_or_zero() — the same helper as L2199 / L2684 / L4197.
 namespace {
-int guarded_cli_printable_height(const DynamicPrintConfig &config)
-{
-    int height = 0;
-    if (config.option<ConfigOptionFloat>("printable_height"))
-        height = static_cast<int>(config.opt_float("printable_height"));
-    return height;
-}
-
 DynamicPrintConfig load_temp_json(const std::string &filename, const std::string &body, std::map<std::string, std::string> &key_values)
 {
     const boost::filesystem::path dir = boost::filesystem::temp_directory_path() / "snorca_tests";
@@ -564,7 +556,7 @@ TEST_CASE("CLI printable_height guard survives load_from_json without inherit fl
         std::map<std::string, std::string> key_values;
         DynamicPrintConfig config = load_temp_json("empty_project_settings.json", "{}\n", key_values);
         REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
-        REQUIRE(guarded_cli_printable_height(config) == 0);
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
     }
 
     SECTION("4-arg load_from_json does not flatten a parent printable_height") {
@@ -583,10 +575,10 @@ TEST_CASE("CLI printable_height guard survives load_from_json without inherit fl
         REQUIRE(config.option<ConfigOptionString>("inherits") != nullptr);
         REQUIRE(config.opt_string("inherits") == "probe parent");
         REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
-        REQUIRE(guarded_cli_printable_height(config) == 0);
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
     }
 
-    SECTION("L4190 crash shape: local printable_area of 4 points, no printable_height") {
+    SECTION("downward-check crash shape: local printable_area of 4 points, no printable_height") {
         std::map<std::string, std::string> key_values;
         DynamicPrintConfig config = load_temp_json(
             "area_without_height.json",
@@ -601,9 +593,9 @@ TEST_CASE("CLI printable_height guard survives load_from_json without inherit fl
         REQUIRE(area != nullptr);
         REQUIRE(area->values.size() >= 4);
         REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
-        // Downward-check only reads height inside the size>=4 gate; the guard keeps the
-        // struct default of 0, so the L4228 check marks the printer failed.
-        REQUIRE(guarded_cli_printable_height(config) == 0);
+        // Downward-check only reads height inside the size>=4 gate; the helper keeps the
+        // struct default of 0, so the ~L4236 check marks the printer failed.
+        REQUIRE(cli_printable_height_or_zero(config) == 0);
     }
 
     SECTION("present printable_height still reads through the guard") {
@@ -618,7 +610,7 @@ TEST_CASE("CLI printable_height guard survives load_from_json without inherit fl
             "}\n",
             key_values);
         REQUIRE(config.option<ConfigOptionFloat>("printable_height") != nullptr);
-        REQUIRE(guarded_cli_printable_height(config) == 256);
+        REQUIRE(cli_printable_height_or_zero(config) == 256);
     }
 }
 

@@ -1494,20 +1494,20 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
         if (decode_color(txt_color, rgba))
             colors.push_back({txt_color, rgba});
     } else {
-        const ConfigOptionStrings* filamemts_opt = dynamic_cast<const ConfigOptionStrings*>(config->option("filament_colour"));
-        if (filamemts_opt == nullptr)
-            return;
-
-        std::vector<std::string> filament_colors = filamemts_opt->values;
+        std::vector<std::string> filament_colors;
+        if (GUI::wxGetApp().is_editor() && GUI::wxGetApp().plater() != nullptr) {
+            // Use the same palette as the filament panel and the painted-facet renderer (project config,
+            // physical filaments followed by enabled mixed filaments). The plater's copy of filament_colour
+            // in `config` can lag behind the project config after a project load or printer switch.
+            filament_colors = GUI::wxGetApp().plater()->get_extruder_colors_from_plater_config();
+        } else {
+            const ConfigOptionStrings* filamemts_opt = dynamic_cast<const ConfigOptionStrings*>(config->option("filament_colour"));
+            if (filamemts_opt == nullptr)
+                return;
+            filament_colors = filamemts_opt->values;
+        }
         if (filament_colors.empty())
             return;
-
-        // Include enabled mixed (virtual) filament colors so volume extruder IDs
-        // assigned to mixed rows render correctly in Prepare view.
-        if (GUI::wxGetApp().preset_bundle != nullptr) {
-            const auto mixed_colors = GUI::wxGetApp().preset_bundle->mixed_filaments.display_colors();
-            filament_colors.insert(filament_colors.end(), mixed_colors.begin(), mixed_colors.end());
-        }
 
         colors.resize(filament_colors.size());
 

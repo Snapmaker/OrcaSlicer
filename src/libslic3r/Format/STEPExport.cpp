@@ -7,6 +7,8 @@
 #include "STEP.hpp"
 
 #include "libslic3r/AABBMesh.hpp"
+#include "libslic3r/BRep/CadEdit.hpp"
+#include "libslic3r/BRep/CadShape.hpp"
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -181,14 +183,14 @@ struct SourceCache
     }
 };
 
-TopoDS_Shape find_source_brep(const ModelVolume &volume, SourceCache &cache, std::string *why_not)
+TopoDS_Shape find_source_brep(const std::string &path, const std::string &volume_name, const indexed_triangle_set &mesh,
+                              const Vec3d &offset, SourceCache &cache, std::string *why_not)
 {
     auto fail = [why_not](const std::string &why) {
         if (why_not)
             *why_not = why;
         return TopoDS_Shape();
     };
-    const std::string &path = volume.source.input_file;
     if (path.empty() || !is_step_path(path))
         return fail("the part was not imported from STEP");
     boost::system::error_code ec;
@@ -203,12 +205,10 @@ TopoDS_Shape find_source_brep(const ModelVolume &volume, SourceCache &cache, std
     for (int pass = 0; pass < 2; ++pass)
         for (const std::vector<NamedSolid> *list : {&file.plain, &file.split})
             for (const NamedSolid &ns : *list)
-                if ((ns.name == volume.name) == (pass == 0))
+                if ((ns.name == volume_name) == (pass == 0))
                     candidates.push_back(&ns);
 
-    const indexed_triangle_set &mesh   = volume.mesh().its;
-    const Vec3d                 offset = volume.source.mesh_offset;
-    std::string                 why    = "no shape in the source STEP matches the part";
+    std::string why = "no shape in the source STEP matches the part";
     for (const NamedSolid *ns : candidates) {
         if (ns->solid.IsNull())
             continue;
@@ -283,6 +283,11 @@ struct Part
     bool           has_colour = false;
     Quantity_Color colour;
 };
+
+TopoDS_Shape find_source_brep(const ModelVolume &volume, SourceCache &cache, std::string *why_not)
+{
+    return find_source_brep(volume.source.input_file, volume.name, volume.mesh().its, volume.source.mesh_offset, cache, why_not);
+}
 
 // Writes `objects` (each with its parts, already placed) as an XCAF document: one named shape per
 // single-part object, an assembly per multi-part object, under a root assembly when there are
@@ -362,16 +367,22 @@ bool write_step_objects(const std::string &path, const std::vector<std::pair<std
 
 } // namespace
 
-TopoDS_Shape step_source_brep(const ModelVolume &volume, std::string *why_not)
+TopoDS_Shape step_source_brep(const std::string &input_file, const std::string &volume_name, const indexed_triangle_set &mesh,
+                              const Vec3d &mesh_offset, std::string *why_not)
 {
     SourceCache cache;
     try {
-        return find_source_brep(volume, cache, why_not);
+        return find_source_brep(input_file, volume_name, mesh, mesh_offset, cache, why_not);
     } catch (const Standard_Failure &) {
         if (why_not)
             *why_not = "OCCT failed while reading the source STEP";
     }
     return TopoDS_Shape();
+}
+
+TopoDS_Shape step_source_brep(const ModelVolume &volume, std::string *why_not)
+{
+    return step_source_brep(volume.source.input_file, volume.name, volume.mesh().its, volume.source.mesh_offset, why_not);
 }
 
 bool store_step(const std::string &path, const std::vector<StepExportItem> &items, const StepExportParams &params, StepExportReport &report)
@@ -419,7 +430,18 @@ bool store_step(const std::string &path, const std::vector<StepExportItem> &item
 
                     std::string  why_not;
                     TopoDS_Shape exact;
-                    if (params.use_source_brep && !volume->source.input_file.empty() && is_step_path(volume->source.input_file))
+                    // A part edited with the exact CAD tools (fillet, chamfer, shell) carries its
+                    // B-rep; it is the only exact form of the part, since the mesh no longer matches
+                    // the source STEP.
+                    if (params.use_source_brep)
+                        if (const std::shared_ptr<const BRep::CadBody> body = BRep::attached_cad_body(*volume)) {
+                            try {
+                                exact = BRep::cad_body_shape(*body);
+                            } catch (const std::exception &e) {
+                                why_not = std::string("its CAD body cannot be read: ") + e.what();
+                            }
+                        }
+                    if (exact.IsNull() && params.use_source_brep && !volume->source.input_file.empty() && is_step_path(volume->source.input_file))
                         exact = find_source_brep(*volume, cache, &why_not);
                     if (!exact.IsNull()) {
                         part.shape = transform_shape(exact, world * volume->get_matrix());

@@ -250,6 +250,11 @@ set(lisbslic3r_sources
     Format/STEPExport.hpp
     BRep/MeshToBRep.cpp
     BRep/MeshToBRep.hpp
+    BRep/CadBody.cpp
+    BRep/CadBody.hpp
+    BRep/CadEdit.cpp
+    BRep/CadEdit.hpp
+    BRep/CadShape.hpp
     Format/STL.cpp
     Format/STL.hpp
     Format/svg.cpp
@@ -630,6 +635,7 @@ slic3r_unity_build(libslic3r SKIP
     Format/STEP.cpp                 # OCCT's Handle() macro breaks CGAL headers in neighbours
     Format/STEPExport.cpp           # OCCT's Handle() macro breaks CGAL headers in neighbours
     BRep/MeshToBRep.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
+    BRep/CadEdit.cpp                # OCCT's Handle() macro breaks CGAL headers in neighbours
     Shape/TextShape.cpp             # OCCT's Handle() macro breaks CGAL headers in neighbours
     Geometry/VoronoiUtilsCgal.cpp   # CGAL must come before OCCT's Handle() macro (Model.hpp -> STEP.hpp)
     FlushVolCalc.cpp                # calls RGB2HSV() from libslic3r_gui; alone it is dropped by the linker in libslic3r_tests

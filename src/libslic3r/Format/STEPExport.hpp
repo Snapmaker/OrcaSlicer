@@ -8,6 +8,8 @@
 // filament colour is written as its surface colour. Geometry is placed in world coordinates
 // (instance matrix * volume matrix, plus StepExportParams::world_offset).
 //
+// A part that carries a CAD body (BRep/CadBody.hpp: filleted, chamfered, shelled or converted
+// with the exact CAD tools) whose mesh is unedited is exported with that body.
 // A part imported from STEP is exported with its EXACT original geometry when the source
 // file can still be read and the part's mesh is still the tessellation of it (see
 // step_source_brep()); any other part is converted from its mesh by BRep::mesh_to_brep(),
@@ -77,6 +79,10 @@ bool store_step_part(const std::string &path, const ModelVolume &volume, const S
 // unreadable, or when the volume's mesh is no longer the tessellation of that B-rep (the part
 // was cut, simplified, remeshed, baked, ...). `why_not` receives the reason for a null result.
 TopoDS_Shape step_source_brep(const ModelVolume &volume, std::string *why_not = nullptr);
+// The same from the pieces of the volume it reads (its source file, name, mesh and the importer's
+// centring shift), for callers that must not touch the Model from a worker thread.
+TopoDS_Shape step_source_brep(const std::string &input_file, const std::string &volume_name, const indexed_triangle_set &mesh,
+                              const Vec3d &mesh_offset, std::string *why_not = nullptr);
 
 } // namespace Slic3r
 

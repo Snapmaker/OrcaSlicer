@@ -1,11 +1,14 @@
 #include <catch2/catch.hpp>
 #include <atomic>
 #include <clocale>
-#include <cstdlib>
 #include <map>
 #include <string>
 #include <type_traits>
 #include <vector>
+
+#ifdef _WIN32
+#include <locale.h>
+#endif
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
@@ -203,18 +206,23 @@ int load_json(Slic3r::DynamicPrintConfig &config,
 // Install a comma-decimal numeric locale when the host has one, so nested-setter
 // restore is observable. active is false when no such locale exists (CI images
 // often ship only C/POSIX); the restore assertion then just checks the original
-// is_decimal_separator_point() value.
+// is_decimal_separator_point() value. Do not generate locales via localedef.
 struct CommaNumericLocale
 {
     bool        active = false;
     std::string previous;
-#ifndef _WIN32
-    std::string old_locpath;
-    bool        locpath_replaced = false;
+#ifdef _WIN32
+    int previous_threadlocale = 0;
 #endif
 
     CommaNumericLocale()
     {
+#ifdef _WIN32
+        // Enable per-thread locale before setlocale so a comma locale cannot leak
+        // into the process-wide LC_NUMERIC for later tests.
+        previous_threadlocale = _configthreadlocale(0);
+        _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+#endif
         const char *cur = std::setlocale(LC_NUMERIC, nullptr);
         previous        = cur ? cur : "C";
 #ifdef _WIN32
@@ -230,40 +238,13 @@ struct CommaNumericLocale
                 return;
             }
         }
-#ifndef _WIN32
-        // Many CI images ship only C/POSIX. Generate a user-local de_DE so nested
-        // restore is actually observable (inner must not snap back to comma).
-        {
-            const boost::filesystem::path locdir = boost::filesystem::temp_directory_path() / "edgeslicer_locales";
-            boost::system::error_code     ec;
-            boost::filesystem::create_directories(locdir, ec);
-            const boost::filesystem::path generated = locdir / "de_DE.UTF-8";
-            if (!boost::filesystem::exists(generated)) {
-                const std::string cmd = "localedef -c -i de_DE -f UTF-8 \"" + generated.string() + "\" >/dev/null 2>&1";
-                std::system(cmd.c_str());
-            }
-            if (const char *prev = std::getenv("LOCPATH"))
-                old_locpath = prev;
-            ::setenv("LOCPATH", locdir.string().c_str(), 1);
-            locpath_replaced = true;
-            if (std::setlocale(LC_NUMERIC, "de_DE.UTF-8") != nullptr && !Slic3r::is_decimal_separator_point()) {
-                active = true;
-                return;
-            }
-        }
-#endif
         std::setlocale(LC_NUMERIC, previous.c_str());
     }
     ~CommaNumericLocale()
     {
         std::setlocale(LC_NUMERIC, previous.c_str());
-#ifndef _WIN32
-        if (locpath_replaced) {
-            if (old_locpath.empty())
-                ::unsetenv("LOCPATH");
-            else
-                ::setenv("LOCPATH", old_locpath.c_str(), 1);
-        }
+#ifdef _WIN32
+        _configthreadlocale(previous_threadlocale);
 #endif
     }
 };
@@ -358,7 +339,9 @@ TEST_CASE("mixed-case include directory and template meta keys still resolve", "
     CHECK(config.opt_serialize("nozzle_temperature") == "250,250");
     REQUIRE(config.has("filament_flow_ratio"));
     CHECK(config.opt_serialize("filament_flow_ratio") == "0.88,0.88");
-    CHECK_FALSE(config.has("instantiation"));
+    // instantiation / from are template-only meta keys, not ConfigOptions.
+    REQUIRE(key_values.count(BBL_JSON_KEY_INSTANTIATION) == 0);
+    REQUIRE(key_values.count(BBL_JSON_KEY_FROM) == 0);
 }
 
 TEST_CASE("nested CNumericLocalesSetter keeps a C decimal point and restores after", "[LocalesUtils]")
@@ -373,6 +356,7 @@ TEST_CASE("nested CNumericLocalesSetter keeps a C decimal point and restores aft
     else
         REQUIRE_FALSE(point_before);
 
+    Slic3r::reset_numeric_locale_setter_counts();
     {
         Slic3r::CNumericLocalesSetter outer;
         REQUIRE(Slic3r::is_decimal_separator_point());
@@ -382,6 +366,8 @@ TEST_CASE("nested CNumericLocalesSetter keeps a C decimal point and restores aft
             {
                 Slic3r::CNumericLocalesSetter inner2;
                 REQUIRE(Slic3r::is_decimal_separator_point());
+                REQUIRE(Slic3r::numeric_locale_setter_installs() == 1);
+                REQUIRE(Slic3r::numeric_locale_setter_nested_skips() == 2);
             }
             // Inner destructors must not restore the pre-outer locale.
             REQUIRE(Slic3r::is_decimal_separator_point());
@@ -390,4 +376,6 @@ TEST_CASE("nested CNumericLocalesSetter keeps a C decimal point and restores aft
     }
 
     REQUIRE(Slic3r::is_decimal_separator_point() == point_before);
+    REQUIRE(Slic3r::numeric_locale_setter_installs() == 1);
+    REQUIRE(Slic3r::numeric_locale_setter_nested_skips() == 2);
 }

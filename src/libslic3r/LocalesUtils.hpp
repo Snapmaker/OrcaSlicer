@@ -35,6 +35,11 @@ private:
 
 };
 
+// Test helpers: this-thread counts of actual setlocale/uselocale vs nested skips.
+void reset_numeric_locale_setter_counts();
+int  numeric_locale_setter_installs();
+int  numeric_locale_setter_nested_skips();
+
 // A function to check that current C locale uses decimal point as a separator.
 // Intended mostly for asserts.
 bool is_decimal_separator_point();

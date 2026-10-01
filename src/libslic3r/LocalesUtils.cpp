@@ -13,7 +13,19 @@ namespace Slic3r {
 
 // How many setters this thread holds, so the ones nested in another can skip
 // setlocale, which takes a lock the whole process shares on Windows.
-static thread_local int s_numeric_locale_depth = 0;
+static thread_local int s_numeric_locale_depth         = 0;
+static thread_local int s_numeric_locale_installs      = 0;
+static thread_local int s_numeric_locale_nested_skips  = 0;
+
+void reset_numeric_locale_setter_counts()
+{
+    s_numeric_locale_installs     = 0;
+    s_numeric_locale_nested_skips = 0;
+}
+
+int numeric_locale_setter_installs() { return s_numeric_locale_installs; }
+
+int numeric_locale_setter_nested_skips() { return s_numeric_locale_nested_skips; }
 
 CNumericLocalesSetter::CNumericLocalesSetter()
 {
@@ -22,6 +34,7 @@ CNumericLocalesSetter::CNumericLocalesSetter()
     if (s_numeric_locale_depth > 0 && is_decimal_separator_point()) {
         m_nested = true;
         ++s_numeric_locale_depth;
+        ++s_numeric_locale_nested_skips;
         return;
     }
 #ifdef _WIN32
@@ -40,6 +53,7 @@ CNumericLocalesSetter::CNumericLocalesSetter()
 #endif
     // Counted last, since the destructor does not run for a constructor that throws.
     ++s_numeric_locale_depth;
+    ++s_numeric_locale_installs;
 }
 
 

@@ -2988,9 +2988,11 @@ extern "C" {
 
 #if defined(_MSC_VER) || defined(__MINGW64__)
 #ifdef WIN32
-static FILE *mz_wfopen(const wchar_t *pFilename, const char *pMode)
+static FILE *mz_wfopen(const wchar_t *pFilename, const wchar_t *pMode)
 {
     FILE *pFile = NULL;
+    /* pMode is a wide string: _wfopen_s reads it as wchar_t, so a narrow "wb" here is garbage and
+       trips the CRT invalid-parameter handler (a narrow "w" only worked by luck of the next byte). */
     _wfopen_s(&pFile, pFilename, pMode);
     return pFile;
 }
@@ -5176,7 +5178,7 @@ mz_bool mz_zip_reader_extract_to_file_w(mz_zip_archive *pZip, mz_uint file_index
         return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_FEATURE);
 
     /* Binary mode, like mz_zip_reader_extract_to_file: text mode would rewrite the line endings of a binary entry. */
-    pFile = MZ_WFOPEN(pDst_filename, "wb");
+    pFile = MZ_WFOPEN(pDst_filename, L"wb");
     if (!pFile) {
        return mz_zip_set_error(pZip, MZ_ZIP_FILE_OPEN_FAILED);
     }

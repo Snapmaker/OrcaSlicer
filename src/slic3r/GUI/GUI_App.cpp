@@ -2165,25 +2165,21 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
             if (stat.m_uncomp_size > 0) {
                 const std::string dest_file = plugin_entry_basename(stat);
                 auto dest_path = plugin_folder / dest_file;
-                std::string dest_zip_file = encode_path(dest_path.string().c_str());
                 try {
                     // symlink_status so an existing symlink, dangling or not, is replaced rather than written through.
                     if (fs::is_symlink(fs::symlink_status(dest_path)) || fs::exists(dest_path))
                         fs::remove(dest_path);
-                    mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+                    // Wide API on Windows: the entry name is validated as UTF-8, so it must not be
+                    // narrowed through the ANSI code page (best-fit maps fullwidth "../" look-alikes
+                    // to a real "../").
+                    const bool res = extract_entry_to_file(archive, stat.m_file_index, dest_path);
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from plugin zip %2%\n") % dest_file % stat.m_filename;
-                    if (res == 0) {
-#ifdef WIN32
-                        std::wstring new_dest_zip_file = boost::locale::conv::utf_to_utf<wchar_t>(dest_path.generic_string());
-                        res                            = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, new_dest_zip_file.c_str(), 0);
-#endif
-                        if (res == 0) {
-                            mz_zip_error zip_error = mz_zip_get_last_error(&archive);
-                            BOOST_LOG_TRIVIAL(error) << "[install_plugin]Archive read error:" << mz_zip_get_error_string(zip_error) << std::endl;
-                            close_zip_reader(&archive);
-                            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
-                            return InstallStatusUnzipFailed;
-                        }
+                    if (!res) {
+                        mz_zip_error zip_error = mz_zip_get_last_error(&archive);
+                        BOOST_LOG_TRIVIAL(error) << "[install_plugin]Archive read error:" << mz_zip_get_error_string(zip_error) << std::endl;
+                        close_zip_reader(&archive);
+                        if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+                        return InstallStatusUnzipFailed;
                     }
                     else {
                         if (pro_fn) {
@@ -2302,6 +2298,10 @@ int GUI_App::install_bambu_camera_component(InstallProgressFn pro_fn, WasCancell
             entry = decode(extra.substr(0, n), stat.m_filename);
         }
         const std::string leaf = fs::path(entry).filename().string();
+        if (leaf.empty() || !untrusted::is_safe_archive_relative_path(leaf)) {
+            BOOST_LOG_TRIVIAL(warning) << "[camera component] skipping entry with an unsafe name: " << stat.m_filename;
+            continue;
+        }
         const bool is_source  = boost::iequals(leaf, want_source);
         // Bambu's package carries the filter's own dependencies next to it (live555 for LAN RTSP,
         // the agora_* / libaosl set for cloud streams); the filter fails to load without them, so
@@ -2315,15 +2315,9 @@ int GUI_App::install_bambu_camera_component(InstallProgressFn pro_fn, WasCancell
         // Extract to a temp file first, so a half-written download can never leave a truncated
         // filter sitting where a working one used to be.
         const fs::path staged = fs::temp_directory_path() / (std::string("edgeslicer_cam_") + leaf);
-        std::string staged_enc = encode_path(staged.string().c_str());
-        mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, staged_enc.c_str(), 0);
-#ifdef WIN32
-        if (res == 0) {
-            std::wstring staged_w = boost::locale::conv::utf_to_utf<wchar_t>(staged.generic_string());
-            res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, staged_w.c_str(), 0);
-        }
-#endif
-        if (res == 0) {
+        // Wide API on Windows, never narrowed through the ANSI code page (see install_plugin).
+        const bool res = extract_entry_to_file(archive, stat.m_file_index, staged);
+        if (!res) {
             BOOST_LOG_TRIVIAL(error) << "[camera component] failed to extract " << leaf;
             continue;
         }

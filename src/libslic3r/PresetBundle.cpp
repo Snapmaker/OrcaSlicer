@@ -39,6 +39,7 @@
 #include <boost/locale.hpp>
 #include <boost/log/trivial.hpp>
 #include <miniz/miniz.h>
+#include "miniz_extension.hpp"
 
 
 // Store the print/filament/printer presets into a "presets" subdirectory of the Slic3rPE config dir.
@@ -1048,7 +1049,8 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
                     // create target file path
                     std::string target_file_path = boost::filesystem::path(temp_folder / file_name).make_preferred().string();
 
-                    status = mz_zip_reader_extract_to_file(&zip_archive, i, encode_path(target_file_path.c_str()).c_str(), MZ_ZIP_FLAG_CASE_SENSITIVE);
+                    // Wide API on Windows: the name is never narrowed through the ANSI code page.
+                    status = extract_entry_to_file(zip_archive, i, target_file_path) ? MZ_TRUE : MZ_FALSE;
                     // target file is opened
                     if (MZ_FALSE == status) {
                         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Failed to open target file: " << target_file_path;

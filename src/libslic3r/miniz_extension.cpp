@@ -90,7 +90,51 @@ bool zip_entry_is_symlink(const mz_zip_archive_file_stat &stat)
     return (mode & 0170000u) == 0120000u;
 }
 
+bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const boost::filesystem::path &dest_path)
+{
+#ifdef _WIN32
+    // path::c_str() is a wchar_t* here. No narrowing: the ANSI code page maps U+FF0E / U+FF0F
+    // (and other look-alikes) to '.' and '/', which would defeat every check done on the UTF-8 name.
+    return mz_zip_reader_extract_to_file_w(&archive, file_index, dest_path.c_str(), 0) != MZ_FALSE;
+#else
+    return mz_zip_reader_extract_to_file(&archive, file_index, dest_path.string().c_str(), 0) != MZ_FALSE;
+#endif
+}
+
+bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const std::string &dest_path_utf8)
+{
+#ifdef _WIN32
+    const std::wstring dest_w = boost::nowide::widen(dest_path_utf8);
+    return mz_zip_reader_extract_to_file_w(&archive, file_index, dest_w.c_str(), 0) != MZ_FALSE;
+#else
+    return mz_zip_reader_extract_to_file(&archive, file_index, dest_path_utf8.c_str(), 0) != MZ_FALSE;
+#endif
+}
+
 namespace {
+
+// An archive entry name is UTF-8. On Windows it is widened explicitly, so the path does not
+// depend on whether boost::filesystem has the nowide locale installed (the app installs it,
+// a unit test may not).
+boost::filesystem::path entry_path(const std::string &name_utf8)
+{
+#ifdef _WIN32
+    return boost::filesystem::path(boost::nowide::widen(name_utf8));
+#else
+    return boost::filesystem::path(name_utf8);
+#endif
+}
+
+// UTF-8 text of a path for logs and error messages (path::string() would go through the
+// narrow locale, which can throw for characters the code page does not have).
+std::string path_utf8(const boost::filesystem::path &p)
+{
+#ifdef _WIN32
+    return boost::nowide::narrow(p.native());
+#else
+    return p.string();
+#endif
+}
 
 std::string strip_trailing_separators(std::string name)
 {
@@ -150,13 +194,13 @@ bool ensure_dirs(const boost::filesystem::path &root,
         if (is_dir_or_dir_symlink(p))
             continue;
         if (leaf_exists(p)) {
-            err = p.string() + " is not a directory";
+            err = path_utf8(p) + " is not a directory";
             return false;
         }
         boost::system::error_code ec;
         fs::create_directory(p, ec);
         if (ec) {
-            err = "create directory failed: " + p.string() + " (" + ec.message() + ")";
+            err = "create directory failed: " + path_utf8(p) + " (" + ec.message() + ")";
             return false;
         }
         created.push_back(p);
@@ -166,14 +210,8 @@ bool ensure_dirs(const boost::filesystem::path &root,
 
 bool extract_to_path(mz_zip_archive &archive, const mz_zip_archive_file_stat &stat, const boost::filesystem::path &path, std::string &err)
 {
-    const std::string dest_encoded = encode_path(path.string().c_str());
-    mz_bool           res          = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_encoded.c_str(), 0);
-#ifdef _WIN32
-    if (!res) {
-        const std::wstring dest_w = boost::nowide::widen(path.generic_string());
-        res                       = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, dest_w.c_str(), 0);
-    }
-#endif
+    // Wide API only on Windows (see extract_entry_to_file): no narrow attempt first, no fallback.
+    const bool res = extract_entry_to_file(archive, stat.m_file_index, path);
     if (!res) {
         const mz_zip_error zip_err = mz_zip_get_last_error(&archive);
         err = std::string("extract failed: ") + stat.m_filename +
@@ -209,7 +247,7 @@ bool commit_part(const boost::filesystem::path &part, const boost::filesystem::p
     // A dest-file symlink is replaced rather than followed.
     fs::rename(part, dest, ec);
     if (ec) {
-        err = "rename failed: " + part.string() + " -> " + dest.string() + " (" + ec.message() + ")";
+        err = "rename failed: " + path_utf8(part) + " -> " + path_utf8(dest) + " (" + ec.message() + ")";
         return false;
     }
     return true;
@@ -253,13 +291,13 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
     std::vector<fs::path> created_dirs;
     if (!is_dir_or_dir_symlink(dest_root)) {
         if (leaf_exists(dest_root)) {
-            err = dest_root.string() + " is not a directory";
+            err = path_utf8(dest_root) + " is not a directory";
             return false;
         }
         boost::system::error_code ec;
         fs::create_directories(dest_root, ec);
         if (ec) {
-            err = "create directory failed: " + dest_root.string() + " (" + ec.message() + ")";
+            err = "create directory failed: " + path_utf8(dest_root) + " (" + ec.message() + ")";
             return false;
         }
         created_dirs.push_back(dest_root);
@@ -289,12 +327,12 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
         }
         const std::string name = strip_trailing_separators(stat.m_filename);
         if (name.empty() || !untrusted::is_safe_archive_relative_path(name) ||
-            !untrusted::is_path_within_root(dest_root, dest_root / name)) {
+            !untrusted::is_path_within_root(dest_root, dest_root / entry_path(name))) {
             err = std::string("entry resolves outside the extraction root: ") + stat.m_filename;
             BOOST_LOG_TRIVIAL(error) << "Unzip: rejecting archive, " << err;
             return fail();
         }
-        reserved.insert(dest_root / name);
+        reserved.insert(dest_root / entry_path(name));
     }
 
     // Pass 2: stage every file to a unique sibling .part.%%%%%%%%. Dest files are not opened,
@@ -306,7 +344,7 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
             return fail();
         }
         const std::string name      = strip_trailing_separators(stat.m_filename);
-        const fs::path    full_dest = dest_root / name;
+        const fs::path    full_dest = dest_root / entry_path(name);
         try {
             if (stat.m_is_directory) {
                 if (!ensure_dirs(dest_root, full_dest, created_dirs, err))
@@ -322,14 +360,14 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
                 return fail();
             const fs::path part = make_part_path(full_dest, reserved);
             if (!untrusted::is_path_within_root(dest_root, part)) {
-                err = "part path resolves outside the extraction root: " + part.string();
+                err = "part path resolves outside the extraction root: " + path_utf8(part);
                 return fail();
             }
             reserved.insert(part);
             staged.push_back({full_dest, part, leaf_exists(full_dest)});
             if (!extract_to_path(archive, stat, part, err))
                 return fail();
-            BOOST_LOG_TRIVIAL(info) << "Unzip: staged file " << stat.m_file_index << " to " << part.string();
+            BOOST_LOG_TRIVIAL(info) << "Unzip: staged file " << stat.m_file_index << " to " << path_utf8(part);
         } catch (const std::exception &e) {
             err = e.what();
             BOOST_LOG_TRIVIAL(error) << "Unzip: archive read exception: " << err;
@@ -345,7 +383,7 @@ bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::
         if (!commit_part(s.part, s.dest, err))
             return fail();
         s.part.clear();
-        BOOST_LOG_TRIVIAL(info) << "Unzip: committed " << s.dest.string();
+        BOOST_LOG_TRIVIAL(info) << "Unzip: committed " << path_utf8(s.dest);
     }
     return true;
 }

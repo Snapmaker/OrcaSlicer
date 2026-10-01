@@ -2988,9 +2988,11 @@ extern "C" {
 
 #if defined(_MSC_VER) || defined(__MINGW64__)
 #ifdef WIN32
-static FILE *mz_wfopen(const wchar_t *pFilename, const char *pMode)
+static FILE *mz_wfopen(const wchar_t *pFilename, const wchar_t *pMode)
 {
     FILE *pFile = NULL;
+    /* pMode is a wide string: _wfopen_s reads it as wchar_t, so a narrow "wb" here is garbage and
+       trips the CRT invalid-parameter handler (a narrow "w" only worked by luck of the next byte). */
     _wfopen_s(&pFile, pFilename, pMode);
     return pFile;
 }
@@ -3377,6 +3379,20 @@ static mz_bool mz_zip_set_file_times(const char *pFilename, MZ_TIME_T access_tim
 
     return !utime(pFilename, &t);
 }
+
+#if defined(WIN32) && defined(_MSC_VER)
+/* Wide variant for mz_zip_reader_extract_to_file_w: the narrow one would be handed a wchar_t pointer. */
+static mz_bool mz_zip_set_file_times_w(const wchar_t *pFilename, MZ_TIME_T access_time, MZ_TIME_T modified_time)
+{
+    struct _utimbuf t;
+
+    memset(&t, 0, sizeof(t));
+    t.actime = access_time;
+    t.modtime = modified_time;
+
+    return !_wutime(pFilename, &t);
+}
+#endif
 #endif /* #ifndef MINIZ_NO_STDIO */
 #endif /* #ifndef MINIZ_NO_TIME */
 
@@ -5161,7 +5177,8 @@ mz_bool mz_zip_reader_extract_to_file_w(mz_zip_archive *pZip, mz_uint file_index
     if ((file_stat.m_is_directory) || (!file_stat.m_is_supported))
         return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_FEATURE);
 
-    pFile = MZ_WFOPEN(pDst_filename, "w");
+    /* Binary mode, like mz_zip_reader_extract_to_file: text mode would rewrite the line endings of a binary entry. */
+    pFile = MZ_WFOPEN(pDst_filename, L"wb");
     if (!pFile) {
        return mz_zip_set_error(pZip, MZ_ZIP_FILE_OPEN_FAILED);
     }
@@ -5175,7 +5192,7 @@ mz_bool mz_zip_reader_extract_to_file_w(mz_zip_archive *pZip, mz_uint file_index
 
 #if !defined(MINIZ_NO_TIME) && !defined(MINIZ_NO_STDIO)
     if (status)
-        mz_zip_set_file_times(pDst_filename, file_stat.m_time, file_stat.m_time);
+        mz_zip_set_file_times_w(pDst_filename, file_stat.m_time, file_stat.m_time);
 #endif
 
     return status;

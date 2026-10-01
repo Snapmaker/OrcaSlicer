@@ -111,7 +111,7 @@ namespace {
 // Integers and numeric strings that fit in int. Out-of-range values (e.g. 2^32, which
 // get<int>() / static_cast<int>(stol) would truncate to 0 / "success") return false.
 // Booleans and floats are not accepted; see get_err_code_from_body.
-bool try_parse_json_int(const nlohmann::json &value, int &out)
+bool try_parse_json_err_int(const nlohmann::json &value, int &out)
 {
     try {
         // is_number_integer() is also true for unsigned; check unsigned first.
@@ -174,7 +174,7 @@ int PrintHost::get_err_code_from_body(const std::string &body)
         return 0;
 
     int err_code = 0;
-    if (!try_parse_json_int(parsed["err"], err_code))
+    if (!try_parse_json_err_int(parsed["err"], err_code))
         return -1;
 
     // err_code == -1 is also a real host value; it cannot be told from a parse failure.

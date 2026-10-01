@@ -81,7 +81,7 @@ public:
     //
     //   missing err                         → 0 (Duet connect often has no err field)
     //   integer / unsigned                  → that value
-    //   numeric string ("0", "+3", " 1 ")   → that value via try_parse_json_int (ptree lexical_cast)
+    //   numeric string ("0", "+3", " 1 ")   → that value via try_parse_json_err_int (ptree lexical_cast)
     //   discarded JSON / HTML               → -1
     //   non-object (including [])           → -1  (stricter than ptree/upstream: array root was 0)
     //   float / bool / object / other string→ -1  (stricter than ptree, which could coerce 1.0 → 1)

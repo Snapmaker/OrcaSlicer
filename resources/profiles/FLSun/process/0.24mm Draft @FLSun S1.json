@@ -5,6 +5,7 @@
     "from": "system",
     "setting_id": "GP004",
     "instantiation": "true",
+    "layer_height": "0.24",
     "bottom_shell_layers": "5",
     "bottom_shell_thickness": "0.8",
     "bottom_surface_pattern": "monotonicline",

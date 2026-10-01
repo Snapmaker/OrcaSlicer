@@ -125,6 +125,8 @@ bool GLGizmoEdit::on_init()
     // they are already in the Edit gizmo.
     m_desc["round_all"]         = _L("Round all edges...");
     m_desc["round_all_hint"]    = _L("Fillet every edge of the part at once by a radius. This rebuilds the whole part, so painted data is cleared and the gizmo closes.");
+    m_desc["cad_fillet"]        = _L("Exact fillet / chamfer (CAD)...");
+    m_desc["cad_fillet_hint"]   = _L("Geometrically exact fillets, chamfers and shells on the part's CAD body. Best for parts imported from STEP; a mesh is converted first.");
 
     return true;
 }
@@ -1812,6 +1814,15 @@ void GLGizmoEdit::on_render_input_window(float x, float y, float bottom_limit)
 
     ImGui::Separator();
     m_imgui->text_wrapped(m_desc.at("paint_kept"), wrap_width);
+
+    // --- the exact B-rep tool ---
+    // The bevel above works on triangles; for a CAD part the exact tool is the better answer,
+    // so it is offered here where users look for it. CallAfter for the same reason as below:
+    // opening it closes this gizmo, which must not happen inside this gizmo's own frame.
+    ImGui::Separator();
+    if (m_imgui->button(m_desc.at("cad_fillet")))
+        wxGetApp().CallAfter([]() { wxGetApp().obj_list()->open_cad_fillet(/*from_gizmo*/ true); });
+    m_imgui->text_wrapped(m_desc.at("cad_fillet_hint"), wrap_width);
 
     // --- the interim whole-mesh fillet ---
     //

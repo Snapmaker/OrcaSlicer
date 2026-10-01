@@ -283,19 +283,27 @@ bool LayerTools::is_extruder_order(unsigned int a, unsigned int b) const
     return false;
 }
 
-// Resolve a 1-based filament ID through the mixed-filament manager for this layer.
-unsigned int LayerTools::resolve_mixed_1based(unsigned int filament_id) const
+unsigned int LayerTools::resolve_mixed_1based_at(unsigned int       filament_id,
+                                                 float              layer_print_z,
+                                                 float              layer_height,
+                                                 const PrintObject *current_object) const
 {
     return resolve_mixed_with_layer_heights(mixed_mgr,
                                             num_physical,
                                             filament_id,
                                             this->layer_index,
-                                            float(this->print_z),
-                                            float(this->layer_height),
+                                            layer_print_z,
+                                            layer_height,
                                             mixed_layer_height_a,
                                             mixed_layer_height_b,
                                             mixed_base_layer_height,
-                                            this->current_object);
+                                            current_object != nullptr ? current_object : this->current_object);
+}
+
+// Resolve a 1-based filament ID through the mixed-filament manager for this layer.
+unsigned int LayerTools::resolve_mixed_1based(unsigned int filament_id) const
+{
+    return resolve_mixed_1based_at(filament_id, float(this->print_z), float(this->layer_height), this->current_object);
 }
 
 // Wave A fix-wave / C-1 (.superpowers/sdd/2026-08-31-paint-depth/wave-a-review.md): wall_filament,
@@ -743,9 +751,27 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
         layer_tools.current_object           = &object;
     }
 
-    // Collect the support extruders.
+    // Collect the support extruders. Stamp layer_index only at this object's
+    // support print_z (inherited from the last object layer at or below it).
+    // ByLayer shares LayerTools across objects: writing every m_layer_tools
+    // entry let a later shorter object overwrite a taller object's indices
+    // above the short top, so mixed walls/infill resolved to unscheduled tools.
+    const auto &object_layers = object.layers();
+    auto inherited_layer_index = [&object_layers](coordf_t print_z) {
+        int inherited = 0;
+        for (size_t i = 0; i < object_layers.size(); ++i) {
+            if (object_layers[i]->print_z <= print_z + EPSILON)
+                inherited = int(i);
+            else
+                break;
+        }
+        return inherited;
+    };
+
     for (auto support_layer : object.support_layers()) {
         LayerTools   &layer_tools = this->tools_for_layer(support_layer->print_z);
+        layer_tools.layer_index        = inherited_layer_index(support_layer->print_z);
+        layer_tools.object_layer_count = int(object_layers.size());
         layer_tools.layer_height = support_layer->height;
         ExtrusionRole role = support_layer->support_fills.role();
         bool         has_support        = role == erMixed || role == erSupportMaterial || role == erSupportTransition;

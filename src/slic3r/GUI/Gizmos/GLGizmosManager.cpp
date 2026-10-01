@@ -25,6 +25,7 @@
 #include "slic3r/GUI/Gizmos/GLGizmoSimplify.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoSculpt.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoEdit.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoCadFillet.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoEmboss.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoSVG.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoMeshBoolean.hpp"
@@ -183,6 +184,7 @@ void GLGizmosManager::switch_gizmos_icon_filename()
             gizmo->set_icon_filename(m_is_dark ? "toolbar_sculpt_dark.svg" : "toolbar_sculpt.svg");
             break;
         case (EType::Edit):
+        case (EType::CadFillet):
             gizmo->set_icon_filename(m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg");
             break;
         }
@@ -229,6 +231,7 @@ bool GLGizmosManager::init()
     m_gizmos.emplace_back(new GLGizmoBrimEars(m_parent, m_is_dark ? "toolbar_brimears_dark.svg" : "toolbar_brimears.svg", EType::BrimEars));
     m_gizmos.emplace_back(new GLGizmoSculpt(m_parent, m_is_dark ? "toolbar_sculpt_dark.svg" : "toolbar_sculpt.svg", EType::Sculpt));
     m_gizmos.emplace_back(new GLGizmoEdit(m_parent, m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg", EType::Edit));
+    m_gizmos.emplace_back(new GLGizmoCadFillet(m_parent, m_is_dark ? "toolbar_edit_dark.svg" : "toolbar_edit.svg", EType::CadFillet));
     //m_gizmos.emplace_back(new GLGizmoSlaSupports(m_parent, "sla_supports.svg", sprite_id++));
     //m_gizmos.emplace_back(new GLGizmoFaceDetector(m_parent, "face recognition.svg", sprite_id++));
     //m_gizmos.emplace_back(new GLGizmoHollow(m_parent, "hollow.svg", sprite_id++));
@@ -1569,6 +1572,8 @@ std::string get_name_from_gizmo_etype(GLGizmosManager::EType type)
         return "Sculpt";
     case GLGizmosManager::EType::Edit:
         return "Edit";
+    case GLGizmosManager::EType::CadFillet:
+        return "CAD Fillet";
     default:
         return "";
     }

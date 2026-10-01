@@ -6977,6 +6977,37 @@ void ObjectList::simplify()
     gizmos_mgr.open_gizmo(GLGizmosManager::EType::Simplify);
 }
 
+void ObjectList::open_cad_fillet(bool from_gizmo)
+{
+    GLGizmosManager &gizmos_mgr = wxGetApp().plater()->get_view3D_canvas3D()->get_gizmos_manager();
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::CadFillet)
+        return;
+    // From the menu, the same rule as Simplify: another open gizmo may hold state on this mesh.
+    if (!from_gizmo && !gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::CadFillet))
+        return;
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::CadFillet);
+}
+
+bool ObjectList::can_open_cad_fillet()
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || plater->get_view3D_canvas3D() == nullptr)
+        return false;
+    GLCanvas3D *canvas = plater->get_view3D_canvas3D();
+    if (canvas->get_canvas_type() != GLCanvas3D::ECanvasType::CanvasView3D)
+        return false;
+    const Selection &selection = canvas->get_selection();
+    if (selection.get_volume_idxs().size() != 1)
+        return false;
+    const GLVolume *v = selection.get_first_volume();
+    if (v == nullptr)
+        return false;
+    const ModelObjectPtrs &objects = wxGetApp().model().objects;
+    const int o = v->object_idx(), vi = v->volume_idx();
+    return o >= 0 && size_t(o) < objects.size() && vi >= 0 && size_t(vi) < objects[o]->volumes.size() &&
+           objects[o]->volumes[vi]->is_model_part();
+}
+
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const
 {
     auto obj = object(obj_idx);

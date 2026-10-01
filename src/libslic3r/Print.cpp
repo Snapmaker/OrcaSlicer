@@ -1015,6 +1015,7 @@ std::vector<unsigned int> Print::object_extruders() const
         }
     }
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1023,8 +1024,10 @@ std::vector<unsigned int> Print::support_material_extruders() const
 {
     std::vector<unsigned int> extruders;
     bool support_uses_current_extruder = false;
-    // BBS
-    auto num_extruders = (unsigned int)m_config.filament_diameter.size();
+    // Bound by physical + mixed virtual count so a mixed support filament is not
+    // clamped to 0 before expand_0based_extruder_ids resolves it.
+    auto num_physical  = (unsigned int)m_config.filament_diameter.size();
+    auto num_extruders = (unsigned int)m_mixed_filament_mgr.total_filaments(num_physical);
 
     for (PrintObject *object : m_objects) {
         if (object->has_support_material()) {
@@ -1050,6 +1053,7 @@ std::vector<unsigned int> Print::support_material_extruders() const
         append(extruders, this->object_extruders());
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
     return extruders;
 }
 
@@ -1079,6 +1083,7 @@ std::vector<unsigned int> Print::extruders(bool conside_custom_gcode) const
     }
 
     sort_remove_duplicates(extruders);
+    m_mixed_filament_mgr.expand_0based_extruder_ids(extruders, m_config.filament_diameter.size());
 
     return extruders;
 }

@@ -6,6 +6,7 @@
 #include "PrintConfig.hpp"
 #include "libslic3r.h"
 #include "Utils.hpp"
+#include "LocalesUtils.hpp"
 #include "Model.hpp"
 #include "format.hpp"
 #include "common_func/common_func.hpp"
@@ -4255,6 +4256,9 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         section_parse_errors.resize(subfiles.size());
         tbb::parallel_for(tbb::blocked_range<size_t>(0, subfiles.size()),
                           [&](const tbb::blocked_range<size_t> &range) {
+                              // One C locale per worker chunk so parse_json_document's
+                              // inner setter skips setlocale (MSVC _Lockit(_LOCK_LOCALE)).
+                              CNumericLocalesSetter locales_setter;
                               for (size_t i = range.begin(); i != range.end(); ++i) {
                                   const std::string file = vendor_dir_path + "/" + subfiles[i].second;
                                   std::string       err;
@@ -4294,6 +4298,10 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_vendor_configs_
         if (i < section_docs.size())
             section_docs[i] = json();
     };
+
+    // One C locale on this thread for sequential deserialize (and any sequential
+    // fallback parse). Inner per-file setters in load_from_json_document skip.
+    CNumericLocalesSetter vendor_locales_setter;
 
     //3.1) paste the process
     presets = &this->prints;

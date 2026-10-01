@@ -1,0 +1,64 @@
+{
+    "type": "filament",
+    "name": "FLSun S1 Pro PETG",
+    "inherits": "FLSun Generic PETG",
+    "from": "system",
+    "setting_id": "GFSA04",
+    "filament_id": "GFG99",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "260"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "nozzle_temperature_range_high": [
+        "280"
+    ],
+    "hot_plate_temp": [
+        "70"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "70"
+    ],
+    "filament_max_volumetric_speed": [
+        "110"
+    ],
+    "fan_min_speed": [
+        "80"
+    ],
+    "fan_max_speed": [
+        "80"
+    ],
+    "close_fan_the_first_x_layers": [
+        "1"
+    ],
+    "full_fan_speed_layer": [
+        "3"
+    ],
+    "overhang_fan_speed": [
+        "80"
+    ],
+    "slow_down_layer_time": [
+        "3"
+    ],
+    "slow_down_min_speed": [
+        "20"
+    ],
+    "fan_cooling_layer_time": [
+        "1"
+    ],
+    "filament_flow_ratio": [
+        "1.05"
+    ],
+    "filament_retraction_length": [
+        "1.5"
+    ],
+    "filament_density": "1.26",
+    "compatible_printers": [
+        "FLSun S1 Pro 0.4 nozzle"
+    ]
+}

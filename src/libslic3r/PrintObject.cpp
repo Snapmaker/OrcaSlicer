@@ -29,6 +29,7 @@
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/concurrent_vector.h>
 #include <oneapi/tbb/parallel_for.h>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -1966,7 +1967,12 @@ void PrintObject::detect_surfaces_type()
         // Only iterate to the second-to-last layer, since we look at layer i+1.
         if( (this->config().enable_extra_bridge_layer.value == eblApplyToAll) || (this->config().enable_extra_bridge_layer.value == eblExternalBridgeOnly)){
             const size_t last = (m_layers.empty() ? 0 : m_layers.size() - 1);
-            tbb::parallel_for( tbb::blocked_range<size_t>(0, last), [this, region_id](const tbb::blocked_range<size_t> &range) {
+            // Iteration i reads layer i and rewrites layer i+1, so rewriting in place raced with iteration i+1 reading
+            // the same vector on another thread. The rewritten layers go to this buffer and are swapped in after the
+            // loop. Nothing a rewrite reads can change under it: it only splits stInternal surfaces and passes every
+            // stBottomBridge surface through untouched, so this is what a serial run produces.
+            std::vector<std::optional<Surfaces>> rewritten(m_layers.size());
+            tbb::parallel_for( tbb::blocked_range<size_t>(0, last), [this, region_id, &rewritten](const tbb::blocked_range<size_t> &range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
                     m_print->throw_if_canceled();
                     
@@ -1974,7 +1980,7 @@ void PrintObject::detect_surfaces_type()
                     // Current layer (i): Search for stBottomBridge polygons.
                     const Surfaces &bot_surfs = m_layers[i]->m_regions[region_id]->slices.surfaces;
                     // Next layer (i+1): The layer where stInternal polygons may be re-classified.
-                    Surfaces &top_surfs = m_layers[i + 1]->m_regions[region_id]->slices.surfaces;
+                    const Surfaces &top_surfs = m_layers[i + 1]->m_regions[region_id]->slices.surfaces;
                     
                     // Step 2: Collect the bridge polygons in the current layer region
                     Polygons polygons_bridge;
@@ -2005,11 +2011,11 @@ void PrintObject::detect_surfaces_type()
                     // TODO: Monitor GitHub issues to check whether second bridge layers are ommited where they should be generated. If yes, reduce the filtering distance
                     
                     // For each surface in the layer above
-                    for (Surface &s_up : top_surfs) {
+                    for (const Surface &s_up : top_surfs) {
                         // Only reclassify stInternal polygons (i.e. what will become later solid and sparse infill)
                         // Leave the rest unaffected
                         if (s_up.surface_type != stInternal) {
-                            new_surfaces.push_back(std::move(s_up)); // do not modify them
+                            new_surfaces.push_back(s_up); // do not modify them
                             continue; // continue to the next surface
                         }
                         // Identify stInternal polygons that overlap with the bridging polygons on the layer underneath.
@@ -2035,10 +2041,13 @@ void PrintObject::detect_surfaces_type()
                             new_surfaces.push_back(std::move(s));
                         }
                     }
-                    top_surfs = std::move(new_surfaces);
+                    rewritten[i + 1] = std::move(new_surfaces);
                 }
             }
             );
+            for (size_t i = 0; i < m_layers.size(); ++i)
+                if (rewritten[i])
+                    m_layers[i]->m_regions[region_id]->slices.surfaces = std::move(*rewritten[i]);
             // ==============================================================================================================
             // === ORCA: Interim workaround - for now the new stInternalAfterExternalBridge surfaace is re-classified  ==============
             // === back to a bottom bridge. As a starting point, this improves bridging reliability as it extrudes ==========
@@ -2774,44 +2783,56 @@ void PrintObject::bridge_over_infill()
             backup_surfaces[lidx] = {};
         }
 
-        tbb::parallel_for(tbb::blocked_range<size_t>(0, this->layers().size()), [po = this, &backup_surfaces,
-                                                                                 &surfaces_by_layer](tbb::blocked_range<size_t> r) {
+        // A layer is expanded only if a lightning region of the layer below has sparse infill, and expanding a layer
+        // rewrites its own fill_surfaces - so doing both in one parallel_for raced: layer lidx read layer lidx-1's
+        // fill_surfaces while another thread moved them out and rebuilt them. Split into a read-only parallel pass, a
+        // serial decision pass and a write pass. A layer's expansion depends only on its own unmodified surfaces, so
+        // it is computed up front for every candidate layer; which layers really get expanded is then decided bottom
+        // up, each one looking at the layer below as expanded or not - exactly what a serial run decides.
+        const size_t num_layers = this->layers().size();
+        // Expanded fill surfaces of every layer that has bridge candidates, one SurfaceCollection per layer region.
+        std::vector<std::vector<SurfaceCollection>> expanded_fills(num_layers);
+        // Whether a lightning region of layer lidx has any sparse infill, as sliced and once expanded.
+        std::vector<char> lightning_sparse(num_layers, 0);
+        std::vector<char> lightning_sparse_expanded(num_layers, 0);
+        auto has_lightning_sparse = [](const Layer *layer, const auto &fill_of) {
+            for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx)
+                if (layer->regions()[region_idx]->region().config().sparse_infill_pattern == ipLightning &&
+                    !to_polygons(fill_of(region_idx).filter_by_type(stInternal)).empty())
+                    return true;
+            return false;
+        };
+
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, num_layers), [po = static_cast<const PrintObject *>(this), &expanded_fills,
+                                                                      &lightning_sparse, &lightning_sparse_expanded, &has_lightning_sparse,
+                                                                      &surfaces_by_layer](tbb::blocked_range<size_t> r) {
             PRINT_OBJECT_TIME_LIMIT_MILLIS(PRINT_OBJECT_TIME_LIMIT_DEFAULT);
             for (size_t lidx = r.begin(); lidx < r.end(); lidx++) {
-                if (surfaces_by_layer.find(lidx) == surfaces_by_layer.end())
+                const Layer *layer = po->get_layer(lidx);
+                lightning_sparse[lidx] = has_lightning_sparse(layer, [layer](size_t region_idx) -> const SurfaceCollection & {
+                    return layer->regions()[region_idx]->fill_surfaces;
+                });
+
+                auto candidates = surfaces_by_layer.find(lidx);
+                if (candidates == surfaces_by_layer.end() || layer->lower_layer == nullptr)
                     continue;
 
-                Layer       *layer       = po->get_layer(lidx);
-                const Layer *lower_layer = layer->lower_layer;
-                if (lower_layer == nullptr)
-                    continue;
+                // Copy the surfaces, the copy is modified and later discarded
+                std::vector<SurfaceCollection> &fills = expanded_fills[lidx];
+                fills.reserve(layer->regions().size());
+                for (const LayerRegion *region : layer->regions())
+                    fills.push_back(region->fill_surfaces);
 
-                Polygons lightning_fill;
-                for (const LayerRegion *region : lower_layer->regions()) {
-                    if (region->region().config().sparse_infill_pattern == ipLightning) {
-                        Polygons lf = to_polygons(region->fill_surfaces.filter_by_type(stInternal));
-                        lightning_fill.insert(lightning_fill.end(), lf.begin(), lf.end());
-                    }
-                }
-
-                if (lightning_fill.empty())
-                    continue;
-
-                for (LayerRegion *region : layer->regions()) {
-                    backup_surfaces[lidx][region] = std::move(
-                        region->fill_surfaces); // Make backup copy by move!! so that pointers in candidate surfaces stay valid
-                    // Copy the surfaces back, this will make copy, but we will later discard it anyway
-                    region->fill_surfaces = backup_surfaces[lidx][region];
-                }
-
-                for (LayerRegion *region : layer->regions()) {
-                    ExPolygons sparse_infill = to_expolygons(region->fill_surfaces.filter_by_type(stInternal));
-                    ExPolygons solid_infill  = to_expolygons(region->fill_surfaces.filter_by_type(stInternalSolid));
+                for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx) {
+                    const LayerRegion *region = layer->regions()[region_idx];
+                    SurfaceCollection &fill   = fills[region_idx];
+                    ExPolygons sparse_infill = to_expolygons(fill.filter_by_type(stInternal));
+                    ExPolygons solid_infill  = to_expolygons(fill.filter_by_type(stInternalSolid));
 
                     if (sparse_infill.empty()) {
                         break;
                     }
-                    for (const auto &surface : surfaces_by_layer[lidx]) {
+                    for (const auto &surface : candidates->second) {
                         if (surface.region != region)
                             continue;
                         ExPolygons expansion = intersection_ex(sparse_infill, expand(surface.new_polys, scaled<float>(3.0)));
@@ -2821,16 +2842,41 @@ void PrintObject::bridge_over_infill()
                     solid_infill  = union_safety_offset_ex(solid_infill);
                     sparse_infill = diff_ex(sparse_infill, solid_infill);
 
-                    region->fill_surfaces.remove_types({stInternalSolid, stInternal});
+                    fill.remove_types({stInternalSolid, stInternal});
                     for (const ExPolygon &ep : solid_infill) {
-                        region->fill_surfaces.surfaces.emplace_back(stInternalSolid, ep);
+                        fill.surfaces.emplace_back(stInternalSolid, ep);
                     }
                     for (const ExPolygon &ep : sparse_infill) {
-                        region->fill_surfaces.surfaces.emplace_back(stInternal, ep);
+                        fill.surfaces.emplace_back(stInternal, ep);
                     }
                 }
+
+                lightning_sparse_expanded[lidx] = has_lightning_sparse(layer, [&fills](size_t region_idx) -> const SurfaceCollection & {
+                    return fills[region_idx];
+                });
             }
         });
+
+        std::vector<char> expand_layer(num_layers, 0);
+        for (size_t lidx = 1; lidx < num_layers; lidx++) {
+            if (expanded_fills[lidx].empty())
+                continue;
+            assert(this->get_layer(lidx)->lower_layer == this->get_layer(lidx - 1));
+            expand_layer[lidx] = expand_layer[lidx - 1] ? lightning_sparse_expanded[lidx - 1] : lightning_sparse[lidx - 1];
+        }
+
+        for (size_t lidx = 0; lidx < num_layers; lidx++) {
+            if (!expand_layer[lidx])
+                continue;
+            Layer *layer = this->get_layer(lidx);
+            for (size_t region_idx = 0; region_idx < layer->regions().size(); ++region_idx) {
+                LayerRegion *region = layer->regions()[region_idx];
+                backup_surfaces[lidx][region] = std::move(
+                    region->fill_surfaces); // Make backup copy by move!! so that pointers in candidate surfaces stay valid
+                region->fill_surfaces = std::move(expanded_fills[lidx][region_idx]);
+            }
+        }
+        expanded_fills.clear();
 
         // Use the modified surfaces to generate expanded lightning anchors
         this->m_lightning_generator = this->prepare_lightning_infill_data();
@@ -3547,8 +3593,14 @@ void PrintObject::bridge_over_infill()
     // === ORCA: Create a second internal bridge layer above the first bridge layer. ========================================================
     // ======================================================================================================================================
     if ( this->m_config.enable_extra_bridge_layer == eblApplyToAll || this->m_config.enable_extra_bridge_layer == eblInternalBridgeOnly) {
+        // Iteration lidx reads layer lidx and rewrites layer lidx+1, so rewriting in place raced with iteration lidx+1
+        // reading the same fill_surfaces on another thread. The rewritten layers go to this buffer (one Surfaces per
+        // layer region) and are swapped in after the loop. Nothing a rewrite reads can change under it: it only splits
+        // stInternal / stInternalSolid surfaces and keeps every stInternalBridge surface, in order, so this is what a
+        // serial run produces.
+        std::vector<std::vector<Surfaces>> rewritten(this->layers().size());
         // Process layers in parallel up to second-to-last
-        tbb::parallel_for( tbb::blocked_range<size_t>(0, this->layers().size() - 1), [this](const tbb::blocked_range<size_t>& r) {
+        tbb::parallel_for( tbb::blocked_range<size_t>(0, this->layers().size() - 1), [this, &rewritten](const tbb::blocked_range<size_t>& r) {
             for (size_t lidx = r.begin(); lidx < r.end(); ++lidx)
             {
                 Layer* layer = this->get_layer(lidx);
@@ -3594,7 +3646,9 @@ void PrintObject::bridge_over_infill()
                     // Union the bridging polygons
                     ExPolygons bridging_union = union_safety_offset_ex(bridging_current_layer);
                     
-                    for (LayerRegion *next_region : next_layer->regions()) {
+                    std::vector<Surfaces> &next_rewritten = rewritten[lidx + 1];
+                    next_rewritten.reserve(next_layer->regions().size());
+                    for (const LayerRegion *next_region : next_layer->regions()) {
                         Surfaces next_new_surfaces;
                         Surfaces keep_surfaces;
                         
@@ -3652,14 +3706,22 @@ void PrintObject::bridge_over_infill()
                             }
                         }
                         
-                        // 3) Rebuild next_region surfaces
-                        next_region->fill_surfaces.surfaces.clear();
-                        next_region->fill_surfaces.append(keep_surfaces);
-                        next_region->fill_surfaces.append(next_new_surfaces);
+                        // 3) Rebuild next_region surfaces (applied after the loop)
+                        append(keep_surfaces, std::move(next_new_surfaces));
+                        next_rewritten.emplace_back(std::move(keep_surfaces));
                     } // end for next_layer->regions
                 } // end if next layer
             }
         }); // end parallel_for
+        for (size_t lidx = 0; lidx < rewritten.size(); ++lidx) {
+            std::vector<Surfaces> &layer_rewritten = rewritten[lidx];
+            if (layer_rewritten.empty())
+                continue;
+            Layer *layer = this->get_layer(lidx);
+            assert(layer_rewritten.size() == layer->regions().size());
+            for (size_t region_idx = 0; region_idx < layer_rewritten.size(); ++region_idx)
+                layer->regions()[region_idx]->fill_surfaces.surfaces = std::move(layer_rewritten[region_idx]);
+        }
         
         // =================================================================================================================
         // === ORCA: Interim workaround - for now the new stSecondInternalBridge surfaces are re-classified  ===============

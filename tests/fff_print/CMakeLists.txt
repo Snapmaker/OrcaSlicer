@@ -28,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
 	test_slice_bake.cpp
 	test_modifier_effect.cpp
 	test_tree_support_determinism.cpp
+	test_extra_bridge_layer_determinism.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	test_wipe.cpp

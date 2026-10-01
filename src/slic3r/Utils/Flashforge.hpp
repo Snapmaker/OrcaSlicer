@@ -55,7 +55,6 @@ private:
     bool request_local_api_json(const std::string& path, const std::string& body, std::string& response_body, wxString& error_msg) const;
     std::string make_http_url(const std::string& path) const;
     std::string extract_host_name() const;
-    int  get_err_code_from_body(const std::string &body) const;
     bool connect(wxString& msg) const;
     bool start_print(wxString& msg, const std::string& filename) const;
 };

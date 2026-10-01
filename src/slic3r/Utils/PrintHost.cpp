@@ -102,6 +102,22 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config, bool change_eng
     return host;
 }
 
+int PrintHost::get_err_code_from_body(const std::string &body)
+{
+    const auto parsed = nlohmann::json::parse(body, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object())
+        return -1;
+
+    if (!parsed.contains("err"))
+        return 0;
+
+    const auto &err = parsed["err"];
+    if (!err.is_number_integer())
+        return -1;
+
+    return err.get<int>();
+}
+
 wxString PrintHost::format_error(const std::string &body, const std::string &error, unsigned status) const
 {
     if (status != 0) {
@@ -214,32 +230,36 @@ void PrintHostJobQueue::priv::bg_thread_main()
 {
     // bg thread entry point
 
-    try {
-        // Pick up jobs from the job channel:
-        while (! bg_exit) {
-            auto job = channel_jobs.pop();   // Sleeps in a cond var if there are no jobs
-            if (job.empty()) {
-                // This happens when the thread is being stopped
-                break;
-            }
+    // Pick up jobs from the job channel:
+    while (! bg_exit) {
+        auto job = channel_jobs.pop();   // Sleeps in a cond var if there are no jobs
+        if (job.empty()) {
+            // This happens when the thread is being stopped
+            break;
+        }
 
-            source_to_remove = job.upload_data.source_path;
+        source_to_remove = job.upload_data.source_path;
 
-            BOOST_LOG_TRIVIAL(debug) << boost::format("PrintHostJobQueue/bg_thread: Received job: [%1%]: `%2%` -> `%3%`, cancelled: %4%")
-                % job_id
-                % job.upload_data.upload_path
-                % job.printhost->get_host()
-                % job.cancelled;
+        BOOST_LOG_TRIVIAL(debug) << boost::format("PrintHostJobQueue/bg_thread: Received job: [%1%]: `%2%` -> `%3%`, cancelled: %4%")
+            % job_id
+            % job.upload_data.upload_path
+            % job.printhost->get_host()
+            % job.cancelled;
 
+        // One throwing job must not kill the worker: later sends would sit in the queue forever,
+        // and remove_source() for this job would be skipped. (Orca #15947 / decision D7.)
+        try {
             if (! job.cancelled) {
                 perform_job(std::move(job));
             }
-
-            remove_source();
-            job_id++;
+        } catch (const std::exception &e) {
+            emit_error(e.what());
+        } catch (...) {
+            emit_error(_L("Unknown error"));
         }
-    } catch (const std::exception &e) {
-        emit_error(e.what());
+
+        remove_source();
+        job_id++;
     }
 
     // Cleanup leftover files, if any
@@ -428,11 +448,19 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
             BOOST_LOG_TRIVIAL(info) << "PrintHostJobQueue: sent " << script;
     }
 
-    bool success = the_job.printhost->upload(std::move(the_job.upload_data),
-        [this](Http::Progress progress, bool &cancel)   { this->progress_fn(std::move(progress), cancel); },
-        [this](wxString error)                          { this->error_fn(std::move(error)); },
-        [this](wxString tag, wxString host)             { this->info_fn(std::move(tag), std::move(host)); }
-    );
+    bool success = false;
+    try {
+        success = the_job.printhost->upload(std::move(the_job.upload_data),
+            [this](Http::Progress progress, bool &cancel) { this->progress_fn(std::move(progress), cancel); },
+            [this](wxString error) { this->error_fn(std::move(error)); },
+            [this](wxString tag, wxString host) { this->info_fn(std::move(tag), std::move(host)); });
+    } catch (const std::exception &e) {
+        error_fn(wxString::FromUTF8(e.what()));
+        success = false;
+    } catch (...) {
+        error_fn(_L("Unknown error"));
+        success = false;
+    }
 
     if (success) {
         emit_progress(100);

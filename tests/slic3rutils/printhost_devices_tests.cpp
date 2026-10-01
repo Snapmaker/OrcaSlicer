@@ -6,6 +6,7 @@
 
 #include <catch2/catch.hpp>
 
+#include "slic3r/Utils/PrintHost.hpp"
 #include "slic3r/Utils/PrintHostDevices.hpp"
 #include "slic3r/Utils/PrintHostDeviceStatus.hpp"
 #include "slic3r/Utils/PrusaLinkStatus.hpp"
@@ -677,4 +678,20 @@ TEST_CASE("PrusaLinkStatus: what a PrusaLink printer says it is doing", "[PrintH
         // It reports a state but never a filament, and the dialog has to say so.
         CHECK(PrintHostDevices::no_filament_note("prusalink").find("PrusaLink") != std::string::npos);
     }
+}
+
+TEST_CASE("PrintHost: get_err_code_from_body does not throw on malformed JSON", "[PrintHost]")
+{
+    // Duet/MKS (and the deleted ESP3D/Flashforge copies) used throwing pt::read_json.
+    // Html from a non-Duet host, garbage, a JSON array, or a non-integer err must return -1
+    // rather than throw out of an Http on_complete callback (Orca #15947).
+    CHECK(PrintHost::get_err_code_from_body("") == -1);
+    CHECK(PrintHost::get_err_code_from_body("<html>") == -1);
+    CHECK(PrintHost::get_err_code_from_body("[]") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"x"})") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":0})") == 0);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":1})") == 1);
+    // A successful Duet connect often has no err field; that is success (0), not unknown (-1).
+    CHECK(PrintHost::get_err_code_from_body(R"({})") == 0);
+    REQUIRE_NOTHROW(PrintHost::get_err_code_from_body("<html>404</html>"));
 }

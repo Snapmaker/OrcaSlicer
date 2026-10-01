@@ -7,8 +7,6 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
 #include <boost/asio.hpp>
 #include <boost/algorithm/string.hpp>
 
@@ -29,7 +27,6 @@
 #include "SerialMessageType.hpp"
 
 namespace fs = boost::filesystem;
-namespace pt = boost::property_tree;
 
 namespace Slic3r {
 
@@ -148,15 +145,6 @@ bool ESP3D::start_print(wxString& msg, const std::string& filename) const
         .perform_sync();
 
     return ret;
-}
-
-int ESP3D::get_err_code_from_body(const std::string& body) const
-{
-    pt::ptree          root;
-    std::istringstream iss(body); // wrap returned json to istringstream
-    pt::read_json(iss, root);
-
-    return root.get<int>("err", 0);
 }
 
 // ESP3D only accepts 8.3 filenames else it crashes marlin and other undefined behaviour

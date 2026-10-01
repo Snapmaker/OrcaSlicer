@@ -4,15 +4,12 @@
 #include <ctime>
 #include <chrono>
 #include <thread>
-#include <sstream>
 #include <fstream>
 #include <set>
 #include <map>
 #include <boost/filesystem/path.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
 #include <boost/asio.hpp>
 #include <boost/algorithm/string.hpp>
 
@@ -38,7 +35,6 @@
 #include "SerialMessageType.hpp"
 
 namespace fs = boost::filesystem;
-namespace pt = boost::property_tree;
 using json = nlohmann::json;
 
 namespace Slic3r {
@@ -342,12 +338,27 @@ bool parse_detail_material_slots(const std::string&                   response_b
 
     supports_material_station = reports_material_station;
 
+    if (!slot_infos.is_array())
+        return true;
+
     for (const auto& slot : slot_infos) {
+        if (!slot.is_object())
+            continue;
+
         FlashforgeMaterialSlot info;
-        info.slot_id        = slot.value("slotId", static_cast<int>(slots.size()) + 1);
-        info.has_filament   = slot.value("hasFilament", false);
-        info.material_name  = slot.value("materialName", std::string());
-        info.material_color = slot.value("materialColor", std::string());
+        info.slot_id = static_cast<int>(slots.size()) + 1;
+        if (slot.contains("slotId"))
+            try_parse_json_int(slot["slotId"], info.slot_id);
+
+        int has_filament_flag = 0;
+        if (slot.contains("hasFilament") && try_parse_json_int(slot["hasFilament"], has_filament_flag))
+            info.has_filament = has_filament_flag != 0;
+
+        if (slot.contains("materialName") && slot["materialName"].is_string())
+            info.material_name = slot["materialName"].get<std::string>();
+        if (slot.contains("materialColor") && slot["materialColor"].is_string())
+            info.material_color = slot["materialColor"].get<std::string>();
+
         slots.emplace_back(std::move(info));
     }
 
@@ -780,15 +791,6 @@ std::string Flashforge::make_http_url(const std::string& path) const
 std::string Flashforge::extract_host_name() const
 {
     return FlashforgeLocalApi::host_name_of(m_host);
-}
-
-int Flashforge::get_err_code_from_body(const std::string& body) const
-{
-    pt::ptree          root;
-    std::istringstream iss(body); // wrap returned json to istringstream
-    pt::read_json(iss, root);
-
-    return root.get<int>("err", 0);
 }
 
 } // namespace Slic3r

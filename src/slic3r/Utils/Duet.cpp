@@ -5,8 +5,6 @@
 #include <boost/filesystem/path.hpp>
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
 
 #include <wx/frame.h>
 #include <wx/event.h>
@@ -23,7 +21,6 @@
 #include "Http.hpp"
 
 namespace fs = boost::filesystem;
-namespace pt = boost::property_tree;
 
 namespace Slic3r {
 
@@ -83,7 +80,7 @@ bool Duet::upload(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn e
 	http.on_complete([&](std::string body, unsigned status) {
 			BOOST_LOG_TRIVIAL(debug) << boost::format("Duet: File uploaded: HTTP %1%: %2%") % status % body;
 
-			int err_code = dsf ? (status == 201 ? 0 : 1) : get_err_code_from_body(body);
+			int err_code = dsf ? (status == 201 ? 0 : 1) : PrintHost::get_err_code_from_body(body);
 			if (err_code != 0) {
 				BOOST_LOG_TRIVIAL(error) << boost::format("Duet: Request completed but error code was received: %1%") % err_code;
 				error_fn(format_error(body, L("Unknown error occurred"), 0));
@@ -145,7 +142,7 @@ Duet::ConnectionType Duet::connect(wxString &msg) const
 		.on_complete([&](std::string body, unsigned) {
 			BOOST_LOG_TRIVIAL(debug) << boost::format("Duet: Got: %1%") % body;
 
-			int err_code = get_err_code_from_body(body);
+			int err_code = PrintHost::get_err_code_from_body(body);
 			switch (err_code) {
 				case 0:
 					res = ConnectionType::rrf;
@@ -277,15 +274,6 @@ bool Duet::start_print(wxString &msg, const std::string &filename, ConnectionTyp
 		.perform_sync();
 
 	return res;
-}
-
-int Duet::get_err_code_from_body(const std::string &body) const
-{
-	pt::ptree root;
-	std::istringstream iss (body); // wrap returned json to istringstream
-	pt::read_json(iss, root);
-
-	return root.get<int>("err", 0);
 }
 
 }

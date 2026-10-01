@@ -76,6 +76,11 @@ public:
 
     static PrintHost* get_print_host(DynamicPrintConfig *config, bool change_engine = true);
 
+    // Duet/MKS (and similar hosts) report {"err": N} in the HTTP body. HTML, garbage, a JSON array,
+    // or a non-integer err must not throw: Http callbacks have no try, so a throw would kill Test
+    // on the GUI thread or the upload worker. -1 means "unknown error".
+    static int get_err_code_from_body(const std::string &body);
+
     virtual bool send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo) { return false; }
 
     virtual bool get_machine_info(const std::vector<std::pair<std::string, std::vector<std::string>>>& targets, nlohmann::json& response) { return false; }

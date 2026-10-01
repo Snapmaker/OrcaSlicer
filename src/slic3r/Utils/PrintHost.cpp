@@ -1,5 +1,8 @@
 #include "PrintHost.hpp"
 
+#include <atomic>
+#include <climits>
+#include <cstdint>
 #include <vector>
 #include <thread>
 #include <exception>
@@ -105,13 +108,25 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config, bool change_eng
 
 namespace {
 
-// Same contract as Flashforge.cpp's try_parse_json_int for integers and numeric strings
-// (booleans/floats are intentionally not accepted here; see get_err_code_from_body).
+// Integers and numeric strings that fit in int. Out-of-range values (e.g. 2^32, which
+// get<int>() / static_cast<int>(stol) would truncate to 0 / "success") return false.
+// Booleans and floats are not accepted; see get_err_code_from_body.
 bool try_parse_json_int(const nlohmann::json &value, int &out)
 {
     try {
-        if (value.is_number_integer() || value.is_number_unsigned()) {
-            out = value.get<int>();
+        // is_number_integer() is also true for unsigned; check unsigned first.
+        if (value.is_number_unsigned()) {
+            const auto u = value.get<std::uint64_t>();
+            if (u > static_cast<std::uint64_t>(INT_MAX))
+                return false;
+            out = static_cast<int>(u);
+            return true;
+        }
+        if (value.is_number_integer()) {
+            const auto n = value.get<std::int64_t>();
+            if (n < static_cast<std::int64_t>(INT_MIN) || n > static_cast<std::int64_t>(INT_MAX))
+                return false;
+            out = static_cast<int>(n);
             return true;
         }
 
@@ -121,16 +136,28 @@ bool try_parse_json_int(const nlohmann::json &value, int &out)
             if (text.empty())
                 return false;
 
-            size_t     pos    = 0;
-            const long parsed = std::stol(text, &pos, 10);
-            if (pos == text.size()) {
-                out = static_cast<int>(parsed);
-                return true;
-            }
+            size_t          pos    = 0;
+            const long long parsed = std::stoll(text, &pos, 10);
+            if (pos != text.size())
+                return false;
+            if (parsed < INT_MIN || parsed > INT_MAX)
+                return false;
+            out = static_cast<int>(parsed);
+            return true;
         }
     } catch (...) {}
 
     return false;
+}
+
+wxString wxstring_from_exception(const std::exception &e)
+{
+    wxString msg = wxString::FromUTF8(e.what());
+    if (msg.empty())
+        msg = wxString(e.what(), wxConvLibc);
+    if (msg.empty())
+        msg = _L("Unknown error");
+    return msg;
 }
 
 } // namespace
@@ -186,7 +213,7 @@ struct PrintHostJobQueue::priv
     std::thread bg_thread;
     bool bg_exit = false;
     // Set when error_fn runs for this job, so a later throw does not emit a second dialog.
-    bool error_emitted = false;
+    std::atomic<bool> error_emitted { false };
 
     PrintHostQueueDialog *queue_dialog;
 
@@ -283,16 +310,16 @@ void PrintHostJobQueue::priv::bg_thread_main()
 
         // One throwing job must not kill the worker: later sends would sit in the queue forever,
         // and remove_source() for this job would be skipped. (Orca #15947 / decision D7.)
-        error_emitted = false;
+        error_emitted.store(false);
         try {
             if (! job.cancelled) {
                 perform_job(std::move(job));
             }
         } catch (const std::exception &e) {
-            if (!error_emitted)
-                emit_error(wxString::FromUTF8(e.what()));
+            if (!error_emitted.load())
+                emit_error(wxstring_from_exception(e));
         } catch (...) {
-            if (!error_emitted)
+            if (!error_emitted.load())
                 emit_error(_L("Unknown error"));
         }
 
@@ -355,7 +382,7 @@ void PrintHostJobQueue::priv::error_fn(wxString error)
 {
     // Remember that this job already reported, even if cancel suppresses the dialog: a throw
     // after error_fn must not emit a second one.
-    error_emitted = true;
+    error_emitted.store(true);
     // check if transfer was not canceled before error occured - than do not show the error
     bool do_emit_err = true;
     if (channel_cancels.size_hint() > 0) {
@@ -496,11 +523,11 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
             [this](wxString error) { this->error_fn(std::move(error)); },
             [this](wxString tag, wxString host) { this->info_fn(std::move(tag), std::move(host)); });
     } catch (const std::exception &e) {
-        if (!error_emitted)
-            error_fn(wxString::FromUTF8(e.what()));
+        if (!error_emitted.load())
+            error_fn(wxstring_from_exception(e));
         success = false;
     } catch (...) {
-        if (!error_emitted)
+        if (!error_emitted.load())
             error_fn(_L("Unknown error"));
         success = false;
     }

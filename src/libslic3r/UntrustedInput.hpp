@@ -131,6 +131,20 @@ bool has_model_extension(const std::string &file_name);
 // Returns "" when nothing usable is left. Never returns a name with a path separator.
 std::string sanitize_download_filename(const std::string &name);
 
+// Marker a download of this process writes before it is renamed to filename
+// (filename + "." + pid + ".download"). Concurrent downloads treat this as the name in use.
+boost::filesystem::path download_marker_path(const boost::filesystem::path &dest_folder, const std::string &filename);
+
+// Sanitize filename first (via sanitize_download_filename), then pick a name that neither an
+// entry of dest_folder nor another download's marker uses: "name.ext", then "name(1).ext", …
+// up to 999. The marker at ignored_marker does not count (the caller's own in-flight file).
+// Returns true and the name in result, or false and the last name tried (empty when nothing
+// usable remains after sanitizing). Never returns a name with a path separator.
+bool find_unused_filename(const boost::filesystem::path &dest_folder,
+                          const std::string             &filename,
+                          const boost::filesystem::path &ignored_marker,
+                          std::string                   &result);
+
 // Upper bound for a model download (same cap as the MakerWorld import path).
 constexpr std::size_t MODEL_DOWNLOAD_SIZE_LIMIT = std::size_t(500) * 1024 * 1024;
 

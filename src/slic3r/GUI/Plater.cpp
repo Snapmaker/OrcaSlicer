@@ -91,6 +91,7 @@
 #include "libslic3r/Format/BambuExport.hpp"
 #include "../Utils/BambuStudioLauncher.hpp"
 #include "BlenderBridge.hpp"
+#include "FreeCADBridge.hpp"
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/ModelArrange.hpp"   // get_instance_arrange_poly, for the Fill bed dialog's defaults
@@ -10487,6 +10488,8 @@ struct Plater::priv
     std::unique_ptr<DualNozzle::Watcher> dual_nozzle_watcher;
     // "Edit in Blender" sessions; created on first use.
     std::unique_ptr<BlenderBridge> blender_bridge;
+    // "Edit in FreeCAD" sessions; created on first use.
+    std::unique_ptr<FreeCADBridge> freecad_bridge;
 
     std::string                 label_btn_export;
     std::string                 label_btn_send;
@@ -22639,6 +22642,13 @@ void Plater::edit_in_blender()
     p->blender_bridge->edit_selection();
 }
 
+void Plater::edit_in_freecad()
+{
+    if (!p->freecad_bridge)
+        p->freecad_bridge = std::make_unique<FreeCADBridge>(this);
+    p->freecad_bridge->edit_selection();
+}
+
 void Plater::reload_all_from_disk()
 {
     p->reload_all_from_disk();
@@ -26660,6 +26670,7 @@ bool Plater::can_fillcolor() const { return p->can_fillcolor(); }
 bool Plater::has_assmeble_view() const { return p->has_assemble_view(); }
 bool Plater::can_replace_with_stl() const { return p->can_replace_with_stl(); }
 bool Plater::can_edit_in_blender() const { return BlenderBridge::can_edit(p->get_selection()); }
+bool Plater::can_edit_in_freecad() const { return FreeCADBridge::can_edit(p->get_selection()); }
 bool Plater::can_mirror() const { return p->can_mirror(); }
 bool Plater::can_split(bool to_objects) const { return p->can_split(to_objects); }
 

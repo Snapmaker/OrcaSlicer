@@ -64,6 +64,14 @@ bool store_step(const std::string &path, const std::vector<StepExportItem> &item
 // Every instance of every object of the model.
 bool store_step(const std::string &path, const Model &model, const StepExportParams &params, StepExportReport &report);
 
+// One part on its own, in its MESH coordinates (the frame ModelVolume::mesh() is in: before the
+// part's own and the instance's transforms), for a round trip through a CAD program (the FreeCAD
+// bridge). A shape whose geometry comes back in the same frame can replace the part's mesh while
+// the part keeps its placement. The exact B-rep is written when step_source_brep() finds it;
+// otherwise the mesh is converted, or, with `exact_only`, nothing is written and report.error says
+// why the part has no exact B-rep.
+bool store_step_part(const std::string &path, const ModelVolume &volume, const StepExportParams &params, StepExportReport &report, bool exact_only = false);
+
 // The exact B-rep of a volume imported from STEP, in the volume's MESH coordinates (the
 // frame ModelVolume::mesh() is in), or a null shape when the source file is gone or
 // unreadable, or when the volume's mesh is no longer the tessellation of that B-rep (the part

@@ -3,6 +3,7 @@
 #include "GUI_App.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
+#include "FreeCADBridge.hpp"
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
 #include "Theme.hpp"
@@ -1873,6 +1874,20 @@ wxWindow* PreferencesDialog::create_general_page()
            "Full path to blender.exe (Windows), the Blender.app bundle (macOS), or the blender executable (Linux)."),
         "blender_path");
 
+    // "Edit in FreeCAD" finds FreeCAD on its own (file association, installed-programs list, usual
+    // install folders, PATH, Snap, Flatpak); this is for an install it cannot find. The add-on adds
+    // "Send to EdgeSlicer" and "Update EdgeSlicer" to FreeCAD for every document.
+    auto title_freecad = create_item_title(_L("FreeCAD"), page, _L("FreeCAD"));
+    auto item_freecad_path = create_item_text_input(_L("FreeCAD path"), page,
+        _L("Only needed if \"Edit in FreeCAD\" cannot find FreeCAD automatically. "
+           "Full path to FreeCAD.exe or its install folder (Windows), the FreeCAD.app bundle (macOS), or the FreeCAD executable or AppImage (Linux)."),
+        "freecad_path");
+    auto item_freecad_addon = create_item_button(_L("FreeCAD add-on"), _L("Install FreeCAD add-on"), page,
+        _L("FreeCAD add-on"),
+        _L("Copy the EdgeSlicer add-on into FreeCAD's user Mod folder (FreeCAD 0.21 and 1.x), so \"Send to EdgeSlicer\" "
+           "and \"Update EdgeSlicer\" are on a toolbar in every FreeCAD document. Restart FreeCAD afterwards."),
+        [this]() { FreeCADBridge::install_addon(this); });
+
     //dark mode
 #ifdef _WIN32
     auto title_darkmode = create_item_title(_L("Dark Mode"), page, _L("Dark Mode"));
@@ -1996,6 +2011,10 @@ wxWindow* PreferencesDialog::create_general_page()
 
     sizer_page->Add(title_blender, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_blender_path, 0, wxTOP, FromDIP(3));
+
+    sizer_page->Add(title_freecad, 0, wxTOP | wxEXPAND, FromDIP(20));
+    sizer_page->Add(item_freecad_path, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_freecad_addon, 0, wxTOP, FromDIP(3));
 
 #ifdef _WIN32
     sizer_page->Add(title_darkmode, 0, wxTOP | wxEXPAND, FromDIP(20));

@@ -1231,6 +1231,13 @@ void MenuFactory::append_menu_item_edit_in_blender(wxMenu *menu)
         []() { return plater()->can_edit_in_blender(); }, m_parent);
 }
 
+void MenuFactory::append_menu_item_edit_in_freecad(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Edit in FreeCAD"), _L("Open the selected part in FreeCAD. Saving in FreeCAD updates the part here"),
+        [](wxCommandEvent &) { plater()->edit_in_freecad(); }, "", menu,
+        []() { return plater()->can_edit_in_freecad(); }, m_parent);
+}
+
 void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
 {
     // BBS
@@ -2213,6 +2220,7 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_reload_from_disk(&m_object_menu);
     append_menu_item_replace_with_stl(&m_object_menu);
     append_menu_item_edit_in_blender(&m_object_menu);
+    append_menu_item_edit_in_freecad(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
     append_menu_item_export_step(&m_object_menu);
 }
@@ -2350,6 +2358,7 @@ void MenuFactory::create_bbl_part_menu()
     append_menu_item_reload_from_disk(menu);
     append_menu_item_replace_with_stl(menu);
     append_menu_item_edit_in_blender(menu);
+    append_menu_item_edit_in_freecad(menu);
     append_menu_item_export_stl_part(menu);
 }
 

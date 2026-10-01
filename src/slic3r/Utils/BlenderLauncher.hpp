@@ -12,14 +12,15 @@
 #include <string>
 #include <vector>
 
+#include "ExternalEditor.hpp"
+
 namespace Slic3r {
 namespace BlenderLauncher {
 
-using FileExists = std::function<bool(const std::string &path)>;
-// Names (not full paths) of the directories directly inside `dir`; empty when it does not exist.
-using ListDirs = std::function<std::vector<std::string>(const std::string &dir)>;
-
-enum class Platform { Windows, MacOS, Linux };
+// Shared with the other external-editor launchers (Utils/ExternalEditor.hpp).
+using FileExists = ExternalEditor::FileExists;
+using ListDirs   = ExternalEditor::ListDirs;
+using Platform   = ExternalEditor::Platform;
 
 // What discovery looks at, gathered by the caller so the precedence logic stays testable.
 struct Environment

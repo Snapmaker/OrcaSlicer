@@ -284,6 +284,82 @@ struct Part
     Quantity_Color colour;
 };
 
+// Writes `objects` (each with its parts, already placed) as an XCAF document: one named shape per
+// single-part object, an assembly per multi-part object, under a root assembly when there are
+// several objects.
+bool write_step_objects(const std::string &path, const std::vector<std::pair<std::string, std::vector<Part>>> &objects,
+                        const StepExportParams &params, StepExportReport &report, double seconds_shapes)
+{
+    Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
+    Handle(TDocStd_Document) doc;
+    app->NewDocument("MDTV-XCAF", doc);
+    bool ok = false;
+    try {
+        Handle(XCAFDoc_ShapeTool) shapes  = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
+        Handle(XCAFDoc_ColorTool) colours = XCAFDoc_DocumentTool::ColorTool(doc->Main());
+        auto add_part = [&](const Part &part, const std::string &name) {
+            const TDF_Label label = shapes->AddShape(part.shape, Standard_False);
+            TDataStd_Name::Set(label, TCollection_ExtendedString(name.c_str(), Standard_True));
+            if (part.has_colour)
+                colours->SetColor(label, part.colour, XCAFDoc_ColorSurf);
+            return label;
+        };
+        TDF_Label root;
+        if (objects.size() > 1) {
+            root = shapes->NewShape();
+            TDataStd_Name::Set(root, TCollection_ExtendedString(params.product_name.c_str(), Standard_True));
+        }
+        for (const auto &[object_name, parts] : objects) {
+            TDF_Label object_label;
+            if (parts.size() == 1)
+                object_label = add_part(parts.front(), object_name);
+            else {
+                object_label = shapes->NewShape();
+                TDataStd_Name::Set(object_label, TCollection_ExtendedString(object_name.c_str(), Standard_True));
+                for (const Part &part : parts) {
+                    const TDF_Label comp = shapes->AddComponent(object_label, add_part(part, part.name), TopLoc_Location());
+                    TDataStd_Name::Set(comp, TCollection_ExtendedString(part.name.c_str(), Standard_True));
+                }
+            }
+            if (!root.IsNull()) {
+                const TDF_Label comp = shapes->AddComponent(root, object_label, TopLoc_Location());
+                TDataStd_Name::Set(comp, TCollection_ExtendedString(object_name.c_str(), Standard_True));
+            }
+        }
+        shapes->UpdateAssemblies();
+
+        STEPCAFControl_Writer writer;
+        writer.SetColorMode(Standard_True);
+        writer.SetNameMode(Standard_True);
+        Interface_Static::SetCVal("write.step.unit", "MM");
+        Interface_Static::SetCVal("write.step.schema", "AP214IS");
+        // No p-curves: CAD systems rebuild them, and for a faceted B-rep they would double the
+        // file (the source STEP files we re-export rarely carry them either).
+        Interface_Static::SetIVal("write.surfacecurve.mode", 0);
+        const auto t_transfer = std::chrono::steady_clock::now();
+        if (!writer.Transfer(doc, STEPControl_AsIs))
+            report.error = "the shapes could not be transferred to STEP";
+        else {
+            const auto t_write = std::chrono::steady_clock::now();
+            APIHeaderSection_MakeHeader header(writer.ChangeWriter().Model());
+            header.SetOriginatingSystem(new TCollection_HAsciiString("EdgeSlicer"));
+            header.SetName(new TCollection_HAsciiString(boost::filesystem::path(path).filename().string().c_str()));
+            if (writer.Write(path.c_str()) != IFSelect_RetDone)
+                report.error = "cannot write " + path;
+            else
+                ok = true;
+            const auto t_end = std::chrono::steady_clock::now();
+            BOOST_LOG_TRIVIAL(info) << "STEP export: shapes " << seconds_shapes << " s, transfer "
+                                    << std::chrono::duration<double>(t_write - t_transfer).count() << " s, write "
+                                    << std::chrono::duration<double>(t_end - t_write).count() << " s";
+        }
+    } catch (const Standard_Failure &e) {
+        report.error = std::string("OCCT failed while writing STEP: ") + (e.GetMessageString() ? e.GetMessageString() : "unknown error");
+    }
+    app->Close(doc);
+    return ok;
+}
+
 } // namespace
 
 TopoDS_Shape step_source_brep(const ModelVolume &volume, std::string *why_not)
@@ -398,75 +474,7 @@ bool store_step(const std::string &path, const std::vector<StepExportItem> &item
     }
     report.objects = int(objects.size());
     const double seconds_shapes = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-
-    Handle(XCAFApp_Application) app = XCAFApp_Application::GetApplication();
-    Handle(TDocStd_Document) doc;
-    app->NewDocument("MDTV-XCAF", doc);
-    bool ok = false;
-    try {
-        Handle(XCAFDoc_ShapeTool) shapes  = XCAFDoc_DocumentTool::ShapeTool(doc->Main());
-        Handle(XCAFDoc_ColorTool) colours = XCAFDoc_DocumentTool::ColorTool(doc->Main());
-        auto add_part = [&](const Part &part, const std::string &name) {
-            const TDF_Label label = shapes->AddShape(part.shape, Standard_False);
-            TDataStd_Name::Set(label, TCollection_ExtendedString(name.c_str(), Standard_True));
-            if (part.has_colour)
-                colours->SetColor(label, part.colour, XCAFDoc_ColorSurf);
-            return label;
-        };
-        TDF_Label root;
-        if (objects.size() > 1) {
-            root = shapes->NewShape();
-            TDataStd_Name::Set(root, TCollection_ExtendedString(params.product_name.c_str(), Standard_True));
-        }
-        for (const auto &[object_name, parts] : objects) {
-            TDF_Label object_label;
-            if (parts.size() == 1)
-                object_label = add_part(parts.front(), object_name);
-            else {
-                object_label = shapes->NewShape();
-                TDataStd_Name::Set(object_label, TCollection_ExtendedString(object_name.c_str(), Standard_True));
-                for (const Part &part : parts) {
-                    const TDF_Label comp = shapes->AddComponent(object_label, add_part(part, part.name), TopLoc_Location());
-                    TDataStd_Name::Set(comp, TCollection_ExtendedString(part.name.c_str(), Standard_True));
-                }
-            }
-            if (!root.IsNull()) {
-                const TDF_Label comp = shapes->AddComponent(root, object_label, TopLoc_Location());
-                TDataStd_Name::Set(comp, TCollection_ExtendedString(object_name.c_str(), Standard_True));
-            }
-        }
-        shapes->UpdateAssemblies();
-
-        STEPCAFControl_Writer writer;
-        writer.SetColorMode(Standard_True);
-        writer.SetNameMode(Standard_True);
-        Interface_Static::SetCVal("write.step.unit", "MM");
-        Interface_Static::SetCVal("write.step.schema", "AP214IS");
-        // No p-curves: CAD systems rebuild them, and for a faceted B-rep they would double the
-        // file (the source STEP files we re-export rarely carry them either).
-        Interface_Static::SetIVal("write.surfacecurve.mode", 0);
-        const auto t_transfer = std::chrono::steady_clock::now();
-        if (!writer.Transfer(doc, STEPControl_AsIs))
-            report.error = "the shapes could not be transferred to STEP";
-        else {
-            const auto t_write = std::chrono::steady_clock::now();
-            APIHeaderSection_MakeHeader header(writer.ChangeWriter().Model());
-            header.SetOriginatingSystem(new TCollection_HAsciiString("EdgeSlicer"));
-            header.SetName(new TCollection_HAsciiString(boost::filesystem::path(path).filename().string().c_str()));
-            if (writer.Write(path.c_str()) != IFSelect_RetDone)
-                report.error = "cannot write " + path;
-            else
-                ok = true;
-            const auto t_end = std::chrono::steady_clock::now();
-            BOOST_LOG_TRIVIAL(info) << "STEP export: shapes " << seconds_shapes << " s, transfer "
-                                    << std::chrono::duration<double>(t_write - t_transfer).count() << " s, write "
-                                    << std::chrono::duration<double>(t_end - t_write).count() << " s";
-        }
-    } catch (const Standard_Failure &e) {
-        report.error = std::string("OCCT failed while writing STEP: ") + (e.GetMessageString() ? e.GetMessageString() : "unknown error");
-    }
-    app->Close(doc);
-    return done(ok);
+    return done(write_step_objects(path, objects, params, report, seconds_shapes));
 }
 
 bool store_step(const std::string &path, const Model &model, const StepExportParams &params, StepExportReport &report)
@@ -475,6 +483,59 @@ bool store_step(const std::string &path, const Model &model, const StepExportPar
     for (const ModelObject *object : model.objects)
         items.push_back({object, -1});
     return store_step(path, items, params, report);
+}
+
+bool store_step_part(const std::string &path, const ModelVolume &volume, const StepExportParams &params, StepExportReport &report, bool exact_only)
+{
+    report          = StepExportReport{};
+    const auto t0   = std::chrono::steady_clock::now();
+    auto       done = [&](bool ok) {
+        report.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return ok;
+    };
+
+    Part part;
+    part.name = volume.name.empty() ? (volume.get_object() != nullptr && !volume.get_object()->name.empty() ? volume.get_object()->name : std::string("part")) : volume.name;
+    try {
+        std::string why_not;
+        if (params.use_source_brep && is_step_path(volume.source.input_file))
+            part.shape = step_source_brep(volume, &why_not);
+        else
+            why_not = "the part was not imported from STEP";
+        if (!part.shape.IsNull())
+            ++report.exact_parts;
+        else if (exact_only) {
+            report.error = why_not;
+            return done(false);
+        } else {
+            if (!why_not.empty())
+                report.warnings.emplace_back(part.name + ": exported from its mesh (" + why_not + ")");
+            BRep::MeshToBRepStats stats;
+            part.shape = BRep::mesh_to_brep(volume.mesh().its, params.mesh, stats);
+            ++report.mesh_parts;
+            if (!stats.is_solid)
+                ++report.open_parts;
+            for (const std::string &w : stats.warnings)
+                report.warnings.emplace_back(part.name + ": " + w);
+        }
+    } catch (const Standard_Failure &e) {
+        report.error = std::string("OCCT failed while building the shape: ") + (e.GetMessageString() ? e.GetMessageString() : "unknown error");
+        return done(false);
+    } catch (const std::exception &e) {
+        report.error = e.what();
+        return done(false);
+    }
+    if (part.shape.IsNull()) {
+        report.error = "nothing to export";
+        return done(false);
+    }
+    report.parts   = 1;
+    report.objects = 1;
+    std::vector<std::pair<std::string, std::vector<Part>>> objects;
+    const std::string name = part.name;
+    objects.emplace_back(name, std::vector<Part>{ std::move(part) });
+    const double seconds_shapes = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    return done(write_step_objects(path, objects, params, report, seconds_shapes));
 }
 
 } // namespace Slic3r

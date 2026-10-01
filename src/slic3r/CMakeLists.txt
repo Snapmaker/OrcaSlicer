@@ -40,6 +40,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/BBLStatusBarSend.hpp
     GUI/BlenderBridge.cpp
     GUI/BlenderBridge.hpp
+    GUI/ExternalEditorBridge.cpp
+    GUI/ExternalEditorBridge.hpp
+    GUI/FreeCADBridge.cpp
+    GUI/FreeCADBridge.hpp
     GUI/BBLTopbar.cpp
     GUI/BBLTopbar.hpp
     GUI/BedShapeDialog.cpp
@@ -829,6 +833,10 @@ set(SLIC3R_GUI_SOURCES
     Utils/BambuStudioLauncher.hpp
     Utils/BlenderLauncher.cpp
     Utils/BlenderLauncher.hpp
+    Utils/ExternalEditor.cpp
+    Utils/ExternalEditor.hpp
+    Utils/FreeCADLauncher.cpp
+    Utils/FreeCADLauncher.hpp
     Utils/InstanceRouting.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp

@@ -18,6 +18,9 @@
 #include <catch2/catch.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -192,4 +195,33 @@ TEST_CASE("lightning anchor expansion is identical on one thread and on many", "
 {
     check_repeatable("disabled", "lightning");
     check_repeatable("apply_to_all", "lightning");
+}
+
+// Stress run, hidden from the normal suite. The races only bit when two workers landed on
+// neighbouring layers at the same moment - mostly at the tail of a parallel_for, where TBB splits
+// the remaining range down to single layers - so one slice rarely hits them. This slices the plate
+// over and over under a varying TBB thread cap and checks every result against a one-thread slice.
+// Iterations: EDGE_XBRIDGE_ITERS (default 100). Run:
+//   fff_print_tests "[.ExtraBridgeLayerStress]"
+TEST_CASE("second bridge layers and lightning anchors: slice stress", "[.ExtraBridgeLayerStress]")
+{
+    int iterations = 100;
+    if (const char *env = std::getenv("EDGE_XBRIDGE_ITERS"))
+        iterations = std::max(1, std::atoi(env));
+
+    const DynamicPrintConfig       config    = plate_config("apply_to_all", "lightning");
+    const std::vector<std::string> reference = comparable_lines(slice_plate(config, 1));
+    REQUIRE(reference.size() > 1000);
+
+    const size_t caps[] = {0, 2, 3, 4, 6, 8, 12, 16};
+    int          failures = 0;
+    for (int i = 0; i < iterations; ++i) {
+        const size_t                   cap   = caps[size_t(i) % std::size(caps)];
+        const std::vector<std::string> again = comparable_lines(slice_plate(config, cap));
+        const long long                diff  = first_difference(reference, again);
+        std::cout << "iteration " << i << " cap " << cap << ": " << (diff == -1 ? "same" : "DIFFERENT at line " + std::to_string(diff)) << std::endl;
+        if (diff != -1)
+            ++failures;
+    }
+    CHECK(failures == 0);
 }

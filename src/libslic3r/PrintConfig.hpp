@@ -300,6 +300,12 @@ enum DraftShield {
     dsDisabled, dsEnabled
 };
 
+// Side stabilizers (Support/Stabilizers.hpp): off, the automatic rings plus any painted points, or the
+// painted points only. Replaced a bool; PrintConfigDef::handle_legacy maps 1 to auto and 0 to off.
+enum StabilizerMode {
+    smOff, smAuto, smManual
+};
+
 enum class PerimeterGeneratorType
 {
     // Classic perimeter generator using Clipper offsets with constant extrusion width.
@@ -680,6 +686,7 @@ CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(TimelapseType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(BedType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(SkirtType)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(DraftShield)
+CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(StabilizerMode)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(ForwardCompatibilitySubstitutionRule)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(GCodeThumbnailsFormat)
 CONFIG_OPTION_ENUM_DECLARE_STATIC_MAPS(CounterboreHoleBridgingOption)
@@ -1234,7 +1241,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,               tree_support_auto_brim))
     ((ConfigOptionFloat,              tree_support_brim_width))
     // Side stabilizers (Support/Stabilizers.hpp)
-    ((ConfigOptionBool,               stabilizer_supports))
+    ((ConfigOptionEnum<StabilizerMode>, stabilizer_supports))
     ((ConfigOptionFloat,              stabilizer_ring_spacing))
     ((ConfigOptionInt,                stabilizer_points_per_ring))
     ((ConfigOptionFloat,              stabilizer_tip_diameter))

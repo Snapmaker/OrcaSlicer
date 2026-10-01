@@ -4,13 +4,17 @@
 #include "../ExtrusionEntityCollection.hpp"
 #include "../Flow.hpp"
 #include "../Layer.hpp"
+#include "../Model.hpp"
 #include "../Print.hpp"
+#include "../TriangleSelector.hpp"
 
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
+#include <unordered_map>
 
 namespace Slic3r {
 
@@ -18,7 +22,7 @@ namespace stabilizers {
 
 // Farthest crossing of the ray `from + t * dir` (t > 0) with the island's outer contour, as t.
 // Negative when the ray never crosses it.
-static double outermost_crossing(const Polygon &contour, const Vec2d &from, const Vec2d &dir)
+static double outermost_crossing(const Polygon &contour, const Vec2d &from, const Vec2d &dir, Vec2d *normal = nullptr)
 {
     double best = -1.;
     const size_t n = contour.size();
@@ -32,10 +36,26 @@ static double outermost_crossing(const Polygon &contour, const Vec2d &from, cons
         const Vec2d  w = a - from;
         const double t = (w.x() * e.y() - w.y() * e.x()) / denom; // along the ray
         const double s = (w.x() * dir.y() - w.y() * dir.x()) / denom; // along the edge
-        if (t > 0. && s >= 0. && s <= 1.)
-            best = std::max(best, t);
+        if (t > 0. && s >= 0. && s <= 1. && t > best) {
+            best = t;
+            // Outward of a counter-clockwise contour.
+            if (normal != nullptr)
+                *normal = Vec2d(e.y(), -e.x()).normalized();
+        }
     }
     return best;
+}
+
+// The layer whose slicing plane is nearest to height z. Layers must be sorted and not empty.
+static std::vector<LayerOutline>::const_iterator nearest_layer(const std::vector<LayerOutline> &layers, double z)
+{
+    auto it = std::lower_bound(layers.begin(), layers.end(), float(z),
+                               [](const LayerOutline &l, float zz) { return l.slice_z < zz; });
+    if (it == layers.end())
+        it = std::prev(it);
+    else if (it != layers.begin() && std::abs(std::prev(it)->slice_z - z) < std::abs(it->slice_z - z))
+        it = std::prev(it);
+    return it;
 }
 
 std::vector<Contact> ring_contacts(const std::vector<LayerOutline> &layers, const RingParams &params)
@@ -52,12 +72,7 @@ std::vector<Contact> ring_contacts(const std::vector<LayerOutline> &layers, cons
 
     for (double z = params.ring_spacing; z <= double(top_z) - params.top_margin; z += params.ring_spacing) {
         // The layer whose slicing plane is nearest to the ring height.
-        auto it = std::lower_bound(layers.begin(), layers.end(), float(z),
-                                   [](const LayerOutline &l, float zz) { return l.slice_z < zz; });
-        if (it == layers.end())
-            it = std::prev(it);
-        else if (it != layers.begin() && std::abs(std::prev(it)->slice_z - z) < std::abs(it->slice_z - z))
-            it = std::prev(it);
+        auto it = nearest_layer(layers, z);
         if (it->islands == nullptr)
             continue;
 
@@ -77,11 +92,12 @@ std::vector<Contact> ring_contacts(const std::vector<LayerOutline> &layers, cons
             for (int i = 0; i < n; ++i) {
                 const double a = i * step_angle;
                 const Vec2d  dir(std::cos(a), std::sin(a));
-                const double t = outermost_crossing(island.contour, c, dir);
+                Vec2d        normal = dir;
+                const double t = outermost_crossing(island.contour, c, dir, &normal);
                 if (t <= 0.)
                     continue;
                 const Vec2d p = c + dir * t;
-                out.push_back({ Vec2d(unscaled(p.x()), unscaled(p.y())), dir, size_t(it - layers.begin()), it->slice_z });
+                out.push_back({ Vec2d(unscaled(p.x()), unscaled(p.y())), dir, size_t(it - layers.begin()), it->slice_z, normal });
             }
         }
     }
@@ -95,6 +111,189 @@ sla::SupportPoints ring_points(const std::vector<LayerOutline> &layers, const Ri
     for (const Contact &c : ring_contacts(layers, params))
         out.emplace_back(Vec3f(float(c.pos.x()), float(c.pos.y()), c.z), tip_r);
     return out;
+}
+
+// --- settings -----------------------------------------------------------------------------------
+
+StabilizerSettings StabilizerSettings::from_config(const PrintObjectConfig &cfg, double support_line_width)
+{
+    StabilizerSettings s;
+    s.rings.ring_spacing     = cfg.stabilizer_ring_spacing.value;
+    s.rings.points_per_ring  = cfg.stabilizer_points_per_ring.value;
+    s.rings.tip_diameter     = cfg.stabilizer_tip_diameter.value;
+    s.rings.max_island_width = cfg.stabilizer_max_island_width.value;
+    s.tip_gap                = cfg.stabilizer_tip_gap.value;
+    // Two perimeters on each side at least, or a pillar is a single wobbly loop.
+    s.pillar_radius          = 0.5 * std::max(cfg.stabilizer_pillar_diameter.value, 4. * support_line_width);
+    s.clearance              = std::max(1.0, cfg.support_object_xy_distance.value);
+    s.max_run                = 10.;
+    const StabilizerMode mode = cfg.stabilizer_supports.value;
+    s.ring_struts            = mode == smAuto;
+    s.painted_points         = mode != smOff;
+    return s;
+}
+
+StabilizerSettings settings_of(const PrintObject &object)
+{
+    return StabilizerSettings::from_config(object.config(), support_material_flow(&object).width());
+}
+
+std::vector<LayerOutline> outlines_of(const PrintObject &object)
+{
+    std::vector<LayerOutline> outlines;
+    outlines.reserve(object.layers().size());
+    for (const Layer *layer : object.layers())
+        outlines.push_back({ float(layer->slice_z), &layer->lslices });
+    return outlines;
+}
+
+// --- painted points -----------------------------------------------------------------------------
+
+std::vector<PaintedSpot> painted_spots(const ModelObject &object, const Transform3d &trafo, double ring_spacing)
+{
+    std::vector<PaintedSpot> out;
+    for (const ModelVolume *mv : object.volumes) {
+        if (! mv->is_model_part() || mv->supported_facets.empty() ||
+            ! mv->supported_facets.has_facets(*mv, EnforcerBlockerType::STABILIZER))
+            continue;
+        indexed_triangle_set its = mv->supported_facets.get_facets_strict(*mv, EnforcerBlockerType::STABILIZER);
+        if (its.indices.empty())
+            continue;
+        its_transform(its, trafo * mv->get_matrix(), true);
+
+        // Connected patches: triangles sharing a vertex position (split triangles may carry their
+        // own copies of a vertex, so positions, not indices).
+        std::vector<int> parent(its.vertices.size());
+        for (size_t i = 0; i < parent.size(); ++i)
+            parent[i] = int(i);
+        auto find = [&parent](int i) {
+            while (parent[i] != i)
+                i = parent[i] = parent[parent[i]];
+            return i;
+        };
+        struct KeyHash
+        {
+            size_t operator()(const std::tuple<int64_t, int64_t, int64_t> &k) const
+            {
+                return std::hash<int64_t>()(std::get<0>(k)) * 73856093 ^ std::hash<int64_t>()(std::get<1>(k)) * 19349663 ^
+                       std::hash<int64_t>()(std::get<2>(k)) * 83492791;
+            }
+        };
+        std::unordered_map<std::tuple<int64_t, int64_t, int64_t>, int, KeyHash> by_pos;
+        auto key = [](const Vec3f &v) {
+            return std::make_tuple(int64_t(std::llround(v.x() * 1000.)), int64_t(std::llround(v.y() * 1000.)),
+                                   int64_t(std::llround(v.z() * 1000.)));
+        };
+        for (size_t i = 0; i < its.vertices.size(); ++i) {
+            auto [it, inserted] = by_pos.emplace(key(its.vertices[i]), int(i));
+            if (! inserted)
+                parent[find(int(i))] = find(it->second);
+        }
+        for (const stl_triangle_vertex_indices &f : its.indices) {
+            parent[find(f(1))] = find(f(0));
+            parent[find(f(2))] = find(f(0));
+        }
+
+        struct Tri { Vec3d c; Vec3d n; double area; };
+        std::unordered_map<int, std::vector<Tri>> patches;
+        for (const stl_triangle_vertex_indices &f : its.indices) {
+            const Vec3d a = its.vertices[f(0)].cast<double>(), b = its.vertices[f(1)].cast<double>(),
+                        c = its.vertices[f(2)].cast<double>();
+            const Vec3d  cr   = (b - a).cross(c - a);
+            const double area = 0.5 * cr.norm();
+            if (area <= 0.)
+                continue;
+            patches[find(f(0))].push_back({ (a + b + c) / 3., cr.normalized(), area });
+        }
+
+        for (auto &[id, tris] : patches) {
+            double zmin = std::numeric_limits<double>::max(), zmax = std::numeric_limits<double>::lowest();
+            for (const Tri &t : tris) {
+                zmin = std::min(zmin, t.c.z());
+                zmax = std::max(zmax, t.c.z());
+            }
+            // A patch taller than a ring spacing asks for one strut per spacing of its height.
+            const size_t bands = ring_spacing > EPSILON && zmax - zmin > ring_spacing ?
+                                     size_t(std::ceil((zmax - zmin) / ring_spacing)) : 1;
+            std::vector<Vec3d>  sum_c(bands, Vec3d::Zero()), sum_n(bands, Vec3d::Zero());
+            std::vector<double> sum_a(bands, 0.);
+            for (const Tri &t : tris) {
+                const size_t b = bands == 1 ? 0 :
+                    std::min(bands - 1, size_t((t.c.z() - zmin) / ((zmax - zmin) / double(bands))));
+                sum_c[b] += t.c * t.area;
+                sum_n[b] += t.n * t.area;
+                sum_a[b] += t.area;
+            }
+            for (size_t b = 0; b < bands; ++b)
+                if (sum_a[b] > 0.) {
+                    const double nn = sum_n[b].norm();
+                    out.push_back({ sum_c[b] / sum_a[b], nn > EPSILON ? Vec3d(sum_n[b] / nn) : Vec3d::Zero() });
+                }
+        }
+    }
+    // Deterministic order (the patch map is unordered): bottom up, then by position.
+    std::sort(out.begin(), out.end(), [](const PaintedSpot &a, const PaintedSpot &b) {
+        return std::make_tuple(a.pos.z(), a.pos.x(), a.pos.y()) < std::make_tuple(b.pos.z(), b.pos.x(), b.pos.y());
+    });
+    return out;
+}
+
+std::vector<PaintedSpot> painted_spots(const PrintObject &object)
+{
+    if (object.model_object() == nullptr)
+        return {};
+    return painted_spots(*object.model_object(), object.trafo_centered(), object.config().stabilizer_ring_spacing.value);
+}
+
+// The contact a painted spot asks for: the point of the nearest island's outline, at the layer
+// nearest the spot's height, closest to the spot. Its direction is the painted surface's own,
+// flattened; on a flat top or bottom (no sideways normal) the outline's own outward normal there.
+static bool painted_contact(const std::vector<LayerOutline> &layers, const PaintedSpot &spot, Contact &out)
+{
+    if (layers.empty())
+        return false;
+    auto it = nearest_layer(layers, spot.pos.z());
+    if (it->islands == nullptr || it->islands->empty())
+        return false;
+    const Point p(scaled(spot.pos.x()), scaled(spot.pos.y()));
+    const ExPolygon *best      = nullptr;
+    Point            best_pt   = p;
+    size_t           best_edge = 0;
+    double           best_d2   = std::numeric_limits<double>::max();
+    for (const ExPolygon &island : *it->islands) {
+        if (island.contour.size() < 3)
+            continue;
+        size_t      edge = 0;
+        const Point q    = island.contour.point_projection(p, &edge);
+        const double d2  = (q - p).cast<double>().squaredNorm();
+        if (d2 < best_d2) {
+            best_d2   = d2;
+            best      = &island;
+            best_pt   = q;
+            best_edge = edge;
+        }
+    }
+    // The spot must lie on this layer's outline, not across the plate from it.
+    if (best == nullptr || best_d2 > sqr(scaled<double>(3.)))
+        return false;
+
+    const Polygon &contour = best->contour;
+    const Vec2d    e       = (contour[(best_edge + 1) % contour.size()] - contour[best_edge]).cast<double>();
+    if (e.norm() < EPSILON)
+        return false;
+    const Vec2d wall = Vec2d(e.y(), -e.x()).normalized(); // outward of a counter-clockwise contour
+    Vec2d dir(spot.normal.x(), spot.normal.y());
+    if (dir.norm() > 0.2)
+        dir.normalize();
+    else
+        dir = wall;
+    const Vec2d pos = unscaled(best_pt);
+    // Out of the part, whatever the paint's winding said.
+    const Vec2d probe = pos + dir * 0.05;
+    if (best->contains(Point(scaled(probe.x()), scaled(probe.y()))))
+        dir = -dir;
+    out = { pos, dir, size_t(it - layers.begin()), it->slice_z, wall };
+    return true;
 }
 
 // --- geometry ---------------------------------------------------------------------------------
@@ -180,91 +379,154 @@ static double distance_to(const ExPolygons &islands, const Vec2d &c)
     return unscaled(best);
 }
 
-std::vector<Strut> plan_struts(const PrintObject &object)
+static const ExPolygons &islands_at(const std::vector<LayerOutline> &layers, size_t i)
+{
+    static const ExPolygons none;
+    return layers[i].islands != nullptr ? *layers[i].islands : none;
+}
+
+// The shortest strut from contact `c` out along `dir` whose pillar has a clear way down to the bed,
+// and whose own path from the pillar up to the tip stays off the part. False when none fits within
+// the settings' max_run.
+static bool fit_strut(const std::vector<LayerOutline> &layers, const StabilizerSettings &st, const Contact &c,
+                      const Vec2d &dir, Strut &out)
+{
+    const double pillar_r  = st.pillar_radius;
+    const double clearance = st.clearance;
+    for (double run = pillar_r + clearance; run <= st.max_run + EPSILON; run += 0.5) {
+        Strut s;
+        s.tip       = c.pos;
+        s.dir       = dir;
+        s.tip_layer = c.layer;
+        s.tip_z     = c.z;
+        s.run       = run;
+        s.normal    = c.normal;
+        const Vec2d  pillar = s.pillar();
+        const double top_z  = s.junction_z();
+        bool ok = true;
+        for (size_t i = 0; ok && i <= c.layer; ++i) {
+            const double z = layers[i].slice_z;
+            if (z <= top_z + EPSILON) {
+                // (A little slack: on a round part the clearance is exactly met.)
+                ok = !disc_hits(islands_at(layers, i), pillar, pillar_r + clearance - 0.1);
+            } else {
+                // Along the strut: its axis must stay outside the part and move away from the
+                // wall at least half as fast as it drops - true of any wall that does not lean
+                // out over the strut.
+                const double dz = c.z - z;
+                if (dz > st.rings.tip_diameter)
+                    ok = distance_to(islands_at(layers, i), s.axis_at(z)) >= 0.5 * dz;
+            }
+        }
+        if (ok) {
+            out = s;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<Strut> plan_struts(const std::vector<LayerOutline> &layers, const StabilizerSettings &st,
+                               const std::vector<PaintedSpot> &painted, PlanReport *report)
 {
     std::vector<Strut> out;
-    const PrintObjectConfig &cfg = object.config();
-    const auto              &layers = object.layers();
+    if (report != nullptr)
+        *report = PlanReport();
     if (layers.size() < 2)
         return out;
 
-    std::vector<LayerOutline> outlines;
-    outlines.reserve(layers.size());
-    for (const Layer *layer : layers)
-        outlines.push_back({ float(layer->slice_z), &layer->lslices });
-
-    RingParams rp;
-    rp.ring_spacing     = cfg.stabilizer_ring_spacing.value;
-    rp.points_per_ring  = cfg.stabilizer_points_per_ring.value;
-    rp.tip_diameter     = cfg.stabilizer_tip_diameter.value;
-    rp.max_island_width = cfg.stabilizer_max_island_width.value;
-
-    const double pillar_r = pillar_radius(object);
-    // The pillar stands this far off anything of the part below it.
-    const double clearance = std::max(1.0, cfg.support_object_xy_distance.value);
-    const double max_run   = 10.;
-
-    for (const Contact &c : ring_contacts(outlines, rp)) {
-        // Shortest strut whose pillar has a clear way down to the bed, and whose own path from the
-        // pillar up to the tip stays off the part.
-        for (double run = pillar_r + clearance; run <= max_run + EPSILON; run += 0.5) {
+    if (st.ring_struts)
+        for (const Contact &c : ring_contacts(layers, st.rings)) {
             Strut s;
-            s.tip       = c.pos;
-            s.dir       = c.dir;
-            s.tip_layer = c.layer;
-            s.tip_z     = c.z;
-            s.run       = run;
-            const Vec2d  pillar = s.pillar();
-            const double top_z  = s.junction_z();
-            bool ok = true;
-            for (size_t i = 0; ok && i <= c.layer; ++i) {
-                const double z = layers[i]->slice_z;
-                if (z <= top_z + EPSILON) {
-                    // (A little slack: on a round part the clearance is exactly met.)
-                    ok = !disc_hits(layers[i]->lslices, pillar, pillar_r + clearance - 0.1);
-                } else {
-                    // Along the strut: its axis must stay outside the part and move away from the
-                    // wall at least half as fast as it drops - true of any wall that does not lean
-                    // out over the strut.
-                    const double dz = c.z - z;
-                    if (dz > rp.tip_diameter)
-                        ok = distance_to(layers[i]->lslices, s.axis_at(z)) >= 0.5 * dz;
-                }
-            }
-            if (ok) {
+            if (fit_strut(layers, st, c, c.dir, s))
                 out.push_back(s);
+        }
+    const size_t n_ring = out.size();
+
+    // Painted points: on top of the rings, ignoring their spacing, count and island width limit,
+    // but held to the same printability rules - and, as they are the user's explicit ask, never
+    // silently dropped.
+    PlanReport rep;
+    static const std::vector<PaintedSpot> no_spots;
+    const std::vector<PaintedSpot> &spots = st.painted_points ? painted : no_spots;
+    rep.painted              = spots.size();
+    rep.manual_without_paint = ! st.ring_struts && st.painted_points && spots.empty();
+    const double same_spot = std::max(1.0, st.rings.tip_diameter);
+    for (const PaintedSpot &spot : spots) {
+        Contact c;
+        if (! painted_contact(layers, spot, c)) {
+            rep.unreachable.push_back(spot.pos);
+            continue;
+        }
+        // A strut already touching there (a ring's, or an earlier painted spot's) serves it.
+        auto touches = [&c, same_spot](const Strut &s) {
+            return std::abs(s.tip_z - double(c.z)) < same_spot && (s.tip - c.pos).norm() < same_spot;
+        };
+        if (std::any_of(out.begin(), out.begin() + n_ring, touches)) {
+            ++rep.painted_on_ring;
+            continue;
+        }
+        if (std::any_of(out.begin() + n_ring, out.end(), touches)) {
+            ++rep.painted_placed;
+            continue;
+        }
+        // Straight out from the painted surface first, then swung further and further to either side
+        // until a strut fits past whatever is in the way.
+        bool placed = false;
+        for (double deg : { 0., 15., -15., 30., -30., 45., -45., 60., -60. }) {
+            const double a = deg * M_PI / 180.;
+            const Vec2d  dir(c.dir.x() * std::cos(a) - c.dir.y() * std::sin(a), c.dir.x() * std::sin(a) + c.dir.y() * std::cos(a));
+            Strut s;
+            // A painted point near the bed: the pillar must still stand on the bed, under the strut.
+            if (fit_strut(layers, st, c, dir, s) && s.junction_z() >= 0.) {
+                s.painted = true;
+                out.push_back(s);
+                placed = true;
                 break;
             }
         }
+        if (placed)
+            ++rep.painted_placed;
+        else
+            rep.unreachable.push_back(Vec3d(c.pos.x(), c.pos.y(), double(c.z)));
     }
+    if (report != nullptr)
+        *report = std::move(rep);
     return out;
+}
+
+std::vector<Strut> plan_struts(const PrintObject &object, PlanReport *report)
+{
+    if (object.layers().size() < 2) {
+        if (report != nullptr)
+            *report = PlanReport();
+        return {};
+    }
+    return plan_struts(outlines_of(object), settings_of(object), painted_spots(object), report);
 }
 
 double pillar_radius(const PrintObject &object)
 {
-    // Two perimeters on each side at least, or a pillar is a single wobbly loop.
-    const double min_d = 4. * support_material_flow(&object).width();
-    return 0.5 * std::max(object.config().stabilizer_pillar_diameter.value, min_d);
+    return settings_of(object).pillar_radius;
 }
 
-std::vector<ExPolygons> slice_struts(const PrintObject &object, const std::vector<Strut> &struts,
-                                     const std::function<void()> &throw_if_canceled)
+std::vector<ExPolygons> slice_struts(const std::vector<LayerOutline> &layers, const StabilizerSettings &st,
+                                     const std::vector<Strut> &struts, const std::function<void()> &throw_if_canceled)
 {
-    const auto &layers = object.layers();
     std::vector<ExPolygons> out(layers.size());
     if (struts.empty())
         return out;
 
-    const PrintObjectConfig &cfg = object.config();
-    const double tip_r    = 0.5 * cfg.stabilizer_tip_diameter.value;
-    const double pillar_r = pillar_radius(object);
+    const double tip_r    = 0.5 * st.rings.tip_diameter;
+    const double pillar_r = st.pillar_radius;
     // A small foot on the bed: the pillar widens by this much over the same height, at 45 degrees.
     const double foot     = std::min(1.0, pillar_r);
-    const float  tip_gap  = scaled<float>(cfg.stabilizer_tip_gap.value);
+    const float  tip_gap  = scaled<float>(st.tip_gap);
 
     for (size_t i = 0; i < layers.size(); ++i) {
-        throw_if_canceled();
-        const double z = layers[i]->slice_z;
+        if (throw_if_canceled)
+            throw_if_canceled();
+        const double z = layers[i].slice_z;
         Polygons     polys;
         for (const Strut &s : struts) {
             if (z > s.tip_z + EPSILON)
@@ -289,10 +551,16 @@ std::vector<ExPolygons> slice_struts(const PrintObject &object, const std::vecto
             continue;
         // Touch, don't fuse: clip at the part's outline, so the tip's footprint ends exactly where
         // the outer wall begins - or stop short of it by the tip gap.
-        const ExPolygons &part = layers[i]->lslices;
+        const ExPolygons &part = islands_at(layers, i);
         out[i] = tip_gap > 0.f ? diff_ex(union_(polys), offset_ex(part, tip_gap)) : diff_ex(union_(polys), part);
     }
     return out;
+}
+
+std::vector<ExPolygons> slice_struts(const PrintObject &object, const std::vector<Strut> &struts,
+                                     const std::function<void()> &throw_if_canceled)
+{
+    return slice_struts(outlines_of(object), settings_of(object), struts, throw_if_canceled);
 }
 
 // The support layer at `layer`'s print_z, or null when the support generators made none.
@@ -320,16 +588,18 @@ static SupportLayer *support_layer_at(PrintObject &object, const Layer &layer, b
 
 } // namespace stabilizers
 
-void generate_stabilizer_supports(PrintObject &object, const std::function<void()> &throw_if_canceled)
+stabilizers::PlanReport generate_stabilizer_supports(PrintObject &object, const std::function<void()> &throw_if_canceled)
 {
+    stabilizers::PlanReport report;
     const PrintObjectConfig &cfg = object.config();
-    if (!cfg.stabilizer_supports.value || object.layers().size() < 2)
-        return;
+    if (cfg.stabilizer_supports.value == smOff || object.layers().size() < 2)
+        return report;
 
-    const std::vector<stabilizers::Strut> struts = stabilizers::plan_struts(object);
-    BOOST_LOG_TRIVIAL(debug) << "Stabilizers: " << struts.size() << " struts";
+    const std::vector<stabilizers::Strut> struts = stabilizers::plan_struts(object, &report);
+    BOOST_LOG_TRIVIAL(debug) << "Stabilizers: " << struts.size() << " struts, " << report.painted << " painted point(s), "
+                             << report.unreachable.size() << " unreachable";
     if (struts.empty())
-        return;
+        return report;
     throw_if_canceled();
 
     std::vector<ExPolygons> slices = stabilizers::slice_struts(object, struts, throw_if_canceled);
@@ -392,6 +662,7 @@ void generate_stabilizer_supports(PrintObject &object, const std::function<void(
             sls[i]->upper_layer = i + 1 < sls.size() ? sls[i + 1] : nullptr;
         }
     }
+    return report;
 }
 
 } // namespace Slic3r

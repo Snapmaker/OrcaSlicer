@@ -424,7 +424,7 @@ TEST_CASE("Stabilizers on the owner's project reach every ring", "[Stabilizers]"
     ProjectPrint p;
     REQUIRE(slice_project(p));
     const PrintObject &po = *p.print.objects().front();
-    REQUIRE(po.config().stabilizer_supports.value);
+    REQUIRE(po.config().stabilizer_supports.value == smAuto);
     CHECK_THAT(stabilizers::pillar_radius(po), WithinAbs(1.5, 1e-6));
     CHECK(stabilizers::plan_struts(po).size() == 9);
 

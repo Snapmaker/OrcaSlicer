@@ -404,6 +404,13 @@ static const t_config_enum_values s_keys_map_DraftShield = {
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(DraftShield)
 
+static const t_config_enum_values s_keys_map_StabilizerMode = {
+    { "off",    smOff    },
+    { "auto",   smAuto   },
+    { "manual", smManual }
+};
+CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(StabilizerMode)
+
 static const t_config_enum_values s_keys_map_ForwardCompatibilitySubstitutionRule = {
     { "disable",        ForwardCompatibilitySubstitutionRule::Disable },
     { "enable",         ForwardCompatibilitySubstitutionRule::Enable },
@@ -7183,15 +7190,25 @@ void PrintConfigDef::init_fff_params()
 
     // Side stabilizers: pinpoint struts on pillars that touch tall, thin parts on their sides
     // (Support/Stabilizers.hpp).
-    def = this->add("stabilizer_supports", coBool);
+    def = this->add("stabilizer_supports", coEnum);
     def->label = L("Side stabilizers");
     def->category = L("Support");
-    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip, "
-                     "in rings up the part's height, and stand on the build plate next to it. They keep the part "
-                     "from wobbling while it prints and snap off at the tip afterwards. Printed as support, so "
-                     "supports must be enabled.");
+    def->tooltip = L("Add thin struts that touch tall, slender parts on their sides with a small pinpoint tip "
+                     "and stand on the build plate next to it. They keep the part from wobbling while it prints "
+                     "and snap off at the tip afterwards. Printed as support, so supports must be enabled.\n\n"
+                     "Off: no stabilizers.\n"
+                     "Auto: rings of touch points up the part's height, plus any stabilizer points painted with "
+                     "the support painting tool.\n"
+                     "Manual: only the painted stabilizer points.");
+    def->enum_keys_map = &ConfigOptionEnum<StabilizerMode>::get_enum_values();
+    def->enum_values.push_back("off");
+    def->enum_values.push_back("auto");
+    def->enum_values.push_back("manual");
+    def->enum_labels.push_back(L("Off"));
+    def->enum_labels.push_back(L("Auto"));
+    def->enum_labels.push_back(L("Manual"));
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionEnum<StabilizerMode>(smOff));
 
     def = this->add("stabilizer_ring_spacing", coFloat);
     def->label = L("Stabilizer ring spacing");
@@ -9278,6 +9295,13 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         opt_key = "thumbnails";
     } else if (opt_key == "counterbole_hole_bridging") {
         opt_key = "counterbore_hole_bridging";
+    } else if (opt_key == "stabilizer_supports") {
+        // Side stabilizers were an on/off checkbox before the Off / Auto / Manual choice (projects
+        // saved with the first version of the feature): on was the automatic rings.
+        if (value == "1" || value == "true")
+            value = "auto";
+        else if (value == "0" || value == "false")
+            value = "off";
     } else if (opt_key == "draft_shield" && value == "limited") {
         value = "disabled";
     } else if (opt_key == "support_interface_filament_source") {

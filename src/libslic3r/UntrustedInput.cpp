@@ -577,6 +577,32 @@ bool has_embedded_nul(const boost::filesystem::path &p)
     return has_embedded_nul(p.string()) || has_embedded_nul(p.generic_string());
 }
 
+boost::filesystem::path strip_trailing_separators_path(boost::filesystem::path p)
+{
+    std::string s = p.generic_string();
+    while (s.size() > 1 && (s.back() == '/' || s.back() == '\\'))
+        s.pop_back();
+    return boost::filesystem::path(s);
+}
+
+// weakly_canonical follows a symlink at the last component. Extraction *replaces*
+// a destination symlink, so that last hop must stay the spelled path under root.
+// Intermediate symlinks are still followed, so root/out/lib.so (out -> outside) is rejected.
+boost::filesystem::path weakly_canonical_for_confine(const boost::filesystem::path &p)
+{
+    const boost::filesystem::path stripped = strip_trailing_separators_path(p);
+    boost::system::error_code     ec;
+    if (boost::filesystem::is_symlink(boost::filesystem::symlink_status(stripped, ec))) {
+        const boost::filesystem::path parent = stripped.parent_path();
+        if (parent.empty())
+            return stripped;
+        return boost::filesystem::weakly_canonical(parent) / stripped.filename();
+    }
+    return boost::filesystem::weakly_canonical(stripped);
+}
+
+bool skip_dot_or_empty(const boost::filesystem::path &comp) { return comp.empty() || comp == "."; }
+
 } // namespace
 
 bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
@@ -584,17 +610,23 @@ bool is_path_within_root(const boost::filesystem::path &root, const boost::files
     if (has_embedded_nul(root) || has_embedded_nul(candidate))
         return false;
     try {
-        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(root);
-        const boost::filesystem::path cand_c = boost::filesystem::weakly_canonical(candidate);
+        const boost::filesystem::path root_c = weakly_canonical_for_confine(root);
+        const boost::filesystem::path cand_c = weakly_canonical_for_confine(candidate);
         if (has_embedded_nul(root_c) || has_embedded_nul(cand_c))
             return false;
         auto r = root_c.begin();
         auto c = cand_c.begin();
-        for (; r != root_c.end(); ++r, ++c) {
-            if (r->empty())
+        while (r != root_c.end()) {
+            if (skip_dot_or_empty(*r)) {
+                ++r;
                 continue;
+            }
+            while (c != cand_c.end() && skip_dot_or_empty(*c))
+                ++c;
             if (c == cand_c.end() || *r != *c)
                 return false;
+            ++r;
+            ++c;
         }
         return true;
     } catch (...) {

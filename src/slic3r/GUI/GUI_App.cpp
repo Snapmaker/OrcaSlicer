@@ -89,6 +89,7 @@
 #include "libslic3r/StartupProfile.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/miniz_extension.hpp"
+#include "libslic3r/UntrustedInput.hpp"
 #include "libslic3r/DataDirMigration.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Color.hpp"
@@ -2133,6 +2134,13 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
         }
         if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
             BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, mz_zip_reader_file_stat for file %2% failed")%__LINE__%i;
+            close_zip_reader(&archive);
+            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+            return InstallStatusUnzipFailed;
+        }
+        // Symlink entries are refused even when uncomp_size is 0 (D3 whole-archive reject).
+        if (zip_entry_is_symlink(stat)) {
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] symlink entry rejected: " << stat.m_filename;
             close_zip_reader(&archive);
             if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
             return InstallStatusUnzipFailed;

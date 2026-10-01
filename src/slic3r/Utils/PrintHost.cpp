@@ -3,6 +3,7 @@
 #include <vector>
 #include <thread>
 #include <exception>
+#include <boost/algorithm/string.hpp>
 #include <boost/optional.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/filesystem.hpp>
@@ -102,6 +103,38 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config, bool change_eng
     return host;
 }
 
+namespace {
+
+// Same contract as Flashforge.cpp's try_parse_json_int for integers and numeric strings
+// (booleans/floats are intentionally not accepted here; see get_err_code_from_body).
+bool try_parse_json_int(const nlohmann::json &value, int &out)
+{
+    try {
+        if (value.is_number_integer() || value.is_number_unsigned()) {
+            out = value.get<int>();
+            return true;
+        }
+
+        if (value.is_string()) {
+            std::string text = value.get<std::string>();
+            boost::trim(text);
+            if (text.empty())
+                return false;
+
+            size_t     pos    = 0;
+            const long parsed = std::stol(text, &pos, 10);
+            if (pos == text.size()) {
+                out = static_cast<int>(parsed);
+                return true;
+            }
+        }
+    } catch (...) {}
+
+    return false;
+}
+
+} // namespace
+
 int PrintHost::get_err_code_from_body(const std::string &body)
 {
     const auto parsed = nlohmann::json::parse(body, nullptr, false);
@@ -111,11 +144,11 @@ int PrintHost::get_err_code_from_body(const std::string &body)
     if (!parsed.contains("err"))
         return 0;
 
-    const auto &err = parsed["err"];
-    if (!err.is_number_integer())
+    int err_code = 0;
+    if (!try_parse_json_int(parsed["err"], err_code))
         return -1;
 
-    return err.get<int>();
+    return err_code;
 }
 
 wxString PrintHost::format_error(const std::string &body, const std::string &error, unsigned status) const
@@ -152,6 +185,8 @@ struct PrintHostJobQueue::priv
 
     std::thread bg_thread;
     bool bg_exit = false;
+    // Set when error_fn runs for this job, so a later throw does not emit a second dialog.
+    bool error_emitted = false;
 
     PrintHostQueueDialog *queue_dialog;
 
@@ -248,14 +283,17 @@ void PrintHostJobQueue::priv::bg_thread_main()
 
         // One throwing job must not kill the worker: later sends would sit in the queue forever,
         // and remove_source() for this job would be skipped. (Orca #15947 / decision D7.)
+        error_emitted = false;
         try {
             if (! job.cancelled) {
                 perform_job(std::move(job));
             }
         } catch (const std::exception &e) {
-            emit_error(e.what());
+            if (!error_emitted)
+                emit_error(wxString::FromUTF8(e.what()));
         } catch (...) {
-            emit_error(_L("Unknown error"));
+            if (!error_emitted)
+                emit_error(_L("Unknown error"));
         }
 
         remove_source();
@@ -315,6 +353,9 @@ void PrintHostJobQueue::priv::progress_fn(Http::Progress progress, bool &cancel)
 
 void PrintHostJobQueue::priv::error_fn(wxString error)
 {
+    // Remember that this job already reported, even if cancel suppresses the dialog: a throw
+    // after error_fn must not emit a second one.
+    error_emitted = true;
     // check if transfer was not canceled before error occured - than do not show the error
     bool do_emit_err = true;
     if (channel_cancels.size_hint() > 0) {
@@ -455,33 +496,42 @@ void PrintHostJobQueue::priv::perform_job(PrintHostJob the_job)
             [this](wxString error) { this->error_fn(std::move(error)); },
             [this](wxString tag, wxString host) { this->info_fn(std::move(tag), std::move(host)); });
     } catch (const std::exception &e) {
-        error_fn(wxString::FromUTF8(e.what()));
+        if (!error_emitted)
+            error_fn(wxString::FromUTF8(e.what()));
         success = false;
     } catch (...) {
-        error_fn(_L("Unknown error"));
+        if (!error_emitted)
+            error_fn(_L("Unknown error"));
         success = false;
     }
 
     if (success) {
         emit_progress(100);
         // Ultra: keep a copy of the file the print host received (Preferences > Ultra > G-Code
-        // Archive). Archiving never fails an upload.
-        if (GUI::GcodeArchive::enabled()) {
-            GUI::GcodeArchive::Meta am = GUI::GcodeArchive::meta_for_plate(-1, archive_print ? "print" : "upload");
-            // "ph:<device id>" when the send picked one of this model's devices, so a reprint can be
-            // replayed to the printer it actually went to; "host" (the preset's own address) when
-            // there were none, exactly as before.
-            am.printer_id   = archive_device.empty() ? std::string("host") : ("ph:" + archive_device);
-            am.printer_kind = "printhost";
-            am.printer_name = archive_dev_name.empty() ? (host_name + " " + host_url) : archive_dev_name;
-            am.file_name    = archive_name;
-            am.mapping      = archive_mapping;
-            am.unload_at_end = archive_unload && archive_print;
-            GUI::GcodeArchive::archive(archive_source, am);
-        }
-        if (the_job.switch_to_device_tab) {
-            const auto mainframe = GUI::wxGetApp().mainframe;
-            mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+        // Archive). Archiving never fails an upload; switching to the device tab must not either.
+        // These sit outside the upload try so a throw here cannot flip success into an error.
+        try {
+            if (GUI::GcodeArchive::enabled()) {
+                GUI::GcodeArchive::Meta am = GUI::GcodeArchive::meta_for_plate(-1, archive_print ? "print" : "upload");
+                // "ph:<device id>" when the send picked one of this model's devices, so a reprint can be
+                // replayed to the printer it actually went to; "host" (the preset's own address) when
+                // there were none, exactly as before.
+                am.printer_id    = archive_device.empty() ? std::string("host") : ("ph:" + archive_device);
+                am.printer_kind  = "printhost";
+                am.printer_name  = archive_dev_name.empty() ? (host_name + " " + host_url) : archive_dev_name;
+                am.file_name     = archive_name;
+                am.mapping       = archive_mapping;
+                am.unload_at_end = archive_unload && archive_print;
+                GUI::GcodeArchive::archive(archive_source, am);
+            }
+            if (the_job.switch_to_device_tab) {
+                const auto mainframe = GUI::wxGetApp().mainframe;
+                mainframe->request_select_tab(MainFrame::TabPosition::tpMonitor);
+            }
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(error) << "PrintHostJobQueue: post-upload archive/tab switch failed: " << e.what();
+        } catch (...) {
+            BOOST_LOG_TRIVIAL(error) << "PrintHostJobQueue: post-upload archive/tab switch failed";
         }
     }
 }

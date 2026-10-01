@@ -691,6 +691,12 @@ TEST_CASE("PrintHost: get_err_code_from_body does not throw on malformed JSON", 
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"x"})") == -1);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":0})") == 0);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":1})") == 1);
+    // ptree lexical_cast accepted numeric strings; keep that via try_parse_json_int.
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"0"})") == 0);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"1"})") == 1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":" 2 "})") == 2);
+    // Floats stay -1: stricter than ptree, which could coerce 1.0 → 1.
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":1.5})") == -1);
     // A successful Duet connect often has no err field; that is success (0), not unknown (-1).
     CHECK(PrintHost::get_err_code_from_body(R"({})") == 0);
     REQUIRE_NOTHROW(PrintHost::get_err_code_from_body("<html>404</html>"));

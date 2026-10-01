@@ -291,6 +291,9 @@ public:
     std::string     retract(bool toolchange = false, bool is_last_retraction = false, LiftType lift_type = LiftType::NormalLift, ExtrusionRole role = erNone);
     std::string     unretract() { return m_writer.unlift() + m_writer.unretract(); }
     std::string     set_extruder(unsigned int extruder_id, double print_z, bool by_object=false);
+    // Orca: Adaptive PA. Tell the adaptive PA processor a tool change has just set the PA to `pa`.
+    // Returns G-code to append right after that PA command (empty outside the layer pipeline).
+    std::string     reset_adaptive_pa(double pa);
     bool is_BBL_Printer();
 
     // SoftFever
@@ -652,6 +655,8 @@ private:
     std::unique_ptr<PressureEqualizer>  m_pressure_equalizer;
     
     std::unique_ptr<AdaptivePAProcessor>      m_pa_processor;
+    // True while a layer pipeline that ends in the AdaptivePAProcessor filter is running.
+    bool                                      m_pa_reset_in_band { false };
 
     std::unique_ptr<WipeTowerIntegration> m_wipe_tower;
 

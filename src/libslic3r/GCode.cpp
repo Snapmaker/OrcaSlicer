@@ -1022,7 +1022,7 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
         gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
         // Orca: Adaptive PA
         // Reset Adaptive PA processor last PA value
-        gcodegen.m_pa_processor->resetPreviousPA(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+        gcode += gcodegen.reset_adaptive_pa(gcodegen.config().pressure_advance.get_at(new_extruder_id));
     }
 
     // A phony move to the end position at the wipe tower.
@@ -1179,7 +1179,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
         gcode += gcodegen.writer().set_pressure_advance(gcodegen.config().pressure_advance.get_at(new_extruder_id));
         // Orca: Adaptive PA
         // Reset Adaptive PA processor last PA value
-        gcodegen.m_pa_processor->resetPreviousPA(gcodegen.config().pressure_advance.get_at(new_extruder_id));
+        gcode += gcodegen.reset_adaptive_pa(gcodegen.config().pressure_advance.get_at(new_extruder_id));
     }
 
     // A phony move to the end position at the wipe tower.
@@ -3064,6 +3064,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
     // Orca: Initialise AdaptivePA processor filter
     m_pa_processor = std::make_unique<AdaptivePAProcessor>(*this, tool_ordering.all_extruders());
+    m_pa_reset_in_band = false;
 
     // Emit machine envelope limits for the Marlin firmware.
     this->print_machine_envelope(file, print);
@@ -4139,11 +4140,17 @@ void GCode::process_layers(const Print&                                         
                                        output);
     else if (m_spiral_vase)
         tbb::parallel_pipeline(12, generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
-    else if (m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
-                                       pa_processor_filter & output);
-    else
-        tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+    else {
+        // Orca: Adaptive PA. pa_processor_filter works on an earlier layer than the generator, so tool
+        // changes hand it their PA reset in band (reset_adaptive_pa()).
+        m_pa_reset_in_band = true;
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+                                           pa_processor_filter & output);
+        else
+            tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+        m_pa_reset_in_band = false;
+    }
 }
 
 // Process all layers of a single object instance (sequential mode) with a parallel pipeline:
@@ -4259,11 +4266,17 @@ void GCode::process_layers(const Print&              print,
                                        output);
     else if (m_spiral_vase)
         tbb::parallel_pipeline(12, generator & spiral_mode & cooling & layer_time_speed_smoothing & fan_mover & output);
-    else if (m_pressure_equalizer)
-        tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
-                                       pa_processor_filter & output);
-    else
-        tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+    else {
+        // Orca: Adaptive PA. pa_processor_filter works on an earlier layer than the generator, so tool
+        // changes hand it their PA reset in band (reset_adaptive_pa()).
+        m_pa_reset_in_band = true;
+        if (m_pressure_equalizer)
+            tbb::parallel_pipeline(12, generator & pressure_equalizer & cooling & layer_time_speed_smoothing & fan_mover &
+                                           pa_processor_filter & output);
+        else
+            tbb::parallel_pipeline(12, generator & cooling & layer_time_speed_smoothing & fan_mover & pa_processor_filter & output);
+        m_pa_reset_in_band = false;
+    }
 }
 
 
@@ -10527,6 +10540,16 @@ bool GCode::cross_extruder_flush_volume(int old_filament_id, int new_filament_id
     return true;
 }
 
+// Orca: Adaptive PA. Inside the layer pipeline the processor runs concurrently with the generator
+// that calls this, so the reset goes into the G-code and the processor applies it in order.
+std::string GCode::reset_adaptive_pa(double pa)
+{
+    if (m_pa_reset_in_band)
+        return AdaptivePAProcessor::reset_marker(pa);
+    m_pa_processor->resetPreviousPA(pa);
+    return {};
+}
+
 std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool by_object)
 {
     if (!m_writer.need_toolchange(extruder_id))
@@ -10559,7 +10582,7 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
             gcode += m_writer.set_pressure_advance(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
             // Orca: Adaptive PA
             // Reset Adaptive PA processor last PA value
-            m_pa_processor->resetPreviousPA(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
+            gcode += this->reset_adaptive_pa(get_value_at(m_config, m_config.pressure_advance, ConfigFlowDomain::Filament, extruder_id));
         }
 
         gcode += m_writer.toolchange(extruder_id);

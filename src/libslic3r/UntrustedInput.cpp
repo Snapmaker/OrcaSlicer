@@ -545,6 +545,86 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 
 // ---- archive entries ---------------------------------------------------------------------------
 
+namespace {
+
+// Non-ASCII characters that NFKC normalisation or an ANSI code page's best-fit mapping
+// (WideCharToMultiByte without WC_NO_BEST_FIT_CHARS) turns into '.', '/', '\\' or ':'. The
+// archive extractors write through wide APIs, so these never reach a narrow path call any more;
+// refusing them as well keeps a name like "U+FF0E U+FF0E U+FF0F x" (fullwidth "../x") from
+// meaning something different to any other consumer of the validated name.
+bool is_separator_lookalike(std::uint32_t cp)
+{
+    switch (cp) {
+    case 0x2024: // ONE DOT LEADER
+    case 0x2025: // TWO DOT LEADER
+    case 0x2044: // FRACTION SLASH
+    case 0x2215: // DIVISION SLASH
+    case 0x2216: // SET MINUS
+    case 0x2236: // RATIO
+    case 0x2571: // BOX DRAWINGS LIGHT DIAGONAL UPPER RIGHT TO LOWER LEFT
+    case 0x2572: // BOX DRAWINGS LIGHT DIAGONAL UPPER LEFT TO LOWER RIGHT
+    case 0x29F5: // REVERSE SOLIDUS OPERATOR
+    case 0x29F8: // BIG SOLIDUS
+    case 0x29F9: // BIG REVERSE SOLIDUS
+    case 0xA789: // MODIFIER LETTER COLON
+    case 0xFE30: // PRESENTATION FORM FOR VERTICAL TWO DOT LEADER
+    case 0xFE52: // SMALL FULL STOP
+    case 0xFE55: // SMALL COLON
+    case 0xFE68: // SMALL REVERSE SOLIDUS
+    case 0xFF0E: // FULLWIDTH FULL STOP
+    case 0xFF0F: // FULLWIDTH SOLIDUS
+    case 0xFF1A: // FULLWIDTH COLON
+    case 0xFF3C: // FULLWIDTH REVERSE SOLIDUS
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Scans the UTF-8 text for such a character. A byte that is not part of a well-formed
+// sequence is skipped: legacy-encoded names keep working, and no conforming decoder reads a
+// malformed (e.g. overlong) sequence as an ASCII character.
+bool has_separator_lookalike(const std::string &s)
+{
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t              len = 0;
+        std::uint32_t       cp  = 0;
+        if (c < 0x80) {
+            ++i;
+            continue;
+        } else if ((c & 0xE0) == 0xC0) {
+            len = 2;
+            cp  = c & 0x1F;
+        } else if ((c & 0xF0) == 0xE0) {
+            len = 3;
+            cp  = c & 0x0F;
+        } else if ((c & 0xF8) == 0xF0) {
+            len = 4;
+            cp  = c & 0x07;
+        } else {
+            ++i;
+            continue;
+        }
+        bool ok = i + len <= s.size();
+        for (size_t k = 1; ok && k < len; ++k) {
+            const unsigned char cc = static_cast<unsigned char>(s[i + k]);
+            ok                     = (cc & 0xC0) == 0x80;
+            cp                     = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) {
+            ++i;
+            continue;
+        }
+        if (is_separator_lookalike(cp))
+            return true;
+        i += len;
+    }
+    return false;
+}
+
+} // namespace
+
 bool is_safe_archive_relative_path(const std::string &path)
 {
     if (path.empty() || path.size() > 1024 || path.front() == '/')
@@ -552,6 +632,8 @@ bool is_safe_archive_relative_path(const std::string &path)
     for (unsigned char c : path)
         if (c < 0x20 || c == 0x7f || c == '\\' || c == ':')
             return false;
+    if (has_separator_lookalike(path))
+        return false;
     size_t start = 0;
     while (true) {
         const size_t slash = path.find('/', start);

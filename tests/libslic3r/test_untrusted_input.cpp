@@ -15,6 +15,8 @@
 #include "libslic3r/miniz_extension.hpp"
 
 #include <boost/filesystem.hpp>
+#include <boost/filesystem/fstream.hpp>
+#include <boost/nowide/convert.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include <array>
@@ -330,6 +332,28 @@ TEST_CASE("archive entry names may not leave the extraction folder", "[Untrusted
     for (const char *p : {"", "../x", "a/../../x", "..", ".", "./x", "a/./b", "/etc/passwd", "a//b", "a/", "..\\x",
                           "a\\b", "C:/x", "C:x", "a/.../b", "a/.. /b", "x\x01y"})
         CHECK_FALSE(is_safe_archive_relative_path(p));
+}
+
+// The Windows ANSI code page maps these look-alikes to '.', '/', '\\' and ':' when a UTF-8 name is
+// narrowed (WideCharToMultiByte best-fit), so a name made of them is "../x" to a narrow fopen.
+// The validator refuses them on every platform; ordinary non-ASCII names stay fine.
+TEST_CASE("archive entry names refuse look-alikes of dot, slash, backslash and colon", "[Untrusted][ZipSlip]")
+{
+    // U+FF0E U+FF0E U+FF0F "evil.txt" (fullwidth "../evil.txt")
+    CHECK_FALSE(is_safe_archive_relative_path("\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt"));
+    CHECK_FALSE(is_safe_archive_relative_path("sub/\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt"));
+    // U+FF0E U+FF0E U+FF3C (fullwidth reverse solidus)
+    CHECK_FALSE(is_safe_archive_relative_path("\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\xBC" "evil.txt"));
+    CHECK_FALSE(is_safe_archive_relative_path("C\xEF\xBC\x9A" "evil.txt"));    // U+FF1A fullwidth colon
+    CHECK_FALSE(is_safe_archive_relative_path("a\xE2\x88\x95" "b"));            // U+2215 division slash
+    CHECK_FALSE(is_safe_archive_relative_path("a\xE2\x81\x84" "b"));            // U+2044 fraction slash
+    CHECK_FALSE(is_safe_archive_relative_path("a\xE2\x88\x96" "b"));            // U+2216 set minus
+    CHECK_FALSE(is_safe_archive_relative_path("a\xE2\x80\xA4\xE2\x80\xA4" "b")); // U+2024 one dot leader
+    CHECK_FALSE(is_safe_archive_relative_path("a\xEF\xB9\x92" "b"));            // U+FE52 small full stop
+
+    CHECK(is_safe_archive_relative_path("caf\xC3\xA9/printer.json"));              // e acute
+    CHECK(is_safe_archive_relative_path("\xE6\xB5\x8B\xE8\xAF\x95/\xE6\xB5\x8B.json")); // CJK
+    CHECK(is_safe_archive_relative_path("a\xE2\x80\xA6" "b"));                  // U+2026 ellipsis is an ordinary character
 }
 
 // ---- settings in project / preset files ---------------------------------------------------------------
@@ -1251,7 +1275,15 @@ TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing
     const fs::path target   = dir / "cache";
     fs::create_directories(target);
 
-    const char *hostile[] = {"../evil.txt", "..\\evil.txt", "sub/../../evil.txt", "C:/evil.txt", "C:evil.txt", "\\evil.txt"};
+    const char *hostile[] = {"../evil.txt", "..\\evil.txt", "sub/../../evil.txt", "C:/evil.txt", "C:evil.txt", "\\evil.txt",
+                             // drive letter with a backslash, UNC, a bare "..", a "..\\.." pair
+                             "C:\\evil.txt", "\\\\server\\share\\evil.txt", "..", "sub/..", "..\\..\\evil.txt",
+                             // fullwidth ".." + "/" (U+FF0E U+FF0E U+FF0F): the ANSI best-fit mapping makes this "../"
+                             "\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt",
+                             "sub/\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\x8F" "evil.txt",
+                             // fullwidth ".." + reverse solidus (U+FF3C), division slash (U+2215)
+                             "\xEF\xBC\x8E\xEF\xBC\x8E\xEF\xBC\xBC" "evil.txt",
+                             "\xEF\xBC\x8E\xEF\xBC\x8E\xE2\x88\x95" "evil.txt"};
     for (const char *name : hostile) {
         INFO(name);
         write_zip_entries(zip_file, {{"normal.json", "{}"}, {name, "escaped"}});
@@ -1271,6 +1303,18 @@ TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing
         std::string err;
         CHECK_FALSE(extract_archive_confined(zip_file, target, err));
         CHECK_FALSE(fs::exists(dir / "evil.txt"));
+        CHECK(fs::is_empty(target));
+    }
+
+    // Absolute paths that name another place: a UNC share spelled with slashes, and a drive-rooted path.
+    for (const char *absolute : {"//server/share/evil.txt", "/C:/evil.txt", "/etc/evil.txt"}) {
+        INFO(absolute);
+        const std::string name        = absolute;
+        const std::string placeholder = "#" + name.substr(1);
+        write_zip_entries(zip_file, {{"normal.json", "{}"}, {placeholder, "escaped"}});
+        rename_zip_entry(zip_file, placeholder, name);
+        std::string err;
+        CHECK_FALSE(extract_archive_confined(zip_file, target, err));
         CHECK(fs::is_empty(target));
     }
 
@@ -1301,6 +1345,40 @@ TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing
         CHECK(fs::is_empty(target));
         CHECK_FALSE(fs::exists(dir / "evil.txt"));
     }
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// A UTF-8 entry name is interpreted as UTF-8 and written through the wide API on Windows (no round
+// trip through the ANSI code page). CJK characters are not in the en-US code page, so a narrow
+// path could not even name this file. The content has '\n' and a NUL: the wide writer must open the
+// file in binary mode.
+TEST_CASE("extract_archive_confined writes non-ASCII entry names and binary content exactly", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_utf8_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path target   = dir / "cache";
+    fs::create_directories(target);
+
+    const std::string name_dir  = "caf\xC3\xA9";                             // "cafe" with an e acute
+    const std::string name_file = "\xE6\xB5\x8B\xE8\xAF\x95.json";         // two CJK characters
+    const std::string content("line1\nline2\r\nline3\n\0end\n", 24);
+    REQUIRE(content.size() == 24);
+    write_zip_entries(zip_file, {{name_dir + "/" + name_file, content}});
+
+    std::string err;
+    REQUIRE(extract_archive_confined(zip_file, target, err));
+#ifdef _WIN32
+    const fs::path expected = target / fs::path(boost::nowide::widen(name_dir)) / fs::path(boost::nowide::widen(name_file));
+#else
+    const fs::path expected = target / name_dir / name_file;
+#endif
+    REQUIRE(fs::exists(expected));
+    boost::filesystem::ifstream in(expected, std::ios::binary);
+    const std::string           got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(got == content);
 
     boost::system::error_code ec;
     fs::remove_all(dir, ec);

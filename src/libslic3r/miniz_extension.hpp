@@ -27,6 +27,14 @@ bool zip_entry_is_symlink(const mz_zip_archive_file_stat &stat);
 bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::path &dest, std::string &err);
 bool extract_archive_confined(const boost::filesystem::path &zip_path, const boost::filesystem::path &dest, std::string &err);
 
+// Extracts one archive entry to dest_path. On Windows the file is opened through the wide API
+// (_wfopen): the path never goes through the ANSI code page, whose best-fit mapping turns
+// fullwidth look-alikes (U+FF0E U+FF0E U+FF0F) into "../". Every extraction of an untrusted
+// entry name must use this rather than encode_path() + mz_zip_reader_extract_to_file().
+// The std::string overload takes a UTF-8 path.
+bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const boost::filesystem::path &dest_path);
+bool extract_entry_to_file(mz_zip_archive &archive, mz_uint file_index, const std::string &dest_path_utf8);
+
 class MZ_Archive {
 public:
     mz_zip_archive arch;

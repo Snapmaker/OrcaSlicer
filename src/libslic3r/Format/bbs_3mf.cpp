@@ -3405,10 +3405,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     boost::filesystem::create_directories(parent_full_path);
             }
             dest_file = dir.string() + std::string("/") + dest_file;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract auxiliary file to file");
                 return;
             }
@@ -3426,10 +3426,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             // BBS: use backup path
             //aux directory from model
             boost::filesystem::path dest_path = boost::filesystem::path(m_backup_path + "/" + src_file);
-            std::string dest_zip_file = encode_path(dest_path.string().c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            // Wide API on Windows: the validated UTF-8 name is never narrowed through the ANSI code page.
+            const bool res = extract_entry_to_file(archive, stat.m_file_index, m_backup_path + "/" + src_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_path % stat.m_filename % res;
-            if (res == 0) {
+            if (!res) {
                 add_error("Error while extract file to temp directory");
                 return;
             }

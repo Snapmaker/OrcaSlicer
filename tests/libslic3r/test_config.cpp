@@ -525,6 +525,103 @@ TEST_CASE("PrintConfigDef and the CLI ConfigDefs never register the same option 
     CHECK(duplicates.empty());
 }
 
+// CLI --load-settings / --downward_check (Snapmaker_Orca.cpp) call
+// ConfigBase::load_from_json()'s 4-arg form, which does not flatten inherits. opt_float()
+// then dereferences a null option<>() when printable_height lives only on the parent.
+// These cases exercise the same guard as L2199 / L2681 / L4190.
+namespace {
+int guarded_cli_printable_height(const DynamicPrintConfig &config)
+{
+    int height = 0;
+    if (config.option<ConfigOptionFloat>("printable_height"))
+        height = static_cast<int>(config.opt_float("printable_height"));
+    return height;
+}
+
+DynamicPrintConfig load_temp_json(const std::string &filename, const std::string &body, std::map<std::string, std::string> &key_values)
+{
+    const boost::filesystem::path dir = boost::filesystem::temp_directory_path() / "snorca_tests";
+    boost::filesystem::create_directories(dir);
+    const boost::filesystem::path path = dir / filename;
+    {
+        boost::nowide::ofstream ofs(path.string());
+        ofs << body;
+    }
+    DynamicPrintConfig config;
+    std::string        reason;
+    const ConfigSubstitutions substitutions =
+        config.load_from_json(path.string(), ForwardCompatibilitySubstitutionRule::EnableSilent, key_values, reason);
+    boost::filesystem::remove(path);
+    REQUIRE(reason.empty());
+    REQUIRE(substitutions.empty());
+    return config;
+}
+} // namespace
+
+TEST_CASE("CLI printable_height guard survives load_from_json without inherit flatten", "[Config][CLI]")
+{
+    SECTION("empty project_settings-style JSON leaves the key absent") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json("empty_project_settings.json", "{}\n", key_values);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        REQUIRE(guarded_cli_printable_height(config) == 0);
+    }
+
+    SECTION("4-arg load_from_json does not flatten a parent printable_height") {
+        // Mirrors BBL nozzle variants: child inherits, height lives on the parent only.
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "inheriting_machine.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe child\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"inherits\": \"probe parent\",\n"
+            "    \"printable_area\": [\"0x0\", \"256x0\", \"256x256\", \"0x256\"]\n"
+            "}\n",
+            key_values);
+        REQUIRE(config.option<ConfigOptionString>("inherits") != nullptr);
+        REQUIRE(config.opt_string("inherits") == "probe parent");
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        REQUIRE(guarded_cli_printable_height(config) == 0);
+    }
+
+    SECTION("L4190 crash shape: local printable_area of 4 points, no printable_height") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "area_without_height.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe area only\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"printable_area\": [\"0x0\", \"220x0\", \"220x220\", \"0x220\"]\n"
+            "}\n",
+            key_values);
+        const auto *area = config.option<ConfigOptionPoints>("printable_area");
+        REQUIRE(area != nullptr);
+        REQUIRE(area->values.size() >= 4);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") == nullptr);
+        // Downward-check only reads height inside the size>=4 gate; the guard keeps the
+        // struct default of 0, so the L4228 check marks the printer failed.
+        REQUIRE(guarded_cli_printable_height(config) == 0);
+    }
+
+    SECTION("present printable_height still reads through the guard") {
+        std::map<std::string, std::string> key_values;
+        DynamicPrintConfig config = load_temp_json(
+            "height_present.json",
+            "{\n"
+            "    \"type\": \"machine\",\n"
+            "    \"name\": \"probe height\",\n"
+            "    \"from\": \"system\",\n"
+            "    \"printable_height\": \"256\"\n"
+            "}\n",
+            key_values);
+        REQUIRE(config.option<ConfigOptionFloat>("printable_height") != nullptr);
+        REQUIRE(guarded_cli_printable_height(config) == 256);
+    }
+}
+
 // Snapmaker #810: enabling small-area flow compensation must fall back to the
 // PrintConfig default model (not an empty per-preset override). The toggle
 // itself stays off until the user turns it on.

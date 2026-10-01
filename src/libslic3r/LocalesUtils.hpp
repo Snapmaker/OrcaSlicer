@@ -35,7 +35,9 @@ private:
 
 };
 
-// Test helpers: this-thread counts of actual setlocale/uselocale vs nested skips.
+// Diagnostics / test-only: this-thread counts of actual setlocale/uselocale vs
+// nested skips. Not a production API; Catch2 uses them to prove inner setters
+// skipped setlocale. Do not call from slicer paths.
 void reset_numeric_locale_setter_counts();
 int  numeric_locale_setter_installs();
 int  numeric_locale_setter_nested_skips();

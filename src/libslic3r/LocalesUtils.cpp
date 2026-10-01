@@ -17,6 +17,7 @@ static thread_local int s_numeric_locale_depth         = 0;
 static thread_local int s_numeric_locale_installs      = 0;
 static thread_local int s_numeric_locale_nested_skips  = 0;
 
+// Diagnostics / test-only counters (see LocalesUtils.hpp). Not used by slicer paths.
 void reset_numeric_locale_setter_counts()
 {
     s_numeric_locale_installs     = 0;

@@ -1,20 +1,25 @@
 #include <catch2/catch.hpp>
 
 #include "libslic3r/Config.hpp"
+#include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Semver.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/UntrustedInput.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/miniz_extension.hpp"
 
 #include <boost/filesystem.hpp>
 #include <boost/nowide/fstream.hpp>
 
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -854,5 +859,161 @@ TEST_CASE("Mixed vt u v and vt u v w lines keep the indices stable", "[obj][untr
     check_uv(uv[0], 0.25f, 0.5f);
     check_uv(uv[1], 0.75f, 1.f);
     check_uv(uv[2], 0.75f, 1.f);
+}
+
+// ---- 3MF XML entries larger than expat's int (Orca #15958) ------------------------------------
+//
+// The three XML_GetBuffer / XML_ParseBuffer sites (Prusa fingerprint probe, Prusa model-config
+// extract, BBS XML extract) used to cast m_uncomp_size to int. An entry whose central directory
+// claims more than INT_MAX bytes then allocated a truncated buffer and extracted the declared
+// size into it. Fail the load instead of truncating.
+
+TEST_CASE("xml_entry_size_ok rejects sizes that cannot be passed to expat as int", "[3mf][untrusted]")
+{
+    const std::uint64_t int_max = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+    CHECK(xml_entry_size_ok(0));
+    CHECK(xml_entry_size_ok(1));
+    CHECK(xml_entry_size_ok(int_max));
+    CHECK_FALSE(xml_entry_size_ok(int_max + 1));
+    CHECK_FALSE(xml_entry_size_ok((std::uint64_t(1) << 32) + 16));
+}
+
+namespace {
+
+// Writes a single-entry zip whose central directory carries a zip64 record declaring an
+// uncompressed size beyond what the 32-bit expat buffer API can take, while the deflated
+// payload inflates to only a few bytes. Built by hand because miniz never writes a size that
+// disagrees with the data. Adapted from Orca #15958 (no ScopedTemporaryFile on Edge).
+void write_zip_with_oversized_entry(const fs::path &path, const std::string &entry)
+{
+    const std::string xml = "<x/>";
+    size_t            comp_len = 0;
+    void             *comp     = tdefl_compress_mem_to_heap(xml.data(), xml.size(), &comp_len, TDEFL_DEFAULT_MAX_PROBES);
+    REQUIRE(comp != nullptr);
+    const std::string deflated(static_cast<const char *>(comp), comp_len);
+    mz_free(comp);
+    const std::uint32_t crc = static_cast<std::uint32_t>(
+        mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const std::uint8_t *>(xml.data()), xml.size()));
+    const std::uint64_t claimed_size = (std::uint64_t(1) << 32) + 16;
+
+    std::string out;
+    auto        put = [&out](std::uint64_t v, int bytes) {
+        for (int i = 0; i < bytes; ++i)
+            out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+    };
+    // local file header, with the true sizes
+    put(0x04034b50, 4);
+    put(45, 2);
+    put(0, 2);
+    put(8, 2);
+    put(0, 2);
+    put(0, 2);
+    put(crc, 4);
+    put(deflated.size(), 4);
+    put(xml.size(), 4);
+    put(entry.size(), 2);
+    put(0, 2);
+    out += entry + deflated;
+    // central directory header, sizes deferred to the zip64 extra field
+    const size_t cd_offset = out.size();
+    put(0x02014b50, 4);
+    put(45, 2);
+    put(45, 2);
+    put(0, 2);
+    put(8, 2);
+    put(0, 2);
+    put(0, 2);
+    put(crc, 4);
+    put(0xFFFFFFFF, 4);
+    put(0xFFFFFFFF, 4);
+    put(entry.size(), 2);
+    put(20, 2);
+    put(0, 2);
+    put(0, 2);
+    put(0, 2);
+    put(0, 4);
+    put(0, 4);
+    out += entry;
+    put(0x0001, 2);
+    put(16, 2);
+    put(claimed_size, 8);
+    put(deflated.size(), 8);
+    const size_t cd_size = out.size() - cd_offset;
+    // end of central directory
+    put(0x06054b50, 4);
+    put(0, 2);
+    put(0, 2);
+    put(1, 2);
+    put(1, 2);
+    put(cd_size, 4);
+    put(cd_offset, 4);
+    put(0, 2);
+
+    boost::nowide::ofstream f(path.string(), std::ios::binary);
+    REQUIRE(f.good());
+    f.write(out.data(), static_cast<std::streamsize>(out.size()));
+    REQUIRE(f.good());
+}
+
+bool zip_entry_claims_oversize(const fs::path &path, const std::string &entry)
+{
+    mz_zip_archive archive;
+    mz_zip_zero_struct(&archive);
+    if (!open_zip_reader(&archive, path.string()))
+        return false;
+    const int index = mz_zip_reader_locate_file(&archive, entry.c_str(), nullptr, 0);
+    mz_zip_archive_file_stat stat;
+    const bool ok = index >= 0 && mz_zip_reader_file_stat(&archive, static_cast<mz_uint>(index), &stat) &&
+                    !xml_entry_size_ok(stat.m_uncomp_size);
+    close_zip_reader(&archive);
+    return ok;
+}
+
+} // namespace
+
+TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[3mf][untrusted]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_3mf_intmax_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path path = dir / "oversized.3mf";
+
+    SECTION("BBS importer")
+    {
+        write_zip_with_oversized_entry(path, "_rels/.rels");
+        REQUIRE(zip_entry_claims_oversize(path, "_rels/.rels"));
+        Model                      model;
+        DynamicPrintConfig         config;
+        ConfigSubstitutionContext  ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+        PlateDataPtrs              plates;
+        std::vector<Preset *>      project_presets;
+        bool                       is_bbl_3mf = false;
+        Semver                     file_version;
+        bool                       loaded     = true;
+        REQUIRE_NOTHROW(loaded = load_bbs_3mf(path.string().c_str(), &config, &ctxt, &model, &plates, &project_presets, &is_bbl_3mf,
+                                             &file_version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig));
+        CHECK_FALSE(loaded);
+        release_PlateData_list(plates);
+    }
+    SECTION("PrusaSlicer importer")
+    {
+        write_zip_with_oversized_entry(path, "Metadata/Slic3r_PE_model.config");
+        REQUIRE(zip_entry_claims_oversize(path, "Metadata/Slic3r_PE_model.config"));
+        Model                     model;
+        DynamicPrintConfig        config;
+        ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Disable};
+        bool                      loaded = true;
+        REQUIRE_NOTHROW(loaded = load_3mf(path.string().c_str(), config, ctxt, &model, false));
+        CHECK_FALSE(loaded);
+    }
+    SECTION("PrusaSlicer fingerprint probe")
+    {
+        write_zip_with_oversized_entry(path, "3D/3dmodel.model");
+        REQUIRE(zip_entry_claims_oversize(path, "3D/3dmodel.model"));
+        PrusaFileParser parser;
+        CHECK_FALSE(parser.check_3mf_from_prusa(path.string()));
+    }
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
 }
 

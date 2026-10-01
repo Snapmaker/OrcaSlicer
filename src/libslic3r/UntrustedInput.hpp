@@ -10,6 +10,8 @@
 // The GUI decides what to do with a verdict (ask, refuse, strip); this file only decides.
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
@@ -141,6 +143,13 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
 // an archive entry name becomes part of a path on disk (zip-slip).
 bool is_safe_archive_relative_path(const std::string &path);
+
+// expat's XML_GetBuffer / XML_ParseBuffer take an int length. An archive entry larger than
+// INT_MAX cannot be handed to those APIs without truncating the size (Orca #15958).
+inline bool xml_entry_size_ok(std::uint64_t uncomp_size)
+{
+    return uncomp_size <= static_cast<std::uint64_t>(std::numeric_limits<int>::max());
+}
 
 // ---- settings in project / preset files ----------------------------------------------------------
 

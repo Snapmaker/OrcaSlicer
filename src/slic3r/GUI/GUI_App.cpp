@@ -2097,6 +2097,57 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
     mz_uint num_entries = mz_zip_reader_get_num_files(&archive);
     mz_zip_archive_file_stat stat;
     BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, got %2% files")%__LINE__ %num_entries;
+
+    auto plugin_entry_basename = [&](const mz_zip_archive_file_stat &st) {
+        std::string dest_file;
+        if (st.m_is_utf8)
+            dest_file = st.m_filename;
+        else {
+            std::string extra(1024, 0);
+            size_t      n = mz_zip_reader_get_extra(&archive, st.m_file_index, extra.data(), extra.size());
+            dest_file     = decode(extra.substr(0, n), st.m_filename);
+        }
+        return boost::filesystem::path(dest_file).filename().string();
+    };
+    auto plugin_entry_ok = [&](const mz_zip_archive_file_stat &st, const std::string &dest_file, const boost::filesystem::path &dest_path) {
+        if (zip_entry_is_symlink(st)) {
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] symlink entry rejected: " << st.m_filename;
+            return false;
+        }
+        if (dest_file.empty() || !untrusted::is_safe_archive_relative_path(dest_file) ||
+            !untrusted::is_path_within_root(plugin_folder, dest_path)) {
+            BOOST_LOG_TRIVIAL(error) << "[install_plugin] entry " << st.m_filename << " (as " << dest_file << ") resolves outside "
+                                     << plugin_folder.string();
+            return false;
+        }
+        return true;
+    };
+
+    // Pass 1: validate every extractable entry before writing anything. A hostile plugin zip
+    // with one escaping or symlink entry is refused as a whole (D3), matching extract_archive_confined.
+    for (mz_uint i = 0; i < num_entries; i++) {
+        if (m_networking_cancel_update || cancel) {
+            BOOST_LOG_TRIVIAL(info) << boost::format("[install_plugin]: %1%, cancelled by user")%__LINE__;
+            close_zip_reader(&archive);
+            return -1;
+        }
+        if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
+            BOOST_LOG_TRIVIAL(error) << boost::format("[install_plugin]: %1%, mz_zip_reader_file_stat for file %2% failed")%__LINE__%i;
+            close_zip_reader(&archive);
+            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+            return InstallStatusUnzipFailed;
+        }
+        if (stat.m_uncomp_size == 0)
+            continue;
+        const std::string dest_file = plugin_entry_basename(stat);
+        const auto        dest_path = plugin_folder / dest_file;
+        if (!plugin_entry_ok(stat, dest_file, dest_path)) {
+            close_zip_reader(&archive);
+            if (pro_fn) { pro_fn(InstallStatusUnzipFailed, 0, cancel); }
+            return InstallStatusUnzipFailed;
+        }
+    }
+
     for (mz_uint i = 0; i < num_entries; i++) {
         if (m_networking_cancel_update || cancel) {
             BOOST_LOG_TRIVIAL(info) << boost::format("[install_plugin]: %1%, cancelled by user")%__LINE__;
@@ -2104,21 +2155,12 @@ int GUI_App::install_plugin(std::string name, std::string package_name, InstallP
         }
         if (mz_zip_reader_file_stat(&archive, i, &stat)) {
             if (stat.m_uncomp_size > 0) {
-                std::string dest_file;
-                if (stat.m_is_utf8) {
-                    dest_file = stat.m_filename;
-                }
-                else {
-                    std::string extra(1024, 0);
-                    size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
-                    dest_file = decode(extra.substr(0, n), stat.m_filename);
-                }
-                auto dest_file_path = boost::filesystem::path(dest_file);
-                dest_file = dest_file_path.filename().string();
-                auto dest_path = boost::filesystem::path(plugin_folder.string() + "/" + dest_file);
+                const std::string dest_file = plugin_entry_basename(stat);
+                auto dest_path = plugin_folder / dest_file;
                 std::string dest_zip_file = encode_path(dest_path.string().c_str());
                 try {
-                    if (fs::exists(dest_path))
+                    // symlink_status so an existing symlink, dangling or not, is replaced rather than written through.
+                    if (fs::is_symlink(fs::symlink_status(dest_path)) || fs::exists(dest_path))
                         fs::remove(dest_path);
                     mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from plugin zip %2%\n") % dest_file % stat.m_filename;

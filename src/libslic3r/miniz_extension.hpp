@@ -4,12 +4,24 @@
 #include <string>
 #include <miniz.h>
 
+#include <boost/filesystem/path.hpp>
+
 namespace Slic3r {
 
 bool open_zip_reader(mz_zip_archive *zip, const std::string &fname_utf8);
 bool open_zip_writer(mz_zip_archive *zip, const std::string &fname_utf8);
 bool close_zip_reader(mz_zip_archive *zip);
 bool close_zip_writer(mz_zip_archive *zip);
+
+// Unix symlink bit in the zip central-directory external attributes (high 16 bits).
+bool zip_entry_is_symlink(const mz_zip_archive_file_stat &stat);
+
+// Extracts every entry of an already-open reader under dest. Validates every entry first
+// (is_safe_archive_relative_path + is_path_within_root, no symlink entries). Any bad entry
+// rejects the whole archive and writes nothing (Orca #15957 / D3). A symlink already at a
+// destination is removed before the file is written, rather than followed.
+bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::path &dest, std::string &err);
+bool extract_archive_confined(const boost::filesystem::path &zip_path, const boost::filesystem::path &dest, std::string &err);
 
 class MZ_Archive {
 public:

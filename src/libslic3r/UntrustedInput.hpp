@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include <boost/filesystem/path.hpp>
+
 namespace Slic3r {
 
 class DynamicPrintConfig;
@@ -143,6 +145,18 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // no leading '/', no "." or ".." segment, no empty segment, no control characters. Used before
 // an archive entry name becomes part of a path on disk (zip-slip).
 bool is_safe_archive_relative_path(const std::string &path);
+
+// True if candidate stays under root after weakly_canonical. Rejects an embedded NUL in either
+// path. A trailing separator on root is ignored. Compared component-wise so a sibling that
+// shares a prefix (/tmp/root2 vs /tmp/root) is not accepted.
+bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate);
+
+// True if a symlink stored at link_rel_path (relative to root) with this target stays inside
+// root: the target must be relative (no absolute / drive / NUL), and joined to the link's
+// directory it must pass is_path_within_root.
+bool is_symlink_target_within_root(const boost::filesystem::path &root,
+                                   const std::string             &link_rel_path,
+                                   const std::string             &target);
 
 // expat's XML_GetBuffer / XML_ParseBuffer take an int length. An archive entry larger than
 // INT_MAX cannot be handed to those APIs without truncating the size (Orca #15958).

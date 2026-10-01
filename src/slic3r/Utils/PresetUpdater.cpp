@@ -426,80 +426,14 @@ bool PresetUpdater::priv::get_file(const std::string &url, const fs::path &targe
 //BBS: refine preset update logic
 bool PresetUpdater::priv::extract_file(const fs::path &source_path, const fs::path &dest_path)
 {
-    bool res = true;
-    std::string file_path = source_path.string();
-    fs::path parent_path = !dest_path.empty() ? dest_path : source_path.parent_path();
-    mz_zip_archive archive;
-    mz_zip_zero_struct(&archive);
-
-    if (!open_zip_reader(&archive, file_path))
-    {
-        BOOST_LOG_TRIVIAL(error) << "Unable to open zip reader for "<<file_path;
+    const fs::path parent_path = !dest_path.empty() ? dest_path : source_path.parent_path();
+    std::string    err;
+    if (!extract_archive_confined(source_path, parent_path, err)) {
+        BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Unzip: extract " << source_path.string() << " to " << parent_path.string()
+                                 << " failed: " << err;
         return false;
     }
-
-    mz_uint num_entries = mz_zip_reader_get_num_files(&archive);
-    fs::path base_path = parent_path.lexically_normal();
-
-    mz_zip_archive_file_stat stat;
-    // we first loop the entries to read from the archive the .amf file only, in order to extract the version from it
-    for (mz_uint i = 0; i < num_entries; ++i)
-    {
-        if (mz_zip_reader_file_stat(&archive, i, &stat))
-        {
-            fs::path full_dest = (base_path / stat.m_filename).lexically_normal();
-            // Reject paths that escape base (e.g. ".." in zip entry)
-            std::string rel_str = full_dest.lexically_relative(base_path).generic_string();
-            if (rel_str.empty() || rel_str.find("..") == 0) {
-                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: skip invalid path "<<stat.m_filename;
-                continue;
-            }
-            if (stat.m_is_directory) {
-                if (!fs::exists(full_dest))
-                    fs::create_directories(full_dest);
-                continue;
-            }
-            if (stat.m_uncomp_size == 0) {
-                BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: invalid size for file "<<stat.m_filename;
-                continue;
-            }
-            try
-            {
-                // Ensure parent directory exists (zip often has no directory entries, e.g. "flutter_web/version.json" only)
-                fs::path parent_dir = full_dest.parent_path();
-                if (!parent_dir.empty() && !fs::exists(parent_dir))
-                    fs::create_directories(parent_dir);
-
-                std::string dest_file_encoded = encode_path(full_dest.string().c_str());
-                res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_file_encoded.c_str(), 0);
-#ifdef _WIN32
-                if (!res) {
-                    std::wstring dest_file_w = boost::nowide::widen(full_dest.generic_string());
-                    res = mz_zip_reader_extract_to_file_w(&archive, stat.m_file_index, dest_file_w.c_str(), 0);
-                }
-#endif
-                if (!res) {
-                    mz_zip_error zip_err = mz_zip_get_last_error(&archive);
-                    BOOST_LOG_TRIVIAL(error) << "[Orca Updater]extract file "<<stat.m_filename<<" to dest "<<full_dest.string()
-                        << " failed: " << (zip_err != MZ_ZIP_NO_ERROR ? mz_zip_get_error_string(zip_err) : "unknown");
-                    close_zip_reader(&archive);
-                    return false;
-                }
-                BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extract file " << stat.m_file_index << " to "<<full_dest.string();
-            }
-            catch (const std::exception& e)
-            {
-                close_zip_reader(&archive);
-                BOOST_LOG_TRIVIAL(error) << "[Orca Updater]Archive read exception:"<<e.what();
-                return false;
-            }
-        }
-        else {
-            BOOST_LOG_TRIVIAL(warning) << "[Orca Updater]Unzip: read file stat failed";
-        }
-    }
-    close_zip_reader(&archive);
-
+    BOOST_LOG_TRIVIAL(info) << "[Orca Updater]successfully extracted " << source_path.string() << " to " << parent_path.string();
     return true;
 }
 

@@ -7,6 +7,8 @@
 #include <cctype>
 #include <cstdint>
 
+#include <boost/filesystem.hpp>
+
 namespace Slic3r {
 namespace untrusted {
 
@@ -564,6 +566,57 @@ bool is_safe_archive_relative_path(const std::string &path)
         start = slash + 1;
     }
     return true;
+}
+
+namespace {
+
+bool has_embedded_nul(const std::string &s) { return s.find('\0') != std::string::npos; }
+
+bool has_embedded_nul(const boost::filesystem::path &p)
+{
+    return has_embedded_nul(p.string()) || has_embedded_nul(p.generic_string());
+}
+
+} // namespace
+
+bool is_path_within_root(const boost::filesystem::path &root, const boost::filesystem::path &candidate)
+{
+    if (has_embedded_nul(root) || has_embedded_nul(candidate))
+        return false;
+    try {
+        const boost::filesystem::path root_c = boost::filesystem::weakly_canonical(root);
+        const boost::filesystem::path cand_c = boost::filesystem::weakly_canonical(candidate);
+        if (has_embedded_nul(root_c) || has_embedded_nul(cand_c))
+            return false;
+        auto r = root_c.begin();
+        auto c = cand_c.begin();
+        for (; r != root_c.end(); ++r, ++c) {
+            if (r->empty())
+                continue;
+            if (c == cand_c.end() || *r != *c)
+                return false;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool is_symlink_target_within_root(const boost::filesystem::path &root,
+                                   const std::string             &link_rel_path,
+                                   const std::string             &target)
+{
+    if (target.empty() || has_embedded_nul(target) || has_embedded_nul(link_rel_path))
+        return false;
+    if (target.front() == '/' || target.front() == '\\')
+        return false;
+    if (target.size() > 1 && target[1] == ':')
+        return false;
+    const size_t      sep    = link_rel_path.find_last_of("/\\");
+    const std::string joined = (sep == std::string::npos ? std::string() : link_rel_path.substr(0, sep + 1)) + target;
+    if (has_embedded_nul(joined))
+        return false;
+    return is_path_within_root(root, root / joined);
 }
 
 // ---- settings --------------------------------------------------------------------------------

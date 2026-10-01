@@ -314,7 +314,10 @@ bool PrusaFileParser::check_3mf_from_prusa(const std::string filename)
             mz_zip_archive_file_stat stat;
             if (!mz_zip_reader_file_stat(&archive, model_file_index, &stat)) goto EXIT;
             // expat sizes its buffer with an int, so a larger entry cannot be parsed in one piece.
-            if (!untrusted::xml_entry_size_ok(stat.m_uncomp_size)) goto EXIT;
+            if (!untrusted::xml_entry_size_ok(stat.m_uncomp_size)) {
+                BOOST_LOG_TRIVIAL(error) << "Found invalid size";
+                goto EXIT;
+            }
 
             const int xml_size      = static_cast<int>(stat.m_uncomp_size);
             void     *parser_buffer = XML_GetBuffer(m_parser, xml_size);
@@ -328,6 +331,10 @@ bool PrusaFileParser::check_3mf_from_prusa(const std::string filename)
     }
 
 EXIT:
+    if (m_parser != nullptr) {
+        XML_ParserFree(m_parser);
+        m_parser = nullptr;
+    }
     close_zip_reader(&archive);
     return m_from_prusa;
 }

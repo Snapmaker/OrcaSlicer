@@ -882,12 +882,15 @@ TEST_CASE("xml_entry_size_ok rejects sizes that cannot be passed to expat as int
 namespace {
 
 // Writes a single-entry zip whose central directory carries a zip64 record declaring an
-// uncompressed size beyond what the 32-bit expat buffer API can take, while the deflated
-// payload inflates to only a few bytes. Built by hand because miniz never writes a size that
-// disagrees with the data. Adapted from Orca #15958 (no ScopedTemporaryFile on Edge).
+// uncompressed size beyond what the 32-bit expat buffer API can take. The deflated payload
+// inflates to 64 bytes, which is larger than (int)claimed_size (16), so without the INT_MAX
+// guard the truncated XML_GetBuffer / extract path is reached instead of miniz rejecting a
+// 4-byte inflate. Built by hand because miniz never writes a size that disagrees with the data.
 void write_zip_with_oversized_entry(const fs::path &path, const std::string &entry)
 {
-    const std::string xml = "<x/>";
+    const std::string xml          = std::string(64, 'x');
+    const std::uint64_t claimed_size = (std::uint64_t(1) << 32) + 16;
+    REQUIRE(xml.size() > static_cast<size_t>(static_cast<int>(claimed_size)));
     size_t            comp_len = 0;
     void             *comp     = tdefl_compress_mem_to_heap(xml.data(), xml.size(), &comp_len, TDEFL_DEFAULT_MAX_PROBES);
     REQUIRE(comp != nullptr);
@@ -895,7 +898,6 @@ void write_zip_with_oversized_entry(const fs::path &path, const std::string &ent
     mz_free(comp);
     const std::uint32_t crc = static_cast<std::uint32_t>(
         mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const std::uint8_t *>(xml.data()), xml.size()));
-    const std::uint64_t claimed_size = (std::uint64_t(1) << 32) + 16;
 
     std::string out;
     auto        put = [&out](std::uint64_t v, int bytes) {
@@ -970,6 +972,27 @@ bool zip_entry_claims_oversize(const fs::path &path, const std::string &entry)
     return ok;
 }
 
+// load_bbs_3mf / load_3mf / check_3mf_from_prusa only log "Found invalid size" from the INT_MAX
+// guard. Without the guard the load still fails (truncated extract), so the tests must assert
+// this exact message or they cannot fail when the guard is removed.
+struct InvalidSizeLog
+{
+    std::vector<std::string> lines;
+    InvalidSizeLog()
+    {
+        // 4 == boost::log::trivial::error (see Utils.hpp set_log_observer).
+        set_log_observer([this](int, const std::string &msg) { lines.push_back(msg); }, 4);
+    }
+    ~InvalidSizeLog() { set_log_observer({}, 0); }
+    bool saw_invalid_size() const
+    {
+        for (const std::string &line : lines)
+            if (line.find("Found invalid size") != std::string::npos)
+                return true;
+        return false;
+    }
+};
+
 } // namespace
 
 TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[3mf][untrusted]")
@@ -990,9 +1013,11 @@ TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[
         bool                       is_bbl_3mf = false;
         Semver                     file_version;
         bool                       loaded     = true;
+        InvalidSizeLog             log;
         REQUIRE_NOTHROW(loaded = load_bbs_3mf(path.string().c_str(), &config, &ctxt, &model, &plates, &project_presets, &is_bbl_3mf,
                                              &file_version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig));
         CHECK_FALSE(loaded);
+        CHECK(log.saw_invalid_size());
         release_PlateData_list(plates);
     }
     SECTION("PrusaSlicer importer")
@@ -1003,15 +1028,19 @@ TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[
         DynamicPrintConfig        config;
         ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Disable};
         bool                      loaded = true;
+        InvalidSizeLog            log;
         REQUIRE_NOTHROW(loaded = load_3mf(path.string().c_str(), config, ctxt, &model, false));
         CHECK_FALSE(loaded);
+        CHECK(log.saw_invalid_size());
     }
     SECTION("PrusaSlicer fingerprint probe")
     {
         write_zip_with_oversized_entry(path, "3D/3dmodel.model");
         REQUIRE(zip_entry_claims_oversize(path, "3D/3dmodel.model"));
+        InvalidSizeLog  log;
         PrusaFileParser parser;
         CHECK_FALSE(parser.check_3mf_from_prusa(path.string()));
+        CHECK(log.saw_invalid_size());
     }
 
     boost::system::error_code ec;

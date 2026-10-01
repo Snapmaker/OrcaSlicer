@@ -18,8 +18,10 @@ bool zip_entry_is_symlink(const mz_zip_archive_file_stat &stat);
 
 // Extracts every entry of an already-open reader under dest. Validates every entry first
 // (is_safe_archive_relative_path + is_path_within_root, no symlink entries). Any bad entry
-// rejects the whole archive and writes nothing (Orca #15957 / D3). A symlink already at a
-// destination is removed before the file is written, rather than followed.
+// rejects the whole archive and writes nothing (Orca #15957 / D3). Files are staged to a
+// sibling .part and renamed over the dest only after every entry has been staged, so a
+// pass-2 failure never deletes or truncates a pre-existing dest. A dest-file symlink is
+// replaced by that rename rather than written through.
 bool extract_archive_confined(mz_zip_archive &archive, const boost::filesystem::path &dest, std::string &err);
 bool extract_archive_confined(const boost::filesystem::path &zip_path, const boost::filesystem::path &dest, std::string &err);
 

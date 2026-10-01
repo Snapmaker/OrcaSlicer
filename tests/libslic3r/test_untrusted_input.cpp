@@ -1053,7 +1053,9 @@ TEST_CASE("3MF XML entries declaring more than an int can hold fail to load", "[
 // hostile bundle with one traversal, absolute, drive-letter, backslash, or symlink entry is
 // now refused as a whole (D3). install_plugin still flattens names to the basename and skips
 // symlink entries (macOS dylib version links) instead of refusing the zip. A dest-file symlink
-// is replaced rather than followed; a symlink-to-dir extraction root is followed.
+// is replaced rather than followed; a symlink-to-dir extraction root is followed. Pass-2
+// stages to sibling .part files and only then renames, so a mid-extract I/O failure leaves
+// pre-existing dest files untouched (content and presence).
 
 namespace {
 
@@ -1295,6 +1297,43 @@ TEST_CASE("extract_archive_confined rejects a hostile archive and writes nothing
         CHECK_FALSE(fs::exists(target / "normal.json"));
         CHECK(fs::is_empty(target));
         CHECK_FALSE(fs::exists(dir / "evil.txt"));
+    }
+
+    boost::system::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("extract_archive_confined pass-2 failure leaves pre-existing files intact", "[Untrusted][ZipSlip]")
+{
+    const fs::path dir = fs::temp_directory_path() / fs::unique_path("edgeslicer_confined_keep_%%%%%%%%");
+    fs::create_directories(dir);
+    const fs::path zip_file = dir / "bundle.zip";
+    const fs::path cache    = dir / "cache";
+    fs::create_directories(cache);
+    {
+        boost::nowide::ofstream keep((cache / "keep.json").string());
+        keep << "OLD";
+    }
+    {
+        boost::nowide::ofstream blocker((cache / "blocker").string());
+        blocker << "block";
+    }
+    write_zip_entries(zip_file, {{"keep.json", "NEW"}, {"blocker/x.json", "x"}});
+
+    std::string err;
+    CHECK_FALSE(extract_archive_confined(zip_file, cache, err));
+    CHECK_FALSE(err.empty());
+    CHECK(fs::exists(cache / "keep.json"));
+    CHECK(read_text_file(cache / "keep.json") == "OLD");
+    CHECK(fs::is_regular_file(cache / "blocker"));
+    CHECK(read_text_file(cache / "blocker") == "block");
+    CHECK_FALSE(fs::exists(cache / "blocker" / "x.json"));
+    CHECK_FALSE(fs::is_directory(cache / "blocker"));
+
+    for (fs::recursive_directory_iterator it(cache), end; it != end; ++it) {
+        const std::string name = it->path().filename().string();
+        CHECK(name.find(".part") == std::string::npos);
+        CHECK(name.find(".bak-extract") == std::string::npos);
     }
 
     boost::system::error_code ec;

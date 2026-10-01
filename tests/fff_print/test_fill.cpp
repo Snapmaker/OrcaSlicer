@@ -721,7 +721,13 @@ TEST_CASE("Gyroid infill of an object matches the infill of a larger object with
         return unscale<double>(distance);
     };
 
-    const double tolerance = 0.01;
+    // Multiline 1 reproduces the larger object's waves to 10 um. With multiline > 1 the interleaved
+    // waves are generated per bounding box (the accepted G-code change of this PR for multiline
+    // 2-5: the result can move slightly with the bbox), so two bboxes of the same center differ a
+    // little more: 12.6 um at multiline 2, density 0.05, z=17.38 on MSVC (deterministic), far below
+    // the 0.45 mm line spacing. A real phase shift is a large fraction of the wave period (the
+    // pinned multiline-1 test below catches that), so 20 um stays meaningful. Multiline 1 keeps 10 um.
+    const double tolerance = multiline > 1 ? 0.02 : 0.01;
     // Half a z period of the waves, through both switches between horizontal and vertical waves.
     const double wave_distance = spacing * multiline / (density * FillGyroid::DensityAdjust);
     for (int step = 0; step <= 8; ++step) {

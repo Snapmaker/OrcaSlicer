@@ -1224,6 +1224,15 @@ void MenuFactory::append_menu_item_replace_with_stl(wxMenu *menu)
         []() { return plater()->can_replace_with_stl(); }, m_parent);
 }
 
+// Exact B-rep fillet / chamfer / shell of the selected part (GLGizmoCadFillet).
+void MenuFactory::append_menu_item_cad_fillet(wxMenu *menu)
+{
+    append_menu_item(menu, wxID_ANY, _L("Fillet / chamfer (CAD)") + dots,
+        _L("Exact fillet, chamfer or shell of the part's CAD body: STEP parts keep their exact shape, meshes are converted first"),
+        [](wxCommandEvent &) { obj_list()->open_cad_fillet(); }, "", menu,
+        []() { return ObjectList::can_open_cad_fillet(); }, m_parent);
+}
+
 void MenuFactory::append_menu_item_edit_in_blender(wxMenu *menu)
 {
     append_menu_item(menu, wxID_ANY, _L("Edit in Blender"), _L("Open the selected part in Blender. Saving in Blender updates the part here"),
@@ -2103,6 +2112,7 @@ void MenuFactory::create_common_object_menu(wxMenu* menu)
     append_menu_item_reload_from_disk(menu);
     append_menu_item_export_stl(menu);
     append_menu_item_export_step(menu);
+    append_menu_item_cad_fillet(menu);
     // "Scale to print volume" makes a sense just for whole object
     append_menu_item_scale_selection_to_fit_print_volume(menu);
 
@@ -2213,6 +2223,7 @@ void MenuFactory::create_extra_object_menu()
     append_menu_item_reload_from_disk(&m_object_menu);
     append_menu_item_replace_with_stl(&m_object_menu);
     append_menu_item_edit_in_blender(&m_object_menu);
+    append_menu_item_cad_fillet(&m_object_menu);
     append_menu_item_export_stl(&m_object_menu);
     append_menu_item_export_step(&m_object_menu);
 }
@@ -2249,6 +2260,7 @@ void MenuFactory::create_part_menu()
     append_menu_item_delete(menu);
     append_menu_item_reload_from_disk(menu);
     append_menu_item_export_stl(menu);
+    append_menu_item_cad_fillet(menu);
     append_menu_item_export_stl_part(menu);
     append_menu_item_fix_through_netfabb(menu);
     append_menu_items_mirror(menu);
@@ -2350,6 +2362,7 @@ void MenuFactory::create_bbl_part_menu()
     append_menu_item_reload_from_disk(menu);
     append_menu_item_replace_with_stl(menu);
     append_menu_item_edit_in_blender(menu);
+    append_menu_item_cad_fillet(menu);
     append_menu_item_export_stl_part(menu);
 }
 

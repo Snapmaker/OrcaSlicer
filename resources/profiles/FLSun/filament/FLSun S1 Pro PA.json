@@ -1,0 +1,61 @@
+{
+    "type": "filament",
+    "name": "FLSun S1 Pro PA",
+    "inherits": "FLSun Generic PA",
+    "from": "system",
+    "setting_id": "GFSA04",
+    "filament_id": "GFN99",
+    "instantiation": "true",
+    "nozzle_temperature": [
+        "270"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "270"
+    ],
+    "nozzle_temperature_range_low": [
+        "260"
+    ],
+    "nozzle_temperature_range_high": [
+        "280"
+    ],
+    "hot_plate_temp": [
+        "100"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "100"
+    ],
+    "filament_max_volumetric_speed": [
+        "20"
+    ],
+    "fan_min_speed": [
+        "65"
+    ],
+    "fan_max_speed": [
+        "65"
+    ],
+    "close_fan_the_first_x_layers": [
+        "1"
+    ],
+    "full_fan_speed_layer": [
+        "3"
+    ],
+    "overhang_fan_speed": [
+        "50"
+    ],
+    "slow_down_layer_time": [
+        "4"
+    ],
+    "slow_down_min_speed": [
+        "20"
+    ],
+    "fan_cooling_layer_time": [
+        "1"
+    ],
+    "filament_flow_ratio": [
+        "0.9"
+    ],
+    "filament_density": "1.26",
+    "compatible_printers": [
+        "FLSun S1 Pro 0.4 nozzle"
+    ]
+}

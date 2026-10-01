@@ -1,5 +1,7 @@
 #include "GCodeWriter.hpp"
 #include "CustomGCode.hpp"
+#include "Exception.hpp"
+#include "format.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -492,7 +494,17 @@ std::string GCodeWriter::toolchange(unsigned int extruder_id)
 {
     // set the new extruder
 	auto it_extruder = Slic3r::lower_bound_by_predicate(m_extruders.begin(), m_extruders.end(), [extruder_id](const Extruder &e) { return e.id() < extruder_id; });
-    assert(it_extruder != m_extruders.end() && it_extruder->id() == extruder_id);
+    if (it_extruder == m_extruders.end() || it_extruder->id() != extruder_id) {
+        // A missing physical Extruder used to leave a dangling m_extruder (Release asserts
+        // compiled out) or, after a silent return, keep E/retract/temp on the old tool while
+        // the placeholder already names the new one. Refuse hard so the caller cannot continue.
+        const std::string msg = Slic3r::format(
+            "GCodeWriter::toolchange: no physical extruder registered for id %1%. "
+            "Mixed virtual filament IDs must be resolved to physical extruders before export.",
+            extruder_id);
+        BOOST_LOG_TRIVIAL(error) << msg;
+        throw SlicingError(msg);
+    }
     m_extruder = &*it_extruder;
 
     // return the toolchange command

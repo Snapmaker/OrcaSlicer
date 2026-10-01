@@ -266,6 +266,86 @@ TEST_CASE("Mixed filament grouped manual patterns normalize and round-trip", "[M
     CHECK(loaded.mixed_filaments().front().mix_b_percent == 13);
 }
 
+TEST_CASE("expand_0based_extruder_ids maps mixed virtual ids to physical components", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00"});
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 2) == 3);
+
+    std::vector<unsigned int> ids = {2}; // 0-based virtual id 3
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+
+    ids = {0};
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0});
+
+    ids = {0, 1};
+    mgr.expand_0based_extruder_ids(ids, 2);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+}
+
+TEST_CASE("expand_0based_extruder_ids includes manual_pattern tokens", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("13");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
+
+    std::vector<unsigned int> ids = {3}; // 0-based virtual id 4
+    mgr.expand_0based_extruder_ids(ids, 3);
+    // resolve() uses only the pattern, so token "3" -> physical 3 and "1" -> component_a.
+    // Filament 2 (component_b) is unused.
+    REQUIRE(ids == std::vector<unsigned int>{0, 2});
+}
+
+TEST_CASE("expand_0based_extruder_ids uses 3+ id gradients only when resolve would", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"});
+    MixedFilament &mf = mgr.mixed_filaments().front();
+    // Gradient 1/3/4 does not include component_b, so LayerCycle must not collapse to A/B.
+    mf.gradient_component_ids = "134";
+    mf.distribution_mode      = int(MixedFilament::LayerCycle);
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 4) == 5);
+
+    std::vector<unsigned int> ids = {4};
+    mgr.expand_0based_extruder_ids(ids, 4);
+    REQUIRE(ids == std::vector<unsigned int>{0, 2, 3});
+
+    mf.distribution_mode = int(MixedFilament::Simple);
+    ids                  = {4};
+    mgr.expand_0based_extruder_ids(ids, 4);
+    REQUIRE(ids == std::vector<unsigned int>{0, 1});
+}
+
+TEST_CASE("expand_0based_extruder_ids adds component_a when any pattern token is unmapped", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FF0000", "#00FF00", "#0000FF"});
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("39");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 3) == 4);
+
+    std::vector<unsigned int> ids = {3};
+    mgr.expand_0based_extruder_ids(ids, 3);
+    // Token "3" -> physical 3; token "9" is unmapped so resolve() falls back to component_a.
+    REQUIRE(ids == std::vector<unsigned int>{0, 2});
+}
+
+TEST_CASE("expand_0based_extruder_ids includes bracket-10 pattern tokens", "[MixedFilament]")
+{
+    MixedFilamentManager mgr;
+    std::vector<std::string> colors(10, "#FF0000");
+    colors[9] = "#0000FF";
+    mgr.add_custom_filament(1, 2, 50, colors);
+    mgr.mixed_filaments().front().manual_pattern = MixedFilamentManager::normalize_manual_pattern("1[10]");
+    REQUIRE(mgr.filament_id_from_mixed_index(0, 10) == 11);
+
+    std::vector<unsigned int> ids = {10};
+    mgr.expand_0based_extruder_ids(ids, 10);
+    REQUIRE(ids == std::vector<unsigned int>{0, 9});
+}
+
 TEST_CASE("Mixed filament component surface offsets round-trip and bias the second layer component", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#FF0000", "#FFFF00"};

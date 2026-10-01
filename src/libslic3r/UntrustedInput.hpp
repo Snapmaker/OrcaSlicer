@@ -146,6 +146,26 @@ bool content_matches_extension(const std::string &file_name, const std::string &
 // an archive entry name becomes part of a path on disk (zip-slip).
 bool is_safe_archive_relative_path(const std::string &path);
 
+enum class ArchiveEntryName {
+    Reject, // unsafe: refuse the entry (the confined extractor refuses the whole archive)
+    Skip,   // nothing to extract: a bare "./" or "." directory entry
+    Ok      // `out` holds the normalised name
+};
+
+// The one place an archive entry name is cleaned up and then judged. Harmless spellings that
+// common zip tools produce are normalised first: backslash separators (PowerShell 5.1
+// Compress-Archive, some .NET zippers), a leading "./" or "./" segments (bsdtar), repeated
+// separators ("a//b") and a trailing separator. The result is then held to is_safe_archive_relative_path
+// as strictly as ever. Rejected: ".." segments anywhere, an absolute path ("/x", "\x", UNC
+// "\\server\share", "\\?\C:\x"), a drive letter or any ':' (C:x, alternate data streams),
+// control characters / NUL, look-alikes of '.' '/' '\' ':', segments made only of dots and
+// spaces, and names over 1024 bytes. `out` is only written for Ok.
+ArchiveEntryName normalize_archive_entry_path(const std::string &raw, std::string &out);
+
+// The last segment of a name returned by normalize_archive_entry_path (the whole name when it
+// has no '/'). For extractors that flatten entries to their file name.
+std::string archive_entry_leaf(const std::string &normalized);
+
 // True if candidate stays under root after weakly_canonical. Rejects an embedded NUL in either
 // path. A trailing separator on root is ignored. Compared component-wise so a sibling that
 // shares a prefix (/tmp/root2 vs /tmp/root) is not accepted. A symlink-to-dir root is followed

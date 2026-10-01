@@ -1033,18 +1033,19 @@ PresetsConfigSubstitutions PresetBundle::import_presets(std::vector<std::string>
                 mz_zip_archive_file_stat file_stat;
                 status = mz_zip_reader_file_stat(&zip_archive, i, &file_stat);
                 if (status) {
-                    std::string file_name = file_stat.m_filename;
                     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " Form zip file: " << file << ". Read file name: " << file_stat.m_filename;
-                    // Only the entry's own name is used, never its folders: "..\..\x" (a
-                    // Windows separator) used to climb out of the temp folder (zip-slip).
-                    size_t index = file_name.find_last_of("/\\");
-                    if (std::string::npos != index) {
-                        file_name = file_name.substr(index + 1);
-                    }
-                    if (!untrusted::is_safe_archive_relative_path(file_name)) {
+                    // Only the entry's own name is used, never its folders. The name is normalised
+                    // like every other extractor's (backslashes, "./", "a//b") and then judged:
+                    // "..\..\x" used to climb out of the temp folder (zip-slip) and is still refused.
+                    std::string normalized_name;
+                    const untrusted::ArchiveEntryName verdict = untrusted::normalize_archive_entry_path(file_stat.m_filename, normalized_name);
+                    if (verdict == untrusted::ArchiveEntryName::Skip)
+                        continue;
+                    if (verdict == untrusted::ArchiveEntryName::Reject) {
                         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " skipping bundle entry with an unsafe name: " << file_stat.m_filename;
                         continue;
                     }
+                    std::string file_name = untrusted::archive_entry_leaf(normalized_name);
                     if (BUNDLE_STRUCTURE_JSON_NAME == file_name) continue;
                     // create target file path
                     std::string target_file_path = boost::filesystem::path(temp_folder / file_name).make_preferred().string();

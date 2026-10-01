@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -231,4 +232,84 @@ TEST_CASE("No-sparse Bambu tower: compacted layers print at tower speed on a sup
 {
     for (const char *wall : { "rectangle", "rib" })
         DYNAMIC_SECTION("wall " << wall) { check_no_sparse_tower(wall); }
+}
+
+// Owner report (H2D, PR #226 test copy, but main does it too): with "no sparse layers" on, slicing
+// stopped with "Conflicts of G-code paths have been found ... (WipeTower <-> Assembly)" although
+// the tower stood well clear of every object. The plate's second filament only started far up the
+// print, so the tower's first real layer (its first tool change) was hundreds of layers up. The
+// brim chamfer counted "layers since the first layer" for the sparse layers below it as a negative
+// number and added one brim loop per layer down. Those layers are never printed, but their walls
+// went into the fake tower the conflict checker tests against: hundreds of loops spreading across
+// the bed. Here the second filament starts at 10 mm and a 1 mm chip stands about 10 mm from the tower.
+TEST_CASE("No-sparse Bambu tower: layers below the first tool change get no brim loops", "[WipeTower][NoSparseLayers]")
+{
+    DynamicPrintConfig config = no_sparse_config();
+    config.set_deserialize_strict({ { "wipe_tower_wall_type", "rib" } });
+
+    Slic3r::Print print;
+    Slic3r::Model model;
+    // Filament 1 up to 10 mm, filament 2 above it: no tool change at all below 10 mm.
+    ModelObject *stack = model.add_object();
+    stack->name        = "stack.stl";
+    ModelVolume *lower = stack->add_volume(make_cube(20., 20., 10.));
+    ModelVolume *upper = stack->add_volume(make_cube(20., 20., 10.));
+    upper->set_offset(lower->get_offset() + Vec3d(0., 0., 10.));
+    lower->config.set("extruder", 1);
+    upper->config.set("extruder", 2);
+    stack->add_instance()->set_offset(Vec3d(40., 40., 0.));
+    stack->ensure_on_bed();
+    // A low chip beside the tower (x 140..170), about 10 mm off its left side.
+    ModelObject *chip = model.add_object();
+    chip->name        = "chip.stl";
+    chip->add_volume(make_cube(10., 10., 0.9));
+    chip->add_instance()->set_offset(Vec3d(120., 145., 0.));
+    chip->ensure_on_bed();
+    chip->config.set("extruder", 1);
+
+    print.apply(model, config);
+    print.is_BBL_printer() = true;
+    const StringObjectException err = print.validate();
+    INFO(err.string);
+    REQUIRE(err.string.empty());
+    const std::string gcode = Slic3r::Test::gcode(print);
+
+    // The checker's view of the tower: no layer reaches further than the tower wall at the bed (the
+    // widest, as the ribs taper upwards) plus a brim. The wall is the first outline a layer records;
+    // the brim loops follow it. The brim is at most 3 mm (the auto brim here is 1.6 mm).
+    const std::map<float, Polylines> &walls = print.get_fake_wipe_tower().outer_wall;
+    REQUIRE(walls.size() > 10);
+    REQUIRE(!walls.begin()->second.empty());
+    BoundingBox first = get_extents(walls.begin()->second.front());
+    first.offset(scaled(3.5));
+    for (const auto &[z, polylines] : walls) {
+        BoundingBox b;
+        for (const Polyline &pl : polylines)
+            b.merge(get_extents(pl));
+        INFO("tower wall at z " << z << ": " << polylines.size() << " polylines, " << unscaled(b.size().x()) << " x "
+             << unscaled(b.size().y()) << " mm; allowed " << unscaled(first.size().x()) << " x " << unscaled(first.size().y()));
+        CHECK(first.contains(b.min));
+        CHECK(first.contains(b.max));
+    }
+
+    // ...so the chip does not "conflict" with it.
+    const ConflictResultOpt conflict = print.get_conflict_result();
+    INFO("conflict: " << (conflict ? conflict->_objName1 + " <-> " + conflict->_objName2 + " at " + std::to_string(conflict->_height) : std::string("none")));
+    CHECK(!conflict.has_value());
+
+    // And the printed tower never reaches past its first layer either.
+    const std::vector<TowerMove> moves = tower_moves(gcode);
+    REQUIRE(!moves.empty());
+    const double first_z = std::min_element(moves.begin(), moves.end(), [](const TowerMove &a, const TowerMove &b) { return a.z < b.z; })->z;
+    double xmin = 1e9, xmax = -1e9;
+    for (const TowerMove &m : moves)
+        if (std::abs(m.z - first_z) < 1e-3) {
+            xmin = std::min(xmin, m.x);
+            xmax = std::max(xmax, m.x);
+        }
+    for (const TowerMove &m : moves) {
+        INFO("tower extrusion at z " << m.z << " x " << m.x << ", first layer spans x " << xmin << ".." << xmax);
+        CHECK(m.x >= xmin - 0.01);
+        CHECK(m.x <= xmax + 0.01);
+    }
 }

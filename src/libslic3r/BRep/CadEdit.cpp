@@ -14,6 +14,16 @@
 #include <boost/log/trivial.hpp>
 
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepGProp.hxx>
+#include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <GProp_GProps.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <TopoDS_Shell.hxx>
+#include <gp_Pln.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -42,9 +52,16 @@
 #include <gp_Trsf.hxx>
 
 #include <algorithm>
+#include <cfloat>
+#include <cstdio>
+#include <stdexcept>
 #include <chrono>
 #include <cmath>
 #include <sstream>
+
+#ifdef _WIN32
+#include <eh.h>
+#endif
 
 namespace Slic3r { namespace BRep {
 
@@ -74,6 +91,70 @@ double seconds_since(std::chrono::steady_clock::time_point t0)
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
+// OpenCASCADE's blending and offset algorithms can fault on geometry they do not handle (a shell
+// opened on a face bounded by fillets dereferenced a null pointer in BRepOffset). While an
+// operation runs, an access violation or similar hardware exception on this thread is turned
+// into an OcctCrash, so the operation fails with a message instead of taking the application
+// down. Windows only (_set_se_translator; OCCT itself is built with /EHa there). Scoped: the
+// previous translator is restored, so other jobs on the same worker thread are unaffected.
+struct OcctCrash : std::runtime_error
+{
+    using std::runtime_error::runtime_error;
+};
+
+#ifdef _WIN32
+class OcctCrashGuard
+{
+public:
+    OcctCrashGuard() : m_previous(_set_se_translator(&OcctCrashGuard::translate)) {}
+    ~OcctCrashGuard() { _set_se_translator(m_previous); }
+    OcctCrashGuard(const OcctCrashGuard &) = delete;
+    OcctCrashGuard &operator=(const OcctCrashGuard &) = delete;
+
+private:
+    static void __cdecl translate(unsigned int code, struct _EXCEPTION_POINTERS *)
+    {
+        switch (code) {
+        case 0xC0000005u: // access violation
+        case 0xC000001Du: // illegal instruction
+        case 0xC0000094u: // integer divide by zero
+        case 0xC000008Cu: // array bounds exceeded
+        case 0xC0000006u: // in-page error
+        {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "OpenCASCADE crashed (exception 0x%08X)", code);
+            throw OcctCrash(buf);
+        }
+        default: return; // not ours to translate: keep the default handling
+        }
+    }
+    _se_translator_function m_previous;
+};
+#else
+struct OcctCrashGuard
+{};
+#endif
+
+// A part that a CAD system wrote as a compound around one solid is that solid: the offset and
+// blend algorithms want the solid itself.
+TopoDS_Shape single_solid_or_self(const TopoDS_Shape &shape)
+{
+    if (shape.ShapeType() != TopAbs_COMPOUND && shape.ShapeType() != TopAbs_COMPSOLID)
+        return shape;
+    TopoDS_Shape solid;
+    int          solids = 0;
+    for (TopExp_Explorer ex(shape, TopAbs_SOLID); ex.More(); ex.Next()) {
+        solid = ex.Current();
+        ++solids;
+    }
+    if (solids != 1)
+        return shape;
+    TopTools_IndexedMapOfShape all_faces, solid_faces;
+    TopExp::MapShapes(shape, TopAbs_FACE, all_faces);
+    TopExp::MapShapes(solid, TopAbs_FACE, solid_faces);
+    return all_faces.Extent() == solid_faces.Extent() ? solid : shape;
+}
+
 } // namespace
 
 TopoDS_Shape cad_body_shape(const CadBody &body)
@@ -92,7 +173,7 @@ TopoDS_Shape cad_body_shape(const CadBody &body)
         t.SetTranslation(gp_Vec(body.shift.x(), body.shift.y(), body.shift.z()));
         shape = BRepBuilderAPI_Transform(shape, t, Standard_True).Shape();
     }
-    return shape;
+    return single_solid_or_self(shape);
 }
 
 std::shared_ptr<CadBody> make_cad_body(const TopoDS_Shape &shape, const indexed_triangle_set &mesh, CadBodyOrigin origin, int operations)
@@ -198,6 +279,7 @@ std::shared_ptr<const CadBody> cad_body_from_mesh(const indexed_triangle_set &it
                        std::to_string(ConvertMaxTriangles) + " can be converted. Simplify it first.";
         return nullptr;
     }
+    OcctCrashGuard guard;
     try {
         MeshToBRepStats    stats;
         const TopoDS_Shape shape = mesh_to_brep(its, {}, stats);
@@ -215,6 +297,7 @@ std::shared_ptr<const CadBody> cad_body_from_mesh(const indexed_triangle_set &it
         report.seconds = seconds_since(t0);
         return body;
     } catch (const Standard_Failure &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD conversion: OCCT exception " << occt_message(e);
         report.error = "the conversion failed (" + occt_message(e) + ")";
     } catch (const std::exception &e) {
         report.error = e.what();
@@ -294,8 +377,9 @@ constexpr double TangentChainDeg = 2.;
 
 CadTopology cad_topology(const CadBody &body, double linear_deflection, double angular_deflection)
 {
-    CadTopology  topo;
-    TopoDS_Shape shape = cad_body_shape(body);
+    CadTopology    topo;
+    OcctCrashGuard guard;
+    TopoDS_Shape   shape = cad_body_shape(body);
     try {
         TopTools_IndexedMapOfShape faces, edges;
         TopExp::MapShapes(shape, TopAbs_FACE, faces);
@@ -415,7 +499,11 @@ CadTopology cad_topology(const CadBody &body, double linear_deflection, double a
                     }
         }
     } catch (const Standard_Failure &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD topology: OCCT exception " << occt_message(e);
         throw Slic3r::RuntimeError("the CAD body's topology cannot be read (" + occt_message(e) + ")");
+    } catch (const OcctCrash &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD topology: " << e.what();
+        throw Slic3r::RuntimeError(std::string("the CAD body's topology cannot be read (") + e.what() + ")");
     }
     return topo;
 }
@@ -467,34 +555,44 @@ CadOpResult fail(CadOpStatus status, std::string why)
     return r;
 }
 
-// Validate, tessellate and wrap an operation's result.
-void finish(TopoDS_Shape result, const CadBody &input, const TessellationParams &tess, CadOpResult &r)
+// Validate a candidate result without tessellating it: a valid, closed, positive-volume solid.
+// `why` says what is wrong otherwise. ShapeFix gets one try at a result that is only slightly off.
+bool valid_solid(TopoDS_Shape &result, std::string &why)
 {
     if (result.IsNull()) {
-        r.status = CadOpStatus::InvalidResult;
-        r.error  = "the operation produced no shape";
-        return;
+        why = "the operation produced no shape";
+        return false;
     }
     if (!BRepCheck_Analyzer(result).IsValid()) {
-        // A blend can come out with tolerances a little off; let ShapeFix try once.
         ShapeFix_Shape fix(result);
         fix.Perform();
         result = fix.Shape();
         if (result.IsNull() || !BRepCheck_Analyzer(result).IsValid()) {
-            r.status = CadOpStatus::InvalidResult;
-            r.error  = "the result is not a valid solid";
-            return;
+            why = "the result is not a valid solid";
+            return false;
         }
     }
     const ShapeInfo info = shape_info(result, false);
     if (info.solids == 0 || info.free_shells > 0 || !(info.volume > 0.)) {
+        why = "the result is not a closed solid";
+        return false;
+    }
+    return true;
+}
+
+// Validate, tessellate and wrap an operation's result.
+void finish(TopoDS_Shape result, const CadBody &input, const TessellationParams &tess, CadOpResult &r)
+{
+    std::string why;
+    if (!valid_solid(result, why)) {
         r.status = CadOpStatus::InvalidResult;
-        r.error  = "the result is not a closed solid";
+        r.error  = why;
         return;
     }
-    r.faces_after  = info.faces;
-    r.volume_after = info.volume;
-    r.mesh         = tessellate_cad_shape(result, tess.linear_deflection, tess.angular_deflection);
+    const ShapeInfo info = shape_info(result, false);
+    r.faces_after        = info.faces;
+    r.volume_after       = info.volume;
+    r.mesh               = tessellate_cad_shape(result, tess.linear_deflection, tess.angular_deflection);
     if (r.mesh.indices.empty()) {
         r.status = CadOpStatus::InvalidResult;
         r.error  = "the result could not be triangulated";
@@ -502,6 +600,195 @@ void finish(TopoDS_Shape result, const CadBody &input, const TessellationParams 
     }
     r.body   = make_cad_body(result, r.mesh, input.origin, input.operations + 1);
     r.status = CadOpStatus::Ok;
+}
+
+// BRepFilletAPI_MakeFillet / MakeChamfer over `edges` (edge-map indices, already checked).
+// Returns a null shape when OCCT reports it cannot build it; may throw Standard_Failure.
+TopoDS_Shape build_edge_feature(const TopoDS_Shape &shape, const TopTools_IndexedMapOfShape &emap, EdgeFeature feature,
+                                double size, const std::vector<int> &edges, int *faulty_contours = nullptr)
+{
+    if (feature == EdgeFeature::Fillet) {
+        BRepFilletAPI_MakeFillet mk(shape);
+        for (int e : edges)
+            mk.Add(size, TopoDS::Edge(emap(e + 1)));
+        mk.Build();
+        if (faulty_contours)
+            *faulty_contours = mk.NbFaultyContours();
+        return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
+    }
+    BRepFilletAPI_MakeChamfer mk(shape);
+    for (int e : edges)
+        mk.Add(size, TopoDS::Edge(emap(e + 1)));
+    mk.Build();
+    return mk.IsDone() ? mk.Shape() : TopoDS_Shape();
+}
+
+// After a failure: the largest size that still builds, by bisection between 0 and the size that
+// failed. Bounded in steps and time, since each try is a full blend.
+double largest_working_size(const TopoDS_Shape &shape, const TopTools_IndexedMapOfShape &emap, EdgeFeature feature,
+                            double failed_size, const std::vector<int> &edges)
+{
+    const auto t0   = std::chrono::steady_clock::now();
+    double     lo   = 0., hi = failed_size, best = 0.;
+    for (int i = 0; i < 8 && seconds_since(t0) < 4.; ++i) {
+        const double mid = 0.5 * (lo + hi);
+        bool         ok  = false;
+        try {
+            TopoDS_Shape s = build_edge_feature(shape, emap, feature, mid, edges);
+            std::string  why;
+            ok             = !s.IsNull() && valid_solid(s, why);
+        } catch (const Standard_Failure &) {
+            ok = false;
+        } catch (const std::exception &) {
+            ok = false;
+        }
+        if (ok) {
+            best = mid;
+            lo   = mid;
+        } else
+            hi = mid;
+    }
+    return best;
+}
+
+// Outward normal of a planar face (orientation applied), or false when the face is not planar.
+bool planar_outward_normal(const TopoDS_Face &face, gp_Dir &normal)
+{
+    BRepAdaptor_Surface s(face, Standard_False);
+    if (s.GetType() != GeomAbs_Plane)
+        return false;
+    const gp_Pln pl = s.Plane();
+    normal          = pl.Axis().Direction();
+    if (!pl.Direct())
+        normal.Reverse();
+    if (face.Orientation() == TopAbs_REVERSED)
+        normal.Reverse();
+    return true;
+}
+
+// Does `face` meet a neighbour tangentially along any of its edges (the boundary of a fillet)?
+bool has_tangent_neighbour(const TopoDS_Face &face, const TopTools_IndexedDataMapOfShapeListOfShape &edge_faces)
+{
+    const double smooth_cos = std::cos(SmoothJoinDeg * PI / 180.);
+    for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next()) {
+        const TopoDS_Edge &edge = TopoDS::Edge(ex.Current());
+        if (BRep_Tool::Degenerated(edge) || !edge_faces.Contains(edge))
+            continue;
+        for (TopTools_ListOfShape::Iterator it(edge_faces.FindFromKey(edge)); it.More(); it.Next()) {
+            const TopoDS_Face &other = TopoDS::Face(it.Value());
+            if (other.IsSame(face))
+                continue;
+            gp_Dir n0, n1;
+            if (normal_at_edge(face, edge, n0) && normal_at_edge(other, edge, n1) && n0.Dot(n1) > smooth_cos)
+                return true;
+        }
+    }
+    return false;
+}
+
+// Shell by BRepOffsetAPI_MakeThickSolidByJoin: the standard construction. May throw.
+TopoDS_Shape shell_by_thick_solid(const TopoDS_Shape &solid, const std::vector<TopoDS_Face> &open, double thickness, std::string &why)
+{
+    TopTools_ListOfShape faces;
+    for (const TopoDS_Face &f : open)
+        faces.Append(f);
+    BRepOffsetAPI_MakeThickSolid mk;
+    // A negative offset shells inward, so the outside of the part keeps its size.
+    mk.MakeThickSolidByJoin(solid, faces, -thickness, 1.e-3);
+    mk.Build();
+    if (!mk.IsDone()) {
+        why = "BRepOffset error " + std::to_string(int(mk.MakeOffset().Error()));
+        return TopoDS_Shape();
+    }
+    return mk.Shape();
+}
+
+// Shell by offsetting the closed solid inward and subtracting that core, then cutting each
+// opening through the wall: a prism of the core's copy of the opened face, pushed out along the
+// face's normal just past the wall. This is what makes faces that meet their neighbours
+// tangentially (any face bounded by fillets) openable: MakeThickSolidByJoin cannot end a wall
+// on a tangent edge - it fails, throws Standard_NoSuchObject or crashes there - while offsetting
+// the closed solid follows the blends. Planar opened faces only.
+TopoDS_Shape shell_by_core_cut(const TopoDS_Shape &solid, const std::vector<TopoDS_Face> &open, double thickness, std::string &why)
+{
+    std::vector<gp_Dir> normals;
+    for (const TopoDS_Face &f : open) {
+        gp_Dir n;
+        if (!planar_outward_normal(f, n)) {
+            why = "only flat faces can be left open on a part with rounded edges";
+            return TopoDS_Shape();
+        }
+        normals.push_back(n);
+    }
+    BRepOffsetAPI_MakeOffsetShape off;
+    off.PerformByJoin(solid, -thickness, 1.e-3, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Arc);
+    if (!off.IsDone()) {
+        why = "the inner wall could not be built (BRepOffset error " + std::to_string(int(off.MakeOffset().Error())) + ")";
+        return TopoDS_Shape();
+    }
+    TopoDS_Shape core = off.Shape();
+    if (core.IsNull()) {
+        why = "the inner wall could not be built";
+        return TopoDS_Shape();
+    }
+    if (core.ShapeType() == TopAbs_SHELL) {
+        BRepBuilderAPI_MakeSolid mk(TopoDS::Shell(core));
+        if (!mk.IsDone()) {
+            why = "the inner wall is not closed";
+            return TopoDS_Shape();
+        }
+        core = mk.Solid();
+    }
+    {
+        GProp_GProps props;
+        BRepGProp::VolumeProperties(core, props);
+        if (props.Mass() < 0.)
+            core.Reverse();
+        if (!(std::abs(props.Mass()) > 0.)) {
+            why = "the wall leaves no room inside the part";
+            return TopoDS_Shape();
+        }
+    }
+    BRepAlgoAPI_Cut hollow(solid, core);
+    if (!hollow.IsDone()) {
+        why = "the inside could not be removed";
+        return TopoDS_Shape();
+    }
+    TopoDS_Shape result = hollow.Shape();
+    const double reach  = thickness * 1.05 + 0.01;
+    for (size_t i = 0; i < open.size(); ++i) {
+        TopTools_ListOfShape inner = off.Modified(open[i]);
+        if (inner.IsEmpty())
+            inner = off.Generated(open[i]);
+        if (inner.IsEmpty()) {
+            why = "the opening could not be located on the inner wall";
+            return TopoDS_Shape();
+        }
+        for (TopTools_ListOfShape::Iterator it(inner); it.More(); it.Next()) {
+            if (it.Value().ShapeType() != TopAbs_FACE)
+                continue;
+            BRepPrimAPI_MakePrism prism(it.Value(), gp_Vec(normals[i]) * reach);
+            if (!prism.IsDone()) {
+                why = "the opening could not be cut";
+                return TopoDS_Shape();
+            }
+            TopoDS_Shape tool = prism.Shape();
+            GProp_GProps props;
+            BRepGProp::VolumeProperties(tool, props);
+            if (props.Mass() < 0.)
+                tool.Reverse();
+            BRepAlgoAPI_Cut cut(result, tool);
+            if (!cut.IsDone()) {
+                why = "the opening could not be cut";
+                return TopoDS_Shape();
+            }
+            result = cut.Shape();
+        }
+    }
+    // The booleans split faces along the cut; merge them back.
+    ShapeUpgrade_UnifySameDomain unify(result, Standard_True, Standard_True, Standard_True);
+    unify.Build();
+    return unify.Shape();
 }
 
 } // namespace
@@ -519,7 +806,8 @@ CadOpResult fillet_edges(const CadBody &body, EdgeFeature feature, double size, 
     std::sort(edges.begin(), edges.end());
     edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
 
-    CadOpResult r;
+    CadOpResult      r;
+    OcctCrashGuard   guard;
     try {
         const TopoDS_Shape shape  = cad_body_shape(body);
         const ShapeInfo    before = shape_info(shape, false);
@@ -528,47 +816,49 @@ CadOpResult fillet_edges(const CadBody &body, EdgeFeature feature, double size, 
 
         TopTools_IndexedMapOfShape emap;
         TopExp::MapShapes(shape, TopAbs_EDGE, emap);
+        for (int e : edges)
+            if (e < 0 || e >= emap.Extent())
+                return fail(CadOpStatus::BadIndex, "an edge index is out of range");
+        r.shortest_edge = DBL_MAX;
+        for (int e : edges)
+            r.shortest_edge = std::min(r.shortest_edge, GCPnts_AbscissaPoint::Length(BRepAdaptor_Curve(TopoDS::Edge(emap(e + 1)))));
+
+        int          faulty = 0;
         TopoDS_Shape result;
-        if (feature == EdgeFeature::Fillet) {
-            BRepFilletAPI_MakeFillet mk(shape);
-            for (int e : edges) {
-                if (e < 0 || e >= emap.Extent())
-                    return fail(CadOpStatus::BadIndex, "an edge index is out of range");
-                mk.Add(size, TopoDS::Edge(emap(e + 1)));
-            }
-            mk.Build();
-            if (!mk.IsDone()) {
-                r.status = CadOpStatus::Failed;
-                r.error  = "the fillet could not be built. The radius is probably too large for the faces next to the "
-                           "selected edges, or an edge ends where a fillet cannot be blended. Try a smaller radius or fewer edges.";
-                BOOST_LOG_TRIVIAL(info) << "CAD fillet failed: " << mk.NbFaultyContours() << " faulty contours, "
-                                        << mk.NbFaultyVertices() << " faulty vertices, radius " << size;
-                r.seconds = seconds_since(t0);
-                return r;
-            }
-            result = mk.Shape();
-        } else {
-            BRepFilletAPI_MakeChamfer mk(shape);
-            for (int e : edges) {
-                if (e < 0 || e >= emap.Extent())
-                    return fail(CadOpStatus::BadIndex, "an edge index is out of range");
-                mk.Add(size, TopoDS::Edge(emap(e + 1)));
-            }
-            mk.Build();
-            if (!mk.IsDone()) {
-                r.status = CadOpStatus::Failed;
-                r.error  = "the chamfer could not be built. The distance is probably too large for the faces next to the "
-                           "selected edges. Try a smaller distance or fewer edges.";
-                r.seconds = seconds_since(t0);
-                return r;
-            }
-            result = mk.Shape();
+        std::string  occt_error;
+        try {
+            result = build_edge_feature(shape, emap, feature, size, edges, &faulty);
+        } catch (const Standard_Failure &e) {
+            occt_error = occt_message(e);
+            BOOST_LOG_TRIVIAL(error) << "CAD " << what << ": OCCT exception " << occt_error;
         }
-        finish(result, body, tess, r);
+        std::string why;
+        if (!result.IsNull() && !valid_solid(result, why)) {
+            BOOST_LOG_TRIVIAL(warning) << "CAD " << what << ": " << why;
+            result.Nullify();
+        }
+        if (result.IsNull()) {
+            r.status = CadOpStatus::Failed;
+            r.error  = feature == EdgeFeature::Fillet ?
+                           "the fillet could not be built. The radius is probably too large for the faces next to the selected edges, "
+                           "or an edge ends where a fillet cannot be blended." :
+                           "the chamfer could not be built. The distance is probably too large for the faces next to the selected edges.";
+            r.largest_size = largest_working_size(shape, emap, feature, size, edges);
+            BOOST_LOG_TRIVIAL(info) << "CAD " << what << " failed: size " << size << ", " << edges.size() << " edges, "
+                                    << faulty << " faulty contours, shortest edge " << r.shortest_edge << ", largest working size "
+                                    << r.largest_size << (occt_error.empty() ? std::string() : ", " + occt_error);
+        } else
+            finish(result, body, tess, r);
+    } catch (const OcctCrash &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD " << what << ": " << e.what();
+        r.status = CadOpStatus::Failed;
+        r.error  = std::string("OpenCASCADE crashed while building the ") + what + ". Try a smaller size or fewer edges.";
     } catch (const Standard_Failure &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD " << what << ": OCCT exception " << occt_message(e);
         r.status = CadOpStatus::Failed;
         r.error  = std::string("the ") + what + " could not be built (" + occt_message(e) + "). Try a smaller size or fewer edges.";
     } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD " << what << ": " << e.what();
         r.status = CadOpStatus::Failed;
         r.error  = e.what();
     }
@@ -590,7 +880,8 @@ CadOpResult shell_solid(const CadBody &body, const std::vector<int> &faces_in, d
     std::sort(faces.begin(), faces.end());
     faces.erase(std::unique(faces.begin(), faces.end()), faces.end());
 
-    CadOpResult r;
+    CadOpResult    r;
+    OcctCrashGuard guard;
     try {
         const TopoDS_Shape shape  = cad_body_shape(body);
         const ShapeInfo    before = shape_info(shape, false);
@@ -598,35 +889,86 @@ CadOpResult shell_solid(const CadBody &body, const std::vector<int> &faces_in, d
         r.volume_before           = before.volume;
         if (before.solids != 1)
             return fail(CadOpStatus::Failed, "shell works on a single solid, and this part has " + std::to_string(before.solids));
+        // The offset algorithms want the solid itself, not a compound around it.
+        TopoDS_Shape solid;
+        for (TopExp_Explorer ex(shape, TopAbs_SOLID); ex.More(); ex.Next())
+            solid = ex.Current();
+        // A wall of half the part's smallest extent or more leaves nothing inside; offsetting that
+        // far inverts the core, which OCCT does not survive, so it is refused up front.
+        const Vec3d extent = before.bbox.size();
+        if (2. * thickness >= extent.minCoeff())
+            return fail(CadOpStatus::BadSize, "the wall is too thick for this part: it must be less than half of the part's smallest size.");
 
-        TopTools_IndexedMapOfShape fmap;
+        // Faces are addressed in the body's own map (the one the UI picked from), then found again
+        // in the solid by identity, so a compound wrapper or a location cannot desynchronise them.
+        TopTools_IndexedMapOfShape fmap, solid_faces;
         TopExp::MapShapes(shape, TopAbs_FACE, fmap);
-        TopTools_ListOfShape open;
+        TopExp::MapShapes(solid, TopAbs_FACE, solid_faces);
+        std::vector<TopoDS_Face> open;
         for (int f : faces) {
             if (f < 0 || f >= fmap.Extent())
                 return fail(CadOpStatus::BadIndex, "a face index is out of range");
-            open.Append(fmap(f + 1));
+            const int i = solid_faces.FindIndex(fmap(f + 1));
+            if (i == 0)
+                return fail(CadOpStatus::BadIndex, "a picked face is not part of the solid");
+            open.push_back(TopoDS::Face(solid_faces(i)));
         }
-        // A negative offset shells inward, so the outside of the part keeps its size.
-        BRepOffsetAPI_MakeThickSolid mk;
-        mk.MakeThickSolidByJoin(shape, open, -thickness, 1.e-3);
-        mk.Build();
-        if (!mk.IsDone()) {
+
+        TopTools_IndexedDataMapOfShapeListOfShape edge_faces;
+        TopExp::MapShapesAndAncestors(solid, TopAbs_EDGE, TopAbs_FACE, edge_faces);
+        const bool tangent = std::any_of(open.begin(), open.end(), [&edge_faces](const TopoDS_Face &f) {
+            return has_tangent_neighbour(f, edge_faces);
+        });
+
+        TopoDS_Shape result;
+        std::string  why_primary, why_fallback;
+        // MakeThickSolidByJoin cannot end a wall on a tangent edge (it fails, throws
+        // Standard_NoSuchObject, or crashes), so an opening bounded by fillets goes straight to the
+        // core-and-cut construction. Otherwise the standard one is tried first.
+        if (!tangent) {
+            try {
+                result = shell_by_thick_solid(solid, open, thickness, why_primary);
+            } catch (const Standard_Failure &e) {
+                why_primary = occt_message(e);
+            }
+            if (!result.IsNull() && !valid_solid(result, why_primary))
+                result.Nullify();
+            if (result.IsNull())
+                BOOST_LOG_TRIVIAL(warning) << "CAD shell: MakeThickSolid failed (" << why_primary << "), trying the core-and-cut construction";
+        }
+        if (result.IsNull()) {
+            try {
+                result = shell_by_core_cut(solid, open, thickness, why_fallback);
+            } catch (const Standard_Failure &e) {
+                why_fallback = occt_message(e);
+            }
+            if (!result.IsNull() && !valid_solid(result, why_fallback))
+                result.Nullify();
+            if (result.IsNull())
+                BOOST_LOG_TRIVIAL(error) << "CAD shell: core-and-cut failed (" << why_fallback << ")";
+        }
+        if (result.IsNull()) {
             r.status  = CadOpStatus::Failed;
-            r.error   = "the shell could not be built. The wall is probably too thick for the part, or a face cannot be "
-                        "offset by that much. Try a thinner wall.";
+            r.error   = "the shell could not be built. The wall is probably too thick for the part, or a face cannot be offset "
+                        "by that much. Try a thinner wall.";
             r.seconds = seconds_since(t0);
             return r;
         }
-        finish(mk.Shape(), body, tess, r);
+        finish(result, body, tess, r);
         if (r.ok() && !(r.volume_after < r.volume_before)) {
             r      = fail(CadOpStatus::InvalidResult, "the shell did not remove any material");
             r.body = nullptr;
         }
+    } catch (const OcctCrash &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD shell: " << e.what();
+        r.status = CadOpStatus::Failed;
+        r.error  = "OpenCASCADE crashed while building the shell. Try a thinner wall or another face.";
     } catch (const Standard_Failure &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD shell: OCCT exception " << occt_message(e);
         r.status = CadOpStatus::Failed;
         r.error  = "the shell could not be built (" + occt_message(e) + "). Try a thinner wall.";
     } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "CAD shell: " << e.what();
         r.status = CadOpStatus::Failed;
         r.error  = e.what();
     }
@@ -634,6 +976,13 @@ CadOpResult shell_solid(const CadBody &body, const std::vector<int> &faces_in, d
     BOOST_LOG_TRIVIAL(info) << "CAD shell of " << faces.size() << " open faces, thickness " << thickness << ": "
                             << (r.ok() ? "ok" : r.error) << ", " << r.seconds << " s";
     return r;
+}
+
+double mean_scale(const Transform3d &volume_to_world)
+{
+    const Matrix3d m    = volume_to_world.linear();
+    const double   mean = (m.col(0).norm() + m.col(1).norm() + m.col(2).norm()) / 3.;
+    return mean > 1e-12 ? mean : 1.;
 }
 
 bool apply_cad_result(ModelVolume &volume, const CadOpResult &result)

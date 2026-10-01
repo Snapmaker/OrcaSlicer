@@ -143,6 +143,10 @@ struct CadOpResult
     int                            faces_after   = 0;
     double                         volume_before = 0.;
     double                         volume_after  = 0.;
+    // A fillet / chamfer that failed: the largest size that does build for the same edges (found
+    // by bisection, 0 when even small sizes fail), and the shortest selected edge. Mesh units.
+    double                         largest_size  = 0.;
+    double                         shortest_edge = 0.;
     double                         seconds       = 0.;
 
     bool ok() const { return status == CadOpStatus::Ok; }
@@ -156,6 +160,11 @@ CadOpResult fillet_edges(const CadBody &body, EdgeFeature feature, double size, 
 // faces open. At least one face must be opened.
 CadOpResult shell_solid(const CadBody &body, const std::vector<int> &open_faces, double thickness,
                         const TessellationParams &tess = {});
+
+// Sizes are typed in world millimetres; the body lives in the volume's mesh space. The factor
+// between the two for `volume_to_world` (instance * volume matrix): the mean of the three scale
+// factors (a roughly uniform scale is assumed). mesh size = world size / mean_scale().
+double mean_scale(const Transform3d &volume_to_world);
 
 // Swap the volume's mesh for `result.mesh` and attach `result.body` (re-fingerprinted to the
 // mesh the volume actually ends up with). The volume keeps its transformation, name, settings

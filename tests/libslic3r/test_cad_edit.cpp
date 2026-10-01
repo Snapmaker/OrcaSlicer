@@ -15,9 +15,14 @@
 #include "libslic3r/TriangleMesh.hpp"
 
 #include <BRepFilletAPI_MakeFillet.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Trsf.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <Interface_Static.hxx>
 #include <STEPControl_Writer.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -536,5 +541,304 @@ TEST_CASE("A filleted part keeps its exact CAD body through a project 3MF", "[Ca
         REQUIRE(project_round_trip(model, loaded));
         REQUIRE(loaded.objects.size() == 1);
         CHECK(loaded.objects.front()->volumes.front()->cad_body == nullptr);
+    }
+}
+
+namespace {
+
+// The planar face whose every hit-test triangle lies on the body's top (max z) plane: what a
+// user clicks when they pick the top of the part.
+int top_face_of(const BRep::CadTopology &topo)
+{
+    const double zmax = topo.bbox.max.z();
+    for (int f = 0; f < topo.num_faces; ++f) {
+        if (!topo.face_planar[size_t(f)])
+            continue;
+        bool any = false, all = true;
+        for (size_t t = 0; t < topo.triangle_face.size() && all; ++t)
+            if (topo.triangle_face[t] == f) {
+                any = true;
+                for (int k = 0; k < 3; ++k)
+                    if (std::abs(double(topo.mesh.vertices[size_t(topo.mesh.indices[t](k))].z()) - zmax) > 1e-4)
+                        all = false;
+            }
+        if (any && all)
+            return f;
+    }
+    return -1;
+}
+
+// Shell the body opening its top face, every way the gizmo can hand it over.
+void require_shell_works(const BRep::CadBody &body, double thickness, double min_removed)
+{
+    const BRep::CadTopology topo = BRep::cad_topology(body, 0.05, 0.3);
+    const int               top  = top_face_of(topo);
+    REQUIRE(top >= 0);
+    const BRep::CadOpResult r = BRep::shell_solid(body, {top}, thickness);
+    INFO(r.error);
+    REQUIRE(r.ok());
+    CHECK(r.volume_after < r.volume_before - min_removed);
+    CHECK(body_info(*r.body).valid);
+    CHECK(TriangleMesh(r.mesh).stats().open_edges == 0);
+    // And any other single face of the box-like part opens as well.
+    for (int f = 0; f < topo.num_faces; ++f) {
+        if (!topo.face_planar[size_t(f)])
+            continue;
+        const BRep::CadOpResult rf = BRep::shell_solid(body, {f}, thickness);
+        INFO("face " << f << ": " << rf.error);
+        CHECK(rf.ok());
+    }
+}
+
+} // namespace
+
+// Owner hand test on PR #218: Shell failed with Standard_NoSuchObject on every face of a part,
+// while fillet and chamfer worked. These are the three ways a part reaches the gizmo.
+TEST_CASE("Shell works on converted, STEP-sourced and filleted bodies", "[CadEdit]")
+{
+    SECTION("a mesh cube converted to a CAD body")
+    {
+        Model        model;
+        ModelObject *object = model.add_object();
+        ModelVolume *volume = object->add_volume(TriangleMesh(its_make_cube(20., 20., 20.)));
+        object->add_instance();
+        BRep::MeshConversionReport report;
+        const auto                 body = BRep::cad_body_from_mesh(volume->mesh().its, report);
+        REQUIRE(body);
+        require_shell_works(*body, 2., 3000.);
+    }
+    SECTION("a STEP cube, straight from its file")
+    {
+        TempFile source(".step");
+        write_occt_step(BRepPrimAPI_MakeBox(gp_Pnt(0., 0., 0.), 20., 20., 20.).Shape(), source.str());
+        Model        model;
+        ModelObject *object = import_step(model, source.str());
+        std::string  why;
+        const auto   body = BRep::cad_body_from_step_source(*object->volumes.front(), &why);
+        INFO(why);
+        REQUIRE(body);
+        require_shell_works(*body, 2., 3000.);
+    }
+    SECTION("a STEP cube after a fillet was applied (the attached body)")
+    {
+        TempFile source(".step");
+        write_occt_step(BRepPrimAPI_MakeBox(gp_Pnt(0., 0., 0.), 20., 20., 20.).Shape(), source.str());
+        Model        model;
+        ModelObject *object = import_step(model, source.str());
+        ModelVolume *volume = object->volumes.front();
+        const auto   body   = BRep::cad_body_from_step_source(*volume);
+        REQUIRE(body);
+        const BRep::CadTopology topo = BRep::cad_topology(*body, 0.05, 0.3);
+        // The four vertical edges: the top and bottom faces stay planar and pickable.
+        std::vector<int> vertical;
+        for (int e = 0; e < topo.num_edges; ++e) {
+            const auto &pl = topo.edge_polylines[size_t(e)];
+            if (pl.size() >= 2 && std::abs(double(pl.front().z() - pl.back().z())) > 10.)
+                vertical.push_back(e);
+        }
+        REQUIRE(vertical.size() == 4);
+        const BRep::CadOpResult f = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 3., vertical);
+        INFO(f.error);
+        REQUIRE(f.ok());
+        BRep::apply_cad_result(*volume, f);
+        const auto attached = BRep::attached_cad_body(*volume);
+        REQUIRE(attached);
+        require_shell_works(*attached, 2., 2500.);
+    }
+    SECTION("a converted cube with every edge filleted")
+    {
+        BRep::MeshConversionReport report;
+        const auto                 body = BRep::cad_body_from_mesh(its_make_cube(20., 20., 20.), report);
+        REQUIRE(body);
+        const BRep::CadTopology topo = BRep::cad_topology(*body, 0.05, 0.3);
+        std::vector<int>        all;
+        for (int e = 0; e < topo.num_edges; ++e)
+            if (topo.edge_selectable[size_t(e)])
+                all.push_back(e);
+        const BRep::CadOpResult f = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 2., all);
+        INFO(f.error);
+        REQUIRE(f.ok());
+        require_shell_works(*f.body, 1., 2000.);
+    }
+    SECTION("a body whose mesh was moved (a non-zero shift)")
+    {
+        Model        model;
+        ModelObject *object = model.add_object();
+        ModelVolume *volume = object->add_volume(TriangleMesh(its_make_cube(20., 20., 20.)));
+        object->add_instance();
+        BRep::MeshConversionReport report;
+        volume->cad_body = BRep::cad_body_from_mesh(volume->mesh().its, report);
+        REQUIRE(volume->cad_body);
+        TriangleMesh mesh = volume->mesh();
+        mesh.translate(5.f, 6.f, 7.f);
+        volume->set_mesh(std::move(mesh));
+        const auto moved = BRep::attached_cad_body(*volume);
+        REQUIRE(moved);
+        REQUIRE_FALSE(moved->shift.isZero());
+        require_shell_works(*moved, 2., 3000.);
+    }
+}
+
+// Most CAD systems write a single part as a COMPOUND holding the solid, often placed with a
+// location; load_step() keeps that compound as the part's shape (getNamedSolids). The owner's
+// part on PR #218 was such a file.
+namespace {
+
+TopoDS_Shape compound_of(const TopoDS_Shape &solid, const gp_Vec &move)
+{
+    gp_Trsf t;
+    t.SetTranslation(move);
+    const TopoDS_Shape placed = solid.Moved(TopLoc_Location(t));
+    TopoDS_Compound    compound;
+    BRep_Builder       builder;
+    builder.MakeCompound(compound);
+    builder.Add(compound, placed);
+    return compound;
+}
+
+std::shared_ptr<const BRep::CadBody> step_body(const TopoDS_Shape &shape, Model &model, ModelVolume *&volume, TempFile &file)
+{
+    write_occt_step(shape, file.str());
+    ModelObject *object = import_step(model, file.str());
+    REQUIRE(object->volumes.size() == 1);
+    volume = object->volumes.front();
+    std::string why;
+    auto        body = BRep::cad_body_from_step_source(*volume, &why);
+    INFO(why);
+    REQUIRE(body);
+    return body;
+}
+
+} // namespace
+
+TEST_CASE("A STEP part stored as a located compound takes small fillets and a shell", "[CadEdit]")
+{
+    Model        model;
+    ModelVolume *volume = nullptr;
+    TempFile     file(".step");
+    const auto   body = step_body(compound_of(BRepPrimAPI_MakeBox(10., 10., 10.).Shape(), gp_Vec(3., 4., 5.)), model, volume, file);
+    const BRep::CadTopology topo = BRep::cad_topology(*body, 0.02, 0.3);
+    CHECK(topo.num_faces == 6);
+    CHECK(all_selectable(topo).size() == 12);
+
+    SECTION("a 0.5 mm fillet on a 10 mm cube")
+    {
+        const BRep::CadOpResult r = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 0.5, all_selectable(topo));
+        INFO(r.error);
+        REQUIRE(r.ok());
+        CHECK_THAT(r.volume_after, WithinRel(rounded_cube_volume(10., 0.5), 1e-6));
+    }
+    SECTION("a 0.5 mm chamfer of one edge")
+    {
+        const BRep::CadOpResult r = BRep::fillet_edges(*body, BRep::EdgeFeature::Chamfer, 0.5, {all_selectable(topo).front()});
+        INFO(r.error);
+        REQUIRE(r.ok());
+        CHECK_THAT(r.volume_after, WithinRel(1000. - 0.125 * 10., 1e-6));
+    }
+    SECTION("shell, every face")
+    {
+        for (int f = 0; f < topo.num_faces; ++f) {
+            const BRep::CadOpResult r = BRep::shell_solid(*body, {f}, 1.);
+            INFO("face " << f << ": " << r.error);
+            CHECK(r.ok());
+            CHECK_THAT(r.volume_after, WithinRel(1000. - 8. * 8. * 9., 1e-6));
+        }
+    }
+}
+
+
+// What the owner's part on PR #218 most likely was: a STEP part whose faces are bounded by
+// fillets. Every face of such a part meets a neighbour tangentially, and
+// BRepOffsetAPI_MakeThickSolidByJoin cannot end a wall on a tangent edge - it fails, throws
+// Standard_NoSuchObject or crashes - so Shell failed whichever face was picked.
+TEST_CASE("Shell opens faces bounded by fillets on a rounded STEP part", "[CadEdit]")
+{
+    // A 20 mm box with its four vertical and four top edges rounded, written and imported as STEP.
+    const TopoDS_Shape         box = BRepPrimAPI_MakeBox(20., 20., 20.).Shape();
+    TopTools_IndexedMapOfShape edges;
+    TopExp::MapShapes(box, TopAbs_EDGE, edges);
+    BRepFilletAPI_MakeFillet mk(box);
+    for (int i = 1; i <= edges.Extent(); ++i) {
+        TopoDS_Vertex a, b;
+        TopExp::Vertices(TopoDS::Edge(edges(i)), a, b);
+        const gp_Pnt pa = BRep_Tool::Pnt(a), pb = BRep_Tool::Pnt(b);
+        const bool   vertical = std::abs(pa.Z() - pb.Z()) > 10.;
+        const bool   top      = pa.Z() > 19. && pb.Z() > 19.;
+        if (vertical || top)
+            mk.Add(3., TopoDS::Edge(edges(i)));
+    }
+    mk.Build();
+    REQUIRE(mk.IsDone());
+    Model        model;
+    ModelVolume *volume = nullptr;
+    TempFile     file(".step");
+    const auto   body = step_body(mk.Shape(), model, volume, file);
+    const BRep::CadTopology topo = BRep::cad_topology(*body, 0.05, 0.3);
+
+    int opened = 0;
+    for (int f = 0; f < topo.num_faces; ++f) {
+        if (!topo.face_planar[size_t(f)])
+            continue;
+        const BRep::CadOpResult r = BRep::shell_solid(*body, {f}, 1.5);
+        INFO("face " << f << ": " << r.error);
+        CHECK(r.ok());
+        CHECK(r.error.find("NoSuchObject") == std::string::npos);
+        if (r.ok()) {
+            ++opened;
+            CHECK(r.volume_after < 0.6 * r.volume_before);
+            CHECK(body_info(*r.body).valid);
+            CHECK(TriangleMesh(r.mesh).stats().open_edges == 0);
+        }
+    }
+    CHECK(opened == 6); // 4 sides, top, bottom
+}
+
+TEST_CASE("Small parts: sizes, scales and STEP units", "[CadEdit]")
+{
+    SECTION("the world -> mesh size factor is the mean scale")
+    {
+        CHECK_THAT(BRep::mean_scale(Transform3d::Identity()), WithinAbs(1., 1e-12));
+        const Transform3d half = Geometry::assemble_transform(Vec3d(5., 6., 7.), Vec3d(0.3, 0.2, 1.), Vec3d(0.5, 0.5, 0.5));
+        CHECK_THAT(BRep::mean_scale(half), WithinAbs(0.5, 1e-9));
+        // A 1 mm radius typed on a part shown at half size is 2 mm on its mesh.
+        CHECK_THAT(1. / BRep::mean_scale(half), WithinAbs(2., 1e-9));
+    }
+    SECTION("a 10 mm STEP cube takes a 0.3 mm fillet, and the size it cannot take says what would fit")
+    {
+        Model        model;
+        ModelVolume *volume = nullptr;
+        TempFile     file(".step");
+        const auto   body = step_body(BRepPrimAPI_MakeBox(10., 10., 10.).Shape(), model, volume, file);
+        const BRep::CadTopology topo = BRep::cad_topology(*body, 0.02, 0.3);
+        const BRep::CadOpResult ok   = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 0.3, all_selectable(topo));
+        INFO(ok.error);
+        REQUIRE(ok.ok());
+        CHECK_THAT(ok.volume_after, WithinRel(rounded_cube_volume(10., 0.3), 1e-6));
+
+        const BRep::CadOpResult too_big = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 6., all_selectable(topo));
+        CHECK_FALSE(too_big.ok());
+        CHECK_THAT(too_big.shortest_edge, WithinAbs(10., 1e-6));
+        CHECK(too_big.largest_size > 2.);
+        CHECK(too_big.largest_size < 5.01);
+    }
+    SECTION("a STEP file written in metres comes in, and is filleted, in millimetres")
+    {
+        Interface_Static::SetCVal("write.step.unit", "M");
+        TempFile file(".step");
+        write_occt_step(BRepPrimAPI_MakeBox(10., 10., 10.).Shape(), file.str());
+        Interface_Static::SetCVal("write.step.unit", "MM");
+        Model        model;
+        ModelObject *object = import_step(model, file.str());
+        const Vec3d  size   = object->volumes.front()->mesh().bounding_box().size();
+        CHECK_THAT(size.x(), WithinAbs(10., 1e-4));
+        std::string why;
+        const auto  body = BRep::cad_body_from_step_source(*object->volumes.front(), &why);
+        INFO(why);
+        REQUIRE(body);
+        CHECK_THAT(body_info(*body).bbox.size().x(), WithinAbs(10., 1e-4));
+        const BRep::CadTopology topo = BRep::cad_topology(*body, 0.02, 0.3);
+        const BRep::CadOpResult r    = BRep::fillet_edges(*body, BRep::EdgeFeature::Fillet, 0.5, all_selectable(topo));
+        INFO(r.error);
+        CHECK(r.ok());
     }
 }

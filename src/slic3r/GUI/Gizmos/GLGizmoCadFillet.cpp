@@ -50,6 +50,17 @@ struct GLGizmoCadFillet::JobOutput
     std::string                          error;
 };
 
+// A warning that wraps at the panel's width: OCCT's reasons can be long, and ImGuiWrapper's
+// warning_text() draws one unwrapped line that the fixed-width panel cuts off.
+static void warning_wrapped(const wxString &text, float wrap_width)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGuiWrapper::to_ImVec4(ColorRGB::WARNING()));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + wrap_width);
+    ImGui::TextUnformatted(into_u8(text).c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::PopStyleColor();
+}
+
 GLGizmoCadFillet::GLGizmoCadFillet(GLCanvas3D &parent, const std::string &icon_filename, unsigned int sprite_id)
     : GLGizmoBase(parent, icon_filename, sprite_id)
 {}
@@ -233,9 +244,7 @@ double GLGizmoCadFillet::mesh_scale() const
 {
     // Sizes are typed in world millimetres; the body lives in the volume's mesh space. As the
     // Edit gizmo does, a roughly uniform scale is assumed and the mean factor used.
-    const Vec3d  s    = Geometry::Transformation(volume_trafo()).get_scaling_factor();
-    const double mean = (std::abs(s.x()) + std::abs(s.y()) + std::abs(s.z())) / 3.;
-    return mean > EPSILON ? mean : 1.;
+    return BRep::mean_scale(volume_trafo());
 }
 
 BRep::TessellationParams GLGizmoCadFillet::apply_tessellation() const
@@ -515,7 +524,7 @@ void GLGizmoCadFillet::run_operation_async(bool apply)
             if (out.op->ok())
                 out.topo = std::make_unique<BRep::CadTopology>(BRep::cad_topology(*out.op->body, topo_lin, 0.35));
         },
-        [this, apply, key](JobOutput &out) {
+        [this, apply, key, mode, scale](JobOutput &out) {
             if (!out.op || !out.op->ok()) {
                 clear_preview();
                 m_last_error = out.op ? out.op->error : out.error;
@@ -523,7 +532,19 @@ void GLGizmoCadFillet::run_operation_async(bool apply)
                     m_last_error = _u8L("The operation failed.");
                 // Sentence case for a message that starts mid-sentence in libslic3r.
                 m_last_error[0] = char(std::toupper(static_cast<unsigned char>(m_last_error[0])));
+                // What would fit, in the sizes the panel shows (world millimetres).
+                if (out.op && (mode == Mode::Fillet || mode == Mode::Chamfer)) {
+                    if (out.op->largest_size > 0.)
+                        m_last_error += " " + GUI::format(mode == Mode::Fillet ?
+                                                              _u8L("The largest radius that works for this selection is about %1% mm.") :
+                                                              _u8L("The largest distance that works for this selection is about %1% mm."),
+                                                          GUI::format("%.2f", out.op->largest_size * scale));
+                    else if (out.op->shortest_edge > 0. && out.op->status == BRep::CadOpStatus::Failed)
+                        m_last_error += " " + GUI::format(_u8L("Even much smaller sizes fail on this selection; its shortest edge is %1% mm."),
+                                                          GUI::format("%.2f", out.op->shortest_edge * scale));
+                }
                 m_last_error += " " + _u8L("Nothing was changed.");
+                BOOST_LOG_TRIVIAL(error) << "CAD gizmo: " << m_last_error;
                 return;
             }
             if (apply) {
@@ -948,7 +969,7 @@ void GLGizmoCadFillet::on_render_input_window(float x, float y, float bottom_lim
         return;
     }
     if (m_stage == Stage::Failed) {
-        m_imgui->warning_text(from_u8(m_load_error));
+        warning_wrapped(from_u8(m_load_error), wrap_width);
         if (m_imgui->button(m_desc.at("retry"))) {
             m_stage = Stage::NoPart; // makes attach_to_selection() start over
             attach_to_selection();
@@ -958,17 +979,17 @@ void GLGizmoCadFillet::on_render_input_window(float x, float y, float bottom_lim
     }
     if (m_stage == Stage::NeedsConversion) {
         if (!m_load_error.empty())
-            m_imgui->warning_text(from_u8(m_load_error));
+            warning_wrapped(from_u8(m_load_error), wrap_width);
         m_imgui->text_wrapped(m_desc.at("needs_convert"), wrap_width);
         const bool too_big = m_mesh_triangles > BRep::ConvertMaxTriangles;
         if (too_big)
-            m_imgui->warning_text(GUI::format_wxstr(m_desc.at("convert_limit"), m_mesh_triangles, BRep::ConvertMaxTriangles));
+            warning_wrapped(GUI::format_wxstr(m_desc.at("convert_limit"), m_mesh_triangles, BRep::ConvertMaxTriangles), wrap_width);
         else if (m_mesh_triangles > BRep::ConvertWarnTriangles)
-            m_imgui->warning_text(GUI::format_wxstr(m_desc.at("convert_big"), m_mesh_triangles));
+            warning_wrapped(GUI::format_wxstr(m_desc.at("convert_big"), m_mesh_triangles), wrap_width);
         if (m_imgui->button(m_desc.at("convert"), ImVec2(0.f, 0.f), !too_big && !m_job_running))
             convert_async();
         if (!m_last_error.empty())
-            m_imgui->warning_text(from_u8(m_last_error));
+            warning_wrapped(from_u8(m_last_error), wrap_width);
         finish();
         return;
     }
@@ -1060,7 +1081,7 @@ void GLGizmoCadFillet::on_render_input_window(float x, float y, float bottom_lim
     }
 
     if (!m_last_error.empty())
-        m_imgui->warning_text(from_u8(m_last_error));
+        warning_wrapped(from_u8(m_last_error), wrap_width);
     else if (!m_last_info.empty())
         m_imgui->text_wrapped(from_u8(m_last_info), wrap_width);
 

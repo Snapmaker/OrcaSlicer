@@ -214,7 +214,8 @@ TEST_CASE("Hollowing warns about a part it cannot hollow", "[Hollowing]")
         const size_t at = w.message.find("up to about ");
         REQUIRE(at != std::string::npos);
         const double suggested = std::atof(w.message.c_str() + at + 12);
-        // The cube is 10 mm deep at its centre and the hollower keeps a 2 mm fillet: about 7.9.
+        // The cube is 10 mm deep at its centre and the hollower keeps a 2 mm fillet, less a margin
+        // for its voxels: about 7.7.
         CHECK(suggested > 6.5);
         CHECK(suggested < 8.);
 
@@ -235,6 +236,12 @@ TEST_CASE("Hollowing warns about a part it cannot hollow", "[Hollowing]")
         INFO(w.message);
         REQUIRE(!w.message.empty());
         CHECK(w.message.find("too thin") != std::string::npos);
+        // ...and how thick it is: 4 mm, to within the layer height.
+        const size_t at = w.message.find("(about ");
+        REQUIRE(at != std::string::npos);
+        const double thick = std::atof(w.message.c_str() + at + 7);
+        CHECK(thick > 3.7);
+        CHECK(thick < 4.1);
         CHECK(w.level == PrintStateBase::WarningLevel::NON_CRITICAL);
     }
 
@@ -249,8 +256,8 @@ TEST_CASE("Hollowing warns about a part it cannot hollow", "[Hollowing]")
             slices.push_back(l->lslices);
             zs.push_back(float(l->slice_z));
         }
-        // Half the narrowest side, 6 mm, a little less for the slice planes at half a layer.
-        CHECK_THAT(hollowing_depth(slices, zs), Catch::Matchers::WithinAbs(5.95, 0.1));
+        // Half the narrowest side.
+        CHECK_THAT(hollowing_depth(slices, zs), Catch::Matchers::WithinAbs(6., 0.05));
     }
 }
 

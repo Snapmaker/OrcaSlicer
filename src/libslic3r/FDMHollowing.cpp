@@ -33,8 +33,11 @@ double hollowing_depth(const std::vector<ExPolygons> &slices, const std::vector<
     const size_t n = std::min(slices.size(), slice_zs.size());
     if (n == 0)
         return 0.;
+    // The part's bottom and top: the slicing planes are half a layer inside them.
+    const double bottom = n > 1 ? 1.5 * slice_zs[0] - 0.5 * slice_zs[1] : slice_zs[0];
+    const double top    = n > 1 ? 1.5 * slice_zs[n - 1] - 0.5 * slice_zs[n - 2] : slice_zs[0];
     // Upper bound: half the height, and half the narrower side of the widest layer.
-    double hi = 0.5 * double(slice_zs[n - 1] - slice_zs[0]);
+    double hi = 0.5 * (top - bottom);
     double xy = 0.;
     for (size_t i = 0; i < n; ++i)
         if (!slices[i].empty()) {
@@ -50,7 +53,7 @@ double hollowing_depth(const std::vector<ExPolygons> &slices, const std::vector<
         for (size_t i = 0; i < n; ++i)
             eroded[i] = offset_ex(slices[i], -scaled<float>(r));
         for (size_t i = 0; i < n; ++i) {
-            if (eroded[i].empty() || slice_zs[i] - r < slice_zs[0] || slice_zs[i] + r > slice_zs[n - 1])
+            if (eroded[i].empty() || slice_zs[i] - r < bottom || slice_zs[i] + r > top)
                 continue;
             // Layer i is the middle of the stack: everything within r below and above it.
             ExPolygons acc = eroded[i];
@@ -119,7 +122,7 @@ std::vector<std::string> hollow_volume_slices(const PrintObject &object, const s
         if (cavity.empty()) {
             // Tell the user, with a shell thickness that would have worked.
             const double depth  = hollowing_depth(vs.slices, slice_zs);
-            const double max_ok = round_down(depth - HOLLOWING_CLOSING_DISTANCE - 0.1);
+            const double max_ok = round_down(depth - HOLLOWING_CLOSING_DISTANCE - 0.3);
             BOOST_LOG_TRIVIAL(info) << "Hollowing: " << mo.name << " / " << volume.name << " is too thin for a "
                                     << thickness << " mm shell, depth " << depth << " mm";
             warnings.emplace_back(max_ok >= 0.5 ?
@@ -128,7 +131,7 @@ std::vector<std::string> hollow_volume_slices(const PrintObject &object, const s
                                who(volume), thickness, max_ok) :
                 Slic3r::format(_u8L("%1% was not hollowed: it is too thin to leave a cavity inside any shell "
                                     "(about %2% mm at its thickest, and hollowing needs more than 5 mm)."),
-                               who(volume), round_down(2. * depth)));
+                               who(volume), std::round(20. * depth) / 10.));
             continue;
         }
 

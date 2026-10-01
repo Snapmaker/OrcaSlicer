@@ -80,14 +80,15 @@ endif()
 
 find_package(Git)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
-    # Check current Git commit hash
+    # Check current Git commit hash. It is written into src/slic3r/GeneratedConfig.hpp
+    # (included by GUI_App.cpp only), not passed as a global -D flag: that changes the
+    # compiler options of every target on each new commit and forces a full rebuild.
     execute_process(
         COMMAND ${GIT_EXECUTABLE} log -1 --format=%h
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         OUTPUT_VARIABLE GIT_COMMIT_HASH
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-    add_definitions("-DGIT_COMMIT_HASH=\"${GIT_COMMIT_HASH}\"")
 endif()
 
 if(DEFINED ENV{SLIC3R_STATIC})

@@ -22,6 +22,7 @@
 #include "ImageFill.hpp"
 #include "FlexiJoint.hpp"
 #include "CutRecipe.hpp"
+#include "BRep/CadBody.hpp"
 
 //BBS: add bbs 3mf
 #include "Format/bbs_3mf.hpp"
@@ -978,6 +979,11 @@ public:
     // Contain 2d information about embossed shape to be editabled
     std::optional<EmbossShape> emboss_shape; 
 
+    // The exact B-rep this volume's mesh is a tessellation of, when an exact CAD operation
+    // (fillet, chamfer, shell, "Convert to CAD body") produced or sourced one. Only trusted while
+    // the mesh still matches its fingerprint: use BRep::attached_cad_body(), not this directly.
+    std::shared_ptr<const BRep::CadBody> cad_body;
+
     // A parent object owning this modifier volume.
     ModelObject*        get_object() const { return this->object; }
     ModelVolumeType     type() const { return m_type; }
@@ -1197,7 +1203,8 @@ private:
         name(other.name), source(other.source), m_mesh(other.m_mesh), m_convex_hull(other.m_convex_hull),
         config(other.config), m_type(other.m_type), object(object), m_transformation(other.m_transformation),
         supported_facets(other.supported_facets), seam_facets(other.seam_facets), mmu_segmentation_facets(other.mmu_segmentation_facets),
-        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape)
+        fuzzy_skin_facets(other.fuzzy_skin_facets), cut_info(other.cut_info), text_configuration(other.text_configuration), emboss_shape(other.emboss_shape),
+        cad_body(other.cad_body)
     {
 		assert(this->id().valid()); 
         assert(this->config.id().valid()); 
@@ -1286,6 +1293,12 @@ private:
         cereal::load_by_value(ar, config);
         cereal::load(ar, text_configuration);
         cereal::load(ar, emboss_shape);
+        bool has_cad_body = false;
+        ar(has_cad_body);
+        if (has_cad_body)
+            ar(cad_body);
+        else
+            cad_body.reset();
 		assert(m_mesh);
 		if (has_convex_hull) {
 			cereal::load_optional(ar, m_convex_hull);
@@ -1307,6 +1320,10 @@ private:
         cereal::save_by_value(ar, config);
         cereal::save(ar, text_configuration);
         cereal::save(ar, emboss_shape);
+        const bool has_cad_body = cad_body != nullptr;
+        ar(has_cad_body);
+        if (has_cad_body)
+            ar(cad_body);
 		if (has_convex_hull)
 			cereal::save_optional(ar, m_convex_hull);
 	}

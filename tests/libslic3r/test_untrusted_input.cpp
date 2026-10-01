@@ -883,9 +883,11 @@ namespace {
 
 // Writes a single-entry zip whose central directory carries a zip64 record declaring an
 // uncompressed size beyond what the 32-bit expat buffer API can take. The deflated payload
-// inflates to 64 bytes, which is larger than (int)claimed_size (16), so without the INT_MAX
-// guard the truncated XML_GetBuffer / extract path is reached instead of miniz rejecting a
-// 4-byte inflate. Built by hand because miniz never writes a size that disagrees with the data.
+// inflates to 64 bytes. Expat's internal buffer is at least ~2 KiB, so 64 bytes never
+// overflows anything; a removed guard is caught by the "Found invalid size" log CHECK,
+// not by a buffer overflow. Keep the payload under 1 KiB so a mutation fails cleanly
+// (main's unguarded code only overflows above about 2 KiB). Built by hand because miniz
+// never writes a size that disagrees with the data.
 void write_zip_with_oversized_entry(const fs::path &path, const std::string &entry)
 {
     const std::string xml          = std::string(64, 'x');
@@ -973,8 +975,9 @@ bool zip_entry_claims_oversize(const fs::path &path, const std::string &entry)
 }
 
 // load_bbs_3mf / load_3mf / check_3mf_from_prusa only log "Found invalid size" from the INT_MAX
-// guard. Without the guard the load still fails (truncated extract), so the tests must assert
-// this exact message or they cannot fail when the guard is removed.
+// guard. A 64-byte payload never overflows expat's ~2 KiB buffer, so without the guard the
+// load may still fail for other reasons. The tests must assert this exact message or they
+// cannot fail when the guard is removed.
 struct InvalidSizeLog
 {
     std::vector<std::string> lines;

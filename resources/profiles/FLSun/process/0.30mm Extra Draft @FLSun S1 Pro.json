@@ -1,0 +1,21 @@
+{
+    "type": "process",
+    "name": "0.30mm Extra Draft @FLSun S1 Pro",
+    "inherits": "0.20mm Standard @FLSun S1 Pro",
+    "from": "system",
+    "setting_id": "GP004",
+    "instantiation": "true",
+    "layer_height": "0.3",
+    "bottom_shell_layers": "4",
+    "bottom_shell_thickness": "1.2",
+    "top_shell_layers": "4",
+    "top_shell_thickness": "1.2",
+    "support_threshold_angle": "40",
+    "gap_infill_speed": "170",
+    "inner_wall_speed": "270",
+    "internal_solid_infill_speed": "270",
+    "sparse_infill_speed": "570",
+    "compatible_printers": [
+        "FLSun S1 Pro 0.4 nozzle"
+    ]
+}

@@ -152,6 +152,8 @@ bool try_parse_json_int(const nlohmann::json &value, int &out)
 
 wxString wxstring_from_exception(const std::exception &e)
 {
+    // FromUTF8 is empty on invalid UTF-8. The libc fallback is platform-dependent
+    // (MSVC ANSI system_error) and is not unit-tested; Windows smoke must cover it.
     wxString msg = wxString::FromUTF8(e.what());
     if (msg.empty())
         msg = wxString(e.what(), wxConvLibc);
@@ -175,6 +177,7 @@ int PrintHost::get_err_code_from_body(const std::string &body)
     if (!try_parse_json_int(parsed["err"], err_code))
         return -1;
 
+    // err_code == -1 is also a real host value; it cannot be told from a parse failure.
     return err_code;
 }
 

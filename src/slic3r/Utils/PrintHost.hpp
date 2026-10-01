@@ -86,6 +86,9 @@ public:
     //   non-object (including [])           → -1  (stricter than ptree/upstream: array root was 0)
     //   float / bool / object / other string→ -1  (stricter than ptree, which could coerce 1.0 → 1)
     //   out of int range (2^32, INT_MIN-1)  → -1  (must not truncate to 0 / "success")
+    //
+    // {"err":-1} returns -1, the same sentinel as a parse failure. That collision is accepted:
+    // Duet's switch already treats -1 as "Unknown error", and hosts do not use -1 as success.
     static int get_err_code_from_body(const std::string &body);
 
     virtual bool send_gcodes(const std::vector<std::string>& codes, std::string& extraInfo) { return false; }

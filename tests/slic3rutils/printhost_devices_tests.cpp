@@ -695,16 +695,27 @@ TEST_CASE("PrintHost: get_err_code_from_body does not throw on malformed JSON", 
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"0"})") == 0);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"1"})") == 1);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":" 2 "})") == 2);
-    CHECK(PrintHost::get_err_code_from_body(R"({"err":"-1"})") == -1);
+    // "-7" not "-1": a real {"err":-1} cannot be told from a parse failure (accepted).
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"-7"})") == -7);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"+3"})") == 3);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"1x"})") == -1);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":" "})") == -1);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":true})") == -1);
+    // INT_MIN/INT_MAX are in range; one past each is not. String forms match.
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":2147483647})") == 2147483647);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":-2147483648})") == (-2147483647 - 1));
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":2147483648})") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":-2147483649})") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"2147483647"})") == 2147483647);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"-2147483648"})") == (-2147483647 - 1));
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"2147483648"})") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"-2147483649"})") == -1);
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":"99999999999999999999"})") == -1);
+    // Above 2^64 JSON has no integer type left; nlohmann stores a float, which we reject.
+    CHECK(PrintHost::get_err_code_from_body(R"({"err":1e20})") == -1);
     // Out of int range must not truncate to 0 (success). 2^32 was the reported get<int> wrap.
     CHECK(PrintHost::get_err_code_from_body(R"({"err":4294967296})") == -1);
-    CHECK(PrintHost::get_err_code_from_body(R"({"err":-2147483649})") == -1);
     CHECK(PrintHost::get_err_code_from_body(R"({"err":"4294967296"})") == -1);
-    CHECK(PrintHost::get_err_code_from_body(R"({"err":"-2147483649"})") == -1);
     // Floats stay -1: stricter than ptree, which could coerce 1.0 → 1.
     CHECK(PrintHost::get_err_code_from_body(R"({"err":1.5})") == -1);
     // A successful Duet connect often has no err field; that is success (0), not unknown (-1).

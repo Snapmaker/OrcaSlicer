@@ -3,6 +3,9 @@
 #define ORCA_UPDATER_SIG_KEY_B64 "@ORCA_UPDATER_SIG_KEY_B64@"
 #define ORCA_UPDATER_SIG_KEY_AVAILABLE @ORCA_UPDATER_SIG_KEY_AVAILABLE@
 
-// Commit the build was configured from (see GIT_COMMIT_HASH in the top-level CMakeLists.txt).
-#define SLIC3R_GIT_COMMIT_HASH "@GIT_COMMIT_HASH@"
+// Commit the build was configured from (see the top-level CMakeLists.txt).
+#cmakedefine GIT_COMMIT_HASH "@GIT_COMMIT_HASH@"
+#ifndef GIT_COMMIT_HASH
+#define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized
+#endif
 
